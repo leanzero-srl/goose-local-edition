@@ -5890,18 +5890,22 @@ mod tests {
     /// filename and every consumer looks them up by task id.
     #[test]
     fn activity_digest_key_flattens_paths_and_round_trips() {
-        // The desktop's decoder, mirrored here so the two can never drift apart: `~~` -> `~`,
-        // a lone `~` -> `/`.
+        // The desktop's decoder, mirrored here so the two can never drift apart: a left-to-right
+        // scan of `~.` escape pairs (`~t` -> `~`, `~s` -> `/`, `~b` -> `\`).
         fn decode(k: &str) -> String {
             let mut out = String::new();
-            let mut it = k.chars().peekable();
+            let mut it = k.chars();
             while let Some(c) = it.next() {
                 if c == '~' {
-                    if it.peek() == Some(&'~') {
-                        it.next();
-                        out.push('~');
-                    } else {
-                        out.push('/');
+                    match it.next() {
+                        Some('t') => out.push('~'),
+                        Some('s') => out.push('/'),
+                        Some('b') => out.push('\\'),
+                        Some(other) => {
+                            out.push('~');
+                            out.push(other);
+                        }
+                        None => out.push('~'),
                     }
                 } else {
                     out.push(c);
@@ -5928,6 +5932,12 @@ mod tests {
             );
         }
         // INJECTIVE: a literal `~` and a separator must never collide on one digest file.
+        // The escape alphabet's whole reason: adjacent mixes that the doubling scheme aliased.
+        assert_ne!(
+            activity_digest_key("fix::r0::a/~b"),
+            activity_digest_key("fix::r0::a~/b"),
+            "adjacent mixed separators must not alias"
+        );
         assert_ne!(
             activity_digest_key("fix::r0::a/b"),
             activity_digest_key("fix::r0::a~b"),
@@ -12068,12 +12078,16 @@ fn build_reasoning(texts: &[String]) -> String {
 /// while the desktop showed "generating…" with no content and the judge had no digest to read, so
 /// its over-read/thrash checks were disarmed for exactly the tasks that repair the app.
 ///
-/// INJECTIVE, because the desktop reverses it to recover the task id: a literal `~` doubles
-/// (`~` -> `~~`) before separators become `~`, so `a/b` and `a~b` can never land on one file and
-/// the decode (`~~` -> `~`, lone `~` -> `/`) is exact. Review finding: the first version was a
-/// plain replace, which aliased those two ids onto the same digest.
+/// INJECTIVE via a true escape alphabet, because the desktop reverses it to recover the task id.
+/// The previous scheme (`~` -> `~~`, then separators -> `~`) was pairwise-injective for the cases
+/// its test pinned but aliased ADJACENT mixes: `a/~b` and `a~/b` both encoded to `a~~~b`. Escapes
+/// with distinct tails cannot collide: `~` -> `~t`, `/` -> `~s`, `\` -> `~b` — every `~` in the
+/// output is an escape lead, so a left-to-right scan of `~.` pairs is an exact inverse.
 fn activity_digest_key(task_id: &str) -> String {
-    task_id.replace('~', "~~").replace(['/', '\\'], "~")
+    task_id
+        .replace('~', "~t")
+        .replace('/', "~s")
+        .replace('\\', "~b")
 }
 
 /// Build the `.swarm/activity/<key>.json` digest a worker/scout/planner call refreshes as it streams. The judge
@@ -14310,6 +14324,71 @@ impl GooseAgentDispatcher {
             .unwrap()
             .insert(task_id.to_string(), (tmp, owned_files.to_vec()));
         Ok(path)
+    }
+
+    /// F883: grade EXACTLY what a promote would land — never the raw shadow.
+    ///
+    /// The shadow grade judged the WHOLE shadow tree while `promote_speculative` copies ONLY the
+    /// owned files (plus creations for multi-file owners). Two failure shapes fall out of that
+    /// mismatch, both confirmed by review: a worker whose improvement lives in a NON-owned file
+    /// grades strictly better, "promotes", and lands nothing — the promotion counter arms
+    /// join-skips on a fiction; and a torn two-file edit grades on its coherent whole and lands
+    /// only its broken half. The composition below mirrors the promote copy rules exactly:
+    /// real tree + owned files from the shadow + (owned.len() > 1) created source files.
+    ///
+    /// Returns (verified, changed, established). `established` is the ruler's own strict bit
+    /// (gate ran AND the composite spec-contract raised no inconclusive) — the race arm's claim
+    /// rule kills siblings on it, so it must never be weakened to `verified.is_some()`.
+    /// `changed == false` means the shadow left every owned byte
+    /// identical and created nothing a promote would copy — there is nothing to land, so the
+    /// caller must record no promotion and skip the grade (a byte-identical tree re-graded is a
+    /// coin-flip on gate flakiness, and "promoted nothing, counted as promoted" is the exact
+    /// no-op-promotion class this exists to kill).
+    #[allow(clippy::too_many_arguments)]
+    async fn grade_promotion_preview(
+        &self,
+        task_id: &str,
+        real_root: &Path,
+        prompt: &str,
+        lang: TargetLang,
+        all_files: &[String],
+        composite: bool,
+        missing_gate: bool,
+    ) -> (Option<usize>, bool, bool) {
+        let Some((shadow_root, owned)) = ({
+            let g = self.spec_shadows.lock().unwrap();
+            g.get(task_id)
+                .map(|(shadow, owned)| (shadow.path().to_path_buf(), owned.clone()))
+        }) else {
+            return (None, false, false);
+        };
+        let preview = match tempfile::TempDir::new() {
+            Ok(t) => t,
+            Err(_) => return (None, true, false),
+        };
+        if copy_tree_excluding(real_root, preview.path()).is_err() {
+            return (None, true, false);
+        }
+        let mut changed = owned.iter().any(|f| {
+            std::fs::read(shadow_root.join(f)).ok() != std::fs::read(real_root.join(f)).ok()
+        });
+        copy_owned_files(&shadow_root, preview.path(), &owned);
+        if owned.len() > 1 {
+            changed |= copy_created_source_files(&shadow_root, preview.path()) > 0;
+        }
+        if !changed {
+            return (None, false, false);
+        }
+        let (verified, established) = one_ruler_grade(
+            preview.path(),
+            prompt,
+            lang,
+            all_files,
+            composite,
+            missing_gate,
+        )
+        .await;
+        (verified, true, established)
     }
 
     /// The shadow's own root, so a twin can be VERIFIED before anyone decides whether it won. Peeks
@@ -17786,7 +17865,11 @@ fn interpret_pytest_run(code: Option<i32>, output: &str) -> TestRunVerdict {
     // leaves the real state unknown. The engine already has the right verdict for this — the pytest
     // path records a timeout as INCONCLUSIVE, "not a failure and NOT a pass either" — so an
     // infrastructure collision gets the same treatment rather than being suppressed or believed.
-    if pytest_port_collision(&low) {
+    // Exit 0 outranks the collision string: a suite that PASSES while some fixture's stderr
+    // mentions "Address already in use" (a test that provokes the error deliberately, a retried
+    // bind inside the app) proved everything it exists to prove. Only a non-zero exit with the
+    // collision signature is the harness's own contention.
+    if pytest_port_collision(&low) && code != Some(0) {
         return TestRunVerdict::Inconclusive(
             "`pytest -q` could not bind a port (Address already in use) — another task in this run \
              was serving the app at the same time. This is a COLLISION IN THE HARNESS, not a defect \
@@ -18417,23 +18500,42 @@ async fn run_smoke_gate(root: &Path, lang: TargetLang) -> SmokeResult {
                 // nature (a sibling task holding the port for the length of ITS check), so the
                 // retry budget should outlast a sibling, not just blink at it.
                 let mut attempts = 0;
+                let mut last_collided = pytest_port_collision(&combined.to_lowercase());
                 while attempts < PYTEST_COLLISION_RETRIES
-                    && pytest_port_collision(&combined.to_lowercase())
+                    && last_collided
                     && !matches!(v, TestRunVerdict::Pass)
                 {
                     static RETRY_STAGGER: std::sync::atomic::AtomicU64 =
                         std::sync::atomic::AtomicU64::new(0);
                     let slot = RETRY_STAGGER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    tokio::time::sleep(std::time::Duration::from_secs(5 + 7 * (slot % 4))).await;
+                    // GROW PAST THE SIBLING, not into it. The sibling holding the port is running
+                    // ITS suite under the same 120s cap, and a colliding attempt errors out in a
+                    // couple of seconds — so a flat 5-26s schedule burned all three retries inside
+                    // the first minute of a two-minute hold and re-recorded the collision it was
+                    // built to outlast (run 8 did exactly that with one retry; the arithmetic
+                    // spent three the same way). 10/40/90 spans ~140s of contention before the
+                    // stagger, which is longer than any one sibling can hold the port.
+                    let base = [10u64, 40, 90][attempts.min(2)];
+                    tokio::time::sleep(std::time::Duration::from_secs(base + 7 * (slot % 4))).await;
                     attempts += 1;
                     let mut retry_cmd = tokio::process::Command::new("python3");
                     retry_cmd.args(["-m", "pytest", "-q"]).current_dir(root);
                     let Some(out2) = smoke_output(retry_cmd, 120).await else {
+                        // The retry itself never finished. Keeping the PREVIOUS attempt's verdict
+                        // would record a collision that did not happen on the last attempt — say
+                        // what actually occurred instead.
+                        v = TestRunVerdict::Inconclusive(
+                            "`pytest -q` retry after a port collision did not complete (timed out \
+                             at 120s) — nothing was proven either way"
+                                .to_string(),
+                        );
                         break;
                     };
                     let combined2 = combined_output(&out2);
                     v = interpret_pytest_run(out2.status.code(), &combined2);
-                    if !pytest_port_collision(&combined2.to_lowercase()) {
+                    last_collided = pytest_port_collision(&combined2.to_lowercase())
+                        && !matches!(v, TestRunVerdict::Pass);
+                    if !last_collided {
                         break;
                     }
                 }
@@ -20037,7 +20139,7 @@ async fn probe_advertised_get(
     spec: &str,
     path: &str,
     populated: bool,
-) -> Option<(u16, Vec<(&'static str, String)>)> {
+) -> Option<(u16, Vec<(String, String)>)> {
     let url = format!("http://127.0.0.1:{port}{path}");
     let mut cmd = tokio::process::Command::new("curl");
     cmd.args(["-s", "-w", "\n%{http_code}", "-m", "5", &url]);
@@ -20049,7 +20151,13 @@ async fn probe_advertised_get(
     } else {
         ""
     };
-    let mut found: Vec<(&'static str, String)> = Vec::new();
+    // The first element is a DEDUP TOKEN, not a display string: stable across the empty and
+    // populated passes (the display text appends a "once the app HOLDS ROWS" clause when
+    // populated, which made raw-text dedup structurally impossible — every populated finding
+    // differed from its empty twin by exactly that suffix, so the promised "report only what an
+    // empty app could not reveal" suppression never fired once). Keyed by kind PLUS the violated
+    // key where one exists, so a NEW key failing the same rule still reports.
+    let mut found: Vec<(String, String)> = Vec::new();
     // A MISSING STATUS LINE IS NOT, BY ITSELF, A DEFECT. curl reports 000 for a plain timeout as
     // readily as for a dead connection, and blaming the app for a slow endpoint would be a phantom of
     // exactly the kind this gate has produced before. MEASURED: the real wedge (an infinite
@@ -20062,14 +20170,14 @@ async fn probe_advertised_get(
     }
     if code >= 500 {
         found.push((
-            "5xx",
+            "5xx".to_string(),
             format!(
                 "GET {path} returned {code}{when} — the advertised endpoint errors (server 5xx)"
             ),
         ));
     } else if code == 404 || code == 405 {
         found.push((
-            "missing_route",
+            "missing_route".to_string(),
             format!(
                 "GET {path} returned {code} — the spec advertises this endpoint but the app does not implement it"
             ),
@@ -20084,8 +20192,16 @@ async fn probe_advertised_get(
                         .filter(|k| v.get(k.as_str()).is_none())
                         .collect();
                     if !missing.is_empty() {
+                        let token = format!(
+                            "keys:{}",
+                            missing
+                                .iter()
+                                .map(|k| k.as_str())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        );
                         found.push((
-                            "keys",
+                            token,
                             format!(
                                 "GET {path} answered {code}{when} but its JSON body is missing the \
                                  documented key(s) {} — the spec's response shape for this endpoint \
@@ -20103,7 +20219,7 @@ async fn probe_advertised_get(
                         for k in &documented {
                             if let Some(bad) = v.get(k.as_str()).and_then(utc_bounds_violation) {
                                 found.push((
-                                    "utc",
+                                    format!("utc:{k}"),
                                     format!(
                                         "GET {path}'s `{k}` reads `{bad}`{when} — the spec documents \
                                          this endpoint's timestamps as RFC3339 UTC, so the value \
@@ -20116,7 +20232,7 @@ async fn probe_advertised_get(
                     }
                 }
                 Err(_) => found.push((
-                    "notjson",
+                    "notjson".to_string(),
                     format!(
                         "GET {path} answered {code}{when} but the body is not JSON, while the spec \
                          documents a JSON response shape ({}) for it",
@@ -20335,8 +20451,8 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 }
                 empty_codes.insert(path.clone(), code);
                 let seen = empty_pass.entry(path.clone()).or_default();
-                for (_, text) in found {
-                    seen.insert(text.clone());
+                for (token, text) in found {
+                    seen.insert(token);
                     findings.push(text);
                 }
             }
@@ -20472,7 +20588,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             let a_out = String::from_utf8_lossy(&a.stdout).into_owned();
             let b_out = String::from_utf8_lossy(&b.stdout).into_owned();
             let (a_body, a_code) = split_curl_status(&a_out);
-            let (b_body, _) = split_curl_status(&b_out);
+            let (b_body, b_code) = split_curl_status(&b_out);
             if (200..300).contains(&a_code) {
                 post_ok += 1;
             }
@@ -20485,7 +20601,15 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             // treated 304 as "try again" — 249,703 identical conditional requests, a sync that never
             // returns, and a single-threaded server wedged behind it. Every downstream check scored
             // zero off this one defect, and the engine's only trace of it was a console-error note.
-            if a_code == 0 {
+            // BOTH SAMPLES ARE SUBJECT TO THE SAME RULE. The first draft keyed only on the FIRST
+            // call and discarded b's status — but the measured wedge class (a client that stores one
+            // ETag and loops on 304) completes its FIRST sync perfectly and hangs on the SECOND,
+            // which is exactly the sample the first draft fed to the body comparison as an empty
+            // string. `repeated_post_verdict("", "")` is Unreadable, and the gate then filed "the
+            // response does not carry the documented fields" about a handler whose first response
+            // carried all three — a fixer sent to edit a return statement that is correct.
+            let second_only_hang = (200..300).contains(&a_code) && b_code == 0;
+            if a_code == 0 || second_only_hang {
                 // CONFIRM BEFORE ACCUSING. 20s is the idempotency probe's budget, NOT the app's:
                 // the spec allows this sync 60s, the scorer still grades one at 180s, and the vendor
                 // forces several seconds of mandatory Retry-After sleeps on any client that obeys it.
@@ -20511,29 +20635,52 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                     .map(|o| split_curl_status(&String::from_utf8_lossy(&o.stdout)).1)
                     .unwrap_or(0);
                 if c_code == 0 {
+                    let shape = if second_only_hang {
+                        "The FIRST call answered correctly and only the REPEAT never returns — \
+                         which is the signature of a conditional-request loop: the repeat sends \
+                         If-None-Match, gets 304, and treats 304 as a reason to re-issue the \
+                         identical request, which returns the identical 304 forever."
+                    } else {
+                        "Bound EVERY loop that talks to the vendor by a condition that must \
+                         eventually hold — page until the vendor says there is no next page — and \
+                         never re-issue an identical request because of the STATUS it returned, \
+                         because an identical request returns the identical status forever. A \
+                         conditional request answers 'this exact request is unchanged'; retrying it \
+                         unchanged loops without end."
+                    };
                     findings.push(format!(
-                        "POST {path} NEVER RETURNS — it was still running after {POST_PROBE_SECS}s, and \
-                         still running after a further {HANG_CONFIRM_SECS}s, which is past the far end \
-                         of this spec's own performance budget. A hang is worse than an error: the \
-                         endpoint answers nothing, and on a single-threaded server every later request \
-                         queues behind it, so the whole app goes dark. Bound EVERY loop that talks to \
-                         the vendor by a condition that must eventually hold — page until the vendor \
-                         says there is no next page — and never re-issue an identical request because \
-                         of the STATUS it returned, because an identical request returns the identical \
-                         status forever. A conditional request answers 'this exact request is \
-                         unchanged'; retrying it unchanged loops without end.{client_loc}"
+                        "POST {path} NEVER RETURNS — still running after {POST_PROBE_SECS}s, and \
+                         still running after a further {HANG_CONFIRM_SECS}s, which is past the far \
+                         end of this spec's own performance budget. A hang is worse than an error: \
+                         the endpoint answers nothing, and on a single-threaded server every later \
+                         request queues behind it, so the whole app goes dark. {shape}{client_loc}"
+                    ));
+                } else if c_code >= 500 {
+                    // A confirm that ERRORS is not "merely slow" — it reproduces the failure the
+                    // short samples could not see finish. Filing it as not-proven-broken would tell
+                    // the fix loop, in writing, to ignore a POST that reproducibly 5xxes.
+                    findings.push(format!(
+                        "POST {path} returned {c_code} — the spec advertises this endpoint and it \
+                         errors (server 5xx, confirmed on a {HANG_CONFIRM_SECS}s call). Nothing \
+                         downstream of it can work; fix this before any idempotency concern."
                     ));
                 } else {
+                    if (200..300).contains(&c_code) {
+                        // The sync DID complete — the app is populated, so the pass-2 read probes
+                        // below are meaningful. Without this, a legally-slow sync (35s is scored
+                        // 1.00) silently disabled the entire populated pass.
+                        post_ok += 1;
+                    }
                     inconclusive.push(format!(
                         "spec-contract: POST {path} did not answer within {POST_PROBE_SECS}s but DID \
-                         complete on a longer call — too slow to judge idempotency from these samples, \
-                         and NOT proven broken. Do not 'fix' the app for this."
+                         complete on a longer call — too slow to judge idempotency from these \
+                         samples, and NOT proven broken. Do not 'fix' the app for this."
                     ));
                 }
-                // Whatever the outcome, the two samples above are empty, so every body-comparison
-                // below would read them as a missing response shape and push a second finding that
-                // contradicts the first — telling a fixer to edit the return payload of a handler
-                // that never reaches its return statement.
+                // Whatever the outcome, at least one of the two samples is empty, so every
+                // body-comparison below would read it as a missing response shape and push a second
+                // finding that contradicts the first — telling a fixer to edit the return payload
+                // of a handler that never reaches its return statement.
                 continue;
             } else if a_code >= 500 {
                 findings.push(format!(
@@ -20674,11 +20821,11 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                         continue;
                     }
                     let seen = empty_pass.get(path);
-                    for (_, text) in found {
-                        // Deduped on the FINDING TEXT, not its coarse kind: an endpoint that
-                        // documents several keys can violate the same rule on a different key, and
-                        // kind-level dedup would silently swallow the second one.
-                        if seen.is_some_and(|k| k.contains(&text)) {
+                    for (token, text) in found {
+                        // Deduped on the token (kind + violated key), which is stable across the
+                        // two passes — the display text is not, because the populated pass appends
+                        // a HOLDS-ROWS clause. A same-rule violation on a NEW key still reports.
+                        if seen.is_some_and(|k| k.contains(&token)) {
                             continue;
                         }
                         fresh.push(text);
@@ -25239,6 +25386,39 @@ async fn build_swarm_dispatcher(
 }
 
 #[allow(dead_code)]
+/// F883/E5: the files a per-file fix shard OWNS. A pytest failure attributes to its TEST file —
+/// the only path a `-q` summary names — but the defect is as often in the module under test,
+/// which a shard owning only the test cannot land: its worker either fixes the module in a
+/// shadow that promote discards, or takes the one route that CAN land — weakening the tests.
+/// Owning BOTH keeps the fix landable either way. The module is added only when it resolves to
+/// a planned non-test file AND no sibling group already owns it — the partition must stay
+/// disjoint, because two shards writing one real file is the race this machinery exists to
+/// prevent.
+fn shard_owned_files(
+    group_file: &str,
+    all_files: &[String],
+    taken: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut owned = vec![group_file.to_string()];
+    let base = group_file.rsplit('/').next().unwrap_or(group_file);
+    if let Some(stem) = base
+        .strip_prefix("test_")
+        .map(|r| r.trim_end_matches(".py"))
+        .filter(|s| !s.is_empty())
+    {
+        let want = format!("{stem}.py");
+        if let Some(module) = all_files.iter().find(|f| {
+            let fb = f.rsplit('/').next().unwrap_or(f);
+            fb == want && !fb.starts_with("test_")
+        }) {
+            if module.as_str() != group_file && !taken.contains(module.as_str()) {
+                owned.push(module.clone());
+            }
+        }
+    }
+    owned
+}
+
 fn fix_round_specs(
     findings: &[String],
     all_files: &[String],
@@ -25250,6 +25430,7 @@ fn fix_round_specs(
         .iter()
         .map(|g| format!("fix::r{round}::{}", g.file))
         .collect();
+    let taken: std::collections::HashSet<String> = groups.iter().map(|g| g.file.clone()).collect();
     let mut specs: Vec<goose_swarm::TaskSpec> = groups
         .into_iter()
         .zip(fix_ids.iter())
@@ -25258,7 +25439,7 @@ fn fix_round_specs(
             description: smoke_fix_description(&g.findings, lang),
             difficulty: goose_swarm::Difficulty::Hard,
             preferred_model: None,
-            owned_files: vec![g.file],
+            owned_files: shard_owned_files(&g.file, all_files, &taken),
             deps: Vec::new(),
             subsplit: Vec::new(),
         })
@@ -26118,23 +26299,20 @@ impl GooseAgentDispatcher {
                 return Err(DispatchError::Transient(e));
             }
         }
-        // F862 ONE RULER (see one_ruler_grade): the shadow answers the round's exact question.
-        let verified = match self.speculative_root(&req.task_id) {
-            Some(root) => {
-                one_ruler_grade(
-                    &root,
-                    &fr.prompt,
-                    fr.lang,
-                    &fr.all_files,
-                    fr.composite,
-                    fr.missing_gate,
-                )
-                .await
-                .0
-            }
-            None => None,
-        };
-        let promoted = shard_beats_baseline(verified, baseline);
+        // F862 ONE RULER + F883 GRADE-WHAT-LANDS: the composed preview answers the round's
+        // exact question about the tree a promote would actually produce.
+        let (verified, shadow_changed, _est) = self
+            .grade_promotion_preview(
+                &req.task_id,
+                &root,
+                &fr.prompt,
+                fr.lang,
+                &fr.all_files,
+                fr.composite,
+                fr.missing_gate,
+            )
+            .await;
+        let promoted = shadow_changed && shard_beats_baseline(verified, baseline);
         if promoted {
             self.fix_promotions
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -26152,6 +26330,7 @@ impl GooseAgentDispatcher {
             "verified_findings": verified,
             "baseline_findings": baseline,
             "promoted": promoted,
+            "shadow_changed": shadow_changed,
         }));
         match ran {
             Ok(Ok(mut out)) => {
@@ -26530,12 +26709,7 @@ impl GooseAgentDispatcher {
                      `collected 0 items`, `no tests ran` or `file or directory not found` means NOTHING \
                      ran — that is a FAILURE even if the command exits 0, fix the path/collection before \
                      finishing. NEVER pipe the test command through `head`/`tail` — the pipe replaces \
-                     the real exit code with the pipe's and a broken run reads as a pass. If a test \
-                     starts the app or any server, it must bind an EPHEMERAL port it asks the OS for \
-                     (bind port 0, read back the assigned port) — NEVER a literal port number. Several \
-                     tasks in this run execute at the same time on one machine, so a hard-coded port \
-                     makes your suite fail with `Address already in use` through no fault of the code \
-                     under test, and that failure is indistinguishable from a real one. A test file \
+                     the real exit code with the pipe's and a broken run reads as a pass. A test file \
                      with a SyntaxError or a bad import is worse than none. A turn that ends without \
                      your owned file written and non-empty FAILS and is retried.\n\n"
                         .to_string()
@@ -26556,10 +26730,30 @@ impl GooseAgentDispatcher {
                      #1 way workers burn their whole budget and produce nothing.\n\n"
                         .to_string()
                 };
+                // THE PORT RULE, for every test author regardless of the kind-prompt lever. It is
+                // a correctness rule, not kind tailoring: coupling it to the A/B lever meant the
+                // control arm's test authors hardcoded ports exactly as run 8 did, and the
+                // regression would have been attributed to the lever. Scoped to BINDING with the
+                // contract carve-out — the spec's own literal ports (the vendor base URL, the
+                // `--port` flag's parsing and default) are CONTRACT VALUES a test must still
+                // assert as written; an over-broad "never a literal port" made obeying workers
+                // delete exactly those assertions.
+                let port_rule = if is_test_author {
+                    "\nPORTS: when a test STARTS the app or any server, it must BIND an ephemeral \
+                     port it asks the OS for (bind port 0, read back the assigned port) — never \
+                     BIND a hard-coded number, because several tasks run at once on this machine \
+                     and a fixed port fails with `Address already in use` through no fault of the \
+                     code under test. Ports that appear in the SPEC (the vendor base URL, the \
+                     `--port` flag's parsing and its documented default) are contract values — \
+                     assert them exactly as written; only the sockets your tests OPEN must be \
+                     ephemeral.\n"
+                } else {
+                    ""
+                };
                 format!(
                     "YOU OWN — write EXACTLY these ABSOLUTE paths, and write NOTHING outside them. Their \
                      parent directories ALREADY EXIST (pre-created for you) — NEVER run `mkdir` at all (it \
-                     just wastes turns):\n{owned}{multi_note}{skeleton_note}{cli_note}{multifile_note}{web_note}\n\
+                     just wastes turns):\n{owned}{multi_note}{skeleton_note}{cli_note}{multifile_note}{web_note}{port_rule}\n\
                      {owner_body}"
                 )
             };
@@ -32676,6 +32870,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 let facts = doc_facts.clone();
                 let desc = smoke_fix_description(&verdict.findings, complete_lang);
                 let wave_prompt = opts.prompt.clone();
+                let wave_cwd = cwd.clone();
                 // F862: the ruler flags the round graded with — the twins grade with the same.
                 let wave_composite = delivery_on || spec_contract_enabled();
                 let wave_missing_gate = missing_deliverable_gate;
@@ -32711,6 +32906,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         let win_claim = win_claim.clone();
                         let wave_cancel = wave_cancel.clone();
                         let wave_prompt = wave_prompt.clone();
+                        let wave_cwd = wave_cwd.clone();
                         async move {
                             let task_id = format!("complete-fix::twin{i}");
                             // THE TAIL'S FIRST DISPATCH EVENT. The repair tail emitted no task_dispatched at
@@ -32796,20 +32992,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // round, cancelling the twins that were editing, and promoting twelve
                             // byte-identical files. The shadow now answers the round's exact
                             // question, every category included.
-                            let (verified, gate_established) = match me.speculative_root(&task_id) {
-                                Some(root) => {
-                                    one_ruler_grade(
-                                        &root,
-                                        &wave_prompt,
-                                        complete_lang,
-                                        &all_files,
-                                        wave_composite,
-                                        wave_missing_gate,
-                                    )
-                                    .await
-                                }
-                                None => (None, false),
-                            };
+                            // F883: composed preview, not the raw shadow — a twin owns every
+                            // PLANNED file, but an edit to an unplanned pre-existing file still
+                            // does not land (promote copies owned + creations only), so the raw
+                            // shadow can grade a tree the real one never becomes.
+                            let (verified, twin_changed, twin_est) = me
+                                .grade_promotion_preview(
+                                    &task_id,
+                                    &wave_cwd,
+                                    &wave_prompt,
+                                    complete_lang,
+                                    &all_files,
+                                    wave_composite,
+                                    wave_missing_gate,
+                                )
+                                .await;
+                            let gate_established = twin_est;
+                            let verified = if twin_changed { verified } else { None };
                             sink_r.write_value(serde_json::json!({
                                 "event": "complete_fix_completed",
                                 "round": round, "twin": i, "model": model,
@@ -32927,6 +33126,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     missing_gate: missing_deliverable_gate,
                                 });
                                 let mut fix_run = Scheduler::new(fix_devices.clone(), 1)
+                                    .for_fix_round()
                                     .with_sink(sink.clone())
                                     .with_doc_facts(doc_facts.clone())
                                     .with_pause_file(working_dir.join(".swarm").join("pause"));
@@ -32998,8 +33198,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 );
                 if !groups.is_empty() {
                     let baseline = verdict.findings.len();
+                    let taken: std::collections::HashSet<String> =
+                        groups.iter().map(|g| g.file.clone()).collect();
                     let me = smoke_fix_dispatcher.clone();
                     let all_files = smoke_all_files.clone();
+                    let fan_cwd = cwd.clone();
+                    let fan_prompt = opts.prompt.clone();
+                    let fan_all_files = smoke_all_files.clone();
+                    let fan_composite = delivery_on || spec_contract_enabled();
+                    let fan_missing_gate = missing_deliverable_gate;
                     let dev = dev_id.clone();
                     // Cloned OUTSIDE the Fn closure: fanout calls it once per group, so it may only borrow.
                     let decisions = user_decisions.clone();
@@ -33009,10 +33216,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         fanout_over_fleet(fleet_slots.clone(), groups, move |g, model| {
                             let me = me.clone();
                             let all_files = all_files.clone();
+                            let fan_cwd = fan_cwd.clone();
+                            let fan_prompt = fan_prompt.clone();
+                            let fan_all_files = fan_all_files.clone();
                             let dev = dev.clone();
                             let decisions = decisions.clone();
                             let facts = facts.clone();
                             let sink_r = sink_r.clone();
+                            let taken = taken.clone();
                             async move {
                                 let task_id = format!("complete-fix::{}", g.file);
                                 sink_r.write_value(serde_json::json!({
@@ -33028,7 +33239,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     model_id: model.clone(),
                                     context_slice: String::new(),
                                     attempt: round,
-                                    owned_files: vec![g.file.clone()],
+                                    owned_files: shard_owned_files(&g.file, &all_files, &taken),
                                     all_files,
                                     prior_hint: None,
                                     subsplit: Vec::new(),
@@ -33081,18 +33292,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // whatever the agent claims, unverified, on the real tree. The shard
                                 // owns ONE file and the worker is pinned to it (single_owned_file), so
                                 // the shadow's gate verdict is what a promote would produce for real.
-                                let verified = match me.speculative_root(&task_id) {
-                                    Some(root) => {
-                                        let gate = run_smoke_gate(&root, complete_lang).await;
-                                        if gate.ran {
-                                            Some(gate.findings.len())
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    None => None,
-                                };
-                                let promoted = shard_beats_baseline(verified, baseline);
+                                // F883 + F862: the shard's grade was run_smoke_gate — a SUBSET
+                                // of the ruler that produced `baseline` (the round's composite
+                                // complete_verify count) — so a shard that edited NOTHING graded
+                                // its byte-identical shadow below baseline on the categories the
+                                // subset could not see, and promoted a no-op every wave. One
+                                // ruler, on the composed preview a promote would actually land.
+                                let (verified, shard_changed, _est) = me
+                                    .grade_promotion_preview(
+                                        &task_id,
+                                        &fan_cwd,
+                                        &fan_prompt,
+                                        complete_lang,
+                                        &fan_all_files,
+                                        fan_composite,
+                                        fan_missing_gate,
+                                    )
+                                    .await;
+                                let promoted =
+                                    shard_changed && shard_beats_baseline(verified, baseline);
                                 if promoted {
                                     me.promote_speculative(&task_id).await;
                                 } else {
@@ -33129,13 +33347,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // join entirely; the loop head re-gates next round and the findings drive it
                 // there. (A sentinel baseline here would promote on UNKNOWN, the vacuous-pass
                 // trap with the sign flipped.)
+                // F862: the join twin's baseline and grade were BOTH run_smoke_gate — internally
+                // consistent, but a SUBSET of the ruler that opened the round, so a cross-file
+                // finding visible only to the composite categories could neither hold the twin
+                // accountable nor be repaired by it. One ruler here too.
                 let post_wave_gate = if unassigned.is_empty() {
                     None
                 } else {
-                    Some(run_smoke_gate(&cwd, complete_lang).await)
+                    Some(
+                        one_ruler_grade(
+                            &cwd,
+                            &opts.prompt,
+                            complete_lang,
+                            &smoke_all_files,
+                            delivery_on || spec_contract_enabled(),
+                            missing_deliverable_gate,
+                        )
+                        .await,
+                    )
                 };
-                if let Some(post_wave) = post_wave_gate.filter(|g| g.ran).map(|g| g.findings.len())
-                {
+                if let Some(post_wave) = post_wave_gate.and_then(|(n, _)| n) {
                     let task_id = "complete-fix::cross-file".to_string();
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_dispatched",
@@ -33171,19 +33402,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         smoke_fix_dispatcher.run(req),
                     )
                     .await;
-                    // GRADE THE TREE, NOT THE AGENT'S EXIT — third application of the one rule.
-                    let verified = match smoke_fix_dispatcher.speculative_root(&task_id) {
-                        Some(root) => {
-                            let gate = run_smoke_gate(&root, complete_lang).await;
-                            if gate.ran {
-                                Some(gate.findings.len())
-                            } else {
-                                None
-                            }
-                        }
-                        None => None,
-                    };
-                    let promoted = shard_beats_baseline(verified, post_wave);
+                    // GRADE THE TREE, NOT THE AGENT'S EXIT — third application of the one rule,
+                    // now on the composed preview with the round's full ruler (F883/F862).
+                    let (verified, join_changed, _est) = smoke_fix_dispatcher
+                        .grade_promotion_preview(
+                            &task_id,
+                            &cwd,
+                            &opts.prompt,
+                            complete_lang,
+                            &smoke_all_files,
+                            delivery_on || spec_contract_enabled(),
+                            missing_deliverable_gate,
+                        )
+                        .await;
+                    let promoted = join_changed && shard_beats_baseline(verified, post_wave);
                     if promoted {
                         smoke_fix_dispatcher.promote_speculative(&task_id).await;
                     } else {

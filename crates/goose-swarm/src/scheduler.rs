@@ -717,6 +717,9 @@ struct State {
     spec_count: u32,
     /// S7 (GOOSE_SWARM_TESTGEN): generated-test jobs fired this run, capped at TESTGEN_CAP.
     testgen_count: u32,
+    /// F883/E8: set for the repair-round scheduler run — disables testgen idle-fill (its landed
+    /// files write the REAL tree, which a fix round must never touch except via a graded promote).
+    fix_round: bool,
     /// F779: tail-review jobs fired this run (capped at TAIL_REVIEW_CAP) + its rotating dimension.
     tail_review_count: u32,
     tail_review_dim: usize,
@@ -1748,7 +1751,7 @@ impl State {
     /// discipline exactly (idle_jobs + in_flight, released by the IdleSlotGuard); the seq is the
     /// landed filename's suffix, so replicates of a run produce the same names.
     fn pick_testgen(&mut self) -> Option<(String, u32, usize)> {
-        if !testgen_enabled() || self.testgen_count >= TESTGEN_CAP {
+        if self.fix_round || !testgen_enabled() || self.testgen_count >= TESTGEN_CAP {
             return None;
         }
         if !self.dag.tasks.values().any(|n| n.state == TaskState::Done) {
@@ -2566,6 +2569,8 @@ pub struct Scheduler {
     /// integrate-verify then gates the degraded file honestly (build + R1 missing-deliverable). false =>
     /// the exhausted arm is byte-identical (fail_descendants).
     degrade_on_stall: bool,
+    /// F883/E8: marks this scheduler as a repair-round run — testgen idle-fill is disabled there.
+    fix_round: bool,
 }
 
 impl Scheduler {
@@ -2583,6 +2588,7 @@ impl Scheduler {
             pause_file: None,
             doc_facts: String::new(),
             degrade_on_stall: false,
+            fix_round: false,
         }
     }
 
@@ -2630,6 +2636,16 @@ impl Scheduler {
     /// chokepoint (no ready task, no pre-review work) a TWIN of the longest-running in-flight task is raced
     /// on the idle device, first-to-finish wins. OFF by default — with it off no twin is ever spawned and
     /// the scheduler is byte-identical. The twin spawns ONLY on a genuinely idle device (1 task per node).
+    /// F883/E8: a FIX-ROUND scheduler run must not fill idle slots with test GENERATION. The
+    /// testgen path writes landed files to the REAL tree, and a fix round's whole discipline is
+    /// that nothing reaches the real tree except a graded promote — a generated test landing
+    /// mid-wave shifts every in-flight shard's baseline under it, and the per-round seq reset
+    /// can overwrite the main run's landed generated tests. Pre-review idle-fill stays: read-only.
+    pub fn for_fix_round(mut self) -> Self {
+        self.fix_round = true;
+        self
+    }
+
     pub fn with_speculation(mut self) -> Self {
         self.speculation_enabled = true;
         self
@@ -2760,6 +2776,7 @@ impl Scheduler {
             speculating: HashSet::new(),
             spec_count: 0,
             testgen_count: 0,
+            fix_round: self.fix_round,
             tail_review_count: 0,
             tail_review_dim: 0,
         }));

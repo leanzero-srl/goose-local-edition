@@ -218,12 +218,13 @@ function ShotLightbox({
         </div>
       </div>
       <div className="flex-1 overflow-auto p-4" onClick={onClose} role="presentation">
+        {/* No stopPropagation here: ANY click below the header closes the viewer. The automated
+            journey drives this page blind over CDP — if a stale-coordinate click ever opens the
+            viewer, the next click must escape it rather than being swallowed by the image. */}
         <img
           src={`data:image/png;base64,${shot.b64}`}
           alt={shot.caption}
           className="mx-auto block max-w-full bg-white"
-          onClick={(e) => e.stopPropagation()}
-          role="presentation"
         />
       </div>
     </div>
