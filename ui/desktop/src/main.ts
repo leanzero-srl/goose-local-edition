@@ -2194,6 +2194,17 @@ ipcMain.handle('get-is-fullscreen', (event) => {
   return win?.isFullScreen() ?? false;
 });
 
+// The main window hides its title bar on macOS, so the only ways into full screen were the green
+// button and a system shortcut. The benchmark's screenshot viewer needs the whole display to be
+// worth opening, so the renderer gets a direct toggle and the View menu below gets the standard one.
+ipcMain.handle('toggle-fullscreen', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return false;
+  const next = !win.isFullScreen();
+  win.setFullScreen(next);
+  return next;
+});
+
 // Add file/directory selection handler
 ipcMain.handle('select-file-or-directory', async (_event, defaultPath?: string) => {
   const dialogOptions: OpenDialogOptions = {
