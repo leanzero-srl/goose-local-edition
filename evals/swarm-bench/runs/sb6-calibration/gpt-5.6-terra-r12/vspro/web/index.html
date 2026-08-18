@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VendorSync Pro</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="app-header"><div class="brand-mark" aria-hidden="true">VS</div><h1>VendorSync <span>Pro</span></h1><button id="sync-now" type="button">Sync now</button></header>
+  <main>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <section id="summary" aria-label="Payment summary"><div id="last-sync">Loading summary…</div></section>
+    <section id="visualization" aria-labelledby="viz-heading">
+      <div class="section-heading"><div><p class="eyebrow">ACTIVITY ATLAS</p><h2 id="viz-heading">Payment activity</h2></div><button id="viz-toggle" type="button" aria-pressed="false">Show table</button></div>
+      <div id="viz-stage">
+        <canvas id="viz3d" aria-label="Interactive 3D payment activity chart. Drag to rotate, use the mouse wheel to zoom, and double click to reset the view." tabindex="0"></canvas>
+        <div id="viz-tooltip" role="status" aria-live="polite"></div>
+        <div id="viz-loading" role="status">Loading payment activity…</div>
+        <div id="viz-empty" hidden>No payment activity yet. Sync to bring in recent activity.</div>
+        <div id="viz-error" role="alert" hidden>Activity data could not be loaded. Try syncing again.</div>
+      </div>
+      <div id="fallback-wrap" hidden aria-label="Payment activity table"></div>
+    </section>
+    <section id="payments-section" aria-labelledby="payments-heading">
+      <div class="section-heading"><div><p class="eyebrow">LIVE LEDGER</p><h2 id="payments-heading">Payments</h2></div>
+        <div class="filters" aria-label="Payment filters">
+          <div id="status-filter" class="custom-select" data-value=""><button type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="status-options">All statuses</button><div id="status-options" class="options" role="listbox" aria-label="Status"><button type="button" role="option" aria-selected="true" data-value="">All statuses</button><button type="button" role="option" data-value="settled">Settled</button><button type="button" role="option" data-value="pending">Pending</button><button type="button" role="option" data-value="refunded">Refunded</button><button type="button" role="option" data-value="failed">Failed</button></div></div>
+          <div id="currency-filter" class="custom-select" data-value=""><button type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="currency-options">All currencies</button><div id="currency-options" class="options" role="listbox" aria-label="Currency"><button type="button" role="option" aria-selected="true" data-value="">All currencies</button><button type="button" role="option" data-value="EUR">EUR</button><button type="button" role="option" data-value="USD">USD</button><button type="button" role="option" data-value="JPY">JPY</button><button type="button" role="option" data-value="KWD">KWD</button></div></div>
+        </div>
+      </div>
+      <div id="table-state" role="status" aria-live="polite"></div>
+      <div class="table-scroll"><table><thead><tr><th id="date-sort" tabindex="0" role="button" aria-sort="ascending" aria-label="Sort by date, ascending">Date</th><th id="amount-sort" tabindex="0" role="button" aria-sort="none" aria-label="Sort by amount">Amount</th><th>Status</th><th>Counterparty</th><th>Note</th></tr></thead><tbody id="payment-rows"></tbody></table></div>
+      <div class="pager"><button id="prev" type="button">Prev</button><span id="showing" aria-live="polite">Showing 0–0 of 0</span><button id="next" type="button">Next</button></div>
+    </section>
+  </main>
+  <script src="viz.js"></script><script src="app.js"></script>
+</body>
+</html>
