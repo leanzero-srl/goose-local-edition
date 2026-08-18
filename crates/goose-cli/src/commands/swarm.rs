@@ -32768,8 +32768,27 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             {
                 let best_dir = cwd.join(".swarm/best-tree");
                 let _ = std::fs::create_dir_all(&best_dir);
+                // F886: the snapshot is the APP TREE, never the run's evidence. run.jsonl,
+                // bench-shots, heartbeat and the scorer's db live in the same directory, and
+                // snapshotting them means the end-of-run restore REWINDS HISTORY: run 10's
+                // restore replaced run.jsonl with its round-0 copy (mtimes preserved), erasing
+                // every fix-round event, and --delete removed the repair-progression screenshots
+                // taken after the snapshot.
                 let ok = tokio::process::Command::new("rsync")
-                    .args(["-a", "--delete", "--exclude", ".swarm"])
+                    .args([
+                        "-a",
+                        "--delete",
+                        "--exclude",
+                        ".swarm",
+                        "--exclude",
+                        "run.jsonl",
+                        "--exclude",
+                        "bench-shots",
+                        "--exclude",
+                        "heartbeat",
+                        "--exclude",
+                        "graded.db",
+                    ])
                     .arg(format!("{}/", cwd.display()))
                     .arg(format!("{}/", best_dir.display()))
                     .status()
@@ -33585,8 +33604,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 if !last_verify_ran || last_verify_count > best_count {
                     let best_dir = cwd.join(".swarm/best-tree");
                     if best_dir.is_dir() {
+                        // F886: same exclusions as the snapshot — the restore ships the best
+                        // APP TREE and must never touch the run's own history or evidence.
                         let restored = tokio::process::Command::new("rsync")
-                            .args(["-a", "--delete", "--exclude", ".swarm"])
+                            .args([
+                                "-a",
+                                "--delete",
+                                "--exclude",
+                                ".swarm",
+                                "--exclude",
+                                "run.jsonl",
+                                "--exclude",
+                                "bench-shots",
+                                "--exclude",
+                                "heartbeat",
+                                "--exclude",
+                                "graded.db",
+                            ])
                             .arg(format!("{}/", best_dir.display()))
                             .arg(format!("{}/", cwd.display()))
                             .status()
