@@ -23,6 +23,17 @@ sys.path.insert(0, str(HERE))
 import score_build  # noqa: E402
 import vendor_service  # noqa: E402
 
+
+def _regime():
+    """sb-6 gate (--sb6 / BENCH_SB6): spec v3 + vendor_service_v2 + score_sb6. Read at CALL
+    time (env-at-import would miss a sweep's per-arm env — the FEATURE_CHECKS precedent).
+    Returns (scorer_module, vendor_module, default_spec_name). Default path byte-identical."""
+    if not os.environ.get("BENCH_SB6"):
+        return score_build, vendor_service, "spec-build.md"
+    import score_sb6  # noqa: PLC0415 — deliberately lazy: sb-5 runs never import sb-6
+    import vendor_service_v2  # noqa: PLC0415
+    return score_sb6, vendor_service_v2, "spec-build-v3.md"
+
 ROOT = HERE.parent
 # BENCH_GOOSE (product contract 2026-08-17): the packaged desktop app passes its bundled engine
 # here; the dev default stays the checkout's release binary.
@@ -53,10 +64,12 @@ def build_prompt(port: int) -> str:
     # BENCH3: an amend arm points BENCH_AMEND_SPEC at the brownfield spec; BENCH_SPEC is the
     # regime-level override (sb-5 product: spec-build-v2.md via REGIME.env); greenfield default.
     spec_file = os.environ.get("BENCH_AMEND_SPEC", "") or os.environ.get("BENCH_SPEC", "")
-    spec = (Path(spec_file) if spec_file else ROOT / "spec-build.md").read_text()
-    return (spec.replace("{DOCS_URL}", f"http://127.0.0.1:{port}/v1/docs")
+    _sc, _vn, default_spec = _regime()
+    spec = (Path(spec_file) if spec_file else ROOT / default_spec).read_text()
+    docs_path = getattr(_vn, "DOCS_PATH", "/v1/docs")
+    return (spec.replace("{DOCS_URL}", f"http://127.0.0.1:{port}{docs_path}")
                 .replace("{BASE_URL}", f"http://127.0.0.1:{port}")
-                .replace("{API_KEY}", vendor_service.API_KEY))
+                .replace("{API_KEY}", getattr(_vn, "API_KEY", vendor_service.API_KEY)))
 
 
 def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout: int) -> Dict:
@@ -170,7 +183,8 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
                 shutil.copy2(child, workdir / child.name)
     trace = out_root / f"trace-{entrant}-r{rep}.jsonl"
 
-    server = vendor_service.serve(port, trace)
+    scorer, vendor, _spec = _regime()
+    server = vendor.serve(port, trace)
     # Quality screenshots (product contract 2026-08-17): the browser probe leaves
     # <epoch>-<scenario>.png in here on every render-gate pass DURING the run and again at
     # scoring — the repair-progression evidence the published post carries. Set in our own
@@ -178,12 +192,12 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     os.environ["BENCH_SHOTS_DIR"] = str(workdir / "bench-shots")
     try:
         agent = invoke(entrant, workdir, port, load_env(), timeout)
-        ctx = score_build.gather(workdir, port, workdir / "graded.db", trace,
-                                 mark_phase=vendor_service.mark_phase)
+        ctx = scorer.gather(workdir, port, workdir / "graded.db", trace,
+                            mark_phase=vendor.mark_phase)
     finally:
         server.shutdown()
 
-    verdict = score_build.evaluate(ctx)
+    verdict = scorer.evaluate(ctx)
     # BENCH2/F769: ARCHIVE THE TREE at score time — the sweep wipes the workdir within seconds
     # of [done] (dir reuse), which has already cost the campaign the 0.996 tree and the first
     # two dual-score windows. A tree copy is ~100KB and makes every scored artifact a permanent
@@ -228,14 +242,19 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--port", type=int, default=8850)
     ap.add_argument("--out", type=Path, default=ROOT / "runs/build")
+    ap.add_argument("--sb6", action="store_true",
+                    help="sb-6 regime: spec-build-v3 + vendor_service_v2 + score_sb6 "
+                         "(equivalent to BENCH_SB6=1; default path stays byte-identical)")
     args = ap.parse_args()
+    if args.sb6:
+        os.environ["BENCH_SB6"] = "1"
 
     verdicts = []
     reps = [args.only_rep] if args.only_rep is not None else list(range(args.reps))
     for rep in reps:
         v = run(args.entrant, rep, args.out, args.timeout, args.port + rep)
         verdicts.append(v)
-        print(score_build.format_report(
+        print(_regime()[0].format_report(
             v, f"{args.entrant} rep{rep} ({v['agent']['secs']}s)"), flush=True)
         print()
 

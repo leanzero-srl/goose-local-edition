@@ -1,0 +1,8 @@
+{
+  "reference_pass": true,
+  "scorer_version": "sb-6.0-rc1",
+  "score": 1.0,
+  "date": "2026-08-18",
+  "thresholds_calibrated": false,
+  "thresholds_sha256": "3b063219406ac6c882230f2bb42bdef9f1c91a9f2a6c236d2e7ee40a01dd2544"
+}

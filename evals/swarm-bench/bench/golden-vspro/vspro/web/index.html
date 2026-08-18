@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VendorSync Pro</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header id="app-header">
+  <span class="brand-mark" aria-hidden="true">VS</span>
+  <h1>VendorSync <em>Pro</em></h1>
+  <span class="brand-tag">Meridian payments desk</span>
+</header>
+
+<div id="notice" role="status" hidden></div>
+
+<main>
+  <section id="summary" aria-label="Summary">
+    <div id="cur-totals"></div>
+    <div class="summary-side">
+      <p class="last-sync-row">Last sync: <span id="last-sync">Never synced</span></p>
+      <button id="sync-now" type="button">Sync now</button>
+    </div>
+  </section>
+
+  <section id="viz-panel" aria-label="Payment activity, 3D">
+    <div class="panel-head">
+      <h2>Activity by day &amp; status</h2>
+      <button id="viz-toggle" type="button" aria-pressed="false">Table view</button>
+    </div>
+    <div id="viz-stage">
+      <canvas id="viz3d"></canvas>
+      <div id="viz-tooltip" hidden></div>
+      <p id="viz-nogl" hidden>3D is unavailable — WebGL is not supported here, showing the 2D table instead.</p>
+      <p id="viz-empty" hidden>No activity yet — run a sync to fill the chart.</p>
+      <p id="viz-error" hidden>The activity data failed to load. Check that the server is running, then try again.</p>
+      <table id="viz-fallback" hidden>
+        <thead>
+          <tr><th>Day</th><th>Settled</th><th>Pending</th><th>Refunded</th><th>Failed</th><th>Total</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="viz-legend" aria-hidden="true"></p>
+  </section>
+
+  <section id="table-panel" aria-label="Payments">
+    <div class="panel-head">
+      <h2>Payments</h2>
+      <div class="filters">
+        <div id="status-filter" class="dropdown" data-value=""></div>
+        <div id="currency-filter" class="dropdown" data-value=""></div>
+      </div>
+    </div>
+
+    <p id="state-loading" hidden>Loading payments…</p>
+    <div id="state-empty" hidden>
+      <p>No payments yet.</p>
+      <button id="empty-sync" type="button">Sync from Meridian</button>
+    </div>
+    <p id="state-error" hidden>The backend is unreachable. Check that the server is running on this port, then retry by reloading the page.</p>
+
+    <div id="table-wrap" hidden>
+      <table id="payments-table">
+        <thead>
+          <tr>
+            <th class="sortable" data-sort="created_at" aria-sort="ascending">Date</th>
+            <th class="sortable" data-sort="amount_minor" aria-sort="none">Amount</th>
+            <th>Status</th>
+            <th>Counterparty</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="pager">
+        <button id="prev" type="button">Prev</button>
+        <span id="range">Showing 0–0 of 0</span>
+        <button id="next" type="button">Next</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="viz.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "calibrated": false,
+  "note": "UNCALIBRATED — honest defaults only. gamma/k_P and the calibration-owned rungs (drag frames, under-load ladder, side-face achievable fraction, overlap floor) are placeholders until the Bedrock sweep (SB6-CALIBRATION.md §3) fits and freezes them; score_sb6.py prints a loud banner while this flag is false. At freeze: set calibrated=true, bake this file's sha256 into score_sb6.CALIB_SHA256, bump SCORER_VERSION to sb-6.0.",
+  "gamma_core": 1.0,
+  "gamma_hard": 1.0,
+  "k_p": 1.0,
+  "gamma_cap": 4.0,
+  "drag_frames_rungs": [[1.0, 24], [0.75, 18], [0.5, 12], [0.25, 6]],
+  "underload_p95_rungs": [[1.0, 150], [0.75, 300], [0.5, 600], [0.25, 1200]],
+  "underload_overlap_floor": 0.5,
+  "tooltip_ms_rungs": [[1.0, 150], [0.6, 400], [0.3, 1200]],
+  "optimistic_paint_rungs": [[1.0, 100], [0.6, 250], [0.3, 800]],
+  "side_face_achievable": 0.75,
+  "vsdbg_proj_tol_px": 2.0
+}
