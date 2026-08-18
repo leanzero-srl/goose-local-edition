@@ -233,7 +233,11 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
                 break
     verdict.update({"entrant": entrant, "rep": rep, "agent": agent,
                     "actual_pool": actual_pool,
-                    "actual_nodes": len(actual_pool) if actual_pool is not None else None})
+                    "actual_nodes": len(actual_pool) if actual_pool is not None else None,
+                    # The vendor port the spec's {BASE_URL} rendered with — any later
+                    # standalone re-score MUST re-serve the vendor on this port, or apps
+                    # that (legitimately) hardcoded the advertised URL grade as dead.
+                    "vendor_port": port})
     (workdir / "verdict.json").write_text(json.dumps(verdict, indent=2))
     return verdict
 

@@ -145,7 +145,13 @@ UNCALIBRATED_BANNER = (
     "⚠⚠ SB-6 UNCALIBRATED — sb6-thresholds.json carries honest defaults; gamma/k_P/drag/"
     "side-face rungs are NOT frozen. Scores are rc-grade (sb-6.0-rc), never board-grade. ⚠⚠")
 
-SCORER_VERSION = "sb-6.0" if CALIBRATED else "sb-6.0"
+# sb-6.1 (2026-08-18 overnight): rendered-means-seen on the first-data stamp (hidden
+# fallback rows no longer earn p_page_interactive), causal-evidence sync "completed"
+# (observed /api/sync request / in-flight state / view change — never elapsed time alone),
+# reachable j_empty_state middle rung (empty scenario now reports bodyTextLength),
+# serves_page 0.2 rung requires an answering server, honest vendor-trap unavail wording.
+# Thresholds file unchanged — CALIB_SHA256 pin carries over.
+SCORER_VERSION = "sb-6.1" if CALIBRATED else "sb-6.1-rc"
 
 # ── weights + the compression-proof asserts (deleting one is a loud diff) ────────────────────
 
@@ -443,7 +449,10 @@ def _(c: Ctx):
 def _(c: Ctx):
     if c.root_status != 200 or "<" not in c.html:
         exists = (c.pkg / "web/index.html").is_file()
-        return g(0.2 if exists else 0.0, f"GET / -> {c.root_status}",
+        # sb-6.1: the file-on-disk 0.2 rung applies only when a server actually answered —
+        # partial credit while the server is provably down graded a corpse as "serving".
+        answered = c.root_status is not None
+        return g(0.2 if (exists and answered) else 0.0, f"GET / -> {c.root_status}",
                  "the page is not served by the backend")
     assets = ["web/styles.css", "web/app.js", "web/viz.js"]
     ok = 0
@@ -726,7 +735,11 @@ def _(c: Ctx):
     mock's own trap ledger (F14: the stall is documented in vendor_docs before it is graded)."""
     t = c.trap_results
     if not t:
-        return unavail("vendor_service_v2.trap_results() missing — traps unobserved")
+        # sb-6.1 wording: trap_results() exists in the harness — an empty ledger means the
+        # harvest never ran because the app never exercised the vendor's trap surfaces
+        # (usually a dead server), not that the harness lost the instrument.
+        return unavail("vendor trap ledger empty — trap surfaces never exercised "
+                       "(app/server never drove the vendor)")
     keys = ("retry_after", "cursor_expiry", "stall")
     vals = {k: float(t.get(k, 0.0)) for k in keys}
     return g(sum(vals.values()) / len(keys), f"{vals}",
