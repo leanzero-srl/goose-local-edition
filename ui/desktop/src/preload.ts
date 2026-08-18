@@ -127,7 +127,7 @@ type ElectronAPI = {
   /** Run the frozen benchmark suite on N nodes. Long-running; resolves with the scored row.
    *  Two-phase: 'benchmark-started' {workdir} fires immediately (subscribe via `on`), then
    *  'benchmark-log' lines stream and 'benchmark-finished' closes the run. */
-  benchmarkRun: (nodes: number) => Promise<unknown>;
+  benchmarkRun: (nodes: number, tier?: string) => Promise<unknown>;
   /** Kill the active benchmark run — the runner's process group AND the detached engine. */
   benchmarkCancel: () => Promise<{ ok: boolean; error?: string }>;
   /** The in-flight run, if any — lets a remounted view re-attach to the live panel. */
@@ -318,7 +318,7 @@ const electronAPI: ElectronAPI = {
   readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
   readSwarmRun: (workingDir: string) => ipcRenderer.invoke('read-swarm-run', workingDir),
   benchmarkRead: () => ipcRenderer.invoke('benchmark-read'),
-  benchmarkRun: (nodes: number) => ipcRenderer.invoke('benchmark-run', nodes),
+  benchmarkRun: (nodes: number, tier?: string) => ipcRenderer.invoke('benchmark-run', nodes, tier),
   benchmarkCancel: () => ipcRenderer.invoke('benchmark-cancel'),
   benchmarkStatus: () => ipcRenderer.invoke('benchmark-status'),
   benchmarkIdentity: () => ipcRenderer.invoke('benchmark-identity'),
