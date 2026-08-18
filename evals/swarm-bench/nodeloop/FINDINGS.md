@@ -20336,3 +20336,61 @@ findings AND headroom; it had the first and not the second). A cluster of findin
 is the BEST case for a focused per-file fixer, not a reason to fall back to racing. FIXED:
 `prefer_shard_over_race` now keys on ATTRIBUTED WORK (>=2 groups OR >=3 attributed findings),
 with the measured 7-in-one-file case as its regression test; a single lone finding still races.
+
+## F881
+
+RUN 8 SCORED 0.601 (Tier B 0.2188) WITH TEN TIER-B CHECKS AT EXACTLY 0.0, WHILE THE ENGINE'S OWN
+GATE REPORTED THREE FINDINGS, ALL COSMETIC. The gap between "what the scorer measured" and "what
+the engine could see" is the whole finding.
+
+REPRODUCED, not inferred. Staged the archived tree (`swarm-3node-r0-run8`) against the real vendor
+mock and drove it by hand:
+
+  - `POST /api/sync` -> `{"fetched": 247, "inserted": 247}` in 2.0s. Sync WORKS.
+  - `GET /api/summary` BEFORE any sync -> `200 {"count":0,...,"oldest":null,"newest":null}`.
+    Every documented key present. This is the only state the engine ever probed.
+  - `GET /api/summary` AFTER the sync -> NO RESPONSE AT ALL (curl 000).
+  - On a second staging the sync itself never returned. The vendor trace explains it exactly:
+    247,114 lines, of which `{200: 1, 429: 2, 410: 1, 304: 249703}` — a quarter of a million
+    IDENTICAL conditional requests, all at offset 0, all replaying one ETag `"d5152d5b673e84a1"`.
+
+THE APP'S DEFECT: `MeridianClient` stores ONE collection-wide `self._etag` and sends it on every
+request. The vendor keys ETags per (offset, limit) and injected a `410 cursor_expired` mid-run. The
+client correctly restarted pagination (`cursor = None`) but kept the validator from the successful
+page 1 — so the restarted page-1 request now MATCHED, returned 304, and the loop's `continue`
+re-issued the identical request forever. A hang, not an error. Behind a single-threaded
+`HTTPServer`, every later request queues behind it and the whole app goes dark, which is why one
+defect zeroed ten checks. Separately `Store.all_payments()` does not SELECT `created_at_utc` while
+`/api/summary` indexes it — an unhandled KeyError that only exists once rows are present.
+
+THE ENGINE'S THREE BLINDNESSES, all fixed in d4cb60319:
+
+1. THE GATE PROBES AN EMPTY APP. `run_spec_contract` spawns the app against a FRESH scratch db
+   (hermetic by design, F767), probes every advertised GET there, then POSTs the mutating
+   endpoints, then never reads again. An empty app is the one state in which almost no read defect
+   is observable — row shape, ordering, totals and UTC bounds have nothing to be wrong about until
+   data exists. FIXED: a SECOND pass over the same advertised reads after the POST wave, sharing
+   one ruler (`probe_advertised_get`) with the first so they cannot drift, reporting only the
+   finding KINDS the empty pass could not have produced, and never re-counting `verified`.
+
+2. A POST THAT NEVER RETURNS WAS UNNAMEABLE. curl times out, both bodies come back empty, and
+   `repeated_post_verdict` — which can only compare two bodies — abstained with "could not be
+   read". The worst defect class on the board produced the weakest possible signal. FIXED: curl
+   code 0 on an advertised POST is now a finding that names the loop that causes it.
+
+3. MY FIRST DETECTOR WAS DEAD ON ARRIVAL AND MEASUREMENT CAUGHT IT BEFORE THE RUN DID. I keyed the
+   crash on curl exit 52/56 ("empty reply"/"recv failure") reasoning that a slow endpoint cannot
+   produce them. The real wedge reports exit 28 — a plain timeout, indistinguishable from slowness
+   on its own. What actually separates them is the PAIR of observations: answered 2xx while empty,
+   answers nothing once populated. `wedged_after_populating` owns that rule and is pinned both
+   ways. Reading the exit code was reasoning; running it was evidence.
+
+ALSO SETTLED HERE: run 8 raced whole-tree twins (0 of 3 promoted, now 0 of 12 lifetime) and I had
+suspected the F880 routing fix of being inert. It was not — run 8's binary (`e7e902c97`) carried the
+OLD predicate `(groups >= 2 || attributed >= 3)`, and with one group holding one attributed finding
+it raced CORRECTLY. The current rule (`>= 1 && >= 1`, `2a9ecb9ad`) lands in the next run and is now
+pinned by a test built from run 8's three real finding strings and its real owned-file list.
+
+DOMAIN_PITFALLS gains the conditional-request fact (per-page validators, 304 means "this page is
+unchanged, continue", never re-issue an identical request because of its status, drop validators
+when pagination restarts) so the author receives it before writing the fetch loop.
