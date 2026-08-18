@@ -132,30 +132,142 @@ function PhaseStrip({
   );
 }
 
+const shotColor = (name: string) =>
+  name === 'loaded-before' ? 'var(--color-node-5)' : 'var(--color-block-teal)';
+
+/**
+ * Full-size viewer for one screenshot. The strip crops to 160px of the top of a full page render,
+ * which is enough to notice something is wrong and never enough to read it — the counters, the row
+ * values and the console state all live below that crop.
+ */
+function ShotLightbox({
+  shots,
+  index,
+  onIndex,
+  onClose,
+}: {
+  shots: BenchShot[];
+  index: number;
+  onIndex: (i: number) => void;
+  onClose: () => void;
+}) {
+  const shot = shots[index];
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowRight') onIndex((index + 1) % shots.length);
+      if (e.key === 'ArrowLeft') onIndex((index - 1 + shots.length) % shots.length);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [index, shots.length, onIndex, onClose]);
+
+  if (!shot) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex flex-col"
+      style={{ backgroundColor: 'rgba(6,8,14,0.97)' }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="flex items-center justify-between gap-3 px-4 py-2.5"
+        style={{ backgroundColor: shotColor(shot.name) }}
+        onClick={(e) => e.stopPropagation()}
+        role="presentation"
+      >
+        <span className="text-[13px] font-bold text-white">{shot.caption}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[12px] font-bold text-white opacity-90">
+            {index + 1} / {shots.length}
+          </span>
+          {shots.length > 1 && (
+            <>
+              <button
+                type="button"
+                className="rounded bg-black px-2.5 py-1 text-[12px] font-bold text-white"
+                onClick={() => onIndex((index - 1 + shots.length) % shots.length)}
+              >
+                ‹ Prev
+              </button>
+              <button
+                type="button"
+                className="rounded bg-black px-2.5 py-1 text-[12px] font-bold text-white"
+                onClick={() => onIndex((index + 1) % shots.length)}
+              >
+                Next ›
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="rounded bg-black px-2.5 py-1 text-[12px] font-bold text-white"
+            onClick={() => void window.electron.toggleFullscreen?.()}
+          >
+            Fullscreen
+          </button>
+          <button
+            type="button"
+            className="rounded bg-white px-2.5 py-1 text-[12px] font-bold text-black"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto p-4" onClick={onClose} role="presentation">
+        <img
+          src={`data:image/png;base64,${shot.b64}`}
+          alt={shot.caption}
+          className="mx-auto block max-w-full bg-white"
+          onClick={(e) => e.stopPropagation()}
+          role="presentation"
+        />
+      </div>
+    </div>
+  );
+}
+
 /** Before/after screenshot strip from the run's bench-shots — the product story of the build. */
 function ShotsStrip({ shots }: { shots: BenchShot[] }) {
+  const [open, setOpen] = useState<number | null>(null);
   if (shots.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-3">
-      {shots.map((s) => (
-        <figure key={s.name} className="w-[260px] overflow-hidden rounded border border-border-primary">
-          <img
-            src={`data:image/png;base64,${s.b64}`}
-            alt={s.caption}
-            className="block h-[160px] w-full bg-background-secondary object-cover object-top"
-          />
-          <figcaption
-            className="px-2 py-1.5 text-[11px] font-bold text-white"
-            style={{
-              backgroundColor:
-                s.name === 'loaded-before' ? 'var(--color-node-5)' : 'var(--color-block-teal)',
-            }}
+    <>
+      <div className="flex flex-wrap gap-3">
+        {shots.map((s, i) => (
+          <figure
+            key={s.name}
+            className="w-[260px] cursor-zoom-in overflow-hidden rounded border border-border-primary"
+            onClick={() => setOpen(i)}
+            role="presentation"
+            title="Click to view full size"
           >
-            {s.caption}
-          </figcaption>
-        </figure>
-      ))}
-    </div>
+            <img
+              src={`data:image/png;base64,${s.b64}`}
+              alt={s.caption}
+              className="block h-[160px] w-full bg-background-secondary object-cover object-top"
+            />
+            <figcaption
+              className="px-2 py-1.5 text-[11px] font-bold text-white"
+              style={{ backgroundColor: shotColor(s.name) }}
+            >
+              {s.caption}
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+      {open !== null && (
+        <ShotLightbox
+          shots={shots}
+          index={open}
+          onIndex={setOpen}
+          onClose={() => setOpen(null)}
+        />
+      )}
+    </>
   );
 }
 
