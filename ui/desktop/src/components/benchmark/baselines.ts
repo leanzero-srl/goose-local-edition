@@ -28,7 +28,7 @@ export interface BenchmarkRow {
 export type BenchTier = 'sb-5.3' | 'sb-6';
 export const TIERS: BenchTier[] = ['sb-5.3', 'sb-6'];
 export const DEFAULT_TIER: BenchTier = 'sb-5.3';
-export const TIER_SCORER: Record<BenchTier, string> = { 'sb-5.3': 'sb-5.3', 'sb-6': 'sb-6.0' };
+export const TIER_SCORER: Record<BenchTier, string> = { 'sb-5.3': 'sb-5.3', 'sb-6': 'sb-6.1' };
 export const COMPARABLE_SCORER = TIER_SCORER[DEFAULT_TIER];
 
 export const TIER_LABELS: Record<Tier, string> = {
@@ -70,27 +70,51 @@ export const BASELINES_BY_TIER: Record<BenchTier, BenchmarkRow[]> = {
       wallSecs: 318,
     },
   ],
+  // sb-6.1 board (2026-08-19): serial hermetic re-scores at each tree's advertised vendor
+  // port. Luna/Terra are engine-kill floors (session cut by the compaction bug fixed in
+  // 19b4ed6ef) — floors, not ceilings; disclosed on the website run pages.
   'sb-6': [
     {
+      label: 'GPT-5.6 Sol',
+      score: 0.869,
+      tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
+      scorerVersion: 'sb-6.1',
+      wallSecs: 1890,
+    },
+    {
       label: 'Claude Opus 5',
-      score: 0.7445,
-      tiers: { A: 1.0, B: 1.0, C: 0.792, D: 1.0 },
-      scorerVersion: 'sb-6.0',
-      wallSecs: 1494,
+      score: 0.8281,
+      tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
+      scorerVersion: 'sb-6.1',
+      wallSecs: 2208,
+    },
+    {
+      label: 'GPT-5.6 Luna',
+      score: 0.7887,
+      tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
+      scorerVersion: 'sb-6.1',
+      wallSecs: 237,
     },
     {
       label: 'Claude Sonnet 5',
-      score: 0.7314,
-      tiers: { A: 1.0, B: 0.938, C: 0.75, D: 0.95 },
-      scorerVersion: 'sb-6.0',
-      wallSecs: 1322,
+      score: 0.7666,
+      tiers: { A: 1.0, B: 1.0, C: 1.0, D: 0.86 },
+      scorerVersion: 'sb-6.1',
+      wallSecs: 1790,
+    },
+    {
+      label: 'GPT-5.6 Terra',
+      score: 0.7257,
+      tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
+      scorerVersion: 'sb-6.1',
+      wallSecs: 390,
     },
     {
       label: 'Claude Haiku 4.5',
-      score: 0.4518,
-      tiers: { A: 0.833, B: 0.5, C: 0.35, D: 0.55 },
-      scorerVersion: 'sb-6.0',
-      wallSecs: 780,
+      score: 0.4597,
+      tiers: { A: 0.8786, B: 0.9468, C: 0.8809, D: 0.86 },
+      scorerVersion: 'sb-6.1',
+      wallSecs: 463,
     },
   ],
 };
