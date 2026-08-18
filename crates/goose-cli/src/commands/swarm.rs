@@ -11594,6 +11594,26 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
+    /// F892 (fleet sb-6 run, round 0, watched live): the Unreadable-POST finding hardcoded the
+    /// sync counters, so on a spec with four POST endpoints the note/batch/webhook handlers were
+    /// accused of missing ANOTHER endpoint's fields. The keys must come from the accused path's
+    /// own table row.
+    #[test]
+    fn each_post_is_accused_only_of_its_own_documented_shape() {
+        let spec = "| method | path | response |\n|---|---|---|\n\
+            | `POST` | `/api/sync` | `{\"fetched\": 0, \"inserted\": 0, \"total\": 0}` |\n\
+            | `POST` | `/api/payments/batch` | `{\"created\": [], \"failed\": []}` |\n";
+        assert_eq!(
+            spec_documented_keys(spec, "/api/sync"),
+            vec!["fetched", "inserted", "total"]
+        );
+        assert_eq!(
+            spec_documented_keys(spec, "/api/payments/batch"),
+            vec!["created", "failed"]
+        );
+        assert!(spec_documented_keys(spec, "/api/webhooks/meridian").is_empty());
+    }
+
     #[test]
     fn group_findings_by_file_partitions_dedups_and_serializes() {
         let findings = vec![
@@ -20771,18 +20791,37 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 },
                 // F806: this was INCONCLUSIVE and that silence is exactly why the
                 // conditional-request loss persisted 5-for-5 while the repair hint sat unused —
-                // the spec DOCUMENTS the sync response as {"fetched", "inserted", "total"}
-                // (spec-build.md, the endpoint table), so a response missing them is an OBSERVED
-                // shape violation, not an unknowable. Filing it as a finding gives the fix loop a
-                // concrete first step, and once `fetched` lands the cheapness check binds on the
-                // next round — where the NotCheap hint above takes over.
-                RepeatedPost::Unreadable => findings.push(format!(
-                    "POST {path}'s response does not carry the documented fields — the spec's \
-                     endpoint table defines this response as {{\"fetched\": <int>, \
-                     \"inserted\": <int>, \"total\": <int>}}. Return those three counters \
-                     from the sync handler; without them a repeat sync's cheapness and \
-                     idempotency cannot be verified by anyone, including this gate."
-                )),
+                // The spec's endpoint table documents THIS PATH's response shape, so a response
+                // missing it is an OBSERVED violation, not an unknowable. F892: the first draft
+                // hardcoded the sync counters here — written when /api/sync was the only
+                // advertised POST — and on a spec with four POST endpoints it accused note/batch/
+                // webhook handlers of missing ANOTHER endpoint's fields, steering repair at
+                // correct return statements. The keys now come from the same per-row parser every
+                // GET assertion uses; a row that documents no keys degrades to a shape-neutral
+                // message instead of borrowing a sibling's.
+                RepeatedPost::Unreadable => {
+                    let documented = spec_documented_keys(spec, path.as_str());
+                    if documented.is_empty() {
+                        findings.push(format!(
+                            "POST {path}'s response could not be read as JSON on either probe — \
+                             the spec documents a JSON response for every endpoint, so return the \
+                             documented body; without it this endpoint's behaviour cannot be \
+                             verified by anyone, including this gate."
+                        ));
+                    } else {
+                        findings.push(format!(
+                            "POST {path}'s response does not carry the documented field(s) {} — \
+                             the spec's endpoint table names them for exactly this endpoint. \
+                             Return them from this handler; without them the endpoint's contract \
+                             cannot be verified by anyone, including this gate.",
+                            documented
+                                .iter()
+                                .map(|k| format!("`{k}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                }
             }
             // Q2(c): ACQUIRED BUT NOT PERSISTED — the single largest unguarded score family.
             // MEASURED across 182 archived verdicts: "did the advertised POST actually land rows
