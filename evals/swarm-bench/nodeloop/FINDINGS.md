@@ -20577,3 +20577,21 @@ The afternoon trio was scored in PARALLEL; webhook delivery races and stall-trap
 that load read as app defects. Policy from here: scoring is SERIAL, always — which is also
 Mihai's explicit overnight order for the runs themselves. Any auto-score that overlapped other
 work gets a quiet serial re-score before publishing.
+
+## F898 — The overnight sb-6.1 board: published, disclosed, and the 3D gap named
+
+Morning deliverable (Mihai's overnight order) landed in full at ~02:40: the sb-6.1 era is the
+sole sb-6 board on leanzero.net/agentic-benchmarks — Sol 0.8690 · Opus 0.8281 · Luna 0.7887
+(floor) · Sonnet 0.7666 · Terra 0.7257 (floor) · Haiku 0.4597 · fleet r1 0.4527 — every row
+with the scorer's own screenshots (3D viz shot included), 69 check rows, model identifiers, and
+the engine-kill floors disclosed in the run notes. The defective sb-6.0 docs were deleted, not
+archived: they were provisional hours-old numbers from a defective ruler, not an era. Fleet r1
+is the honest story of the hard tier: backend near-perfect (sync 1553/1553, p95s in single-digit
+ms, first rows at 21 ms), T tier 0.05 — the raw-WebGL panel is where the 27B class breaks
+today, and the tier now measures it instead of compressing it away. r2 runs to ~05:05 as the
+second roll; its number replaces the fleet doc only if better. Site plumbing hardened on the
+way: an on-demand revalidation endpoint (the Amplify board served STALE HTML 25+ min after the
+Sanity CDN had the new era), and the seed script generalized (era-versioned verdict names, viz
+scenario, per-entry notes). Engine-side, the night's fixes are the durable win: compaction can
+no longer kill reasoning-model sessions (F894), and the bench scores serially/hermetically at
+advertised ports forever (F895-F897).
