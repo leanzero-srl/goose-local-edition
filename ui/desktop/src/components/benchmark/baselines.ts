@@ -47,9 +47,11 @@ export const TIER_WEIGHTS: Record<Tier, number> = { A: 0.25, B: 0.3, C: 0.25, D:
 export const BASELINES_BY_TIER: Record<BenchTier, BenchmarkRow[]> = {
   'sb-5.3': [
     {
+      // The stable rep (r0: identical across two probe passes; the rep spread is 0.889-0.960,
+      // so treat any gap under ~0.05 to this number as within the baseline's own noise).
       label: 'Claude Opus 5',
-      score: 0.9344,
-      tiers: { A: 1.0, B: 0.981, C: 1.0, D: 0.913 },
+      score: 0.9142,
+      tiers: { A: 1.0, B: 1.0, C: 0.9, D: 0.875 },
       scorerVersion: 'sb-5.3',
       wallSecs: 1170,
     },

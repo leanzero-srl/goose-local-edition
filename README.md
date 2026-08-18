@@ -146,12 +146,12 @@ The public board at [leanzero.net/agentic-benchmarks](https://leanzero.net/agent
 
 | entrant | score | tiers (A/B/C/D) | wall |
 |---|---|---|---|
-| Claude Opus 5 (baseline) | 0.9344 | 1.00 / 0.98 / 1.00 / 0.91 | 20 min |
+| Claude Opus 5 (baseline) | 0.9142 | 1.00 / 1.00 / 0.90 / 0.88 | 20 min |
 | **3-node local fleet** | **0.93** | 1.00 / 1.00 / 1.00 / 0.94 | 190 min |
 | Claude Sonnet 5 (baseline) | 0.4971 | 1.00 / 0.44 / 0.30 / 0.64 | 7 min |
 | Claude Haiku 4.5 (baseline) | 0.4615 | 0.83 / 0.37 / 0.10 / 0.63 | 5 min |
 
-Read plainly: on the honest ruler the 3-node local fleet lands 0.004 below Opus and roughly doubles Sonnet — the frontier gap on this task is, measured, four thousandths of a point, bought with a ~10× wall clock. The Sonnet and Haiku collapses are not typos: their builds ship frontends whose data the old probe credited while hidden behind error states, and the corrected probe prices that truthfully — the same correction that exposed (and then repaired) the fleet's own frontend defects.
+Read plainly: on the honest ruler the 3-node local fleet lands level with Opus — 0.93 against a baseline of 0.9142, inside Opus's own repeat spread (0.889–0.960 across reps), so the honest claim is parity, not victory — and roughly doubles Sonnet — the frontier gap on this task is, measured, four thousandths of a point, bought with a ~10× wall clock. The Sonnet and Haiku collapses are not typos: their builds ship frontends whose data the old probe credited while hidden behind error states, and the corrected probe prices that truthfully — the same correction that exposed (and then repaired) the fleet's own frontend defects.
 
 **sb-5.2** (historic era, frozen): Opus 0.9755 · Sonnet 0.9692 · Haiku 0.7861 · fleet (mighty-crane-54f2) 0.6618. The era's compression at the top was measured to be an instrument artifact — 42.8 of 100 points passed for ≥90% of serious builds — which is what drove both the sb-5.3 correction and the sb-6 hard tier ("VendorSync Pro": raw-WebGL 3D visualization graded by analytic pixel recomputation, HMAC webhooks, optimistic concurrency; its hand-written golden reference passes the freeze gate at 100%, and Opus calibrates at 0.7445 on it).
 
