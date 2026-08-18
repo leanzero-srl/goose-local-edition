@@ -25324,16 +25324,33 @@ fn web_vocab_note(owned_files: &[String], enabled: bool) -> String {
     if !enabled || !owns_web {
         return String::new();
     }
-    "\nWEB VOCABULARY (you own a frontend file — this ADDS one permitted read to the rules \
-     below): the page's html, css and js MUST share ONE vocabulary of class names and element \
-     ids — a stylesheet whose selectors match nothing in the markup ships an UNSTYLED page and \
-     FAILS verification, exactly like broken code. You MAY (and should) read the page's sibling \
-     web files (its html/css/js) before writing yours, and you MUST reuse the EXACT class and \
-     id names they already define — never invent parallel names. If the sibling files do not \
-     exist yet, put the class names ON the markup you write (or, for css/js written first, keep \
-     the vocabulary minimal and obvious: name classes after the spec's visible parts) so the \
-     others can match it. State containers (loading / empty / error) must be hidden by default \
-     and toggled by the js — never all visible at once."
+    // A CONCRETE, FROZEN ID LIST — not an instruction to agree. Telling three workers to "share
+    // one vocabulary" is a hope, and the measured outcome is a lottery: one run drifted on 2 ids,
+    // the next on SEVEN (`summary`, `filter-btn`, `filter-menu`, `table-body`, `pagination`,
+    // `loader`, `error-banner` — every one referenced by app.js and defined by no html), which
+    // made 7 of that run's 10 findings and left the page inoperable. The contracts phase freezes
+    // Python signatures between modules for exactly this reason; the DOM is a cross-file
+    // interface too, and it was the only one left unfrozen. These ids are fixed, spelled here,
+    // and identical in every web worker's prompt, so agreement is structural rather than
+    // negotiated.
+    "\nWEB VOCABULARY — A FROZEN CONTRACT, NOT A SUGGESTION (you own a frontend file; this also \
+     ADDS one permitted read to the rules below). The page's html, css and js MUST share ONE \
+     vocabulary. Use EXACTLY these element ids, spelled exactly like this, for the parts the \
+     spec describes — the html DEFINES them, the js looks them up, the css may style them:\n\
+     - `app-root` the page container; `app-title` the heading\n\
+     - `sync-button` the control that starts a sync; `last-sync` its status/timestamp readout\n\
+     - `payments-table` the table; `payments-body` its <tbody> that rows are appended to\n\
+     - `summary-total` the count/total readout; `status-filter` the status filter control\n\
+     - `pagination` the pager container; `prev-page` and `next-page` its buttons; `page-info` its \
+     \"showing X-Y of N\" readout\n\
+     - `loading-state`, `empty-state`, `error-state` the three state containers\n\
+     An id the js queries that the html never defines is a GUARANTEED null at runtime and a \
+     BLOCKING finding — it is the single most common way this page ships broken. Do not invent \
+     parallel names, do not rename these, and do not assume a sibling used something else: this \
+     list IS the agreement. You may read the sibling web files to match their classes (class \
+     names are yours to choose, but css selectors must match the markup that exists, or the page \
+     ships unstyled and FAILS verification). State containers must be hidden by default and \
+     toggled by the js — never all visible at once."
         .to_string()
 }
 
