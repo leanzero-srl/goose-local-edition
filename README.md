@@ -5,7 +5,7 @@ goose Local Edition is a fork of [goose](https://github.com/aaif-goose/goose) (o
 The fork adds three things to upstream goose:
 
 1. **A swarm engine** (`crates/goose-swarm` and the `goose swarm` CLI command) that plans, dispatches, supervises, verifies and repairs a software build across a pool of LM Studio devices — one model, several machines.
-2. **A benchmark product** — a Benchmark page in the desktop app that runs the swarm against a frozen specification, scores the resulting application with an execution-based scorer (sb-5.2, 60 checks across seven tiers), and publishes the result to the public board at [leanzero.net/agentic-benchmarks](https://leanzero.net/agentic-benchmarks).
+2. **A benchmark product** — a Benchmark page in the desktop app that runs the swarm against a frozen specification, scores the resulting application with an execution-based scorer (sb-5.3, 60 checks across seven tiers; older eras stay published under the board's scorer selector), and publishes the result to the public board at [leanzero.net/agentic-benchmarks](https://leanzero.net/agentic-benchmarks).
 3. **A measurement harness** (`evals/swarm-bench/`) — the scorer, its determinism and isolation controls, the run supervisor, and the findings ledger that recorded the entire campaign (873 numbered findings over roughly two and a half weeks).
 
 Everything upstream goose does — the desktop app, the CLI, providers, MCP extensions — continues to work. The fork point is upstream commit `a0aed81f3` (2026-07-03); the `local-edition` branch carries approximately 2,257 commits on top of it.
@@ -140,18 +140,20 @@ The reference fleet is three Apple-silicon machines running [LM Studio](https://
 
 ## Current results
 
-The public board at [leanzero.net/agentic-benchmarks](https://leanzero.net/agentic-benchmarks) carries three frozen Anthropic cloud baselines and the fleet's first published entry, all on sb-5.2:
+The public board at [leanzero.net/agentic-benchmarks](https://leanzero.net/agentic-benchmarks) carries frozen Anthropic cloud baselines and the fleet's published entries, organized by scorer era — the board's selector defaults to the newest scorer and keeps every older era viewable as a frozen historic board.
+
+**sb-5.3** (the current scorer — "rendered means seen": a table row counts only if the browser would actually paint it; the sb-5.2 numbers below were measured before that correction and are kept as their own era):
 
 | entrant | score | tiers (A/B/C/D) | wall |
 |---|---|---|---|
-| Claude Opus 5 (baseline) | 0.9755 | 1.00 / 0.97 / 1.00 / 0.97 | 20 min |
-| Claude Sonnet 5 (baseline) | 0.9692 | 1.00 / 1.00 / 1.00 / 0.88 | 7 min |
-| Claude Haiku 4.5 (baseline) | 0.7861 | 0.83 / 0.87 / 0.50 / 0.79 | 5 min |
-| mighty-crane-54f2 (3-node local fleet) | 0.6618 | 1.00 / 0.38 / 0.70 / 0.81 | 94 min |
+| Claude Opus 5 (baseline) | 0.9344 | 1.00 / 0.98 / 1.00 / 0.91 | 20 min |
+| **3-node local fleet** | **0.93** | 1.00 / 1.00 / 1.00 / 0.94 | 190 min |
+| Claude Sonnet 5 (baseline) | 0.4971 | 1.00 / 0.44 / 0.30 / 0.64 | 7 min |
+| Claude Haiku 4.5 (baseline) | 0.4615 | 0.83 / 0.37 / 0.10 / 0.63 | 5 min |
 
-Read plainly: the fleet's published entry sits below Haiku and far below Sonnet and Opus, at roughly five to nineteen times their wall clock. The published 0.6618 is itself an honest rescore — a probe gap caught before publication would have posted a higher, wrong number.
+Read plainly: on the honest ruler the 3-node local fleet lands 0.004 below Opus and roughly doubles Sonnet — the frontier gap on this task is, measured, four thousandths of a point, bought with a ~10× wall clock. The Sonnet and Haiku collapses are not typos: their builds ship frontends whose data the old probe credited while hidden behind error states, and the corrected probe prices that truthfully — the same correction that exposed (and then repaired) the fleet's own frontend defects.
 
-Behind the single published entry, the closing campaign's paired curve (three-node fleet against one node, same spec, same binary, rolling) stands at **quality 5 of 7 pairs to the swarm, speed 7 of 7**, with three-node scores ranging 0.61–0.86 and the best product-regime run at 0.8645 — above fresh-Haiku territory, closing on nothing above it yet. The single node under the same product spec frequently cannot finish inside the 150-minute cap at all.
+**sb-5.2** (historic era, frozen): Opus 0.9755 · Sonnet 0.9692 · Haiku 0.7861 · fleet (mighty-crane-54f2) 0.6618. The era's compression at the top was measured to be an instrument artifact — 42.8 of 100 points passed for ≥90% of serious builds — which is what drove both the sb-5.3 correction and the sb-6 hard tier ("VendorSync Pro": raw-WebGL 3D visualization graded by analytic pixel recomputation, HMAC webhooks, optimistic concurrency; its hand-written golden reference passes the freeze gate at 100%, and Opus calibrates at 0.7445 on it).
 
 Two findings frame these numbers honestly:
 
