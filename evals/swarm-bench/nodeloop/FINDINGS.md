@@ -20447,3 +20447,32 @@ branch re-sends the dead cursor; single collection-wide ETag with truncation-on-
 pagination/filter operate on the first 25 fetched rows only; summary serves offset-bearing
 timestamps; CLI Ctrl+C AttributeError; /api/sync unguarded on vendor failure. Round 0's promoted
 twin already fixed part of this; the run continues.
+
+## F887 — RUN 10, the mechanism-proof run (0.7704 sb-5.3, wall 141 min)
+
+Run 10's number is not the story; what fired is. On the c7aac3af7 binary, watched at the
+5-minute cadence: the dom-id scan named the frontend NINE times by file:line (the class that was
+invisible in run 9); the visible-row render gate said "renders NO data rows in a real browser";
+the hang detector confirmed a real sync hang through the 200s confirm call; F882 attribution
+routed the FIRST per-file fix shards ever dispatched (fix::r0::meridian.py, fix::r0::app.js);
+F883's grade-what-lands refused two no-op shadows honestly; the judge split the fix join into
+four focused children; and the fleet panel matched engine truth in the exact mixed-state
+scenario that lied the day before (screenshot banked).
+
+Three NEW bad bugs were caught live and fixed the same hour, all landing in the run-11 binary:
+- F884: the meridian worker ran 585s with ZERO tool calls and was accepted "done" because the
+  engine's own pre-created skeleton counted as its deliverable. Three decision points shared the
+  fiction (judge Accept, claimed-done guard, watchdog salvage); one skeleton_only() predicate
+  now closes all three.
+- F885: the app.js fix shard's worker did the CORRECT repair — added every missing id to
+  index.html — and grade-what-lands rightly refused it because the shard owned only app.js. A
+  js/css shard now owns its page markup too (the finding's remediation spans both by nature).
+- F886: ship-best's end-of-run restore REWOUND run.jsonl to its round-0 snapshot copy (rsync -a
+  preserved mtimes, so the file looked untouched) and deleted the post-snapshot screenshots.
+  The snapshot/restore pair now excludes the run's evidence on both sides.
+
+Honest sb-5.3 standings: run 9 tree 0.8911 (best), run 6 0.7726, run 10 0.7704. Run 11 on the
+F884+F885+F886 binary is the publish candidate. Separately, the sb-6 hard-tier design package
+(data-mined saturation case, VendorSync Pro spec draft, deterministic 3D pixel-truth probing,
+punishing scoring math, Bedrock calibration protocol, red-team amendments) landed in
+evals/swarm-bench/sb6/ — design only, sb-5.3 stays the live scorer.
