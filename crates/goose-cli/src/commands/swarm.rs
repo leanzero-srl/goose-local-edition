@@ -11399,6 +11399,105 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(fix_round_specs(&[], &all, 0, TargetLang::Python).is_empty());
     }
 
+    /// F881 REGRESSION (run 8, score 0.601): the repair round RACED whole-tree twins even though its
+    /// first finding literally begins with a path. 0 of 3 twins promoted, as 0 of 9 had before it.
+    /// These are the THREE finding strings run 8's own `complete_verify` emitted, and the file list
+    /// its DAG owned. If attribution returns no group, the round can only race — so this test pins
+    /// the routing INPUT, not the routing rule (which `prefer_shard_over_race` already pins).
+    #[test]
+    fn run8_findings_attribute_to_files_so_the_round_shards() {
+        let files: Vec<String> = [
+            "README.md",
+            "test_api.py",
+            "test_main.py",
+            "test_meridian.py",
+            "test_store.py",
+            "test_web.py",
+            "vendorsync/__init__.py",
+            "vendorsync/__main__.py",
+            "vendorsync/api.py",
+            "vendorsync/meridian.py",
+            "vendorsync/store.py",
+            "vendorsync/web/app.js",
+            "vendorsync/web/index.html",
+            "vendorsync/web/styles.css",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let findings = vec![
+            "vendorsync/web/app.js:132 references DOM id `sync-error` which NO html file in the app \
+             defines — getElementById returns null there and the page throws at runtime (the \
+             rendered-nothing class). Either add the id to the HTML or fix the reference to an id \
+             that exists.".to_string(),
+            "POST /api/sync is not CHEAP on a repeat run — the second sync re-fetched 247 row(s) it \
+             already had. FIX: make the client send If-None-Match per page.".to_string(),
+            "the page renders but the browser console carries 2 error(s) in normal use (first: \
+             Failed to load resource: net::ERR_EMPTY_RESPONSE) — fix the JS errors; users hit them \
+             as broken interactions.".to_string(),
+        ];
+        let (groups, unassigned) = group_findings_by_file(&findings, &files);
+        eprintln!("GROUPS={} UNASSIGNED={}", groups.len(), unassigned.len());
+        for g in &groups {
+            eprintln!("  group {} <- {} finding(s)", g.file, g.findings.len());
+        }
+        let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
+        assert!(
+            prefer_shard_over_race(true, groups.len(), attributed),
+            "run 8's findings must route to per-file sharding, not a whole-tree race"
+        );
+    }
+
+    /// F881 (run 8, 0.601): the vendor client stored ONE collection-wide ETag and looped on 304
+    /// forever after a cursor restart. The author must receive the conditional-request fact, and it
+    /// must not spray onto tasks that have nothing to do with paged fetching.
+    #[test]
+    fn conditional_request_pitfall_reaches_the_client_author() {
+        let client = relevant_pitfalls(
+            "Implement the Meridian vendor client: paginate with next_cursor, honour ETag / \
+             If-None-Match, and handle 429 Retry-After. vendorsync/meridian.py",
+        )
+        .expect("a conditional-request task must retrieve the ETag pitfall");
+        assert!(
+            client.contains("an ETag belongs to ONE page"),
+            "the ETag-per-page fact did not reach the client author: {client}"
+        );
+        assert!(
+            client.contains("infinite loop"),
+            "the measured 304 loop must be named, not merely implied: {client}"
+        );
+        assert!(
+            !client.contains("CRON day-of-week"),
+            "unrelated trivia must not ride along"
+        );
+        // A frontend task mentions "pagination controls" and must NOT be handed vendor-protocol
+        // trivia — the triggers are deliberately protocol words, not topical ones.
+        assert!(
+            relevant_pitfalls(
+                "Render the payments table with pagination controls and a status filter"
+            )
+            .is_none_or(|p| !p.contains("an ETag belongs to ONE page")),
+            "a UI pagination task must not receive vendor conditional-request trivia"
+        );
+    }
+
+    /// F881: the paired-observation rule that separates "this endpoint died once it held data" from
+    /// "this endpoint is slow" — the distinction curl's exit code alone could not make.
+    #[test]
+    fn only_a_read_that_worked_empty_and_died_populated_is_a_wedge() {
+        // The measured case: /api/summary answered 200 empty, nothing at all after a sync.
+        assert!(wedged_after_populating(200, 0));
+        assert!(wedged_after_populating(204, 0));
+        // Already broken while empty -> the FIRST pass owns it; reporting it twice is double-counting.
+        assert!(!wedged_after_populating(500, 0));
+        assert!(!wedged_after_populating(404, 0));
+        // Never answered in either state -> a transport story, never an app defect.
+        assert!(!wedged_after_populating(0, 0));
+        // Still answering once populated -> no wedge, whatever else the body may be missing.
+        assert!(!wedged_after_populating(200, 200));
+        assert!(!wedged_after_populating(200, 500));
+    }
+
     #[test]
     fn group_findings_by_file_partitions_dedups_and_serializes() {
         let findings = vec![
@@ -12258,7 +12357,23 @@ holidays); day+1 is not always the next business day. Percentages: 5% is 0.05, b
 timeout and Go's zero-value http.Client has none, so a server that accepts the connection and never \
 answers hangs the caller forever with no recovery. Pass a timeout on every request (connect AND read), \
 and bound any retry loop with a maximum attempt count plus backoff — an unbounded retry is the same \
-hang with extra steps.\
+hang with extra steps.
+13. Conditional requests over a PAGED collection: an ETag belongs to ONE page, not to the collection. \
+Store the validator per page key (path + cursor/offset + limit) and replay each page's OWN validator; \
+one ETag reused for every page matches nothing and re-fetches the whole collection. Worse, a 304 means \
+'THIS PAGE is unchanged — keep its stored rows and CONTINUE to the next page', never 'the collection is \
+unchanged, stop': treating it as a stop condition ends the loop on page 1 and returns a partial list \
+(the measured bug is a method documented as returning EVERY item returning exactly one page of them, \
+and only on the SECOND call, because the first call populated the cache). A method that promises every \
+item must page to the very end and return the accumulated list on EVERY call; a count method must \
+report the collection's true total from the vendor's own total field, not the length of whatever is \
+cached locally. NEVER re-issue an identical request because of the STATUS it returned: an unchanged \
+conditional request answers 304 every time, so 'got 304, try again' is an infinite loop, not a retry. \
+This is measured, not hypothetical — one build stored a single collection-wide validator, the vendor \
+expired a cursor mid-run, the client restarted pagination while still replaying that validator, its \
+own first page answered 304, and the loop re-sent that request 249,703 times: the sync never \
+returned and the server went dark behind it. When pagination restarts, DROP the validators for the \
+pages you are about to re-fetch.\
 ";
 
 /// Triggers are deliberately UNAMBIGUOUS, not merely topical. A first cut used bare words like "page",
@@ -12366,6 +12481,14 @@ const PITFALL_TRIGGERS: &[&[&str]] = &[
         "fetch(",
         "http client",
         "api client",
+    ],
+    &[
+        "etag",
+        "if-none-match",
+        "304",
+        "conditional request",
+        "next_cursor",
+        "fetch_all",
     ],
 ];
 
@@ -19810,6 +19933,129 @@ fn spec_contract_enabled() -> bool {
 /// NO MODEL in the path: the contract is regex-parsed from the spec text, so only an engine event creates the
 /// verdict. FAIL-OPEN everywhere it can't be sure (non-python, no advertised entry/endpoints, server never bound,
 /// curl error) → inconclusive, never a false red.
+/// F881: ONE ruler for probing one advertised GET, shared by BOTH passes of the spec contract.
+///
+/// Returns `(http_code, findings)` where every finding carries a KIND, so the second pass can report
+/// only the classes the first pass could not possibly have seen. `None` means curl never completed —
+/// inconclusive, never a finding.
+///
+/// WHY A SECOND PASS EXISTS (measured on run 8, score 0.601, Tier B 0.2188): the gate spawns the app
+/// against a FRESH scratch database, so every advertised read was asserted on an EMPTY app.
+/// `GET /api/summary` answered 200 there with every documented key present — `oldest`/`newest` were
+/// simply null — and the gate counted it verified. That same endpoint CLOSES THE CONNECTION once the
+/// store holds rows, because the built app indexed a column its own query never SELECTed. It zeroed
+/// TEN Tier-B checks, and the only trace the engine carried was a render-gate note about a browser
+/// console error. An empty app is the one state in which almost no read defect is observable: row
+/// shape, ordering, totals and UTC bounds all have nothing to be wrong about until data exists.
+/// Pure: did this advertised read go DARK once the app held rows? (Pinned by test — the rule, not
+/// the transport.) True only for the PAIR "answered 2xx while empty, answers nothing once populated".
+/// A read that already failed while empty is reported by the first pass, and a read that never
+/// answered in either state is a transport story the gate must not turn into an app defect.
+fn wedged_after_populating(empty_code: u16, populated_code: u16) -> bool {
+    populated_code == 0 && (200..300).contains(&empty_code)
+}
+
+/// The per-attempt budget for probing an advertised mutating endpoint. Named once so the curl flag
+/// and the hang finding that quotes it can never drift apart.
+const POST_PROBE_SECS: u64 = 20;
+
+async fn probe_advertised_get(
+    port: u16,
+    spec: &str,
+    path: &str,
+    populated: bool,
+) -> Option<(u16, Vec<(&'static str, String)>)> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let mut cmd = tokio::process::Command::new("curl");
+    cmd.args(["-s", "-w", "\n%{http_code}", "-m", "5", &url]);
+    let out = smoke_output(cmd, 8).await?;
+    let raw = String::from_utf8_lossy(&out.stdout).into_owned();
+    let (body, code) = split_curl_status(&raw);
+    let when = if populated {
+        " once the app HOLDS ROWS (re-probed after the advertised sync)"
+    } else {
+        ""
+    };
+    let mut found: Vec<(&'static str, String)> = Vec::new();
+    // A MISSING STATUS LINE IS NOT, BY ITSELF, A DEFECT. curl reports 000 for a plain timeout as
+    // readily as for a dead connection, and blaming the app for a slow endpoint would be a phantom of
+    // exactly the kind this gate has produced before. MEASURED: the real wedge (an infinite
+    // conditional-request loop inside the sync) surfaces as exit 28, indistinguishable from slowness
+    // on its own. What disambiguates it is not curl's exit code but the PAIR of observations — the
+    // same endpoint answering 2xx while empty and answering nothing once populated — so the caller
+    // that holds both makes that call, and this function only reports the code.
+    if code == 0 {
+        return Some((code, found));
+    }
+    if code >= 500 {
+        found.push((
+            "5xx",
+            format!(
+                "GET {path} returned {code}{when} — the advertised endpoint errors (server 5xx)"
+            ),
+        ));
+    } else if code == 404 || code == 405 {
+        found.push((
+            "missing_route",
+            format!(
+                "GET {path} returned {code} — the spec advertises this endpoint but the app does not implement it"
+            ),
+        ));
+    } else if (200..300).contains(&code) {
+        let documented = spec_documented_keys(spec, path);
+        if !documented.is_empty() {
+            match serde_json::from_str::<serde_json::Value>(body.trim()) {
+                Ok(v) => {
+                    let missing: Vec<&String> = documented
+                        .iter()
+                        .filter(|k| v.get(k.as_str()).is_none())
+                        .collect();
+                    if !missing.is_empty() {
+                        found.push((
+                            "keys",
+                            format!(
+                                "GET {path} answered {code}{when} but its JSON body is missing the \
+                                 documented key(s) {} — the spec's response shape for this endpoint \
+                                 names them exactly. Serve every documented key, spelled as \
+                                 documented.",
+                                missing
+                                    .iter()
+                                    .map(|k| format!("`{k}`"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        ));
+                    }
+                    if spec_documents_utc(spec, path) {
+                        for k in &documented {
+                            if let Some(bad) = v.get(k.as_str()).and_then(utc_bounds_violation) {
+                                found.push((
+                                    "utc",
+                                    format!(
+                                        "GET {path}'s `{k}` reads `{bad}`{when} — the spec documents \
+                                         this endpoint's timestamps as RFC3339 UTC, so the value \
+                                         must carry a UTC designator (`Z` or `+00:00`). Convert at \
+                                         the boundary; never serve naive or local time."
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                }
+                Err(_) => found.push((
+                    "notjson",
+                    format!(
+                        "GET {path} answered {code}{when} but the body is not JSON, while the spec \
+                         documents a JSON response shape ({}) for it",
+                        documented.join(", ")
+                    ),
+                )),
+            }
+        }
+    }
+    Some((code, found))
+}
+
 async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecContractResult {
     let mut findings = Vec::new();
     let mut inconclusive = Vec::new();
@@ -19997,81 +20243,31 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             probed_post: 0,
         };
     }
+    // FIRST PASS: the app as freshly started — EMPTY. Records which finding KINDS each path already
+    // produced, so the populated pass below reports only what an empty app could not reveal.
+    let mut empty_pass: std::collections::HashMap<String, std::collections::HashSet<&'static str>> =
+        std::collections::HashMap::new();
+    let mut empty_codes: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
     for path in &gets {
-        let url = format!("http://127.0.0.1:{port}{path}");
-        let mut cmd = tokio::process::Command::new("curl");
-        // THE BODY, NOT ONLY THE STATUS (Q2b). Every archived probe read `-o /dev/null` and asserted
-        // the status code alone — so /api/summary was "probed" while its documented total_minor and
-        // UTC bounds were never read, and a 200 with an empty shell counted the same as a correct
-        // response. The spec's response-shape cell documents the top-level keys; a 2xx whose body is
-        // missing them is a FINDING with the exact keys named, which is what the fix loop can act on.
-        cmd.args(["-s", "-w", "\n%{http_code}", "-m", "5", &url]);
-        let Some(out) = smoke_output(cmd, 8).await else {
-            inconclusive.push(format!(
+        match probe_advertised_get(port, spec, path, false).await {
+            None => inconclusive.push(format!(
                 "spec-contract: curl of GET {path} did not complete"
-            ));
-            continue;
-        };
-        let raw = String::from_utf8_lossy(&out.stdout).into_owned();
-        let (body, code) = split_curl_status(&raw);
-        if code >= 500 {
-            findings.push(format!(
-                "GET {path} returned {code} — the advertised endpoint errors (server 5xx)"
-            ));
-        } else if code == 404 || code == 405 {
-            findings.push(format!(
-                "GET {path} returned {code} — the spec advertises this endpoint but the app does not implement it"
-            ));
-        } else if (200..300).contains(&code) {
-            // AFFIRMATIVE: the advertised endpoint answered with a real 2xx. This is the signal a consumer can
-            // require (verified>=1) to tell a genuine pass from "checked nothing".
-            verified += 1;
-            let documented = spec_documented_keys(spec, path);
-            if !documented.is_empty() {
-                match serde_json::from_str::<serde_json::Value>(body.trim()) {
-                    Ok(v) => {
-                        let missing: Vec<&String> = documented
-                            .iter()
-                            .filter(|k| v.get(k.as_str()).is_none())
-                            .collect();
-                        if !missing.is_empty() {
-                            findings.push(format!(
-                                "GET {path} answered {code} but its JSON body is missing the \
-                                 documented key(s) {} — the spec's response shape for this endpoint \
-                                 names them exactly. Serve every documented key, spelled as \
-                                 documented.",
-                                missing
-                                    .iter()
-                                    .map(|k| format!("`{k}`"))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            ));
-                        }
-                        // Q2(b2): when the row documents RFC3339 UTC, a date-shaped documented
-                        // value without a UTC designator is a finding naming key and value.
-                        if spec_documents_utc(spec, path) {
-                            for k in &documented {
-                                if let Some(bad) = v.get(k.as_str()).and_then(utc_bounds_violation)
-                                {
-                                    findings.push(format!(
-                                        "GET {path}'s `{k}` reads `{bad}` — the spec documents \
-                                         this endpoint's timestamps as RFC3339 UTC, so the value \
-                                         must carry a UTC designator (`Z` or `+00:00`). Convert at \
-                                         the boundary; never serve naive or local time."
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    Err(_) => findings.push(format!(
-                        "GET {path} answered {code} but the body is not JSON, while the spec \
-                         documents a JSON response shape ({}) for it",
-                        documented.join(", ")
-                    )),
+            )),
+            Some((code, found)) => {
+                // AFFIRMATIVE: the advertised endpoint answered with a real 2xx. This is the signal a
+                // consumer can require (verified>=1) to tell a genuine pass from "checked nothing".
+                // Counted ONCE, here — the populated pass adds findings only, never coverage.
+                if (200..300).contains(&code) {
+                    verified += 1;
+                }
+                empty_codes.insert(path.clone(), code);
+                let kinds = empty_pass.entry(path.clone()).or_default();
+                for (kind, text) in found {
+                    kinds.insert(kind);
+                    findings.push(text);
                 }
             }
         }
-        // 3xx / other 4xx (a route that needs a body/auth) -> neither a finding nor verified (fail-open)
     }
     // PROBE THE ADVERTISED MUTATING ENDPOINTS — the 44%-of-remaining-loss hole.
     //
@@ -20084,6 +20280,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     // a freshly built app is exactly where a false finding would be most expensive. `probed_post` is
     // emitted either way so the arm's OFF state is measurable rather than assumed.
     let mut post_probed = 0usize;
+    let mut post_ok = 0usize;
     if swarm_gate("GOOSE_SWARM_PROBE_ADVERTISED_POST", false) {
         // F825: vendor ground truth, fetched ONCE. Recorded as a note either way so the
         // mechanism is verifiable from the run log (the F818 lesson: an unobservable
@@ -20157,7 +20354,17 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             // this check can produce, and it was the one shape it could not see.
             let call = || {
                 let mut cmd = tokio::process::Command::new("curl");
-                cmd.args(["-s", "-w", "\n%{http_code}", "-X", "POST", "-m", "20", &url]);
+                let budget = POST_PROBE_SECS.to_string();
+                cmd.args([
+                    "-s",
+                    "-w",
+                    "\n%{http_code}",
+                    "-X",
+                    "POST",
+                    "-m",
+                    &budget,
+                    &url,
+                ]);
                 cmd
             };
             let (Some(a), Some(b)) = (
@@ -20174,7 +20381,30 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             let b_out = String::from_utf8_lossy(&b.stdout).into_owned();
             let (a_body, a_code) = split_curl_status(&a_out);
             let (b_body, _) = split_curl_status(&b_out);
-            if a_code >= 500 {
+            if (200..300).contains(&a_code) {
+                post_ok += 1;
+            }
+            // A POST THAT NEVER ANSWERS IS THE WORST DEFECT ON THIS BOARD, and until now it was the
+            // one the gate could not name. curl times out, both bodies come back empty, and
+            // `repeated_post_verdict` — which can only compare two bodies — abstained with
+            // "could not be read". MEASURED (run 8, 0.601): the built client stored ONE
+            // collection-wide ETag, the vendor expired a cursor mid-page, the client restarted
+            // pagination while still replaying that ETag, its own page 1 answered 304, and the loop
+            // treated 304 as "try again" — 249,703 identical conditional requests, a sync that never
+            // returns, and a single-threaded server wedged behind it. Every downstream check scored
+            // zero off this one defect, and the engine's only trace of it was a console-error note.
+            if a_code == 0 {
+                findings.push(format!(
+                    "POST {path} NEVER RETURNS — it was still running when the probe's {POST_PROBE_SECS}s \
+                     budget expired, twice. A hang is worse than an error: the endpoint answers \
+                     nothing, and on a single-threaded server every later request queues behind it, so \
+                     the whole app goes dark. Bound EVERY loop that talks to the vendor by a condition \
+                     that must eventually hold — page until the vendor says there is no next page, and \
+                     never treat a response STATUS as a reason to repeat the identical request, because \
+                     an identical request returns the identical status forever. In particular a 304 \
+                     answers 'this exact request is unchanged'; retrying it unchanged loops without end."
+                ));
+            } else if a_code >= 500 {
                 findings.push(format!(
                     "POST {path} returned {a_code} — the spec advertises this endpoint and it \
                      errors (server 5xx). Nothing downstream of it can work; fix this before any \
@@ -20457,6 +20687,39 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                         "render-gate: probe did not complete — nothing proven either way"
                             .to_string(),
                     ),
+                }
+            }
+        }
+    }
+    // SECOND PASS: the same advertised reads, now that the POST wave has actually populated the app.
+    // Only classes the empty pass did NOT already report are added, so nothing is double-counted and
+    // a defect visible in both states is still reported exactly once.
+    // Gated on a POST that actually ANSWERED 2xx, not merely on one having been attempted. When the
+    // sync itself hangs, every read behind it times out too, and reporting each of those as its own
+    // broken endpoint would bury the one finding that matters under a cascade of its own symptoms.
+    if post_ok > 0 {
+        for path in &gets {
+            if let Some((code, found)) = probe_advertised_get(port, spec, path, true).await {
+                let was = empty_codes.get(path).copied().unwrap_or(0);
+                if wedged_after_populating(was, code) {
+                    findings.push(format!(
+                        "GET {path} answered {was} while the app was EMPTY and returns NOTHING AT ALL \
+                         once it holds rows — same process, same endpoint, one sync in between. That \
+                         pair rules out a slow endpoint and points at the code path that reads STORED \
+                         rows: an unhandled exception there kills the connection (a browser shows \
+                         ERR_EMPTY_RESPONSE) and, on a single-threaded server, wedges every request \
+                         after it. Check that every field the response builder reads is one the query \
+                         actually SELECTs, and that no loop over vendor pages can fail to terminate. \
+                         Reproduce with a sync FIRST, then GET {path} — an empty app hides this."
+                    ));
+                    continue;
+                }
+                let seen = empty_pass.get(path);
+                for (kind, text) in found {
+                    if seen.is_some_and(|k| k.contains(kind)) {
+                        continue;
+                    }
+                    findings.push(text);
                 }
             }
         }
