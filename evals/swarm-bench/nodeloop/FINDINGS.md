@@ -20505,3 +20505,63 @@ BOARD STATE (sb-5.3, honest, live at leanzero.net with the era selector + screen
 0.9344 · fleet 0.93 · Sonnet 0.4971 · Haiku 0.4615. sb-6 ("VendorSync Pro", 3D, webhooks,
 optimistic concurrency) is implemented with its golden reference passing the freeze gate at 100%;
 Opus calibrated at 0.7445 on it; Sonnet/Haiku baselines in flight; threshold fit next.
+
+## F892 — Unreadable-POST finding hardcoded sync's shape; per-path documented keys
+
+The spec-contract gate's unreadable-POST finding printed `{fetched,inserted,total}` for EVERY
+path — sync's shape pasted into batch/note findings. Fixed: `spec_documented_keys(path)` derives
+each path's documented response keys from the spec table; the finding names the keys that path
+actually owes. (Committed pre-summary; journaled late — the ledger gap itself is the F771 class.)
+
+## F893 — The judge's idle-slot release notified the scheduler into a 333-cycle spin
+
+IdleSlotGuard::drop notified on EVERY release, including the judge's claimed-device skip path:
+claim → skip → release → notify → re-pick, 333 cycles in 5 minutes with zero work moved. Fix:
+judge guards never notify on release (`claimed.is_some() && !is_judge`); worker releases keep
+the wake. Scheduler test pins it.
+
+## F894 — ALL six GPT-on-Bedrock runs died at the first compaction; the engine was the gimp
+
+Mihai asked whether the cloud models were being gimped. Proven, to the request id: every GPT-5.6
+sb-6 run (luna/sol/terra × r10/r11) ended at the exact same instant — "Context near the cap —
+compacting to stay lean..." followed by Bedrock ValidationException "User messages cannot contain
+reasoning content". Root cause in core, not the bench: compact_messages/summarize_tool_call take
+the summarizer's RESPONSE — which for a reasoning model carries Thinking blocks — and re-role it
+to Role::User verbatim (context_mgmt/mod.rs). The next Converse call ships a user message with
+reasoningContent and the session dies. Local models never trip it (LM Studio ignores it);
+Anthropic runs finished under the cap and never compacted (verified: no compaction in any
+Anthropic tail). Every published GPT score was "how much app existed at time of death" — luna
+0.06→0.79 across two reps was the SAME model dying early vs late, not variance. The parallel-
+contention hypothesis is dead: luna r11 scored 0.79 while the fleet ran full-tilt. Fix
+19b4ed6ef: strip reasoning content at both re-role sites + a user-role reasoning filter in the
+Bedrock formatter; test pins the strip. Reruns are SERIAL by Mihai's order (Bedrock spend).
+
+## F895 — sb-6.1: the dud-audit's three probe defects; the ruler stays fair by re-scoring everyone
+
+The three-auditor workflow hand-booted the sol/terra/luna r10 trees and confirmed the zeros were
+real apps failing — AND found three instrument defects the fleet-fairness rule turns into a
+version bump (b70f930ad): (1) initFirstDataStamp counted rows in a HIDDEN fallback table while
+its own fallback filtered to visible — p_page_interactive 1.0 on an app whose table never
+renders; (2) sync "completed" was elapsed-time-without-failure — a handler-less button scored
+0.5; now demands causal evidence (observed /api/sync resource, in-flight state, or view change);
+(3) j_empty_state's 0.3 rung was unreachable (empty scenario never emitted bodyTextLength).
+Plus: serves_page's 0.2 rung requires an ANSWERING server; vendor_traps unavail wording stops
+blaming the harness. SCORER_VERSION sb-6.1; thresholds file byte-identical, CALIB pin carries;
+golden reference re-gated before any board re-score; every sb-6 entrant re-scores on the same
+ruler.
+
+## F896 — Fleet sb-6 r0 = 0.0608, and the number is HONEST; the ruler's fairness hole was elsewhere
+
+The swarm's first sb-6 run scored 0.0608 and every layer of "the scorer must be wrong" dissolved
+under a hand boot: the app binds, then EVERY request 500s — __main__ patches APIHandler.__init__
+to attach store/client AFTER original_init, but BaseHTTPRequestHandler handles the request INSIDE
+__init__, so do_GET runs before the attach line exists (classic socketserver trap); and
+meridian.py passes a full URL to http.client.HTTPConnection (wants host:port) so webhook
+registration DNS-fails. The engine's gate went red honestly (spec_contract "advertised check
+failed", 15 findings) — the wall expired inside the fix round (fix_sched_wall_cut) before the
+repair landed. The REAL fairness hole found while proving this: standalone re-scores served the
+graded vendor on an arbitrary port while apps that hardcode the spec's rendered {BASE_URL} are
+spec-compliant (the spec documents no --base-url flag and no env var; MERIDIAN_BASE_URL is an
+undocumented harness channel). run_build now records vendor_port in every verdict; re-scores
+serve the vendor at the tree's advertised port (recovered for existing trees from each app's own
+hardcode: opus 8980, sonnet 8982, haiku 8987, luna 9003, fleet 8990).
