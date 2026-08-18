@@ -20273,3 +20273,32 @@ the probe already reported rowCountAfter/viewRefreshed/completed and nothing con
 files two blocking findings: no working sync control at all, and (the measured one) a completed
 sync that still renders zero rows, with the concrete correction (re-fetch and render after the
 sync resolves, update the readouts from that same response). Probe failure stays inconclusive.
+
+## F879 — run 6 = 0.8342 (campaign best, above Haiku) and the last big loss is a client whose PUBLIC API breaks on the SECOND call
+
+Run 6, on the F870-F878 build: **0.8342** — the campaign's best and clearly above Haiku 4.5
+(0.7861). A 1.0 / B 0.750 / C 0.700 / D 0.813, HARD 1.0, P 1.0, and the tiers that were broken
+this morning are transformed: V 0.0 -> 0.9167, J 0.2 -> 0.70. The page WORKS — 25 rows rendered
+with the DOM claiming 247 of 247, dates like "Mar 1, 2026, 14:00", badge statuses, pagination,
+filter, no 375px scroll, v_styling 1.0. Repair converged 6 -> 2 -> 2 and the stall exit stopped
+honestly rather than burning a third wave; both frontend detectors ended clean. Today's arc:
+0.6618 published -> 0.8029 -> 0.8342.
+
+THE REMAINING LOSS, located exactly. Tier C fell 1.0 -> 0.700 on three checks with ONE cause:
+`client_all_payments` returned 100 of 247 and `client_total_count` returned 0 — while EVERY
+protocol check passed (13 docs fetches, cursor paging, all 7 pages, both retry modes, cursor
+expiry, idempotency key, 3/3 conditional requests answered 304, 247/247 rows surviving a
+restart). So the client makes every correct HTTP call and the app's server path works; its own
+documented public API is broken for a direct caller. Invisible to the engine because every
+engine check reaches the client THROUGH the HTTP surface — the standing law again.
+
+FIXED: `CLIENT_API_SCRIPT` + `spec_client_symbol` drive the spec's own client class directly
+inside the vendor-truth block (where the expected total is already in hand), calling only
+zero-argument documented accessors and sizing what they return. VALIDATION REFUTED THE FIRST
+VERSION: against a fresh vendor the client returns 247 correctly, so a single-call probe stayed
+silent. The defect is state-dependent — it appears on the REPEAT call, when the vendor answers
+304 and the client serves a partial cache — which is the same shape as `resync_idempotent`
+(second sync inserted=0 total=100). The probe now calls each accessor TWICE and judges the
+second: measured on the real tree, `fetch_all_payments()` 1st=247 2nd=100 -> FINDING,
+`total_count()` 0/0 -> FINDING, reproducing the scorer's verdict exactly. Silence on every
+failure to import/construct/call.
