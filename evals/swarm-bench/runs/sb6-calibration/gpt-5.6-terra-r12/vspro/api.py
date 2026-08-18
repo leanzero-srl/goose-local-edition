@@ -1,430 +1,374 @@
-"""The vspro HTTP backend — threaded so reads keep answering while a sync is in flight.
-
-One structured error envelope everywhere, frozen field-error codes, webhook signature
-verification against the RAW request body, and process-lifetime webhook counters (the health
-quad counts events received by THIS process since it started — red-team F3; the registration
-challenge increments nothing — F13).
-"""
-
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import hmac
 import json
 import re
 import threading
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from . import CURRENCIES, STATUSES
-from .meridian import (MeridianClient, MeridianConflict, MeridianError, MeridianUnavailable,
-                       parse_instant)
-from .store import Store
+from .meridian import MeridianClient, MeridianConflict, MeridianError
+from .store import STATUSES, Store
 
-WEB_DIR = Path(__file__).resolve().parent / "web"
-STATIC = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/index.html": ("index.html", "text/html; charset=utf-8"),
-    "/styles.css": ("styles.css", "text/css; charset=utf-8"),
-    "/app.js": ("app.js", "application/javascript; charset=utf-8"),
-    "/viz.js": ("viz.js", "application/javascript; charset=utf-8"),
-}
-
+CURRENCIES = ("EUR", "USD", "JPY", "KWD")
 SORTS = ("created_at", "-created_at", "amount_minor", "-amount_minor")
-PAYMENT_PATH = re.compile(r"^/api/payments/([^/]+)$")
-NOTE_PATH = re.compile(r"^/api/payments/([^/]+)/note$")
-RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
-COUNTRY = re.compile(r"^[A-Z]{2}$")
+WEB_ROOT = Path(__file__).with_name("web")
+MAX_BODY = 1_048_576
+RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
 
 
-class WebhookLedger:
-    """The four live counters plus the shared secret. In-memory on purpose: the spec pins the
-    counters to events received by this process since it started."""
-
-    def __init__(self) -> None:
-        self.lock = threading.Lock()
-        self.registered = False
-        self.secret: Optional[str] = None
-        self.received = 0
-        self.applied = 0
-        self.ignored = 0
-        self.rejected = 0
-
-    def snapshot(self) -> dict:
-        with self.lock:
-            return {"registered": self.registered, "received": self.received,
-                    "applied": self.applied, "ignored": self.ignored,
-                    "rejected": self.rejected}
-
-    def bump(self, counter: str) -> None:
-        with self.lock:
-            setattr(self, counter, getattr(self, counter) + 1)
+def now_utc() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-class AppContext:
-    def __init__(self, store: Store, client: MeridianClient) -> None:
-        self.store = store
-        self.client = client
-        self.ledger = WebhookLedger()
-        self.sync_lock = threading.Lock()
+def valid_rfc3339(value: object) -> bool:
+    if not isinstance(value, str) or not RFC3339.fullmatch(value):
+        return False
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+    except ValueError:
+        return False
 
 
-def field_error(path: str, code: str) -> dict:
-    return {"path": path, "code": code}
+def serve(port: int, store: Store, client: MeridianClient):
+    state = {"secret": None, "registered": False, "received": 0, "applied": 0, "ignored": 0, "rejected": 0}
+    state_lock = threading.Lock()
+    sync_lock = threading.Lock()
 
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
 
-class Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
-    ctx: AppContext = None  # injected by serve()
+        def log_message(self, _format, *args):
+            pass
 
-    def log_message(self, *_args) -> None:
-        return
+        def send_json(self, code: int, body: dict) -> None:
+            raw = json.dumps(body, separators=(",", ":"), allow_nan=False).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
 
-    # ── plumbing ──────────────────────────────────────────────────────────────────────────────
+        def error(self, code: str, message: str, fields: list[dict] | None = None) -> None:
+            detail = {"code": code, "message": message}
+            if fields:
+                detail["field_errors"] = fields
+            status = 400 if fields else {"not_found": 404, "conflict": 409, "bad_signature": 401, "vendor_unavailable": 503}.get(code, 400)
+            self.send_json(status, {"error": detail})
 
-    def _json(self, code: int, payload: dict) -> None:
-        body = json.dumps(payload).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _error(self, code: int, err_code: str, message: str,
-               field_errors: Optional[List[dict]] = None) -> None:
-        err = {"code": err_code, "message": message}
-        if field_errors:
-            err["field_errors"] = field_errors
-        self._json(code, {"error": err})
-
-    def _static(self, path: str) -> None:
-        name, ctype = STATIC[path]
-        body = (WEB_DIR / name).read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length") or 0)
-        return self.rfile.read(length) if length else b""
-
-    # ── routing ───────────────────────────────────────────────────────────────────────────────
-
-    def do_GET(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
-        route = parsed.path
-        if route in STATIC:
-            self._static(route)
-            return
-        if route == "/api/health":
-            self._health()
-            return
-        if route == "/api/payments":
-            self._payments(parse_qs(parsed.query))
-            return
-        match = PAYMENT_PATH.match(route)
-        if match:
-            self._payment_one(match.group(1))
-            return
-        if route == "/api/summary":
-            self._json(200, self.ctx.store.summary())
-            return
-        if route == "/api/buckets":
-            self._buckets()
-            return
-        self._error(404, "not_found", f"no such path: {route}")
-
-    def do_POST(self) -> None:  # noqa: N802
-        route = urlparse(self.path).path
-        raw = self._read_body()
-        if route == "/api/webhooks/meridian":
-            self._webhook(raw)
-            return
-        try:
-            body = json.loads(raw) if raw else {}
-        except json.JSONDecodeError:
-            self._error(400, "bad_request", "request body is not valid JSON")
-            return
-        if route == "/api/sync":
-            self._sync()
-            return
-        match = NOTE_PATH.match(route)
-        if match:
-            self._note(match.group(1), body)
-            return
-        if route == "/api/payments/batch":
-            self._batch(body)
-            return
-        self._error(404, "not_found", f"no such path: {route}")
-
-    # ── GET handlers ──────────────────────────────────────────────────────────────────────────
-
-    def _health(self) -> None:
-        self._json(200, {"status": "ok", "payments": self.ctx.store.count(),
-                         "last_sync": self.ctx.store.last_sync(),
-                         "webhook": self.ctx.ledger.snapshot()})
-
-    @staticmethod
-    def _int_param(params: Dict[str, list], name: str, default: int,
-                   errors: List[dict]) -> int:
-        raw = (params.get(name) or [None])[0]
-        if raw is None:
-            return default
-        try:
-            value = int(raw)
-        except ValueError:
-            errors.append(field_error(name, "not_an_integer"))
-            return default
-        if value < 0:
-            errors.append(field_error(name, "not_positive"))
-            return default
-        return value
-
-    def _payments(self, params: Dict[str, list]) -> None:
-        errors: List[dict] = []
-        limit = self._int_param(params, "limit", 50, errors)
-        offset = self._int_param(params, "offset", 0, errors)
-        status = (params.get("status") or [None])[0]
-        currency = (params.get("currency") or [None])[0]
-        sort = (params.get("sort") or ["created_at"])[0]
-        if status is not None and status not in STATUSES:
-            errors.append(field_error("status", "unsupported"))
-        if currency is not None and currency not in CURRENCIES:
-            errors.append(field_error("currency", "unsupported"))
-        if sort not in SORTS:
-            errors.append(field_error("sort", "unsupported"))
-        if errors:
-            self._error(400, "bad_request", "invalid query parameters", errors)
-            return
-        limit = min(limit, 200)
-        rows, total = self.ctx.store.query(limit=limit, offset=offset, status=status,
-                                           currency=currency, sort=sort)
-        self._json(200, {"data": rows, "total": total, "limit": limit, "offset": offset})
-
-    def _payment_one(self, payment_id: str) -> None:
-        row = self.ctx.store.get(payment_id)
-        if row is None:
-            self._error(404, "not_found", f"no payment {payment_id}")
-            return
-        self._json(200, row)
-
-    def _buckets(self) -> None:
-        cells = self.ctx.store.buckets()
-        days: List[str] = []
-        for cell in cells:
-            if not days or days[-1] != cell["day"]:
-                days.append(cell["day"])
-        self._json(200, {"timezone": "Europe/Berlin", "days": days,
-                         "statuses": list(STATUSES), "cells": cells})
-
-    # ── POST handlers ─────────────────────────────────────────────────────────────────────────
-
-    def _sync(self) -> None:
-        with self.ctx.sync_lock:
+        def read_raw(self) -> bytes | None:
             try:
-                payments = self.ctx.client.fetch_all_payments()
-            except MeridianUnavailable:
-                self._error(503, "vendor_unavailable", "the Meridian API is unreachable")
-                return
-            except MeridianError as err:
-                self._error(502, "vendor_unavailable", f"vendor sync failed: {err}")
-                return
-            inserted, updated = self.ctx.store.upsert_many(payments)
-            self.ctx.store.set_last_sync(
-                datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-        self._json(200, {"fetched": len(payments), "inserted": inserted,
-                         "updated": updated, "total": self.ctx.store.count()})
-
-    def _note(self, payment_id: str, body: dict) -> None:
-        note = body.get("note")
-        errors: List[dict] = []
-        if note is None:
-            errors.append(field_error("note", "required"))
-        elif not isinstance(note, str) or not note:
-            errors.append(field_error("note", "required"))
-        elif len(note) > 280:
-            errors.append(field_error("note", "too_long"))
-        if errors:
-            self._error(400, "bad_request", "invalid note", errors)
-            return
-        row = self.ctx.store.get(payment_id)
-        if row is None:
-            self._error(404, "not_found", f"no payment {payment_id}")
-            return
-        try:
-            fresh = self.ctx.client.update_payment(payment_id, {"note": note},
-                                                   version=row["version"])
-        except MeridianConflict:
-            # Second 412: surface the conflict, local row untouched.
-            self._error(409, "conflict",
-                        "the payment was modified concurrently and the edit could not be applied")
-            return
-        except MeridianUnavailable:
-            self._error(503, "vendor_unavailable", "the Meridian API is unreachable")
-            return
-        except MeridianError as err:
-            self._error(502, "vendor_unavailable", f"vendor update failed: {err}")
-            return
-        self.ctx.store.upsert_one(fresh)
-        self._json(200, {"id": payment_id, "note": fresh.get("note", note),
-                         "version": int(fresh["version"])})
-
-    def _batch(self, body: dict) -> None:
-        items = body.get("items")
-        errors: List[dict] = []
-        if not isinstance(items, list) or not items:
-            errors.append(field_error("items", "required"))
-        elif len(items) > 20:
-            errors.append(field_error("items", "too_long"))
-        else:
-            for i, item in enumerate(items):
-                errors.extend(self._validate_item(i, item if isinstance(item, dict) else {}))
-        if errors:
-            self._error(400, "bad_request", "invalid batch payload", errors)
-            return
-        vendor_items = [{"amount": it["amount"], "counterparty": it["counterparty"],
-                         "occurred_at": it["occurred_at"],
-                         "idempotency_key": it["idempotency_key"]} for it in items]
-        try:
-            outcomes = self.ctx.client.create_batch(vendor_items)
-        except MeridianUnavailable:
-            self._error(503, "vendor_unavailable", "the Meridian API is unreachable")
-            return
-        except MeridianError as err:
-            self._error(502, "vendor_unavailable", f"vendor batch failed: {err}")
-            return
-        results, succeeded, failed = [], 0, 0
-        for i, outcome in enumerate(outcomes):
-            if outcome.get("status") == "created" or outcome.get("id"):
-                succeeded += 1
-                results.append({"index": i, "status": "created", "id": outcome.get("id")})
-            else:
-                failed += 1
-                err = outcome.get("error") or {}
-                results.append({"index": i, "status": "error",
-                                "error": {"code": err.get("code", "bad_request"),
-                                          "message": err.get("message", "item failed")}})
-        self._json(200, {"results": results, "succeeded": succeeded, "failed": failed})
-
-    @staticmethod
-    def _validate_item(i: int, item: dict) -> List[dict]:
-        errors: List[dict] = []
-        prefix = f"items[{i}]"
-        amount = item.get("amount")
-        if not isinstance(amount, dict):
-            errors.append(field_error(f"{prefix}.amount", "required"))
-        else:
-            value = amount.get("value_minor")
-            if value is None:
-                errors.append(field_error(f"{prefix}.amount.value_minor", "required"))
-            elif isinstance(value, bool) or not isinstance(value, int):
-                errors.append(field_error(f"{prefix}.amount.value_minor", "not_an_integer"))
-            elif value <= 0:
-                errors.append(field_error(f"{prefix}.amount.value_minor", "not_positive"))
-            currency = amount.get("currency")
-            if not currency:
-                errors.append(field_error(f"{prefix}.amount.currency", "required"))
-            elif currency not in CURRENCIES:
-                errors.append(field_error(f"{prefix}.amount.currency", "unsupported"))
-        counterparty = item.get("counterparty")
-        if not isinstance(counterparty, dict):
-            errors.append(field_error(f"{prefix}.counterparty", "required"))
-        else:
-            name = counterparty.get("name")
-            if not name or not isinstance(name, str):
-                errors.append(field_error(f"{prefix}.counterparty.name", "required"))
-            elif len(name) > 80:
-                errors.append(field_error(f"{prefix}.counterparty.name", "too_long"))
-            country = counterparty.get("country")
-            if not country or not isinstance(country, str):
-                errors.append(field_error(f"{prefix}.counterparty.country", "required"))
-            elif not COUNTRY.match(country):
-                errors.append(field_error(f"{prefix}.counterparty.country", "bad_format"))
-        occurred = item.get("occurred_at")
-        if not occurred or not isinstance(occurred, str):
-            errors.append(field_error(f"{prefix}.occurred_at", "required"))
-        elif not RFC3339.match(occurred):
-            errors.append(field_error(f"{prefix}.occurred_at", "bad_format"))
-        else:
-            try:
-                parse_instant(occurred)
+                value = self.headers.get("Content-Length")
+                if value is None:
+                    return b""
+                length = int(value)
+                if length < 0 or length > MAX_BODY:
+                    return None
+                return self.rfile.read(length)
             except ValueError:
-                errors.append(field_error(f"{prefix}.occurred_at", "bad_format"))
-        key = item.get("idempotency_key")
-        if not key or not isinstance(key, str):
-            errors.append(field_error(f"{prefix}.idempotency_key", "required"))
-        return errors
+                return None
 
-    # ── webhooks ──────────────────────────────────────────────────────────────────────────────
+        @staticmethod
+        def parse_json(raw: bytes | None):
+            if raw is None:
+                return None
+            try:
+                return json.loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return None
 
-    def _webhook(self, raw: bytes) -> None:
-        try:
-            body = json.loads(raw) if raw else {}
-        except json.JSONDecodeError:
-            body = None
-        if isinstance(body, dict) and body.get("type") == "webhook.verify" \
-                and "challenge" in body:
-            # Registration plumbing, not an event delivery: increments no counter.
-            self._json(200, {"challenge": body["challenge"]})
-            return
-        self.ctx.ledger.bump("received")
-        secret = self.ctx.ledger.secret
-        if not self._signature_ok(self.headers.get("Meridian-Signature"), secret, raw):
-            self.ctx.ledger.bump("rejected")
-            self._error(401, "bad_signature", "webhook signature missing or invalid")
-            return
-        if not isinstance(body, dict) or "id" not in body or "data" not in body:
-            self.ctx.ledger.bump("rejected")
-            self._error(400, "bad_request", "malformed event payload")
-            return
-        outcome = self.ctx.store.apply_event(body)
-        if outcome == "applied":
-            self.ctx.ledger.bump("applied")
-        else:
-            self.ctx.ledger.bump("ignored")
-        self._json(200, {"received": True})
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            if parsed.path in ("/", "/index.html"):
+                return self.static("index.html")
+            if parsed.path in ("/styles.css", "/app.js", "/viz.js"):
+                return self.static(parsed.path[1:])
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            if parsed.path == "/api/health":
+                with state_lock:
+                    webhook = {key: state[key] for key in ("registered", "received", "applied", "ignored", "rejected")}
+                return self.send_json(200, {"status": "ok", "payments": store.count(), "last_sync": store.last_sync(), "webhook": webhook})
+            if parsed.path == "/api/summary":
+                return self.send_json(200, store.summary())
+            if parsed.path == "/api/buckets":
+                cells = store.buckets()
+                days = list(dict.fromkeys(cell["day"] for cell in cells))
+                return self.send_json(200, {"timezone": "Europe/Berlin", "days": days, "statuses": list(STATUSES), "cells": cells})
+            if parsed.path == "/api/payments":
+                return self.payments(query)
+            parts = parsed.path.split("/")
+            if len(parts) == 4 and parts[:3] == ["", "api", "payments"] and parts[3]:
+                payment = store.get(parts[3])
+                return self.send_json(200, payment) if payment else self.error("not_found", "Payment was not found")
+            self.error("not_found", "Path was not found")
 
-    @staticmethod
-    def _signature_ok(header: Optional[str], secret: Optional[str], raw: bytes) -> bool:
-        if not header or not secret:
-            return False
-        parts = dict(part.split("=", 1) for part in header.split(",") if "=" in part)
-        stamp, signature = parts.get("t"), parts.get("v1")
-        if not stamp or not signature:
-            return False
-        expected = hmac.new(secret.encode(), f"{stamp}.".encode() + raw,
-                            hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
+        def static(self, filename: str):
+            path = WEB_ROOT / filename
+            if not path.is_file():
+                return self.error("not_found", "Asset was not found")
+            raw = path.read_bytes()
+            content_types = {"index.html": "text/html; charset=utf-8", "styles.css": "text/css; charset=utf-8", "app.js": "application/javascript; charset=utf-8", "viz.js": "application/javascript; charset=utf-8"}
+            self.send_response(200)
+            self.send_header("Content-Type", content_types[filename])
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
 
+        def payments(self, query):
+            fields = []
 
-def register_webhook(ctx: AppContext, port: int, attempts: int = 5, delay: float = 1.0) -> bool:
-    """Register with the vendor AFTER the server is listening; tolerate a briefly unreachable
-    vendor at boot (the app serves local data regardless)."""
-    url = f"http://127.0.0.1:{port}/api/webhooks/meridian"
-    for i in range(attempts):
-        try:
-            result = ctx.client.register_webhook(url)
-            with ctx.ledger.lock:
-                ctx.ledger.secret = result["secret"]
-                ctx.ledger.registered = True
-            return True
-        except MeridianError:
-            if i < attempts - 1:
-                threading.Event().wait(delay)
-    return False
+            def number(name: str, default: int) -> int:
+                raw = query.get(name, [str(default)])[0]
+                try:
+                    result = int(raw)
+                except (TypeError, ValueError):
+                    fields.append({"path": name, "code": "not_an_integer"})
+                    return default
+                if result < 0:
+                    fields.append({"path": name, "code": "not_positive"})
+                    return default
+                return result
 
+            limit, offset = number("limit", 50), number("offset", 0)
+            limit = min(limit, 200)
+            status = query.get("status", [None])[0]
+            currency = query.get("currency", [None])[0]
+            sort = query.get("sort", ["created_at"])[0]
+            if status is not None and status not in STATUSES:
+                fields.append({"path": "status", "code": "unsupported"})
+            if currency is not None and currency not in CURRENCIES:
+                fields.append({"path": "currency", "code": "unsupported"})
+            if sort not in SORTS:
+                fields.append({"path": "sort", "code": "unsupported"})
+            if fields:
+                return self.error("bad_request", "One or more parameters are invalid", fields)
+            rows, total = store.query(limit, offset, status, currency, sort)
+            self.send_json(200, {"data": rows, "total": total, "limit": limit, "offset": offset})
 
-def serve(port: int, store: Store, client: MeridianClient) -> Tuple[ThreadingHTTPServer, AppContext]:
-    ctx = AppContext(store, client)
-    handler = type("BoundHandler", (Handler,), {"ctx": ctx})
-    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+        def method_not_allowed(self):
+            self.error("bad_request", "HTTP method is not supported")
+
+        def do_PUT(self):
+            self.method_not_allowed()
+
+        def do_DELETE(self):
+            self.method_not_allowed()
+
+        def do_PATCH(self):
+            self.method_not_allowed()
+
+        def do_HEAD(self):
+            self.method_not_allowed()
+
+        def do_OPTIONS(self):
+            self.method_not_allowed()
+
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            if parsed.path == "/api/webhooks/meridian":
+                return self.webhook()
+            if parsed.path == "/api/sync":
+                # Consume a possible body so an HTTP/1.1 keep-alive connection stays aligned.
+                if self.read_raw() is None:
+                    return self.error("bad_request", "Request body is too large", [{"path": "body", "code": "bad_format"}])
+                return self.sync()
+            raw = self.read_raw()
+            body = self.parse_json(raw)
+            if body is None:
+                return self.error("bad_request", "Request body must be JSON", [{"path": "body", "code": "bad_format"}])
+            if parsed.path == "/api/payments/batch":
+                return self.batch(body)
+            parts = parsed.path.split("/")
+            if len(parts) == 5 and parts[:3] == ["", "api", "payments"] and parts[3] and parts[4] == "note":
+                return self.note(parts[3], body)
+            self.error("not_found", "Path was not found")
+
+        def sync(self):
+            with sync_lock:
+                try:
+                    payments = client.fetch_all_payments()
+                    inserted, updated = store.upsert_many(payments)
+                    store.set_last_sync(now_utc())
+                    self.send_json(200, {"fetched": len(payments), "inserted": inserted, "updated": updated, "total": store.count()})
+                except MeridianError:
+                    self.error("vendor_unavailable", "Meridian is temporarily unavailable")
+                except Exception:
+                    self.error("vendor_unavailable", "Meridian returned invalid data")
+
+        def note(self, payment_id: str, body):
+            note = body.get("note") if isinstance(body, dict) else None
+            fields = []
+            if not isinstance(note, str):
+                fields.append({"path": "note", "code": "required"})
+            elif not note:
+                fields.append({"path": "note", "code": "required"})
+            elif not note.strip():
+                fields.append({"path": "note", "code": "bad_format"})
+            elif len(note) > 280:
+                fields.append({"path": "note", "code": "too_long"})
+            if fields:
+                return self.error("bad_request", "Note is invalid", fields)
+            old = store.get(payment_id)
+            if not old:
+                return self.error("not_found", "Payment was not found")
+            try:
+                updated = client.update_payment(payment_id, {"note": note}, old["version"])
+            except MeridianConflict:
+                return self.error("conflict", "Payment changed concurrently")
+            except MeridianError:
+                return self.error("vendor_unavailable", "Meridian is temporarily unavailable")
+            store.upsert_many([updated])
+            persisted = store.get(payment_id)
+            if not persisted or persisted["version"] > updated["version"]:
+                return self.error("conflict", "Payment changed concurrently")
+            self.send_json(200, {"id": updated["id"], "note": updated["note"], "version": updated["version"]})
+
+        def batch(self, body):
+            items = body.get("items") if isinstance(body, dict) else None
+            if items is None:
+                return self.error("bad_request", "Items are required", [{"path": "items", "code": "required"}])
+            if not isinstance(items, list):
+                return self.error("bad_request", "Items must be an array", [{"path": "items", "code": "bad_format"}])
+            if not items:
+                return self.error("bad_request", "Items are required", [{"path": "items", "code": "required"}])
+            if len(items) > 20:
+                return self.error("bad_request", "Too many items", [{"path": "items", "code": "too_long"}])
+            fields = []
+            for index, item in enumerate(items):
+                prefix = f"items[{index}]"
+                if not isinstance(item, dict):
+                    fields.append({"path": prefix, "code": "bad_format"})
+                    continue
+                amount = item.get("amount")
+                if not isinstance(amount, dict):
+                    fields.append({"path": prefix + ".amount", "code": "required" if amount is None else "bad_format"})
+                else:
+                    value, currency = amount.get("value_minor"), amount.get("currency")
+                    if value is None:
+                        fields.append({"path": prefix + ".amount.value_minor", "code": "required"})
+                    elif isinstance(value, bool) or not isinstance(value, int):
+                        fields.append({"path": prefix + ".amount.value_minor", "code": "not_an_integer"})
+                    elif value <= 0:
+                        fields.append({"path": prefix + ".amount.value_minor", "code": "not_positive"})
+                    if currency is None:
+                        fields.append({"path": prefix + ".amount.currency", "code": "required"})
+                    elif not isinstance(currency, str) or currency not in CURRENCIES:
+                        fields.append({"path": prefix + ".amount.currency", "code": "unsupported"})
+                counterparty = item.get("counterparty")
+                if not isinstance(counterparty, dict):
+                    fields.append({"path": prefix + ".counterparty", "code": "required" if counterparty is None else "bad_format"})
+                else:
+                    name, country = counterparty.get("name"), counterparty.get("country")
+                    if name is None or not isinstance(name, str) or not name:
+                        fields.append({"path": prefix + ".counterparty.name", "code": "required"})
+                    elif len(name) > 80:
+                        fields.append({"path": prefix + ".counterparty.name", "code": "too_long"})
+                    if country is None:
+                        fields.append({"path": prefix + ".counterparty.country", "code": "required"})
+                    elif not isinstance(country, str) or not re.fullmatch(r"[A-Z]{2}", country):
+                        fields.append({"path": prefix + ".counterparty.country", "code": "bad_format"})
+                occurred_at = item.get("occurred_at")
+                if occurred_at is None:
+                    fields.append({"path": prefix + ".occurred_at", "code": "required"})
+                elif not valid_rfc3339(occurred_at):
+                    fields.append({"path": prefix + ".occurred_at", "code": "bad_format"})
+                key = item.get("idempotency_key")
+                if not isinstance(key, str) or not key:
+                    fields.append({"path": prefix + ".idempotency_key", "code": "required"})
+            if fields:
+                return self.error("bad_request", "One or more items are invalid", fields)
+            try:
+                outcomes = client.create_batch(items)
+            except MeridianError:
+                return self.error("vendor_unavailable", "Meridian is temporarily unavailable")
+            if len(outcomes) != len(items):
+                return self.error("vendor_unavailable", "Meridian returned an invalid batch result")
+            results = []
+            for index, outcome in enumerate(outcomes):
+                if not isinstance(outcome, dict):
+                    return self.error("vendor_unavailable", "Meridian returned an invalid batch result")
+                if outcome.get("status") == "created" or isinstance(outcome.get("id"), str):
+                    payment_id = outcome.get("id")
+                    if not isinstance(payment_id, str):
+                        return self.error("vendor_unavailable", "Meridian returned an invalid batch result")
+                    results.append({"index": index, "status": "created", "id": payment_id})
+                else:
+                    item_error = outcome.get("error")
+                    if not isinstance(item_error, dict) or not isinstance(item_error.get("code"), str) or not isinstance(item_error.get("message"), str):
+                        return self.error("vendor_unavailable", "Meridian returned an invalid batch result")
+                    results.append({"index": index, "status": "error", "error": {"code": item_error["code"], "message": item_error["message"]}})
+            succeeded = sum(result["status"] == "created" for result in results)
+            self.send_json(200, {"results": results, "succeeded": succeeded, "failed": len(results) - succeeded})
+
+        def webhook(self):
+            raw = self.read_raw()
+            event = self.parse_json(raw)
+            if isinstance(event, dict) and event.get("type") == "webhook.verify" and isinstance(event.get("challenge"), str):
+                return self.send_json(200, {"challenge": event["challenge"]})
+            with state_lock:
+                state["received"] += 1
+                secret = state["secret"]
+            signature = self.headers.get("Meridian-Signature", "")
+            parts = dict(part.strip().split("=", 1) for part in signature.split(",") if "=" in part)
+            expected = hmac.new((secret or "").encode(), (parts.get("t", "") + ".").encode() + (raw or b""), hashlib.sha256).hexdigest()
+            if not secret or not parts.get("t") or not parts.get("v1") or not hmac.compare_digest(expected, parts["v1"]):
+                with state_lock:
+                    state["rejected"] += 1
+                return self.error("bad_signature", "Webhook signature is invalid")
+            fields = []
+            if not isinstance(event, dict):
+                fields.append({"path": "body", "code": "bad_format"})
+            else:
+                if event.get("type") != "payment.updated":
+                    fields.append({"path": "type", "code": "unsupported"})
+                if not isinstance(event.get("id"), str) or not event["id"]:
+                    fields.append({"path": "id", "code": "required"})
+                data = event.get("data")
+                if not isinstance(data, dict):
+                    fields.append({"path": "data", "code": "required" if data is None else "bad_format"})
+                else:
+                    if not isinstance(data.get("id"), str) or not data["id"]:
+                        fields.append({"path": "data.id", "code": "required"})
+                    version = data.get("version")
+                    if version is None:
+                        fields.append({"path": "data.version", "code": "required"})
+                    elif isinstance(version, bool) or not isinstance(version, int):
+                        fields.append({"path": "data.version", "code": "not_an_integer"})
+                    elif version <= 0:
+                        fields.append({"path": "data.version", "code": "not_positive"})
+            if fields:
+                with state_lock:
+                    state["rejected"] += 1
+                return self.error("bad_request", "Webhook event is invalid", fields)
+            try:
+                result = store.apply_event(event)
+            except (KeyError, TypeError, ValueError):
+                with state_lock:
+                    state["rejected"] += 1
+                return self.error("bad_request", "Webhook event is invalid", [{"path": "data", "code": "bad_format"}])
+            with state_lock:
+                state["applied" if result == "applied" else "ignored"] += 1
+            self.send_json(200, {"received": True})
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, ctx
+    threading.Thread(target=server.serve_forever, daemon=True, name="vspro-http").start()
+    def register() -> None:
+        url = f"http://127.0.0.1:{server.server_port}/api/webhooks/meridian"
+        for _ in range(5):
+            try:
+                registration = client.register_webhook(url)
+                with state_lock:
+                    state["secret"] = registration["secret"]
+                    state["registered"] = True
+                return
+            except MeridianError:
+                threading.Event().wait(1)
+
+    threading.Thread(target=register, daemon=True, name="vspro-webhook-registration").start()
+    return server
