@@ -26735,14 +26735,21 @@ impl GooseAgentDispatcher {
                     // evidence is usually a test the worker was forbidden to read. Rewriting the file
                     // from scratch is also how a repair round REGRESSES work that was already right.
                     "YOU ARE REPAIRING AN EXISTING FILE. It is already written and mostly works — the \
-                     finding below names a PROVEN defect in it. Read the file first, then make the \
-                     SMALLEST edit that removes that defect: use `edit`, keep everything the finding \
-                     does not name, and never re-emit the whole file from memory (that is how a repair \
-                     round destroys work that was already correct). You MAY read any file the finding \
-                     mentions — including the TEST that failed, which is the definition of the expected \
-                     behaviour — and any module whose symbol appears in the error. Fix the side that is \
-                     wrong against the spec, not the side that is easier to edit. Finish by re-running \
-                     the exact command from the finding and confirming THAT passes.\n\n"
+                     finding below names a PROVEN defect in it. ACT ON A CLOCK: your FIRST tool call \
+                     is `read` on the named file; by your THIRD tool call you MUST have made an `edit`. \
+                     MEASURED across four repair attempts on two runs: every worker given this task \
+                     read, planned eloquently, and ended its whole 15-minute budget with ZERO edits — \
+                     the attempt was discarded and the defect survived. Planning is not the deliverable; \
+                     the edit is. Make the SMALLEST edit that removes the defect: use `edit`, keep \
+                     everything the finding does not name, and never re-emit a LARGE file from memory \
+                     (for a file under ~60 lines a full corrected `write` is acceptable and better than \
+                     paralysis). You MAY read any file the finding mentions — including the TEST that \
+                     failed, which is the definition of the expected behaviour. Fix the side that is \
+                     wrong against the spec, not the side that is easier to edit. Then re-run the exact \
+                     command from the finding and confirm THAT passes. A turn that ends with ZERO file \
+                     modifications FAILS, is retried, and wastes a fleet slot — an imperfect edit that \
+                     the gate rejects costs nothing (your work runs in a shadow; only a strictly better \
+                     tree is kept), so there is NO reason to withhold an edit.\n\n"
                         .to_string()
                 } else if is_asset_owner {
                     "WRITE FIRST. Your owned file(s) are STATIC ASSETS (frontend/docs) — no \
