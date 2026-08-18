@@ -12485,7 +12485,6 @@ const PITFALL_TRIGGERS: &[&[&str]] = &[
     &[
         "etag",
         "if-none-match",
-        "304",
         "conditional request",
         "next_cursor",
         "fetch_all",
@@ -19977,6 +19976,12 @@ fn wedged_after_populating(empty_code: u16, populated_code: u16) -> bool {
 /// and the hang finding that quotes it can never drift apart.
 const POST_PROBE_SECS: u64 = 20;
 
+/// How long a SILENT mutating endpoint gets to prove it is merely slow before the gate calls it a
+/// hang. Deliberately past the far end of the scorer's own performance ladder (which still grades a
+/// sync at 180s) and well past the spec's stated budget, because the cost of being wrong here is a
+/// repair agent sent to rewrite the request loop of a client that works.
+const HANG_CONFIRM_SECS: u64 = 200;
+
 async fn probe_advertised_get(
     port: u16,
     spec: &str,
@@ -20263,7 +20268,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     }
     // FIRST PASS: the app as freshly started — EMPTY. Records which finding KINDS each path already
     // produced, so the populated pass below reports only what an empty app could not reveal.
-    let mut empty_pass: std::collections::HashMap<String, std::collections::HashSet<&'static str>> =
+    let mut empty_pass: std::collections::HashMap<String, std::collections::HashSet<String>> =
         std::collections::HashMap::new();
     let mut empty_codes: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
     for path in &gets {
@@ -20279,9 +20284,9 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                     verified += 1;
                 }
                 empty_codes.insert(path.clone(), code);
-                let kinds = empty_pass.entry(path.clone()).or_default();
-                for (kind, text) in found {
-                    kinds.insert(kind);
+                let seen = empty_pass.entry(path.clone()).or_default();
+                for (_, text) in found {
+                    seen.insert(text.clone());
                     findings.push(text);
                 }
             }
@@ -20412,16 +20417,55 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             // returns, and a single-threaded server wedged behind it. Every downstream check scored
             // zero off this one defect, and the engine's only trace of it was a console-error note.
             if a_code == 0 {
-                findings.push(format!(
-                    "POST {path} NEVER RETURNS — it was still running when the probe's {POST_PROBE_SECS}s \
-                     budget expired, twice. A hang is worse than an error: the endpoint answers \
-                     nothing, and on a single-threaded server every later request queues behind it, so \
-                     the whole app goes dark. Bound EVERY loop that talks to the vendor by a condition \
-                     that must eventually hold — page until the vendor says there is no next page, and \
-                     never treat a response STATUS as a reason to repeat the identical request, because \
-                     an identical request returns the identical status forever. In particular a 304 \
-                     answers 'this exact request is unchanged'; retrying it unchanged loops without end."
-                ));
+                // CONFIRM BEFORE ACCUSING. 20s is the idempotency probe's budget, NOT the app's:
+                // the spec allows this sync 60s, the scorer still grades one at 180s, and the vendor
+                // forces several seconds of mandatory Retry-After sleeps on any client that obeys it.
+                // Calling a 35s sync a hang would send a repair agent into the conditional-request
+                // path of a client that is merely slow — the precise false finding this gate has
+                // produced before. So a silent POST buys exactly one more call, with a budget past
+                // the far end of the scorer's own ladder, and only silence THERE is a hang.
+                let mut confirm = tokio::process::Command::new("curl");
+                let long = HANG_CONFIRM_SECS.to_string();
+                confirm.args([
+                    "-s",
+                    "-w",
+                    "\n%{http_code}",
+                    "-X",
+                    "POST",
+                    "-m",
+                    &long,
+                    &url,
+                ]);
+                let confirmed = smoke_output(confirm, HANG_CONFIRM_SECS + 10).await;
+                let c_code = confirmed
+                    .as_ref()
+                    .map(|o| split_curl_status(&String::from_utf8_lossy(&o.stdout)).1)
+                    .unwrap_or(0);
+                if c_code == 0 {
+                    findings.push(format!(
+                        "POST {path} NEVER RETURNS — it was still running after {POST_PROBE_SECS}s, and \
+                         still running after a further {HANG_CONFIRM_SECS}s, which is past the far end \
+                         of this spec's own performance budget. A hang is worse than an error: the \
+                         endpoint answers nothing, and on a single-threaded server every later request \
+                         queues behind it, so the whole app goes dark. Bound EVERY loop that talks to \
+                         the vendor by a condition that must eventually hold — page until the vendor \
+                         says there is no next page — and never re-issue an identical request because \
+                         of the STATUS it returned, because an identical request returns the identical \
+                         status forever. A conditional request answers 'this exact request is \
+                         unchanged'; retrying it unchanged loops without end."
+                    ));
+                } else {
+                    inconclusive.push(format!(
+                        "spec-contract: POST {path} did not answer within {POST_PROBE_SECS}s but DID \
+                         complete on a longer call — too slow to judge idempotency from these samples, \
+                         and NOT proven broken. Do not 'fix' the app for this."
+                    ));
+                }
+                // Whatever the outcome, the two samples above are empty, so every body-comparison
+                // below would read them as a missing response shape and push a second finding that
+                // contradicts the first — telling a fixer to edit the return payload of a handler
+                // that never reaches its return statement.
+                continue;
             } else if a_code >= 500 {
                 findings.push(format!(
                     "POST {path} returned {a_code} — the spec advertises this endpoint and it \
@@ -20527,6 +20571,72 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                              that the writer and reader share one database path/connection."
                         ));
                     }
+                }
+            }
+        }
+    }
+    // SECOND PASS: the same advertised reads, now that the POST wave has actually populated the app.
+    //
+    // PLACED HERE, immediately after the POST wave and BEFORE the render gate, and the ordering is
+    // load-bearing. The render gate drives a real browser through the sync and gives up after ~70s;
+    // when it does, the browser's socket closes but the app's handler is STILL INSIDE that sync. A
+    // pass running after it would find every advertised path silent on a single-threaded server and
+    // report each one as its own dead endpoint — five or six confident findings, each telling a
+    // repair agent to go audit a read path that is fine, on exactly the builds whose sync is slow.
+    // The guard below (`post_ok`) was measured too early to prevent that; moving the pass is what
+    // prevents it.
+    if post_ok > 0 {
+        // A DEAD CHILD IS NOT A DEAD ENDPOINT. If the app process exited during the sync, every
+        // subsequent connection is refused and looks identical to a wedge — but the remediation
+        // ("audit the code path that reads stored rows") would point at the wrong thing entirely.
+        let child_alive = !matches!(child.try_wait(), Ok(Some(_)));
+        let mut dark: Vec<String> = Vec::new();
+        let mut fresh: Vec<String> = Vec::new();
+        for path in &gets {
+            match probe_advertised_get(port, spec, path, true).await {
+                None => inconclusive.push(format!(
+                    "spec-contract: curl of GET {path} did not complete on the populated re-probe"
+                )),
+                Some((code, found)) => {
+                    let was = empty_codes.get(path).copied().unwrap_or(0);
+                    if wedged_after_populating(was, code) {
+                        dark.push(path.clone());
+                        continue;
+                    }
+                    let seen = empty_pass.get(path);
+                    for (_, text) in found {
+                        // Deduped on the FINDING TEXT, not its coarse kind: an endpoint that
+                        // documents several keys can violate the same rule on a different key, and
+                        // kind-level dedup would silently swallow the second one.
+                        if seen.is_some_and(|k| k.contains(&text)) {
+                            continue;
+                        }
+                        fresh.push(text);
+                    }
+                }
+            }
+        }
+        findings.extend(fresh);
+        if !dark.is_empty() {
+            let all_dark = dark.len() == gets.len();
+            if !child_alive {
+                inconclusive.push(format!(
+                    "spec-contract: the app process EXITED during the advertised sync, so the                      populated re-probe of {} could prove nothing about its read paths",
+                    dark.join(", ")
+                ));
+            } else if all_dark {
+                // EVERY advertised read going dark at once is one story about the server, not N
+                // stories about N endpoints. Reported as one finding so the fix round sees one
+                // defect instead of a cascade of that defect's symptoms.
+                findings.push(format!(
+                    "EVERY advertised read ({}) answered while the app was EMPTY and then returned                      NOTHING AT ALL once it held rows — one sync in between, same process. The whole                      server is stuck or dead, not one endpoint: on a single-threaded server an                      unhandled exception or a loop that never terminates inside the sync leaves every                      later request queued behind it forever. Find the loop or the exception in the                      SYNC path first; the read endpoints themselves are almost certainly fine.                      Reproduce with a sync FIRST, then any GET.",
+                    dark.join(", ")
+                ));
+            } else {
+                for path in &dark {
+                    findings.push(format!(
+                        "GET {path} answered while the app was EMPTY and returns NOTHING AT ALL once                          it holds rows — same process, same endpoint, one sync in between, and its                          sibling endpoints still answer. That pair rules out both a slow endpoint and                          a dead server, and points at the code path that reads STORED rows: an                          unhandled exception there kills the connection (a browser shows                          ERR_EMPTY_RESPONSE). Check that every field the response builder reads is one                          the query actually SELECTs. Reproduce with a sync FIRST, then GET {path} — an                          empty app hides this entirely."
+                    ));
                 }
             }
         }
@@ -20705,39 +20815,6 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                         "render-gate: probe did not complete — nothing proven either way"
                             .to_string(),
                     ),
-                }
-            }
-        }
-    }
-    // SECOND PASS: the same advertised reads, now that the POST wave has actually populated the app.
-    // Only classes the empty pass did NOT already report are added, so nothing is double-counted and
-    // a defect visible in both states is still reported exactly once.
-    // Gated on a POST that actually ANSWERED 2xx, not merely on one having been attempted. When the
-    // sync itself hangs, every read behind it times out too, and reporting each of those as its own
-    // broken endpoint would bury the one finding that matters under a cascade of its own symptoms.
-    if post_ok > 0 {
-        for path in &gets {
-            if let Some((code, found)) = probe_advertised_get(port, spec, path, true).await {
-                let was = empty_codes.get(path).copied().unwrap_or(0);
-                if wedged_after_populating(was, code) {
-                    findings.push(format!(
-                        "GET {path} answered {was} while the app was EMPTY and returns NOTHING AT ALL \
-                         once it holds rows — same process, same endpoint, one sync in between. That \
-                         pair rules out a slow endpoint and points at the code path that reads STORED \
-                         rows: an unhandled exception there kills the connection (a browser shows \
-                         ERR_EMPTY_RESPONSE) and, on a single-threaded server, wedges every request \
-                         after it. Check that every field the response builder reads is one the query \
-                         actually SELECTs, and that no loop over vendor pages can fail to terminate. \
-                         Reproduce with a sync FIRST, then GET {path} — an empty app hides this."
-                    ));
-                    continue;
-                }
-                let seen = empty_pass.get(path);
-                for (kind, text) in found {
-                    if seen.is_some_and(|k| k.contains(kind)) {
-                        continue;
-                    }
-                    findings.push(text);
                 }
             }
         }
