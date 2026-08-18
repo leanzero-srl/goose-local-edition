@@ -20394,3 +20394,56 @@ pinned by a test built from run 8's three real finding strings and its real owne
 DOMAIN_PITFALLS gains the conditional-request fact (per-page validators, 304 means "this page is
 unchanged, continue", never re-issue an identical request because of its status, drop validators
 when pagination restarts) so the author receives it before writing the fetch loop.
+
+## F882
+
+RUN 9 ROUND 0, WATCHED LIVE: two findings, both describing file-anchored work, attributed to
+NOTHING — so the round raced whole-tree twins. The routing rule was right; the attribution layer
+was blind to the two most common finding shapes this regime produces. (1) `pytest -q` names the
+failing file ONLY as a node id with a status word in front — `ERROR tests/test_api.py::TestX::t -
+AttributeError`, fifteen such lines in the finding — and the extractor's line-leading split saw
+"ERROR tests/test_api.py" (embedded space) and rejected it. (2) The gate's own NotCheap finding
+carried the complete per-page ETag remediation and named no file at all. Fixed both (fbbc9ac9b):
+`::`-token heads parse as paths; every client-behaviour finding carries "The vendor client lives
+in `<file>` — fix it there", derived from the spec's module table. Regression test built from the
+round's real texts. POSTSCRIPT: the race that round 0 ran anyway PROMOTED — twin 0 re-verified 1
+vs baseline 2 and landed 14 files, the first whole-tree promotion in 13 lifetime attempts; round 1
+opened at 1 finding.
+
+## F883
+
+THE ULTRACODE HUNT (5 scoped adversarial finders + 2-lens refutation over the six-commit delta and
+run 9's live telemetry; 27 findings, ZERO refuted). The engine/desktop fixes all landed in
+faa2dc79f; the headline classes:
+
+- GRADE-WHAT-LANDS: all four shard/twin grades judged the WHOLE shadow while promote copies only
+  owned files (+ creations) — no-op promotions and torn-edit halves were structurally possible,
+  and the fan arm graded with run_smoke_gate, a SUBSET of its own composite baseline (a zero-edit
+  shadow promoted every wave). grade_promotion_preview composes exactly what promote would copy,
+  grades that with the round's full ruler, and refuses byte-identical shadows.
+- THE GUTTING TRAP: a pytest finding shards onto its TEST file, where the only landable
+  improvement is weakening the tests. Shards now also own the module under test when it is free.
+- FALSE ACCUSATIONS: the b-sample's status was discarded (a second-call-only hang — the exact
+  ETag-loop signature — filed "missing documented fields" against a correct handler); pass-1/2
+  dedup could never fire (the populated pass appends a HOLDS-ROWS clause to every text); a
+  slow-but-completing sync silently disabled pass 2; a confirm that 5xxed was filed "NOT proven
+  broken". All four directions fixed.
+- Also: pytest retry arithmetic that could not outlast a sibling's port hold; the port rule
+  de-coupled from the kind-prompt lever and scoped to BINDING (the over-broad form made obedient
+  workers delete the spec's own contract assertions); fix-round scheduler no longer runs testgen
+  idle-fill (real-tree writes mid-wave); the digest codec made truly injective (~t/~s/~b) in all
+  three implementations; desktop publish freezes screenshots WITH the result row (the workdir is
+  reused+wiped, so publish could attach a different run's shots to this row's score).
+
+DEFERRED, recorded not dropped: (a) the deterministic accept can launder a stalled-but-broken
+test-owning task into done when the stall outlives the observation window — run 9 was rescued by
+complete_verify, which is the working backstop; surgery on the accept path is queued behind run
+10's evidence. (b) cap geometry does not charge gate time (a hanging POST costs ~260s/round of
+uncounted verify wall) — LOW, revisit if run 10's rounds start losing their budget to it.
+
+RUN 9 APP DEFECTS the hunt confirmed (the swarm's own job, listed so the score reads honestly):
+frontend `total` ReferenceError throws on every data render (error state shown); meridian 410
+branch re-sends the dead cursor; single collection-wide ETag with truncation-on-304 risk;
+pagination/filter operate on the first 25 fetched rows only; summary serves offset-bearing
+timestamps; CLI Ctrl+C AttributeError; /api/sync unguarded on vendor failure. Round 0's promoted
+twin already fixed part of this; the run continues.
