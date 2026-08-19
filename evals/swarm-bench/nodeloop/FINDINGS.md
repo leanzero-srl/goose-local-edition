@@ -20614,3 +20614,24 @@ number, exactly": 0.88 x core + 0.12 x gate x excellence with every condition as
 chip; the methodology page documents the task, the composition, and all 69 checks generated
 from scorer source and spot-verified. Fleet r2 (3h, 0.0591, another never-binds app) is the
 wall-time hunt's exhibit A — that investigation runs as wf_6f500588.
+
+## F900 — The 180-minute wall accounted to the minute; five mechanical governors, no time hardcodes
+
+Mihai (05:00): "3 hours is a whole load for nothing... I am forbidding any kind of hard code of
+any time, I want actual gains." The 20-agent accounting of all three sb-6 runs (wf_6f500588)
+put the wall where it lives — r0: 34.1 min to first dispatch (3× 420s detail fallbacks on the
+three HARDEST modules, which then went to build with 600-char briefs), 63.6-min build DAG
+carrying two 4-attempt death ladders (web-viz 32.2 + test-meridian 32.7 worker-min, both FAILED,
+and their failure is what dragged the 80.6-min gates/fix phase in), fix round 0 at 69.1 min = 39%
+of wall running 1.5 tasks in flight on 3 nodes, then a 9-min doomed round reaped by the wall.
+Review lanes bought nothing: tail_review 92 min → 2 findings (dropped at the cut), pre_review
+84 min → 0. Twelve structural proposals, 9 kept by per-proposal adversarial refutation, 5
+implemented and re-reviewed 5/5 SOUND (bba4160d7): judge observe-only in fix rounds; progress-
+gated kills (owned-file fingerprint between kills, action=kill_withheld); relax-through-failure
+for file-less dependents (the never-binds boot defect becomes an IN-RUN finding — 2 of 3 runs
+shipped that defect blind); headroom stop (the extension path's own fix_cap_eff predicate on
+every round); zero-promotion convergence (byte-identical tree proven — every fix-round write
+path routes through the promotions counter — so the phase ends instead of re-measuring into a
+stall exit). Remaining KEPT-not-yet-implemented (day shift): detail-once/defer_detail,
+contracts-into-detail-fan work-stealing, transient-retry session resume, and the r2 boot-defect
+class needs the relax-through mechanism proven live. r3 is the sub-120 test on this binary.
