@@ -4439,6 +4439,9 @@
   "telemetrySettings.updateError": {
     "defaultMessage": "टेलीमेट्री सेटिंग अपडेट करने में विफल."
   },
+  "themeSelector.aura": {
+    "defaultMessage": "Aura"
+  },
   "themeSelector.dark": {
     "defaultMessage": "अंधेरा"
   },

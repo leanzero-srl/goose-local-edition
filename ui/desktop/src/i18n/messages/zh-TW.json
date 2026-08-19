@@ -4439,6 +4439,9 @@
   "telemetrySettings.updateError": {
     "defaultMessage": "無法更新遙測設定。"
   },
+  "themeSelector.aura": {
+    "defaultMessage": "Aura"
+  },
   "themeSelector.dark": {
     "defaultMessage": "深色"
   },

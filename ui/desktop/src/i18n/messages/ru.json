@@ -4439,6 +4439,9 @@
   "telemetrySettings.updateError": {
     "defaultMessage": "Не удалось обновить настройки телеметрии."
   },
+  "themeSelector.aura": {
+    "defaultMessage": "Aura"
+  },
   "themeSelector.dark": {
     "defaultMessage": "Темная"
   },
