@@ -431,15 +431,15 @@ behavior can convert its own failure into a refusal.
 | `race_mutations[k]` | exactly 4 target ids per trigger page: 2 from already-served pages, 2 from not-yet-served (well-defined now that page size is server-fixed) | [A] |
 | `race_order[k]` | per trigger page, seeded flag: webhooks-before-page-flush or page-flush-then-webhooks-before-next-request (§4.3 barriers; 2 of each across the 4 pages) | [A] |
 | `refund_txn` | one (payment, reversal) pair, target from an already-served page | [A] |
-| `ooo_pair` | one payment given two bumps, v+2 delivered before v+1 | [U] |
-| `dup_event` | one event id delivered twice | [U] |
-| `forged_event` | one delivery with a bad signature | [U] |
-| `midwalk_create` | one payment created between k2 and k3 (value-dated in-span, §2.3) | [U] |
+| `ooo_pair` | one payment given two bumps, v+2 delivered before v+1; rides a seeded race page of sync #1 | [A] |
+| `dup_event` | one event id delivered twice; rides a seeded race page of sync #1 | [A] |
+| `forged_event` | one delivery with a bad signature; rides a seeded race page of sync #1 | [A] |
+| `midwalk_create` | one payment created between k2 and k3 (value-dated in-span, §2.3); fires when the walk reaches k2 | [A] |
 | `drop_after_page: j` | connection dropped after page `j ∈ [2, 191]`, `j ∉ race_pages`, sync #1 | [A] |
 | `http500_page: j2` | one 500 + `Retry-After` at page `j2 ∉ race_pages ∪ {j}`, sync #1 | [A] |
 | `sigkill_after_list: n` | SIGKILL ledgerd after the n-th list response of sync #2, `n ∈ [2, 5]` | [A] |
 | `vendor_down_boot_secs: w` | `w ∈ [3, 8]` — vendor refuses connections for the first `w` s of boot | [U] |
-| `stale_304_sync: s` | which post-mutation sync gets the armed stale-validator 304, `s ∈ {3, 4}` | [A] |
+| `stale_304_sync: s` | `s ∈ {3, 4}`: the (s−2)-th sync that PRESENTS a stale conditional gets the armed stale-validator 304 (keying on staleness, never wall order — the arm cannot land on a sync whose validator is genuinely current) | [A] |
 | `partition_after_event: X` | notifierd killed once its durable processed set reaches ledger seq ≥ X | [U] |
 | `partition_commits` | **K = 8 exactly** (frozen count; seeded contents), ≥ 3 outbox-crossing, committed while the notifier is down | [U] |
 | `approval_fixture` | 3 draft payloads (seeded amounts/currencies) + kill placements A1/A2 (§4.5) | [U] |
@@ -600,7 +600,7 @@ replay-verified. All graded behaviors are placement-independent.
 | B2 | One 500 + `Retry-After` at page `j2`, sync #1 | vendor [A] | single documented retry, then continue; never a fresh unconditional restart of committed work |
 | B3 | SIGKILL ledgerd after the n-th list response of sync #2; restart; re-sync | driver [A] | convergence to L4/M3; no duplicates (idempotent upsert); clean cursor restart |
 | B4 | Vendor refuses connections for first `w` s of boot | driver [U] | app binds, serves local data, UI shows degraded/error states; first post-recovery sync succeeds with no operator action |
-| B5 | Stale-validator 304 at sync `s`: vendor answers `304` to the app's conditional request while carrying `X-Collection-Generation: g2` ≠ the stored generation. Docs: a 304 whose generation disagrees with your stored generation is a cache miss — drop the validator and refetch unconditionally, once | vendor [A] | exactly one unconditional refetch in the trace; mutations propagate; > 3 identical conditional requests in the window = the infinite-loop bug, scored; never stale served as fresh |
+| B5 | Stale-validator 304 on the (s−2)-th stale-conditional-presenting sync (`s ∈ {3, 4}`): vendor answers `304` to the app's STALE conditional request while carrying `X-Collection-Generation: g2` ≠ the stored generation. Docs: a 304 whose generation disagrees with your stored generation is a cache miss — drop the validator and refetch unconditionally, once | vendor [A] | exactly one unconditional refetch in the trace; mutations propagate; > 3 identical conditional requests in the window = the infinite-loop bug, scored; never stale served as fresh |
 | B6 | SIGKILL ledgerd between an outbox commit and its relay delivery (arranged inside the B7 partition: notifier down, `pending > 0`, kill, restart, heal) | driver [U] | restart resumes the relay from durable outbox rows; notifier dedupes; every committed event delivered exactly once; none lost — the dual-write trap detector |
 | B7 | Notifier partition: SIGKILL notifierd at durable processed ≥ X; ledgerd commits K = 8 events (≥ 3 outbox-crossing) while it is down; restart notifierd | driver [U] | user writes never block; `/api/outbox/status` reports `"down"` + growing `pending`; UI shows `data-state="degraded"`; after heal the relay catches up in seq order, exactly-once on the processed set; notification multiset matches the scorer's computation; UI back to `"live"` ≤ 5 s, no reload |
 | B8 | Workflow kills A1/A2 (§4.5) | driver [U] | submitted/approved states durable across SIGKILL; exactly one vendor payment per approved draft (idempotency-key reuse on retry); no revert, no dupe |

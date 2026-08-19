@@ -39,7 +39,9 @@ PARTITION_COMMITS_K = 8            # frozen count; seeded contents; >= 3 outbox-
 PARTITION_VENDOR_FLIPS = 5         # the non-crossing 5 of the 8 (3 crossing ride workflow F3)
 SIGKILL_AFTER_LIST_BAND = (2, 5)   # n-th list response of sync #2
 VENDOR_DOWN_BOOT_BAND = (3, 8)     # w seconds
-STALE_304_SYNC_CHOICES = (3, 4)    # which post-mutation sync gets the armed lying 304
+STALE_304_SYNC_CHOICES = (3, 4)    # s: the (s-2)-th sync that PRESENTS a stale conditional
+                                   # gets the armed lying 304 (ordinals 3/4 map to the 1st/2nd
+                                   # stale-presenting sync — staleness, not wall order, arms it)
 PARTITION_AFTER_EVENT_BAND = (2, 64)  # ledger-seq threshold X; any durable outbox-crossing
                                       # delivery satisfies it (seqs run ~N), and kill-placement
                                       # honesty (§4.1) makes grading placement-independent
@@ -51,9 +53,12 @@ MUTABLE_STATUSES = ("settled", "pending", "failed")   # race/partition flips nev
                                                       # "refunded" — only the refund txn
                                                       # does, paired with its reversal (M2)
 
+# ooo_pair/dup_event/forged_event/midwalk_create ride seeded race pages of sync #1 — their
+# firing needs the app's walk to reach those pages, so they are [A], not [U] (an app that
+# never syncs must zero the dependent rungs, never convert into a structural refusal).
 CLASS: Dict[str, str] = {
     "race_pages": "A", "race_mutations": "A", "race_order": "A", "refund_txn": "A",
-    "ooo_pair": "U", "dup_event": "U", "forged_event": "U", "midwalk_create": "U",
+    "ooo_pair": "A", "dup_event": "A", "forged_event": "A", "midwalk_create": "A",
     "drop_after_page": "A", "http500_page": "A", "sigkill_after_list": "A",
     "vendor_down_boot_secs": "U", "stale_304_sync": "A", "partition_after_event": "U",
     "partition_commits": "U", "approval_fixture": "U", "tokens": "U",

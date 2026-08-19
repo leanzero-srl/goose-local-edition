@@ -5,8 +5,10 @@
 // Exit 0 always, including failed checks and the hard cap (timedOut:true);
 // nonzero exit only when the probe itself crashes (or --selfcheck fails).
 //
-// SCENARIO TABLE (the contract score_sb7.py's gather consumes — its docstring + AFFORDANCE_
-// ROSTER are the authority: boot | load | sync | flow | error | viz | feed):
+// SCENARIO TABLE — THIS list is the single authority (score_sb7.py's gather invokes a subset
+// of exactly these names and must keep to them): boot | load | sync | flow | error | viz | feed.
+// gather stores the boot emit under its "empty" evidence key; coast + stream evidence ride
+// the viz emit (coast/stream/d1/streamApplied sections) — there are no separate scenarios.
 //   boot    pre-sync-#1 first paint: D3 corner evidence (empty-with-progress
 //           vs block), #notifications state (evidence key: preSyncState)     → j_empty_state, d_decisions_doc
 //   load    first-use journey: rendered rows (evidence key: tableRendered),
@@ -1385,8 +1387,8 @@ function pageDraftFormFill(arg) {
   const fields = Array.from(form.querySelectorAll('input, textarea, select'));
   const nameOf = (el) => ((el.name || '') + ' ' + (el.id || '') + ' ' +
     (el.getAttribute('placeholder') || '') + ' ' + (el.getAttribute('aria-label') || '')).toLowerCase();
-  const set = (re, value) => {
-    const el = fields.find((f) => re.test(nameOf(f)));
+  const set = (re, value, exclude) => {
+    const el = fields.find((f) => re.test(nameOf(f)) && (!exclude || !exclude.test(nameOf(f))));
     if (!el) return false;
     if (el.tagName === 'SELECT') {
       const opt = Array.from(el.options).find((o) =>
@@ -1402,10 +1404,17 @@ function pageDraftFormFill(arg) {
     fire(el);
     return true;
   };
+  // counterparty is {name, country} (spec: separate name/country inputs, country ^[A-Z]{2}$);
+  // a legacy string counterparty fills the name field alone.
+  const cp = arg.counterparty;
+  const cpName = cp && typeof cp === 'object' ? cp.name : cp;
+  const cpCountry = cp && typeof cp === 'object' ? cp.country : null;
   const filled = {
     amount: set(/amount/, arg.amount_minor),
-    currency: set(/currenc/, arg.currency),
-    counterparty: set(/counterpart|payee|recipient|beneficiar/, arg.counterparty),
+    currency: set(/currenc/, arg.currency, /countr/),
+    counterparty: set(/counterpart|payee|recipient|beneficiar|name/, cpName,
+                      /country|currenc|amount|note/),
+    country: cpCountry == null ? null : set(/country/, cpCountry),
     note: set(/note|memo|desc/, arg.note),
   };
   let submitted = false;
@@ -1842,8 +1851,10 @@ async function flowScenario(page, tokens, pack, H) {
   const drafts = (pack && pack.approval && Array.isArray(pack.approval.drafts) && pack.approval.drafts.length >= 2)
     ? pack.approval.drafts
     : [
-        { amount_minor: 125000, currency: 'EUR', counterparty: 'Probe Rig F1', note: 'probe draft F1' },
-        { amount_minor: 98000, currency: 'USD', counterparty: 'Probe Rig F2', note: 'probe draft F2' },
+        { amount_minor: 125000, currency: 'EUR',
+          counterparty: { name: 'Probe Rig F1', country: 'DE' }, note: 'probe draft F1' },
+        { amount_minor: 98000, currency: 'USD',
+          counterparty: { name: 'Probe Rig F2', country: 'US' }, note: 'probe draft F2' },
       ];
 
   const HOLD_MS = 800;
@@ -1932,21 +1943,36 @@ async function flowScenario(page, tokens, pack, H) {
   const subClick = await page.evaluate(pageDraftAction, { id: f1Id, kind: 'submit' })
     .catch(() => ({ clicked: false }));
   const submitted = await pollState(f1Id, 'submitted', 8000);
-  merge({ f1Submit: { ...subClick, ...submitted, requestsSeen: held.submits } });
+  merge({ f1Submit: { ...subClick, ...submitted, requestsSeen: held.submits },
+          submitCausal: { clicked: !!subClick.clicked, reached: !!submitted.reached,
+                          state: submitted.state, requestsSeen: held.submits } });
 
   await setRole(tokens.checker);
   const approveClick = await page.evaluate(pageDraftAction, { id: f1Id, kind: 'approve' })
     .catch(() => ({ clicked: false }));
-  await sleep(250);                                      // inside the hold window
-  const midList = await page.evaluate(pageDraftList).catch(() => ({ rows: [] }));
-  const midRow = (midList.rows || []).find((r) => r.id === f1Id);
+  // optimistic paint, measured: poll the list inside the hold window; paintMs is the time to
+  // the first 'approved' row seen while the POST is still provably held.
+  const tApprove = Date.now();
+  let paintMs = null, midRow = null;
+  while (Date.now() - tApprove < HOLD_MS - 60) {
+    const l = await page.evaluate(pageDraftList).catch(() => ({ rows: [] }));
+    const row = (l.rows || []).find((r) => r.id === f1Id);
+    if (row) midRow = row;
+    if (row && row.state === 'approved' && held.releasedAt == null) {
+      paintMs = Date.now() - tApprove;
+      break;
+    }
+    await sleep(60);
+  }
   const heldDuringCheck = held.approves > 0 && held.releasedAt == null;
-  merge({ optimisticPaint: {
+  const approved = await pollState(f1Id, 'approved', 12000);
+  merge({ optimistic: {
     holdMs: HOLD_MS, requestSeen: held.approves, heldDuringCheck,
     stateWhileHeld: midRow ? midRow.state : null,
-    paintedWhileHeld: heldDuringCheck && !!midRow && midRow.state === 'approved',
+    paintedWhileHeld: paintMs != null,
+    paintMs,
+    savedAfterRelease: !!approved.reached,
   } });
-  const approved = await pollState(f1Id, 'approved', 12000);
 
   // vendor round-trip: the approved payment lands in the table; the feed shows the journey
   let paymentAppeared = false, rowsAfter = null;
@@ -1967,7 +1993,10 @@ async function flowScenario(page, tokens, pack, H) {
     requestSeen: held.approves > 0, stateAfter: approved.state, reachedApproved: approved.reached,
     paymentAppeared, rowsBefore: tableBefore ? tableBefore.rowCount : null, rowsAfter,
     notificationSeen: /approv/i.test(notifTexts), submittedNotificationSeen: /submit/i.test(notifTexts),
-  } });
+  },
+  // hoisted for the journey checks: top-level booleans, same facts
+  notificationSeen: /approv/i.test(notifTexts),
+  paymentInTable: paymentAppeared });
   await saveShot('flow-approved');
 
   // F2: create, submit, reject; then the D2 resubmit probe
@@ -2281,6 +2310,29 @@ async function vizScenario(page, pack, H) {
       // restore the default distance for everything downstream
       await setCam(cam0 && cam0.yaw != null ? cam0.yaw : V7.yaw0,
                    cam0 && cam0.pitch != null ? cam0.pitch : V7.pitch0, V7.dist0);
+      // pitch clamp: a straight-down drag pushes pitch far past 85 (0.30°/px · ~192 px from
+      // pitch 40 ⇒ unclamped ≈ 97°); a slow release (< 6 px/s) keeps a coast out of it.
+      const pcx = rect.left + rect.w / 2;
+      let pcy = rect.top + Math.max(20, rect.h * 0.15);
+      await page.mouse.move(pcx, pcy);
+      await page.mouse.down();
+      for (let i = 0; i < 12; i++) {
+        pcy += 16;
+        await page.mouse.move(pcx, pcy, { steps: 1 });
+        await sleep(20);
+      }
+      await sleep(250); pcy += 1; await page.mouse.move(pcx, pcy, { steps: 1 });
+      await sleep(250); pcy += 1; await page.mouse.move(pcx, pcy, { steps: 1 });
+      await page.mouse.up();
+      await sleep(300);
+      const cP = await vs7({ want: ['camera'] });
+      const camP = cP.camera && !cP.camera.__err ? cP.camera : null;
+      cameraMath.pitchClamp = {
+        attempted: true,
+        gotPitch: camP && camP.pitch != null ? +camP.pitch.toFixed(3) : null,
+        vpitchAfter: camP ? +(+camP.vpitch || 0).toFixed(2) : null,
+      };
+      await setCam(V7.yaw0, V7.pitch0, V7.dist0);
     } else cameraMath.wheel = { skipped: 'canvas not fully in viewport' };
     merge({ cameraMath });
   }
@@ -2571,6 +2623,15 @@ async function vizScenario(page, pack, H) {
       okCount: cases.filter((c) => c.within3px && c.colorOk).length,
       total: cases.length,
     } });
+    // explicit projection-error measurement: |rendered top − model-projected top| in device
+    // px across the height cases — the worst is cameraMath's projMaxErrPx.
+    const projDeltas = cases.filter((c2) => c2 && typeof c2.deltaPx === 'number')
+      .map((c2) => Math.abs(c2.deltaPx));
+    if (result.cameraMath) {
+      result.cameraMath.projMaxErrPx = projDeltas.length
+        ? +Math.max(...projDeltas).toFixed(2) : null;
+      result.cameraMath.projSamples = projDeltas.length;
+    }
     await setCam(V7.yaw0, V7.pitch0, V7.dist0);
   }
 
@@ -2887,11 +2948,16 @@ async function vizScenario(page, pack, H) {
       ? await page.evaluate(pageTableRowByld, { id: d1TargetId, click: false })
         .catch(() => ({ found: false }))
       : { found: false };
+    // §3.1 pin: the layout basis must not have moved across the applied batches
+    const layoutAfterRead = await vs7({ want: ['layout'] });
+    const layoutAfterGot = layoutAfterRead.layout && !layoutAfterRead.layout.__err
+      ? layoutAfterRead.layout : null;
     merge({ stream: {
       esUrls: log.esUrls || [], unsupported: !!log.unsupported,
       batchesObserved: entries.length, perBatch, changedPixel,
       digestOkCount: perBatch.filter((b) => b.digestOk === true).length,
       digestGradedCount: perBatch.filter((b) => b.digestOk != null).length,
+      layoutAfter: { got: layoutAfterGot },
     } });
     merge({ streamApplied: {
       observed: entries.length > 0,
@@ -2902,6 +2968,10 @@ async function vizScenario(page, pack, H) {
       targetId: d1TargetId, armedBrushed: d1.brushed, via: d1.via,
       mutationSeen, brushAfter,
       survivedInBrush: !!(d1TargetId != null && brushAfter && brushAfter.includes(d1TargetId)),
+      // survived is the D1-corner OBSERVATION: null unless the target was brushed when a
+      // mutation for it was actually seen — the only case documented-vs-observed can grade.
+      survived: (d1TargetId != null && d1.brushed && mutationSeen && brushAfter)
+        ? brushAfter.includes(d1TargetId) : null,
       rowBrushedAfter: d1Row.found ? d1Row.dataBrushed === 'true' : null,
     } });
   }

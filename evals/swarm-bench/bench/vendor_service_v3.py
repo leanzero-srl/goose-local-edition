@@ -31,11 +31,18 @@ What v3 is, per the sb-7 design:
   the j-th 200-serve of sync #1; resume with the same cursor costs exactly one extra
   request), B2 (one 500 + `Retry-After` on the attempt for page j2 of sync #1), B4
   (`arm_boot_refusal` — connections refused for w seconds while the app boots), B5 (the
-  armed LYING 304 at sync s: a stale conditional is answered 304 with a disagreeing
-  `X-Collection-Generation`; identical repeats keep being lied to, so the only documented
-  exit — ONE unconditional refetch — is observable), and the A2 send-window widener
-  (`arm_hold_create`). B3/B6/B7/B8 kills are driver-side by design; this module provides
-  their vendor halves (`fire_partition_commits`, idempotent creates, durable commit truth).
+  armed LYING 304 on the (s-2)-th sync that PRESENTS a stale conditional, s in {3, 4}:
+  answered 304 with a disagreeing `X-Collection-Generation`; identical repeats keep being
+  lied to, so the only documented exit — ONE unconditional refetch — is observable; keying
+  on staleness rather than wall order means the arm can never land on a sync whose
+  validator is genuinely current), and the A2 send-window widener (`arm_hold_create`).
+  B3/B6/B7/B8 kills are driver-side by design; this module provides their vendor halves
+  (`fire_partition_commits`, idempotent creates, durable commit truth).
+- The documented WRITE surface: `PATCH /v3/payments/<id>` updates the note under If-Match
+  optimistic concurrency (no If-Match -> 428, version mismatch -> 412, match -> version+1
+  commit); cursors embed the collection reset-epoch and a cross-reset cursor gets
+  `410 cursor_expired` (restart the walk from scratch, as documented); payment rows carry
+  `settled_at` (an instant for initially-settled rows, else null).
 - Idempotent `POST /v3/payments`: the vendor VALUE-DATES created payments from the seeded
   in-span slot queue (§2.3 — the 3D layout basis provably never moves) and returns the same
   payment for a reused Idempotency-Key (200 replay). A fresh-key retry of identical content
@@ -108,8 +115,19 @@ def _offset_for_cursor(cursor: Optional[str]) -> int:
         return -1
 
 
-def _cursor_for_offset(offset: int) -> str:
-    return json.dumps({"o": offset}).encode().hex()
+def _epoch_for_cursor(cursor: Optional[str]) -> Optional[int]:
+    """The collection reset-epoch the cursor was issued under (None: opaque/legacy shape)."""
+    if not cursor:
+        return None
+    try:
+        e = json.loads(bytes.fromhex(cursor).decode()).get("e")
+        return int(e) if e is not None else None
+    except Exception:
+        return None
+
+
+def _cursor_for_offset(offset: int, epoch: int = 0) -> str:
+    return json.dumps({"o": offset, "e": epoch}).encode().hex()
 
 
 def _etag_for(generation: int, offset: int) -> str:
@@ -156,6 +174,10 @@ class State:
         self.sync_total: Optional[int] = None      # walk bound captured at sync start
         self.drop_armed = False
         self.stale304 = _fresh_stale304()
+        self.stale_syncs: List[int] = []           # sync ordinals that presented a stale
+                                                   # conditional (B5 arms on the (s-2)-th)
+        self.reset_epoch = 0                       # bumped per _reset_run; cursors embed it
+                                                   # and a cross-reset cursor gets 410
         self.fired: set = set()
         self.pending_barrier: Optional[Dict] = None
         self.inflight = 0                          # async delivery jobs in flight
@@ -212,6 +234,7 @@ def _commit_script_event(st: State, ev: Dict) -> Dict:
         slot = st.fx.value_slots[c["value_slot"]]
         row = {"id": ev.get("row_id", MIDWALK_ID), "amount_minor": c["amount_minor"],
                "currency": c["currency"], "created_at": c["created_at"],
+               "settled_at": None,
                "status": "pending", "version": 1, "note": c["note"],
                "counterparty": dict(c["counterparty"]),
                "_instant": slot["_instant"], "_day": c["day"]}
@@ -533,6 +556,67 @@ class Handler(BaseHTTPRequestHandler):
         self._trace(404)
         self._json(404, {"error": "not_found"})
 
+    def do_PATCH(self):  # noqa: N802
+        """Note update with the documented If-Match dance (v2 lineage): no If-Match -> 428,
+        version mismatch -> 412, match -> note applied, version += 1, commit-ledger line."""
+        assert STATE is not None
+        st = STATE
+        parsed = urlparse(self.path)
+        if not self._gated():
+            return
+        m = re.fullmatch(r"/v3/payments/([A-Za-z0-9_]+)", parsed.path)
+        if not m:
+            self._trace(404)
+            self._json(404, {"error": "not_found"})
+            return
+        with st.lock:
+            row = st.index.get(m.group(1))
+        if row is None:
+            self._trace(404)
+            self._json(404, {"error": "not_found"})
+            return
+        raw_if_match = self.headers.get("If-Match")
+        body = self._body()
+        if raw_if_match is None:
+            # 428 is a BUG in the client — the docs say every write carries If-Match.
+            self._trace(428, {"payment_id": row["id"], "current_version": row["version"]})
+            self._json(428, {"error": "precondition_required"})
+            return
+        wanted = re.sub(r'^(W/)?"?|"?$', "", raw_if_match.strip())
+        if not wanted.isdigit():
+            self._trace(400, {"reason": "bad_if_match", "payment_id": row["id"]})
+            self._json(400, {"error": "bad_if_match"})
+            return
+        note = body.get("note")
+        if not isinstance(note, str) or not (1 <= len(note) <= 280):
+            self._trace(400, {"reason": "invalid_note", "payment_id": row["id"]})
+            self._json(400, {"error": "invalid_note"})
+            return
+        with st.lock:
+            if int(wanted) != row["version"]:
+                current = row["version"]
+                conflict = True
+            else:
+                conflict = False
+                row["version"] += 1
+                row["note"] = note
+                st.versions.add((row["id"], row["version"]))
+                st.commit_seq += 1
+                n = st.commit_seq
+                st.generation += 1
+                payload = _public(row)
+                version = row["version"]
+        if conflict:
+            self._trace(412, {"payment_id": row["id"], "current_version": current})
+            self._json(412, {"error": "version_conflict"})
+            return
+        st.record(_base_rec({"commit": "payment.updated", "commit_seq": n,
+                             "payment_id": row["id"], "version": version,
+                             "payment_status": row["status"], "sched": "note_write"}))
+        self._trace(200, {"payment_id": row["id"], "version": version,
+                          "applied_fields": ["note"]})
+        self._json(200, payload)
+
     # ── the list walk: fixed pages, seeded faults, the racing window ─────────────────────────
 
     def _list(self, parsed) -> None:
@@ -585,6 +669,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"error": "internal_error"},
                        headers={"Retry-After": str(RETRY_AFTER_SECS)})
             return
+        epoch = _epoch_for_cursor(cursor)
+        with st.lock:
+            expired = (cursor is not None and epoch is not None
+                       and epoch != st.reset_epoch)
+        if expired:
+            # documented: a cursor issued before a collection rebuild has expired —
+            # restart the walk from scratch (410 cursor_expired)
+            self._trace(410, {"reason": "cursor_expired", "sync": sync_no,
+                              "cursor_epoch": epoch})
+            self._json(410, {"error": "cursor_expired"})
+            return
         if offset < 0 or offset > total:
             self._trace(400, {"sync": sync_no})
             self._json(400, {"error": "bad_cursor"})
@@ -595,14 +690,22 @@ class Handler(BaseHTTPRequestHandler):
         etag = _etag_for(gen, offset)
 
         if inm is not None:
-            # B5: the first STALE conditional of sync s gets the lying 304 whose
-            # X-Collection-Generation disagrees with what the client stored; identical
-            # repeats keep being lied to — the only documented exit is ONE unconditional
-            # refetch. A validator that genuinely matches gets an honest 304.
+            # B5: the first stale conditional of the (s-2)-th sync that PRESENTS a stale
+            # validator gets the lying 304 whose X-Collection-Generation disagrees with what
+            # the client stored (s in {3, 4} maps to the 1st/2nd stale-presenting sync —
+            # staleness, not wall order, arms it, so the arm never lands on a sync whose
+            # validator is genuinely current); identical repeats keep being lied to — the
+            # only documented exit is ONE unconditional refetch. A validator that genuinely
+            # matches gets an honest 304.
             with st.lock:
                 s3 = st.stale304
-                arm = (sync_no == st.sch.stale_304_sync and inm != etag
-                       and not s3["fired"])
+                stale_cond = inm != etag
+                if stale_cond and sync_no not in st.stale_syncs:
+                    st.stale_syncs.append(sync_no)
+                want_nth = max(1, st.sch.stale_304_sync - 2)
+                arm = (stale_cond and not s3["fired"]
+                       and len(st.stale_syncs) == want_nth
+                       and sync_no == st.stale_syncs[-1])
                 if arm:
                     s3.update({"fired": True, "validator": inm, "offset": offset,
                                "fired_t": time.time(), "sync": sync_no})
@@ -660,7 +763,7 @@ class Handler(BaseHTTPRequestHandler):
         with st.lock:
             end = min(offset + PAGE_SIZE, total)
             rows = [_public(p) for p in st.payments[offset:end]]
-            nxt = _cursor_for_offset(end) if end < total else None
+            nxt = _cursor_for_offset(end, st.reset_epoch) if end < total else None
             st.sync_served += 1
             served_nth = st.sync_served
             if (sync_no == 1 and served_nth == st.sch.drop_after_page
@@ -745,7 +848,8 @@ class Handler(BaseHTTPRequestHandler):
             st.value_slot_next += 1
             row = {"id": f"pay_new_{len(st.created):04d}",
                    "amount_minor": body["amount_minor"], "currency": body["currency"],
-                   "created_at": created_at, "status": "pending", "version": 1,
+                   "created_at": created_at, "settled_at": None,
+                   "status": "pending", "version": 1,
                    "note": str(body.get("note") or ""),
                    "counterparty": {"name": body["counterparty"]["name"],
                                     "country": body["counterparty"]["country"]},
@@ -993,10 +1097,13 @@ def quiescent() -> bool:
 
 
 def commit_ledger() -> Dict[str, Dict]:
-    """Current committed state of every payment — L4/M3's vendor ground truth."""
+    """Current committed state of every payment — L4/M3's vendor ground truth. Carries
+    created_at + the value-dated Berlin day so the scorer can place vendor-created payments
+    in the §3.1 load-order model without re-deriving slots."""
     with STATE.lock:
         return {p["id"]: {"version": p["version"], "status": p["status"],
-                          "amount_minor": p["amount_minor"], "currency": p["currency"]}
+                          "amount_minor": p["amount_minor"], "currency": p["currency"],
+                          "created_at": p.get("created_at"), "day": p.get("_day")}
                 for p in STATE.payments}
 
 
@@ -1083,6 +1190,8 @@ def _reset_run() -> None:
         st.sync_total = None
         st.drop_armed = False
         st.stale304 = _fresh_stale304()
+        st.stale_syncs = []
+        st.reset_epoch += 1
         st.fired.clear()
         st.value_slot_next = 1
         st.sync1_walk_done = False

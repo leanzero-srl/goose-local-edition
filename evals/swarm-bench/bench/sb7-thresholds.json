@@ -1,0 +1,19 @@
+{
+  "calibrated": false,
+  "note": "UNCALIBRATED defaults — spec-traceable budgets only; the golden worst-of-5 fit has not run (DESIGN §5.6/§5.8). CAL rungs are set at freeze from the golden's measured distribution and pinned via CALIB_SHA256 in score_sb7.py; until then every report carries the rc-grade banner.",
+  "gamma_core": 1.0,
+  "gamma_hard": 1.0,
+  "k_p": 1.0,
+  "gamma_cap": 4.0,
+  "critical_multiplier_floor": 0.6,
+  "drag_frames_rungs": [[1.0, 32], [0.75, 24], [0.5, 16], [0.25, 8]],
+  "stream_apply_ms_rungs": [[1.0, 250], [0.75, 500], [0.5, 1000], [0.25, 2000]],
+  "underload_p95_rungs": [[1.0, 150], [0.75, 300], [0.5, 600], [0.25, 1200]],
+  "underload_overlap_floor": 0.5,
+  "api_p95_ms_rungs": [[1.0, 150], [0.75, 300], [0.5, 600], [0.25, 1500]],
+  "sync_wall_ms_rungs": [[1.0, 120000], [0.75, 240000], [0.5, 420000], [0.25, 600000]],
+  "optimistic_paint_rungs": [[1.0, 100], [0.6, 250], [0.3, 800]],
+  "e_drag_frames_rungs": [[1.0, 40], [0.75, 32], [0.5, 24], [0.25, 12]],
+  "e_stream_apply_ms_rungs": [[1.0, 100], [0.75, 200], [0.5, 400], [0.25, 800]],
+  "vs7dbg_proj_tol_px": 2.0
+}
