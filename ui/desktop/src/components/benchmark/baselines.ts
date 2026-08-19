@@ -70,50 +70,52 @@ export const BASELINES_BY_TIER: Record<BenchTier, BenchmarkRow[]> = {
       wallSecs: 318,
     },
   ],
-  // sb-6 board (2026-08-19): serial hermetic re-scores at each tree's advertised vendor
-  // port (version stays sb-6.0 until declared stable — fix provenance is F895-F897).
+  // sb-6 board (2026-08-19, post inner-vs-outer fixes d731134aa: proportional excellence
+  // slice, status-vocabulary error-banner fix, tableHash view-refresh): serial hermetic
+  // re-scores at each tree's advertised vendor port (version stays sb-6.0 until declared
+  // stable — fix provenance is F895-F899).
   // Luna/Terra are engine-kill floors (session cut by the compaction bug fixed in
   // 19b4ed6ef) — floors, not ceilings; disclosed on the website run pages.
   'sb-6': [
     {
       label: 'GPT-5.6 Sol',
-      score: 0.869,
+      score: 0.9956,
       tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
       scorerVersion: 'sb-6.0',
       wallSecs: 1890,
     },
     {
       label: 'Claude Opus 5',
-      score: 0.8281,
+      score: 0.9307,
       tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
       scorerVersion: 'sb-6.0',
       wallSecs: 2208,
     },
     {
       label: 'GPT-5.6 Luna',
-      score: 0.7887,
+      score: 0.8671,
       tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
       scorerVersion: 'sb-6.0',
       wallSecs: 237,
     },
     {
       label: 'Claude Sonnet 5',
-      score: 0.7666,
+      score: 0.8543,
       tiers: { A: 1.0, B: 1.0, C: 1.0, D: 0.86 },
       scorerVersion: 'sb-6.0',
       wallSecs: 1790,
     },
     {
       label: 'GPT-5.6 Terra',
-      score: 0.7257,
+      score: 0.7707,
       tiers: { A: 1.0, B: 1.0, C: 1.0, D: 1.0 },
       scorerVersion: 'sb-6.0',
       wallSecs: 390,
     },
     {
       label: 'Claude Haiku 4.5',
-      score: 0.4597,
-      tiers: { A: 0.8786, B: 0.9468, C: 0.8809, D: 0.86 },
+      score: 0.4489,
+      tiers: { A: 0.8786, B: 0.9468, C: 0.8809, D: 0.8 },
       scorerVersion: 'sb-6.0',
       wallSecs: 463,
     },
