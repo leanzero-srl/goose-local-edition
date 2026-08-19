@@ -12493,7 +12493,25 @@ This is measured, not hypothetical — one build stored a single collection-wide
 expired a cursor mid-run, the client restarted pagination while still replaying that validator, its \
 own first page answered 304, and the loop re-sent that request 249,703 times: the sync never \
 returned and the server went dark behind it. When pagination restarts, DROP the validators for the \
-pages you are about to re-fetch.\
+pages you are about to re-fetch.
+14. sqlite3 connections are SINGLE-THREAD by default: a connection created on the main thread and \
+touched from a server/worker thread raises sqlite3.ProgrammingError AT REQUEST TIME and, if the \
+server runs in a thread, kills the server before it ever binds (measured: a built app crashed at \
+boot exactly this way). Either open the connection IN the thread that uses it, open one connection \
+per thread, or pass check_same_thread=False AND guard every access with one lock. ThreadingHTTPServer \
+handlers run on N threads — one shared unguarded connection is a race even when it does not throw.
+15. http.server request handlers do their WORK inside __init__: BaseHTTPRequestHandler.__init__ calls \
+handle() and do_GET before returning, so any attribute attached 'after construction' (a patched \
+__init__ that sets self.store AFTER calling the original, an instance attribute set post-construction) \
+does not exist when do_GET runs — AttributeError on EVERY request while the server 'runs' fine \
+(measured: an app served nothing but 500s for exactly this). Hand state to handlers via CLASS \
+attributes, functools.partial on the handler class, or attributes on the SERVER object read as \
+self.server.store — set BEFORE serve_forever, never patched in after.
+16. http.client.HTTPConnection takes a HOST[:PORT], never a URL: HTTPConnection('http://127.0.0.1:8990') \
+treats the whole string as a hostname and fails DNS ('nodename nor servname provided'). Parse the \
+base URL first (urllib.parse.urlsplit) and pass host and port separately — or use urllib.request \
+which accepts full URLs. Verify the server BINDS and answers before layering features: a server \
+that cannot boot makes every other line of the app worthless.\
 ";
 
 /// Triggers are deliberately UNAMBIGUOUS, not merely topical. A first cut used bare words like "page",
@@ -12608,6 +12626,26 @@ const PITFALL_TRIGGERS: &[&[&str]] = &[
         "conditional request",
         "next_cursor",
         "fetch_all",
+    ],
+    &[
+        "sqlite",
+        "sqlite3",
+        "check_same_thread",
+        "threadinghttpserver",
+    ],
+    &[
+        "basehttprequesthandler",
+        "http.server",
+        "do_get",
+        "do_post",
+        "httpserver",
+        "request handler",
+    ],
+    &[
+        "httpconnection",
+        "http.client",
+        "meridianclient",
+        "vendor client",
     ],
 ];
 
