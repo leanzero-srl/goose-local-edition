@@ -38,6 +38,7 @@ import { LEANZERO_WEBSITE_URL } from '../branding';
 import EnvironmentBadge from './GooseSidebar/EnvironmentBadge';
 import SessionActionsHeader from './SessionActionsHeader';
 import SwarmRunPanel from './swarm/SwarmRunPanel';
+import RunSamplingStrip from './swarm/RunSamplingStrip';
 import { useSwarmRun } from './swarm/useSwarmRun';
 
 const i18n = defineMessages({
@@ -540,6 +541,16 @@ export default function BaseChat({
 
             {/* Inside the scroll area so the whole chat scrolls as ONE — the panel flows with the messages
                 at its natural height instead of overflowing a fixed bottom region. */}
+            {/* Per-run sampling knobs for the NEXT swarm build in this directory — editable until a
+                run is live, then read-only with the values that run launched with (env beats
+                config, run beats the Settings default). */}
+            {isLocal && (
+              <RunSamplingStrip
+                workingDir={session?.working_dir}
+                active={swarmRun.inProgress}
+                className="mb-2"
+              />
+            )}
             {isLocal && <SwarmRunPanel workingDir={session?.working_dir} className="mb-2" />}
           </ScrollArea>
 

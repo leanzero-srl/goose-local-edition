@@ -23,6 +23,34 @@ import {
   presetPatch,
   type PresetId,
 } from './golden';
+import {
+  SAMPLING_KNOBS,
+  clampKnob,
+  hasAnySampling,
+  loadSamplingDefaults,
+  sanitizeSampling,
+  saveSamplingDefaults,
+  type SamplingKnobId,
+  type SamplingSettings,
+} from '../../swarm/sampling';
+
+// The engine-config (config.yaml) field each UI knob writes through to — snake_case, the same
+// fields `goose swarm run` resolves when no per-run env override is present.
+const SAMPLING_CFG_KEY: Record<SamplingKnobId, keyof SwarmConfig> = {
+  temperature: 'temperature',
+  topP: 'top_p',
+  topK: 'top_k',
+  minP: 'min_p',
+  repeatPenalty: 'repeat_penalty',
+};
+
+const SAMPLING_ROW_LABEL: Record<SamplingKnobId, string> = {
+  temperature: 'Temperature',
+  topP: 'Top P',
+  topK: 'Top K',
+  minP: 'Min P',
+  repeatPenalty: 'Repeat penalty',
+};
 
 /**
  * Goose Local Edition — Swarm settings. Surfaces the `swarm:` config (previously CLI-only, editable only
@@ -282,13 +310,34 @@ export default function SwarmSettingsSection() {
   const [logMode, setLogMode] = useSwarmLogMode();
   const [cfg, setCfg] = useState<SwarmConfig>(DEFAULTS);
   const [loaded, setLoaded] = useState(false);
+  // Sampling DEFAULTS: canonical in localStorage (`swarmSamplingDefaults` — what every run
+  // window's strip prefills from), written through to the swarm config so a headless/CLI run
+  // shares the same defaults. Each run window can still override these per run (env beats config).
+  const [samplingDefaults, setSamplingDefaults] = useState<SamplingSettings>(() =>
+    loadSamplingDefaults()
+  );
 
   useEffect(() => {
     let alive = true;
     void (async () => {
       try {
         const raw = (await read('swarm', false)) as SwarmConfig | null;
-        if (alive) setCfg({ ...DEFAULTS, ...(raw ?? {}) });
+        if (alive) {
+          setCfg({ ...DEFAULTS, ...(raw ?? {}) });
+          // One-time seed for pre-existing setups: config.yaml sampling values predating the
+          // defaults store become the defaults, so the panel and the run strips agree.
+          const fromCfg = sanitizeSampling({
+            temperature: raw?.temperature,
+            topP: raw?.top_p,
+            topK: raw?.top_k,
+            minP: raw?.min_p,
+            repeatPenalty: raw?.repeat_penalty,
+          });
+          if (!hasAnySampling(loadSamplingDefaults()) && hasAnySampling(fromCfg)) {
+            saveSamplingDefaults(fromCfg);
+            setSamplingDefaults(fromCfg);
+          }
+        }
       } catch {
         if (alive) setCfg(DEFAULTS);
       } finally {
@@ -328,6 +377,21 @@ export default function SwarmSettingsSection() {
       });
     },
     [upsert]
+  );
+
+  const setSamplingDefault = useCallback(
+    (id: SamplingKnobId, v: number | null) => {
+      const clamped = v == null ? null : (clampKnob(id, v) ?? null);
+      setSamplingDefaults((prev) => {
+        const next: SamplingSettings = { ...prev };
+        if (clamped == null) delete next[id];
+        else next[id] = clamped;
+        saveSamplingDefaults(next);
+        return next;
+      });
+      set({ [SAMPLING_CFG_KEY[id]]: clamped } as Partial<SwarmConfig>);
+    },
+    [set]
   );
 
   const applyPreset = useCallback(() => set(presetPatch(DEFAULTS)), [set]);
@@ -512,22 +576,19 @@ export default function SwarmSettingsSection() {
                 </Row>
               </Group>
 
-              <Group title="Sampling">
-                <Row label="Temperature" hint="blank = model default">
-                  <NumberField value={cfg.temperature ?? null} placeholder="default" onCommit={(v) => set({ temperature: v })} />
-                </Row>
-                <Row label="Top P">
-                  <NumberField value={cfg.top_p ?? null} placeholder="default" onCommit={(v) => set({ top_p: v })} />
-                </Row>
-                <Row label="Top K">
-                  <NumberField value={cfg.top_k ?? null} placeholder="default" onCommit={(v) => set({ top_k: v })} />
-                </Row>
-                <Row label="Min P">
-                  <NumberField value={cfg.min_p ?? null} placeholder="default" onCommit={(v) => set({ min_p: v })} />
-                </Row>
-                <Row label="Repeat penalty">
-                  <NumberField value={cfg.repeat_penalty ?? null} placeholder="default" onCommit={(v) => set({ repeat_penalty: v })} />
-                </Row>
+              <Group
+                title="Sampling defaults"
+                cost="The default knobs every run starts from. Each run window (benchmark or build) shows these and can override them per run — the run's own strip wins for that run only."
+              >
+                {SAMPLING_KNOBS.map((k) => (
+                  <Row key={k.id} label={SAMPLING_ROW_LABEL[k.id]} hint={k.hint}>
+                    <NumberField
+                      value={samplingDefaults[k.id] ?? null}
+                      placeholder="default"
+                      onCommit={(v) => setSamplingDefault(k.id, v)}
+                    />
+                  </Row>
+                ))}
               </Group>
 
               <Group title="Pool & planner">

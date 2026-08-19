@@ -351,6 +351,53 @@ impl ProviderDef for SwarmProvider {
     }
 }
 
+/// The desktop run window's per-run sampling knobs: `<working_dir>/.swarm/run-sampling.json`,
+/// written by the run strip before launch. Threaded onto the engine child as the GOOSE_SWARM_*
+/// env the engine already resolves ahead of config (env beats config, run beats default). A file
+/// is the only per-run channel the desktop has — this provider's own env was fixed when goosed
+/// spawned, long before the user touched a knob. A knob absent from the file sends nothing, so
+/// config.yaml's swarm sampling and finally the model default apply.
+fn run_sampling_env(working_dir: Option<&std::path::Path>) -> Vec<(&'static str, String)> {
+    let Some(dir) = working_dir else {
+        return Vec::new();
+    };
+    let Ok(raw) = std::fs::read_to_string(dir.join(".swarm").join("run-sampling.json")) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<Value>(&raw) else {
+        return Vec::new();
+    };
+    sampling_env_pairs(&v)
+}
+
+/// Pure file-JSON → env-pairs mapping, so the contract is table-testable without a spawn. The
+/// engine clamps ranges itself; only finite numbers pass. top_k is an integer engine-side and JSON
+/// numbers arrive as f64, so whole values emit as `40`, never `40.0` (which the engine's i32 parse
+/// would reject).
+fn sampling_env_pairs(v: &Value) -> Vec<(&'static str, String)> {
+    const KNOBS: [(&str, &str); 5] = [
+        ("temperature", "GOOSE_SWARM_TEMP"),
+        ("top_p", "GOOSE_SWARM_TOP_P"),
+        ("top_k", "GOOSE_SWARM_TOP_K"),
+        ("min_p", "GOOSE_SWARM_MIN_P"),
+        ("repeat_penalty", "GOOSE_SWARM_REPEAT_PENALTY"),
+    ];
+    let mut out = Vec::new();
+    for (key, env) in KNOBS {
+        if let Some(n) = v.get(key).and_then(Value::as_f64) {
+            if n.is_finite() {
+                let s = if n.fract() == 0.0 {
+                    format!("{}", n as i64)
+                } else {
+                    n.to_string()
+                };
+                out.push((env, s));
+            }
+        }
+    }
+    out
+}
+
 /// #ai-session-names (GOOSE_SWARM_AI_NAME env, else `swarm.ai_session_name` in config; DEFAULT ON — the
 /// title call is a 25s detached spawn off the reply critical path, so the queue-contention concern is
 /// moot and the ugly first-4-words truncation is not worth shipping). When on, a swarm-build session is titled by ONE cheap
@@ -494,6 +541,11 @@ impl Provider for SwarmProvider {
         // GOOSE_SWARM_CONVERGE env still overrides for scripted A/B.
         if let Some(dir) = &self.working_dir {
             cmd.current_dir(dir);
+        }
+        // Per-run sampling knobs from the desktop run window (see run_sampling_env): env on the
+        // engine child, which the engine resolves ahead of config — run beats default.
+        for (key, val) in run_sampling_env(self.working_dir.as_deref()) {
+            cmd.env(key, val);
         }
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
@@ -656,6 +708,28 @@ mod tests {
         );
         assert_eq!(t.planned, 3);
         assert_eq!(t.done, 0);
+    }
+
+    /// The run-sampling file contract: only present knobs become env, snake_case keys map to the
+    /// engine's GOOSE_SWARM_* names, and top_k's whole value emits as an integer literal (the
+    /// engine's i32 parse rejects `40.0`). Garbage values send nothing rather than something wrong.
+    #[test]
+    fn run_sampling_file_maps_only_set_knobs_to_env() {
+        let v: Value =
+            serde_json::from_str(r#"{"temperature":0.7,"top_k":40,"repeat_penalty":1.1}"#).unwrap();
+        assert_eq!(
+            sampling_env_pairs(&v),
+            vec![
+                ("GOOSE_SWARM_TEMP", "0.7".to_string()),
+                ("GOOSE_SWARM_TOP_K", "40".to_string()),
+                ("GOOSE_SWARM_REPEAT_PENALTY", "1.1".to_string()),
+            ]
+        );
+        let none: Value = serde_json::from_str(r#"{"top_p":"not a number"}"#).unwrap();
+        assert!(sampling_env_pairs(&none).is_empty());
+        // No file at all → no overrides, never an error.
+        assert!(run_sampling_env(Some(std::path::Path::new("/no/such/dir"))).is_empty());
+        assert!(run_sampling_env(None).is_empty());
     }
 
     #[test]
