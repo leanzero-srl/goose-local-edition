@@ -20656,3 +20656,18 @@ the TIER's, and sb-7's design (instanced 3D + GPU picking, seeded fault injectio
 webhooks with money-conservation, SIGKILL-surviving workflow, outbox consistency, seeded
 fixtures, severity from day one) is authored and red-teamed for Mihai's sign-off before any
 cloud spend.
+
+## F902 — r4: the governors hold (142 min, converged again), the lottery names its family
+
+Fleet r4 on the governor binary: wall 179→142 min, second consecutive run ending on
+complete_fix_converged with findings falling 6→4 — the time half of Mihai's order is
+measurably moving. The quality half named its enemy: r4 is the THIRD boot-dead app in five
+runs (0.0027 — crash at boot, sqlite connection created on the main thread and used from the
+server thread), and with r0's attach-after-init handlers and HTTPConnection-full-URL, all
+three kills are ONE family: Python threading + stdlib-server wiring in __main__/serve. The
+fix loop sees these too late and the 27B cannot repair its own boot crash within its rounds —
+so the family moved to WRITE time: pitfalls 14-16 (d36974597) now reach every author whose
+task matches sqlite3/http.server/http.client triggers, alongside the aggregate-truth and
+restart-durability detectors (bnrl4iije binary) that make the survivors' wrong-money and
+data-loss classes repairable in-run. r4's binary predates both; the sb-7 swarm run and any
+r5 carry them. Board unchanged (r1 0.1837 stays the fleet entry).
