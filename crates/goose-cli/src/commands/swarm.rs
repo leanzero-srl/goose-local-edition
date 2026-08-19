@@ -19724,6 +19724,12 @@ struct SpecContractResult {
     // the remaining loss lives, so whether it was probed is not a diagnostic detail — it decides
     // whether a green means anything.
     probed_post: usize,
+    /// The render gate's self-declaration (gates-not-memory, contract-gap audit rank 3): the
+    /// gate previously left NO trace when it ran clean and NO trace when it could not arm, so
+    /// "was the browser ever consulted this run" was unanswerable from the log — measured: an
+    /// entire fleet run's browser-truth blindness could not be attributed between "probe env
+    /// missing" and "gate ran quietly". One string per verify: armed+result, or why not.
+    render_gate: String,
 }
 
 /// The `python3 -m PKG` entry package the spec literally advertises, if any. Pure/testable.
@@ -20328,6 +20334,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             inconclusive,
             verified,
             probed_post: 0,
+            render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
         };
     }
     let Some(pkg) = spec_python_entry(spec) else {
@@ -20336,6 +20343,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             inconclusive,
             verified,
             probed_post: 0,
+            render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
         };
     };
     let gets = spec_get_endpoints(spec);
@@ -20345,6 +20353,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             inconclusive,
             verified,
             probed_post: 0,
+            render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
         };
     }
     // PREFER THE INVOCATION THE SPEC ADVERTISES, on a port WE choose.
@@ -20405,6 +20414,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             inconclusive,
             verified,
             probed_post: 0,
+            render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
         };
     };
     let mut up = false;
@@ -20445,6 +20455,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             inconclusive,
             verified,
             probed_post: 0,
+            render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
         };
     }
     if !up {
@@ -20486,6 +20497,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             inconclusive,
             verified,
             probed_post: 0,
+            render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
         };
     }
     // FIRST PASS: the app as freshly started — EMPTY. Records which finding KINDS each path already
@@ -20942,6 +20954,17 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     // JSON object with renderedRowCount / totalClaimedInDom / consoleErrors{count,texts};
     // unset or missing, this block is inert. Every failure of the PROBE is inconclusive —
     // only what the browser SAW becomes a finding.
+    let mut render_gate_status = if !up {
+        "not-run (app never came up)".to_string()
+    } else {
+        match std::env::var("GOOSE_SWARM_RENDER_PROBE") {
+            Err(_) => "OFF (GOOSE_SWARM_RENDER_PROBE unset)".to_string(),
+            Ok(p) if !std::path::Path::new(&p).is_file() => {
+                format!("IMPAIRED (probe path is not a file: {p})")
+            }
+            Ok(_) => "armed (no result recorded — probe never returned)".to_string(),
+        }
+    };
     if up {
         if let Ok(probe) = std::env::var("GOOSE_SWARM_RENDER_PROBE") {
             if std::path::Path::new(&probe).is_file() {
@@ -20963,6 +20986,8 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                 .pointer("/consoleErrors/count")
                                 .and_then(|x| x.as_i64())
                                 .unwrap_or(0);
+                            render_gate_status =
+                                format!("ran (rows={rows}, console_errors={console})");
                             if rows == 0 {
                                 let first_err = v
                                     .pointer("/consoleErrors/texts/0")
@@ -21098,15 +21123,22 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                                 });
                             }
                         }
-                        Err(_) => inconclusive.push(
-                            "render-gate: probe output was not JSON — nothing proven either way"
-                                .to_string(),
-                        ),
+                        Err(_) => {
+                            render_gate_status = "IMPAIRED (probe output was not JSON)".to_string();
+                            inconclusive.push(
+                                "render-gate: probe output was not JSON — nothing proven either way"
+                                    .to_string(),
+                            )
+                        }
                     },
-                    None => inconclusive.push(
-                        "render-gate: probe did not complete — nothing proven either way"
-                            .to_string(),
-                    ),
+                    None => {
+                        render_gate_status =
+                            "IMPAIRED (probe spawn failed or timed out)".to_string();
+                        inconclusive.push(
+                            "render-gate: probe did not complete — nothing proven either way"
+                                .to_string(),
+                        )
+                    }
                 }
             }
         }
@@ -21135,6 +21167,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         inconclusive,
         verified,
         probed_post: post_probed,
+        render_gate: render_gate_status,
     }
 }
 
@@ -32409,9 +32442,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // failure path emitted nothing — also fixed below).
         let ship_best = swarm_gate_cfg("GOOSE_SWARM_SHIP_BEST", true);
         let mut best_verified: Option<(u32, usize)> = None; // (round, findings)
-                                                            // Definite-init by the loop: every break happens after the round's verify assigns these.
+                                                            // ESTABLISHED-AWARE SHIP CHAIN (contract-gap audit rank 1): a verify that RAN but
+                                                            // established nothing produces a count that is not comparable to an established one —
+                                                            // a blind low count must not capture the best slot, and an established snapshot must
+                                                            // never lose to an unestablished final state.
+        let mut best_established = false;
+        // Definite-init by the loop: every break happens after the round's verify assigns these.
         let mut last_verify_ran;
         let mut last_verify_count;
+        let mut last_verify_established = false;
         // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS; 0 = opt out of the
         // one-flat-round stop).
         let stall_cap = complete_stall_rounds();
@@ -32756,6 +32795,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "verified": sc_verified,
                     "findings": sc_found,
                     "inconclusive": sc_incon,
+                    // The render gate SELF-DECLARES every round: armed+result, or exactly why
+                    // not — a silent browser gate cost a full run its browser-truth findings
+                    // and the postmortem could not even attribute the silence.
+                    "render_gate": sc.render_gate,
                     // WHETHER THE CHECK LOOKED AT THE MUTATING SURFACE AT ALL. Every other counter
                     // here is silent about it: a run that never issued a write and a run that issued
                     // two and found them well-behaved both report zero POST findings. The bare-GET
@@ -32856,9 +32899,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // UNCHECKED tree is the vacuous-pass trap the speculative-twin path already refuses.
             last_verify_ran = verdict.ran;
             last_verify_count = verdict.findings.len();
+            last_verify_established = verdict.established();
+            // Established preference: a blind (ran-but-unestablished) lower count never
+            // displaces an established snapshot; an established verify may displace an
+            // unestablished snapshot at equal count (same number, strictly better evidence).
             if ship_best
                 && verdict.ran
-                && best_verified.is_none_or(|(_, c)| verdict.findings.len() < c)
+                && best_verified.is_none_or(|(_, c)| {
+                    let cand_est = verdict.established();
+                    if best_established && !cand_est {
+                        false
+                    } else if cand_est && !best_established {
+                        verdict.findings.len() <= c
+                    } else {
+                        verdict.findings.len() < c
+                    }
+                })
             {
                 let best_dir = cwd.join(".swarm/best-tree");
                 let _ = std::fs::create_dir_all(&best_dir);
@@ -32891,11 +32947,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .unwrap_or(false);
                 if ok {
                     best_verified = Some((round, verdict.findings.len()));
+                    best_established = verdict.established();
                 }
                 sink.write_value(serde_json::json!({
                     "event": "best_tree_snapshot",
                     "round": round,
                     "findings": verdict.findings.len(),
+                    "established": verdict.established(),
                     "ok": ok,
                 }));
             }
@@ -33001,7 +33059,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // next round (extension requires BOTH; ceiling 6 = the config clamp). A run at the
             // count without that proof stops exactly as before.
             if round >= rounds {
-                let decreasing = prev_count.is_some_and(|p| verdict.findings.len() < p);
+                // Extension requires ESTABLISHED progress — a blind verify's lower count is
+                // not evidence that another round is earning its wall time (rank-1 chain fix).
+                let decreasing =
+                    prev_count.is_some_and(|p| verdict.findings.len() < p) && verdict.established();
                 let headroom = cap_deadline.is_none_or(|dl| {
                     std::time::Instant::now() + std::time::Duration::from_secs(fix_cap_eff) < dl
                 });
@@ -33767,13 +33828,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }
             round += 1;
         }
-        // F835 RESTORE: at a non-green exit, if the final tree verified WORSE than the best
-        // snapshot (or its last verify never ran), ship the best verified state instead of the
-        // last edit. A green exit never restores — final_passed means the current tree is the
-        // best by definition.
-        if ship_best && !final_passed {
+        // F835 RESTORE: if the final tree verified WORSE than the best snapshot (or its last
+        // verify never ran), ship the best verified state instead of the last edit. Rank-1
+        // chain fix: an UNESTABLISHED final state — including an unestablished "green", which
+        // is a blind zero — also loses to an ESTABLISHED snapshot: evidence outranks a count
+        // nothing corroborated. An established green never restores.
+        let mut shipped_desc = "final tree".to_string();
+        if ship_best && (!final_passed || !final_verified) {
             if let Some((best_round, best_count)) = best_verified {
-                if !last_verify_ran || last_verify_count > best_count {
+                if !last_verify_ran
+                    || last_verify_count > best_count
+                    || (!last_verify_established && best_established)
+                {
                     let best_dir = cwd.join(".swarm/best-tree");
                     if best_dir.is_dir() {
                         // F886: same exclusions as the snapshot — the restore ships the best
@@ -33803,10 +33869,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             "event": "best_tree_restored",
                             "from_round": best_round,
                             "best_findings": best_count,
+                            "best_established": best_established,
                             "final_findings": last_verify_count,
                             "final_ran": last_verify_ran,
+                            "final_established": last_verify_established,
                             "restored": restored,
                         }));
+                        if restored {
+                            shipped_desc = format!(
+                                "restored round {best_round} snapshot ({best_count} established \
+                                 finding(s))"
+                            );
+                            // The shipped tree's own truth replaces the final state's claim: it
+                            // carries best_count established findings, so a blind green must
+                            // not be reported as passed over it.
+                            final_passed = best_count == 0;
+                            final_verified = best_established;
+                        }
                         eprintln!(
                             "{}",
                             style(format!(
@@ -33827,7 +33906,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "event": "complete_result",
             "passed": final_passed,
             "verified": final_verified,
-            "remaining_findings": last_findings.len(),
+            "remaining_findings": if shipped_desc == "final tree" {
+                last_findings.len()
+            } else {
+                best_verified.map(|(_, c)| c).unwrap_or(last_findings.len())
+            },
+            "shipped": shipped_desc,
         }));
         // ── LEARN & REFLECT (GOOSE_SWARM_PERSONA, default OFF) ────────────────────────────────────────
         // The run just PROVED the app builds and its checks pass. That proof is a deterministic engine
