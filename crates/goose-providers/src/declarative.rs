@@ -41,6 +41,7 @@ pub(crate) mod declarative_providers {
         orcarouter,
         ovhcloud,
         perplexity,
+        pleumrouter,
         routstr,
         sakana,
         saladcloud,
