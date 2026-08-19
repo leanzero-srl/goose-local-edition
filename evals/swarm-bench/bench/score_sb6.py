@@ -1822,6 +1822,63 @@ def _gamma(x: float, tier: str) -> float:
     return max(0.0, min(1.0, x)) ** (GAMMA["hard"] if tier in ("T", "HARD") else GAMMA["core"])
 
 
+def telemetry_summary(root) -> "Optional[Dict]":
+    """Per-node prefill/decode token rates from the run's OWN telemetry file (written by the
+    engine's provider layer, one JSON line per completed call). Purely informational — it
+    NEVER touches the score; a tree without the file (cloud entrants, older engines) gets
+    None and the verdict key is simply absent from rendering. Medians, usage-true records
+    only: approximations and failed calls never describe a node."""
+    import statistics
+    from pathlib import Path as _P
+    f = _P(root) / ".swarm" / "telemetry.jsonl"
+    if not f.is_file():
+        return None
+    per: Dict[str, Dict] = {}
+    for line in f.read_text(errors="replace").splitlines():
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if not r.get("usage"):
+            continue
+        node = r.get("node") or "?"
+        pt, ct = r.get("prompt_tokens"), r.get("completion_tokens")
+        ttft, total = r.get("ttft_ms"), r.get("total_ms")
+        d = per.setdefault(node, {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                                  "prefill": [], "decode": []})
+        d["calls"] += 1
+        if isinstance(pt, int):
+            d["prompt_tokens"] += pt
+        if isinstance(ct, int):
+            d["completion_tokens"] += ct
+        if isinstance(pt, int) and pt > 0 and isinstance(ttft, (int, float)) and ttft > 0:
+            d["prefill"].append(pt / (ttft / 1000.0))
+        if (isinstance(ct, int) and ct > 0 and isinstance(ttft, (int, float))
+                and isinstance(total, (int, float)) and total > ttft):
+            d["decode"].append(ct / ((total - ttft) / 1000.0))
+    if not per:
+        return None
+    out: Dict = {"nodes": {}, "calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+    all_pre: List[float] = []
+    all_dec: List[float] = []
+    for node, d in sorted(per.items()):
+        out["nodes"][node] = {
+            "calls": d["calls"],
+            "prompt_tokens": d["prompt_tokens"],
+            "completion_tokens": d["completion_tokens"],
+            "prefill_tok_s": round(statistics.median(d["prefill"]), 1) if d["prefill"] else None,
+            "decode_tok_s": round(statistics.median(d["decode"]), 1) if d["decode"] else None,
+        }
+        out["calls"] += d["calls"]
+        out["prompt_tokens"] += d["prompt_tokens"]
+        out["completion_tokens"] += d["completion_tokens"]
+        all_pre += d["prefill"]
+        all_dec += d["decode"]
+    out["prefill_tok_s"] = round(statistics.median(all_pre), 1) if all_pre else None
+    out["decode_tok_s"] = round(statistics.median(all_dec), 1) if all_dec else None
+    return out
+
+
 def evaluate(c: Ctx) -> Dict:
     rows: List[Dict] = []
     for name, tier, fn in SB6_CHECKS:
@@ -1842,7 +1899,10 @@ def evaluate(c: Ctx) -> Dict:
             outcome = {"score": 0.0, "detail": f"PROBE ERROR: {exc}", "consequence": "probe bug"}
         rows.append({"check": name, "tier": tier, **outcome})
 
-    return compose_from_rows(rows, _nominal_console_errors(c), c)
+    result = compose_from_rows(rows, _nominal_console_errors(c), c)
+    # Mihai 2026-08-19: the posted benchmark itself must show the run's token rates.
+    result["telemetry"] = telemetry_summary(c.root)
+    return result
 
 
 def _critical_severity_input(r: Dict) -> float:

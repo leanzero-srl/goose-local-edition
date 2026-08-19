@@ -2871,6 +2871,9 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, samp
           ...(typeof v.hard === 'number' ? { hard: v.hard } : {}),
           ...(typeof v.excellent === 'boolean' ? { excellent: v.excellent } : {}),
           ...(typeof v.agent?.secs === 'number' ? { wallSecs: v.agent.secs } : {}),
+          // The run's own measured token rates (scorer's telemetry_summary) — published
+          // with the post so the public entry shows prefill/decode tok/s per node.
+          ...(v.telemetry && typeof v.telemetry === 'object' ? { telemetry: v.telemetry } : {}),
           // v2 publisher inputs — stored with the result so Publish works across app restarts.
           // `workdir` and `mine` never leave this machine; benchmark-publish builds the strict
           // allowlisted payload from here.
@@ -3065,6 +3068,9 @@ ipcMain.handle(
       poster: { installId: identity.installId, handle: identity.handle },
       ...(screenshots.length > 0 ? { screenshots } : {}),
       runMeta,
+      ...(stored.telemetry && typeof stored.telemetry === 'object'
+        ? { telemetry: stored.telemetry }
+        : {}),
     };
     // v2.3: per-node detail from the persisted pool_resolved devices — omitted entirely when
     // the run's log had no pool_resolved (legacy results store no poolDevices).
