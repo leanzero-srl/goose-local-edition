@@ -292,14 +292,36 @@ fn critical_owned_files_written(owned_files: &[String]) -> bool {
 /// of any of it and re-derives everything from nothing. The work survives; the understanding does not.
 /// A hint is the only channel that crosses that boundary.
 fn transient_retry_hint(msg: &str) -> Option<String> {
-    msg.contains("mid-stream body drop").then(|| {
-        "Your previous attempt was cut off mid-generation by a dropped connection — not by anything \
-         you did wrong, and not because the work was rejected. ANY FILE YOU HAD ALREADY WRITTEN OR \
-         EDITED IS STILL ON DISK. Do NOT start over from scratch: first READ the current state of the \
-         files involved, KEEP what is already correct, and continue from where that left off. \
-         Re-deriving work that is already done is the most expensive thing you can do here."
-            .to_string()
-    })
+    if msg.contains("mid-stream body drop") {
+        return Some(
+            "Your previous attempt was cut off mid-generation by a dropped connection — not by anything \
+             you did wrong, and not because the work was rejected. ANY FILE YOU HAD ALREADY WRITTEN OR \
+             EDITED IS STILL ON DISK. Do NOT start over from scratch: first READ the current state of the \
+             files involved, KEEP what is already correct, and continue from where that left off. \
+             Re-deriving work that is already done is the most expensive thing you can do here."
+                .to_string(),
+        );
+    }
+    // THE STALL CLASS RETRIES WARM. Measured (r5/r6 wall attribution): stalled-then-cold-retried
+    // attempts were the single largest wall sink in BOTH runs — 58.3 min in r5, 104.9 min in r6 by
+    // minute 85 — because a cold retry re-derives everything, hits the same wall, and stalls the
+    // same way (the class survived temp 0.2, so it is task shape, not sampling luck). The retry
+    // carries three things the cold attempt lacked: the partial work is on disk, the specific
+    // pathology that killed attempt N (threaded verbatim from the kill site), and the instruction
+    // to act before deliberating — 13/15 measured stalls ended reasoning cleanly and never issued
+    // a tool call.
+    if msg.contains("no productive progress") {
+        return Some(format!(
+            "Your previous attempt on this task was stopped because it stalled: {msg}. \
+             ANY FILE IT ALREADY WROTE OR EDITED IS STILL ON DISK. If your owned file(s) \
+             already exist, READ them first, KEEP what is correct, and FINISH the work — do \
+             not regenerate it from scratch. ACT FIRST: your very first response must be a tool call (read or \
+             write), never deliberation — the previous attempt died deliberating without acting. \
+             If the whole job is too big for one pass, write it in sections across MULTIPLE \
+             smaller tool calls, completing the most load-bearing piece first."
+        ));
+    }
+    None
 }
 
 /// Is an UNACTED judge verdict still worth carrying to the task's next attempt?
@@ -3541,9 +3563,10 @@ mod salvage_tests {
         p.to_string_lossy().into_owned()
     }
 
-    /// A dropped body is the ONLY infra transient that earns a hint, and the distinction is the whole
-    /// point: "model unloaded" means nothing happened, so a note would mislead; a mid-stream drop means
-    /// the worker was producing and its edits are already on disk.
+    /// A dropped body and a stall are the ONLY infra transients that earn a hint, and the distinction
+    /// is the whole point: "model unloaded" means nothing happened, so a note would mislead; a
+    /// mid-stream drop or a stall means the worker RAN — anything it wrote before dying is on disk
+    /// (possibly nothing, for a thinking-only stall — the hint's read instruction is conditional).
     #[test]
     fn only_a_dropped_body_earns_a_retry_hint() {
         let h =
@@ -3564,6 +3587,30 @@ mod salvage_tests {
             assert!(
                 transient_retry_hint(quiet).is_none(),
                 "{quiet:?} must not carry a hint — nothing was produced to preserve"
+            );
+        }
+    }
+
+    /// The stall class retries WARM: the hint must carry the specific pathology that killed the
+    /// previous attempt (so the retry can avoid it), the on-disk fact, and the act-first directive.
+    /// All four kill-site variants share the "no productive progress" marker; that marker — not any
+    /// variant's wording — is the contract this test pins.
+    #[test]
+    fn a_stall_earns_a_warm_retry_hint_carrying_its_pathology() {
+        for stall in [
+            "agent stalled — no productive progress: reasoning spiral, 61000 thinking chars",
+            "agent stalled — no productive progress: repeated the identical tool call 14x",
+            "agent stalled — no productive progress (tool/output/text) for 900s while streaming reasoning only",
+            "agent stalled — no productive progress: the judge read this call's own reasoning",
+        ] {
+            let h = transient_retry_hint(stall).expect("a stall must carry a warm hint");
+            assert!(
+                h.contains(stall),
+                "the hint must thread the specific stall pathology verbatim: {h}"
+            );
+            assert!(
+                h.contains("STILL ON DISK") && h.contains("ACT FIRST"),
+                "the hint must carry the on-disk fact and the act-first directive: {h}"
             );
         }
     }

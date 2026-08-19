@@ -15,7 +15,7 @@ use crate::formats::openai_responses::{
 };
 use crate::images::ImageFormat;
 use crate::openai_compatible::{
-    handle_response_openai_compat, handle_status, stream_openai_compat, stream_responses_compat,
+    handle_response_openai_compat, handle_status, stream_responses_compat,
 };
 use crate::request_log::{start_log, LoggerHandleExt};
 use anyhow::Result;
@@ -681,6 +681,10 @@ impl Provider for OpenAiProvider {
             let payload = self.sanitize_request_for_compat(payload);
             let mut log = start_log(model_config, &payload)?;
 
+            // This provider is the one the swarm engine actually calls (lmstudio's declarative
+            // engine resolves here) — the adversarial review caught the first telemetry pass
+            // instrumenting only OpenAiCompatibleProvider, which the fleet never routes through.
+            let telemetry_t0 = std::time::Instant::now();
             let response = self
                 .with_retry(|| async {
                     let resp = self
@@ -695,7 +699,12 @@ impl Provider for OpenAiProvider {
                 })?;
 
             if self.supports_streaming {
-                stream_openai_compat(response, log)
+                super::openai_compatible::stream_openai_compat_timed(
+                    response,
+                    log,
+                    telemetry_t0,
+                    model_config.model_name.clone(),
+                )
             } else {
                 let json: serde_json::Value = response.json().await.map_err(|e| {
                     ProviderError::RequestFailed(format!("Failed to parse JSON: {}", e))
@@ -713,6 +722,14 @@ impl Provider for OpenAiProvider {
                     Some(&usage_data),
                 )?;
 
+                let elapsed = telemetry_t0.elapsed();
+                super::openai_compatible::telemetry_record(
+                    &model_config.model_name,
+                    elapsed,
+                    elapsed,
+                    Some(usage.usage),
+                    0,
+                );
                 Ok(super::base::stream_from_single_message(message, usage))
             }
         }

@@ -118,6 +118,7 @@ impl Provider for OpenAiCompatibleProvider {
         )?;
         let mut log = start_log(model_config, &payload)?;
 
+        let telemetry_t0 = std::time::Instant::now();
         let completions_path = format!("{}chat/completions", self.completions_prefix);
         let response = self
             .with_retry(|| async {
@@ -133,7 +134,7 @@ impl Provider for OpenAiCompatibleProvider {
             })?;
 
         if self.supports_streaming {
-            stream_openai_compat(response, log)
+            stream_openai_compat_timed(response, log, telemetry_t0, model_config.model_name.clone())
         } else {
             let json: serde_json::Value = response.json().await.map_err(|e| {
                 ProviderError::RequestFailed(format!("Failed to parse JSON: {}", e))
@@ -151,9 +152,110 @@ impl Provider for OpenAiCompatibleProvider {
                 Some(&usage.usage),
             )?;
 
+            let elapsed = telemetry_t0.elapsed();
+            telemetry_record(
+                &model_config.model_name,
+                elapsed,
+                elapsed,
+                Some(usage.usage),
+                0,
+            );
             Ok(stream_from_single_message(message, usage))
         }
     }
+}
+
+/// GOOSE_SWARM_TELEMETRY_FILE (Mihai 2026-08-19, adopted): one JSON line per completion call —
+/// model, node (the fleet's model-id prefix), ttft_ms, total_ms, token usage from the backend's
+/// final chunk (`stream_options.include_usage` is always set by the request builder). Env unset
+/// = no work, no file handle. A write failure never fails or slows the call. The same line shape
+/// is written by `goose::providers::swarm` for its planner-side calls; this site covers the
+/// per-task fleet streams, which is where the wall clock actually goes.
+fn telemetry_node(model: &str) -> Option<String> {
+    let bare = model.rsplit('/').next().unwrap_or(model);
+    let (node, rest) = bare.split_once('-')?;
+    (!node.is_empty() && !rest.is_empty()).then(|| node.to_string())
+}
+
+pub(crate) fn telemetry_record(
+    model: &str,
+    ttft: std::time::Duration,
+    total: std::time::Duration,
+    usage: Option<crate::conversation::token_usage::Usage>,
+    chunks: u64,
+) {
+    let Some(path) = std::env::var_os("GOOSE_SWARM_TELEMETRY_FILE").filter(|p| !p.is_empty())
+    else {
+        return;
+    };
+    let has_usage = usage.is_some_and(|u| u.output_tokens.is_some() || u.input_tokens.is_some());
+    let mut line = serde_json::json!({
+        "t": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        "model": model,
+        "node": telemetry_node(model),
+        "ttft_ms": ttft.as_millis() as u64,
+        "total_ms": total.as_millis() as u64,
+        "prompt_tokens": usage.and_then(|u| u.input_tokens),
+        "completion_tokens": usage.and_then(|u| u.output_tokens),
+        "usage": has_usage,
+    });
+    if !has_usage && chunks > 0 {
+        line["approx_completion_chunks"] = serde_json::json!(chunks);
+    }
+    let payload = format!("{line}\n");
+    static APPEND: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = APPEND.lock().unwrap_or_else(|e| e.into_inner());
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        use std::io::Write;
+        let _ = f.write_all(payload.as_bytes());
+    }
+}
+
+/// `stream_openai_compat` plus per-call telemetry: TTFT at the first streamed message, usage from
+/// the final chunk. Behaviour of the yielded stream is byte-identical to the untimed variant.
+/// A consumer that drops the stream mid-way (abort, stall kill) writes NO line — decode-rate
+/// stats deliberately measure only completed calls.
+pub(crate) fn stream_openai_compat_timed(
+    response: Response,
+    mut log: Option<Box<dyn RequestLogHandle>>,
+    t0: std::time::Instant,
+    model_name: String,
+) -> Result<MessageStream, ProviderError> {
+    let stream = response.bytes_stream().map_err(std::io::Error::other);
+
+    Ok(Box::pin(try_stream! {
+        let stream_reader = StreamReader::new(stream);
+        let framed = FramedRead::new(stream_reader, LinesCodec::new())
+            .map_err(Error::from);
+
+        let message_stream = response_to_streaming_message(framed);
+        pin!(message_stream);
+        let mut ttft: Option<std::time::Duration> = None;
+        let mut last_usage: Option<crate::conversation::token_usage::Usage> = None;
+        let mut chunks: u64 = 0;
+        while let Some(message) = message_stream.next().await {
+            let (message, usage) = message.map_err(|e|
+                e.downcast::<ProviderError>()
+                    .unwrap_or_else(ProviderError::stream_decode_error)
+            )?;
+            ttft.get_or_insert_with(|| t0.elapsed());
+            chunks += 1;
+            if let Some(u) = usage.as_ref() {
+                last_usage = Some(u.usage);
+            }
+            log.write(&message, usage.as_ref().map(|f| f.usage).as_ref())?;
+            yield (message, usage);
+        }
+        let total = t0.elapsed();
+        telemetry_record(&model_name, ttft.unwrap_or(total), total, last_usage, chunks);
+    }))
 }
 
 // Re-exported from the dedicated `http_status` module — these helpers are
@@ -219,6 +321,18 @@ mod tests {
     use crate::model::ModelConfig;
     use serde_json::json;
     use test_case::test_case;
+
+    #[test]
+    fn telemetry_node_is_the_dash_bounded_model_prefix() {
+        assert_eq!(
+            telemetry_node("workhorse-qwen3.6-27b").as_deref(),
+            Some("workhorse")
+        );
+        assert_eq!(telemetry_node("ns/gabee-qwen3.6").as_deref(), Some("gabee"));
+        assert_eq!(telemetry_node("gpt4"), None, "no dash -> no node identity");
+        assert_eq!(telemetry_node("-qwen"), None, "empty prefix is not a node");
+        assert_eq!(telemetry_node("gabee-"), None, "empty rest is not a model");
+    }
 
     #[test_case(
         StatusCode::PAYMENT_REQUIRED,

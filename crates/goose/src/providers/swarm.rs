@@ -14,6 +14,7 @@
 //! aborting a run must also unload in-flight remote generations, which is not guaranteed yet).
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -398,6 +399,99 @@ fn sampling_env_pairs(v: &Value) -> Vec<(&'static str, String)> {
     out
 }
 
+/// Per-call telemetry (env GOOSE_SWARM_TELEMETRY_FILE): one JSON line appended per completion call this
+/// provider makes — the planner session-title call and the build-run spawn. The record stores only
+/// measurements; consumers derive the rates (prefill = prompt_tokens/ttft, decode =
+/// completion_tokens/(total−ttft)). Env unset = no line, no file, no work. Both calls at this layer are
+/// single awaits (a non-streaming complete and a subprocess), so ttft equals total unless a streaming
+/// call site supplies its first-chunk instant; the per-task fleet streams are made by the spawned engine,
+/// not here. A write failure must never fail or slow the call it observes — everything is swallowed.
+fn record_call(
+    model: &str,
+    start: Instant,
+    first_chunk: Option<Instant>,
+    usage: Option<&Usage>,
+    completion_chunks: Option<u64>,
+) {
+    let Some(path) = std::env::var_os("GOOSE_SWARM_TELEMETRY_FILE") else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+    let total_ms = start.elapsed().as_millis() as u64;
+    let ttft_ms = first_chunk
+        .map(|f| f.duration_since(start).as_millis() as u64)
+        .unwrap_or(total_ms);
+    let line = telemetry_line(
+        chrono::Utc::now().timestamp_millis(),
+        model,
+        ttft_ms,
+        total_ms,
+        usage,
+        completion_chunks,
+    );
+    telemetry_append(&path, line);
+}
+
+/// Node identity = the model id's prefix before the first '-', after stripping any `namespace/`
+/// (mirrors the engine's `device_from_lms_id`: the fleet's LM Link ids are `mihai-…`, `workhorse-…`,
+/// `gabee-…`). No '-' means the host is not distinguishable → null.
+fn telemetry_node(model: &str) -> Option<String> {
+    // Same rule as goose-providers/src/openai_compatible.rs::telemetry_node — the two writers of
+    // one file must agree; the review caught this copy accepting empty parts ("-qwen" -> Some("")).
+    let bare = model.rsplit('/').next().unwrap_or(model);
+    let (node, rest) = bare.split_once('-')?;
+    (!node.is_empty() && !rest.is_empty()).then(|| node.to_string())
+}
+
+/// Pure line builder, unit-testable without a file. `usage: true` only when the backend actually
+/// reported token counts; without them a streaming caller's chunk count survives as
+/// `approx_completion_chunks` so the record still says something about output volume.
+fn telemetry_line(
+    t_ms: i64,
+    model: &str,
+    ttft_ms: u64,
+    total_ms: u64,
+    usage: Option<&Usage>,
+    completion_chunks: Option<u64>,
+) -> String {
+    let has_usage = usage.is_some_and(|u| u.input_tokens.is_some() || u.output_tokens.is_some());
+    let mut line = serde_json::json!({
+        "t": t_ms,
+        "model": model,
+        "node": telemetry_node(model),
+        "ttft_ms": ttft_ms,
+        "total_ms": total_ms,
+        "prompt_tokens": usage.and_then(|u| u.input_tokens),
+        "completion_tokens": usage.and_then(|u| u.output_tokens),
+        "usage": has_usage,
+    });
+    if !has_usage {
+        if let Some(n) = completion_chunks {
+            line["approx_completion_chunks"] = serde_json::json!(n);
+        }
+    }
+    line.to_string()
+}
+
+static TELEMETRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// One O_APPEND `write_all` per line under a per-process mutex, so concurrent calls never interleave
+/// partial lines — in-process via the lock, cross-process via the atomic append.
+fn telemetry_append(path: &std::ffi::OsStr, mut line: String) {
+    use std::io::Write;
+    line.push('\n');
+    let _guard = TELEMETRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
 /// #ai-session-names (GOOSE_SWARM_AI_NAME env, else `swarm.ai_session_name` in config; DEFAULT ON — the
 /// title call is a 25s detached spawn off the reply critical path, so the queue-contention concern is
 /// moot and the ugly first-4-words truncation is not worth shipping). When on, a swarm-build session is titled by ONE cheap
@@ -460,6 +554,7 @@ async fn ai_session_title(
         &[],
     );
     let secs = name_timeout_secs();
+    let start = Instant::now();
     let (message, usage) = if secs == 0 {
         call.await?
     } else {
@@ -467,6 +562,7 @@ async fn ai_session_title(
             .await
             .map_err(|_| ProviderError::ExecutionError("session-title call timed out".into()))??
     };
+    record_call(&usage.model, start, None, Some(&usage.usage), None);
     Ok(stream_from_single_message(message, usage))
 }
 
@@ -577,6 +673,7 @@ impl Provider for SwarmProvider {
         // is orphaned and keeps dispatching to the fleet. kill_on_drop makes Stop actually stop it.
         cmd.kill_on_drop(true);
 
+        let run_start = Instant::now();
         let mut child = cmd.spawn().map_err(|e| {
             ProviderError::RequestFailed(format!(
                 "Failed to spawn '{} swarm run': {e}. Set SWARM_COMMAND to the goose binary path if it is \
@@ -646,6 +743,7 @@ impl Provider for SwarmProvider {
         })?;
         let stderr_all = stderr_task.await.unwrap_or_default();
         let stdout_buf = stdout_task.await.unwrap_or_default();
+        record_call(&model_config.model_name, run_start, None, None, None);
         let output = std::process::Output {
             status,
             stdout: stdout_buf,
@@ -742,6 +840,93 @@ mod tests {
         assert_eq!(t.done, 1);
         assert_eq!(t.failed, 1);
         assert!(t.in_flight.is_empty());
+    }
+
+    /// The telemetry line contract: backend-reported tokens land as numbers with `usage: true`, the node
+    /// is the fleet's model-id prefix, and consumers can rely on every field being present.
+    #[test]
+    fn telemetry_line_carries_usage_and_node() {
+        let u = Usage::new(Some(1200), Some(340), None);
+        let line = telemetry_line(
+            1755600000000,
+            "workhorse-qwopus3.6-27b-coder-mlx",
+            850,
+            12000,
+            Some(&u),
+            None,
+        );
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["t"], 1755600000000i64);
+        assert_eq!(v["model"], "workhorse-qwopus3.6-27b-coder-mlx");
+        assert_eq!(v["node"], "workhorse");
+        assert_eq!(v["ttft_ms"], 850);
+        assert_eq!(v["total_ms"], 12000);
+        assert_eq!(v["prompt_tokens"], 1200);
+        assert_eq!(v["completion_tokens"], 340);
+        assert_eq!(v["usage"], true);
+        assert!(v.get("approx_completion_chunks").is_none());
+    }
+
+    /// No backend usage → tokens are null, `usage: false`, and a streaming caller's chunk count survives
+    /// as the approximation. A namespaced id follows the engine's device rule (strip `ns/`, prefix before
+    /// '-'); an id with no '-' has no distinguishable host → null node.
+    #[test]
+    fn telemetry_line_without_usage_reports_chunks_and_null_tokens() {
+        let line = telemetry_line(1, "qwen/qwen3.6-27b", 2, 3, None, Some(57));
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["node"], "qwen3.6");
+        assert!(v["prompt_tokens"].is_null());
+        assert!(v["completion_tokens"].is_null());
+        assert_eq!(v["usage"], false);
+        assert_eq!(v["approx_completion_chunks"], 57);
+
+        let run = telemetry_line(1, "swarm", 4, 4, None, None);
+        let v: Value = serde_json::from_str(&run).unwrap();
+        assert!(v["node"].is_null());
+        assert!(v.get("approx_completion_chunks").is_none());
+
+        let empty_usage = Usage::default();
+        let no_counts = telemetry_line(1, "swarm", 4, 4, Some(&empty_usage), None);
+        let v: Value = serde_json::from_str(&no_counts).unwrap();
+        assert_eq!(v["usage"], false);
+    }
+
+    /// The interleave guarantee: many threads appending concurrently must yield exactly one intact,
+    /// parseable JSON line each — and an unwritable path must be swallowed, never panic.
+    #[test]
+    fn telemetry_append_never_interleaves_and_swallows_failures() {
+        let path =
+            std::env::temp_dir().join(format!("goose_swarm_telemetry_{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let threads: Vec<_> = (0..16)
+            .map(|i| {
+                let p = path.clone().into_os_string();
+                std::thread::spawn(move || {
+                    for j in 0..8 {
+                        let filler = "x".repeat(2048);
+                        telemetry_append(
+                            &p,
+                            format!(r#"{{"thread":{i},"line":{j},"filler":"{filler}"}}"#),
+                        );
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 128);
+        for line in lines {
+            serde_json::from_str::<Value>(line).unwrap();
+        }
+
+        telemetry_append(
+            std::ffi::OsStr::new("/no/such/dir/telemetry.jsonl"),
+            "{}".to_string(),
+        );
     }
 
     /// The whole point: the message must NOT be the engine's progress log. It answers what happened, how
