@@ -354,11 +354,16 @@ async fn file_overlap_serializes() {
 
 #[tokio::test]
 async fn terminal_failure_fails_descendants_without_deadlock() {
-    // a (terminal fail) -> b -> c ; plus independent d which must still complete.
+    // a (terminal fail) -> b -> c (both FILE-LESS: verification-shaped, so they RELAX THROUGH
+    // the failure and still run — the wall-time hunt's rule: a verifier that writes nothing is
+    // strictly more informative run-against-the-broken-tree than cascaded Failed);
+    // a -> w which OWNS a file and must still fail exactly as before;
+    // plus independent d which must still complete. No deadlock either way.
     let specs = vec![
-        spec("a", &[], &[]),
+        spec("a", &[], &["a_owned.rs"]),
         spec("b", &["a"], &[]),
         spec("c", &["b"], &[]),
+        spec("w", &["a"], &["w_owned.rs"]),
         spec("d", &[], &[]),
     ];
     let dag = Dag::from_specs(specs).unwrap();
@@ -372,15 +377,17 @@ async fn terminal_failure_fails_descendants_without_deadlock() {
     });
     let sched = Scheduler::new(vec![dev("d1", "m-1", 2)], 3);
     let report = sched.run(dag, disp, String::new()).await.unwrap();
+    let done: HashSet<_> = report.done.iter().cloned().collect();
     assert_eq!(
-        report.done,
-        vec!["d".to_string()],
-        "independent task still completes"
+        done,
+        HashSet::from(["b".to_string(), "c".to_string(), "d".to_string()]),
+        "file-less dependents relax through the failure and run; independent task completes"
     );
     let failed: HashSet<_> = report.failed.iter().cloned().collect();
     assert_eq!(
         failed,
-        HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()])
+        HashSet::from(["a".to_string(), "w".to_string()]),
+        "the write-owning dependent still fails with its dependency"
     );
 }
 

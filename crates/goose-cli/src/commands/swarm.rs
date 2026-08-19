@@ -33019,6 +33019,30 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 eprintln!("complete: wall-clock cap reached — stopping the fix loop");
                 break;
             }
+            // HEADROOM (wall-time hunt, verified): never dispatch a round the remaining
+            // completion window provably cannot finish — the SAME predicate the extension
+            // path above already applies to bonus rounds, now applied to every round.
+            // Measured: both sb-6 wall-cut runs spent their final 8-10 minutes on a round
+            // that was reaped mid-flight and landed nothing, then paid a redundant
+            // re-verify on the unchanged tree.
+            if cap_deadline.is_some_and(|dl| {
+                std::time::Instant::now() + std::time::Duration::from_secs(fix_cap_eff) >= dl
+            }) {
+                sink.write_value(serde_json::json!({
+                    "event": "complete_fix_headroom_stop",
+                    "round": round,
+                    "detail": "remaining completion window is smaller than one fix attempt — \
+                               stopping at the last verified state instead of dispatching a \
+                               doomed round",
+                }));
+                break;
+            }
+            // ZERO-PROMOTION CONVERGENCE (wall-time hunt, verified): set by the graded round
+            // paths when nothing promoted — the real tree is then byte-identical to the tree
+            // this round's opening verify measured, so the next round-head gate would re-measure
+            // the same state at 2-6 minutes for a guaranteed stall exit. Break instead; the
+            // round-opening verdict stays the accurate final word on this tree.
+            let mut fix_converged = false;
             // FIX. Default: ONE serial fix on a single node (v1). GOOSE_SWARM_COMPLETE_PARALLEL: fan one fix
             // per failing FILE across the fleet's models — each agent writes only its own file (shadow
             // isolation), so two agents can never touch the same file; same-file findings collapse into one
@@ -33259,6 +33283,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                          rather than damaged by an unverified edit"
                     },
                 }));
+                if winner.is_none() {
+                    fix_converged = true;
+                }
             } else if fix_sched() && shard_this_round && !fleet_models.is_empty() {
                 // F781/#16 c6 (GOOSE_SWARM_FIX_SCHED, default OFF): THE FIX ROUND AS A REAL
                 // SCHEDULER RUN. The gate's findings become fix::r{N}::{file} DAG tasks a FRESH
@@ -33403,6 +33430,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                             "round": round,
                                         }));
                                     }
+                                }
+                                if fresh
+                                    .fix_promotions
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                                    == 0
+                                {
+                                    fix_converged = true;
                                 }
                             }
                         }
@@ -33719,6 +33753,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "baseline_findings": verdict.findings.len(),
                     "path": "serial",
                 }));
+            }
+            if fix_converged {
+                sink.write_value(serde_json::json!({
+                    "event": "complete_fix_converged",
+                    "round": round,
+                    "findings": verdict.findings.len(),
+                    "detail": "a graded fix round promoted nothing — the tree is unchanged since \
+                               its opening verify, so the phase ends here instead of re-measuring \
+                               an identical tree into a stall exit",
+                }));
+                break;
             }
             round += 1;
         }
