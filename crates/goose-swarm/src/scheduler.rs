@@ -224,6 +224,21 @@ fn salvage_require_critical() -> bool {
 /// on mustsolve-test4: cli-entry owns cmd/logfold/main.go but stalled after writing only a 24-byte go.mod, and
 /// the old `.any()` salvaged it to Done → the app shipped with NO entrypoint. Falls back to `.any()` when the
 /// task owns only manifest/test files. Paths resolve against the run cwd (where workers write).
+/// Content fingerprint of a task's owned files, for the progress-gated kill rule. Absent
+/// files hash as a marker so created-vs-missing is itself movement.
+fn owned_files_fingerprint(owned_files: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for f in owned_files {
+        f.hash(&mut h);
+        match std::fs::read(f) {
+            Ok(bytes) => bytes.hash(&mut h),
+            Err(_) => "ABSENT".hash(&mut h),
+        }
+    }
+    h.finish()
+}
+
 fn owned_file_written(owned_files: &[String]) -> bool {
     let nonempty = |f: &str| std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false);
     if salvage_require_critical() {
@@ -672,6 +687,11 @@ struct State {
     /// pre-reviews) so up to `idle_capacity()` run CONCURRENTLY — one per free node — instead of the old
     /// single shared slot that let the judge starve pre-review and left a second idle node asleep.
     abort_handles: HashMap<TaskId, tokio::task::AbortHandle>,
+    /// Owned-file fingerprint recorded at each judge kill. A SECOND kill is allowed only if the
+    /// files moved since the previous one — a restart that repeats a no-progress attempt costs a
+    /// full task restart (measured 4-25 min) and converges on nothing the deterministic
+    /// backstops would not handle better.
+    kill_tree_hash: HashMap<TaskId, u64>,
     prior_hints: HashMap<TaskId, String>,
     /// Every corrective note the judge has produced this run, in order, and NEVER consumed.
     ///
@@ -2065,6 +2085,49 @@ impl State {
             && interv >= cfg.max_interventions_per_task
             && elapsed >= cfg.terminal_min_secs;
         let redispatch = actionable && interv < cfg.max_interventions_per_task;
+        // FIX ROUNDS: the judge OBSERVES but never intervenes. A kill or split inside a fix
+        // round drops the shard's future before grade_promotion_preview can land its verified
+        // edit — the promotion dies with the worker — and judge splits are what kept rounds
+        // alive past the completion cap (F890; measured: one round was 31.9 wall-minutes of
+        // re-dispatch/split churn that landed nothing). Hints still flow as observations; the
+        // round's own deterministic gates stay the only authority on shard outcomes.
+        let (is_split, terminal, redispatch) = if self.fix_round {
+            (false, false, false)
+        } else {
+            (is_split, terminal, redispatch)
+        };
+        // PROGRESS-GATED KILLS: a second re_dispatch is allowed only if the task's owned files
+        // moved since the previous kill. A no-progress attempt that gets killed and restarted
+        // repeats the same doomed generation (each restart measured 4-25 min of a node); with
+        // the kill withheld, the attempt runs to its own deterministic backstop instead, and
+        // the judge's hint is still stored via the observed path below. File-less tasks
+        // (verify::, e2e shards) keep the old behavior — there is nothing to fingerprint.
+        let mut kill_withheld = false;
+        let redispatch = if redispatch {
+            let files = self
+                .dag
+                .tasks
+                .get(tid)
+                .map(|n| n.spec.owned_files.clone())
+                .unwrap_or_default();
+            if files.is_empty() {
+                true
+            } else {
+                // Caveat (review): a speculation twin writes its SHADOW, so real-tree
+                // fingerprints cannot see its progress — the gate degrades such a task to
+                // observe-only rather than ever corrupting state.
+                let fp = owned_files_fingerprint(&files);
+                if self.kill_tree_hash.get(tid) == Some(&fp) {
+                    kill_withheld = true;
+                    false
+                } else {
+                    self.kill_tree_hash.insert(tid.to_string(), fp);
+                    true
+                }
+            }
+        } else {
+            false
+        };
         // SPLIT is handled FIRST so the emitted event reflects the ACTUAL outcome: apply_split validates the
         // proposal and returns false (no-op, worker keeps running) if it is malformed — in that case the
         // event must report "observed", not a "split" that never happened.
@@ -2087,6 +2150,10 @@ impl State {
             "failed"
         } else if redispatch {
             "re_dispatch"
+        } else if kill_withheld {
+            // The progress gate withheld a kill — distinguishable from an ordinary observe so
+            // the event stream can count how often the gate fires (instrument, don't note).
+            "kill_withheld"
         } else {
             "observed"
         };
@@ -2441,21 +2508,69 @@ impl State {
     /// A failed task can never produce output, so its (transitive) dependents can never run —
     /// mark them Failed so the run terminates instead of deadlocking on blocked tasks.
     fn fail_descendants(&mut self, tid: &str) {
-        let mut q: VecDeque<TaskId> = self
+        // (parent, dependent) pairs so a relaxed verifier's hint names its DIRECT failed
+        // dependency, not the BFS root (review: a→m→v used to tell v that 'a' failed).
+        let mut q: VecDeque<(TaskId, TaskId)> = self
             .dag
             .dependents
             .get(tid)
             .cloned()
             .unwrap_or_default()
-            .into();
-        while let Some(d) = q.pop_front() {
+            .into_iter()
+            .map(|d| (tid.to_string(), d))
+            .collect();
+        while let Some((parent, d)) = q.pop_front() {
             let n = self.dag.tasks.get_mut(&d).unwrap();
             if matches!(n.state, TaskState::Done | TaskState::Failed) {
                 continue;
             }
+            // RELAX-THROUGH-FAILURE for verification-shaped dependents (wall-time hunt,
+            // verified): a dependent that OWNS NO FILES verifies or integrates — it writes
+            // nothing, so running it against the tree that exists is strictly more informative
+            // than cascading Failed. Measured: 2 of 3 sb-6 runs shipped apps that never bind a
+            // port because the module failure killed the verify fan with it, so the boot defect
+            // was discovered by the SCORER after three hours instead of by the run's own gate
+            // during it. The failed dependency is threaded into prior_hints so the verifier
+            // names what it is verifying around; write-owning dependents still fail exactly as
+            // before.
+            if n.spec.owned_files.is_empty() {
+                let hint = format!(
+                    "dependency '{parent}' FAILED — verify the tree that exists and report what \
+                     its absence breaks"
+                );
+                let deps_relaxed = {
+                    if n.indegree_remaining > 0 {
+                        n.indegree_remaining -= 1;
+                    }
+                    n.indegree_remaining == 0 && n.state == TaskState::Pending
+                };
+                if deps_relaxed {
+                    let nd = self.dag.tasks.get_mut(&d).unwrap();
+                    nd.state = TaskState::Ready;
+                    let fan_out = nd.fan_out;
+                    self.ready.push(Ranked {
+                        fan_out,
+                        id: d.clone(),
+                    });
+                }
+                match self.prior_hints.entry(d.clone()) {
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        let v = e.get_mut();
+                        // Converging failed paths must not repeat the same sentence.
+                        if !v.contains(&hint) {
+                            v.push_str("; ");
+                            v.push_str(&hint);
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(hint);
+                    }
+                }
+                continue;
+            }
             n.state = TaskState::Failed;
             for dd in self.dag.dependents.get(&d).cloned().unwrap_or_default() {
-                q.push_back(dd);
+                q.push_back((d.clone(), dd));
             }
         }
     }
@@ -2766,6 +2881,7 @@ impl Scheduler {
             bonus_ids: HashSet::new(),
             device_speed: HashMap::new(),
             abort_handles: HashMap::new(),
+            kill_tree_hash: HashMap::new(),
             prior_hints: HashMap::new(),
             judge_notes: Vec::new(),
             interventions: HashMap::new(),
