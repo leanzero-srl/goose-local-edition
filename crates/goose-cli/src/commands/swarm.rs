@@ -1617,16 +1617,16 @@ fn show_pool(cfg: &SwarmConfig) {
         if let Some(v) = swarm_temp_resolved(cfg.temperature) {
             parts.push(format!("temp={v}"));
         }
-        if let Some(v) = cfg.top_p {
+        if let Some(v) = swarm_top_p_resolved(cfg.top_p) {
             parts.push(format!("top_p={v}"));
         }
-        if let Some(v) = cfg.top_k {
+        if let Some(v) = swarm_top_k_resolved(cfg.top_k) {
             parts.push(format!("top_k={v}"));
         }
-        if let Some(v) = cfg.min_p {
+        if let Some(v) = swarm_min_p_resolved(cfg.min_p) {
             parts.push(format!("min_p={v}"));
         }
-        if let Some(v) = cfg.repeat_penalty {
+        if let Some(v) = swarm_repeat_penalty_resolved(cfg.repeat_penalty) {
             parts.push(format!("rep={v}"));
         }
         let s = if parts.is_empty() {
@@ -19845,6 +19845,29 @@ async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
     ));
     let _ = std::fs::remove_file(&scratch);
     let argv = spec_run_argv(spec, &pkg, &scratch.to_string_lossy(), free_port);
+    // The port the app will ACTUALLY bind. spec_run_argv substitutes free_port only for an
+    // ALL-CAPS placeholder after a port flag; a spec with a literal port (or no parseable
+    // invocation) boots the app on its OWN port — polling free_port there reads a healthy
+    // app as permanently dead and feeds unverified "repairs" into a green tree (adversarial
+    // review, boot-floor 1b). Mirror spec_contract's fallback; and when the fallback port is
+    // already bound pre-spawn (vendor mock, squatter) the bind cannot be attributed, so the
+    // probe refuses to conclude rather than concluding wrong.
+    let probe_port = if argv.iter().any(|a| *a == free_port.to_string()) {
+        free_port
+    } else if let Some(p) = spec_port_opt(spec) {
+        p
+    } else {
+        let _ = std::fs::remove_file(&scratch);
+        return None; // spec advertises no server port — a no-server app is not "dead"
+    };
+    if probe_port != free_port
+        && tokio::net::TcpStream::connect(("127.0.0.1", probe_port))
+            .await
+            .is_ok()
+    {
+        let _ = std::fs::remove_file(&scratch);
+        return None;
+    }
     let mut cmd = tokio::process::Command::new("python3");
     cmd.args(["-m", &pkg])
         .args(&argv)
@@ -19855,9 +19878,34 @@ async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     let mut child = cmd.spawn().ok()?;
+    // Drain the pipes WHILE polling: an undrained pipe wedges a chatty child at ~64KB of
+    // pre-bind output, which this probe would then misread as a dead app.
+    async fn pipe_tail(
+        stream: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>,
+    ) -> String {
+        use tokio::io::AsyncReadExt;
+        let Some(mut s) = stream else {
+            return String::new();
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = s.read(&mut chunk).await {
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if buf.len() > 16384 {
+                let cut = buf.len() - 8192;
+                buf.drain(..cut);
+            }
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+    let stdout_task = tokio::spawn(pipe_tail(child.stdout.take()));
+    let stderr_task = tokio::spawn(pipe_tail(child.stderr.take()));
     let mut up = false;
     for _ in 0..80 {
-        if tokio::net::TcpStream::connect(("127.0.0.1", free_port))
+        if tokio::net::TcpStream::connect(("127.0.0.1", probe_port))
             .await
             .is_ok()
         {
@@ -19867,38 +19915,50 @@ async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     let _ = child.kill().await;
-    let out = child.wait_with_output().await.ok();
+    let _ = child.wait().await;
+    let combined = format!(
+        "{}{}",
+        stdout_task.await.unwrap_or_default(),
+        stderr_task.await.unwrap_or_default()
+    );
     let _ = std::fs::remove_file(&scratch);
     if up {
         Some(None)
     } else {
-        let tail = out
-            .map(|o| {
-                let combined = format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&o.stdout),
-                    String::from_utf8_lossy(&o.stderr)
-                );
-                combined
-                    .chars()
-                    .rev()
-                    .take(1200)
-                    .collect::<String>()
-                    .chars()
-                    .rev()
-                    .collect()
-            })
-            .unwrap_or_else(|| "no output captured".to_string());
-        Some(Some(tail))
+        let tail: String = combined
+            .chars()
+            .rev()
+            .take(1200)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        // Normalize per-probe randomness OUT of the tail: the repair loop's only progress
+        // signal is "did the traceback change", and a tail embedding this probe's scratch
+        // path or port would read as fresh progress every attempt, defeating the
+        // identical-traceback stop and always burning the full attempt budget.
+        let tail = tail
+            .replace(&*scratch.to_string_lossy(), "SCRATCH_DB")
+            .replace(&free_port.to_string(), "PORT");
+        if tail.trim().is_empty() {
+            Some(Some("no output captured".to_string()))
+        } else {
+            Some(Some(tail))
+        }
     }
 }
 
-/// The `python3 -m PKG` entry package the spec literally advertises, if any. Pure/testable.
+/// The `python3 -m PKG` entry package the spec literally advertises, if any — skipping tool
+/// modules (`python3 -m pytest` in a testing note is not the app entry). Pure/testable.
 fn spec_python_entry(spec: &str) -> Option<String> {
-    regex::Regex::new(r"python3?\s+-m\s+([A-Za-z_][\w.]*)")
-        .ok()?
-        .captures(spec)
-        .map(|c| c[1].to_string())
+    let re = regex::Regex::new(r"python3?\s+-m\s+([A-Za-z_][\w.]*)").ok()?;
+    let names: Vec<String> = re.captures_iter(spec).map(|c| c[1].to_string()).collect();
+    names.into_iter().find(|p| {
+        !matches!(
+            p.as_str(),
+            "pytest" | "pip" | "venv" | "unittest" | "http.server" | "compileall" | "build"
+        )
+    })
 }
 
 /// ONE resolution of the scout-docs condition, shared by the per-scout prompt builder and the
@@ -20283,13 +20343,17 @@ fn spec_run_argv(spec: &str, pkg: &str, db_path: &str, port: u16) -> Vec<String>
     out
 }
 
-/// The advertised server port, else 8000 (the uvicorn/FastAPI default the beds use). Pure/testable.
-fn spec_port(spec: &str) -> u16 {
+/// The advertised server port when the spec literally names one. Pure/testable.
+fn spec_port_opt(spec: &str) -> Option<u16> {
     regex::Regex::new(r"(?:127\.0\.0\.1:|localhost:|port\s+)(\d{4,5})")
         .ok()
         .and_then(|re| re.captures(spec).and_then(|c| c[1].parse::<u16>().ok()))
         .filter(|p| *p >= 1024)
-        .unwrap_or(8000)
+}
+
+/// The advertised server port, else 8000 (the uvicorn/FastAPI default the beds use). Pure/testable.
+fn spec_port(spec: &str) -> u16 {
+    spec_port_opt(spec).unwrap_or(8000)
 }
 
 /// The one-line verdict for a `spec_contract` round. Pure, so the ORDER can be pinned by a test.
@@ -20699,11 +20763,15 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     // emitted either way so the arm's OFF state is measurable rather than assumed.
     let mut post_probed = 0usize;
     let mut post_ok = 0usize;
+    // Declared OUTSIDE the POST-probe gate: the aggregate-truth glue below compares the app's
+    // own row count against this vendor total (the fire-and-forget-sync class), and scoping it
+    // inside the gate block was a compile break the committing session never caught.
+    let mut vendor_total: Option<(i64, String)> = None;
     if swarm_gate("GOOSE_SWARM_PROBE_ADVERTISED_POST", false) {
         // F825: vendor ground truth, fetched ONCE. Recorded as a note either way so the
         // mechanism is verifiable from the run log (the F818 lesson: an unobservable
         // mechanism's readout is permanently unverifiable).
-        let vendor_total = vendor_truth_total(spec).await;
+        vendor_total = vendor_truth_total(spec).await;
         match &vendor_total {
             Some((n, vpath)) => inconclusive.push(format!(
                 "vendor-truth: the vendor's own {vpath} reports total={n}"
@@ -21381,7 +21449,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     // existing spawn machinery and probe budgets; no new time constants.
     if up && post_ok > 0 && app_total_rows.unwrap_or(0) > 0 {
         let db_str = scratch_db.to_string_lossy().to_string();
-        if advertised.iter().any(|a| *a == db_str) {
+        if advertised.contains(&db_str) {
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             let mut reboot = tokio::process::Command::new("python3");
             reboot
@@ -24160,7 +24228,7 @@ fn spec_client_symbol(spec: &str) -> (Option<String>, Option<String>) {
 /// integer amount, RFC3339 timestamp, short lowercase status), and any ambiguity prints
 /// ran:false — silence, never a false finding. argv: base_url, tz, then the advertised paths.
 const AGGREGATE_TRUTH_SCRIPT: &str = r#"
-import json, sys, urllib.request, urllib.parse, re
+import json, sys, time, urllib.request, urllib.parse, re
 from datetime import datetime, timezone
 try:
     from zoneinfo import ZoneInfo
@@ -24202,23 +24270,44 @@ for p in paths:
     elif rs and any(re.match(r"^\d{4}-\d{2}-\d{2}$", str(x)) for x in rs[0].values()) and buckets is None:
         buckets = rs
 if not list_path:
+    # Row-shape identification needs a NON-EMPTY list, so an all-empty app (the r5
+    # fire-and-forget-sync class: every GET answers {"data": [], "total": 0}) can never be
+    # identified above — yet its emptiness is THE measurement. Accept the empty LIST SHAPE
+    # itself as identification: a bare [] at an advertised GET, or a dict carrying an empty
+    # list alongside pagination/total vocabulary. One grace sleep before asserting emptiness
+    # so an honest still-running async sync lands as inconclusive, not as an accusation.
+    def empty_list_shape(p):
+        v = get(base + p)
+        if v is None: return False
+        if isinstance(v, list): return len(v) == 0
+        if isinstance(v, dict):
+            has_empty = any(isinstance(x, list) and len(x) == 0 for x in v.values())
+            paged = any(re.search(r"limit|offset|page|total|count", k, re.I) for k in v)
+            return has_empty and paged
+        return False
+    empties = [p for p in paths if empty_list_shape(p)]
+    if empties:
+        time.sleep(6)
+        if all(empty_list_shape(p) for p in empties):
+            print(json.dumps({"ran": True, "total_rows": 0, "findings": []})); sys.exit(0)
     print(json.dumps({"ran": False, "reason": "no row-list endpoint identified"})); sys.exit(0)
 
 sep = "&" if "?" in list_path else "?"
-rows, offset = [], 0
-for _ in range(400):
-    v = get(f"{base}{list_path}{sep}limit=200&offset={offset}")
-    rs = rows_of(v) if v is not None else None
-    if not rs: break
-    rows.extend(rs); offset += len(rs)
-    if len(rs) < 1: break
-    if len(rows) > 60000: break
-if len(rows) == 0:
-    # An identified list endpoint holding ZERO rows is a measurement, not a probe failure —
-    # the caller compares it against the vendor's total (the fire-and-forget-sync class).
-    print(json.dumps({"ran": True, "total_rows": 0, "findings": []})); sys.exit(0)
+rows = []
+for lim in (200, 100, 50):
+    rows, offset = [], 0
+    for _ in range(1600):
+        v = get(f"{base}{list_path}{sep}limit={lim}&offset={offset}")
+        rs = rows_of(v) if v is not None else None
+        if not rs: break
+        rows.extend(rs); offset += len(rs)
+        if len(rows) > 60000: break
+    if rows: break
 if len(rows) < 2:
-    print(json.dumps({"ran": False, "reason": "could not page the row list"})); sys.exit(0)
+    # The plain GET showed rows, so the store is NOT empty — a zero here is a paging
+    # failure (e.g. a documented limit cap rejecting limit=200), never total_rows:0
+    # (which the caller reads as the fire-and-forget-sync class).
+    print(json.dumps({"ran": False, "reason": "could not page the row list (plain GET shows rows)"})); sys.exit(0)
 r0 = rows[0]
 cur_f = next((k for k, v in r0.items() if isinstance(v, str) and re.match(r"^[A-Z]{3}$", v)), None)
 amt_f = next((k for k, v in r0.items() if isinstance(v, int) and not isinstance(v, bool)
@@ -29868,6 +29957,31 @@ fn swarm_temp_resolved(cfg_temp: Option<f32>) -> Option<f32> {
         .or(cfg_temp)
 }
 
+// ONE resolution per knob, shared by the dispatcher's SamplingParams, the levers_resolved echo
+// and the startup banner — the adversarial review caught the first version resolving env only
+// at the sampling site while both evidence channels echoed raw config (and omitted top_k):
+// every readback of "what sampling did this run have" was wrong, which for a controlled
+// benchmark is the load-bearing channel. Exactly the F837 echo-vs-gating drift class again.
+fn swarm_top_p_resolved(cfg: Option<f32>) -> Option<f32> {
+    env_f32_clamped("GOOSE_SWARM_TOP_P", 0.0, 1.0).or(cfg)
+}
+
+fn swarm_top_k_resolved(cfg: Option<i32>) -> Option<i32> {
+    std::env::var("GOOSE_SWARM_TOP_K")
+        .ok()
+        .and_then(|v| v.trim().parse::<i32>().ok())
+        .filter(|v| (0..=1000).contains(v))
+        .or(cfg)
+}
+
+fn swarm_min_p_resolved(cfg: Option<f32>) -> Option<f32> {
+    env_f32_clamped("GOOSE_SWARM_MIN_P", 0.0, 1.0).or(cfg)
+}
+
+fn swarm_repeat_penalty_resolved(cfg: Option<f32>) -> Option<f32> {
+    env_f32_clamped("GOOSE_SWARM_REPEAT_PENALTY", 0.5, 2.0).or(cfg)
+}
+
 /// ONE RULER (F862). Grades a tree by the SAME categories the round's complete_verify counts:
 /// smoke + spec_contract (when the round runs it) + http_timeout_scan + cross_module_drift (when
 /// its lever is on) + the missing-deliverables stat (when the round gates on it). The r1
@@ -30643,15 +30757,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // Per-run env overrides mirror GOOSE_SWARM_TEMP so the desktop's run-window
             // sampling knobs (and any harness) can pin a single run without touching
             // config.yaml — env beats config, run beats default (Mihai 2026-08-19).
-            top_p: env_f32_clamped("GOOSE_SWARM_TOP_P", 0.0, 1.0).or(cfg.top_p),
-            top_k: std::env::var("GOOSE_SWARM_TOP_K")
-                .ok()
-                .and_then(|v| v.trim().parse::<i32>().ok())
-                .filter(|v| (0..=1000).contains(v))
-                .or(cfg.top_k),
-            min_p: env_f32_clamped("GOOSE_SWARM_MIN_P", 0.0, 1.0).or(cfg.min_p),
-            repeat_penalty: env_f32_clamped("GOOSE_SWARM_REPEAT_PENALTY", 0.5, 2.0)
-                .or(cfg.repeat_penalty),
+            top_p: swarm_top_p_resolved(cfg.top_p),
+            top_k: swarm_top_k_resolved(cfg.top_k),
+            min_p: swarm_min_p_resolved(cfg.min_p),
+            repeat_penalty: swarm_repeat_penalty_resolved(cfg.repeat_penalty),
         },
         stream_decode_retry: stream_decode_retry_enabled(cfg.stream_decode_retry),
         straggler_stop: straggler_stop_enabled(cfg.straggler_stop),
@@ -31371,9 +31480,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "context_cap": load_config().context_cap,
             "max_tool_response_chars": load_config().max_tool_response_chars,
             "temperature": swarm_temp_resolved(load_config().temperature),
-            "top_p": load_config().top_p,
-            "min_p": load_config().min_p,
-            "repeat_penalty": load_config().repeat_penalty,
+            "top_p": swarm_top_p_resolved(load_config().top_p),
+            "top_k": swarm_top_k_resolved(load_config().top_k),
+            "min_p": swarm_min_p_resolved(load_config().min_p),
+            "repeat_penalty": swarm_repeat_penalty_resolved(load_config().repeat_penalty),
     });
     if let (Some(dst), Some(src)) = (
         levers_event
@@ -32980,7 +33090,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // Definite-init by the loop: every break happens after the round's verify assigns these.
         let mut last_verify_ran;
         let mut last_verify_count;
-        let mut last_verify_established = false;
+        let mut last_verify_established;
         // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS; 0 = opt out of the
         // one-flat-round stop).
         let stall_cap = complete_stall_rounds();
@@ -33601,8 +33711,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // Round budget: the static count is a FLOOR, not a wall. A run that just STRICTLY
             // reduced its findings and still holds a full fix-cap of wall budget has earned the
             // next round (extension requires BOTH; ceiling 6 = the config clamp). A run at the
-            // count without that proof stops exactly as before.
-            if round >= rounds {
+            // count without that proof stops exactly as before. A pending strategy switch
+            // bypasses this cap the same way it bypasses the stall exit (adversarial review:
+            // the zero-promotion round is USUALLY the last budgeted one, so gating the switch
+            // on the cap emitted fix_strategy_switch, burned the one-shot flag, and never ran
+            // the switched round). The switch is already bounded by strategy_switched, and the
+            // wall/headroom checks below still apply to it.
+            if round >= rounds && !force_race_next && !force_shard_next {
                 // Extension requires ESTABLISHED progress — a blind verify's lower count is
                 // not evidence that another round is earning its wall time (rank-1 chain fix).
                 let decreasing =
@@ -34406,95 +34521,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }
             round += 1;
         }
-        // FUNCTIONAL FLOOR (Mihai 2026-08-19: "the goose swarm should not allow a non
-        // functional result — if the application is dead there is no point to it"). Three of
-        // five sb-6 fleet runs shipped apps that never serve a request; the repair loop saw
-        // the symptoms too late and converged red. Before anything ships: boot the advertised
-        // entry. If it does not BIND, run dedicated boot-repair attempts — the worker gets the
-        // ACTUAL boot traceback (the smallest, most actionable finding a run can produce) —
-        // and stop on PROGRESS grounds only: an attempt that leaves the traceback byte-
-        // identical taught the loop nothing, two such stops end it. Attempt budget reuses the
-        // existing per-fix cap; no new time constants.
-        if matches!(complete_lang, TargetLang::Python) {
-            let mut prev_err: Option<String> = None;
-            let mut attempts = 0u32;
-            loop {
-                let Some(probe) = boot_probe(&cwd, &opts.prompt).await else {
-                    break; // spec advertises no bootable entry — the floor does not apply
-                };
-                let Some(err_tail) = probe else {
-                    if attempts > 0 {
-                        sink.write_value(serde_json::json!({
-                            "event": "boot_repaired",
-                            "attempts": attempts,
-                            "detail": "the app now binds and answers — a dead app never ships \
-                                       without a fight",
-                        }));
-                        eprintln!(
-                            "{}",
-                            style("complete: BOOT REPAIRED — the app binds again").green()
-                        );
-                    }
-                    break;
-                };
-                if attempts >= 3 || prev_err.as_deref() == Some(err_tail.as_str()) {
-                    sink.write_value(serde_json::json!({
-                        "event": "boot_repair_exhausted",
-                        "attempts": attempts,
-                        "detail": "boot repair stopped — no progress between attempts (identical \
-                                   traceback) or attempt budget spent; the ship-best restore \
-                                   decides what ships",
-                        "boot_error": elide_middle(&err_tail, 150, 650),
-                    }));
-                    break;
-                }
-                attempts += 1;
-                sink.write_value(serde_json::json!({
-                    "event": "boot_repair_attempt",
-                    "attempt": attempts,
-                    "boot_error": elide_middle(&err_tail, 150, 650),
-                }));
-                prev_err = Some(err_tail.clone());
-                if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
-                    let boot_req = DispatchRequest {
-                        task_id: format!("boot-repair-{attempts}"),
-                        description: format!(
-                            "THE APP DOES NOT START. The documented invocation was spawned and \
-                             never bound its port. This is the ONLY thing to fix — do not add \
-                             features, do not refactor. The boot output ends with:\n\n{err_tail}\n\n\
-                             Fix the crash at its source (usually __main__.py or the server \
-                             wiring). Known killers on this stack: a sqlite3 connection created \
-                             on one thread and used from another (open it IN the serving thread \
-                             or pass check_same_thread=False with a lock); handler attributes \
-                             patched in AFTER construction (BaseHTTPRequestHandler handles the \
-                             request INSIDE __init__ — use class attributes or self.server.*); \
-                             http.client.HTTPConnection given a full URL instead of host:port. \
-                             When done, verify by running the documented invocation yourself and \
-                             confirming the port answers."
-                        ),
-                        device_id: dev_id,
-                        model_id,
-                        context_slice: String::new(),
-                        attempt: 0,
-                        owned_files: vec![],
-                        all_files: smoke_all_files.clone(),
-                        prior_hint: None,
-                        subsplit: Vec::new(),
-                        speculative: false,
-                        user_decisions: user_decisions.clone(),
-                        doc_facts: doc_facts.clone(),
-                        neighborhood: Vec::new(),
-                    };
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(fix_cap_eff),
-                        smoke_fix_dispatcher.run(boot_req),
-                    )
-                    .await;
-                } else {
-                    break;
-                }
-            }
-        }
         // F835 RESTORE: if the final tree verified WORSE than the best snapshot (or its last
         // verify never ran), ship the best verified state instead of the last edit. Rank-1
         // chain fix: an UNESTABLISHED final state — including an unestablished "green", which
@@ -34564,6 +34590,105 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             .yellow()
                         );
                     }
+                }
+            }
+        }
+        // FUNCTIONAL FLOOR (Mihai 2026-08-19: "the goose swarm should not allow a non
+        // functional result — if the application is dead there is no point to it"). Three of
+        // five sb-6 fleet runs shipped apps that never serve a request; the repair loop saw
+        // the symptoms too late and converged red. Before anything ships: boot the advertised
+        // entry. If it does not BIND, run dedicated boot-repair attempts — the worker gets the
+        // ACTUAL boot traceback (the smallest, most actionable finding a run can produce) —
+        // and stop on PROGRESS grounds only: an attempt that leaves the traceback byte-
+        // identical taught the loop nothing, two such stops end it. Attempt budget reuses the
+        // existing per-fix cap; no new time constants. This block runs AFTER the F835 restore
+        // (adversarial review, boot-floor 1a: probing before the restore let the restore
+        // clobber a successful boot repair with a pre-repair snapshot — the floor must probe
+        // the tree that SHIPS). Past the completion deadline the budget drops to one attempt:
+        // the floor is the point, but not three fix-caps past the wall.
+        if matches!(complete_lang, TargetLang::Python) {
+            let boot_budget: u32 = if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl)
+            {
+                1
+            } else {
+                3
+            };
+            let mut prev_err: Option<String> = None;
+            let mut attempts = 0u32;
+            loop {
+                let Some(probe) = boot_probe(&cwd, &opts.prompt).await else {
+                    break; // spec advertises no bootable entry — the floor does not apply
+                };
+                let Some(err_tail) = probe else {
+                    if attempts > 0 {
+                        sink.write_value(serde_json::json!({
+                            "event": "boot_repaired",
+                            "attempts": attempts,
+                            "detail": "the app now binds and answers — a dead app never ships \
+                                       without a fight",
+                        }));
+                        eprintln!(
+                            "{}",
+                            style("complete: BOOT REPAIRED — the app binds again").green()
+                        );
+                    }
+                    break;
+                };
+                if attempts >= boot_budget || prev_err.as_deref() == Some(err_tail.as_str()) {
+                    sink.write_value(serde_json::json!({
+                        "event": "boot_repair_exhausted",
+                        "attempts": attempts,
+                        "detail": "boot repair stopped — no progress between attempts (identical \
+                                   traceback) or attempt budget spent; the ship-best restore \
+                                   decides what ships",
+                        "boot_error": elide_middle(&err_tail, 150, 650),
+                    }));
+                    break;
+                }
+                attempts += 1;
+                sink.write_value(serde_json::json!({
+                    "event": "boot_repair_attempt",
+                    "attempt": attempts,
+                    "boot_error": elide_middle(&err_tail, 150, 650),
+                }));
+                prev_err = Some(err_tail.clone());
+                if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
+                    let boot_req = DispatchRequest {
+                        task_id: format!("boot-repair-{attempts}"),
+                        description: format!(
+                            "THE APP DOES NOT START. The documented invocation was spawned and \
+                             never bound its port. This is the ONLY thing to fix — do not add \
+                             features, do not refactor. The boot output ends with:\n\n{err_tail}\n\n\
+                             Fix the crash at its source (usually __main__.py or the server \
+                             wiring). Known killers on this stack: a sqlite3 connection created \
+                             on one thread and used from another (open it IN the serving thread \
+                             or pass check_same_thread=False with a lock); handler attributes \
+                             patched in AFTER construction (BaseHTTPRequestHandler handles the \
+                             request INSIDE __init__ — use class attributes or self.server.*); \
+                             http.client.HTTPConnection given a full URL instead of host:port. \
+                             When done, verify by running the documented invocation yourself and \
+                             confirming the port answers."
+                        ),
+                        device_id: dev_id,
+                        model_id,
+                        context_slice: String::new(),
+                        attempt: 0,
+                        owned_files: vec![],
+                        all_files: smoke_all_files.clone(),
+                        prior_hint: None,
+                        subsplit: Vec::new(),
+                        speculative: false,
+                        user_decisions: user_decisions.clone(),
+                        doc_facts: doc_facts.clone(),
+                        neighborhood: Vec::new(),
+                    };
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(fix_cap_eff),
+                        smoke_fix_dispatcher.run(boot_req),
+                    )
+                    .await;
+                } else {
+                    break;
                 }
             }
         }
