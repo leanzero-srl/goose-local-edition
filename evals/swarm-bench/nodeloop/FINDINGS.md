@@ -20737,3 +20737,19 @@ catches cost ~105 min total against the 3h a single ridden-out run would have bu
 each produced a mechanism, not a patch. r9 carries both; telemetry live from call one.
 Board unchanged (r1 0.1837). sb-7 lane: golden 0.9998 committed; haiku canary caught the
 gather(seed=None) harness void, fixed; haiku 0.0387 first real entry; sonnet running.
+
+## F906 — r9: every batch mechanism proven live, INCLUDING the first fix promotion in fleet history; the run itself died to the harness cap
+
+r9 (178.8 min, cut by the 10800s harness timeout mid-round-1): warm hint delivered to the
+worker prompt (found verbatim in the sessions db), stall retry MOVED nodes (api attempt 2
+waited for mihai instead of rebinding to gabee), fix_target_selected chose workhorse on
+basis=measured_decode_rate (15.9 vs 9.9 vs 7.3 tok/s — the static weight had it backwards),
+and spec_promote FIRED — the first verified fix promotion in any fleet run (r3/r4/r5: zero
+across their entire fix phases). The wall was eaten by the prefill-guillotine class (F905
+catch 3): api+web-viz lineages burned ~50 min of 420s zero-token kills before the fix
+landed in the binary at 23:30, after r9's start. The 0.0103 verdict is a truncated-tree
+auto-score — not publishable under F895-F897 and not comparable. r10 launches on the
+prefill-grace binary carrying all four fixes; it is the first clean test of the full batch.
+Remaining known gap: the engine's completion cap does not know the harness's outer timeout,
+so a late-starting fix phase can be truncated by the harness instead of its own governor
+(also bit r1). Candidate: BENCH_WALL_DEADLINE env → engine clamps cap_deadline to it.
