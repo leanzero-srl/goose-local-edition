@@ -20954,6 +20954,52 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     // JSON object with renderedRowCount / totalClaimedInDom / consoleErrors{count,texts};
     // unset or missing, this block is inert. Every failure of the PROBE is inconclusive —
     // only what the browser SAW becomes a finding.
+    // AGGREGATE TRUTH: after a successful advertised sync, recompute the app's aggregates
+    // from its own rows and hold them against its aggregate endpoints (per-currency totals,
+    // per-local-day buckets with the timezone THE SPEC DOCUMENTS). The fleet's #1 loss class
+    // — wrong-money DST bucketing — previously had no in-run detector at all.
+    let mut app_total_rows: Option<i64> = None;
+    if up && post_ok > 0 {
+        let spec_tz = regex::Regex::new(r"\b([A-Z][a-z]+/[A-Z][A-Za-z_]+)\b")
+            .ok()
+            .and_then(|re| re.captures(spec).map(|c| c[1].to_string()))
+            .unwrap_or_else(|| "UTC".to_string());
+        let mut cmd = tokio::process::Command::new("python3");
+        cmd.arg("-c")
+            .arg(AGGREGATE_TRUTH_SCRIPT)
+            .arg(format!("http://127.0.0.1:{port}"))
+            .arg(&spec_tz);
+        for p in &gets {
+            cmd.arg(p);
+        }
+        match smoke_output(cmd, 60).await {
+            Some(out) => match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                Ok(v) if v.get("ran").and_then(|x| x.as_bool()) == Some(true) => {
+                    app_total_rows = v.get("total_rows").and_then(|x| x.as_i64());
+                    if let Some(fs) = v.get("findings").and_then(|x| x.as_array()) {
+                        for f in fs {
+                            if let Some(t) = f.as_str() {
+                                findings.push(t.to_string());
+                            }
+                        }
+                        if fs.is_empty() {
+                            verified += 1;
+                        }
+                    }
+                }
+                Ok(v) => inconclusive.push(format!(
+                    "aggregate-truth: not run — {}",
+                    v.get("reason")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("unknown")
+                )),
+                Err(_) => inconclusive
+                    .push("aggregate-truth: probe output unparseable — nothing proven".to_string()),
+            },
+            None => inconclusive
+                .push("aggregate-truth: probe did not complete — nothing proven".to_string()),
+        }
+    }
     let mut render_gate_status = if !up {
         "not-run (app never came up)".to_string()
     } else {
@@ -21144,6 +21190,95 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         }
     }
     let _ = child.kill().await;
+    // RESTART DURABILITY (contract-gap work order rank 7): when the documented argv carries a
+    // db path and the app held rows, respawn the SAME argv on the SAME db and recount. Rows
+    // lost across kill+restart, or an app that never comes back against its own database, is
+    // the h_durability class the fleet shipped blind — now an in-run finding. Reuses the
+    // existing spawn machinery and probe budgets; no new time constants.
+    if up && post_ok > 0 && app_total_rows.unwrap_or(0) > 0 {
+        let db_str = scratch_db.to_string_lossy().to_string();
+        if advertised.iter().any(|a| *a == db_str) {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let mut reboot = tokio::process::Command::new("python3");
+            reboot
+                .args(["-m", &pkg])
+                .args(&advertised)
+                .current_dir(root)
+                .env("PYTHONPATH", "src")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true);
+            match reboot.spawn() {
+                Err(_) => inconclusive.push(
+                    "restart-durability: respawn failed to start — nothing proven".to_string(),
+                ),
+                Ok(mut child2) => {
+                    let mut up2 = false;
+                    for _ in 0..80 {
+                        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+                            .await
+                            .is_ok()
+                        {
+                            up2 = true;
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                    if !up2 {
+                        findings.push(format!(
+                            "the app does NOT come back when restarted against its own database — \
+                             the same documented invocation that just ran was killed and respawned \
+                             on the same --db file and never bound port {port} again. Schema init \
+                             must be idempotent (CREATE TABLE IF NOT EXISTS) and boot must tolerate \
+                             an already-populated database."
+                        ));
+                    } else {
+                        let spec_tz = regex::Regex::new(r"\b([A-Z][a-z]+/[A-Z][A-Za-z_]+)\b")
+                            .ok()
+                            .and_then(|re| re.captures(spec).map(|c| c[1].to_string()))
+                            .unwrap_or_else(|| "UTC".to_string());
+                        let mut cmd = tokio::process::Command::new("python3");
+                        cmd.arg("-c")
+                            .arg(AGGREGATE_TRUTH_SCRIPT)
+                            .arg(format!("http://127.0.0.1:{port}"))
+                            .arg(&spec_tz);
+                        for p in &gets {
+                            cmd.arg(p);
+                        }
+                        match smoke_output(cmd, 60).await {
+                            Some(out2) => {
+                                if let Ok(v) =
+                                    serde_json::from_slice::<serde_json::Value>(&out2.stdout)
+                                {
+                                    let after = v.get("total_rows").and_then(|x| x.as_i64());
+                                    let before = app_total_rows.unwrap_or(0);
+                                    match after {
+                                        Some(a) if a < before => findings.push(format!(
+                                            "DATA LOSS across restart: the app held {before} rows, \
+                                             was killed and restarted on the SAME database, and now \
+                                             serves only {a} — rows must survive a process restart; \
+                                             commit on write, never hold rows only in memory."
+                                        )),
+                                        Some(_) => verified += 1,
+                                        None => inconclusive.push(
+                                            "restart-durability: post-restart recount unavailable"
+                                                .to_string(),
+                                        ),
+                                    }
+                                }
+                            }
+                            None => inconclusive.push(
+                                "restart-durability: post-restart probe did not complete"
+                                    .to_string(),
+                            ),
+                        }
+                    }
+                    let _ = child2.kill().await;
+                }
+            }
+        }
+    }
     // NO SILENT CAPS. Reported here, at the one exit where the check actually ran, because this is the
     // only path that produces a `verified` a consumer will read as coverage. It is `inconclusive`, never
     // a `finding`: not probing an endpoint is an admission about the CHECK, not a defect in the app.
@@ -23832,6 +23967,147 @@ fn spec_client_symbol(spec: &str) -> (Option<String>, Option<String>) {
 /// engine-side could report it, which is the standing law (a scorer check with no engine sibling
 /// measures a gap the swarm cannot close).
 ///
+/// AGGREGATE TRUTH (contract-gap work order; the fleet's #1 wrong-money class had no in-run
+/// detector). Recompute the app's OWN aggregates from the app's OWN rows and compare them to
+/// the app's aggregate endpoints — per-currency totals against the summary, per-(local-day ×
+/// status) counts against the buckets grid using the TIMEZONE THE SPEC DOCUMENTS. Everything
+/// is self-identifying and generic: the list/summary/buckets endpoints are recognized by their
+/// response SHAPES among the advertised GETs, row fields are detected (3-uppercase currency,
+/// integer amount, RFC3339 timestamp, short lowercase status), and any ambiguity prints
+/// ran:false — silence, never a false finding. argv: base_url, tz, then the advertised paths.
+const AGGREGATE_TRUTH_SCRIPT: &str = r#"
+import json, sys, urllib.request, urllib.parse, re
+from datetime import datetime, timezone
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    print(json.dumps({"ran": False, "reason": "zoneinfo unavailable"})); sys.exit(0)
+
+base, tz_name = sys.argv[1], sys.argv[2]
+paths = sys.argv[3:]
+def get(url):
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:
+        return None
+
+def rows_of(v):
+    if isinstance(v, list) and v and isinstance(v[0], dict): return v
+    if isinstance(v, dict):
+        for x in v.values():
+            if isinstance(x, list) and x and isinstance(x[0], dict): return x
+    return None
+
+def is_rfc3339(s):
+    return isinstance(s, str) and re.match(r"^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}", s) is not None
+
+list_path = summary = buckets = None
+list_rows0 = None
+for p in paths:
+    v = get(base + p)
+    if v is None: continue
+    rs = rows_of(v)
+    if rs and any(is_rfc3339(x) for x in rs[0].values()) and list_path is None:
+        list_path, list_rows0 = p, v
+    elif isinstance(v, dict) and any(isinstance(x, list) and x and isinstance(x[0], dict)
+                                     and any(isinstance(y, str) and re.match(r"^[A-Z]{3}$", y)
+                                             for y in x[0].values())
+                                     for x in v.values()) and summary is None:
+        summary = v
+    elif rs and any(re.match(r"^\d{4}-\d{2}-\d{2}$", str(x)) for x in rs[0].values()) and buckets is None:
+        buckets = rs
+if not list_path:
+    print(json.dumps({"ran": False, "reason": "no row-list endpoint identified"})); sys.exit(0)
+
+sep = "&" if "?" in list_path else "?"
+rows, offset = [], 0
+for _ in range(400):
+    v = get(f"{base}{list_path}{sep}limit=200&offset={offset}")
+    rs = rows_of(v) if v is not None else None
+    if not rs: break
+    rows.extend(rs); offset += len(rs)
+    if len(rs) < 1: break
+    if len(rows) > 60000: break
+if len(rows) < 2:
+    print(json.dumps({"ran": False, "reason": "could not page the row list"})); sys.exit(0)
+r0 = rows[0]
+cur_f = next((k for k, v in r0.items() if isinstance(v, str) and re.match(r"^[A-Z]{3}$", v)), None)
+amt_f = next((k for k, v in r0.items() if isinstance(v, int) and not isinstance(v, bool)
+              and re.search(r"amount|minor|value", k, re.I)), None)
+ts_fields = [k for k, v in r0.items() if is_rfc3339(v)]
+ts_f = next((k for k in ts_fields if re.search(r"creat|date|posted|occur", k, re.I)), None)
+if ts_f is None and len(ts_fields) == 1:
+    ts_f = ts_fields[0]
+st_f = next((k for k in r0 if re.search(r"status|state", k, re.I) and isinstance(r0[k], str)), None)
+if st_f is None:
+    st_f = next((k for k, v in r0.items() if isinstance(v, str) and v.isalpha() and v.islower()
+                 and 3 <= len(v) <= 12 and k != cur_f), None)
+if not (cur_f and amt_f and ts_f):
+    print(json.dumps({"ran": False, "reason": f"row fields ambiguous cur={cur_f} amt={amt_f} ts={ts_f}"}))
+    sys.exit(0)
+
+findings = []
+by_cur = {}
+for r in rows:
+    c = r.get(cur_f)
+    if not isinstance(c, str): continue
+    n, s = by_cur.get(c, (0, 0))
+    by_cur[c] = (n + 1, s + (r.get(amt_f) or 0))
+if summary is not None:
+    arr = next((x for x in summary.values() if isinstance(x, list) and x and isinstance(x[0], dict)
+                and any(isinstance(y, str) and re.match(r"^[A-Z]{3}$", y) for y in x[0].values())), [])
+    for entry in arr:
+        cur = next((v for v in entry.values() if isinstance(v, str) and re.match(r"^[A-Z]{3}$", v)), None)
+        if cur not in by_cur: continue
+        n, s = by_cur[cur]
+        ints = {k: v for k, v in entry.items() if isinstance(v, int) and not isinstance(v, bool)}
+        cnt_k = next((k for k in ints if re.search(r"count", k, re.I)), None)
+        tot_k = next((k for k in ints if re.search(r"total|sum|amount", k, re.I)), None)
+        if cnt_k and ints[cnt_k] != n:
+            findings.append(f"the summary claims {ints[cnt_k]} {cur} payments while the app's own "
+                            f"row list holds {n} — the aggregate and the rows disagree inside ONE app; "
+                            f"recompute the summary from the stored rows, never a separate counter")
+        if tot_k and ints[tot_k] != s:
+            findings.append(f"WRONG MONEY: the summary's {cur} total is {ints[tot_k]} while summing the "
+                            f"app's own {cur} rows gives {s} (minor units) — the aggregate must equal "
+                            f"the sum of the stored rows exactly; check minor-unit handling and that "
+                            f"no cross-currency value leaks in")
+if buckets is not None and st_f:
+    tz = ZoneInfo(tz_name)
+    mine = {}
+    for r in rows:
+        try:
+            dt = datetime.fromisoformat(str(r[ts_f]).replace("Z", "+00:00"))
+        except Exception:
+            continue
+        day = dt.astimezone(tz).date().isoformat()
+        k = (day, r.get(st_f))
+        mine[k] = mine.get(k, 0) + 1
+    checked = wrong = 0
+    examples = []
+    for cell in buckets:
+        day = next((str(v) for v in cell.values() if re.match(r"^\d{4}-\d{2}-\d{2}$", str(v))), None)
+        st = next((v for v in cell.values() if isinstance(v, str) and v.isalpha() and v.islower()
+                   and v != day), None)
+        cnt = next((v for k, v in cell.items() if isinstance(v, int) and not isinstance(v, bool)
+                    and re.search(r"count", k, re.I)), None)
+        if day is None or st is None or cnt is None: continue
+        checked += 1
+        want = mine.get((day, st), 0)
+        if cnt != want:
+            wrong += 1
+            if len(examples) < 3:
+                examples.append(f"({day},{st}) claims {cnt}, rows give {want}")
+    if checked >= 8 and wrong > 0:
+        findings.append(f"WRONG MONEY (bucketing): {wrong} of {checked} bucket cells disagree with a "
+                        f"recount of the app's own rows bucketed by {tz_name} calendar day — e.g. "
+                        f"{'; '.join(examples)}. Convert each UTC instant to {tz_name} BEFORE taking "
+                        f"the date; bucketing by the raw UTC date shifts every payment near midnight "
+                        f"and every DST-window day")
+print(json.dumps({"ran": True, "total_rows": len(rows), "findings": findings}))
+"#;
+
 /// Deterministic and self-limiting: it imports the module the spec names, calls only zero-argument
 /// documented accessors, and compares their SIZE against the vendor's own reported total, which the
 /// caller already fetched. Anything it cannot do — import, construct, call — is silence, never a
