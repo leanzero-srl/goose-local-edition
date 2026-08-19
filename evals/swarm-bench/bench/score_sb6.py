@@ -404,6 +404,25 @@ def check(name: str, tier: str) -> Callable:
 
 product_check = check   # one registry; the alias keeps the score_build idiom readable
 
+# ── SEVERITY REGISTRY (sham-audit 2026-08-19) ────────────────────────────────────────────────
+# Mihai's requirement, and the audit's verified inversions behind it: one benign console error
+# was the most expensive mistake on the board (-4.36 pts via a compound-min plus a double gate
+# hit) while WRONG MONEY was floor-protected at -0.72 and a row lost to SIGKILL+reboot cost
+# 0.002. Severity is a property of the CONSEQUENCE, not the tier: checks whose failure means
+# crash / wrong money / data loss / a dead primary flow are CRITICAL and drive a continuous
+# score multiplier (see evaluate); everything else prices through its tier weight as before.
+# Membership is assigned from each check's own declared consequence taxonomy — reviewed by
+# hand, asserted by the monotonicity selftest below so an inversion can never ship silently.
+CRITICAL_CHECKS = {
+    "server_runs":         "crash — the tool does not run at all",
+    "sync_completeness":   "data loss — an incomplete sync silently loses payments",
+    "b_summary_currency":  "wrong money — sums across currencies or wrong totals",
+    "b_buckets_dst":       "wrong money — mis-bucketed days misstate daily totals",
+    "h_durability":        "data loss — rows that do not survive restart or a race",
+    "j_loads_data":        "dead primary flow — the user sees no data at all",
+    "j_sync_journey":      "dead primary flow — the spec's headline action fails",
+}
+
 
 # ══ A: structure and runtime (ladders, no bare bits) ═════════════════════════════════════════
 
@@ -590,7 +609,10 @@ def _(c: Ctx):
     offending = [key for key, v in s.items()
                  if isinstance(v, int) and v == cross_sum and v not in singles]
     if offending:
-        score = min(score, 0.25)
+        # Severity fix (sham-audit): a cross-currency money SUM is the spec's flagship wrong-
+        # money trap — it was floor-protected at 0.25 (-0.72 pts, one sixth of a console
+        # error). Wrong money is a CLIFF, and the check also drives the critical multiplier.
+        score = 0.0
     order = [x.get("currency") for x in s.get("by_currency", []) if isinstance(x, dict)]
     ordered = order == sorted(order)
     return g(score if ordered else score * 0.9,
@@ -971,7 +993,13 @@ def _(c: Ctx):
     ttfd = _ladder(p.get("timeToFirstDataMs"), [(1.0, 2000), (0.75, 3000), (0.5, 4500), (0.25, 8000)])
     reconcile = 1.0 if (fx and p.get("totalClaimedInDom") == fx.EXPECTED_TOTAL) else 0.0
     ce = (p.get("consoleErrors") or {}).get("count", 0)
-    clean = 1.0 if ce == 0 else 0.0
+    # Severity fix (sham-audit): console errors were the most expensive mistake on the board —
+    # a compound MIN zeroed this whole check AND the same error failed two excellence
+    # conditions (-4.36 pts total for one benign log line, six times wrong money's price).
+    # Console noise on a page whose data flow WORKS is a MINOR defect: it bounds the leg at
+    # 0.6, never zeroes the journey; a page that is both noisy and dataless still zeroes via
+    # the other legs. The excellence gate's console_clean condition remains the strict half.
+    clean = 1.0 if ce == 0 else 0.6
     score, parts = compound(
         {"first_data": ttfd, "reconciles": reconcile, "console_clean": clean},
         {"rendered_rows": rows > 0})
@@ -1541,7 +1569,15 @@ def _(c: Ctx):
     fx = _fx()
     if fx is None:
         return unavail("sb-6 fixture constants missing")
-    persist = min(max(c.rows_after_restart, 0) / fx.EXPECTED_TOTAL, 1.0)
+    # Severity fix (sham-audit): losing a row to SIGKILL+reboot cost 0.002 pts — less than a
+    # default font. Data loss is a CLIFF: any row lost relative to what existed before the
+    # kill zeroes the persist leg (and this check drives the critical multiplier). The
+    # had_rows_before_kill gate already refuses vacuous credit to an app that never had rows.
+    persist = (
+        1.0
+        if c.rows_before_kill > 0 and max(c.rows_after_restart, 0) >= c.rows_before_kill
+        else 0.0
+    )
     conc = max(0.0, 1 - abs((c.concurrent_total or 0) - fx.EXPECTED_TOTAL) / fx.EXPECTED_TOTAL) \
         if c.concurrent_total is not None else 0.0
     src = (c.pkg / "store.py").read_text(errors="replace") if (c.pkg / "store.py").is_file() else ""
@@ -1742,7 +1778,7 @@ def _nominal_console_errors(c: Ctx) -> Optional[int]:
     return total
 
 
-def excellence(rows: List[Dict], c: Ctx) -> tuple:
+def excellence(rows: List[Dict], console: Optional[int]) -> tuple:
     """The excellence slice's unlock, PROPORTIONAL per condition.
 
     The original all-or-nothing gate measured as a dead zone: 7 of 7 real entrants had it
@@ -1753,7 +1789,6 @@ def excellence(rows: List[Dict], c: Ctx) -> tuple:
     Returns (fraction, e_mean, conditions) with every condition named for the verdict.
     """
     by = {r["check"]: r for r in rows}
-    console = _nominal_console_errors(c)
     p_names = [n for n in ("p_list_latency", "p_buckets_latency", "p_summary_latency",
                            "p_page_interactive", "p_first_frame", "p_sync_wall") if n in by]
     conditions: List[Dict] = []
@@ -1766,7 +1801,16 @@ def excellence(rows: List[Dict], c: Ctx) -> tuple:
             conditions.append({"name": n, "ok": by[n]["score"] >= 1.0, "value": by[n]["score"]})
     for n in p_names:
         conditions.append({"name": n, "ok": by[n]["score"] == 1.0, "value": by[n]["score"]})
-    fraction = (sum(1 for cond in conditions if cond["ok"]) / len(conditions)) if conditions else 0.0
+    # Severity fix (sham-audit): the per-condition share was BINARY — a 0.75 sync journey paid
+    # the same full share as 0.0, and cosmetic and crash-adjacent conditions cost identically.
+    # Each score-typed condition now contributes its measured value; console stays binary
+    # (excellence means a clean console, and its graded half lives in j_first_use).
+    def _share(cond: Dict) -> float:
+        if cond["name"] == "console_clean":
+            return 1.0 if cond["ok"] else 0.0
+        return max(0.0, min(1.0, float(cond["value"])))
+
+    fraction = (sum(_share(cond) for cond in conditions) / len(conditions)) if conditions else 0.0
     e_rows = [r for r in rows if r["tier"] == "E" and not r.get("unavailable")]
     e_mean = sum(r["score"] for r in e_rows) / len(e_rows) if e_rows else 0.0
     return fraction, e_mean, conditions
@@ -1798,6 +1842,14 @@ def evaluate(c: Ctx) -> Dict:
             outcome = {"score": 0.0, "detail": f"PROBE ERROR: {exc}", "consequence": "probe bug"}
         rows.append({"check": name, "tier": tier, **outcome})
 
+    return compose_from_rows(rows, _nominal_console_errors(c), c)
+
+
+def compose_from_rows(rows: List[Dict], console: Optional[int], c: Optional[Ctx] = None) -> Dict:
+    """The pure composition: rows -> verdict. Split from evaluate so the monotonicity
+    selftest can push synthetic single-defect row sets through the REAL scoring math —
+    the sham-audit's inversions shipped despite per-check care, and only a hand audit
+    caught them; this makes the severity gradient a property the freeze gate proves."""
     unavailable = [r["check"] for r in rows if r.get("unavailable")]
     tiers: Dict[str, Dict] = {}
     inner = 0.0
@@ -1811,8 +1863,26 @@ def evaluate(c: Ctx) -> Dict:
                        **({"unavailable": [r["check"] for r in sub if r.get("unavailable")]}
                           if len(avail) != len(sub) else {})}
         inner += mean * w
-    gate_fraction, e_mean, gate_conditions = excellence(rows, c)
+    gate_fraction, e_mean, gate_conditions = excellence(rows, console)
     score = 0.88 * inner + E_WEIGHT * gate_fraction * e_mean
+    # THE CRITICAL MULTIPLIER (sham-audit; Mihai's severity requirement): checks whose failure
+    # means crash / wrong money / data loss / a dead primary flow compound a continuous
+    # multiplier on the whole composed score — a critical defect must crater the number, not
+    # price like a styling miss. m is calibration-owned (thresholds file; default 0.6):
+    # factor = m + (1-m)*check_score, so a fully-failed critical costs (1-m) of everything
+    # and a clean run multiplies by exactly 1.0. Unavailable rows never punish (harness rule).
+    crit_floor = float(TH.get("critical_multiplier_floor", 0.6))
+    crit_rows = []
+    crit_mult = 1.0
+    for r in rows:
+        if r["check"] in CRITICAL_CHECKS and not r.get("unavailable"):
+            factor = crit_floor + (1.0 - crit_floor) * max(0.0, min(1.0, r["score"]))
+            crit_mult *= factor
+            crit_rows.append({"check": r["check"], "score": r["score"],
+                              "factor": round(factor, 4),
+                              "why": CRITICAL_CHECKS[r["check"]]})
+    pre_severity = score
+    score *= crit_mult
     tiers["E"] = {"mean": round(gate_fraction * e_mean, 4),
                   "gate": gate_fraction >= 1.0, "gate_fraction": round(gate_fraction, 4),
                   "weight": E_WEIGHT}
@@ -1820,16 +1890,67 @@ def evaluate(c: Ctx) -> Dict:
            "inner": round(inner, 4), "excellence_gate": gate_fraction >= 1.0,
            "excellence": {"fraction": round(gate_fraction, 4), "e_mean": round(e_mean, 4),
                           "conditions": gate_conditions},
+           "critical": {"floor": crit_floor, "multiplier": round(crit_mult, 4),
+                        "pre_severity_score": round(pre_severity, 4), "rows": crit_rows},
            "calibration": ("frozen" if CALIBRATED else
                            "UNCALIBRATED — sb6-thresholds.json defaults; rc-grade only"),
            "gamma": GAMMA, "k_p": K_P,
            "tiers": tiers, "checks": rows,
            "probe_unavailable": unavailable,
-           "harness_missing": list(getattr(c, "harness_missing", [])),
+           "harness_missing": list(getattr(c, "harness_missing", []) if c is not None else []),
            "root_causes": attribute_root_causes(rows),
            "excellent": gate_fraction >= 1.0 and score >= 0.88 and not unavailable,
            "solid": score >= 0.55}
     return out
+
+
+def severity_selftest() -> List[str]:
+    """Prove the severity gradient is monotonic by pushing synthetic single-defect row sets
+    through the REAL composition. Run by the --reference freeze gate: an inversion refuses
+    the freeze. Scenarios encode each defect's realistic ROW-level footprint (a console
+    error also bounds j_first_use's leg and fails the gate's console condition, etc.)."""
+    def rows_all_perfect() -> List[Dict]:
+        return [{"check": n, "tier": t, "score": 1.0, "detail": "synthetic", "consequence": ""}
+                for n, t, _ in SB6_CHECKS]
+
+    def scenario(overrides: Dict[str, float]) -> List[Dict]:
+        rows = rows_all_perfect()
+        for r in rows:
+            if r["check"] in overrides:
+                r["score"] = overrides[r["check"]]
+        return rows
+
+    baseline = compose_from_rows(rows_all_perfect(), 0)["score"]
+    console_err = compose_from_rows(
+        scenario({"j_console_clean": 0.0, "j_first_use": 0.6}), 1)["score"]
+    wrong_money = compose_from_rows(scenario({"b_summary_currency": 0.0}), 0)["score"]
+    data_loss = compose_from_rows(scenario({"h_durability": 0.0}), 0)["score"]
+    dead_flow = compose_from_rows(
+        scenario({"j_loads_data": 0.0, "j_first_use": 0.0}), 0)["score"]
+    cosmetic = compose_from_rows(scenario({"v_styling": 0.5}), 0)["score"]
+    minor = compose_from_rows(scenario({"uses_max_limit": 0.5}), 0)["score"]
+
+    fails: List[str] = []
+    def expect(cond: bool, msg: str):
+        if not cond:
+            fails.append(msg)
+    expect(abs(baseline - 1.0) < 1e-6, f"all-perfect must compose to 1.0 (got {baseline})")
+    expect(wrong_money < console_err,
+           f"WRONG MONEY ({wrong_money:.4f}) must cost more than a console error ({console_err:.4f})")
+    expect(data_loss < console_err,
+           f"DATA LOSS ({data_loss:.4f}) must cost more than a console error ({console_err:.4f})")
+    expect(dead_flow < console_err,
+           f"DEAD PRIMARY FLOW ({dead_flow:.4f}) must cost more than a console error ({console_err:.4f})")
+    expect(console_err < cosmetic,
+           f"a console error ({console_err:.4f}) must cost more than a cosmetic miss ({cosmetic:.4f})")
+    expect(console_err < minor,
+           f"a console error ({console_err:.4f}) must cost more than a minor inefficiency ({minor:.4f})")
+    for name, crit_score in (("wrong money", wrong_money), ("data loss", data_loss),
+                             ("dead flow", dead_flow)):
+        expect(crit_score < cosmetic and crit_score < minor,
+               f"CRITICAL {name} ({crit_score:.4f}) must cost more than cosmetic ({cosmetic:.4f}) "
+               f"and minor ({minor:.4f})")
+    return fails
 
 
 def format_report(result: Dict, title: str = "") -> str:
@@ -2454,6 +2575,7 @@ def main() -> int:
 
     if args.reference:
         fails = _reference_gate(result)
+        fails.extend(severity_selftest())
         if fails:
             print("\nREFERENCE GATE (G6): REFUSED — freeze is blocked. Harness defects, "
                   "not app defects, until proven otherwise:", file=sys.stderr)

@@ -744,7 +744,11 @@ function pageErrorBanner() {
     if (el.children.length > 0 && !el.matches('[role="alert"],[class*="error" i],[class*="alert" i],[class*="banner" i]'))
       continue;
     if (el.closest('td,th,[role="cell"],[role="gridcell"],script,style')) continue;
+    // Explicit error semantics WIN over context exclusion (sham-audit): an app whose real
+    // banner happens to live inside a chip/nav-classed container still counts when it says
+    // role=alert — only unlabeled page furniture is excluded.
     if (
+      !el.closest('[role="alert"]') &&
       el.closest(
         'button,select,option,label,nav,[role="option"],[role="tab"],[role="listbox"],' +
           '[class*="legend" i],[class*="filter" i],[class*="chip" i],[class*="tag" i]'
@@ -1391,6 +1395,15 @@ async function main() {
     await waitIdle(10000);
     await pollFirstData(5000);
     const before = await page.evaluate(pageViewSnapshot).catch(() => null);
+    // Vacuity guard (sham-audit): a page that mutates its own table between two PRE-click
+    // snapshots (clocks, animations) must not earn view_refreshed from tableHashChanged —
+    // the hash only counts as refresh evidence when the table is static without input.
+    await sleep(600);
+    const before2 = await page.evaluate(pageViewSnapshot).catch(() => null);
+    const tableSelfMutates = !!(before && before2) && before.tableHash !== before2.tableHash;
+    // Overgrant guard (sham-audit): a banner that exists BEFORE the click is page furniture,
+    // not a sync outcome — only a NEW banner may block "completed".
+    const bannerBefore = await page.evaluate(pageErrorBanner).catch(() => null);
     const state = await page.evaluate(pageSyncState).catch(() => ({ found: false }));
     if (!state.found) {
       emit({
@@ -1453,6 +1466,7 @@ async function main() {
     while (Date.now() - clickAt < capMs) {
       const s = await page.evaluate(pageSyncState).catch(() => null);
       errorBanner = await page.evaluate(pageErrorBanner).catch(() => null);
+      if (errorBanner && bannerBefore && errorBanner === bannerBefore) errorBanner = null;
       if (!syncRequested) syncRequested = await syncRequestSeen();
       if (s && s.found && s.disabled) everDisabled = true;
       buttonPresentAfter = !!(s && s.found);
@@ -1483,10 +1497,12 @@ async function main() {
         !!(before && after) &&
         (after.rowCount !== before.rowCount || (after.lastSyncText || '') !== (before.lastSyncText || ''));
     }
-    const tableHashChanged = !!(before && after) && after.tableHash !== before.tableHash;
+    const tableHashChanged =
+      !!(before2 && after) && after.tableHash !== before2.tableHash && !tableSelfMutates;
     // A spec-compliant page shows 50 rows before AND after sync (pagination), so rowCount
     // is structurally constant — visible-table content change is refresh evidence too
     // (measured: three strong builds failed view_refreshed on rowCount 50==50 alone).
+    // Self-mutating tables are excluded above: their hash proves nothing about the click.
     if (!viewRefreshed && tableHashChanged) viewRefreshed = true;
 
     if (!syncRequested) syncRequested = await syncRequestSeen();
