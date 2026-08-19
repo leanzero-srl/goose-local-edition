@@ -2432,12 +2432,45 @@ const resolveBenchNode = async (): Promise<string> => {
 // workdir, verdicts, traces and screenshots all live under userData.
 const benchWorkRoot = (): string => path.join(app.getPath('userData'), 'benchmark');
 
+interface RunSampling {
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  repeatPenalty?: number;
+}
+
+// Keep only finite numbers on the five known knobs — the engine clamps ranges itself, but a NaN or
+// a stray key must never reach a spawn env or the run-sampling file.
+const cleanSampling = (raw: unknown): RunSampling => {
+  const out: RunSampling = {};
+  if (raw == null || typeof raw !== 'object') return out;
+  const rec = raw as Record<string, unknown>;
+  for (const k of ['temperature', 'topP', 'topK', 'minP', 'repeatPenalty'] as const) {
+    const v = Number(rec[k]);
+    if (rec[k] != null && Number.isFinite(v)) out[k] = v;
+  }
+  return out;
+};
+
+// The per-run env overrides the engine resolves ahead of config (env beats config, run beats
+// default). Only SET knobs produce a variable — an absent knob falls through to config.yaml's
+// swarm sampling and finally the model default.
+const samplingEnv = (s: RunSampling): Record<string, string> => ({
+  ...(s.temperature != null ? { GOOSE_SWARM_TEMP: String(s.temperature) } : {}),
+  ...(s.topP != null ? { GOOSE_SWARM_TOP_P: String(s.topP) } : {}),
+  ...(s.topK != null ? { GOOSE_SWARM_TOP_K: String(Math.round(s.topK)) } : {}),
+  ...(s.minP != null ? { GOOSE_SWARM_MIN_P: String(s.minP) } : {}),
+  ...(s.repeatPenalty != null ? { GOOSE_SWARM_REPEAT_PENALTY: String(s.repeatPenalty) } : {}),
+});
+
 interface ActiveBenchRun {
   child: ReturnType<typeof spawn>;
   workdir: string;
   nodes: number;
   startedAt: string;
   cancelled: boolean;
+  sampling: RunSampling;
 }
 let activeBenchRun: ActiveBenchRun | null = null;
 
@@ -2676,8 +2709,8 @@ ipcMain.handle('benchmark-identity', async () => ensureBenchIdentity());
 // must not become invisible because the page unmounted.
 ipcMain.handle('benchmark-status', async () => {
   if (!activeBenchRun) return { running: false };
-  const { workdir, nodes, startedAt } = activeBenchRun;
-  return { running: true, workdir, nodes, startedAt };
+  const { workdir, nodes, startedAt, sampling } = activeBenchRun;
+  return { running: true, workdir, nodes, startedAt, sampling };
 });
 
 ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
@@ -2694,10 +2727,11 @@ ipcMain.handle('benchmark-shots', async (_event, workdir?: string) => {
   return pickBenchShots(dir);
 });
 
-ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string) => {
+ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string, sampling?: RunSampling) => {
   if (activeBenchRun) {
     throw new Error('a benchmark run is already in progress');
   }
+  const runSampling = cleanSampling(sampling);
   // sb-6 ("VendorSync Pro" — the hard tier): same engine, same pipeline, a different frozen
   // ruler. The payload carries both scorers; the tier only switches which spec/probe/scorer the
   // harness wires up, so a run is always scored by exactly one frozen version end to end.
@@ -2772,14 +2806,18 @@ ipcMain.handle('benchmark-run', async (event, nodes: number, tier?: string) => {
           // off — so it invented pagination/429/ETag/idempotency and nine Tier-B checks collapsed.
           GOOSE_SWARM_DOC_PREFETCH: '1',
           GOOSE_SWARM_DIVERSE_PLAN: '1',
-          GOOSE_SWARM_TEMP: '0.2',
+          // Run-window sampling knobs. Temperature keeps its shipped 0.2 pin unless the strip set
+          // one; the other four ride only when set, so an untouched knob stays at config/model
+          // default. Env beats config engine-side, so these pin exactly this run.
+          ...samplingEnv(runSampling),
+          GOOSE_SWARM_TEMP: String(runSampling.temperature ?? 0.2),
         },
       }
     );
-    activeBenchRun = { child, workdir, nodes, startedAt, cancelled: false };
+    activeBenchRun = { child, workdir, nodes, startedAt, cancelled: false, sampling: runSampling };
     // Two-phase: hand the renderer the workdir IMMEDIATELY so it can point the live swarm panel
     // at the run, then resolve with the scored row on completion as before.
-    sendSafe('benchmark-started', { workdir, nodes, startedAt });
+    sendSafe('benchmark-started', { workdir, nodes, startedAt, sampling: runSampling });
 
     let tail = '';
     const buffers: Record<string, string> = { stdout: '', stderr: '' };
@@ -3496,6 +3534,59 @@ ipcMain.handle('swarm-add-note', async (_event, workingDir: string, text: string
   } catch (error) {
     console.error('Error queueing swarm note:', error);
     return false;
+  }
+});
+
+// Per-run sampling for the NORMAL swarm run. The desktop cannot env a run it does not spawn — a
+// `goose swarm run` is a child of goosed (the swarm provider), whose env was fixed at window
+// creation. So the run window's knobs land in <workingDir>/.swarm/run-sampling.json; the provider
+// reads it at spawn and sets GOOSE_SWARM_TEMP/_TOP_P/_TOP_K/_MIN_P/_REPEAT_PENALTY on the engine
+// child — env beats config, so a set knob overrides the Settings default for exactly that run.
+// Keys are snake_case: the file is an ENGINE-side contract (serde in providers/swarm.rs).
+const runSamplingPath = (workingDir: string) =>
+  path.join(expandTilde(workingDir), '.swarm', 'run-sampling.json');
+
+ipcMain.handle('swarm-set-sampling', async (_event, workingDir: string, sampling: unknown) => {
+  try {
+    const s = cleanSampling(sampling);
+    const f = runSamplingPath(workingDir);
+    if (Object.keys(s).length === 0) {
+      await fs.rm(f, { force: true });
+      return true;
+    }
+    await fs.mkdir(path.dirname(f), { recursive: true });
+    const body = {
+      ...(s.temperature != null ? { temperature: s.temperature } : {}),
+      ...(s.topP != null ? { top_p: s.topP } : {}),
+      ...(s.topK != null ? { top_k: Math.round(s.topK) } : {}),
+      ...(s.minP != null ? { min_p: s.minP } : {}),
+      ...(s.repeatPenalty != null ? { repeat_penalty: s.repeatPenalty } : {}),
+    };
+    await fs.writeFile(f, JSON.stringify(body, null, 2), { encoding: 'utf8' });
+    return true;
+  } catch (error) {
+    console.error('Error writing swarm run sampling:', error);
+    return false;
+  }
+});
+
+// Read back what the file says — while a run is live this is the truth about the values it launched
+// with (the provider consumed exactly this file at spawn). camelCase out, matching the strip's shape.
+ipcMain.handle('swarm-get-sampling', async (_event, workingDir: string) => {
+  try {
+    const raw = JSON.parse(await fs.readFile(runSamplingPath(workingDir), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    return cleanSampling({
+      temperature: raw.temperature,
+      topP: raw.top_p,
+      topK: raw.top_k,
+      minP: raw.min_p,
+      repeatPenalty: raw.repeat_penalty,
+    });
+  } catch {
+    return {}; // no file = no overrides — config/model defaults apply
   }
 });
 

@@ -75,6 +75,15 @@ interface SaveDialogResponse {
   filePath?: string;
 }
 
+/** Per-run sampling knobs (mirrors components/swarm/sampling.ts — unset = model/config default). */
+interface SwarmSampling {
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  repeatPenalty?: number;
+}
+
 interface FileResponse {
   file: string;
   filePath: string;
@@ -126,8 +135,9 @@ type ElectronAPI = {
   benchmarkRead: () => Promise<unknown | null>;
   /** Run the frozen benchmark suite on N nodes. Long-running; resolves with the scored row.
    *  Two-phase: 'benchmark-started' {workdir} fires immediately (subscribe via `on`), then
-   *  'benchmark-log' lines stream and 'benchmark-finished' closes the run. */
-  benchmarkRun: (nodes: number, tier?: string) => Promise<unknown>;
+   *  'benchmark-log' lines stream and 'benchmark-finished' closes the run. `sampling` pins this
+   *  run's knobs via env (temperature defaults to the shipped 0.2 pin; the rest ride only when set). */
+  benchmarkRun: (nodes: number, tier?: string, sampling?: SwarmSampling) => Promise<unknown>;
   /** Kill the active benchmark run — the runner's process group AND the detached engine. */
   benchmarkCancel: () => Promise<{ ok: boolean; error?: string }>;
   /** The in-flight run, if any — lets a remounted view re-attach to the live panel. */
@@ -136,6 +146,8 @@ type ElectronAPI = {
     workdir?: string;
     nodes?: number;
     startedAt?: string;
+    /** The sampling knobs the live run launched with (empty object = engine defaults). */
+    sampling?: SwarmSampling;
   }>;
   /** Poster identity (~/.config/goose/benchmark/identity.json), created on first use. */
   benchmarkIdentity: () => Promise<{ installId: string; handle: string }>;
@@ -181,6 +193,12 @@ type ElectronAPI = {
   /** Queue a note for a RUNNING swarm build. Creates .swarm/inbox/ — nothing else does. */
   swarmAddNote: (workingDir: string, text: string) => Promise<boolean>;
   swarmSetPaused: (workingDir: string, paused: boolean) => Promise<boolean>;
+  /** Write the NEXT normal run's sampling knobs to <workingDir>/.swarm/run-sampling.json — the
+   *  swarm provider reads it at spawn and sets GOOSE_SWARM_* env on the engine child (env beats
+   *  config, run beats default). An empty object removes the file (= no per-run overrides). */
+  swarmSetSampling: (workingDir: string, sampling: SwarmSampling) => Promise<boolean>;
+  /** Read the run-sampling file back — during a live run, the values that run launched with. */
+  swarmGetSampling: (workingDir: string) => Promise<SwarmSampling>;
   ensureDirectory: (dirPath: string) => Promise<boolean>;
   listFiles: (dirPath: string, extension?: string) => Promise<string[]>;
   copyDir: (
@@ -318,7 +336,8 @@ const electronAPI: ElectronAPI = {
   readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
   readSwarmRun: (workingDir: string) => ipcRenderer.invoke('read-swarm-run', workingDir),
   benchmarkRead: () => ipcRenderer.invoke('benchmark-read'),
-  benchmarkRun: (nodes: number, tier?: string) => ipcRenderer.invoke('benchmark-run', nodes, tier),
+  benchmarkRun: (nodes: number, tier?: string, sampling?: SwarmSampling) =>
+    ipcRenderer.invoke('benchmark-run', nodes, tier, sampling),
   benchmarkCancel: () => ipcRenderer.invoke('benchmark-cancel'),
   benchmarkStatus: () => ipcRenderer.invoke('benchmark-status'),
   benchmarkIdentity: () => ipcRenderer.invoke('benchmark-identity'),
@@ -332,6 +351,9 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('swarm-add-note', workingDir, text),
   swarmSetPaused: (workingDir: string, paused: boolean) =>
     ipcRenderer.invoke('swarm-set-paused', workingDir, paused),
+  swarmSetSampling: (workingDir: string, sampling: SwarmSampling) =>
+    ipcRenderer.invoke('swarm-set-sampling', workingDir, sampling),
+  swarmGetSampling: (workingDir: string) => ipcRenderer.invoke('swarm-get-sampling', workingDir),
   ensureDirectory: (dirPath: string) => ipcRenderer.invoke('ensure-directory', dirPath),
   listFiles: (dirPath: string, extension?: string) =>
     ipcRenderer.invoke('list-files', dirPath, extension),

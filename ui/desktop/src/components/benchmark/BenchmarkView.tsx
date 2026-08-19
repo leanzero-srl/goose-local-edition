@@ -18,6 +18,13 @@ import { ScoringDetail, type VerdictDetail } from './ScoringDetail';
 import { SwarmRunPanel } from '../swarm/SwarmRunPanel';
 import { useSwarmRun } from '../swarm/useSwarmRun';
 import { ZoneHeader, ZONE_HUES } from '../swarm/ZoneHeader';
+import SamplingKnobs from '../swarm/SamplingKnobs';
+import { useSaveSamplingDefaults } from '../swarm/useSamplingDefaults';
+import {
+  loadSamplingDefaults,
+  sanitizeSampling,
+  type SamplingSettings,
+} from '../swarm/sampling';
 import { Input } from '../ui/input';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 
@@ -300,6 +307,11 @@ function StatTile({ label, value, color }: { label: string; value: string; color
 export default function BenchmarkView() {
   const [nodes, setNodes] = useState<NodeChoice>(3);
   const [tier, setTier] = useState<BenchTier>(DEFAULT_TIER);
+  // The strip's editable values — what the NEXT run will use. Prefilled from the shared defaults
+  // (localStorage `swarmSamplingDefaults`); passed into benchmarkRun where set knobs become env.
+  const [sampling, setSampling] = useState<SamplingSettings>(() => loadSamplingDefaults());
+  // Non-null while a run is live: the values that run LAUNCHED with (strip renders them read-only).
+  const [launchedSampling, setLaunchedSampling] = useState<SamplingSettings | null>(null);
   const [running, setRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -319,6 +331,7 @@ export default function BenchmarkView() {
   // Live engine truth for the active run — drives the phase strip (present/finished), while the
   // full SwarmRunPanel below renders the same dir with its own poller.
   const swarm = useSwarmRun(activeWorkdir ?? undefined);
+  const saveDefaults = useSaveSamplingDefaults();
 
   const loadShots = useCallback(async (workdir?: string) => {
     try {
@@ -354,6 +367,9 @@ export default function BenchmarkView() {
         setRunning(true);
         setActiveWorkdir(s.workdir);
         setRunStartedAt(s.startedAt ? Date.parse(s.startedAt) : Date.now());
+        // main.ts kept the launched knobs with the run — the strip shows the truth, not this
+        // mount's defaults.
+        setLaunchedSampling(sanitizeSampling(s.sampling));
         setStatus(null);
       }
     });
@@ -362,10 +378,11 @@ export default function BenchmarkView() {
   // Stream the harness's lifecycle from main: workdir on start, stdout/stderr lines, terminal row.
   useEffect(() => {
     const onStarted = (_e: unknown, payload: unknown) => {
-      const p = payload as { workdir?: string; startedAt?: string };
+      const p = payload as { workdir?: string; startedAt?: string; sampling?: unknown };
       if (p?.workdir) {
         setActiveWorkdir(p.workdir);
         setRunStartedAt(p.startedAt ? Date.parse(p.startedAt) : Date.now());
+        setLaunchedSampling(sanitizeSampling(p.sampling));
         setScored(false);
         setLastLine(null);
         setShots([]);
@@ -384,6 +401,7 @@ export default function BenchmarkView() {
       setCancelling(false);
       setActiveWorkdir(null);
       setRunStartedAt(null);
+      setLaunchedSampling(null);
       if (p?.cancelled) {
         setStatus('Run cancelled.');
       } else if (p?.row) {
@@ -421,6 +439,7 @@ export default function BenchmarkView() {
           setCancelling(false);
           setActiveWorkdir(null);
           setRunStartedAt(null);
+          setLaunchedSampling(null);
           void loadExisting();
         }
       });
@@ -455,8 +474,9 @@ export default function BenchmarkView() {
     setRunning(true);
     setScored(false);
     setStatus(null);
+    setLaunchedSampling(sampling);
     try {
-      const result = await window.electron.benchmarkRun?.(nodes, tier);
+      const result = await window.electron.benchmarkRun?.(nodes, tier, sampling);
       if (result) {
         setMine(result as MineRow);
         setModel((result as MineRow).modelId ?? '');
@@ -471,8 +491,9 @@ export default function BenchmarkView() {
       setCancelling(false);
       setActiveWorkdir(null);
       setRunStartedAt(null);
+      setLaunchedSampling(null);
     }
-  }, [nodes, loadShots]);
+  }, [nodes, tier, sampling, loadShots]);
 
   const cancel = useCallback(async () => {
     setConfirmCancel(false);
@@ -541,7 +562,20 @@ export default function BenchmarkView() {
             )}
           </header>
 
-          <section className="mt-6 flex flex-wrap items-center gap-3">
+          {/* Run settings — the sampling knobs the next run will use, editable until launch; while
+              a run is live they freeze on the values that run launched with. Unset temperature
+              keeps the benchmark's shipped 0.2 pin (regime comparability); the other knobs unset
+              fall through to config/model defaults. */}
+          <SamplingKnobs
+            className="mt-6"
+            value={launchedSampling ?? sampling}
+            onChange={setSampling}
+            active={running}
+            placeholders={{ temperature: '0.2 (pinned)' }}
+            onSaveDefaults={() => saveDefaults(sampling)}
+          />
+
+          <section className="mt-3 flex flex-wrap items-center gap-3">
             <span className="text-sm text-text-secondary">Benchmark</span>
             <div className="flex overflow-hidden rounded border border-border-primary">
               {TIERS.map((t) => (
