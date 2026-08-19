@@ -20687,3 +20687,33 @@ event) — a different mechanism is new information, a repeat is not. Also live 
 levers echo confirms GOOSE_SWARM_TEMP=0.2 (the lottery survives 0.2; the r6/sb-7 test drops
 to 0.0), and the functional floor missed r5's binary by minutes — the next run carries floor
 + switch + knobs. Board unchanged: r1 (0.1837) remains the fleet entry.
+
+## F904 — pre-r6 adversarial review: five of the conversion batch's mechanisms were broken as shipped
+
+Mihai's "check if the fixes are legit first" was the right call — an adversarial review of the
+functional floor, strategy switch, zero-acquire finding, and sampling envs found five real
+breakers, two of which would have corrupted r6 itself (all fixed, f83fe8131):
+(1a) the floor ran BEFORE the ship-best restore, so a successful boot repair could be clobbered
+by a pre-repair snapshot — the floor now probes the tree that SHIPS; (1b) boot_probe polled the
+free port unconditionally while spec_run_argv only substitutes it for an ALL-CAPS placeholder —
+a literal-port spec read a healthy app as permanently dead and fed 3 unverified writes into a
+possibly-green tree (now mirrors spec_contract's port fallback, refuses on a pre-bound port,
+skips no-server specs; tool modules like pytest are no longer taken as the entry; pipes drained;
+per-probe randomness normalized OUT of the traceback so the identical-traceback stop can stop);
+(2) the strategy switch bypassed the stall exit but NOT the round cap — and the zero-promotion
+round is usually the LAST budgeted one (r5's exact shape), so fix_strategy_switch was emitted,
+the one-shot flag burned, and the switched round never ran (flags now bypass the cap; wall and
+headroom still bind); (3) the zero-acquire detector was DEAD CODE on its own motivating case —
+row-shape identification requires a non-empty list, so r5's all-empty app ({"data": [],
+"total": 0}) could never be identified; and its one reachable zero-path was a FALSE positive
+(a documented limit cap rejecting limit=200 read as "sync acquired nothing"). The script now
+identifies the empty LIST SHAPE itself with one grace sleep before asserting emptiness, and a
+paging failure after a rows-bearing GET is inconclusive (limit fallback 200/100/50), never
+total_rows:0; (4) the F837 echo class AGAIN: levers_resolved and the banner echoed raw config
+for top_p/min_p/repeat_penalty and omitted top_k — every readback of "what sampling did this
+run have" was wrong, which for a controlled comparison is the load-bearing channel (one
+resolver per knob now feeds dispatcher + event + banner); (5) the committing session's last
+engine commit (6fa20e0b8) DID NOT COMPILE — vendor_total was scoped inside the POST-probe gate
+while the new glue used it outside, and its "tests passing" claim was never real (the
+gates-not-memory class: a && chain that prints "committed" is not a gate that REFUSES).
+532 tests + clippy -D warnings green. r6 launches on this binary, same setup as r5.
