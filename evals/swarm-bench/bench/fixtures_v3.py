@@ -285,6 +285,42 @@ class Fixture:
                 "Szh": round(sum(z * h for _x, z, h in pos), 4),
                 "brushedCount": 0}
 
+    def expected_scene_digest_at_load(self, creates: Optional[List[Dict]] = None) -> Dict:
+        """§3.1 digest at PAGE LOAD: /api/viz/records serves (created_at instant ASC, id ASC),
+        so creates committed BEFORE the graded load interleave chronologically — each takes
+        its chronological in-day rank and shifts every later same-day row's rank by one.
+        `creates` rows carry created_at (or _instant), day (or _day), amount_minor, currency.
+        Contrast expected_scene_digest(extra=…): the post-load streamed-APPEND model (§3.7),
+        which stays correct for creates that arrive after the page loaded."""
+        def _inst(s):
+            return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        day_index = {d.isoformat(): i for i, d in enumerate(self.days)}
+        rows = [(_inst(p["_instant"]), p["id"], p["_day_index"],
+                 p["amount_minor"], p["currency"]) for p in self.payments]
+        for k, item in enumerate(creates or []):
+            rows.append((_inst(item.get("_instant") or item["created_at"]),
+                         str(item.get("id") or f"~create{k}"),
+                         day_index[item.get("day") or item["_day"]],
+                         item["amount_minor"], item["currency"]))
+        rows.sort(key=lambda r: (r[0], r[1]))
+        r0 = max(self.day_counts)
+        rank_in_day: Dict[int, int] = {}
+        pos: List[Tuple[float, float, float]] = []
+        for _t, _id, d, amount, cur in rows:
+            r = rank_in_day.get(d, 0)
+            rank_in_day[d] = r + 1
+            x = (d - (SPAN_DAYS - 1) / 2) * CELL_PITCH
+            z = (r - (r0 - 1) / 2) * CELL_PITCH
+            pos.append((x, z, height_for(amount, cur)))
+        return {"count": len(pos),
+                "Sh": round(sum(h for _x, _z, h in pos), 4),
+                "Sh2": round(sum(h * h for _x, _z, h in pos), 4),
+                "Sx": round(sum(x for x, _z, _h in pos), 4),
+                "Sz": round(sum(z for _x, z, _h in pos), 4),
+                "Sxh": round(sum(x * h for x, _z, h in pos), 4),
+                "Szh": round(sum(z * h for _x, z, h in pos), 4),
+                "brushedCount": 0}
+
     def label_candidates(self) -> List[Dict]:
         """The 12 highest-a_major records (tie-break id ASC) — the §3.5 candidate set."""
         ranked = sorted(self.payments,
@@ -579,17 +615,22 @@ def _probe_expect(fx: "Fixture") -> Dict:
     """The JSON pack the harness hands the browser probe (SB7_EXPECT_FILE): every §3 number
     the probe compares against, derived here and nowhere else."""
     mc = fx.schedule.midwalk_create
+    slot0 = fx.value_slots[mc["value_slot"]]
     return {
         "seed": fx.seed, "n": N_RECORDS, "page_size": PAGE_SIZE, "pages": PAGE_COUNT,
         "window": [fx.days[0].isoformat(), fx.days[-1].isoformat()],
         "dst_day": fx.days[fx.dst_index].isoformat(),
         "layout": dict(fx.LAYOUT),
         "digest": dict(fx.DIGEST),
-        "digest_post_midwalk": fx.expected_scene_digest(
-            [{"value_slot": 0, "amount_minor": mc["amount_minor"],
+        "digest_post_midwalk": fx.expected_scene_digest_at_load(
+            [{"created_at": slot0["created_at"], "_instant": slot0["_instant"],
+              "day": slot0["day"], "amount_minor": mc["amount_minor"],
               "currency": mc["currency"]}]),
         "label_candidates": [dict(c) for c in fx.LABEL_CANDIDATES],
         "height_cases": [dict(c) for c in fx.HEIGHT_CASES],
+        # the probe's documented pack shape: bare id arrays under camelCase keys
+        "labelCandidates": [c["id"] for c in fx.LABEL_CANDIDATES],
+        "heightCases": [c["id"] for c in fx.HEIGHT_CASES],
         "read_targets": list(fx.READ_TARGETS),
         "d1_target": dict(fx.d1_target),
         "burst_count": BURST_COUNT,
@@ -617,6 +658,7 @@ def build(seed: str = DEFAULT_SEED) -> Fixture:
     ramt = Rand(seed, "amount")
     roff = Rand(seed, "offset")
     rsec = Rand(seed, "second")
+    rset = Rand(seed, "settledat")
     rows: List[Dict] = []
     used_minutes: List[set] = []
     i = 0
@@ -643,6 +685,9 @@ def build(seed: str = DEFAULT_SEED) -> Fixture:
                 "currency": currency,
                 "created_at": _rfc3339_with_offset(instant.replace(tzinfo=None),
                                                    _OFFSETS[roff.below(len(_OFFSETS))]),
+                "settled_at": ((instant + timedelta(minutes=1 + rset.below(4320)))
+                               .strftime("%Y-%m-%dT%H:%M:%SZ")
+                               if statuses[i] == "settled" else None),
                 "status": statuses[i],
                 "version": 1,
                 "note": "",
