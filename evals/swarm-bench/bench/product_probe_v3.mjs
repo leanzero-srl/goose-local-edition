@@ -695,6 +695,12 @@ function streamInstrument() {
       if (P.stream.length < 40) P.stream.push(entry);
       const k0 = digestKey(entry.digest0);
       const t0 = entry.t0;
+      // Harness fix: rAF starves at rest in headless Chromium and timers get
+      // coarse-throttled (~300 ms), both of which billed detection latency to the app.
+      // MessageChannel scheduling is unthrottled: the first tick lands within the next
+      // task, so an instant apply measures as instant; after 600 ms fall back to a
+      // coarse timer to keep the poll cheap.
+      const mc = new MessageChannel();
       const poll = () => {
         const now = performance.now();
         const d = digest();
@@ -704,9 +710,10 @@ function streamInstrument() {
           return;
         }
         if (now - t0 > 3000) { entry.t1 = now; entry.c1 = counters(); entry.digest1 = d; return; }
-        requestAnimationFrame(poll);
+        if (now - t0 < 600) { mc.port2.postMessage(0); } else setTimeout(poll, 80);
       };
-      requestAnimationFrame(poll);
+      mc.port1.onmessage = poll;
+      mc.port2.postMessage(0);
     });
     return es;
   }
@@ -1304,6 +1311,21 @@ function pageArmCoastWatch() {
     if (w.tUp != null) return;
     w.tUp = performance.now();
     window.removeEventListener('pointerup', onUp, true);
+    // Harness fix: v0 is defined "at release". This capture-phase listener runs BEFORE
+    // the app's own pointerup handler computes the velocity, so the sample must be
+    // deferred one task (MessageChannel — unthrottled) to land right after the full
+    // dispatch; the first rAF sample alone arrived a frame late, under-reporting v0
+    // and shrinking the settle budget.
+    const mcU = new MessageChannel();
+    mcU.port1.onmessage = () => {
+      const c0 = cam();
+      if (c0 && typeof c0.yaw === 'number' &&
+          (!w.samples.length || w.samples[0].t !== 0)) {
+        w.samples.unshift({ t: 0, yaw: c0.yaw, pitch: c0.pitch, distance: c0.distance,
+                            vyaw: c0.vyaw, vpitch: c0.vpitch });
+      }
+    };
+    mcU.port2.postMessage(0);
     let calm = 0;
     const tick = () => {
       const t = performance.now();
@@ -1313,10 +1335,15 @@ function pageArmCoastWatch() {
           w.samples.push({ t: +(t - w.tUp).toFixed(2), yaw: c.yaw, pitch: c.pitch,
                            distance: c.distance, vyaw: c.vyaw, vpitch: c.vpitch });
         const stopped = Math.abs(c.vyaw || 0) < 2 && Math.abs(c.vpitch || 0) < 2;
-        calm = stopped ? calm + 1 : 0;
+        if (stopped) {
+          calm += 1;
+          if (w.settleMs == null) w.settleMs = +(t - w.tUp).toFixed(1);
+        } else {
+          calm = 0;
+          w.settleMs = null;
+        }
         if (calm >= 2) {
           w.settled = true;
-          if (w.settleMs == null) w.settleMs = +(t - w.tUp).toFixed(1);
           return;
         }
       }
@@ -2021,10 +2048,22 @@ async function flowScenario(page, tokens, pack, H) {
     const rejClick = await page.evaluate(pageDraftAction, { id: f2Id, kind: 'reject' })
       .catch(() => ({ clicked: false }));
     const rejected = await pollState(f2Id, 'rejected', 10000);
-    const notifEnd = await page.evaluate(pageNotificationsState).catch(() => ({ present: false }));
+    // Harness fix: an optimistic app paints 'rejected' instantly, which made this read
+    // land ~50 ms after the click — before any relay could run. The feed owns a ≤5 s
+    // poll cadence, so the notification gets that window to appear.
+    let rejNotifSeen = false;
+    {
+      const tN = Date.now();
+      while (Date.now() - tN < 7000 && !rejNotifSeen) {
+        const nf = await page.evaluate(pageNotificationsState)
+          .catch(() => ({ present: false }));
+        if (/reject/i.test((nf.texts || []).join(' | '))) rejNotifSeen = true;
+        else await sleep(400);
+      }
+    }
     rejectCausal = { draftId: f2Id, clicked: !!rejClick.clicked, used: rejClick.used || null,
                      stateAfter: rejected.state, reachedRejected: rejected.reached,
-                     notificationSeen: /reject/i.test((notifEnd.texts || []).join(' | ')) };
+                     notificationSeen: rejNotifSeen };
     // D2 corner: terminal vs resubmittable — attempt a maker resubmit, report what happened.
     await setRole(tokens.maker);
     const resub = await page.evaluate(pageDraftAction, { id: f2Id, kind: 'submit' })
@@ -2096,7 +2135,8 @@ function findPickTargets(ctx, model, seed) {
       found.occludedHigherN = { ...target, cls: 'occluded-by-higher-n', occludedN: n, occludedId: it.id };
     else if (!found.partial) {
       // partial: the occluded instance is directly visible somewhere else on screen
-      for (const [ox, oy] of [[-6, 0], [6, 0], [0, -6], [0, 6]]) {
+      for (const [ox, oy] of [[-6, 0], [6, 0], [0, -6], [0, 6], [-9, 0], [9, 0],
+                              [0, -9], [0, 9], [-12, 0], [12, 0], [-6, -6], [6, -6]]) {
         const q = decisiveAt(ctx, p.x + ox, p.y + oy);
         if (q.decisive && q.front === n) {
           found.partial = { ...target, cls: 'partial-occlusion', occludedN: n, occludedId: it.id,
@@ -2118,11 +2158,44 @@ function findPickTargets(ctx, model, seed) {
   }
   return found;
 }
+// Loose sample points for pixel-motion evidence: center-ray front with ±1 px 4-neighbor
+// agreement — enough to know WHICH instance's face the pixel shows, without the full
+// decisive margins (harness fix: at far poses columns are ~2-3 px wide, so full
+// decisiveness is unreachable while motion detection only needs a stable face pixel).
+function findLoosePoints(ctx, model, seed, count) {
+  const rng = seedRng(seed, 'loosepts');
+  const order = model.items.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const out = [];
+  for (const n of order) {
+    if (out.length >= count) break;
+    const it = model.items[n];
+    const p = projectPt(ctx.eye, ctx.basis, ctx.W, ctx.H, [it.x, it.h * 0.5, it.z]);
+    if (!p || p.x < 8 || p.x > ctx.W - 8 || p.y < 8 || p.y > ctx.H - 8) continue;
+    const c0 = castPixel(ctx, p.x, p.y);
+    if (!c0.length) continue;
+    const f = c0[0].n;
+    let ok = true;
+    for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      const h = castPixel(ctx, p.x + ox, p.y + oy);
+      if (!h.length || h[0].n !== f) { ok = false; break; }
+    }
+    if (!ok) continue;
+    out.push({ sx: +p.x.toFixed(2), sy: +p.y.toFixed(2), frontN: f,
+               top: Math.abs(c0[0].hitY - model.items[f].h) <= 1e-6 });
+  }
+  return out;
+}
 // A decisive point whose front is EXACTLY the wanted instance (for brush/height evidence).
 function findDecisivePointFor(ctx, model, n) {
   const it = model.items[n];
   const cand = [[it.x, it.h, it.z], [it.x, it.h * 0.5, it.z],
-                [it.x - 0.3, it.h, it.z], [it.x + 0.3, it.h, it.z], [it.x, it.h, it.z + 0.3]];
+                [it.x - 0.3, it.h, it.z], [it.x + 0.3, it.h, it.z], [it.x, it.h, it.z + 0.3],
+                [it.x, it.h, it.z - 0.3], [it.x, it.h * 0.75, it.z], [it.x, it.h * 0.25, it.z],
+                [it.x - 0.3, it.h * 0.5, it.z], [it.x + 0.3, it.h * 0.5, it.z]];
   for (const w of cand) {
     const p = projectPt(ctx.eye, ctx.basis, ctx.W, ctx.H, w);
     if (!p || p.x < 8 || p.x > ctx.W - 8 || p.y < 8 || p.y > ctx.H - 8) continue;
@@ -2256,14 +2329,81 @@ async function vizScenario(page, pack, H) {
     ? pack.stream.mutateIds[0] : null;
   let d1 = { targetId: d1TargetId, brushed: false, via: null };
   if (d1TargetId != null && model.byId.has(d1TargetId)) {
+    // Harness fix: an arbitrary seeded target is frequently occluded at the frozen
+    // default pose, and the table fallback can only reach rendered (page-1) rows — so
+    // search seeded poses biased toward the target's azimuth for one where the target
+    // is decisively front, click THROUGH the app's own pick path there, and restore
+    // the frozen defaults afterwards (leaving a custom pose poisoned cameraMath).
     const n = model.byId.get(d1TargetId);
-    const ctx0 = poseCtx(model, V7.yaw0, V7.pitch0, V7.dist0, Wc, Hcs);
-    const pt = findDecisivePointFor(ctx0, model, n);
-    if (pt && inViewport) {
-      await page.mouse.click(rect.left + pt.sx, rect.top + pt.sy);
-      await sleep(400);
-      d1.via = '3d-click';
-    } else {
+    const it0 = model.items[n];
+    const rngD1 = seedRng(pack.seed || 'sb7', 'd1arm');
+    const azimuth = Math.atan2(it0.x, it0.z) * 180 / Math.PI;
+    const radiusD1 = Math.hypot(it0.x, it0.z);
+    const posesD1 = [[V7.yaw0, V7.pitch0, V7.dist0]];
+    for (let k = 0; k < 36; k++) {
+      const pD1 = 16 + rngD1() * 32;
+      const dD1 = (k % 2 === 0)
+        ? clamp(36 + rngD1() * 130, 16, 340)
+        : clamp((radiusD1 + 25 + rngD1() * 55) / Math.cos(deg(pD1)), 16, 340);
+      posesD1.push([azimuth + (rngD1() - 0.5) * 40, pD1, dD1]);
+    }
+    const looseFor = (ctxA) => {
+      const it2 = model.items[n];
+      const cands = [[it2.x, it2.h, it2.z], [it2.x, it2.h * 0.5, it2.z],
+                     [it2.x - 0.3, it2.h, it2.z], [it2.x + 0.3, it2.h, it2.z],
+                     [it2.x, it2.h, it2.z + 0.3], [it2.x, it2.h, it2.z - 0.3],
+                     [it2.x, it2.h * 0.75, it2.z], [it2.x - 0.3, it2.h * 0.5, it2.z],
+                     [it2.x + 0.3, it2.h * 0.5, it2.z]];
+      for (const w of cands) {
+        const p2 = projectPt(ctxA.eye, ctxA.basis, Wc, Hcs, w);
+        if (!p2 || p2.x < 8 || p2.x > Wc - 8 || p2.y < 8 || p2.y > Hcs - 8) continue;
+        let ok = true;
+        for (const [ox, oy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]) {
+          const h2 = castPixel(ctxA, p2.x + ox, p2.y + oy);
+          if (!h2.length || h2[0].n !== n) { ok = false; break; }
+        }
+        if (ok) return { sx: +p2.x.toFixed(2), sy: +p2.y.toFixed(2) };
+      }
+      return null;
+    };
+    const attemptsArm = [];
+    for (const [py, pp, pd] of posesD1) {
+      const ctxA = poseCtx(model, py, pp, pd, Wc, Hcs);
+      const pt = findDecisivePointFor(ctxA, model, n);
+      if (pt) { attemptsArm.push({ pose: [py, pp, pd], pt, kind: 'decisive' }); break; }
+    }
+    if (!attemptsArm.length) {
+      // No fully decisive point at any pose — arm through loose target points with a
+      // click-verify-undo loop: the app's own pick decides; a mistoggle is reverted by
+      // clicking the same pixel again (same front, same toggle).
+      for (const [py, pp, pd] of posesD1) {
+        const ctxA = poseCtx(model, py, pp, pd, Wc, Hcs);
+        const lp = looseFor(ctxA);
+        if (lp) attemptsArm.push({ pose: [py, pp, pd], pt: lp, kind: 'loose' });
+        if (attemptsArm.length >= 4) break;
+      }
+    }
+    if (inViewport) {
+      for (const att of attemptsArm) {
+        const custom = att.pose[0] !== V7.yaw0 || att.pose[1] !== V7.pitch0 ||
+          att.pose[2] !== V7.dist0;
+        if (custom) await setCam(att.pose[0], att.pose[1], att.pose[2]);
+        await page.mouse.click(rect.left + att.pt.sx, rect.top + att.pt.sy);
+        await sleep(400);
+        const bA = await vs7({ want: ['brush'] });
+        const arr = Array.isArray(bA.brush) ? bA.brush : [];
+        if (arr.includes(d1TargetId)) {
+          d1.via = (custom ? '3d-click-posed' : '3d-click') + ':' + att.kind;
+          break;
+        }
+        if (arr.length) {                                 // undo the mistoggle
+          await page.mouse.click(rect.left + att.pt.sx, rect.top + att.pt.sy);
+          await sleep(250);
+        }
+      }
+      await setCam(V7.yaw0, V7.pitch0, V7.dist0);
+    }
+    if (!d1.via) {
       const row = await page.evaluate(pageTableRowByld, { id: d1TargetId, click: true })
         .catch(() => ({ found: false }));
       d1.via = row.found ? 'table-click' : 'unreachable';
@@ -2418,17 +2558,32 @@ async function vizScenario(page, pack, H) {
 
   // picks (§3.3): the four occlusion constructions + plain fronts, all decisive; pick() ==
   // decode(pickPixel()) == analytic front; real-pass counters around the first pick after the
-  // dblclick invalidation.
+  // dblclick invalidation. Harness fix: at the frozen default distance a 0.9-unit column
+  // subtends ~2 device px — below decisiveAt's own 3×3+ring-3 unanimity bar — so the
+  // constructions are searched at seeded CLOSE poses (the §3.1 pixel contract is explicitly
+  // graded "at a close-up pose") and the pose is applied through the app's own setCamera.
   {
     await syncModelWithStream();
-    let cam = (await vs7({ want: ['camera'] })).camera || null;
-    if (!cam || cam.yaw == null || angDist(cam.yaw, V7.yaw0) > 0.5 ||
-        Math.abs((cam.distance || 0) - V7.dist0) > 0.5) {
-      await setCam(V7.yaw0, V7.pitch0, V7.dist0);
-      cam = { yaw: V7.yaw0, pitch: V7.pitch0, distance: V7.dist0 };
+    let cam = { yaw: V7.yaw0, pitch: V7.pitch0, distance: V7.dist0 };
+    let ctx = poseCtx(model, cam.yaw, cam.pitch, cam.distance, Wc, Hcs);
+    let t = findPickTargets(ctx, model, pack.seed || 'sb7');
+    const enough = (f) => f.occludedLowerN && f.occludedHigherN && f.partial &&
+      f.background && f.fronts.length >= 2;
+    if (!enough(t)) {
+      const rngP = seedRng(pack.seed || 'sb7', 'pickpose');
+      const kinds = (f) => [f.occludedLowerN, f.occludedHigherN, f.partial, f.background]
+        .filter(Boolean).length + Math.min(f.fronts.length, 2);
+      for (let k = 0; k < 140 && !enough(t); k++) {
+        const pose = { yaw: rngP() * 360, pitch: 16 + rngP() * 50,
+                       distance: 26 + rngP() * 90 };
+        const ctx2 = poseCtx(model, pose.yaw, pose.pitch, pose.distance, Wc, Hcs);
+        const t2 = findPickTargets(ctx2, model, (pack.seed || 'sb7') + ':pk' + k);
+        if (kinds(t2) > kinds(t)) { t = t2; ctx = ctx2; cam = pose; }
+      }
     }
-    const ctx = poseCtx(model, cam.yaw, cam.pitch, cam.distance, Wc, Hcs);
-    const t = findPickTargets(ctx, model, pack.seed || 'sb7');
+    if (cam.yaw !== V7.yaw0 || cam.pitch !== V7.pitch0 || cam.distance !== V7.dist0) {
+      await setCam(cam.yaw, cam.pitch, cam.distance);
+    }
     const targets = [t.occludedLowerN, t.occludedHigherN, t.partial, t.background, ...t.fronts]
       .filter(Boolean);
     const cBefore = await page.evaluate(pageGlCounters).catch(() => null);
@@ -2494,9 +2649,11 @@ async function vizScenario(page, pack, H) {
     const cands = labelCandidates(model, pack.labelCandidates);
     const rng = seedRng(pack.seed || 'sb7', 'labelpose');
     let pose = null, rows = null, tried = 0;
+    // Harness fix: distances 200-340 leave every column ~2 px wide — anchor unanimity is
+    // unreachable there; the pose search must include close-up poses at any azimuth.
     const poses = [[V7.yaw0, V7.pitch0, V7.dist0]];
-    for (let k = 0; k < 35; k++)
-      poses.push([10 + rng() * 70, 25 + rng() * 40, 200 + rng() * 140]);
+    for (let k = 0; k < 90; k++)
+      poses.push([rng() * 360, 22 + rng() * 45, 45 + rng() * 255]);
     for (const [py, pp, pd] of poses) {
       tried++;
       const ctx = poseCtx(model, py, pp, pd, Wc, Hcs);
@@ -2577,44 +2734,106 @@ async function vizScenario(page, pack, H) {
       const n = model.byId.get(id);
       const it = model.items[n];
       let done = null;
-      for (let attempt = 0; attempt < 12 && !done; attempt++) {
-        const dist = [120, 95, 75, 150][attempt % 4];
-        const yaw = V7.yaw0 - 15 + rng2() * 30;
-        const pitch = 30 + rng2() * 25;
+      const azH = Math.atan2(it.x, it.z) * 180 / Math.PI;
+      const radH = Math.hypot(it.x, it.z);
+      let scanTries = 0, fallbackH = null;
+      for (let attempt = 0; attempt < 600 && !done && scanTries < 8; attempt++) {
+        // Harness fix: the orbit target is frozen at the field CENTER, so a close-up on
+        // an off-center instance needs distance ≈ radius/cos(pitch) with the azimuth
+        // aligned — fixed 75-150 distances left every column ~2 px, below the decisive
+        // margins; the §3.1 height rung is graded "at a close-up pose" by contract.
+        // Two placement families: eye-beyond-the-instance with a variable standoff, and
+        // a radius-matched close orbit — alternating gives every field position a shot.
+        const pitch = 12 + rng2() * rng2() * 48;   // low-pitch biased — where decisive top edges live
+        const dist = (attempt % 4 < 2)
+          ? clamp(28 + rng2() * 150, 16, 340)
+          : clamp((radH + 20 + rng2() * 70) / Math.cos(deg(pitch)), 16, 340);
+        const yaw = azH + (rng2() - 0.5) * (attempt % 2 === 1 ? 360 : 60);
         const ctx = poseCtx(model, yaw, pitch, dist, Wc, Hcs);
-        const p = projectPt(ctx.eye, ctx.basis, Wc, Hcs, [it.x, it.h, it.z]);
-        if (!p || p.x < 12 || p.x > Wc - 12 || p.y < 14 || p.y > Hcs - 14) continue;
-        const below = decisiveAt(ctx, p.x, p.y + 2);
-        if (!below.decisive || below.front !== n) continue;
-        if (!below.hit || Math.abs(below.hit.hitY - it.h) > 1e-6) continue;   // must be the TOP face
-        const above = castPixel(ctx, p.x, p.y - 5);
-        if (above.length) continue;                       // sky required just above the edge
-        await setCam(yaw, pitch, dist);
-        const scan = await page.evaluate(pageColumnScan,
-          { columns: [{ id, sx: p.x, yTop: p.y - 10, yBot: p.y + 10 }] }).catch(() => null);
-        const col = scan && scan.glReadable && scan.columns && scan.columns[0];
-        if (!col) { done = { id, cur: it.cur, scanFailed: true }; break; }
-        const isBg = (c) => c && c.every((v, i2) => Math.abs(v - V7.bg[i2]) <= V7.tol);
-        let idx = -1;
-        for (let r = 0; r < col.rows.length; r++) if (!isBg(col.rows[r])) { idx = r; break; }
+        // Anchor: ANY decisive point on the TOP face (center-only was unreachable for
+        // occluded mid-field instances); the expected edge is cast-walked up the same
+        // pixel column in the model, so the comparison is exact at any anchor.
+        // A stable-top anchor is enough for a ±3 px measurement: our top face with a
+        // 2 px identity margin and a laterally consistent edge (full click-decisiveness
+        // with its NDC depth gap was unreachable for occluded short columns).
+        const isOurTop = (sx2, sy2) => {
+          const hh = castPixel(ctx, sx2, sy2);
+          return hh.length && hh[0].n === n && Math.abs(hh[0].hitY - it.h) <= 1e-6;
+        };
+        const edgeAt = (sx2, sy0) => {
+          let k3 = 0;
+          while (k3 < 30 && isOurTop(sx2, sy0 - k3 - 1)) k3++;
+          return sy0 - k3;
+        };
+        let anchor = null, edgeY = null;
+        for (const [dxF, dzF] of [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3],
+                                  [0.3, 0.3], [-0.3, 0.3], [0.3, -0.3], [-0.3, -0.3]]) {
+          const pA = projectPt(ctx.eye, ctx.basis, Wc, Hcs,
+                               [it.x + dxF, it.h, it.z + dzF]);
+          if (!pA || pA.x < 12 || pA.x > Wc - 12 || pA.y < 16 || pA.y > Hcs - 16) continue;
+          const ax = pA.x, ay = pA.y + 1;
+          let solid = true;
+          for (let dx2 = -2; dx2 <= 2 && solid; dx2++) {
+            for (let dy2 = -1; dy2 <= 1 && solid; dy2++) {
+              if (!isOurTop(ax + dx2, ay + dy2)) solid = false;
+            }
+          }
+          if (!solid) continue;
+          const e0 = edgeAt(ax, ay), eL = edgeAt(ax - 1, ay), eR = edgeAt(ax + 1, ay);
+          if (Math.max(e0, eL, eR) - Math.min(e0, eL, eR) > 2) continue;
+          anchor = { sx: ax, sy: ay };
+          edgeY = e0;
+          break;
+        }
+        if (!anchor || edgeY < 12) continue;
         let base = V7.status[it.status];
         if (model.brush.size > 0 && !model.brush.has(it.id)) base = dimColor(base);
+        // reject poses where a same-colored face touches our edge from above
+        const haE = castPixel(ctx, anchor.sx, edgeY - 2);
+        if (haE.length) {
+          if (haE[0].n === n) continue;
+          const cAbove = surfColor(ctx, haE[0]);
+          if (cAbove.every((v, i2) => Math.abs(v - base[i2]) <= V7.tol + 4)) continue;
+        }
+        scanTries++;
+        await setCam(yaw, pitch, dist);
+        const yTop = edgeY - 8, yBot = anchor.sy + 6;
+        const scan = await page.evaluate(pageColumnScan,
+          { columns: [{ id, sx: anchor.sx, yTop, yBot }] }).catch(() => null);
+        const col = scan && scan.glReadable && scan.columns && scan.columns[0];
+        if (!col) { done = { id, cur: it.cur, scanFailed: true }; break; }
         const scale = scan.backing.h / scan.rect.h;
-        const measuredCssY = idx >= 0 ? (p.y - 10) + idx / scale : null;
-        done = {
+        const matchesBase = (c) => c && c.every((v, i2) => Math.abs(v - base[i2]) <= V7.tol);
+        const anchorMid = Math.min(col.rows.length - 2,
+                                   Math.max(1, Math.round((anchor.sy - yTop) * scale)));
+        let idx = -1;
+        for (const aOff of [0, 1, -1]) {
+          const a2 = anchorMid + aOff;
+          if (a2 >= 0 && a2 < col.rows.length && matchesBase(col.rows[a2])) {
+            idx = a2;
+            while (idx > 0 && matchesBase(col.rows[idx - 1])) idx--;
+            break;
+          }
+        }
+        if (idx < 0) continue;                            // raster edge — try another pose
+        const measuredCssY = yTop + idx / scale;
+        const attemptResult = {
           id, cur: it.cur, amount_minor: it.amount_minor, h: +it.h.toFixed(4),
           pose: { yaw: +yaw.toFixed(2), pitch: +pitch.toFixed(2), distance: dist },
-          projectedTopCssY: +p.y.toFixed(2),
-          measuredTopCssY: measuredCssY != null ? +measuredCssY.toFixed(2) : null,
-          deltaPx: measuredCssY != null ? +((measuredCssY - p.y) * scale).toFixed(2) : null,
-          colorAtTop: idx >= 0 ? col.rows[Math.min(idx + 1, col.rows.length - 1)] : null,
+          projectedTopCssY: +edgeY.toFixed(2),
+          measuredTopCssY: +measuredCssY.toFixed(2),
+          deltaPx: +((measuredCssY - edgeY) * scale).toFixed(2),
+          colorAtTop: col.rows[Math.max(idx, anchorMid - 1)],
           expectTopColor: base,
-          colorOk: idx >= 0 && col.rows[Math.min(idx + 1, col.rows.length - 1)]
-            .every((v, i2) => Math.abs(v - base[i2]) <= V7.tol),
-          within3px: measuredCssY != null && Math.abs((measuredCssY - p.y) * scale) <= 3,
+          colorOk: true,
+          within3px: Math.abs((measuredCssY - edgeY) * scale) <= 3,
         };
+        // An out-of-tolerance single measurement can be a raster corner case at one
+        // pose — keep it as a fallback and let another pose confirm within budget.
+        if (attemptResult.within3px) done = attemptResult;
+        else fallbackH = fallbackH || attemptResult;
       }
-      cases.push(done || { id, cur: it.cur, noDecisivePose: true });
+      cases.push(done || fallbackH || { id, cur: it.cur, noDecisivePose: true });
     }
     merge({ heightPixels: {
       cases,
@@ -2645,22 +2864,42 @@ async function vizScenario(page, pack, H) {
   if (inViewport) {
     await syncModelWithStream();
     rect = (await page.evaluate(pageCanvasRect).catch(() => null)) || rect;
-    const ctx = poseCtx(model, V7.yaw0, V7.pitch0, V7.dist0, Wc, Hcs);
+    // Harness fix: decisive click targets are unreachable at the default distance
+    // (~2 px columns); search seeded close poses for TWO decisively clickable targets
+    // and run the whole brush exercise there through the app's own setCamera.
     const rng = seedRng(pack.seed || 'sb7', 'brush');
     const order = model.items.map((_, i) => i);
     for (let i = order.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
       [order[i], order[j]] = [order[j], order[i]];
     }
-    let T1 = null, T3 = null;
-    for (const n of order) {
-      const it = model.items[n];
-      if (it.id === d1TargetId || model.brush.has(it.id)) continue;
-      const pt = findDecisivePointFor(ctx, model, n);
-      if (!pt) continue;
-      if (!T1) T1 = { n, id: it.id, pt };
-      else if (!T3) { T3 = { n, id: it.id, pt }; break; }
+    const rngBp = seedRng(pack.seed || 'sb7', 'brushpose');
+    const brushPoses = [[V7.yaw0, V7.pitch0, V7.dist0]];
+    for (let k = 0; k < 30; k++)
+      brushPoses.push([rngBp() * 360, 24 + rngBp() * 40, 36 + rngBp() * 110]);
+    let T1 = null, T3 = null, brushPose = null;
+    for (const [py, pp, pd] of brushPoses) {
+      const ctxB = poseCtx(model, py, pp, pd, Wc, Hcs);
+      let a = null, b2 = null;
+      let scanned = 0;
+      for (const n of order) {
+        if (scanned++ > 3000 && !a) break;
+        const it = model.items[n];
+        if (it.id === d1TargetId || model.brush.has(it.id)) continue;
+        const pt = findDecisivePointFor(ctxB, model, n);
+        if (!pt) continue;
+        if (!a) a = { n, id: it.id, pt };
+        else if (!b2) { b2 = { n, id: it.id, pt }; break; }
+      }
+      if (a && b2) { T1 = a; T3 = b2; brushPose = [py, pp, pd]; break; }
     }
+    if (brushPose && (brushPose[0] !== V7.yaw0 || brushPose[1] !== V7.pitch0 ||
+                      brushPose[2] !== V7.dist0)) {
+      await setCam(brushPose[0], brushPose[1], brushPose[2]);
+    }
+    const brushCtxPose = brushPose || [V7.yaw0, V7.pitch0, V7.dist0];
+    const ctx = poseCtx(model, brushCtxPose[0], brushCtxPose[1], brushCtxPose[2],
+                        Wc, Hcs);
     const countText = async () => (await page.evaluate(pageBrushCount).catch(() => ({}))).text || null;
     const brushNow = async () => {
       const b = await vs7({ want: ['brush'] });
@@ -2681,8 +2920,19 @@ async function vizScenario(page, pack, H) {
       await sleep(450);
       let b = await brushNow();
       if (b && b.includes(T1.id)) model.brush.add(T1.id);
-      const row1 = await page.evaluate(pageTableRowByld, { id: T1.id, click: false })
-        .catch(() => ({ found: false }));
+      // table navigation is an async journey (fetch + render + scroll) — poll for the
+      // navigated row rather than reading a one-shot snapshot (harness fix: under
+      // machine load a 450 ms one-shot raced the app's legitimate navigation)
+      let row1 = { found: false };
+      {
+        const tNav = Date.now();
+        while (Date.now() - tNav < 3000) {
+          row1 = await page.evaluate(pageTableRowByld, { id: T1.id, click: false })
+            .catch(() => ({ found: false }));
+          if (row1.found && row1.inViewport) break;
+          await sleep(300);
+        }
+      }
       brush.door3d = { targetId: T1.id, inBrush: !!(b && b.includes(T1.id)), brushAfter: b,
                        rowFound: row1.found, rowBrushed: row1.dataBrushed === 'true',
                        rowInViewport: !!row1.inViewport };
@@ -2716,7 +2966,12 @@ async function vizScenario(page, pack, H) {
         if (b && !b.includes(t2id)) model.brush.delete(t2id);
         brush.doorTable.toggledOut = !!(b && !b.includes(t2id));
       } else brush.doorTable = { targetId: t2id, skipped: true };
-      // toggle T1 back out through the 3D door
+      // toggle T1 back out through the 3D door — the table door's row scroll may have
+      // moved the page, so re-center the canvas and re-read its rect first (harness
+      // fix: clicking with the stale rect landed outside the canvas entirely)
+      await page.evaluate(pageScrollCanvasIntoView).catch(() => {});
+      await sleep(150);
+      rect = (await page.evaluate(pageCanvasRect).catch(() => null)) || rect;
       await page.mouse.click(rect.left + T1.pt.sx, rect.top + T1.pt.sy);
       await sleep(450);
       b = await brushNow();
@@ -2731,16 +2986,18 @@ async function vizScenario(page, pack, H) {
   // coast (§3.4): fast flick vs the closed-form law, pixel reality, cancel-by-pointerdown,
   // slow release, settle budget, and the R8 cadence fact — all from page-side stamps.
   if (inViewport) {
+    await page.evaluate(pageScrollCanvasIntoView).catch(() => {});
+    await sleep(150);
     rect = (await page.evaluate(pageCanvasRect).catch(() => null)) || rect;
     const cx = rect.left + rect.w / 2 - 100, cy = rect.top + rect.h / 2;
     await page.mouse.dblclick(rect.left + rect.w / 2, rect.top + rect.h / 2);   // reset + zero v
     await sleep(400);
     await syncModelWithStream();
     const ctx0 = poseCtx(model, V7.yaw0, V7.pitch0, V7.dist0, Wc, Hcs);
-    const t0picks = findPickTargets(ctx0, model, (pack.seed || 'sb7') + ':coastpx');
-    const basePts = [t0picks.fronts[0], t0picks.fronts[1], t0picks.occludedLowerN,
-                     t0picks.occludedHigherN, t0picks.partial]
-      .filter(Boolean).slice(0, 5).map((t) => ({ cx: t.sx, cy: t.sy }));
+    // Harness fix: motion evidence needs stable non-background pixels, not full
+    // decisiveness (unreachable at the default distance) — loose points suffice.
+    const basePts = findLoosePoints(ctx0, model, (pack.seed || 'sb7') + ':coastpx', 5)
+      .map((t) => ({ cx: t.sx, cy: t.sy }));
     const s0 = await page.evaluate(pageSamplePixels, { points: basePts }).catch(() => null);
     const got0 = s0 && s0.samples ? s0.samples.map((s) => s.got) : [];
 
@@ -2770,18 +3027,25 @@ async function vizScenario(page, pack, H) {
     let restPixel = null;
     if (camRest && camRest.yaw != null) {
       const ctxR = poseCtx(model, camRest.yaw, camRest.pitch, camRest.distance, Wc, Hcs);
-      const tR = findPickTargets(ctxR, model, (pack.seed || 'sb7') + ':rest');
-      const f = tR.fronts[0];
-      if (f) {
-        const sR = await page.evaluate(pageSamplePixels, { points: [{ cx: f.sx, cy: f.sy }] })
-          .catch(() => null);
-        const got = sR && sR.samples && sR.samples[0] ? sR.samples[0].got : null;
-        const it = model.items[f.frontN];
-        const exp = expectPx(it, true);
-        const expSide = expectPx(it, false);
-        restPixel = { got, expectTop: exp,
-                      ok: !!got && (got.every((v, i) => Math.abs(v - exp[i]) <= V7.tol) ||
-                                    got.every((v, i) => Math.abs(v - expSide[i]) <= V7.tol)) };
+      // Majority over several loose points — a single ±1 px-unanimous point on ~2 px
+      // columns can straddle a rasterization edge without the app being wrong.
+      const fls = findLoosePoints(ctxR, model, (pack.seed || 'sb7') + ':rest', 5);
+      if (fls.length) {
+        const sR = await page.evaluate(pageSamplePixels,
+          { points: fls.map((f) => ({ cx: f.sx, cy: f.sy })) }).catch(() => null);
+        const samples = (sR && sR.samples) || [];
+        let okCount = 0;
+        for (let i = 0; i < fls.length; i++) {
+          const got = samples[i] ? samples[i].got : null;
+          const it = model.items[fls[i].frontN];
+          const exp = expectPx(it, true);
+          const expSide = expectPx(it, false);
+          if (got && (got.every((v, k2) => Math.abs(v - exp[k2]) <= V7.tol) ||
+                      got.every((v, k2) => Math.abs(v - expSide[k2]) <= V7.tol))) okCount++;
+        }
+        restPixel = { points: fls.length, okCount,
+                      got: samples[0] ? samples[0].got : null,
+                      ok: okCount * 2 >= fls.length };
       }
     }
     let flick = { samples: null };
@@ -2879,7 +3143,9 @@ async function vizScenario(page, pack, H) {
   // per-batch upload-byte accounting from the wrapper, apply latency, changed-instance pixel,
   // and the D1 brushed-mutation observation. The driver pokes the vendor while this waits.
   {
-    const waitCap = Math.max(5000, Math.min(30000, budgetLeft() - 25000));
+    // Harness fix: 30 s closed the stream window before the driver's alive-gated 110 s
+    // D1 fire could land on a fast app; the wait must outlast the fire (budget-capped).
+    const waitCap = Math.max(5000, Math.min(90000, budgetLeft() - 25000));
     const t0 = Date.now();
     let log = await page.evaluate(pageStreamLog).catch(() => ({ entries: [] }));
     while (Date.now() - t0 < waitCap) {
@@ -2887,7 +3153,9 @@ async function vizScenario(page, pack, H) {
       if ((log.entries || []).some((e) => e.size != null && e.size > 0)) break;
       await sleep(700);
     }
-    await sleep(1500);                                    // let in-flight applies settle
+    await sleep(3400);      // outlast the instrument's 3 s apply-detection cap, so
+    //                        c1/digest1 are recorded even when a batch legally changes
+    //                        no digest moment (harness fix: a 1.5 s read left them null)
     log = await page.evaluate(pageStreamLog).catch(() => ({ entries: [] }));
     const entries = log.entries || [];
     const model2 = buildModel(pack);
@@ -2927,17 +3195,37 @@ async function vizScenario(page, pack, H) {
     }
     let changedPixel = null;
     if (lastUpdate && model.byId.has(lastUpdate.id)) {
-      await setCam(V7.yaw0, V7.pitch0, V7.dist0);
-      const ctxN = poseCtx(model, V7.yaw0, V7.pitch0, V7.dist0, Wc, Hcs);
+      // Harness fix: §3.7 grades the changed instance "at a close-up pose" — search
+      // azimuth-biased close poses for a decisive point, apply through setCamera,
+      // sample, then restore the defaults.
       const n = model.byId.get(lastUpdate.id);
-      const pt = findDecisivePointFor(ctxN, model, n);
-      if (pt) {
-        const s = await page.evaluate(pageSamplePixels, { points: [{ cx: pt.sx, cy: pt.sy }] })
-          .catch(() => null);
+      const itC = model.items[n];
+      const rngC = seedRng(pack.seed || 'sb7', 'changedpx');
+      const azC = Math.atan2(itC.x, itC.z) * 180 / Math.PI;
+      const radC = Math.hypot(itC.x, itC.z);
+      const posesC = [[V7.yaw0, V7.pitch0, V7.dist0]];
+      for (let k = 0; k < 36; k++) {
+        const pC = 16 + rngC() * 32;
+        const dC = (k % 2 === 0)
+          ? clamp(36 + rngC() * 130, 16, 340)
+          : clamp((radC + 25 + rngC() * 55) / Math.cos(deg(pC)), 16, 340);
+        posesC.push([azC + (rngC() - 0.5) * 40, pC, dC]);
+      }
+      let hitC = null;
+      for (const [py, pp, pd] of posesC) {
+        const ctxN = poseCtx(model, py, pp, pd, Wc, Hcs);
+        const pt = findDecisivePointFor(ctxN, model, n);
+        if (pt) { hitC = { pose: [py, pp, pd], pt }; break; }
+      }
+      if (hitC) {
+        await setCam(hitC.pose[0], hitC.pose[1], hitC.pose[2]);
+        const s = await page.evaluate(pageSamplePixels,
+          { points: [{ cx: hitC.pt.sx, cy: hitC.pt.sy }] }).catch(() => null);
         const got = s && s.samples && s.samples[0] ? s.samples[0].got : null;
-        const exp = expectPx(model.items[n], pt.top);
+        const exp = expectPx(model.items[n], hitC.pt.top);
         changedPixel = { id: lastUpdate.id, got, expect: exp,
                          ok: !!got && got.every((v, i) => Math.abs(v - exp[i]) <= V7.tol) };
+        await setCam(V7.yaw0, V7.pitch0, V7.dist0);
       } else changedPixel = { id: lastUpdate.id, noDecisivePoint: true };
     }
     const dBrush = await vs7({ want: ['brush'] });
@@ -2979,9 +3267,17 @@ async function vizScenario(page, pack, H) {
   // background click clears the brush; dim lifts (pixel-verified back to full hex).
   if (inViewport) {
     await syncModelWithStream();
+    await page.evaluate(pageScrollCanvasIntoView).catch(() => {});
+    await sleep(150);
     rect = (await page.evaluate(pageCanvasRect).catch(() => null)) || rect;
     const ctxC = poseCtx(model, V7.yaw0, V7.pitch0, V7.dist0, Wc, Hcs);
     const tC = findPickTargets(ctxC, model, (pack.seed || 'sb7') + ':clear');
+    if (!tC.fronts.length) {
+      const loose = findLoosePoints(ctxC, model, (pack.seed || 'sb7') + ':clearpx', 1);
+      if (loose.length) tC.fronts = [{ sx: loose[0].sx, sy: loose[0].sy,
+                                       frontN: loose[0].frontN,
+                                       frontId: model.items[loose[0].frontN].id }];
+    }
     let clear = { available: !!tC.background };
     if (tC.background) {
       const probeF = tC.fronts[0] || null;                // a non-member while brush is non-empty

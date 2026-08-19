@@ -1154,9 +1154,17 @@ def _(c: Ctx):
                      parts={"vacuous_root": "sync_completeness"})
         return g(0.0, "no post-mutation re-sync requests observed",
                  "never sending conditional requests is itself a graded failure (§4.1)")
-    cheap = 0.5 * (c.resync_cond / reqs) + 0.5 * (c.resync_304 / reqs)
-    return g(cheap, f"{c.resync_cond}/{reqs} conditional, {c.resync_304}/{reqs} 304 "
-             "across post-mutation syncs",
+    # Harness fix: the 304 FRACTION is vendor-controlled (the global collection
+    # generation moves with every commit, so a re-sync after real mutations gets
+    # honest 200s on every page no matter how disciplined the client), which made the
+    # old 0.5·cond + 0.5·304 formula structurally unreachable. What the CLIENT owns is
+    # conditional discipline: every request carries a validator except the documented
+    # B5 unconditional refetch and the first visit to a page that did not exist at
+    # fixture load. 304s stay reported as evidence.
+    allowed = getattr(c, "resync_allowed_uncond", 0)
+    cheap = min(1.0, (c.resync_cond + allowed) / reqs)
+    return g(cheap, f"{c.resync_cond}/{reqs} conditional ({allowed} documented "
+             f"unconditional), {c.resync_304} x 304 across post-mutation syncs",
              "an unconditional full re-walk on every sync is the expensive-client defect")
 
 
@@ -3438,14 +3446,26 @@ def _measure_under_stream(base: str, V) -> Dict:
             pass
         window["t1"] = window["t1"] or time.time()
 
-    bt = threading.Thread(target=_burst)
-    bt.start()
-    time.sleep(0.2)
+    # Harness fix: a fast app finishes the 24-delivery burst in well under the old
+    # 0.2 s reader head start, leaving overlap 0.0 and an unfair refusal — readers
+    # start FIRST and keep reading until the burst has completed (bounded).
+    burst_done = threading.Event()
+    go = threading.Event()
     lock = threading.Lock()
     samples: List[Dict] = []
 
+    def _burst_wrapped():
+        go.set()
+        try:
+            _burst()
+        finally:
+            burst_done.set()
+
     def _reader():
-        for _ in range(5):
+        go.wait(timeout=10)
+        n = 0
+        while n < 40 and (n < 5 or not burst_done.is_set()):
+            n += 1
             t0 = time.time()
             status, body, _raw, _h = _get(f"{base}/api/payments?limit=50", timeout=10)
             t1 = time.time()
@@ -3457,6 +3477,8 @@ def _measure_under_stream(base: str, V) -> Dict:
     readers = [threading.Thread(target=_reader) for _ in range(6)]
     for r_ in readers:
         r_.start()
+    bt = threading.Thread(target=_burst_wrapped)
+    bt.start()
     for r_ in readers:
         r_.join(timeout=60)
     bt.join(timeout=60)
@@ -3497,8 +3519,16 @@ def _analyze_trace(c: Ctx) -> None:
     """Trace → walk stats, B1/B2/B5 evidence, resync conditional counts, sched-unreached."""
     segs = _segments(c.trace)
     c.sched_unreached = [e for e in c.trace if e.get("sched-unreached")]
-    s1 = segs.get("sync1", [])
-    lists1 = _list_events(s1)
+    # Sync #1's walk is DEFINED by the vendor's sync ordinal, not by the wall-clock
+    # phase boundary (harness fix: an app whose self-driven retry lands before the
+    # driver's post-refusal sleep expires starts its walk inside the "boot" segment,
+    # and phase-keyed stats then blamed the app for pages it provably served).
+    lp1 = _list_path()
+    lists1 = [e for e in c.trace
+              if e.get("path") == lp1 and e.get("method") == "GET"
+              and e.get("sync") == 1]
+    if not lists1:
+        lists1 = _list_events(segs.get("sync1", []))
     served1 = [e for e in lists1 if e.get("status") == 200]
     pages1 = [e.get("page") for e in served1 if e.get("page") is not None]
     undoc = sum(1 for e in lists1
@@ -3594,14 +3624,24 @@ def _analyze_trace(c: Ctx) -> None:
                    "waited": waited, "continued": walk_complete}
 
     cond = n304 = reqs = 0
+    uncond_new_offsets: set = set()
+    lying_in_segs = False
     for name in ("sync2", "sync3", "sync4"):
         for e in _list_events(segs.get(name, [])):
             reqs += 1
             if e.get("if_none_match") or e.get("conditional"):
                 cond += 1
+            else:
+                off = e.get("offset")
+                if isinstance(off, int) and off >= N_FROZEN:
+                    uncond_new_offsets.add(off)   # a page born after fixture load —
+                    #                               no validator can exist on first visit
             if e.get("status") == 304:
                 n304 += 1
+                if e.get("lying"):
+                    lying_in_segs = True
     c.resync_reqs, c.resync_cond, c.resync_304 = reqs, cond, n304
+    c.resync_allowed_uncond = min(len(uncond_new_offsets), 4) + (1 if lying_in_segs else 0)
 
     # B5 by the vendor's own per-line facts — the lying 304s carry "lying": true and a
     # "sync" ordinal; the armed one additionally carries sched: "stale_304_sync". Phase
@@ -3873,6 +3913,31 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
             key = (mc_slot["day"], "pending")
             if key in cells:
                 cells[key] += 1
+            # The racing window's page-triggered status flips (race mutations + the
+            # refund) are COMMITTED and webhook-delivered before the battery reads
+            # buckets — a correct app's cells reflect them, so the expectation must
+            # (harness fix: comparing against untouched fixture cells failed every
+            # correct app on ~2 cells per status-kind mutation).
+            fxm2 = _fixtures()
+            if fxm2 is not None and hasattr(fxm2, "scheduled_delivery_script"):
+                idx0 = fx.index()
+                flips: Dict[str, tuple] = {}
+                for ev in fxm2.scheduled_delivery_script(fx):
+                    if ev.get("page") is None or ev.get("kind") in ("duplicate",
+                                                                    "forged"):
+                        continue
+                    if ev.get("type") != "payment.updated":
+                        continue
+                    pid, ver = ev.get("payment_id"), ev.get("version")
+                    if pid in idx0 and isinstance(ver, int) \
+                            and ver > flips.get(pid, (0, ""))[0]:
+                        flips[pid] = (ver, ev.get("status"))
+                for pid, (_v, status) in flips.items():
+                    brow = idx0[pid]
+                    if status and status != brow["status"]:
+                        cells[(brow["_day"], brow["status"])] -= 1
+                        cells[(brow["_day"], status)] = \
+                            cells.get((brow["_day"], status), 0) + 1
             c.buckets_expected = cells
             c.expected_total_at_load = N_FROZEN + 1
 

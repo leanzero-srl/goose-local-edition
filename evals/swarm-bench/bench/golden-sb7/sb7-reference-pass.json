@@ -1,0 +1,9 @@
+{
+  "reference_pass": true,
+  "scorer_version": "sb-7.0-rc",
+  "score": 0.9998,
+  "fixture_seed": "5a05d7631d9276e3",
+  "date": "2026-08-19",
+  "thresholds_calibrated": false,
+  "thresholds_sha256": "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3"
+}
