@@ -29948,6 +29948,121 @@ fn env_f32_clamped(name: &str, lo: f32, hi: f32) -> Option<f32> {
         .map(|v| v.clamp(lo, hi))
 }
 
+/// Median decode rate (tokens/sec) per node, from the run's OWN telemetry file. A record
+/// contributes only when it carries real backend usage and a positive decode window —
+/// approximations and failed calls never rank a node. Pure/testable.
+fn telemetry_node_rates(path: &Path) -> std::collections::HashMap<String, f64> {
+    let mut samples: std::collections::HashMap<String, Vec<f64>> = Default::default();
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Default::default();
+    };
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("usage").and_then(|x| x.as_bool()) != Some(true) {
+            continue;
+        }
+        let (Some(node), Some(ct), Some(ttft), Some(total)) = (
+            v.get("node").and_then(|x| x.as_str()),
+            v.get("completion_tokens").and_then(|x| x.as_f64()),
+            v.get("ttft_ms").and_then(|x| x.as_f64()),
+            v.get("total_ms").and_then(|x| x.as_f64()),
+        ) else {
+            continue;
+        };
+        let decode_s = (total - ttft) / 1000.0;
+        if ct > 0.0 && decode_s > 0.0 {
+            samples
+                .entry(node.to_string())
+                .or_default()
+                .push(ct / decode_s);
+        }
+    }
+    samples
+        .into_iter()
+        .map(|(k, mut v)| {
+            v.sort_by(|a, b| a.total_cmp(b));
+            let m = v[v.len() / 2];
+            (k, m)
+        })
+        .collect()
+}
+
+/// The measured rate for a device: the telemetry node key must equal the device/model id or be
+/// a '-'-bounded prefix of it (the fleet's node identity is the model-id prefix, "gabee-…").
+/// The boundary requirement is load-bearing: a bare starts_with would let a one-letter key
+/// claim every device. Pure/testable.
+fn measured_rate_for(
+    rates: &std::collections::HashMap<String, f64>,
+    dev_id: &str,
+    model_id: &str,
+) -> Option<f64> {
+    rates.iter().find_map(|(k, r)| {
+        let matches = |s: &str| {
+            s == k
+                || s.strip_prefix(k.as_str())
+                    .is_some_and(|rest| rest.starts_with('-'))
+        };
+        (matches(model_id) || matches(dev_id)).then_some(*r)
+    })
+}
+
+#[cfg(test)]
+mod telemetry_rank_tests {
+    use super::*;
+
+    #[test]
+    fn rates_use_median_and_skip_useless_records() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("t.jsonl");
+        std::fs::write(
+            &p,
+            [
+                // three good gabee samples: 10, 20, 30 tok/s -> median 20
+                r#"{"node":"gabee","usage":true,"completion_tokens":100,"ttft_ms":0,"total_ms":10000}"#,
+                r#"{"node":"gabee","usage":true,"completion_tokens":200,"ttft_ms":0,"total_ms":10000}"#,
+                r#"{"node":"gabee","usage":true,"completion_tokens":300,"ttft_ms":0,"total_ms":10000}"#,
+                // no real usage -> never ranks a node
+                r#"{"node":"mihai","usage":false,"completion_tokens":900,"ttft_ms":0,"total_ms":1000}"#,
+                // zero decode window -> skipped
+                r#"{"node":"mihai","usage":true,"completion_tokens":50,"ttft_ms":1000,"total_ms":1000}"#,
+                "not json at all",
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let rates = telemetry_node_rates(&p);
+        assert_eq!(
+            rates.len(),
+            1,
+            "only nodes with usable samples rank: {rates:?}"
+        );
+        assert!(
+            (rates["gabee"] - 20.0).abs() < 1e-9,
+            "median, not mean: {rates:?}"
+        );
+        assert!(telemetry_node_rates(Path::new("/definitely/missing")).is_empty());
+    }
+
+    #[test]
+    fn rate_lookup_requires_a_dash_bounded_prefix() {
+        let rates: std::collections::HashMap<String, f64> =
+            [("gabee".to_string(), 13.2)].into_iter().collect();
+        assert_eq!(
+            measured_rate_for(&rates, "dev0", "gabee-qwen3.6-27b"),
+            Some(13.2)
+        );
+        assert_eq!(
+            measured_rate_for(&rates, "gabee", "other-model"),
+            Some(13.2)
+        );
+        // "gabee" is NOT a '-'-bounded prefix of "gabeexl-…" — a loose starts_with would lie here.
+        assert_eq!(measured_rate_for(&rates, "dev1", "gabeexl-qwen"), None);
+        assert_eq!(measured_rate_for(&rates, "dev2", "mihai-qwen"), None);
+    }
+}
+
 fn swarm_temp_resolved(cfg_temp: Option<f32>) -> Option<f32> {
     std::env::var("GOOSE_SWARM_TEMP")
         .ok()
@@ -30620,12 +30735,28 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .cyan()
         );
     }
+    // Per-call token telemetry (Mihai 2026-08-19: "yeah we should adopt this"). The provider
+    // appends one JSON line per completion call when this env names a file; unset = zero
+    // overhead. Defaulted into the run's own .swarm so every run self-measures — the file is
+    // what fix-target selection reads to rank nodes by MEASURED decode rate instead of the
+    // static config weight (live capture caught the weight backwards: gabee decodes 13.2 tok/s
+    // vs the local node's 7.9 while speed_weight ranked them the other way).
+    if std::env::var_os("GOOSE_SWARM_TELEMETRY_FILE").is_none() {
+        let tpath = working_dir.join(".swarm/telemetry.jsonl");
+        let _ = std::fs::create_dir_all(working_dir.join(".swarm"));
+        // Truncate: rates must be THIS run's own measurement — a reused working dir would
+        // otherwise rank this fleet by a previous run's (possibly different) fleet. An
+        // explicitly-set env is the caller's file and is left alone.
+        let _ = std::fs::write(&tpath, "");
+        std::env::set_var("GOOSE_SWARM_TELEMETRY_FILE", &tpath);
+    }
     sink.write_value(serde_json::json!({
         "event": "run_started",
         "prompt": opts.prompt,
         "planner_model": cfg.planner_model,
         "endpoint": cfg.endpoint,
         "working_dir": working_dir.display().to_string(),
+        "telemetry_file": std::env::var("GOOSE_SWARM_TELEMETRY_FILE").ok(),
         "max_turns": worker_max_turns,
         "max_attempts": cfg.max_attempts,
         "pool": enabled.iter().map(|d| serde_json::json!({
@@ -32774,12 +32905,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // it — so it is the one dispatch where landing on the quickest machine is worth the most, and it
     // was the one dispatch that ignored the setting entirely. `max_by_key` returns the LAST maximum, so
     // ties resolve to the later pool entry deterministically rather than by iteration accident.
-    let smoke_fix_target = devices
+    //
+    // MEASURED BEATS CONFIGURED — but the measurement happens LATER. speed_weight decides the
+    // initial target here; the candidate list is captured (devices moves into the scheduler
+    // below) so the COMPLETE phase can re-rank by the run's OWN telemetry once the build wave
+    // has produced per-node samples. The first version of this read telemetry HERE — at
+    // EXECUTE start, before a single worker call — so the measured branch could never engage
+    // (adversarial review). A live capture caught the config backwards (gabee 13.2 tok/s
+    // ranked below a 7.9 tok/s node), which is why the re-rank exists at all.
+    let mut smoke_fix_target = devices
         .iter()
         .filter(|d| d.enabled)
         .max_by_key(|d| d.speed_weight)
         .or_else(|| devices.first())
         .map(|d| (d.id.clone(), d.model_id.clone()));
+    let fix_target_candidates: Vec<(String, String)> = devices
+        .iter()
+        .filter(|d| d.enabled)
+        .map(|d| (d.id.clone(), d.model_id.clone()))
+        .collect();
     // LEARN & REFLECT — the SNAPSHOT. Capture the structural facts NOW, while the plan is still in scope:
     // by the time the run knows it PASSED, plan_json has been moved into the plan_loaded event and `dag` has
     // been moved into scheduler.run(). Same reason smoke_all_files is captured here.
@@ -33061,6 +33205,37 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "COMPLETE",
             "verify the app by RUNNING it, fix-until-green (bounded), and refuse to ship a red app",
         );
+        // FIX-TARGET RE-RANK, at the moment it matters: by now the build wave has pushed
+        // hundreds of per-call telemetry lines, so the run's OWN measured decode rates can
+        // outrank the static speed_weight for the serialized repair dispatches. Requires
+        // EVERY candidate measured (mixed measured-vs-unmeasured comparisons lie); anything
+        // less keeps the speed_weight target chosen at EXECUTE start.
+        {
+            let telemetry_rates = std::env::var("GOOSE_SWARM_TELEMETRY_FILE")
+                .ok()
+                .map(|p| telemetry_node_rates(Path::new(&p)))
+                .unwrap_or_default();
+            let all_measured = !fix_target_candidates.is_empty()
+                && fix_target_candidates
+                    .iter()
+                    .all(|(id, model)| measured_rate_for(&telemetry_rates, id, model).is_some());
+            if all_measured {
+                smoke_fix_target = fix_target_candidates
+                    .iter()
+                    .max_by(|a, b| {
+                        let ra = measured_rate_for(&telemetry_rates, &a.0, &a.1).unwrap_or(0.0);
+                        let rb = measured_rate_for(&telemetry_rates, &b.0, &b.1).unwrap_or(0.0);
+                        ra.total_cmp(&rb)
+                    })
+                    .map(|(id, model)| (id.clone(), model.clone()));
+            }
+            sink.write_value(serde_json::json!({
+                "event": "fix_target_selected",
+                "device": smoke_fix_target.as_ref().map(|(d, _)| d.clone()),
+                "basis": if all_measured { "measured_decode_rate" } else { "speed_weight" },
+                "measured_rates": telemetry_rates,
+            }));
+        }
         let mut final_passed = false;
         // Whether the smoke oracle actually RAN (vs skipped for an unprofiled language / missing toolchain
         // / empty tree). A skip ships byte-identically to today (final_passed stays true) but is reported
