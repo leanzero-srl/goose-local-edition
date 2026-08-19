@@ -1845,6 +1845,30 @@ def evaluate(c: Ctx) -> Dict:
     return compose_from_rows(rows, _nominal_console_errors(c), c)
 
 
+def _critical_severity_input(r: Dict) -> float:
+    """What the CRITICAL multiplier actually reads for a check. The check's tier score prices
+    its whole compound; the multiplier must key on the MEASURED catastrophic component only —
+    verification on the first sweep caught three mis-attributions: (1) h_durability zeroed by
+    its STATIC write-pattern leg while measured persistence/concurrency were perfect (a risk
+    is MAJOR, measured loss is CRITICAL); (2) a slow-but-healthy boot (0.75) reading as a
+    crash; (3) a rendered-but-mislabeled table (0.5) reading as a dead flow. Plus float-noise
+    hits at 0.9999999999999999."""
+    s = max(0.0, min(1.0, r["score"]))
+    if s >= 1.0 - 1e-9:
+        return 1.0
+    name = r["check"]
+    parts = r.get("parts") or {}
+    if name == "h_durability":
+        vals = [v for k, v in parts.items()
+                if k in ("persists", "concurrent") and isinstance(v, (int, float))]
+        return max(0.0, min(1.0, min(vals))) if vals else s
+    if name == "j_loads_data":
+        return 0.0 if s == 0.0 else 1.0
+    if name == "server_runs":
+        return 0.0 if s < 0.4 else 1.0
+    return s
+
+
 def compose_from_rows(rows: List[Dict], console: Optional[int], c: Optional[Ctx] = None) -> Dict:
     """The pure composition: rows -> verdict. Split from evaluate so the monotonicity
     selftest can push synthetic single-defect row sets through the REAL scoring math —
@@ -1876,11 +1900,14 @@ def compose_from_rows(rows: List[Dict], console: Optional[int], c: Optional[Ctx]
     crit_mult = 1.0
     for r in rows:
         if r["check"] in CRITICAL_CHECKS and not r.get("unavailable"):
-            factor = crit_floor + (1.0 - crit_floor) * max(0.0, min(1.0, r["score"]))
+            sev = _critical_severity_input(r)
+            factor = crit_floor + (1.0 - crit_floor) * sev
             crit_mult *= factor
-            crit_rows.append({"check": r["check"], "score": r["score"],
-                              "factor": round(factor, 4),
-                              "why": CRITICAL_CHECKS[r["check"]]})
+            if sev < 1.0:
+                crit_rows.append({"check": r["check"], "score": r["score"],
+                                  "severity_input": round(sev, 4),
+                                  "factor": round(factor, 4),
+                                  "why": CRITICAL_CHECKS[r["check"]]})
     pre_severity = score
     score *= crit_mult
     tiers["E"] = {"mean": round(gate_fraction * e_mean, 4),
