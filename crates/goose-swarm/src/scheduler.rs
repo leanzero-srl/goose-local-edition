@@ -310,7 +310,14 @@ fn transient_retry_hint(msg: &str) -> Option<String> {
     // pathology that killed attempt N (threaded verbatim from the kill site), and the instruction
     // to act before deliberating — 13/15 measured stalls ended reasoning cleanly and never issued
     // a tool call.
-    if msg.contains("no productive progress") {
+    //
+    // The marker is the SHARED PREFIX of all five kill-site strings, not the "no productive
+    // progress" suffix family: r7's first live stall retried COLD because the idle watchdog's
+    // own message ("agent stalled — no progress for Ns (no token/tool activity)") — the DOMINANT
+    // variant in the measured 420s loops — does not carry that suffix. Caught live under the
+    // kill-on-divergence watch; the prefix has exactly five producers, all stalls, verified by
+    // grep across both crates.
+    if msg.contains("agent stalled") {
         return Some(format!(
             "Your previous attempt on this task was stopped because it stalled: {msg}. \
              ANY FILE IT ALREADY WROTE OR EDITED IS STILL ON DISK. If your owned file(s) \
@@ -3602,6 +3609,9 @@ mod salvage_tests {
             "agent stalled — no productive progress: repeated the identical tool call 14x",
             "agent stalled — no productive progress (tool/output/text) for 900s while streaming reasoning only",
             "agent stalled — no productive progress: the judge read this call's own reasoning",
+            // The idle watchdog's variant — the DOMINANT one in the measured 420s loops, and the
+            // one the first predicate missed (r7 kill-on-divergence catch).
+            "agent stalled — no progress for 420s (no token/tool activity)",
         ] {
             let h = transient_retry_hint(stall).expect("a stall must carry a warm hint");
             assert!(
