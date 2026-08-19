@@ -145,13 +145,13 @@ UNCALIBRATED_BANNER = (
     "⚠⚠ SB-6 UNCALIBRATED — sb6-thresholds.json carries honest defaults; gamma/k_P/drag/"
     "side-face rungs are NOT frozen. Scores are rc-grade (sb-6.0-rc), never board-grade. ⚠⚠")
 
-# sb-6.1 (2026-08-18 overnight): rendered-means-seen on the first-data stamp (hidden
-# fallback rows no longer earn p_page_interactive), causal-evidence sync "completed"
-# (observed /api/sync request / in-flight state / view change — never elapsed time alone),
-# reachable j_empty_state middle rung (empty scenario now reports bodyTextLength),
-# serves_page 0.2 rung requires an answering server, honest vendor-trap unavail wording.
-# Thresholds file unchanged — CALIB_SHA256 pin carries over.
-SCORER_VERSION = "sb-6.1" if CALIBRATED else "sb-6.1-rc"
+# VERSION POLICY (Mihai, 2026-08-19): sb-6.0 was never declared stable, so in-development
+# fixes do NOT increment the version — the string stays sb-6.0 until he declares it stable,
+# and fix provenance lives in git + FINDINGS.md (F895-F897: rendered-means-seen first-data
+# stamp, causal-evidence sync "completed", reachable j_empty_state rung, answering-server
+# serves_page, honest vendor-trap wording, hermetic CLI scoring). Thresholds file unchanged —
+# CALIB_SHA256 pin carries.
+SCORER_VERSION = "sb-6.0" if CALIBRATED else "sb-6.0-rc"
 
 # ── weights + the compression-proof asserts (deleting one is a loud diff) ────────────────────
 
