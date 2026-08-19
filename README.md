@@ -160,14 +160,14 @@ Read plainly: on the honest ruler the 3-node local fleet lands level with Opus �
 | GPT-5.6 Sol (baseline) | 0.9956 | clean |
 | Claude Opus 5 (baseline) | 0.9307 | clean |
 | GPT-5.6 Luna (baseline) | 0.8671 | floor† |
-| Claude Sonnet 5 (baseline) | 0.8543 | clean |
-| GPT-5.6 Terra (baseline) | 0.7707 | floor† |
-| **3-node local fleet** | **0.5059** | clean |
-| Claude Haiku 4.5 (baseline) | 0.4489 | clean |
+| Claude Sonnet 5 (baseline) | 0.8635 | clean |
+| GPT-5.6 Terra (baseline) | 0.3252 | floor† |
+| Claude Haiku 4.5 (baseline) | 0.1887 | clean |
+| **3-node local fleet** | **0.1837** | clean |
 
 † Luna's and Terra's sessions were cut early by a goose engine defect (compaction re-roled the summarizer's reasoning content into a user message, which Bedrock rejects — every GPT session died at its first compaction; fixed in `19b4ed6ef`). Their scores are floors, not ceilings, and are disclosed as such on the board.
 
-The hard tier does what it was built to do: it separates the field the soft tier compressed — the spread runs 0.45 to 0.99 where sb-5.2 packed everyone above 0.96. Scores are composed as `0.88 × core + 0.12 × excellence`, where the excellence slice unlocks per named perfection condition (journeys, console, responsive, latencies — each run page shows the exact arithmetic). The fleet's build ships a working backend (full 1553-payment sync, sub-2ms API latencies, rows rendering at 21 ms) but scores 0.05 on the 3D tier — the WebGL panel is where the 27B class currently breaks, and that is now measured instead of hidden.
+The hard tier does what it was built to do: it separates the field the soft tier compressed — the spread runs 0.003 to 0.996. Scores are composed as `(0.88 × core + 0.12 × excellence) × critical`, where the excellence slice unlocks per named perfection condition and the critical multiplier compounds for every measured crash, wrong-money, data-loss, or dead-primary-flow defect (a monotonicity selftest in the freeze gate proves severity ordering can never invert). Terra's 0.33 is the model in action: a flawless backend whose frontend shows users zero rows is priced as the dead product a user would experience, not the good API a curl would see. The fleet's build ships a working backend (full 1553-payment sync, sub-2ms API latencies, rows rendering at 21 ms) but scores 0.05 on the 3D tier — the WebGL panel is where the 27B class currently breaks, and that is now measured instead of hidden.
 
 **sb-5.2** (historic era, frozen): Opus 0.9755 · Sonnet 0.9692 · Haiku 0.7861 · fleet (mighty-crane-54f2) 0.6618. The era's compression at the top was measured to be an instrument artifact — 42.8 of 100 points passed for ≥90% of serious builds — which is what drove both the sb-5.3 correction and the sb-6 hard tier above.
 

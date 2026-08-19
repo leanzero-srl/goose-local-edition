@@ -20635,3 +20635,24 @@ path routes through the promotions counter — so the phase ends instead of re-m
 stall exit). Remaining KEPT-not-yet-implemented (day shift): detail-once/defer_detail,
 contracts-into-detail-fan work-stealing, transient-retry session resume, and the r2 boot-defect
 class needs the relax-through mechanism proven live. r3 is the sub-120 test on this binary.
+
+## F901 — The severity model: critical defects crater the score, and the ruler proves it can't invert
+
+Mihai's requirement landed as sb-6.0's severity model (496db6d02 + the measured-severity
+correction): seven CRITICAL checks (crash / wrong money / data loss / dead primary flow)
+compound a continuous multiplier on the composed score, wrong-money and data-loss are cliffs,
+console errors de-inverted to MINOR-when-the-flow-works, excellence shares continuous, and a
+monotonicity selftest in the freeze gate synthesizes single-defect runs and REFUSES the freeze
+on any inversion. The first sweep's verification caught the multiplier keying on the wrong
+things — a static write-pattern leg, a slow-but-healthy boot, a rendered-but-mislabeled table
+— so the multiplier now reads MEASURED severity only (parts-aware). Golden 1.00 both sweeps.
+Final board (all serial/hermetic/advertised-port): Sol 0.9956 · Opus 0.9307 · Luna 0.8671* ·
+Sonnet 0.8635 · Terra 0.3252* · Haiku 0.1887 · fleet r1 0.1837 (*engine-kill floors). Terra is
+the model in action: a flawless backend whose frontend renders ZERO rows now prices as the
+dead product the user experiences. The sham-audit that drove all this also proved Sol's
+near-ceiling is EARNED (hand-verified money/DST/conflicts/durability/HMAC, zero shortcuts, one
+latent 304-cache infinite-loop found beyond the scorer's paths) — so the ceiling problem is
+the TIER's, and sb-7's design (instanced 3D + GPU picking, seeded fault injection, racing
+webhooks with money-conservation, SIGKILL-surviving workflow, outbox consistency, seeded
+fixtures, severity from day one) is authored and red-teamed for Mihai's sign-off before any
+cloud spend.
