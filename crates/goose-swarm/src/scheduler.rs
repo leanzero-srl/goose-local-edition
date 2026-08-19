@@ -967,8 +967,28 @@ impl State {
             .copied()
             .filter(|&i| n.avoid_device.as_deref() != Some(self.devices[i].cfg.id.as_str()))
             .collect();
-        // If avoiding the failed device leaves nothing, fall back to any free device.
-        let pool = if allowed.is_empty() { free } else { allowed };
+        // If avoiding the failed device leaves nothing, WAIT for a different slot instead of
+        // rebinding — as long as the fleet has any other build device at all. The fallback used
+        // to hand the retry straight back to the device that just killed it, because the kill
+        // frees exactly that slot while the rest of the fleet is mid-generation. MEASURED (r8):
+        // web-viz stalled at 420s of zero token activity on the slowest node FOUR times, every
+        // retry re-landing on it — the same starvation each attempt, and the caller already
+        // re-queues a None cleanly (`leftover` -> Ready), so waiting is deadlock-free: another
+        // node's completion re-opens dispatch. A single-build-device fleet keeps the fallback.
+        let pool = if allowed.is_empty() {
+            let another_build_device_exists = n.avoid_device.is_some()
+                && self.devices.iter().any(|d| {
+                    d.cfg.enabled
+                        && !d.cfg.supervision
+                        && n.avoid_device.as_deref() != Some(d.cfg.id.as_str())
+                });
+            if another_build_device_exists {
+                return None;
+            }
+            free
+        } else {
+            allowed
+        };
         // Spread work across the fleet: the LEAST-LOADED device wins, so idle nodes get work before
         // any node doubles up; ties break toward the planner's preferred model, then by index for
         // determinism. (Honoring preferred_model first would pile every same-model task on one device

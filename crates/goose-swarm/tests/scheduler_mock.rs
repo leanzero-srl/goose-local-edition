@@ -144,6 +144,39 @@ fn mock(rec: &Arc<Mutex<Recorder>>, delay_ms: u64) -> Arc<MockDispatcher> {
 }
 
 #[tokio::test]
+async fn a_retry_waits_for_a_different_device_instead_of_rebinding() {
+    // r8 web-viz starvation loop, pinned: "victim" fails transient on attempt 0; at that
+    // instant the ONLY free slot is the device that just killed it ("blocker" still occupies
+    // the other). The retry must WAIT and land on a DIFFERENT device when the blocker frees —
+    // rebinding to the killer re-runs the same starvation (measured: four 420s stalls, all on
+    // the same slowest node).
+    let specs = vec![spec("blocker", &[], &[]), spec("victim", &[], &[])];
+    let dag = Dag::from_specs(specs).unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    let disp = Arc::new(MockDispatcher {
+        rec: rec.clone(),
+        delay: Duration::from_millis(30),
+        fail_transient_first: ["victim".to_string()].into_iter().collect(),
+        terminal: HashSet::new(),
+        slow: ["blocker".to_string()].into_iter().collect(),
+    });
+    let sched = Scheduler::new(vec![dev("other", "m-o", 1), dev("slowhost", "m-s", 1)], 3);
+    let report = sched.run(dag, disp, String::new()).await.unwrap();
+    assert_eq!(
+        report.done.len(),
+        2,
+        "both tasks finish — waiting must not deadlock"
+    );
+    let r = rec.lock().unwrap();
+    let devs = &r.run_devices["victim"];
+    assert_eq!(devs.len(), 2, "one failed attempt + one retry: {devs:?}");
+    assert_ne!(
+        devs[0], devs[1],
+        "the retry must land on a DIFFERENT device, not rebind to the one that killed it"
+    );
+}
+
+#[tokio::test]
 async fn no_double_claim_and_all_done() {
     let rec = Arc::new(Mutex::new(Recorder::default()));
     let specs: Vec<_> = (0..12).map(|i| spec(&format!("t{i}"), &[], &[])).collect();
