@@ -33129,6 +33129,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // next wave. MEASURED stakes: a flat wave costs 1,599-2,400s; a cut converting run costs the
         // rounds it was denied.
         let mut round: u32 = 0;
+        // ONE STRATEGY SWITCH (r5 postmortem): the detectors now produce precise, actionable
+        // findings, and the loss moved to FIX CONVERSION — r5's single sched round promoted
+        // nothing against 7 named findings and converged at 0.017. A zero-promotion round may
+        // switch strategy EXACTLY ONCE (shards -> race, or race -> shards): a different
+        // mechanism is new information, a repeat is not. The pending switch bypasses the
+        // stall exit for its one round; a second zero-promotion round converges for good.
+        let mut force_race_next = false;
+        let mut force_shard_next = false;
+        let mut strategy_switched = false;
         loop {
             let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
             // A failed task blocks green ONLY when the smoke gate is BLIND (it did not run — an unprofiled
@@ -33521,7 +33530,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // that gates green, so it judges progress: a round that did not REDUCE the count made
             // no progress, and one such round is proof — the next wave would re-attempt the same
             // findings from the same tree at 1,599-2,400s a draw. `stall_cap=0` keeps the opt-out.
-            if stall_cap > 0 && round > 0 && verdict.findings.len() >= last_findings.len() {
+            if stall_cap > 0
+                && round > 0
+                && verdict.findings.len() >= last_findings.len()
+                && !force_race_next
+                && !force_shard_next
+            {
                 sink.write_value(serde_json::json!({
                     "event": "complete_stall_exit",
                     "round": round,
@@ -33619,7 +33633,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // racing is that the OTHER nodes are idle during a median-one-finding repair round, so with
             // one model there is nothing to recover and the overhead is pure cost. This matters now that
             // the lever is default-ON — a 1-node fleet must keep running exactly what it ran before.
-            let shard_this_round = {
+            let shard_this_round = if force_race_next {
+                force_race_next = false;
+                false
+            } else if force_shard_next {
+                force_shard_next = false;
+                true
+            } else {
                 let (groups, _) = group_findings_by_file(&verdict.findings, &smoke_all_files);
                 let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
                 prefer_shard_over_race(sink_shard(), groups.len(), attributed)
@@ -33848,7 +33868,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     },
                 }));
                 if winner.is_none() {
-                    fix_converged = true;
+                    if !strategy_switched && fix_sched() {
+                        strategy_switched = true;
+                        force_shard_next = true;
+                        sink.write_value(serde_json::json!({
+                            "event": "fix_strategy_switch",
+                            "round": round,
+                            "from": "race", "to": "shards",
+                            "detail": "the race promoted nothing — one round of per-file shards \
+                                       before convergence; a different mechanism is new \
+                                       information, a repeat is not",
+                        }));
+                    } else {
+                        fix_converged = true;
+                    }
                 }
             } else if fix_sched() && shard_this_round && !fleet_models.is_empty() {
                 // F781/#16 c6 (GOOSE_SWARM_FIX_SCHED, default OFF): THE FIX ROUND AS A REAL
@@ -34000,7 +34033,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     .load(std::sync::atomic::Ordering::Relaxed)
                                     == 0
                                 {
-                                    fix_converged = true;
+                                    if !strategy_switched && spec_repair() && fleet_models.len() > 1
+                                    {
+                                        strategy_switched = true;
+                                        force_race_next = true;
+                                        sink.write_value(serde_json::json!({
+                                            "event": "fix_strategy_switch",
+                                            "round": round,
+                                            "from": "shards", "to": "race",
+                                            "detail": "the shard round promoted nothing — one \
+                                                       race of independent whole-fix attempts \
+                                                       before convergence; a different mechanism \
+                                                       is new information, a repeat is not",
+                                        }));
+                                    } else {
+                                        fix_converged = true;
+                                    }
                                 }
                             }
                         }
