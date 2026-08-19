@@ -20595,3 +20595,22 @@ Sanity CDN had the new era), and the seed script generalized (era-versioned verd
 scenario, per-entry notes). Engine-side, the night's fixes are the durable win: compaction can
 no longer kill reasoning-model sessions (F894), and the bench scores serially/hermetically at
 advertised ports forever (F895-F897).
+
+## F899 — "The inner scoring makes no sense versus the outer": three mechanisms, all fixed
+
+Mihai's 05:00 review named it and the diagnosis across ALL seven published verdicts proved it
+general: (1) THE DEAD EXCELLENCE SLICE — the all-or-nothing E gate was locked on 7/7 entrants,
+compressing the whole board x0.88 while run pages showed measured-perfect E rows worth 0.000;
+now proportional (each named condition unlocks its share; golden still 1.00, gate fraction 1.0).
+(2) STATUS VOCABULARY AS ERROR — pageErrorBanner matched bare /failed/i, so sol's 3D legend chip
+<span class=failed>Failed</span> was a PERMANENT error banner blocking sync "completed" on an app
+whose sync provably works (hand-driven: disable → Syncing… → 64 rows + fresh stamp in 3.2s, the
+"banner" present before the click). (3) PAGINATION-DEAD view_refreshed — a spec-compliant table
+shows 50 rows before AND after sync, so the rowCount comparison never fired; tableHashChanged
+now counts. Board after the fixes (serial hermetic sweep, advertised ports, version stays
+sb-6.0 by Mihai's no-increment order): Sol 0.9956 · Opus 0.9307 · Luna 0.8671* · Sonnet 0.8543 ·
+Terra 0.7707* · fleet r1 0.5059 · Haiku 0.4489 (*engine-kill floors). Run pages now render "The
+number, exactly": 0.88 x core + 0.12 x gate x excellence with every condition as a pass/fail
+chip; the methodology page documents the task, the composition, and all 69 checks generated
+from scorer source and spot-verified. Fleet r2 (3h, 0.0591, another never-binds app) is the
+wall-time hunt's exhibit A — that investigation runs as wf_6f500588.
