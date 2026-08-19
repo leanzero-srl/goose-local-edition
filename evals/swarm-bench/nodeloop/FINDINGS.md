@@ -20671,3 +20671,19 @@ task matches sqlite3/http.server/http.client triggers, alongside the aggregate-t
 restart-durability detectors (bnrl4iije binary) that make the survivors' wrong-money and
 data-loss classes repairable in-run. r4's binary predates both; the sb-7 swarm run and any
 r5 carry them. Board unchanged (r1 0.1837 stays the fleet entry).
+
+## F903 — r5: the pitfalls ended the boot-kill family; the loss moved to fix CONVERSION
+
+Fleet r5 (first run with write-time pitfalls + both in-run detectors + defer_detail):
+0.0174 at 177 min. The instrument story is a WIN — the app BOOTS AND SERVES (3/3 assets,
+health 200: the boot-kill family that took r0/r2/r4 is dead on its first post-pitfall run),
+and the 7 findings are precise and actionable (the exact missing POST keys per endpoint, the
+exact frontend TypeError, sync 0/1553 against a healthy server). The loss: the single sched
+fix round promoted NOTHING against those findings and the zero-promotion governor converged —
+correct for the wall, terminal for the score. Detection is no longer the bottleneck;
+CONVERSION is. Shipped in response: ONE strategy switch on a zero-promotion round
+(shards <-> race, exactly once, stall-exit bypassed for its one round, fix_strategy_switch
+event) — a different mechanism is new information, a repeat is not. Also live in r5's log:
+levers echo confirms GOOSE_SWARM_TEMP=0.2 (the lottery survives 0.2; the r6/sb-7 test drops
+to 0.0), and the functional floor missed r5's binary by minutes — the next run carries floor
++ switch + knobs. Board unchanged: r1 (0.1837) remains the fleet entry.
