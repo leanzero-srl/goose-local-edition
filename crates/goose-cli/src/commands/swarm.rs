@@ -29824,6 +29824,14 @@ fn fix_cap_secs() -> u64 {
 /// (F837 class) the event exists to prevent. Cools the single-sample paths (workers, detail,
 /// sink, judges) where low temperature is simply correct for code; skeleton drafts keep their own
 /// draft_temp dial. NaN/inf are rejected (is_finite), the value clamps to [0, 2].
+fn env_f32_clamped(name: &str, lo: f32, hi: f32) -> Option<f32> {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+        .map(|v| v.clamp(lo, hi))
+}
+
 fn swarm_temp_resolved(cfg_temp: Option<f32>) -> Option<f32> {
     std::env::var("GOOSE_SWARM_TEMP")
         .ok()
@@ -30605,10 +30613,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         allow_model_load: cfg.allow_model_load,
         sampling: SamplingParams {
             temperature: swarm_temp_resolved(cfg.temperature),
-            top_p: cfg.top_p,
-            top_k: cfg.top_k,
-            min_p: cfg.min_p,
-            repeat_penalty: cfg.repeat_penalty,
+            // Per-run env overrides mirror GOOSE_SWARM_TEMP so the desktop's run-window
+            // sampling knobs (and any harness) can pin a single run without touching
+            // config.yaml — env beats config, run beats default (Mihai 2026-08-19).
+            top_p: env_f32_clamped("GOOSE_SWARM_TOP_P", 0.0, 1.0).or(cfg.top_p),
+            top_k: std::env::var("GOOSE_SWARM_TOP_K")
+                .ok()
+                .and_then(|v| v.trim().parse::<i32>().ok())
+                .filter(|v| (0..=1000).contains(v))
+                .or(cfg.top_k),
+            min_p: env_f32_clamped("GOOSE_SWARM_MIN_P", 0.0, 1.0).or(cfg.min_p),
+            repeat_penalty: env_f32_clamped("GOOSE_SWARM_REPEAT_PENALTY", 0.5, 2.0)
+                .or(cfg.repeat_penalty),
         },
         stream_decode_retry: stream_decode_retry_enabled(cfg.stream_decode_retry),
         straggler_stop: straggler_stop_enabled(cfg.straggler_stop),
