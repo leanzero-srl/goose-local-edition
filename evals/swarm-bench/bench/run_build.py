@@ -28,6 +28,10 @@ def _regime():
     """sb-6 gate (--sb6 / BENCH_SB6): spec v3 + vendor_service_v2 + score_sb6. Read at CALL
     time (env-at-import would miss a sweep's per-arm env — the FEATURE_CHECKS precedent).
     Returns (scorer_module, vendor_module, default_spec_name). Default path byte-identical."""
+    if os.environ.get("BENCH_SB7"):
+        import score_sb7  # noqa: PLC0415 — deliberately lazy, same as the sb-6 branch
+        import vendor_service_v3  # noqa: PLC0415
+        return score_sb7, vendor_service_v3, "spec-build-sb7.md"
     if not os.environ.get("BENCH_SB6"):
         return score_build, vendor_service, "spec-build.md"
     import score_sb6  # noqa: PLC0415 — deliberately lazy: sb-5 runs never import sb-6
@@ -254,9 +258,14 @@ def main() -> int:
     ap.add_argument("--sb6", action="store_true",
                     help="sb-6 regime: spec-build-v3 + vendor_service_v2 + score_sb6 "
                          "(equivalent to BENCH_SB6=1; default path stays byte-identical)")
+    ap.add_argument("--sb7", action="store_true",
+                    help="sb-7 regime: spec-build-sb7 + vendor_service_v3 + score_sb7 "
+                         "(equivalent to BENCH_SB7=1; wins over --sb6)")
     args = ap.parse_args()
     if args.sb6:
         os.environ["BENCH_SB6"] = "1"
+    if args.sb7:
+        os.environ["BENCH_SB7"] = "1"
 
     verdicts = []
     reps = [args.only_rep] if args.only_rep is not None else list(range(args.reps))
