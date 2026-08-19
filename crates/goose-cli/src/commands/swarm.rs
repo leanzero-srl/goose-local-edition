@@ -411,6 +411,9 @@ pub struct SwarmConfig {
     /// files + research findings — ALL of these are in the prompt and mutate across rounds) so an UNCHANGED
     /// subtask reuses its detail instead of regenerating it. Identical input => identical spec => zero quality
     /// cost; a round that changed goal/findings (re-research, answered ask) correctly MISSES and re-details.
+    /// ⚠️ DEFER_DETAIL (2026-08-19) largely retires the within-run case this was built for: the detail fan
+    /// now runs ONCE, post-loop, on the plan that ships, so retarget rounds no longer re-detail at all. The
+    /// memo stays wired (it is still correct, and still covers any future re-entry of the fan).
     /// None => OFF (byte-identical). env GOOSE_SWARM_DETAIL_MEMO overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail_memo: Option<bool>,
@@ -17269,13 +17272,13 @@ impl GooseAgentDispatcher {
         // every module and does ALL verification serially on one node (it stalls) — into a fannable per-module
         // `verify::<M>` task each (read-only, owns nothing, fans like the build tasks) PLUS a THIN
         // integrate-verify join (same id) that does only the irreducible whole-program run. OFF -> byte-identical.
-        // Whether the split ACTUALLY applied — the T2 sink-canonicalizer below must know, because it would
-        // otherwise overwrite the thin join with the full monolithic spec and silently undo the split.
-        let mut fan_verify_applied = false;
+        // Whether the split ACTUALLY applied matters to the detail fan's filter and the T2 sink-canonicalizer
+        // (which would otherwise overwrite the thin join with the full monolithic spec and silently undo the
+        // split) — both now live in detail_plan, which re-derives the flag from the `verify::` ids the split
+        // installs, so nothing needs threading across the seam.
         if swarm_gate_cfg("GOOSE_SWARM_FAN_VERIFY", load_config().fan_verify) {
             let fanned = fan_verify_split(&mut v, lang);
             if fanned > 0 {
-                fan_verify_applied = true;
                 // Second axis: shard the END-TO-END run by command across the fleet, so the whole-program
                 // check stops being one task on one node while the rest of the fleet idles.
                 if swarm_gate_cfg("GOOSE_SWARM_FAN_E2E", load_config().fan_e2e) {
@@ -17331,6 +17334,46 @@ impl GooseAgentDispatcher {
                 );
             }
         }
+        Ok((v.to_string(), plan_conf, uncertainties))
+    }
+
+    /// DEFER_DETAIL (speed hunt 2026-08-19): the detail fan, hoisted OUT of `'plan_loop`. It used to run
+    /// at the tail of every parallel_plan call, so each retarget/ask redraft re-bought the whole fan —
+    /// MEASURED baseline-n3-r0: 3× fan = 26 detail_completed with 18/18 same-id rework by round 2, ~11-30
+    /// min per retargeting run, and detail_fallback timeouts hit the hardest modules before dispatch. The
+    /// loop's own machinery (skeleton drafts, agreement, clarity, retarget/ask) reads only prompt +
+    /// skeleton, so the fan now runs exactly ONCE, here, on the plan the loop finally ships: the SAME fan
+    /// (same prompts, same memo, same detail_completed/detail_fallback events, same T2 sink shaping), just
+    /// later. `user_prompt`/`research_findings` are the POST-ask values — the ask's answers are folded into
+    /// both before the loop exits, so specs are written against the answered spec.
+    ///
+    /// Returns the ONLY (plan_json, dag) pair downstream (pillars/contracts/plan_loaded/fill-fan/
+    /// Scheduler::run) may ever see — the single seam. Nothing loop-resident survives past it.
+    async fn detail_plan(
+        self: &Arc<Self>,
+        planner_model: &str,
+        worker_models: Vec<String>,
+        user_prompt: &str,
+        research_findings: &str,
+        plan_json: &str,
+    ) -> Result<(String, Dag)> {
+        let mut v: serde_json::Value = serde_json::from_str(plan_json)?;
+        let existing_files = existing_files_manifest(&self.working_dir);
+        let lang = detect_language(user_prompt, &existing_files);
+        // Re-derived from the plan itself rather than threaded through the loop: `verify::` ids exist
+        // exactly when fan_verify_split split the sink in the round that drafted this plan (the model
+        // never emits them — they are engine-installed), so the plan string is the authoritative carrier
+        // of the flag across the seam.
+        let fan_verify_applied = v
+            .get("subtasks")
+            .and_then(|s| s.as_array())
+            .is_some_and(|a| {
+                a.iter().any(|s| {
+                    s.get("id")
+                        .and_then(|i| i.as_str())
+                        .is_some_and(|i| i.starts_with("verify::"))
+                })
+            });
         let items: Vec<(usize, String, String, String, bool)> = v
             .get("subtasks")
             .and_then(|s| s.as_array())
@@ -17679,7 +17722,22 @@ impl GooseAgentDispatcher {
                 }
             }
         }
-        Ok((v.to_string(), plan_conf, uncertainties))
+        let detailed = v.to_string();
+        let dag = Dag::from_planner_json(&detailed)
+            .map_err(|e| anyhow!("detailed plan no longer parses: {e}"))?;
+        // SEAM GUARD: verify:: tasks exist only when fan_verify split the sink, and the T2 canonicaliser
+        // just above then installs the deterministic thin/joined join spec on integrate-verify — a
+        // loop-resident (pre-detail) skeleton still carries a model/injected sink spec instead. If this
+        // fires, the dag about to ship did not pass through this detail step.
+        debug_assert!(
+            !fan_verify_applied
+                || dag.tasks.get("integrate-verify").is_none_or(|n| {
+                    n.spec.description == thin_integrate_verify_spec(lang)
+                        || n.spec.description == joined_integrate_verify_spec(lang)
+                }),
+            "defer_detail seam: verify:: tasks shipped without the detail step's canonical sink shaping"
+        );
+        Ok((detailed, dag))
     }
 
     pub(crate) async fn plan(
@@ -31363,10 +31421,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "detail": "reused the previous plan; research and planning skipped. Completed tasks are re-run.",
         }));
     }
-    let (plan_json, dag, plan_conf) = if let Some(r) = resume {
+    // `plan_needs_detail`: whether the shipped plan is a SKELETON that must still pass through the
+    // post-loop detail fan (defer_detail). False on RESUME — the resumed plan comes from
+    // plan_loaded.tasks, which is written AFTER the detail step, so its descriptions are already the
+    // detailed specs and re-fanning would re-buy work the log already carries. False on the solo-planner
+    // paths, which never had a detail fan.
+    let (plan_json, dag, plan_conf, plan_needs_detail) = if let Some(r) = resume {
         let dag = Dag::from_planner_json(&r.plan_json)
             .map_err(|e| anyhow!("the resumed plan will not parse: {e}"))?;
-        (r.plan_json, dag, PlanConf::default())
+        (r.plan_json, dag, PlanConf::default(), false)
     } else {
         // Labeled so ASK-AWAY's inner ask loop can `continue 'plan_loop` to force a re-plan on a structural
         // answer (language flip / product first defined) while ordinary inline batches loop the inner ask.
@@ -31377,7 +31440,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // `mut` because the user's answers RE-SCORE spec-clarity below: the value bound here is
             // measured against a prompt the ask is about to amend, and carrying it unchanged reports a
             // number for a spec that no longer exists.
-            let (pj, mut plan_conf, uncertainties) = if use_parallel {
+            let (pj, mut plan_conf, uncertainties, plan_from_parallel) = if use_parallel {
                 phase_banner(
                     "PLAN",
                     "27B drafts the skeleton, then the fleet writes every subtask spec IN PARALLEL",
@@ -31426,7 +31489,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     )
                     .await
                 {
-                    Ok(t) => t,
+                    Ok((pj, pc, unc)) => (pj, pc, unc, true),
                     Err(e) => {
                         eprintln!(
                             "  parallel planning failed ({e}); falling back to the solo planner"
@@ -31437,7 +31500,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             style("!").yellow()
                         );
                         }
-                        dispatcher
+                        let (pj, pc, unc) = dispatcher
                             .plan(
                                 &cfg.planner_model,
                                 &opts.prompt,
@@ -31454,7 +31517,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     .max(devices.len()),
                                 &research_findings,
                             )
-                            .await?
+                            .await?;
+                        (pj, pc, unc, false)
                     }
                 }
             } else {
@@ -31467,7 +31531,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     cfg.planner_model,
                     devices.len()
                 );
-                dispatcher
+                let (pj, pc, unc) = dispatcher
                     .plan(
                         &cfg.planner_model,
                         &opts.prompt,
@@ -31484,7 +31548,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             .max(devices.len()),
                         &research_findings,
                     )
-                    .await?
+                    .await?;
+                (pj, pc, unc, false)
             };
             let dag = Dag::from_planner_json(&pj)
                 .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {pj}"))?;
@@ -31575,10 +31640,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     "detail": format!("best_of_n {prev}→{effective_best_of_n}"),
                                 }));
                                 // WHAT THE REDRAFT THROWS AWAY. `continue` re-enters parallel_plan, which
-                                // re-runs the skeleton drafts AND the whole detail fan from scratch.
-                                // MEASURED on a 3-node baseline: the discarded round cost 582s and the
-                                // replacement 710s, so 83% of a 1556s pre-dispatch prefix was planning and a
-                                // third of it was done twice.
+                                // re-runs the skeleton drafts from scratch. ⚠️ DEFER_DETAIL (2026-08-19):
+                                // it no longer re-runs the detail fan — the fan runs once, post-loop, on
+                                // the plan that ships, so a discarded round's `desc_chars`/`desc_sha`
+                                // below now describe SKELETON briefs, not detailed specs. The measurement
+                                // that motivated the move, on the old in-loop fan: the discarded round
+                                // cost 582s and the replacement 710s, so 83% of a 1556s pre-dispatch
+                                // prefix was planning and a third of it was done twice.
                                 //
                                 // Whether that is waste depends on how many of these modules come back
                                 // unchanged in the plan that ships — and nothing recorded it, because
@@ -32144,12 +32212,52 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     if bpc.final_conf.unwrap_or(0) >= plan_conf.final_conf.unwrap_or(0) {
                         let bdag = Dag::from_planner_json(&bpj)
                             .map_err(|e| anyhow!("invalid best retarget plan: {e}"))?;
-                        break (bpj, bdag, bpc);
+                        // A banked plan is ALWAYS parallel-origin: best_plan is only ever set under a
+                        // Some(final_conf), which the solo planner never produces — so it is a skeleton
+                        // the post-loop detail fan must still expand.
+                        break (bpj, bdag, bpc, true);
                     }
                 }
             }
-            break (pj, dag, plan_conf);
+            break (pj, dag, plan_conf, plan_from_parallel);
         }
+    };
+
+    // DEFER_DETAIL — THE ONE SEAM (speed hunt 2026-08-19). The detail fan used to run inside every
+    // parallel_plan call, so each retarget/ask redraft re-bought the whole fan (MEASURED baseline-n3-r0:
+    // 3× fan = 26 detail_completed with 18/18 same-id rework by round 2; ~11-30 min per retargeting run).
+    // It now runs HERE, exactly once, on the plan the loop shipped — reading the POST-ask `opts.prompt` +
+    // `research_findings` (the ask's answers were folded into both before the loop exited, so specs are
+    // written against the answered spec). A retargeted round's details cannot leak into this plan: the fan
+    // has not run until now. The rebound pair below is the ONLY (plan_json, dag) downstream ever sees —
+    // pillars, contracts, plan_loaded, the fill-fan rebuild and Scheduler::run all read it, and nothing
+    // loop-resident survives past this point.
+    let (plan_json, dag) = if plan_needs_detail {
+        let wm: Vec<String> = fleet_slot_models(&devices);
+        match dispatcher
+            .detail_plan(
+                &cfg.planner_model,
+                wm,
+                &opts.prompt,
+                &research_findings,
+                &plan_json,
+            )
+            .await
+        {
+            Ok(pair) => pair,
+            // Structurally near-unreachable (the fan only rewrites descriptions of a plan the loop
+            // already parsed), but the old in-loop failure mode was "fall back to the solo planner",
+            // never "abort the run" — degrade to dispatching the skeleton briefs instead.
+            Err(e) => {
+                eprintln!(
+                    "  {} detail fan skipped ({e}) — dispatching on the skeleton briefs",
+                    style("!").yellow()
+                );
+                (plan_json, dag)
+            }
+        }
+    } else {
+        (plan_json, dag)
     };
 
     // PILLARS OFF THE CRITICAL PATH (speed hunt 2026-08-16). This was one serial planner call
