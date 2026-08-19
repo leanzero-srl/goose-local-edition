@@ -193,7 +193,21 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     trace = out_root / f"trace-{entrant}-r{rep}.jsonl"
 
     scorer, vendor, _spec = _regime()
-    server = vendor.serve(port, trace)
+    # sb-7 needs ONE fixture seed shared by the serving vendor and the scorer — gather(seed=None)
+    # builds no fixtures, which silently voids the expectation pack, the probe tokens and the
+    # kill placements (the haiku canary measured exactly that: every pack-dependent probe
+    # reported "harness failure"). Same hermetic wipes as score_sb7's own CLI.
+    sb7 = bool(os.environ.get("BENCH_SB7"))
+    seed = None
+    if sb7:
+        seed = scorer._draw_seed()  # noqa: SLF001 — the scorer owns seed policy
+        for leftover in ("sb7-tokens.json", "sb7-expect.json"):
+            (workdir / leftover).unlink(missing_ok=True)
+        for leftover_dir in ("graded-sb7-db", "sb7-empty-db", "sb7-combined-db", "sb7-shots"):
+            shutil.rmtree(workdir / leftover_dir, ignore_errors=True)
+        server = vendor.serve(port, trace, seed=seed)
+    else:
+        server = vendor.serve(port, trace)
     # Quality screenshots (product contract 2026-08-17): the browser probe leaves
     # <epoch>-<scenario>.png in here on every render-gate pass DURING the run and again at
     # scoring — the repair-progression evidence the published post carries. Set in our own
@@ -201,8 +215,10 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     os.environ["BENCH_SHOTS_DIR"] = str(workdir / "bench-shots")
     try:
         agent = invoke(entrant, workdir, port, load_env(), timeout)
-        ctx = scorer.gather(workdir, port, workdir / "graded.db", trace,
-                            mark_phase=vendor.mark_phase)
+        db = workdir / ("graded-sb7-db" if sb7 else "graded.db")
+        ctx = scorer.gather(workdir, port, db, trace,
+                            mark_phase=vendor.mark_phase,
+                            **({"seed": seed} if sb7 else {}))
     finally:
         server.shutdown()
 
