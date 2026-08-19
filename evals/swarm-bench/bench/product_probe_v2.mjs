@@ -734,14 +734,27 @@ function pageViewSnapshot() {
 
 function pageErrorBanner() {
   const re = /error|unable|unreachable|failed|try again|retry/i;
+  // The spec's own status vocabulary is not an error: a legend chip or filter option that
+  // says just "Failed" (this bench's payment status) poisoned every errorBanner read on
+  // well-built pages — sync "completed" was blocked on an app whose sync demonstrably
+  // worked. An error is error PHRASING, never a bare domain word in page furniture.
+  const bareStatus = /^(succeeded|pending|failed|refunded)\b[\s()0-9%·.,-]*$/i;
   const els = Array.from(document.querySelectorAll('body *'));
   for (const el of els) {
     if (el.children.length > 0 && !el.matches('[role="alert"],[class*="error" i],[class*="alert" i],[class*="banner" i]'))
       continue;
     if (el.closest('td,th,[role="cell"],[role="gridcell"],script,style')) continue;
+    if (
+      el.closest(
+        'button,select,option,label,nav,[role="option"],[role="tab"],[role="listbox"],' +
+          '[class*="legend" i],[class*="filter" i],[class*="chip" i],[class*="tag" i]'
+      )
+    )
+      continue;
     if (!(el.getClientRects && el.getClientRects().length)) continue;
     const t = (el.innerText || '').trim();
-    if (t && t.length < 300 && re.test(t)) return t.slice(0, 120);
+    if (!t || t.length >= 300 || bareStatus.test(t)) continue;
+    if (re.test(t)) return t.slice(0, 120);
   }
   return null;
 }
@@ -1471,6 +1484,10 @@ async function main() {
         (after.rowCount !== before.rowCount || (after.lastSyncText || '') !== (before.lastSyncText || ''));
     }
     const tableHashChanged = !!(before && after) && after.tableHash !== before.tableHash;
+    // A spec-compliant page shows 50 rows before AND after sync (pagination), so rowCount
+    // is structurally constant — visible-table content change is refresh evidence too
+    // (measured: three strong builds failed view_refreshed on rowCount 50==50 alone).
+    if (!viewRefreshed && tableHashChanged) viewRefreshed = true;
 
     if (!syncRequested) syncRequested = await syncRequestSeen();
     // Demote a "completed" that nothing corroborates: no in-flight state, no observed

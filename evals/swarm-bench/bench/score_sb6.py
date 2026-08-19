@@ -1743,20 +1743,33 @@ def _nominal_console_errors(c: Ctx) -> Optional[int]:
 
 
 def excellence(rows: List[Dict], c: Ctx) -> tuple:
+    """The excellence slice's unlock, PROPORTIONAL per condition.
+
+    The original all-or-nothing gate measured as a dead zone: 7 of 7 real entrants had it
+    locked (one 0.75 journey rung erased a measured-perfect E tier), so the whole board was
+    silently compressed x0.88 and no run page could reconcile its rows with its score. Each
+    condition now unlocks its share of the slice — still harsh (full credit requires ALL of
+    them perfect, and the E checks themselves must also measure well), never a cliff.
+    Returns (fraction, e_mean, conditions) with every condition named for the verdict.
+    """
     by = {r["check"]: r for r in rows}
     console = _nominal_console_errors(c)
     p_names = [n for n in ("p_list_latency", "p_buckets_latency", "p_summary_latency",
                            "p_page_interactive", "p_first_frame", "p_sync_wall") if n in by]
-    gate = (all(by[n]["score"] == 1.0 for n in
-                ("j_first_use", "j_sync_journey", "j_error_state", "j_empty_state") if n in by)
-            and console == 0
-            and by.get("v_responsive_375", {}).get("score") == 1.0
-            and by.get("v_dates_readable", {}).get("score") == 1.0
-            and by.get("t_scene_binding", {}).get("score", 0) >= 1.0
-            and all(by[n]["score"] == 1.0 for n in p_names))
+    conditions: List[Dict] = []
+    for n in ("j_first_use", "j_sync_journey", "j_error_state", "j_empty_state"):
+        if n in by:
+            conditions.append({"name": n, "ok": by[n]["score"] == 1.0, "value": by[n]["score"]})
+    conditions.append({"name": "console_clean", "ok": console == 0, "value": console})
+    for n in ("v_responsive_375", "v_dates_readable", "t_scene_binding"):
+        if n in by:
+            conditions.append({"name": n, "ok": by[n]["score"] >= 1.0, "value": by[n]["score"]})
+    for n in p_names:
+        conditions.append({"name": n, "ok": by[n]["score"] == 1.0, "value": by[n]["score"]})
+    fraction = (sum(1 for cond in conditions if cond["ok"]) / len(conditions)) if conditions else 0.0
     e_rows = [r for r in rows if r["tier"] == "E" and not r.get("unavailable")]
     e_mean = sum(r["score"] for r in e_rows) / len(e_rows) if e_rows else 0.0
-    return (1.0 if gate else 0.0), e_mean
+    return fraction, e_mean, conditions
 
 
 # ── evaluation ───────────────────────────────────────────────────────────────────────────────
@@ -1798,11 +1811,15 @@ def evaluate(c: Ctx) -> Dict:
                        **({"unavailable": [r["check"] for r in sub if r.get("unavailable")]}
                           if len(avail) != len(sub) else {})}
         inner += mean * w
-    gate, e_mean = excellence(rows, c)
-    score = 0.88 * inner + E_WEIGHT * gate * e_mean
-    tiers["E"] = {"mean": round(gate * e_mean, 4), "gate": bool(gate), "weight": E_WEIGHT}
+    gate_fraction, e_mean, gate_conditions = excellence(rows, c)
+    score = 0.88 * inner + E_WEIGHT * gate_fraction * e_mean
+    tiers["E"] = {"mean": round(gate_fraction * e_mean, 4),
+                  "gate": gate_fraction >= 1.0, "gate_fraction": round(gate_fraction, 4),
+                  "weight": E_WEIGHT}
     out = {"score": round(score, 4), "scorer_version": SCORER_VERSION,
-           "inner": round(inner, 4), "excellence_gate": bool(gate),
+           "inner": round(inner, 4), "excellence_gate": gate_fraction >= 1.0,
+           "excellence": {"fraction": round(gate_fraction, 4), "e_mean": round(e_mean, 4),
+                          "conditions": gate_conditions},
            "calibration": ("frozen" if CALIBRATED else
                            "UNCALIBRATED — sb6-thresholds.json defaults; rc-grade only"),
            "gamma": GAMMA, "k_p": K_P,
@@ -1810,7 +1827,7 @@ def evaluate(c: Ctx) -> Dict:
            "probe_unavailable": unavailable,
            "harness_missing": list(getattr(c, "harness_missing", [])),
            "root_causes": attribute_root_causes(rows),
-           "excellent": bool(gate) and score >= 0.88 and not unavailable,
+           "excellent": gate_fraction >= 1.0 and score >= 0.88 and not unavailable,
            "solid": score >= 0.55}
     return out
 
