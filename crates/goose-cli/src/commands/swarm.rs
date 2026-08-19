@@ -21137,13 +21137,36 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             Some(out) => match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
                 Ok(v) if v.get("ran").and_then(|x| x.as_bool()) == Some(true) => {
                     app_total_rows = v.get("total_rows").and_then(|x| x.as_i64());
+                    // THE FIRE-AND-FORGET SYNC (r5, measured): the sync endpoint answered
+                    // 2xx ("sync_started") and its background worker died silently — the
+                    // app's own store held ZERO rows while the vendor held 1553, and no
+                    // finding ever said so (the shape findings fired; the acquire fact did
+                    // not). The app's own emptiness against the vendor's own total is the
+                    // single most actionable finding a sync bug can produce.
+                    if app_total_rows == Some(0) {
+                        if let Some((vendor_n, _)) = &vendor_total {
+                            if *vendor_n > 0 {
+                                findings.push(format!(
+                                    "the advertised sync answered 2xx but the app's OWN list \
+                                     holds ZERO rows while the vendor's collection holds \
+                                     {vendor_n} — the sync did not acquire the data. If the \
+                                     sync runs in a background thread, that thread is dying \
+                                     silently: it must not share a sqlite connection across \
+                                     threads, must log/store its own failure, and a response \
+                                     like 'sync_started' must still be followed by rows \
+                                     actually landing. Verify by POSTing the sync and then \
+                                     counting the app's own list."
+                                ));
+                            }
+                        }
+                    }
                     if let Some(fs) = v.get("findings").and_then(|x| x.as_array()) {
                         for f in fs {
                             if let Some(t) = f.as_str() {
                                 findings.push(t.to_string());
                             }
                         }
-                        if fs.is_empty() {
+                        if fs.is_empty() && app_total_rows != Some(0) {
                             verified += 1;
                         }
                     }
@@ -24190,6 +24213,10 @@ for _ in range(400):
     rows.extend(rs); offset += len(rs)
     if len(rs) < 1: break
     if len(rows) > 60000: break
+if len(rows) == 0:
+    # An identified list endpoint holding ZERO rows is a measurement, not a probe failure —
+    # the caller compares it against the vendor's total (the fire-and-forget-sync class).
+    print(json.dumps({"ran": True, "total_rows": 0, "findings": []})); sys.exit(0)
 if len(rows) < 2:
     print(json.dumps({"ran": False, "reason": "could not page the row list"})); sys.exit(0)
 r0 = rows[0]
