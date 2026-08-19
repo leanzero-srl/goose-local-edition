@@ -19828,6 +19828,71 @@ struct SpecContractResult {
     render_gate: String,
 }
 
+/// FUNCTIONAL FLOOR probe: boot the spec's advertised entry and report whether it BINDS.
+/// Returns None when the app comes up (functional), Some(stderr tail) when it does not —
+/// the traceback is the boot-repair loop's whole input. Python-only, mirroring the
+/// spec-contract spawn (advertised argv, our own free port, fresh scratch db).
+async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
+    let pkg = spec_python_entry(spec)?;
+    let free_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())?;
+    let scratch = std::env::temp_dir().join(format!(
+        "goose-boot-probe-{}-{}.db",
+        std::process::id(),
+        free_port
+    ));
+    let _ = std::fs::remove_file(&scratch);
+    let argv = spec_run_argv(spec, &pkg, &scratch.to_string_lossy(), free_port);
+    let mut cmd = tokio::process::Command::new("python3");
+    cmd.args(["-m", &pkg])
+        .args(&argv)
+        .current_dir(root)
+        .env("PYTHONPATH", "src")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = cmd.spawn().ok()?;
+    let mut up = false;
+    for _ in 0..80 {
+        if tokio::net::TcpStream::connect(("127.0.0.1", free_port))
+            .await
+            .is_ok()
+        {
+            up = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let _ = child.kill().await;
+    let out = child.wait_with_output().await.ok();
+    let _ = std::fs::remove_file(&scratch);
+    if up {
+        Some(None)
+    } else {
+        let tail = out
+            .map(|o| {
+                let combined = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                );
+                combined
+                    .chars()
+                    .rev()
+                    .take(1200)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect()
+            })
+            .unwrap_or_else(|| "no output captured".to_string());
+        Some(Some(tail))
+    }
+}
+
 /// The `python3 -m PKG` entry package the spec literally advertises, if any. Pure/testable.
 fn spec_python_entry(spec: &str) -> Option<String> {
     regex::Regex::new(r"python3?\s+-m\s+([A-Za-z_][\w.]*)")
@@ -34249,6 +34314,95 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 break;
             }
             round += 1;
+        }
+        // FUNCTIONAL FLOOR (Mihai 2026-08-19: "the goose swarm should not allow a non
+        // functional result — if the application is dead there is no point to it"). Three of
+        // five sb-6 fleet runs shipped apps that never serve a request; the repair loop saw
+        // the symptoms too late and converged red. Before anything ships: boot the advertised
+        // entry. If it does not BIND, run dedicated boot-repair attempts — the worker gets the
+        // ACTUAL boot traceback (the smallest, most actionable finding a run can produce) —
+        // and stop on PROGRESS grounds only: an attempt that leaves the traceback byte-
+        // identical taught the loop nothing, two such stops end it. Attempt budget reuses the
+        // existing per-fix cap; no new time constants.
+        if matches!(complete_lang, TargetLang::Python) {
+            let mut prev_err: Option<String> = None;
+            let mut attempts = 0u32;
+            loop {
+                let Some(probe) = boot_probe(&cwd, &opts.prompt).await else {
+                    break; // spec advertises no bootable entry — the floor does not apply
+                };
+                let Some(err_tail) = probe else {
+                    if attempts > 0 {
+                        sink.write_value(serde_json::json!({
+                            "event": "boot_repaired",
+                            "attempts": attempts,
+                            "detail": "the app now binds and answers — a dead app never ships \
+                                       without a fight",
+                        }));
+                        eprintln!(
+                            "{}",
+                            style("complete: BOOT REPAIRED — the app binds again").green()
+                        );
+                    }
+                    break;
+                };
+                if attempts >= 3 || prev_err.as_deref() == Some(err_tail.as_str()) {
+                    sink.write_value(serde_json::json!({
+                        "event": "boot_repair_exhausted",
+                        "attempts": attempts,
+                        "detail": "boot repair stopped — no progress between attempts (identical \
+                                   traceback) or attempt budget spent; the ship-best restore \
+                                   decides what ships",
+                        "boot_error": elide_middle(&err_tail, 150, 650),
+                    }));
+                    break;
+                }
+                attempts += 1;
+                sink.write_value(serde_json::json!({
+                    "event": "boot_repair_attempt",
+                    "attempt": attempts,
+                    "boot_error": elide_middle(&err_tail, 150, 650),
+                }));
+                prev_err = Some(err_tail.clone());
+                if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
+                    let boot_req = DispatchRequest {
+                        task_id: format!("boot-repair-{attempts}"),
+                        description: format!(
+                            "THE APP DOES NOT START. The documented invocation was spawned and \
+                             never bound its port. This is the ONLY thing to fix — do not add \
+                             features, do not refactor. The boot output ends with:\n\n{err_tail}\n\n\
+                             Fix the crash at its source (usually __main__.py or the server \
+                             wiring). Known killers on this stack: a sqlite3 connection created \
+                             on one thread and used from another (open it IN the serving thread \
+                             or pass check_same_thread=False with a lock); handler attributes \
+                             patched in AFTER construction (BaseHTTPRequestHandler handles the \
+                             request INSIDE __init__ — use class attributes or self.server.*); \
+                             http.client.HTTPConnection given a full URL instead of host:port. \
+                             When done, verify by running the documented invocation yourself and \
+                             confirming the port answers."
+                        ),
+                        device_id: dev_id,
+                        model_id,
+                        context_slice: String::new(),
+                        attempt: 0,
+                        owned_files: vec![],
+                        all_files: smoke_all_files.clone(),
+                        prior_hint: None,
+                        subsplit: Vec::new(),
+                        speculative: false,
+                        user_decisions: user_decisions.clone(),
+                        doc_facts: doc_facts.clone(),
+                        neighborhood: Vec::new(),
+                    };
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(fix_cap_eff),
+                        smoke_fix_dispatcher.run(boot_req),
+                    )
+                    .await;
+                } else {
+                    break;
+                }
+            }
         }
         // F835 RESTORE: if the final tree verified WORSE than the best snapshot (or its last
         // verify never ran), ship the best verified state instead of the last edit. Rank-1
