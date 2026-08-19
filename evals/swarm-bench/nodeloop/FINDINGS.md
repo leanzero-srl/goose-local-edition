@@ -20717,3 +20717,23 @@ engine commit (6fa20e0b8) DID NOT COMPILE — vendor_total was scoped inside the
 while the new glue used it outside, and its "tests passing" claim was never real (the
 gates-not-memory class: a && chain that prints "committed" is not a gate that REFUSES).
 532 tests + clippy -D warnings green. r6 launches on this binary, same setup as r5.
+
+## F905 — kill-on-divergence, first night: two live catches, two placement-level truths
+
+Mihai's new protocol (follow the run; first unmet checkpoint = kill + a DIFFERENT fix)
+paid twice in three hours. CATCH 1 (r7, minute 45): the warm-retry hint never attached —
+the idle watchdog's kill message ("no progress for 420s (no token/tool activity)") lacks
+the "no productive progress" suffix the predicate matched; the DOMINANT stall variant was
+the uncovered one. Fixed to the shared "agent stalled" prefix (5 producers, grep-proven,
+fifth variant pinned in tests); r8 then PROVED the hint mechanically (found verbatim in
+the worker sessions db on web-viz's retry). CATCH 2 (r8, minute ~60): the hint reached
+the prompt and web-viz STILL stalled — four 420s zero-token attempts, ALL on gabee
+(telemetry: 7.0 tok/s vs workhorse 14.0), because a kill frees exactly the killer's slot
+while the fleet is mid-generation and pick_device's avoid fallback rebinds instantly.
+Zero tokens for 420s is queue starvation, not task size — no prompt can fix placement.
+pick_device now WAITS (returns None; caller re-queues) when the only free device is the
+avoided one and another build device exists; mock test fails on the old rebind. The two
+catches cost ~105 min total against the 3h a single ridden-out run would have burned, and
+each produced a mechanism, not a patch. r9 carries both; telemetry live from call one.
+Board unchanged (r1 0.1837). sb-7 lane: golden 0.9998 committed; haiku canary caught the
+gather(seed=None) harness void, fixed; haiku 0.0387 first real entry; sonnet running.
