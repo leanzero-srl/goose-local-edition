@@ -14648,6 +14648,9 @@ impl GooseAgentDispatcher {
         // FOR the swarm and had zero callers; None (every planner-side call) is byte-identical.
         single_owned_file: Option<String>,
     ) -> Result<RunAgentOut> {
+        // Captured before the strings move into the message/session below — feeds the
+        // prefill-aware first-token budget at the watchdog site.
+        let prompt_chars = system_prompt.len() + user_text.len();
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
             self.permission_manager.clone(),
@@ -14835,6 +14838,19 @@ impl GooseAgentDispatcher {
         // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
         // every turn and must be allowed to finish. idle_secs == 0 disables the watchdog.
         let idle = std::time::Duration::from_secs(if idle_secs == 0 { 86_400 } else { idle_secs });
+        // PREFILL-AWARE FIRST-TOKEN BUDGET (F905 third catch, r9): prefill streams NOTHING, so a
+        // large prompt on a contended node is indistinguishable from a dead stream to this
+        // watchdog — r9's completed calls measured 164s TTFT at 14k prompt tokens while the
+        // killed calls (which write no telemetry) crossed the idle budget on three DIFFERENT
+        // nodes; no placement can fix a budget that cannot tell prefill from death. Until the
+        // FIRST event arrives, the quiet budget is extended by the estimated prefill time of
+        // THIS prompt at the run's own worst measured prefill rate for this node (chars/4 ≈
+        // tokens — the standard approximation, not a tuned constant; no telemetry yet → no
+        // extension, today's budget). From the first event on, the plain idle budget applies.
+        let prefill_grace = telemetry_prefill_floor(model_id)
+            .map(|rate| std::time::Duration::from_secs_f64(prompt_chars as f64 / 4.0 / rate))
+            .unwrap_or_default();
+        let mut first_event_seen = false;
         // Coalesce the activity-digest write: it used to fire once per stream event (≈ per token) — thousands of
         // blocking fs::write + JSON serializes per task × N nodes. Refresh at most ~2.5x/s; a guaranteed final
         // write after the loop keeps the terminal state exact. Every consumer polls slower (judge 15s, panel ≤10Hz).
@@ -15212,13 +15228,25 @@ impl GooseAgentDispatcher {
                 }));
                 break;
             }
-            // Wait at most `idle`, but no later than the sink cap (when set) so the cap fires promptly.
+            // Wait at most the quiet budget, but no later than the sink cap (when set) so the cap
+            // fires promptly. Before the FIRST event the budget carries the prefill grace — a big
+            // prompt legitimately streams nothing while the backend prefills it.
+            let quiet_budget = if first_event_seen {
+                idle
+            } else {
+                idle + prefill_grace
+            };
             let wait = match sink_deadline {
-                Some(dl) => idle.min(dl.saturating_duration_since(tokio::time::Instant::now())),
-                None => idle,
+                Some(dl) => {
+                    quiet_budget.min(dl.saturating_duration_since(tokio::time::Instant::now()))
+                }
+                None => quiet_budget,
             };
             let ev = match tokio::time::timeout(wait, stream.next()).await {
-                Ok(Some(ev)) => ev,
+                Ok(Some(ev)) => {
+                    first_event_seen = true;
+                    ev
+                }
                 Ok(None) => break,
                 Err(_) => {
                     // Distinguish the sink wall-clock cap from a genuine idle stall: on the cap, finalize
@@ -15249,7 +15277,13 @@ impl GooseAgentDispatcher {
                         break;
                     }
                     return Err(anyhow!(
-                        "agent stalled — no progress for {idle_secs}s (no token/tool activity)"
+                        "agent stalled — no progress for {}s (no token/tool activity{})",
+                        quiet_budget.as_secs(),
+                        if first_event_seen {
+                            ""
+                        } else {
+                            "; budget included measured prefill grace for the first token"
+                        }
                     ));
                 }
             };
@@ -29987,6 +30021,62 @@ fn telemetry_node_rates(path: &Path) -> std::collections::HashMap<String, f64> {
             (k, m)
         })
         .collect()
+}
+
+/// The run's worst MEASURED prefill rate (tokens/sec) for a model's node, from the telemetry
+/// file — the first-token watchdog budget derives from it. Rates are computed ONLY from
+/// samples whose prompt is at or above the run's median prompt size: a small prompt's TTFT is
+/// dominated by queue wait, not prefill, and one such sample would yield an absurdly low rate
+/// that inflates every budget. Big-prompt samples measure what the budget must survive — the
+/// slowest prefill this node has actually completed this run. None until samples exist.
+fn telemetry_prefill_floor(model_id: &str) -> Option<f64> {
+    let path = std::env::var("GOOSE_SWARM_TELEMETRY_FILE").ok()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut rows: Vec<(String, f64, f64)> = Vec::new();
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("usage").and_then(|x| x.as_bool()) != Some(true) {
+            continue;
+        }
+        let (Some(node), Some(pt), Some(ttft)) = (
+            v.get("node").and_then(|x| x.as_str()),
+            v.get("prompt_tokens").and_then(|x| x.as_f64()),
+            v.get("ttft_ms").and_then(|x| x.as_f64()),
+        ) else {
+            continue;
+        };
+        if pt > 0.0 && ttft > 0.0 {
+            rows.push((node.to_string(), pt, ttft / 1000.0));
+        }
+    }
+    if rows.is_empty() {
+        return None;
+    }
+    let mut sizes: Vec<f64> = rows.iter().map(|(_, pt, _)| *pt).collect();
+    sizes.sort_by(|a, b| a.total_cmp(b));
+    let median_size = sizes[sizes.len() / 2];
+    let node_rates: Vec<f64> = rows
+        .iter()
+        .filter(|(n, pt, _)| {
+            *pt >= median_size
+                && model_id
+                    .strip_prefix(n.as_str())
+                    .is_some_and(|rest| rest.starts_with('-'))
+        })
+        .map(|(_, pt, ttft)| pt / ttft)
+        .collect();
+    let pool = if node_rates.is_empty() {
+        // No big-prompt samples for THIS node yet — the fleet-wide floor still beats nothing.
+        rows.iter()
+            .filter(|(_, pt, _)| *pt >= median_size)
+            .map(|(_, pt, ttft)| pt / ttft)
+            .collect::<Vec<f64>>()
+    } else {
+        node_rates
+    };
+    pool.into_iter().min_by(|a, b| a.total_cmp(b))
 }
 
 /// The measured rate for a device: the telemetry node key must equal the device/model id or be
