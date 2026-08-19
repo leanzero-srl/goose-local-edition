@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meridian Payments Console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232563EB'/%3E%3Ctext x='8' y='12' font-size='10' text-anchor='middle' fill='white' font-family='sans-serif'%3EM%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header id="app-header">
+  <div class="brand"><span class="brand-mark">M</span> Meridian Payments Console</div>
+  <div class="header-status"><span id="last-sync">Never synced</span>
+    <button id="sync-now" type="button">Sync now</button></div>
+</header>
+
+<div id="notice" role="status" hidden></div>
+
+<section id="summary" aria-label="Summary">
+  <div id="summary-cards"></div>
+</section>
+
+<section id="viz-panel" aria-label="3D field">
+  <div class="panel-head">
+    <h2>Payment field</h2>
+    <span id="brush-count">0 selected</span>
+  </div>
+  <div id="viz-wrap">
+    <canvas id="viz3d"></canvas>
+    <div id="viz-labels"></div>
+    <div id="viz-empty" hidden>No records to render — run a sync to load the field.</div>
+    <div id="viz-error" hidden>3D data unavailable — the records feed did not load.</div>
+    <div id="viz-nogl" hidden>3D is unavailable in this browser (no WebGL); every other
+      part of the console keeps working.</div>
+  </div>
+</section>
+
+<section id="table-panel" aria-label="Payments">
+  <div class="panel-head">
+    <h2>Payments</h2>
+    <div class="filters">
+      <div class="dd" id="status-filter" data-value="">
+        <button type="button" class="dd-btn">All statuses</button>
+        <div class="dd-menu" hidden></div>
+      </div>
+      <div class="dd" id="currency-filter" data-value="">
+        <button type="button" class="dd-btn">All currencies</button>
+        <div class="dd-menu" hidden></div>
+      </div>
+    </div>
+  </div>
+  <div id="table-state" hidden></div>
+  <div class="table-scroll">
+    <table id="payments-table">
+      <thead>
+        <tr>
+          <th id="th-date" class="sortable" aria-sort="ascending">Date</th>
+          <th id="th-amount" class="sortable">Amount</th>
+          <th>Status</th>
+          <th>Counterparty</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+  <div class="table-foot">
+    <div id="range-readout"></div>
+    <div class="pager">
+      <button id="prev" type="button">Prev</button>
+      <button id="next" type="button">Next</button>
+    </div>
+  </div>
+</section>
+
+<div id="lower-grid">
+  <section id="feed-panel" aria-label="Notifications">
+    <div class="panel-head"><h2>Notifications</h2><span id="feed-flag"></span></div>
+    <ul id="notifications" data-state="live"></ul>
+  </section>
+
+  <section id="drafts-panel" aria-label="Drafts">
+    <div class="panel-head"><h2>Payment drafts</h2></div>
+    <div class="token-row">
+      <input id="role-token" type="text" placeholder="Bearer token (maker / checker / admin)"
+             autocomplete="off" spellcheck="false">
+      <button id="set-token" type="button">Use token</button>
+      <span id="role-name"></span>
+    </div>
+    <form id="draft-form" autocomplete="off">
+      <input name="amount" id="draft-amount" inputmode="numeric"
+             placeholder="Amount (minor units)">
+      <input name="currency" id="draft-currency" maxlength="3"
+             placeholder="Currency (EUR / USD / JPY / KWD)">
+      <input name="counterparty-name" id="draft-cp-name" placeholder="Counterparty name">
+      <input name="country" id="draft-country" maxlength="2" placeholder="Country (DE)">
+      <input name="note" id="draft-note" placeholder="Note">
+      <button id="draft-create" type="submit">Create draft</button>
+    </form>
+    <div id="draft-list"></div>
+    <div class="draft-actions">
+      <button id="submit-btn" type="button" disabled>Submit</button>
+      <button id="approve-btn" type="button" disabled>Approve</button>
+      <button id="reject-btn" type="button" disabled>Reject</button>
+    </div>
+  </section>
+</div>
+
+<script src="viz.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
