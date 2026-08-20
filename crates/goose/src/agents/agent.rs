@@ -69,7 +69,7 @@ use crate::tool_monitor::RepetitionInspector;
 use crate::utils::is_token_cancelled;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
-use goose_providers::thinking::ThinkingEffort;
+use goose_providers::thinking::{ThinkingEffort, ThinkingEffortSupport};
 use regex::Regex;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, ElicitationAction, ErrorCode, ErrorData,
@@ -91,6 +91,27 @@ const DEFAULT_FRONTEND_INSTRUCTIONS: &str = "The following tools are provided di
 fn provider_creation_error(error: anyhow::Error, context: impl fmt::Display) -> anyhow::Error {
     let message = format!("{context}: {error}");
     error.context(message)
+}
+
+fn normalize_legacy_provider_thinking_effort(
+    mut model_config: goose_providers::model::ModelConfig,
+    effort_support: &ThinkingEffortSupport,
+) -> goose_providers::model::ModelConfig {
+    let has_raw_effort = model_config
+        .request_params
+        .as_ref()
+        .is_some_and(|params| params.contains_key("thinking_effort"));
+    if !matches!(effort_support, ThinkingEffortSupport::Unspecified)
+        || !has_raw_effort
+        || model_config.thinking_effort().is_some()
+    {
+        return model_config;
+    }
+
+    if let Some(params) = model_config.request_params.as_mut() {
+        params.remove("thinking_effort");
+    }
+    model_config.with_default_thinking_effort(Config::global().get_goose_thinking_effort())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3460,9 +3481,21 @@ impl Agent {
                 .unwrap_or(model_config),
             Err(_) => model_config,
         };
+        let effort_support = provider.thinking_effort_support();
+        let model_config = normalize_legacy_provider_thinking_effort(model_config, &effort_support);
 
-        let mut current_provider = self.provider.lock().await;
-        *current_provider = Some(provider);
+        {
+            let mut current_provider = self.provider.lock().await;
+            *current_provider = Some(Arc::clone(&provider));
+        }
+
+        // A freshly created provider that manages its own model starts on its
+        // own default, so the session's selection has to be pushed to it before
+        // the next config snapshot is built. Failures are not fatal here: the
+        // selection is re-applied at stream time.
+        if let Err(e) = provider.apply_model_selection(&model_config).await {
+            warn!("Failed to apply model selection to provider: {e}");
+        }
 
         self.config
             .session_manager
@@ -3530,20 +3563,51 @@ impl Agent {
         self.update_goose_mode(mode, session_id).await
     }
 
-    pub async fn update_thinking_effort(
-        &self,
-        session_id: &str,
-        effort: ThinkingEffort,
-    ) -> Result<()> {
+    /// Apply a thinking-effort selection. `effort` is the raw option value: a
+    /// provider that manages effort through a harness has its own vocabulary,
+    /// which is not always a `ThinkingEffort` member.
+    pub async fn update_thinking_effort(&self, session_id: &str, effort: &str) -> Result<()> {
         let current_provider = self.provider().await?;
-        let provider_name = current_provider.get_name().to_string();
-        let model_config = self
-            .model_config_for_session(session_id)
-            .await?
-            .with_thinking_effort(effort);
-
-        self.recreate_provider_for_session(session_id, &provider_name, model_config)
+        // Context rather than a formatted string: the caller distinguishes a
+        // value rejection from an operational failure by downcasting to
+        // `ProviderError`, which stringifying would destroy.
+        let provider_handled = current_provider
+            .set_thinking_effort(session_id, effort)
             .await
+            .context("Provider rejected thinking effort update")?;
+
+        let model_config = self.model_config_for_session(session_id).await?;
+
+        if provider_handled {
+            // The provider applied the value live; recreating it would discard
+            // the very session state we just configured.
+            let model_config = model_config.with_merged_request_params(HashMap::from([(
+                "thinking_effort".to_string(),
+                Value::String(effort.to_string()),
+            )]));
+            return self
+                .config
+                .session_manager
+                .clone()
+                .update(session_id)
+                .model_config(model_config)
+                .apply()
+                .await
+                .context("Failed to persist thinking effort to session");
+        }
+
+        let effort = effort.parse::<ThinkingEffort>().map_err(|_| {
+            anyhow::Error::new(ProviderError::InvalidValue(format!(
+                "Invalid thinking effort: {effort}"
+            )))
+        })?;
+        let provider_name = current_provider.get_name().to_string();
+        self.recreate_provider_for_session(
+            session_id,
+            &provider_name,
+            model_config.with_thinking_effort(effort),
+        )
+        .await
     }
 
     /// Restore the provider from session data or fall back to global config
@@ -4363,6 +4427,235 @@ mod tests {
 
         let conf = rx.await.unwrap();
         assert_eq!(conf.permission, crate::permission::Permission::AllowOnce);
+    }
+
+    enum EffortOutcome {
+        Applied,
+        Unhandled,
+        Rejected,
+    }
+
+    #[derive(Debug)]
+    struct EffortProvider {
+        applies_effort: bool,
+        rejects_effort: bool,
+        effort_calls: std::sync::Mutex<Vec<String>>,
+        model_selections: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl EffortProvider {
+        fn new(outcome: EffortOutcome) -> Self {
+            Self {
+                applies_effort: matches!(outcome, EffortOutcome::Applied),
+                rejects_effort: matches!(outcome, EffortOutcome::Rejected),
+                effort_calls: std::sync::Mutex::new(Vec::new()),
+                model_selections: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn effort_calls(&self) -> Vec<String> {
+            self.effort_calls.lock().unwrap().clone()
+        }
+
+        fn model_selections(&self) -> Vec<String> {
+            self.model_selections.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::base::Provider for EffortProvider {
+        fn get_name(&self) -> &str {
+            "test-effort"
+        }
+        fn thinking_effort_support(&self) -> ThinkingEffortSupport {
+            if self.applies_effort {
+                ThinkingEffortSupport::Options(
+                    goose_providers::thinking::ThinkingEffortCapability {
+                        option_id: "effort".to_string(),
+                        values: vec![goose_providers::thinking::ThinkingEffortOption {
+                            value: "default".to_string(),
+                            label: "Default".to_string(),
+                        }],
+                        current: Some("default".to_string()),
+                    },
+                )
+            } else {
+                ThinkingEffortSupport::Unspecified
+            }
+        }
+        async fn stream(
+            &self,
+            _: &goose_providers::model::ModelConfig,
+            _: &str,
+            _: &[crate::conversation::message::Message],
+            _: &[rmcp::model::Tool],
+        ) -> Result<crate::providers::base::MessageStream, ProviderError> {
+            unimplemented!()
+        }
+        async fn set_thinking_effort(
+            &self,
+            _session_id: &str,
+            value: &str,
+        ) -> Result<bool, ProviderError> {
+            self.effort_calls.lock().unwrap().push(value.to_string());
+            if self.rejects_effort {
+                return Err(ProviderError::RequestFailed("no such effort".to_string()));
+            }
+            Ok(self.applies_effort)
+        }
+        async fn apply_model_selection(
+            &self,
+            model_config: &goose_providers::model::ModelConfig,
+        ) -> Result<(), ProviderError> {
+            self.model_selections
+                .lock()
+                .unwrap()
+                .push(model_config.model_name.clone());
+            Ok(())
+        }
+    }
+
+    async fn effort_test_agent(
+        outcome: EffortOutcome,
+    ) -> (Agent, String, Arc<EffortProvider>, TempDir) {
+        let (agent, session, data_dir) = tracing_test_agent_and_session().await;
+        let provider = Arc::new(EffortProvider::new(outcome));
+        agent
+            .update_provider(
+                provider.clone(),
+                goose_providers::model::ModelConfig::new("mock-model"),
+                &session.id,
+            )
+            .await
+            .unwrap();
+        (agent, session.id, provider, data_dir)
+    }
+
+    async fn persisted_thinking_effort(agent: &Agent, session_id: &str) -> Option<String> {
+        agent
+            .model_config_for_session(session_id)
+            .await
+            .unwrap()
+            .request_param::<String>("thinking_effort")
+    }
+
+    #[tokio::test]
+    async fn update_provider_applies_the_model_selection() {
+        let (_agent, _session_id, provider, _data_dir) =
+            effort_test_agent(EffortOutcome::Applied).await;
+
+        assert_eq!(provider.model_selections(), ["mock-model"]);
+    }
+
+    #[tokio::test]
+    async fn update_provider_replaces_harness_only_effort_for_legacy_provider() {
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", Some("high"))]);
+        let (agent, session, _data_dir) = tracing_test_agent_and_session().await;
+        let provider = Arc::new(EffortProvider::new(EffortOutcome::Unhandled));
+        let model_config =
+            goose_providers::model::ModelConfig::new("mock-model").with_merged_request_params(
+                HashMap::from([("thinking_effort".to_string(), serde_json::json!("default"))]),
+            );
+
+        agent
+            .update_provider(provider, model_config, &session.id)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            persisted_thinking_effort(&agent, &session.id)
+                .await
+                .as_deref(),
+            Some("high")
+        );
+    }
+
+    #[tokio::test]
+    async fn update_provider_preserves_harness_only_effort_for_managed_provider() {
+        let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", Some("high"))]);
+        let (agent, session, _data_dir) = tracing_test_agent_and_session().await;
+        let provider = Arc::new(EffortProvider::new(EffortOutcome::Applied));
+        let model_config =
+            goose_providers::model::ModelConfig::new("mock-model").with_merged_request_params(
+                HashMap::from([("thinking_effort".to_string(), serde_json::json!("default"))]),
+            );
+
+        agent
+            .update_provider(provider, model_config, &session.id)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            persisted_thinking_effort(&agent, &session.id)
+                .await
+                .as_deref(),
+            Some("default")
+        );
+    }
+
+    #[tokio::test]
+    async fn update_thinking_effort_persists_the_raw_value_when_the_provider_applies_it() {
+        let (agent, session_id, provider, _data_dir) =
+            effort_test_agent(EffortOutcome::Applied).await;
+
+        // "xhigh" is a harness value, not a ThinkingEffort member spelling.
+        agent
+            .update_thinking_effort(&session_id, "xhigh")
+            .await
+            .unwrap();
+
+        assert_eq!(provider.effort_calls(), ["xhigh"]);
+        assert_eq!(
+            persisted_thinking_effort(&agent, &session_id)
+                .await
+                .as_deref(),
+            Some("xhigh")
+        );
+        // The unregistered test provider was not respawned.
+        assert_eq!(agent.provider().await.unwrap().get_name(), "test-effort");
+    }
+
+    #[tokio::test]
+    async fn update_thinking_effort_rejects_an_unparseable_value_on_the_legacy_path() {
+        let (agent, session_id, provider, _data_dir) =
+            effort_test_agent(EffortOutcome::Unhandled).await;
+
+        let err = agent
+            .update_thinking_effort(&session_id, "bogus")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err.downcast_ref::<ProviderError>(),
+            Some(ProviderError::InvalidValue(_))
+        ));
+        assert!(err.to_string().contains("Invalid thinking effort"));
+        assert_eq!(provider.effort_calls(), ["bogus"]);
+        assert!(persisted_thinking_effort(&agent, &session_id)
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn update_thinking_effort_surfaces_a_provider_rejection() {
+        let (agent, session_id, _provider, _data_dir) =
+            effort_test_agent(EffortOutcome::Rejected).await;
+
+        let err = agent
+            .update_thinking_effort(&session_id, "high")
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("Provider rejected"));
+        // The caller classifies the failure by variant, so the provider's typed
+        // error has to survive the trip up.
+        assert!(matches!(
+            err.downcast_ref::<ProviderError>(),
+            Some(ProviderError::RequestFailed(_))
+        ));
+        assert!(persisted_thinking_effort(&agent, &session_id)
+            .await
+            .is_none());
     }
 
     const ALWAYS_BLOCK_SCRIPT: &str = r#"#!/bin/sh
