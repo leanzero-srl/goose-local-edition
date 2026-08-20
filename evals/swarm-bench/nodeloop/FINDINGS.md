@@ -20769,3 +20769,16 @@ Refinement noted: a PROMOTED round whose count stays flat hits the stall exit wi
 strategy switch (the switch keys on zero-PROMOTION, not zero-REDUCTION) — the round-1
 stall at 5 findings never tried the race arm. Next engine lever remains #43 (detail
 fallback on api/store — exactly where the B-tier criticals live).
+
+## F908 — the sb-7 cloud board, complete: the tier separates frontier models exactly as designed
+
+golden 0.9998 · sol 0.8166 (full 7200s) · opus 0.4695 · terra 0.3919 (59 min, T 0.04 —
+skipped the mechanisms) · sonnet 0.3751 · luna 0.2204 (full 7200s) · haiku 0.0387.
+Design goals all hit: aceable top (the hand reference proves the ruler), the leader works
+the full budget and still misses the ace (Sol loses on journeys 0.78 + excellence 0.63),
+and the 0.22-0.47 mid-board separates models sb-6 bunched at 0.86-0.93 (luna 0.8671→0.2204,
+sonnet 0.8635→0.3751 — the T/J/E surface is where they diverge). Sol/luna hitting the
+harness timeout is disclosed on their entries. All runs serial, hermetic, seeded (the
+haiku canary caught gather(seed=None) before any paid run). Remaining per standing
+orders: the swarm's own sb-7 run after the sb-6 replicate line, then the full website
+publish (sb-7 methodology + SEO parity per the isolation rules).
