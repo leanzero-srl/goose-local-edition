@@ -406,7 +406,7 @@ fn sampling_env_pairs(v: &Value) -> Vec<(&'static str, String)> {
 /// single awaits (a non-streaming complete and a subprocess), so ttft equals total unless a streaming
 /// call site supplies its first-chunk instant; the per-task fleet streams are made by the spawned engine,
 /// not here. A write failure must never fail or slow the call it observes — everything is swallowed.
-fn record_call(
+pub(crate) fn record_call(
     model: &str,
     start: Instant,
     first_chunk: Option<Instant>,
