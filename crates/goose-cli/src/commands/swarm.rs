@@ -17595,9 +17595,21 @@ impl GooseAgentDispatcher {
                 let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{files_line}{fb}");
                 // Per-subtask detailer digest so the PLAN-detailing fan-out shows live per-node activity.
                 let detail_key = format!("detail-{id}");
+                // #43: the fallback class is PREFILL, not generation — the modules that time out
+                // every run (api, store, meridian) are exactly the ones whose research-findings
+                // block is largest, and a flat budget cannot see prompt size. Same physics and
+                // same cure as the first-token watchdog: extend THIS call's budget by its own
+                // estimated prefill time at the run's worst measured prefill rate (chars/4 ≈
+                // tokens; prologue calls have already populated the telemetry; none → flat
+                // budget, byte-identical). Measured stake: the 44.2%-vs-90.0% spread across
+                // identical configs traced to which modules kept the one-line brief.
                 let detail_budget = detail_budget_secs();
+                let detail_grace = telemetry_prefill_floor(&model)
+                    .map(|r| ((system.len() + user.len()) as f64 / 4.0 / r) as u64)
+                    .unwrap_or(0);
+                let detail_budget_eff = detail_budget + detail_grace;
                 let (desc, fallback_reason) = match tokio::time::timeout(
-                    std::time::Duration::from_secs(detail_budget),
+                    std::time::Duration::from_secs(detail_budget_eff),
                     me.run_agent(
                         &model,
                         system,
@@ -17640,7 +17652,8 @@ impl GooseAgentDispatcher {
                         "secs": started.elapsed().as_secs_f64().round(),
                         "spec_chars": desc.len(),
                         "brief_chars": brief.len(),
-                        "budget_secs": detail_budget,
+                        "budget_secs": detail_budget_eff,
+                        "prefill_grace_secs": detail_grace,
                         "subsplit": goose_swarm::extract_subsplit(&desc).len(),
                     }));
                 }
@@ -17650,7 +17663,8 @@ impl GooseAgentDispatcher {
                         "task_id": id,
                         "reason": fallback_reason,
                         "brief_chars": brief.len(),
-                        "budget_secs": detail_budget,
+                        "budget_secs": detail_budget_eff,
+                        "prefill_grace_secs": detail_grace,
                     }));
                     eprintln!(
                         "  {} detail {} ({:.0}s) — {} at {}s; the worker gets the skeleton line, not a spec",
@@ -17658,7 +17672,7 @@ impl GooseAgentDispatcher {
                         style(&id).bold(),
                         started.elapsed().as_secs_f64(),
                         fallback_reason,
-                        detail_budget,
+                        detail_budget_eff,
                     );
                 } else {
                     eprintln!(
