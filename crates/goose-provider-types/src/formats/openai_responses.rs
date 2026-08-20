@@ -612,10 +612,17 @@ fn add_message_items(input_items: &mut Vec<Value>, messages: &[Message]) {
 
 fn is_gpt_5_6_model(model_name: &str) -> bool {
     let normalized = model_name.to_ascii_lowercase();
-    normalized == "gpt-5.6"
-        || normalized.starts_with("gpt-5.6-")
-        || normalized == "gpt-5-6"
-        || normalized.starts_with("gpt-5-6-")
+    ["gpt-5.6", "gpt-5-6"].iter().any(|needle| {
+        normalized.match_indices(needle).any(|(start, matched)| {
+            let before = start
+                .checked_sub(1)
+                .and_then(|index| normalized.as_bytes().get(index));
+            let after = normalized.as_bytes().get(start + matched.len());
+
+            before.is_none_or(|byte| matches!(byte, b'-' | b'/'))
+                && after.is_none_or(|byte| matches!(byte, b'-' | b'/'))
+        })
+    })
 }
 
 pub fn create_responses_request(
@@ -1970,20 +1977,27 @@ mod tests {
 
     #[test]
     fn test_responses_request_supports_gpt_5_6_reasoning_mode() {
-        let model_config = ModelConfig::new("gpt-5.6-sol").with_merged_request_params(
-            std::collections::HashMap::from([("reasoning_mode".to_string(), json!("pro"))]),
-        );
+        for model_name in [
+            "gpt-5.6-sol",
+            "openrouter/openai/gpt-5.6-sol",
+            "vendor-gpt-5-6",
+        ] {
+            let model_config = ModelConfig::new(model_name).with_merged_request_params(
+                std::collections::HashMap::from([("reasoning_mode".to_string(), json!("pro"))]),
+            );
 
-        let result = create_responses_request(&model_config, "You are helpful.", &[], &[]).unwrap();
+            let result =
+                create_responses_request(&model_config, "You are helpful.", &[], &[]).unwrap();
 
-        assert_eq!(result["reasoning"]["mode"], "pro");
-        assert!(result["reasoning"].get("effort").is_none());
-        assert!(result["reasoning"].get("summary").is_none());
+            assert_eq!(result["reasoning"]["mode"], "pro");
+            assert!(result["reasoning"].get("effort").is_none());
+            assert!(result["reasoning"].get("summary").is_none());
+        }
     }
 
     #[test]
     fn test_responses_request_rejects_reasoning_mode_for_non_gpt_5_6_model() {
-        for model_name in ["gpt-5.5", "gpt-5.60"] {
+        for model_name in ["gpt-5.5", "gpt-5.60", "notgpt-5.6", "gpt-5.6ish"] {
             let model_config = ModelConfig::new(model_name).with_merged_request_params(
                 std::collections::HashMap::from([("reasoning_mode".to_string(), json!("pro"))]),
             );
