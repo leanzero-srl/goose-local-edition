@@ -83,6 +83,14 @@ def build_prompt(port: int) -> str:
 
 def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout: int) -> Dict:
     prompt = build_prompt(port)
+    # Every entrant records per-call token telemetry into the tree's own .swarm — the same
+    # file the swarm engine defaults to, so telemetry_summary() finds it at scoring time and
+    # cloud entries publish MEASURED rates instead of session-store recoveries. Truncated per
+    # run (a reused workdir must never rank this run by a previous run's calls).
+    tpath = workdir / ".swarm" / "telemetry.jsonl"
+    tpath.parent.mkdir(parents=True, exist_ok=True)
+    tpath.write_text("")
+    env = {**env, "GOOSE_SWARM_TELEMETRY_FILE": str(tpath)}
     if entrant in MODELS:
         cmd = [str(GOOSE), "run", "--provider", "aws_bedrock", "--model", MODELS[entrant],
                "-t", prompt]

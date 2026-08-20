@@ -514,6 +514,7 @@ impl BedrockProvider {
         tools: &[Tool],
         model_name: &str,
     ) -> Result<MessageStream, ProviderError> {
+        let converse_t0 = std::time::Instant::now();
         let (bedrock_message, bedrock_usage) = self
             .with_retry(|| self.converse(model, session_id, system, messages, tools))
             .await?;
@@ -538,6 +539,13 @@ impl BedrockProvider {
         )?;
 
         let provider_usage = ProviderUsage::new(model_name.to_string(), usage);
+        super::swarm::record_call(
+            model_name,
+            converse_t0,
+            None,
+            Some(&provider_usage.usage),
+            None,
+        );
         Ok(super::base::stream_from_single_message(
             message,
             provider_usage,
@@ -809,6 +817,7 @@ impl Provider for BedrockProvider {
         // Open the AWS ConverseStream event stream. Retry wraps the request
         // setup only — mid-stream errors are surfaced, not retried (matching
         // the Anthropic provider's behaviour).
+        let telemetry_t0 = std::time::Instant::now();
         let response = self
             .with_retry(|| {
                 self.converse_stream(model_config, session_id_opt, system, messages, tools)
@@ -836,6 +845,8 @@ impl Provider for BedrockProvider {
             let message_id = format!("msg_{}", uuid::Uuid::new_v4());
             let mut full_text = String::new();
             let mut final_usage: Option<ProviderUsage> = None;
+            let mut telemetry_first: Option<std::time::Instant> = None;
+            let mut telemetry_chunks: u64 = 0;
 
             loop {
                 let event = event_stream.recv().await.map_err(|err| {
@@ -890,6 +901,8 @@ impl Provider for BedrockProvider {
                     final_usage = Some(ProviderUsage::new(model_name.clone(), usage));
                 }
                 for message in messages {
+                    telemetry_first.get_or_insert_with(std::time::Instant::now);
+                    telemetry_chunks += 1;
                     if let Some(text) = message.content.first().and_then(|c| c.as_text()) {
                         full_text.push_str(text);
                     }
@@ -903,6 +916,17 @@ impl Provider for BedrockProvider {
             let _ = log.write(
                 &serde_json::json!({ "streamed_text": full_text }),
                 Some(&usage.usage),
+            );
+            // Same GOOSE_SWARM_TELEMETRY_FILE sink the local-fleet provider writes — cloud
+            // (Bedrock) benchmark runs record real per-call TTFT + usage so their published
+            // entries carry measured token rates, not session-store recoveries. Env unset =
+            // no work (every non-benchmark use of this provider).
+            super::swarm::record_call(
+                &model_name,
+                telemetry_t0,
+                telemetry_first,
+                Some(&usage.usage),
+                Some(telemetry_chunks),
             );
             yield (None, Some(usage));
         }))
