@@ -21744,6 +21744,54 @@ fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
 /// that bound is the per-device capacity the EXECUTE scheduler already honors — a weight-1 node still
 /// never has a second request queued behind the first, and a weight-2 node gets the second slot it is
 /// configured for. Results come back in item order.
+/// Order a fan's device pool by DESCENDING configured speed weight (stable: ties keep
+/// discovery order). Every fan pops devices from the FRONT of its queue, so front == the
+/// node that gets the first (and, when items < devices, the ONLY) work. MEASURED (r13,
+/// operator screenshot): pool order is discovery order — gabee, mihai, workhorse — so the
+/// weight-4 host was structurally LAST in line for every scout/contract/detail fan and sat
+/// READY while the weight-1 host prefilled. One rule, one place: every fan site inherits it.
+fn order_fleet_by_speed(
+    devices: Vec<String>,
+    weights: &std::collections::HashMap<String, u32>,
+) -> Vec<String> {
+    let mut devices = devices;
+    devices.sort_by_key(|id| std::cmp::Reverse(configured_speed_weight(weights, id)));
+    devices
+}
+
+#[cfg(test)]
+mod fan_order_tests {
+    use super::*;
+
+    #[test]
+    fn the_fastest_host_is_first_in_every_fan_pool() {
+        let weights: std::collections::HashMap<String, u32> = [
+            ("gabee".to_string(), 1),
+            ("mihai".to_string(), 2),
+            ("workhorse".to_string(), 4),
+        ]
+        .into_iter()
+        .collect();
+        let ordered = order_fleet_by_speed(
+            vec![
+                "gabee-qwen3.6-27b".to_string(),
+                "mihai-qwen3.6-27b".to_string(),
+                "workhorse-qwen3.6-27b".to_string(),
+            ],
+            &weights,
+        );
+        assert_eq!(
+            ordered,
+            vec![
+                "workhorse-qwen3.6-27b",
+                "mihai-qwen3.6-27b",
+                "gabee-qwen3.6-27b"
+            ],
+            "a 1-item fan must hand its work to the weight-4 host, never the discovery-order front"
+        );
+    }
+}
+
 async fn fanout_over_fleet<T, R, F, Fut>(devices: Vec<String>, items: Vec<T>, f: F) -> Vec<R>
 where
     T: Send + 'static,
@@ -21755,7 +21803,7 @@ where
     let devices = if devices.is_empty() {
         vec![String::new()]
     } else {
-        devices
+        order_fleet_by_speed(devices, &load_config().speed_weights)
     };
     // permits == pool size, so a permit holder is always guaranteed a free device to pop.
     let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
@@ -21828,6 +21876,7 @@ where
         style("↯").dim()
     );
     use std::collections::VecDeque;
+    let devices = order_fleet_by_speed(devices, &load_config().speed_weights);
     let permits = Arc::new(tokio::sync::Semaphore::new(devices.len()));
     let pool = Arc::new(Mutex::new(
         devices.into_iter().collect::<VecDeque<String>>(),
