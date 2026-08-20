@@ -20753,3 +20753,19 @@ prefill-grace binary carrying all four fixes; it is the first clean test of the 
 Remaining known gap: the engine's completion cap does not know the harness's outer timeout,
 so a late-starting fix phase can be truncated by the harness instead of its own governor
 (also bit r1). Candidate: BENCH_WALL_DEADLINE env → engine clamps cap_deadline to it.
+
+## F907 — r10: the full batch runs clean end to end — 158.5 min, boots, promotes, ships honestly; score 0.1394 (board holds at r1)
+
+First natural completion since the batch: wall 158.5 min (r5: 177.4; r9: truncated at the
+harness cap). Prefill-guillotine class ABSENT (every stall was post-first-token, the plain
+420s message — the grace note never fired because no honest prefill was killed); stall
+retries moved nodes; fix target measured (workhorse 12.8 tok/s); spec_promote fired again
+(2 for 2 since the batch; 0 for 3 before it); round 1 held at 5 findings → count-based
+stall exit → shipped honestly failed-with-5. Hermetic verdict 0.1394 at port 9000: inner
+0.6971 (r5: 0.363), A 0.89, P 1.00 — the app SERVES; the critical multiplier holds the
+composite down via the sync-completeness family (B 0.69). The verdict carries the first
+telemetry block (347 calls; decode 13.0/8.6/8.2). Board unchanged: r1 0.1837 stays.
+Refinement noted: a PROMOTED round whose count stays flat hits the stall exit without the
+strategy switch (the switch keys on zero-PROMOTION, not zero-REDUCTION) — the round-1
+stall at 5 findings never tried the race arm. Next engine lever remains #43 (detail
+fallback on api/store — exactly where the B-tier criticals live).
