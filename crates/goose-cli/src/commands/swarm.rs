@@ -33455,7 +33455,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .duration_since(std::time::UNIX_EPOCH)
                     .ok()?
                     .as_millis() as i64;
-                let left_ms = ms - now_ms - (fix_cap_eff as i64) * 1000;
+                // Clamp to the WALL ITSELF: the headroom governor already refuses any round
+                // that cannot finish one fix-cap before cap_deadline, so subtracting a
+                // fix-cap here double-counted the margin — r18 reached its gate with the
+                // cleanest tree ever (4 findings) and the repair phase admitted ZERO rounds
+                // because the two subtractions together demanded 2x fix_cap of runway.
+                let left_ms = ms - now_ms;
                 Some(
                     std::time::Instant::now()
                         + std::time::Duration::from_millis(left_ms.max(0) as u64),
