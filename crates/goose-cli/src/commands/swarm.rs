@@ -15801,7 +15801,7 @@ impl GooseAgentDispatcher {
         // the same parse three times.
         let (scout_doc_urls, doc_urls) = scout_docs_decision(user_prompt);
         // One scout per device (work-stealing): a weight-1 node never has a second scout queued.
-        fanout_over_fleet_straggler(worker_models, lenses, scout_grace, "scout", move |lens, model| {
+        fanout_over_fleet_straggler(one_lane_per_host(worker_models), lenses, scout_grace, "scout", move |lens, model| {
             let me = me.clone();
             let exts = research_extensions.clone();
             let prompt = prompt.clone();
@@ -16093,7 +16093,7 @@ impl GooseAgentDispatcher {
         };
         let me = self.clone();
         let stubs =
-            fanout_over_fleet_straggler(worker_models, modules, contract_grace, "contract", move |spec, model| {
+            fanout_over_fleet_straggler(one_lane_per_host(worker_models), modules, contract_grace, "contract", move |spec, model| {
             let me = me.clone();
             let goal = goal.clone();
             async move {
@@ -17543,7 +17543,7 @@ impl GooseAgentDispatcher {
         // behind the first. Each item grabs the next free node, so the fleet stays busy without
         // over-dispatching; on timeout/empty/error we fall back to the architect's brief line.
         let results =
-            fanout_over_fleet_straggler(wm, items, detail_grace, "detail", move |(idx, id, brief, files, subsplit_ok), model| {
+            fanout_over_fleet_straggler(one_lane_per_host(wm), items, detail_grace, "detail", move |(idx, id, brief, files, subsplit_ok), model| {
             let me = me.clone();
             let goal = goal.clone();
             let findings = findings.clone();
@@ -21750,6 +21750,21 @@ fn fleet_slot_models(devices: &[DeviceCfg]) -> Vec<String> {
 /// operator screenshot): pool order is discovery order — gabee, mihai, workhorse — so the
 /// weight-4 host was structurally LAST in line for every scout/contract/detail fan and sat
 /// READY while the weight-1 host prefilled. One rule, one place: every fan site inherits it.
+/// One lane per HOST for the prologue fans (scout/contract/detail) — their own docstrings
+/// promise "one per device", but the pool arrives SLOT-expanded, so two calls stack on one
+/// host and degrade each other (F623: detail time is queue time, monotonic in concurrency).
+/// MEASURED, r16 vs r17: the same detail fan cleared 14/14 on 4 slots, then dropped three
+/// details at ~490s the moment the third host's lanes doubled the fan width — the grace
+/// modeled prefill, not 2-deep decode contention. Dedupe by identity, first occurrence
+/// wins; the fan's own speed-ordering then puts the fastest host first.
+fn one_lane_per_host(models: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    models
+        .into_iter()
+        .filter(|m| seen.insert(m.clone()))
+        .collect()
+}
+
 fn order_fleet_by_speed(
     devices: Vec<String>,
     weights: &std::collections::HashMap<String, u32>,
@@ -21848,6 +21863,21 @@ mod fan_order_tests {
                 "gabee-q"
             ],
             "every host once (fastest first) before any host twice"
+        );
+    }
+
+    #[test]
+    fn one_lane_per_host_dedupes_a_slot_expanded_pool() {
+        let out = one_lane_per_host(vec![
+            "a-q".to_string(),
+            "a-q".to_string(),
+            "b-q".to_string(),
+            "b-q".to_string(),
+        ]);
+        assert_eq!(
+            out,
+            vec!["a-q", "b-q"],
+            "prologue fans run ONE call per host"
         );
     }
 }
