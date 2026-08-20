@@ -123,12 +123,16 @@ fn spec(id: &str, deps: &[&str], files: &[&str]) -> TaskSpec {
 }
 
 fn dev(id: &str, model: &str, weight: u32) -> DeviceCfg {
+    dev_sw(id, model, weight, 1)
+}
+
+fn dev_sw(id: &str, model: &str, weight: u32, speed_weight: u32) -> DeviceCfg {
     DeviceCfg {
         id: id.to_string(),
         model_id: model.to_string(),
         weight,
         enabled: true,
-        speed_weight: 1,
+        speed_weight,
         supervision: false,
     }
 }
@@ -141,6 +145,34 @@ fn mock(rec: &Arc<Mutex<Recorder>>, delay_ms: u64) -> Arc<MockDispatcher> {
         terminal: HashSet::new(),
         slow: HashSet::new(),
     })
+}
+
+#[tokio::test]
+async fn the_configured_speed_weight_decides_every_free_slot_tie() {
+    // Operator directive (2026-08-20): the highest-weight host is the TOP unit — at any
+    // placement choice between free devices, the weight-4 host wins, and it wins FIRST
+    // (task ordering), not just eventually. Pinned after the weight chain was found
+    // silently inert on model-id lookups: an unproven weight system reads as "flat for
+    // some stupid reason".
+    let specs = vec![spec("t0", &[], &[])];
+    let dag = Dag::from_specs(specs).unwrap();
+    let rec = Arc::new(Mutex::new(Recorder::default()));
+    // Deliberately list the SLOW device first: index order must not decide.
+    let sched = Scheduler::new(
+        vec![
+            dev_sw("slowhost", "m-s", 2, 1),
+            dev_sw("fasthost", "m-f", 2, 4),
+        ],
+        3,
+    );
+    let report = sched.run(dag, mock(&rec, 20), String::new()).await.unwrap();
+    assert_eq!(report.done.len(), 1);
+    let r = rec.lock().unwrap();
+    assert_eq!(
+        r.run_devices["t0"],
+        vec!["fasthost".to_string()],
+        "a single task with the whole fleet free must land on the highest speed_weight host"
+    );
 }
 
 #[tokio::test]

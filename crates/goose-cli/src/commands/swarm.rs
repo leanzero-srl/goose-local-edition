@@ -30865,6 +30865,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         "max_attempts": cfg.max_attempts,
         "pool": enabled.iter().map(|d| serde_json::json!({
             "id": d.id, "model_id": d.model_id, "weight": d.weight, "instances": d.instances,
+            // The RESOLVED speed weight — the placement tie-break rides on it, and until this
+            // echo existed no run could prove what it resolved (key/id mismatches ran silent).
+            "speed_weight": configured_speed_weight(&cfg.speed_weights, &d.id),
         })).collect::<Vec<_>>(),
         // The RESOLVED gate set (assured bundle + explicit overrides applied) so a run's config is legible.
         "assured": assured_enabled(),
@@ -33314,8 +33317,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .ok()?
                     .as_millis() as i64;
                 let left_ms = ms - now_ms - (fix_cap_eff as i64) * 1000;
-                Some(std::time::Instant::now()
-                    + std::time::Duration::from_millis(left_ms.max(0) as u64))
+                Some(
+                    std::time::Instant::now()
+                        + std::time::Duration::from_millis(left_ms.max(0) as u64),
+                )
             }) {
             Some(h) => {
                 let clamped = cap_deadline.map_or(h, |c| c.min(h));
