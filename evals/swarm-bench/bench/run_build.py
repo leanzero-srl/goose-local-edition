@@ -90,7 +90,12 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     tpath = workdir / ".swarm" / "telemetry.jsonl"
     tpath.parent.mkdir(parents=True, exist_ok=True)
     tpath.write_text("")
-    env = {**env, "GOOSE_SWARM_TELEMETRY_FILE": str(tpath)}
+    # The engine's repair phase clamps its own deadline to this absolute wall (minus one
+    # fix-cap) so runs FINISH inside the harness timeout instead of being truncated
+    # mid-round — r9 and r11 were both guillotined by the timeout while mid-repair.
+    deadline_ms = int((time.time() + timeout) * 1000)
+    env = {**env, "GOOSE_SWARM_TELEMETRY_FILE": str(tpath),
+           "GOOSE_SWARM_RUN_DEADLINE_UNIX_MS": str(deadline_ms)}
     if entrant in MODELS:
         cmd = [str(GOOSE), "run", "--provider", "aws_bedrock", "--model", MODELS[entrant],
                "-t", prompt]

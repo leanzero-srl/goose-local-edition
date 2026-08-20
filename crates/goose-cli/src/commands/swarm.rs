@@ -33298,6 +33298,37 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let cap_deadline = Some(cap_secs)
             .filter(|&s| s > 0)
             .map(|s| std::time::Instant::now() + std::time::Duration::from_secs(s));
+        // THE HARNESS'S OUTER WALL (F906/F907): a repair budget that outlives the runner's
+        // own timeout is a guillotine, not a budget — r9 and r11 were both cut mid-round by
+        // the harness while this phase still believed it had time. When the harness names its
+        // absolute deadline (GOOSE_SWARM_RUN_DEADLINE_UNIX_MS), clamp the phase deadline to
+        // one fix-cap BEFORE it — the last round the headroom governor admits then finishes,
+        // and the floor/restore/overview tail runs INSIDE the wall. Reuses fix_cap_eff; no
+        // new constants. Unset (every non-harness run) = byte-identical.
+        let cap_deadline = match std::env::var("GOOSE_SWARM_RUN_DEADLINE_UNIX_MS")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .and_then(|ms| {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()?
+                    .as_millis() as i64;
+                let left_ms = ms - now_ms - (fix_cap_eff as i64) * 1000;
+                Some(std::time::Instant::now()
+                    + std::time::Duration::from_millis(left_ms.max(0) as u64))
+            }) {
+            Some(h) => {
+                let clamped = cap_deadline.map_or(h, |c| c.min(h));
+                if cap_deadline.is_none_or(|c| h < c) {
+                    sink.write_value(serde_json::json!({
+                        "event": "complete_cap_clamped_to_harness",
+                        "fix_cap_secs": fix_cap_eff,
+                    }));
+                }
+                Some(clamped)
+            }
+            None => cap_deadline,
+        };
         // Detect from the PRODUCED file manifest, not just the spec: a language-unspecified spec whose
         // plan built a non-Python tree (e.g. a Rust CLI) would otherwise default to Python, run pytest on
         // a tree with no .py, skip (ran=false), and ship trivially green. The manifest's extensions route
@@ -33373,6 +33404,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS; 0 = opt out of the
         // one-flat-round stop).
         let stall_cap = complete_stall_rounds();
+        // F907: which mechanism the previous fix round used and whether it PROMOTED — a
+        // promoted round whose finding count held flat is new information for the OTHER
+        // mechanism, and the stall exit used to fire before that arm ever saw the improved
+        // tree (r10 and r11 both promoted a verified fix, then stall-exited at a flat count).
+        let mut last_round_promoted = false;
+        let mut last_round_was_shard = false;
         // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
         // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
         // FAILED PLANNED TASKS (GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN, default OFF).
@@ -33946,6 +33983,35 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // that gates green, so it judges progress: a round that did not REDUCE the count made
             // no progress, and one such round is proof — the next wave would re-attempt the same
             // findings from the same tree at 1,599-2,400s a draw. `stall_cap=0` keeps the opt-out.
+            // PROMOTED-BUT-FLAT SWITCH (F907): a verified fix landed last round yet the count
+            // held — before the stall exit ends the phase, the OTHER mechanism gets its one
+            // round on the improved tree. Same one-shot bound as the zero-promotion switch.
+            if stall_cap > 0
+                && round > 0
+                && verdict.findings.len() >= last_findings.len()
+                && !force_race_next
+                && !force_shard_next
+                && last_round_promoted
+                && !strategy_switched
+            {
+                let to_race = last_round_was_shard && spec_repair() && fleet_models.len() > 1;
+                let to_shard = !last_round_was_shard && fix_sched();
+                if to_race || to_shard {
+                    strategy_switched = true;
+                    if to_race {
+                        force_race_next = true;
+                    } else {
+                        force_shard_next = true;
+                    }
+                    sink.write_value(serde_json::json!({
+                        "event": "fix_strategy_switch",
+                        "round": round,
+                        "from": if to_race { "shards" } else { "race" },
+                        "to": if to_race { "race" } else { "shards" },
+                        "detail": "the round PROMOTED a verified fix but the finding count held                                    flat — the other mechanism gets one round on the improved                                    tree before the stall exit ends the phase",
+                    }));
+                }
+            }
             if stall_cap > 0
                 && round > 0
                 && verdict.findings.len() >= last_findings.len()
@@ -34288,6 +34354,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                          rather than damaged by an unverified edit"
                     },
                 }));
+                last_round_was_shard = false;
+                last_round_promoted = winner.is_some();
                 if winner.is_none() {
                     if !strategy_switched && fix_sched() {
                         strategy_switched = true;
@@ -34449,6 +34517,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         }));
                                     }
                                 }
+                                last_round_was_shard = true;
+                                last_round_promoted = fresh
+                                    .fix_promotions
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                                    > 0;
                                 if fresh
                                     .fix_promotions
                                     .load(std::sync::atomic::Ordering::Relaxed)
