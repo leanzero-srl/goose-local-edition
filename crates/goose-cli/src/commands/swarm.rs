@@ -21754,9 +21754,32 @@ fn order_fleet_by_speed(
     devices: Vec<String>,
     weights: &std::collections::HashMap<String, u32>,
 ) -> Vec<String> {
-    let mut devices = devices;
-    devices.sort_by_key(|id| std::cmp::Reverse(configured_speed_weight(weights, id)));
-    devices
+    // The pool arrives SLOT-EXPANDED (a weight-2 device appears twice), so a plain sort
+    // groups a host's lanes together and a 3-item fan stacks two calls on the fast host
+    // while a whole node idles — the r14 screenshot, the mirror image of r13's. Two
+    // concurrent generations on one Apple host degrade each other (F623), so the pool is
+    // emitted as a speed-ordered ROUND-ROBIN: every host's first lane (fastest first),
+    // then every host's second lane, and so on — a small fan touches every host once,
+    // fastest first; a big fan still fills every slot.
+    let mut groups: Vec<(String, usize)> = Vec::new();
+    for d in devices {
+        if let Some(g) = groups.iter_mut().find(|(id, _)| *id == d) {
+            g.1 += 1;
+        } else {
+            groups.push((d, 1));
+        }
+    }
+    groups.sort_by_key(|(id, _)| std::cmp::Reverse(configured_speed_weight(weights, id)));
+    let max_lanes = groups.iter().map(|(_, n)| *n).max().unwrap_or(0);
+    let mut out = Vec::new();
+    for lane in 0..max_lanes {
+        for (id, n) in &groups {
+            if lane < *n {
+                out.push(id.clone());
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -21788,6 +21811,43 @@ mod fan_order_tests {
                 "gabee-qwen3.6-27b"
             ],
             "a 1-item fan must hand its work to the weight-4 host, never the discovery-order front"
+        );
+    }
+
+    #[test]
+    fn a_slot_expanded_pool_round_robins_hosts_fastest_first() {
+        // The r13/r14 pair, pinned: slot expansion duplicates hosts, and BOTH failure modes
+        // (slow-host-first, and fast-host stacked while a whole node idles) are lane order.
+        // A 3-item fan on this pool must touch all three hosts, fastest first.
+        let weights: std::collections::HashMap<String, u32> = [
+            ("gabee".to_string(), 1),
+            ("mihai".to_string(), 2),
+            ("workhorse".to_string(), 4),
+        ]
+        .into_iter()
+        .collect();
+        let ordered = order_fleet_by_speed(
+            vec![
+                "gabee-q".to_string(),
+                "gabee-q".to_string(),
+                "mihai-q".to_string(),
+                "mihai-q".to_string(),
+                "workhorse-q".to_string(),
+                "workhorse-q".to_string(),
+            ],
+            &weights,
+        );
+        assert_eq!(
+            ordered,
+            vec![
+                "workhorse-q",
+                "mihai-q",
+                "gabee-q",
+                "workhorse-q",
+                "mihai-q",
+                "gabee-q"
+            ],
+            "every host once (fastest first) before any host twice"
         );
     }
 }
