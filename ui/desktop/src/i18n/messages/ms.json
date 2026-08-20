@@ -3839,6 +3839,12 @@
   "sessions.saving": {
     "defaultMessage": "Menyimpan..."
   },
+  "sessions.scheduledJobs": {
+    "defaultMessage": "Scheduled Jobs"
+  },
+  "sessions.scheduledJobsCount": {
+    "defaultMessage": "{count,plural,one{{count} job} other{{count} jobs}}"
+  },
   "sessions.search.noResults": {
     "defaultMessage": "Tiada sesi sepadan ditemui"
   },

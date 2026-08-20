@@ -3839,6 +3839,12 @@
   "sessions.saving": {
     "defaultMessage": "保存中..."
   },
+  "sessions.scheduledJobs": {
+    "defaultMessage": "Scheduled Jobs"
+  },
+  "sessions.scheduledJobsCount": {
+    "defaultMessage": "{count,plural,one{{count} job} other{{count} jobs}}"
+  },
   "sessions.search.noResults": {
     "defaultMessage": "一致するセッションが見つかりません"
   },

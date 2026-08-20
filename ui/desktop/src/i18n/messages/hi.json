@@ -3839,6 +3839,12 @@
   "sessions.saving": {
     "defaultMessage": "सहेजा जा रहा है..."
   },
+  "sessions.scheduledJobs": {
+    "defaultMessage": "Scheduled Jobs"
+  },
+  "sessions.scheduledJobsCount": {
+    "defaultMessage": "{count,plural,one{{count} job} other{{count} jobs}}"
+  },
   "sessions.search.noResults": {
     "defaultMessage": "कोई मिलान सत्र नहीं मिला"
   },

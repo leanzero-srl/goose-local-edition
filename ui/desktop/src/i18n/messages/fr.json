@@ -3839,6 +3839,12 @@
   "sessions.saving": {
     "defaultMessage": "Enregistrement..."
   },
+  "sessions.scheduledJobs": {
+    "defaultMessage": "Scheduled Jobs"
+  },
+  "sessions.scheduledJobsCount": {
+    "defaultMessage": "{count,plural,one{{count} job} other{{count} jobs}}"
+  },
   "sessions.search.noResults": {
     "defaultMessage": "Aucune session correspondante trouvée"
   },
