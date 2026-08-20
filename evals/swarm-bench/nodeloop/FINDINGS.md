@@ -20782,3 +20782,18 @@ harness timeout is disclosed on their entries. All runs serial, hermetic, seeded
 haiku canary caught gather(seed=None) before any paid run). Remaining per standing
 orders: the swarm's own sb-7 run after the sb-6 replicate line, then the full website
 publish (sb-7 methodology + SEO parity per the isolation rules).
+
+## F909 — r18/r19: the batch is fully live; the loss has MOVED to the frontend surface
+
+r18 (122 min): cleanest tree ever (4 gate findings, 15/15 details) but the harness clamp
+double-counted the fix-cap margin and starved repair (fixed 654f29b14). r19 (147 min,
+clamp fixed, 2-node DC absorbed mid-run): every mechanism fired in one run — 12/12
+details, parallel 3-node fix shards, measured fix target, and the strategy switch's FIRST
+live firing (shards→race; its race round then hit the wall — headroom ended the phase 34s
+later, honest but unproven conversion). Hermetic 0.170 vs published 0.1837: board holds.
+THE SHAPE IS THE FINDING: backend tiers are now strong (B 0.88, C 0.82, A 0.80 — the
+week's fix classes), and the loss concentrates on the frontend surface (J 0.14, V 0.08,
+T 0.04) — the same web-viz/styles family that dominates the stall class. Next engine
+lever: the frontend task family (skeleton-fill split or dedicated viz pitfalls). Wall
+trend: 177 → 158 → 122/147 with full mechanisms. Fleet decode: wh 12.7 / mihai 9.6 /
+gabee 8.7; prefill 276 tok/s (per-run measured, in the verdict).
