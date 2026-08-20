@@ -87,7 +87,10 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     # file the swarm engine defaults to, so telemetry_summary() finds it at scoring time and
     # cloud entries publish MEASURED rates instead of session-store recoveries. Truncated per
     # run (a reused workdir must never rank this run by a previous run's calls).
-    tpath = workdir / ".swarm" / "telemetry.jsonl"
+    # ABSOLUTE, or the engine (cwd = workdir) resolves it to a nested .swarm inside the
+    # tree — measured on r15: the outer file stayed 0 bytes while the engine wrote a copy
+    # two levels deep, and the scorer reads the outer path.
+    tpath = (workdir / ".swarm" / "telemetry.jsonl").resolve()
     tpath.parent.mkdir(parents=True, exist_ok=True)
     tpath.write_text("")
     # The engine's repair phase clamps its own deadline to this absolute wall (minus one
