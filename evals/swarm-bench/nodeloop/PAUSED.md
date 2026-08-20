@@ -9,3 +9,8 @@ Still physically running (pre-dated the pause, deliberately left to finish):
 
 State at pause: r19 hermetic 0.170 (board holds at r1 0.1837, F909); sb-7 cloud board
 published; batch fully live (F905-F909); next engine target = frontend surface (J/V/T).
+
+## Overnight exception (Mihai, ~15:20: "I will be asleep so just post")
+The sb-7 swarm r1 path is PRE-APPROVED end-to-end: run -> hermetic re-score (port 8901)
+-> publish the fleet entry to the site (with telemetry rates). If r1 duds at a 30-min
+check: diagnose + ONE relaunch. Everything else stays paused.
