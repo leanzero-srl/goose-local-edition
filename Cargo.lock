@@ -4985,6 +4985,7 @@ dependencies = [
  "nanoid",
  "nostr",
  "nostr-sdk",
+ "ntapi",
  "oauth2",
  "once_cell",
  "openssl",
