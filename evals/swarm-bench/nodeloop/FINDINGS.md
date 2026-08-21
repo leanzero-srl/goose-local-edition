@@ -20816,3 +20816,29 @@ missing __main__.py is scorer-only knowledge. Release: v1.41.102 live on
 leanzero-srl/goose-local-edition (DMG+zip, in-app engine checksum == target/release,
 main merged, tag pushed). GitHub auth restored via the leanzero-srl token (stored in the
 goose skill per order); aaif remote is read-only and out of the release path.
+
+## F911 — r4: the package-entry class is DEAD; the probe then manufactured the next failure itself; floor moves 0.0138 → 0.0154
+
+r4 (3h wall, first run with a47244c7e package-entry truth + 4e1345be3 probe/gate fixes):
+the plan itself owned app/__main__.py AND app/ledgerd.py (module form) from the start —
+the injection pass correctly NO-OPED, and the failure class that zeroed r1 and r3 (missing
+entries) did not occur. The boot failure MOVED to runtime: app/cli.py load_tokens validated
+the tokens file against the spec's documented keys (maker/checker/admin) and refused the
+probe's `{}` stub — the app was RIGHT and the probe was wrong. Boot repair burned its whole
+budget on that self-inflicted defect (identical traceback both attempts — nothing to fix).
+Hand-proof on the shipped tree: with a spec-shaped tokens file the crash is GONE; the
+process stays alive but NEITHER service ever binds (14s > the spec's 10s bound) — the one
+real remaining defect, and the next engine target (bind-first discipline: the app blocks on
+pre-serve work; pitfall #16 already names it, nothing enforces it at write time). Hermetic
+0.0154 (A .375 D .125 J .036 V .04, runtime tiers zero) — beats the posted r1 floor;
+brun-fleet-qwen-sb70 republished with r4 + honest notes (telemetry: 3 nodes, prefill 364.5,
+decode 12.9 tok/s median).
+
+## F912 — probe fix: the tokens file the probe writes is now the SPEC's own documented shape
+
+spec_json_stub (d6db45423): first `{…}` literal in a window after the flag's mention,
+`<…>` placeholders filled with dummy hex, kept only when the result parses as JSON, `{}`
+when the spec documents no shape. Unit test pins the real sb-7 wording; boundary-safe
+slicing (the clippy string-index deny caught three multi-byte panic sites in the first
+draft). This closes the r4 mechanism: a probe input can no longer fail an app for
+validating what the spec told the harness to provide.
