@@ -5429,6 +5429,41 @@ mod tests {
     }
 
     #[test]
+    fn a_seconds_prefixed_note_is_reported_skipped_not_silently_dropped() {
+        // The exact operator error: a note named with SECONDS instead of milliseconds parses as
+        // 1970, scopes out, and used to vanish without a word — no delivery, no warning, nothing
+        // in the run log to distinguish it from a note that was never written.
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = dir.path().join(".swarm").join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::write(
+            inbox.join("1787347648-ledger-server-spec.json"), // seconds, not ms
+            r#"{"text":"use the brief and contracts as authoritative"}"#,
+        )
+        .unwrap();
+        let since_ms = 1_787_300_000_000i64; // this run started (ms)
+        let d = read_user_notes(dir.path(), since_ms);
+        assert!(
+            d.ids.is_empty(),
+            "a stale-scoped note must not be delivered"
+        );
+        assert_eq!(
+            d.skipped_stale,
+            vec!["1787347648-ledger-server-spec.json".to_string()],
+            "and it must be REPORTED as skipped"
+        );
+        // A correctly-stamped note in the same inbox still lands.
+        std::fs::write(
+            inbox.join(format!("{}-good.json", since_ms + 1000)),
+            r#"{"text":"bind before syncing"}"#,
+        )
+        .unwrap();
+        let d2 = read_user_notes(dir.path(), since_ms);
+        assert_eq!(d2.ids.len(), 1);
+        assert_eq!(d2.skipped_stale.len(), 1);
+    }
+
+    #[test]
     fn no_inbox_means_no_notes_and_a_byte_identical_prompt() {
         let dir = tempfile::TempDir::new().unwrap();
         assert_eq!(read_user_notes(dir.path(), 0).block, "");
@@ -26422,6 +26457,12 @@ struct DeliveredNotes {
     ids: Vec<String>,
     /// Notes in scope but cut by the char budget. Reported, never silent.
     dropped: usize,
+    /// Notes SCOPED OUT as older than this run (filename epoch-ms < run start). A note the user
+    /// wrote for THIS run and never saw delivered is indistinguishable from one that vanished —
+    /// MEASURED: an operator wrote a note with a SECONDS prefix, it parsed as 1970, was silently
+    /// skipped as stale, and nothing anywhere said so (zero user_notes_delivered, no warning).
+    /// Carried so the caller can say it out loud.
+    skipped_stale: Vec<String>,
 }
 
 /// The epoch-ms prefix of an inbox filename (the desktop writes `${Date.now()}.json`). `None` when there is
@@ -26468,6 +26509,7 @@ fn read_user_notes(root: &std::path::Path, since_ms: i64) -> DeliveredNotes {
     let Ok(rd) = std::fs::read_dir(&dir) else {
         return DeliveredNotes::default(); // no inbox => no notes => byte-identical prompt
     };
+    let mut skipped_stale: Vec<String> = Vec::new();
     let mut notes: Vec<(String, String)> = rd
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
@@ -26475,6 +26517,7 @@ fn read_user_notes(root: &std::path::Path, since_ms: i64) -> DeliveredNotes {
             let name = e.file_name().to_string_lossy().to_string();
             // Out of scope for THIS run: an older run's note left in a reused project dir.
             if note_epoch_ms(&name).is_some_and(|ms| ms < since_ms) {
+                skipped_stale.push(name);
                 return None;
             }
             let raw = std::fs::read_to_string(e.path()).ok()?;
@@ -26487,7 +26530,10 @@ fn read_user_notes(root: &std::path::Path, since_ms: i64) -> DeliveredNotes {
         })
         .collect();
     if notes.is_empty() {
-        return DeliveredNotes::default();
+        return DeliveredNotes {
+            skipped_stale,
+            ..DeliveredNotes::default()
+        };
     }
     notes.sort(); // filename is epoch-ms-prefixed => chronological
 
@@ -26522,6 +26568,7 @@ fn read_user_notes(root: &std::path::Path, since_ms: i64) -> DeliveredNotes {
         ),
         ids: kept.into_iter().map(|(id, _)| id).collect(),
         dropped,
+        skipped_stale,
     }
 }
 
@@ -29246,6 +29293,18 @@ impl GooseAgentDispatcher {
         // being on) only shows it was *possible*.
         let notes_block = if swarm_gate_cfg("GOOSE_SWARM_USER_NOTES", load_config().user_notes) {
             let d = read_user_notes(&self.working_dir, self.notes_since_ms);
+            if !d.skipped_stale.is_empty() {
+                // A note the user wrote and never saw delivered is worse than no channel at all.
+                self.events.write_value(serde_json::json!({
+                    "event": "user_notes_skipped_stale",
+                    "task_id": req.task_id,
+                    "files": d.skipped_stale,
+                    "since_ms": self.notes_since_ms,
+                    "detail": "inbox note(s) scoped out as older than this run — the filename prefix \
+                               must be epoch MILLISECONDS (Date.now()); a seconds prefix parses as 1970 \
+                               and is silently skipped",
+                }));
+            }
             if !d.ids.is_empty() {
                 self.events.write_value(serde_json::json!({
                     "event": "user_notes_delivered",
