@@ -1515,9 +1515,16 @@ pub enum BedrockCommand {
         /// AWS region the key targets (default: the stored/env AWS_REGION, else us-east-1).
         #[arg(long)]
         region: Option<String>,
+        /// Machine-readable output: {"region","models":[...]} on stdout (for the desktop app).
+        #[arg(long)]
+        json: bool,
     },
     /// Re-validate the stored/env key and print the usable model ids (the auto-populated roster).
-    Models,
+    Models {
+        /// Machine-readable output: {"region","models":[...],"devices":[...]} on stdout.
+        #[arg(long)]
+        json: bool,
+    },
     /// Add a Bedrock model as a swarm device (checked against the live roster first).
     Add {
         model_id: String,
@@ -1670,17 +1677,24 @@ async fn handle_bedrock(cmd: Option<BedrockCommand>) -> Result<()> {
     };
     let region_now = || bedrock_stored_region().unwrap_or_else(|| "us-east-1".to_string());
     match cmd {
-        Some(BedrockCommand::Key { key, region }) => {
+        Some(BedrockCommand::Key { key, region, json }) => {
             let region = region.unwrap_or_else(region_now);
             let roster = bedrock_roster(&key, &region).await?;
             let config = goose::config::Config::global();
             config.set_secret("AWS_BEARER_TOKEN_BEDROCK", &serde_json::json!(key))?;
             config.set_param("AWS_REGION", serde_json::json!(region.clone()))?;
-            println!("key validated and stored.");
-            bedrock_print_roster(&region, &roster);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({ "region": region, "models": roster })
+                );
+            } else {
+                println!("key validated and stored.");
+                bedrock_print_roster(&region, &roster);
+            }
             Ok(())
         }
-        None | Some(BedrockCommand::Models) => {
+        None | Some(BedrockCommand::Models { json: false }) => {
             let key = need_key()?;
             let region = region_now();
             let roster = bedrock_roster(&key, &region).await?;
@@ -1699,6 +1713,28 @@ async fn handle_bedrock(cmd: Option<BedrockCommand>) -> Result<()> {
                     );
                 }
             }
+            Ok(())
+        }
+        Some(BedrockCommand::Models { json: true }) => {
+            let key = need_key()?;
+            let region = region_now();
+            let roster = bedrock_roster(&key, &region).await?;
+            let cfg = load_config();
+            let devices: Vec<serde_json::Value> = cfg
+                .devices
+                .iter()
+                .filter(|d| d.is_cloud())
+                .map(|d| {
+                    serde_json::json!({
+                        "id": d.id, "model_id": d.model_id, "weight": d.weight,
+                        "enabled": d.enabled,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::json!({ "region": region, "models": roster, "devices": devices })
+            );
             Ok(())
         }
         Some(BedrockCommand::Add { model_id, weight }) => {
@@ -12127,6 +12163,34 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn spec_json_stub_reproduces_the_documented_shape() {
+        // The real sb-7 wording: the tokens-file shape is documented inline after the flag.
+        let spec = "…- `--tokens-file` names a JSON file the harness writes before boot:\n  \
+                    `{\"maker\": \"<32 hex>\", \"checker\": \"<32 hex>\", \"admin\": \"<32 hex>\"}` — the bearer tokens…";
+        let stub = spec_json_stub(spec, "--tokens-file");
+        let v: serde_json::Value = serde_json::from_str(&stub).unwrap();
+        for k in ["maker", "checker", "admin"] {
+            assert!(
+                v.get(k)
+                    .and_then(|x| x.as_str())
+                    .is_some_and(|s| !s.is_empty() && !s.contains('<')),
+                "documented key {k} must survive with a filled dummy value: {stub}"
+            );
+        }
+        // No documented shape near the flag -> the old empty object, not an invention.
+        assert_eq!(
+            spec_json_stub("run `--tokens-file T` with your tokens", "--tokens-file"),
+            "{}"
+        );
+        assert_eq!(spec_json_stub("no such flag at all", "--tokens-file"), "{}");
+        // A shape that stays invalid JSON after placeholder fill is rejected, never shipped broken.
+        assert_eq!(
+            spec_json_stub("--tokens-file {not json here", "--tokens-file"),
+            "{}"
+        );
+    }
+
+    #[test]
     fn bedrock_roster_parsers_keep_only_runnable_ids() {
         // Real ListInferenceProfiles / ListFoundationModels shapes (fields the parsers read).
         let profiles = serde_json::json!({"inferenceProfileSummaries":[
@@ -20891,7 +20955,7 @@ fn spec_run_argv_v2(
         } else if prev_flag.contains("token") || prev_flag.contains("file") {
             let f = scratch_base.join("probe-tokens.json");
             if !f.exists() {
-                let _ = std::fs::write(&f, "{}");
+                let _ = std::fs::write(&f, spec_json_stub(spec, &prev_flag));
             }
             f.to_string_lossy().into_owned()
         } else {
@@ -20901,6 +20965,62 @@ fn spec_run_argv_v2(
     }
     drop(holders);
     (out, ports)
+}
+
+/// The spec's OWN documented JSON shape for a harness-written file (tokens file etc.):
+/// the first `{…}` literal within a short window after the flag's mention, its `<…>`
+/// placeholders replaced with a dummy hex value, kept only when the result parses as
+/// JSON. "{}" when the spec documents no shape.
+///
+/// r4 forensics: the probe wrote `{}` as the tokens file, the app CORRECTLY validated the
+/// spec's documented keys (`{"maker": "<32 hex>", …}` — "a JSON file the harness writes
+/// before boot") and refused to boot, and boot repair burned its whole budget on a defect
+/// that did not exist — every attempt saw the identical self-inflicted traceback.
+fn spec_json_stub(spec: &str, flag: &str) -> String {
+    let word = flag.trim_start_matches('-');
+    let Some(at) = spec.find(word) else {
+        return "{}".to_string();
+    };
+    let tail = spec.get(at..).unwrap_or("");
+    let mut win_end = tail.len().min(600);
+    while win_end < tail.len() && !tail.is_char_boundary(win_end) {
+        win_end += 1;
+    }
+    let window = tail.get(..win_end).unwrap_or(tail);
+    let Some(open) = window.find('{') else {
+        return "{}".to_string();
+    };
+    let rest = window.get(open..).unwrap_or("");
+    let mut depth = 0usize;
+    let mut end = None;
+    for (i, c) in rest.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(i + c.len_utf8());
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else {
+        return "{}".to_string();
+    };
+    let candidate = rest.get(..end).unwrap_or("").to_string();
+    let filled = regex::Regex::new(r"<[^>]{1,60}>")
+        .map(|re| {
+            re.replace_all(&candidate, "0000000000000000000000000000000a")
+                .into_owned()
+        })
+        .unwrap_or(candidate);
+    if serde_json::from_str::<serde_json::Value>(&filled).is_ok() {
+        filled
+    } else {
+        "{}".to_string()
+    }
 }
 
 /// EVERY `python -m X` package the spec advertises (tool modules excluded, deduped,

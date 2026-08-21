@@ -1,12 +1,189 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Meridian Payments Console</title><link rel="stylesheet" href="styles.css"></head><body>
-<div class="shell"><aside class="side"><a class="brand" href="#console"><b>m</b><span>MERIDIAN<small>PAYMENTS CONSOLE</small></span></a><div class="environment"><i></i> PRODUCTION <button id="environment-menu" class="chev" aria-label="Select environment">⌄</button></div><nav aria-label="Console navigation"><a class="active" href="#console">◫ <span>Console</span></a><a href="#api">⌘ <span>API activity</span><em>24</em></a><a href="#customers">◎ <span>Customers</span></a><a href="#reconciliation">≋ <span>Reconciliation</span></a><a href="#risk">◇ <span>Risk review</span></a></nav><div class="side-foot"><button id="new-payment" class="new-payment">＋ New payment</button><a href="#settings">⚙ <span>Settings</span></a><div class="operator"><div>AS</div><span><b>Alex Soto</b><small>Operations</small></span><button id="profile-menu" class="chev">•••</button></div></div></aside>
-<main><header><div class="crumb">OPERATIONS <strong>/</strong> PAYMENT CONSOLE</div><div class="header-actions"><button class="icon-btn" id="global-search" aria-label="Search">⌕</button><button class="icon-btn has-dot" id="notifications" aria-label="Notifications">♧</button><button id="sync-button" class="sync-btn"><span>↻</span> Sync now</button></div></header>
-<section class="intro"><div><p class="kicker">LIVE PAYMENT OPERATIONS</p><h1>Payment command center.</h1><p>Monitor the movement, inspect the payload, and resolve what needs attention.</p></div><div class="clock"><span>SETTLEMENT WINDOW</span><b id="settlement-clock">04:18:22</b><small>Closes at 18:00 UTC</small></div></section>
-<section class="stats"><article><span>Processed today</span><b>$2,842,190</b><small class="up">↑ 12.4% <i>vs yesterday</i></small></article><article><span>Authorization rate</span><b>97.86%</b><small class="up">↑ 0.32% <i>vs yesterday</i></small></article><article><span>Open exceptions</span><b id="exception-count">07</b><small class="amber">3 require action <i>in the next hour</i></small></article><article class="network-state"><span>Network health</span><b><i></i> All systems nominal</b><small>Updated just now</small></article></section>
-<section class="workspace-grid"><article class="panel ledger"><div class="panel-top"><div><p class="kicker">PAYMENT LEDGER</p><h2>Live API activity</h2></div><div class="ledger-actions"><div class="custom-select" id="api-filter"><button aria-haspopup="listbox"><span id="filter-label">All events</span><b>⌄</b></button><div class="select-menu" role="listbox"><button data-filter="all">All events</button><button data-filter="succeeded">Succeeded</button><button data-filter="pending">Pending</button><button data-filter="failed">Failed</button></div></div><button id="export-api" class="quiet-btn">⇩ Export</button></div></div><div class="table-scroll"><table id="api-table"><thead><tr><th>EVENT</th><th>CUSTOMER</th><th>AMOUNT</th><th>STATUS</th><th>RECEIVED</th><th></th></tr></thead><tbody></tbody></table></div><footer><span id="table-count">6 events</span><button id="load-more" class="link-btn">View all events →</button></footer></article>
-<article class="panel signal"><div class="panel-top"><div><p class="kicker">SETTLEMENT FLOW</p><h2>Rail signal</h2></div><button id="reset-camera" class="quiet-btn">Reset view</button></div><canvas id="payment-viz" data-vs7dbg="meridian/raw-webgl2/instancing+picking+camera" aria-label="Interactive payment settlement visualization"></canvas><div class="viz-readout"><span><i class="blue-dot"></i> Card</span><span><i class="mint-dot"></i> ACH</span><span><i class="orange-dot"></i> Exception</span><b id="viz-selection">Drag to orbit · select a node</b></div></article>
-<article class="panel notes"><div class="panel-top"><div><p class="kicker">OPERATOR NOTES</p><h2>Shift handoff</h2></div><span id="notes-saved">Saved</span></div><textarea id="notes" placeholder="Leave a precise handoff for the next operator…"></textarea><div class="notes-bottom"><span>Visible to Operations</span><button id="save-notes" class="primary">Save note</button></div></article>
-<article class="panel drafts"><div class="panel-top"><div><p class="kicker">SAVED DRAFTS</p><h2>Ready to send</h2></div><button id="new-draft" class="quiet-btn">＋ Draft</button></div><div id="draft-list"></div></article></section>
-</main></div>
-<div id="toast" role="status" aria-live="polite"></div><div id="modal" class="modal-layer" aria-hidden="true"><section class="modal" role="dialog" aria-modal="true"><button class="close-modal" aria-label="Close">×</button><p class="kicker" id="modal-kicker">MERIDIAN</p><h2 id="modal-title">Console</h2><div id="modal-content"></div><div class="modal-actions"><button class="quiet-btn close-modal">Cancel</button><button id="modal-confirm" class="primary">Continue</button></div></section></div>
-<script src="viz.js"></script><script src="app.js"></script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meridian Payments Console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563EB'/%3E%3Ctext x='16' y='22' font-family='Helvetica,Arial' font-size='15' font-weight='700' fill='%23fff' text-anchor='middle'%3EMP%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header id="app-header">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">MP</span>
+    <span class="brand-text">
+      <strong class="product-name">Meridian Payments Console</strong>
+      <span class="product-sub">Settlement &amp; reconciliation control plane</span>
+    </span>
+  </div>
+  <div class="header-slot">
+    <span id="last-sync">Never synced</span>
+    <button id="sync-now" type="button">Sync now</button>
+  </div>
+</header>
+
+<div id="notice" role="status" aria-live="polite"></div>
+
+<main class="page">
+
+  <section id="summary-panel" class="panel">
+    <div class="panel-head">
+      <h2 class="panel-title">Ledger totals</h2>
+      <span class="panel-hint">By currency, with reversals</span>
+    </div>
+    <section id="summary" aria-label="Ledger totals by currency"></section>
+  </section>
+
+  <section id="viz-panel" class="panel">
+    <div class="panel-head">
+      <h2 class="panel-title">Volume field &mdash; 3D</h2>
+      <p class="brush-readout"><span id="brush-count">0</span> <span class="brush-word">brushed</span></p>
+    </div>
+    <div class="canvas-wrap">
+      <canvas id="viz3d" width="1200" height="520"></canvas>
+      <div id="viz-labels"></div>
+    </div>
+    <div id="viz-empty" hidden>No payment records to plot yet. Run a sync to pull the vendor ledger, then the field will render.</div>
+    <div id="viz-error" hidden>The 3D field could not be drawn. Your browser may have blocked hardware acceleration &mdash; reload the page or try another browser.</div>
+  </section>
+
+  <section id="payments-panel" class="panel">
+    <div class="panel-head">
+      <h2 class="panel-title">Payments</h2>
+      <span class="panel-hint">Click a row to brush it in the field</span>
+    </div>
+
+    <div class="toolbar">
+      <div class="dropdown" id="status-filter" data-value="">
+        <span class="dd-caption">Status</span>
+        <button class="dd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label">All statuses</span><span class="dd-caret" aria-hidden="true"></span></button>
+        <ul class="dd-menu" role="listbox" aria-label="Filter by status" hidden>
+          <li role="option" data-opt="" class="dd-opt" aria-selected="true">All statuses</li>
+          <li role="option" data-opt="settled" class="dd-opt" aria-selected="false">Settled</li>
+          <li role="option" data-opt="pending" class="dd-opt" aria-selected="false">Pending</li>
+          <li role="option" data-opt="refunded" class="dd-opt" aria-selected="false">Refunded</li>
+          <li role="option" data-opt="failed" class="dd-opt" aria-selected="false">Failed</li>
+        </ul>
+      </div>
+
+      <div class="dropdown" id="currency-filter" data-value="">
+        <span class="dd-caption">Currency</span>
+        <button class="dd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label">All currencies</span><span class="dd-caret" aria-hidden="true"></span></button>
+        <ul class="dd-menu" role="listbox" aria-label="Filter by currency" hidden>
+          <li role="option" data-opt="" class="dd-opt" aria-selected="true">All currencies</li>
+          <li role="option" data-opt="EUR" class="dd-opt" aria-selected="false">EUR</li>
+          <li role="option" data-opt="USD" class="dd-opt" aria-selected="false">USD</li>
+          <li role="option" data-opt="JPY" class="dd-opt" aria-selected="false">JPY</li>
+          <li role="option" data-opt="KWD" class="dd-opt" aria-selected="false">KWD</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="table-scroll">
+      <table id="payments-table">
+        <thead>
+          <tr>
+            <th data-sort-key="created_at" aria-sort="ascending" tabindex="0" role="columnheader" class="sortable">Date<span class="sort-ind" aria-hidden="true"></span></th>
+            <th data-sort-key="amount_minor" aria-sort="none" tabindex="0" role="columnheader" class="sortable">Amount<span class="sort-ind" aria-hidden="true"></span></th>
+            <th role="columnheader">Status</th>
+            <th role="columnheader">Counterparty</th>
+            <th role="columnheader">Note</th>
+          </tr>
+        </thead>
+        <tbody id="payments-body"></tbody>
+      </table>
+    </div>
+
+    <div id="table-loading" hidden>Loading payments&hellip;</div>
+    <div id="table-empty" hidden>
+      <p class="state-title">No payments here yet</p>
+      <p class="state-body">The local ledger is empty or no rows match the current filters.</p>
+      <button id="empty-sync" type="button">Run first sync</button>
+    </div>
+    <div id="table-error" hidden>Payments could not be loaded. The ledger service did not answer &mdash; retry, or run a sync to refresh the local copy.</div>
+
+    <nav class="pager" aria-label="Payments pagination">
+      <button id="prev" type="button">Prev</button>
+      <span id="showing"></span>
+      <button id="next" type="button">Next</button>
+    </nav>
+  </section>
+
+  <div class="cols">
+
+    <section id="notifications-panel" class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">Notifications</h2>
+        <span class="panel-hint">Outbox stream</span>
+      </div>
+      <div id="notif-degraded" hidden>Notifier unreachable &mdash; showing the last known events. New notifications will appear once the notifier answers again; press Sync now to re-check.</div>
+      <div id="notifications" data-state="live"></div>
+    </section>
+
+    <section id="drafts-panel" class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">Payment drafts</h2>
+        <span class="panel-hint">Maker &amp; checker</span>
+      </div>
+
+      <div class="field">
+        <label for="role-token">Role token</label>
+        <input id="role-token" type="text" placeholder="Bearer token" autocomplete="off">
+      </div>
+
+      <form id="draft-form">
+        <div class="form-grid">
+          <div class="field">
+            <label for="draft-amount">Amount (minor units)</label>
+            <input id="draft-amount" name="amount_minor" type="text" inputmode="numeric" placeholder="129900" autocomplete="off">
+          </div>
+
+          <div class="field">
+            <span class="field-label" id="draft-currency-label">Currency</span>
+            <div class="dropdown" id="draft-currency" data-value="EUR">
+              <button class="dd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="draft-currency-label"><span class="dd-label">EUR</span><span class="dd-caret" aria-hidden="true"></span></button>
+              <ul class="dd-menu" role="listbox" aria-label="Draft currency" hidden>
+                <li role="option" data-opt="EUR" class="dd-opt" aria-selected="true">EUR</li>
+                <li role="option" data-opt="USD" class="dd-opt" aria-selected="false">USD</li>
+                <li role="option" data-opt="JPY" class="dd-opt" aria-selected="false">JPY</li>
+                <li role="option" data-opt="KWD" class="dd-opt" aria-selected="false">KWD</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="draft-cp-name">Counterparty name</label>
+            <input id="draft-cp-name" name="cp_name" type="text" placeholder="Aurora Logistics BV" autocomplete="off">
+          </div>
+
+          <div class="field">
+            <label for="draft-cp-country">Counterparty country</label>
+            <input id="draft-cp-country" name="cp_country" type="text" placeholder="NL" autocomplete="off">
+          </div>
+
+          <div class="field field-wide">
+            <label for="draft-note">Note</label>
+            <textarea id="draft-note" name="note" rows="2" placeholder="Reference or memo"></textarea>
+          </div>
+        </div>
+        <button type="submit" id="create-draft">Create draft</button>
+      </form>
+
+      <div id="draft-list"></div>
+
+      <div class="draft-actions">
+        <button id="submit-btn" type="button" disabled>Submit</button>
+        <button id="approve-btn" type="button" disabled>Approve</button>
+        <button id="reject-btn" type="button" disabled>Reject</button>
+      </div>
+    </section>
+
+  </div>
+
+</main>
+
+<script src="viz.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
