@@ -172,8 +172,15 @@ impl Provider for OpenAiCompatibleProvider {
 /// is written by `goose::providers::swarm` for its planner-side calls; this site covers the
 /// per-task fleet streams, which is where the wall clock actually goes.
 fn telemetry_node(model: &str) -> Option<String> {
-    let bare = model.rsplit('/').next().unwrap_or(model);
-    let (node, rest) = bare.split_once('-')?;
+    // NODE-FIRST (mirrors the engine's device_from_lms_id): per-host aliases carry the node at
+    // the START (`mihai-qwen/qwen3.8-27b`); post-slash only when the first segment has no dash.
+    let first = model.split('/').next().unwrap_or(model);
+    let seg = if first.contains('-') {
+        first
+    } else {
+        model.rsplit('/').next().unwrap_or(model)
+    };
+    let (node, rest) = seg.split_once('-')?;
     (!node.is_empty() && !rest.is_empty()).then(|| node.to_string())
 }
 

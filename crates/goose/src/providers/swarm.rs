@@ -440,8 +440,15 @@ pub(crate) fn record_call(
 fn telemetry_node(model: &str) -> Option<String> {
     // Same rule as goose-providers/src/openai_compatible.rs::telemetry_node — the two writers of
     // one file must agree; the review caught this copy accepting empty parts ("-qwen" -> Some("")).
-    let bare = model.rsplit('/').next().unwrap_or(model);
-    let (node, rest) = bare.split_once('-')?;
+    // NODE-FIRST (mirrors the engine's device_from_lms_id): per-host aliases carry the node at
+    // the START (`mihai-qwen/qwen3.8-27b`); post-slash only when the first segment has no dash.
+    let first = model.split('/').next().unwrap_or(model);
+    let seg = if first.contains('-') {
+        first
+    } else {
+        model.rsplit('/').next().unwrap_or(model)
+    };
+    let (node, rest) = seg.split_once('-')?;
     (!node.is_empty() && !rest.is_empty()).then(|| node.to_string())
 }
 

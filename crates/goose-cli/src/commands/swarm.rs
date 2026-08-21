@@ -2373,8 +2373,17 @@ fn lms_http_host() -> String {
 
 /// Node/device name from an LM Link model id: the prefix before the first '-' (mihai-, workhorse-, gabee-).
 fn device_from_lms_id(id: &str) -> Option<String> {
-    let bare = id.rsplit('/').next().unwrap_or(id);
-    bare.split_once('-').map(|(prefix, _)| prefix.to_string())
+    // NODE-FIRST: the fleet's per-host aliases put the node at the START of the id, and since the
+    // qwen3.8 roll-over they carry the publisher inside them (`mihai-qwen/qwen3.8-27b`) — stripping
+    // the namespace first collapsed all three nodes to "qwen3.8". Only when the first segment has
+    // no dash at all (`qwen/qwen3.8-27b`, a shared alias) fall back to the post-slash segment.
+    let first = id.split('/').next().unwrap_or(id);
+    let seg = if first.contains('-') {
+        first
+    } else {
+        id.rsplit('/').next().unwrap_or(id)
+    };
+    seg.split_once('-').map(|(prefix, _)| prefix.to_string())
 }
 
 /// Discover loaded models straight from the LM Studio HTTP server (native /api/v0/models) — the fallback
@@ -12405,10 +12414,15 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             device_from_lms_id("workhorse-qwopus3.6-27b-coder-mlx").as_deref(),
             Some("workhorse")
         );
-        // publisher/ prefix is stripped before taking the node prefix
+        // NODE-FIRST rule: a per-host alias keeps its node even with a publisher inside
         assert_eq!(
-            device_from_lms_id("lmstudio-community/gabee-model").as_deref(),
-            Some("gabee")
+            device_from_lms_id("mihai-qwen/qwen3.8-27b").as_deref(),
+            Some("mihai")
+        );
+        // a shared publisher alias falls back to the post-slash segment's prefix
+        assert_eq!(
+            device_from_lms_id("qwen/qwen3.8-27b").as_deref(),
+            Some("qwen3.8")
         );
         // no dash -> no derivable device
         assert_eq!(device_from_lms_id("solomodel").as_deref(), None);
@@ -18411,8 +18425,14 @@ impl GooseAgentDispatcher {
         } else {
             format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
         };
+        // "plandraft-solo": the solo planner is the SAME pure-reasoning shape as a parallel plan
+        // draft, and drafts are deliberately DISARMED in spiral_budget_for (healthy deep drafts
+        // measure 57k chars; there is no volume threshold separating deep from looping). Under
+        // run_agent_timed's None key this call fell into the generic 60k worker budget and qwen3.8's
+        // FIRST solo plan died at 60,005 chars — on the run's LAST planning leg, where a kill has no
+        // best-of-N sibling to absorb it, only the single warm retry between the run and a dead engine.
         let out = self
-            .run_agent_timed(
+            .run_agent_timed_at(
                 planner_model,
                 system,
                 format!(
@@ -18422,6 +18442,8 @@ impl GooseAgentDispatcher {
                 response,
                 15,
                 &[],
+                None,
+                Some("plandraft-solo"),
             )
             .await?;
         let plan = out

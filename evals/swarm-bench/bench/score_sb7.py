@@ -2933,6 +2933,15 @@ def telemetry_summary(root) -> "Optional[Dict]":
         if not r.get("usage"):
             continue
         node = r.get("node") or "?"
+        # NODE-FIRST re-derivation from the row's verbatim model id: per-host aliases carry the
+        # node at the START (`mihai-qwen/qwen3.8-27b`); engines before the roll-over fix labeled
+        # all three nodes with the post-slash prefix ("qwen3.8"). The model field is always the
+        # truth, so derive here and the summary is correct for old rows too.
+        m = r.get("model") or ""
+        first = m.split("/")[0]
+        seg = first if "-" in first else m.rsplit("/", 1)[-1]
+        if "-" in seg and seg.split("-", 1)[0]:
+            node = seg.split("-", 1)[0]
         pt, ct = r.get("prompt_tokens"), r.get("completion_tokens")
         ttft, total = r.get("ttft_ms"), r.get("total_ms")
         d = per.setdefault(node, {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
