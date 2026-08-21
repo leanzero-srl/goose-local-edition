@@ -8,7 +8,23 @@
 export const RESEARCH_MODES = ['off', 'on', 'auto'] as const;
 export type ResearchMode = (typeof RESEARCH_MODES)[number];
 
+/** One fleet device — the mirror of the engine's SwarmDevice (crates/goose-cli/src/commands/swarm.rs).
+ *  provider absent/"lmstudio" = a local LM Studio node; "bedrock" = a cloud node whose model_id is a
+ *  Bedrock model/inference-profile id. The desktop MUTATES cloud devices only through the engine CLI
+ *  (`goose swarm bedrock add/rm` over IPC) and re-reads the config after — never by upserting devices
+ *  itself, so the CLI and the panel can never fight over the list. */
+export interface SwarmDeviceRow {
+  id: string;
+  model_id: string;
+  weight: number;
+  enabled: boolean;
+  instances?: number;
+  host?: string | null;
+  provider?: string | null;
+}
+
 export interface SwarmConfig {
+  devices?: SwarmDeviceRow[];
   endpoint?: string;
   planner_model?: string;
   worker_max_turns?: number;
