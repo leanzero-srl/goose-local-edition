@@ -20842,3 +20842,19 @@ when the spec documents no shape. Unit test pins the real sb-7 wording; boundary
 slicing (the clippy string-index deny caught three multi-byte panic sites in the first
 draft). This closes the r4 mechanism: a probe input can no longer fail an app for
 validating what the spec told the harness to provide.
+
+## F913 — qwen3.8's first hour: the model thinks PAST the spiral cap on planning; killed r0, fixed, relaunched within the hour
+
+qwen3.8-27b's first sb-7 run died at minute ~40: the parallel drafts gave way to the solo
+planner, whose call ran under the generic 60k-char spiral budget — and BOTH the first call
+and the warm retry were killed at exactly 60,005 thinking chars (2/2 = the model's normal
+planning volume, not a spiral; plan DRAFTS are already disarmed for exactly this reason and
+healthy 3.6 drafts measured 57k). Fix 808f25729: the solo plan call carries activity key
+'plandraft-solo' and spiral_budget_for disarms it. Same commit: NODE-FIRST id derivation —
+the new aliases carry the publisher inside (`mihai-qwen/qwen3.8-27b`) and the old
+strip-namespace-first rule collapsed all three nodes' telemetry to "qwen3.8"; fixed in
+device_from_lms_id, both telemetry_node writers, and retroactively in score_sb7's
+telemetry_summary (proven on r0's live rows: workhorse 18 / mihai 3 / gabee 1). Early
+rates: decode ~14.1 tok/s median, prefill ~244 — decode a touch faster than 3.6, prefill
+slower on early small calls. r0 relaunched on the fixed binary; this run posts as a NEW
+sb-7 submission per Mihai (the 3.6 entry stays).
