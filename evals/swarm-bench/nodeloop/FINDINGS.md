@@ -20929,3 +20929,21 @@ act (F916) and mis-calibrates effort badly on trivial work (63k+ reasoning chars
 __init__.py, an hour of a node under uncapped). Verdict so far: the depth is real and shows up
 in the artifacts; the cost is wall-clock and it needs force-write to convert deliberation into
 files. No score yet — this is artifact evidence, not a graded result.
+
+## F918 — the uncapped regime's ONE surviving killer misread compaction as death, and it cost two modules
+
+r0v2 build wave: 18 done, 2 FAILED — `api` (the whole ledgerd HTTP surface) and `drafts` (the
+maker/checker workflow), each exhausting all 4 attempts on "agent stalled — no progress for 420s
+(no token/tool activity)" AFTER streaming ~48k reasoning chars. Both files are absent from the
+tree. Not a dead socket: the calls were live and had been streaming. Cause: the idle watchdog
+carries the measured prefill grace ONLY until the first event; afterwards a flat
+worker_timeout_secs (420) applies — but qwen3.8's thinking blocks push the worker conversation
+past 100k chars, the agent loop COMPACTS it, and a compaction re-prefills the whole context as a
+separate call emitting nothing to this stream. At the run's own measured prefill rate a full
+context is many minutes of legitimate silence, so 420s condemns healthy work. This was MY gap:
+when I removed every wall cap I kept the idle failsafe on purpose and never asked whether its
+window still fit the model. FIX (3c3d3bd4b): under uncapped the measured prompt-sized grace
+applies for the WHOLE call, still finite so a genuinely dead socket is caught (the judge reads
+reasoning; a dead stream produces none, so infinity is not an option). ALSO CORRECTED HERE: I
+reported "12 tasks completed" from counting task_completed events without reading their `status`
+field — the event fires for both outcomes. Done vs failed is the only honest count.
