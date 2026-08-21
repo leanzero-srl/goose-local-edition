@@ -32230,24 +32230,52 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             style("!").yellow()
                         );
                         }
-                        let (pj, pc, unc) = dispatcher
+                        // SLOTS, NOT DEVICES. A device's `weight` is how many tasks it runs AT ONCE (baked
+                        // default 2), so a 3-device fleet holds 6. Passing `devices.len()` told the planner
+                        // "3", and the width sentence then asked for 3 independent subtasks on a machine that
+                        // can run 6 — MEASURED as a plan ceiling of 4.45 against achieved concurrency 4.447,
+                        // i.e. the scheduler already delivers everything the plan allows (F268/F269).
+                        let plan_slots = devices
+                            .iter()
+                            .map(|d| d.weight as usize)
+                            .sum::<usize>()
+                            .max(devices.len());
+                        // THE SOLO FALLBACK IS THE RUN'S LAST PLANNING LEG AND HAD NO RETRY: sb-7 r2
+                        // lost all three drafts, fell back here, the solo call hit the reasoning-
+                        // spiral kill, and the `?` ended the ENTIRE ENGINE at minute 21 — a whole
+                        // fleet-run died to one sampling accident that any worker task would simply
+                        // have retried. One warm retry before giving up; the second failure is real.
+                        let (pj, pc, unc) = match dispatcher
                             .plan(
                                 &cfg.planner_model,
                                 &opts.prompt,
                                 plan_schema(),
-                                // SLOTS, NOT DEVICES. A device's `weight` is how many tasks it runs AT ONCE (baked
-                                // default 2), so a 3-device fleet holds 6. Passing `devices.len()` told the planner
-                                // "3", and the width sentence then asked for 3 independent subtasks on a machine that
-                                // can run 6 — MEASURED as a plan ceiling of 4.45 against achieved concurrency 4.447,
-                                // i.e. the scheduler already delivers everything the plan allows (F268/F269).
-                                devices
-                                    .iter()
-                                    .map(|d| d.weight as usize)
-                                    .sum::<usize>()
-                                    .max(devices.len()),
+                                plan_slots,
                                 &research_findings,
                             )
-                            .await?;
+                            .await
+                        {
+                            Ok(v) => v,
+                            Err(first) => {
+                                eprintln!(
+                                    "  {} solo planner attempt 1 failed ({first}); retrying once",
+                                    style("!").yellow()
+                                );
+                                sink.write_value(serde_json::json!({
+                                    "event": "solo_planner_retry",
+                                    "error": first.to_string(),
+                                }));
+                                dispatcher
+                                    .plan(
+                                        &cfg.planner_model,
+                                        &opts.prompt,
+                                        plan_schema(),
+                                        plan_slots,
+                                        &research_findings,
+                                    )
+                                    .await?
+                            }
+                        };
                         (pj, pc, unc, false)
                     }
                 }
