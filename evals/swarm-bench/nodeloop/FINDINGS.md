@@ -20911,3 +20911,21 @@ running engine picking it up on the next worker). think_off_test_authors deliber
 OFF: suppressing deliberation is a quality risk on a model whose depth is its strength.
 Disclosure: this run therefore carries a mid-run treatment change (plus the F915 bounce and
 inbox note) and its published notes must say so.
+
+## F917 — qwen3.8 vs qwen3.6 on the SAME spec: better code, real test suites, worse turn discipline
+
+First like-for-like evidence (3.8 r0v2 still mid-build, so partial by construction).
+CODE: 3.8's db.py opens sqlite with check_same_thread=False + WAL + busy_timeout and manual
+transactions — pitfall #14 handled, which NO qwen3.6 sb-7 tree ever did (grep across r1/r3/r4:
+WAL yes, check_same_thread never) on a spec whose services are threaded HTTP servers. Money is
+an integer-minor formatter with a per-currency exponent ("no floats" in its own docstring),
+so JPY/KWD decimal places are structurally right; 3.6 had no such helper. TESTS: 3.8 has 3
+test files / 39 test functions after ~4 modules; the 3.6 runs finished with ONE test file
+(48 and 27 functions) and r4 — the current published entry — shipped ZERO tests. The plan
+itself splits tests happy/edges per module, the decomposition the architect prompt asks for
+and 3.6 never produced. TOOL DISCIPLINE: 10 tool calls, 0 errors, 0 malformed so far vs 3.6's
+8/131, 10/139, 17/87 error rates. AGAINST 3.8: turn discipline is worse — it narrates past the
+act (F916) and mis-calibrates effort badly on trivial work (63k+ reasoning chars to write an
+__init__.py, an hour of a node under uncapped). Verdict so far: the depth is real and shows up
+in the artifacts; the cost is wall-clock and it needs force-write to convert deliberation into
+files. No score yet — this is artifact evidence, not a graded result.
