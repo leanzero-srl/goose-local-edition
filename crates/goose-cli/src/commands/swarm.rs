@@ -142,6 +142,22 @@ pub struct SwarmDevice {
     /// Physical host (lms ps DEVICE column). Informational/display only — routing is by model_id.
     #[serde(default = "default_host")]
     pub host: Option<String>,
+    /// LLM provider serving this device. None/"lmstudio" = the local fleet (default, byte-identical
+    /// for every existing config). "bedrock" = an Amazon Bedrock cloud model — model_id is the
+    /// Bedrock model/inference-profile id, auth is the stored AWS_BEARER_TOKEN_BEDROCK + AWS_REGION
+    /// (`goose swarm bedrock key`). Cloud devices skip every LM Studio residency/servability/load
+    /// check and merge into the run pool additively.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+}
+
+impl SwarmDevice {
+    fn provider_name(&self) -> &str {
+        self.provider.as_deref().unwrap_or("lmstudio")
+    }
+    fn is_cloud(&self) -> bool {
+        self.provider_name() != "lmstudio"
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1210,6 +1226,7 @@ impl Default for SwarmConfig {
                     enabled: true,
                     instances: 1,
                     host: None,
+                    provider: None,
                 },
                 SwarmDevice {
                     id: "macbook".to_string(),
@@ -1218,6 +1235,7 @@ impl Default for SwarmConfig {
                     enabled: true,
                     instances: 1,
                     host: None,
+                    provider: None,
                 },
             ],
             worker_max_turns: default_worker_max_turns(),
@@ -1429,6 +1447,12 @@ pub enum SwarmCommand {
         #[command(subcommand)]
         command: Option<PoolCommand>,
     },
+    /// Amazon Bedrock cloud nodes: validate/store an API key, auto-populate the usable model ids,
+    /// and add per-model swarm devices (mix cloud models into the local fleet).
+    Bedrock {
+        #[command(subcommand)]
+        command: Option<BedrockCommand>,
+    },
     /// Serve the swarm as an MCP extension over stdio, so an interactive `goose session` can offload work
     /// to the local worker fleet. Scaffold: a read-only `swarm_status` tool (async dispatch/collect later).
     #[command(
@@ -1482,6 +1506,273 @@ pub enum PoolCommand {
     },
 }
 
+#[derive(clap::Subcommand, Debug)]
+pub enum BedrockCommand {
+    /// Validate a Bedrock API key against the region, store it (AWS_BEARER_TOKEN_BEDROCK secret +
+    /// AWS_REGION) ONLY if it is good, then print the auto-populated model roster.
+    Key {
+        key: String,
+        /// AWS region the key targets (default: the stored/env AWS_REGION, else us-east-1).
+        #[arg(long)]
+        region: Option<String>,
+    },
+    /// Re-validate the stored/env key and print the usable model ids (the auto-populated roster).
+    Models,
+    /// Add a Bedrock model as a swarm device (checked against the live roster first).
+    Add {
+        model_id: String,
+        /// Concurrent tasks this cloud node may run at once.
+        #[arg(long, default_value_t = 2)]
+        weight: u32,
+    },
+    /// Remove a Bedrock swarm device by model id.
+    Rm { model_id: String },
+}
+
+/// The stored/ambient Bedrock API key: env first (a harness override), then the goose secret store.
+fn bedrock_stored_key() -> Option<String> {
+    std::env::var("AWS_BEARER_TOKEN_BEDROCK")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            goose::config::Config::global()
+                .get_secret::<String>("AWS_BEARER_TOKEN_BEDROCK")
+                .ok()
+        })
+}
+
+fn bedrock_stored_region() -> Option<String> {
+    std::env::var("AWS_REGION")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            goose::config::Config::global()
+                .get_param::<String>("AWS_REGION")
+                .ok()
+        })
+}
+
+/// Validate the key by LISTING what it can use: the region's system-defined inference profiles
+/// (the ids cross-region models must be invoked by) plus on-demand streaming text models. A 200
+/// proves the key; 401/403 is a bad/expired/mis-region key, reported as such. Sorted, deduped.
+async fn bedrock_roster(key: &str, region: &str) -> Result<Vec<String>> {
+    let client = reqwest::Client::new();
+    let base = format!("https://bedrock.{region}.amazonaws.com");
+    let fetch = |path: String| {
+        let client = client.clone();
+        let base = base.clone();
+        let key = key.to_string();
+        async move {
+            let resp = client
+                .get(format!("{base}{path}"))
+                .bearer_auth(&key)
+                .timeout(std::time::Duration::from_secs(20))
+                .send()
+                .await
+                .map_err(|e| anyhow!("cannot reach Bedrock in {region}: {e}"))?;
+            let status = resp.status();
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                anyhow::bail!(
+                    "Bedrock in {region} REJECTED the API key (HTTP {status}) — bad, expired, or \
+                     issued for a different region"
+                );
+            }
+            if !status.is_success() {
+                anyhow::bail!("Bedrock {region}{path} answered HTTP {status}");
+            }
+            resp.json::<serde_json::Value>()
+                .await
+                .map_err(|e| anyhow!("Bedrock {path} answer was not JSON: {e}"))
+        }
+    };
+    let mut ids: Vec<String> = Vec::new();
+    // Cross-region inference profiles: what modern Anthropic/Meta models must be called by.
+    let mut token: Option<String> = None;
+    loop {
+        let q = match &token {
+            Some(t) => format!(
+                "/inference-profiles?maxResults=1000&typeEquals=SYSTEM_DEFINED&nextToken={t}"
+            ),
+            None => "/inference-profiles?maxResults=1000&typeEquals=SYSTEM_DEFINED".to_string(),
+        };
+        let v = fetch(q).await?;
+        ids.extend(bedrock_ids_from_profiles(&v));
+        token = v["nextToken"].as_str().map(str::to_string);
+        if token.is_none() {
+            break;
+        }
+    }
+    // On-demand streaming text models (older/regional ids callable directly).
+    let v = fetch("/foundation-models".to_string()).await?;
+    ids.extend(bedrock_ids_from_models(&v));
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        anyhow::bail!(
+            "the key authenticates in {region} but no usable (streaming text) model ids came back — \
+             the key's policy may not grant model access in this region"
+        );
+    }
+    Ok(ids)
+}
+
+/// ACTIVE system-defined inference profile ids from a ListInferenceProfiles page. Pure/testable.
+fn bedrock_ids_from_profiles(v: &serde_json::Value) -> Vec<String> {
+    v["inferenceProfileSummaries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| p["status"].as_str() == Some("ACTIVE"))
+        .filter_map(|p| p["inferenceProfileId"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// On-demand STREAMING TEXT model ids from a ListFoundationModels answer — what an agent can
+/// actually run on. Image/embedding models and provisioned-only ids are excluded. Pure/testable.
+fn bedrock_ids_from_models(v: &serde_json::Value) -> Vec<String> {
+    v["modelSummaries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| {
+            let has = |field: &str, want: &str| {
+                m[field]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|x| x.as_str() == Some(want)))
+            };
+            has("outputModalities", "TEXT")
+                && has("inferenceTypesSupported", "ON_DEMAND")
+                && m["responseStreamingSupported"].as_bool().unwrap_or(false)
+        })
+        .filter_map(|m| m["modelId"].as_str().map(str::to_string))
+        .collect()
+}
+
+fn bedrock_print_roster(region: &str, roster: &[String]) {
+    println!(
+        "Bedrock key is GOOD in {region} — {} usable model id(s):",
+        roster.len()
+    );
+    for id in roster {
+        println!("  {id}");
+    }
+    println!("\nAdd one as a swarm node:  goose swarm bedrock add <model-id> [--weight N]");
+}
+
+async fn handle_bedrock(cmd: Option<BedrockCommand>) -> Result<()> {
+    let need_key = || {
+        bedrock_stored_key().ok_or_else(|| {
+            anyhow!(
+                "no Bedrock API key stored — set one with `goose swarm bedrock key <KEY> --region <REGION>` \
+                 (or export AWS_BEARER_TOKEN_BEDROCK)"
+            )
+        })
+    };
+    let region_now = || bedrock_stored_region().unwrap_or_else(|| "us-east-1".to_string());
+    match cmd {
+        Some(BedrockCommand::Key { key, region }) => {
+            let region = region.unwrap_or_else(region_now);
+            let roster = bedrock_roster(&key, &region).await?;
+            let config = goose::config::Config::global();
+            config.set_secret("AWS_BEARER_TOKEN_BEDROCK", &serde_json::json!(key))?;
+            config.set_param("AWS_REGION", serde_json::json!(region.clone()))?;
+            println!("key validated and stored.");
+            bedrock_print_roster(&region, &roster);
+            Ok(())
+        }
+        None | Some(BedrockCommand::Models) => {
+            let key = need_key()?;
+            let region = region_now();
+            let roster = bedrock_roster(&key, &region).await?;
+            bedrock_print_roster(&region, &roster);
+            let cfg = load_config();
+            let cloud: Vec<&SwarmDevice> = cfg.devices.iter().filter(|d| d.is_cloud()).collect();
+            if !cloud.is_empty() {
+                println!("\nConfigured Bedrock swarm nodes:");
+                for d in cloud {
+                    println!(
+                        "  {} → {} (weight {}{})",
+                        d.id,
+                        d.model_id,
+                        d.weight,
+                        if d.enabled { "" } else { ", DISABLED" }
+                    );
+                }
+            }
+            Ok(())
+        }
+        Some(BedrockCommand::Add { model_id, weight }) => {
+            let key = need_key()?;
+            let region = region_now();
+            let roster = bedrock_roster(&key, &region).await?;
+            if !roster.contains(&model_id) {
+                let near: Vec<&String> = roster
+                    .iter()
+                    .filter(|r| {
+                        let m = model_id.to_lowercase();
+                        r.to_lowercase().contains(&m)
+                            || m.split(['-', '.'])
+                                .filter(|t| t.len() > 3)
+                                .any(|t| r.to_lowercase().contains(t))
+                    })
+                    .take(8)
+                    .collect();
+                anyhow::bail!(
+                    "'{model_id}' is not in the key's usable roster for {region}.{}",
+                    if near.is_empty() {
+                        " Run `goose swarm bedrock models` for the full list.".to_string()
+                    } else {
+                        format!(
+                            " Closest usable ids:\n  {}",
+                            near.iter()
+                                .map(|s| s.as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n  ")
+                        )
+                    }
+                );
+            }
+            let mut cfg = load_config();
+            if cfg
+                .devices
+                .iter()
+                .any(|d| d.is_cloud() && d.model_id == model_id)
+            {
+                println!("'{model_id}' is already a configured Bedrock node.");
+                return Ok(());
+            }
+            let id = format!("bedrock-{}", model_id.replace([':', '.', '/'], "-"));
+            cfg.devices.push(SwarmDevice {
+                id: id.clone(),
+                model_id: model_id.clone(),
+                weight,
+                enabled: true,
+                instances: 1,
+                host: Some("bedrock".to_string()),
+                provider: Some("bedrock".to_string()),
+            });
+            save_config(&cfg)?;
+            println!(
+                "added cloud node '{id}' → {model_id} (weight {weight}) — the swarm dispatches to \
+                 it on the next run"
+            );
+            Ok(())
+        }
+        Some(BedrockCommand::Rm { model_id }) => {
+            let mut cfg = load_config();
+            let before = cfg.devices.len();
+            cfg.devices
+                .retain(|d| !(d.is_cloud() && d.model_id == model_id));
+            if cfg.devices.len() == before {
+                anyhow::bail!("no configured Bedrock node has model id '{model_id}'");
+            }
+            save_config(&cfg)?;
+            println!("removed the Bedrock node for {model_id}");
+            Ok(())
+        }
+    }
+}
+
 pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
     match cmd {
         SwarmCommand::Run {
@@ -1512,6 +1803,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             None => pool_menu(),
             Some(pc) => pool_op(pc),
         },
+        SwarmCommand::Bedrock { command } => handle_bedrock(command).await,
         SwarmCommand::Serve => crate::commands::swarm_serve::run().await,
     }
 }
@@ -1769,6 +2061,7 @@ fn pool_menu() -> Result<()> {
                     enabled: true,
                     instances,
                     host: None,
+                    provider: None,
                 });
             }
             "weight" => {
@@ -1989,6 +2282,7 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
                 enabled: true,
                 instances: instances.max(1),
                 host: None,
+                provider: None,
             });
         }
         PoolCommand::Rm { id } => cfg.devices.retain(|d| d.id != id),
@@ -2373,6 +2667,7 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
             enabled: true,
             instances: 1,
             host: p.device.clone(),
+            provider: None,
         })
         .collect();
     // Planner: keep the configured planner if it is resident; else pick the best resident model for the
@@ -2471,6 +2766,7 @@ fn import_processes(
             enabled,
             instances: 1,
             host: p.device.clone(),
+            provider: None,
         };
         cfg.devices.push(dev.clone());
         summary.added.push(dev);
@@ -7933,6 +8229,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             enabled: true,
             instances: 1,
             host: None,
+            provider: None,
         }
     }
 
@@ -11830,6 +12127,36 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn bedrock_roster_parsers_keep_only_runnable_ids() {
+        // Real ListInferenceProfiles / ListFoundationModels shapes (fields the parsers read).
+        let profiles = serde_json::json!({"inferenceProfileSummaries":[
+            {"inferenceProfileId":"us.anthropic.claude-haiku-4-5-20251001-v1:0","status":"ACTIVE"},
+            {"inferenceProfileId":"us.meta.llama4-maverick-v1:0","status":"INACTIVE"},
+            {"status":"ACTIVE"}
+        ]});
+        assert_eq!(
+            bedrock_ids_from_profiles(&profiles),
+            vec!["us.anthropic.claude-haiku-4-5-20251001-v1:0".to_string()]
+        );
+        let models = serde_json::json!({"modelSummaries":[
+            {"modelId":"anthropic.claude-3-haiku-20240307-v1:0","outputModalities":["TEXT"],
+             "inferenceTypesSupported":["ON_DEMAND"],"responseStreamingSupported":true},
+            {"modelId":"stability.sd3-large-v1:0","outputModalities":["IMAGE"],
+             "inferenceTypesSupported":["ON_DEMAND"],"responseStreamingSupported":false},
+            {"modelId":"anthropic.claude-opus-5-v1:0","outputModalities":["TEXT"],
+             "inferenceTypesSupported":["INFERENCE_PROFILE"],"responseStreamingSupported":true},
+            {"modelId":"amazon.titan-embed-text-v2:0","outputModalities":["EMBEDDING"],
+             "inferenceTypesSupported":["ON_DEMAND"],"responseStreamingSupported":false}
+        ]});
+        // Only the on-demand streaming TEXT model survives; the profile-only Opus id comes from
+        // the profiles listing instead, never from here.
+        assert_eq!(
+            bedrock_ids_from_models(&models),
+            vec!["anthropic.claude-3-haiku-20240307-v1:0".to_string()]
+        );
+    }
+
+    #[test]
     fn require_advertised_entry_files_truth_table() {
         // The sb-7 r1 shape: three advertised invocations, service packages owned WITHOUT their
         // __main__.py, and notifierd planned FLAT (no files under its package dir at all).
@@ -12025,6 +12352,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             enabled: true,
             instances: 1,
             host: None,
+            provider: None,
         });
         let procs = vec![
             LmsProcess {
@@ -14167,6 +14495,12 @@ fn build_research_exts(enabled: bool) -> Vec<ExtensionConfig> {
 
 pub struct GooseAgentDispatcher {
     provider: Arc<dyn Provider>,
+    /// model_id → provider name for CLOUD pool devices; consulted at the single update_provider
+    /// seam so a bedrock node's calls run on the bedrock provider while everything else keeps the
+    /// shared lmstudio provider. Empty on an all-local fleet (the default path, byte-identical).
+    cloud_models: std::collections::HashMap<String, String>,
+    /// Lazily-created cloud providers, one per provider name, built on first dispatch.
+    cloud_providers: tokio::sync::Mutex<std::collections::HashMap<String, Arc<dyn Provider>>>,
     session_manager: Arc<SessionManager>,
     permission_manager: Arc<PermissionManager>,
     working_dir: PathBuf,
@@ -14306,6 +14640,31 @@ impl GooseAgentDispatcher {
         std::mem::take(&mut *self.sink_review_findings.lock().unwrap())
     }
 
+    /// Provider NAME serving this model id ("lmstudio" unless the pool declared it cloud).
+    fn provider_name(&self, model_id: &str) -> &str {
+        self.cloud_models
+            .get(model_id)
+            .map(String::as_str)
+            .unwrap_or("lmstudio")
+    }
+
+    /// Provider INSTANCE for this model id: the shared lmstudio provider for local models, a
+    /// lazily-created cached one per cloud provider name otherwise.
+    async fn provider_for(&self, model_id: &str) -> Result<Arc<dyn Provider>> {
+        let Some(pname) = self.cloud_models.get(model_id) else {
+            return Ok(self.provider.clone());
+        };
+        let mut cache = self.cloud_providers.lock().await;
+        if let Some(p) = cache.get(pname) {
+            return Ok(p.clone());
+        }
+        let p = goose::providers::create(pname, vec![]).await.map_err(|e| {
+            anyhow!("creating the '{pname}' provider for cloud node model '{model_id}': {e}")
+        })?;
+        cache.insert(pname.clone(), p.clone());
+        Ok(p)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         working_dir: PathBuf,
@@ -14313,6 +14672,7 @@ impl GooseAgentDispatcher {
         notes_since_ms: i64,
         worker_max_turns: u32,
         worker_extensions: Vec<ExtensionConfig>,
+        cloud_models: std::collections::HashMap<String, String>,
         planner_model: String,
         worker_timeout_secs: u64,
         planner_timeout_secs: u64,
@@ -14334,6 +14694,8 @@ impl GooseAgentDispatcher {
         let permission_manager = Arc::new(PermissionManager::new(session_root));
         Ok(Self {
             provider,
+            cloud_models,
+            cloud_providers: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             session_manager,
             permission_manager,
             events,
@@ -14776,42 +15138,53 @@ impl GooseAgentDispatcher {
             .await?;
         let session_id = session.id.clone();
 
-        let mut model_config =
-            goose::model_config::model_config_from_user_config("lmstudio", model_id)?;
+        let mut model_config = goose::model_config::model_config_from_user_config(
+            self.provider_name(model_id),
+            model_id,
+        )?;
         // Follow LM Studio's own temperature: pass the sampling temperature through verbatim, which is
         // None unless the swarm config explicitly sets one. None clears any inherited GOOSE_TEMPERATURE
         // default so the request omits temperature entirely and the LM Studio per-model setting applies.
         model_config = model_config.with_temperature(temp_override.or(self.sampling.temperature));
         let mut extra = std::collections::HashMap::new();
-        if let Some(v) = self.sampling.top_p {
-            extra.insert("top_p".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = self.sampling.top_k {
-            extra.insert("top_k".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = self.sampling.min_p {
-            extra.insert("min_p".to_string(), serde_json::json!(v));
-        }
-        if let Some(v) = self.sampling.repeat_penalty {
-            extra.insert("repeat_penalty".to_string(), serde_json::json!(v));
-        }
-        if let Some(tool) = force_tool_until_act.filter(|t| !t.is_empty()) {
-            extra.insert(
-                goose_provider_types::formats::openai::FORCE_TOOL_UNTIL_ACT_KEY.to_string(),
-                serde_json::json!(tool),
-            );
-        }
-        if let Some(text) = prefill_assistant.filter(|t| !t.is_empty()) {
-            extra.insert(
-                goose_provider_types::formats::openai::PREFILL_ASSISTANT_KEY.to_string(),
-                serde_json::json!(text),
-            );
+        // The sampling knobs and the openai-format prefill/force-tool keys are LM STUDIO request-body
+        // params; a cloud provider (bedrock) neither understands nor needs them, so a cloud model's
+        // config carries only the temperature.
+        if !self.cloud_models.contains_key(model_id) {
+            if let Some(v) = self.sampling.top_p {
+                extra.insert("top_p".to_string(), serde_json::json!(v));
+            }
+            if let Some(v) = self.sampling.top_k {
+                extra.insert("top_k".to_string(), serde_json::json!(v));
+            }
+            if let Some(v) = self.sampling.min_p {
+                extra.insert("min_p".to_string(), serde_json::json!(v));
+            }
+            if let Some(v) = self.sampling.repeat_penalty {
+                extra.insert("repeat_penalty".to_string(), serde_json::json!(v));
+            }
+            if let Some(tool) = force_tool_until_act.filter(|t| !t.is_empty()) {
+                extra.insert(
+                    goose_provider_types::formats::openai::FORCE_TOOL_UNTIL_ACT_KEY.to_string(),
+                    serde_json::json!(tool),
+                );
+            }
+            if let Some(text) = prefill_assistant.filter(|t| !t.is_empty()) {
+                extra.insert(
+                    goose_provider_types::formats::openai::PREFILL_ASSISTANT_KEY.to_string(),
+                    serde_json::json!(text),
+                );
+            }
         }
         if !extra.is_empty() {
             model_config = model_config.with_merged_request_params(extra);
         }
         agent
-            .update_provider(self.provider.clone(), model_config, &session_id)
+            .update_provider(
+                self.provider_for(model_id).await?,
+                model_config,
+                &session_id,
+            )
             .await
             .map_err(|e| anyhow!("update_provider: {e}"))?;
 
@@ -26492,6 +26865,8 @@ struct DispatcherRecipe {
     notes_since_ms: i64,
     worker_max_turns: u32,
     worker_extensions: Vec<ExtensionConfig>,
+    /// model_id → provider name for CLOUD pool devices (e.g. "bedrock"). Empty on an all-local fleet.
+    cloud_models: std::collections::HashMap<String, String>,
     planner_model: String,
     worker_timeout_secs: u64,
     planner_timeout_secs: u64,
@@ -26516,6 +26891,7 @@ async fn build_swarm_dispatcher(
             r.notes_since_ms,
             r.worker_max_turns,
             r.worker_extensions,
+            r.cloud_models,
             r.planner_model,
             r.worker_timeout_secs,
             r.planner_timeout_secs,
@@ -28969,6 +29345,7 @@ impl GooseAgentDispatcher {
                 if transient {
                     // Best-effort re-warm before re-dispatch — only if model loading is allowed.
                     if self.allow_model_load
+                        && !self.cloud_models.contains_key(&req.model_id)
                         && (s.contains("Model is unloaded") || s.contains("connection"))
                     {
                         ensure_loaded(&req.model_id, 1);
@@ -31073,12 +31450,50 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .yellow()
         );
         cfg.devices.iter().filter(|d| d.enabled).cloned().collect()
+    } else if cfg.devices.iter().any(|d| d.enabled && d.is_cloud()) {
+        eprintln!(
+            "{}",
+            style("fleet has no local models loaded — running on the configured CLOUD nodes only")
+                .yellow()
+        );
+        Vec::new()
     } else {
         return Err(anyhow!(
             "No models are loaded on the fleet (`lms ps` is empty or unavailable) and model loading is off.\n\
              Load your models in LM Studio, or enable loading via `goose swarm pool` (model-load)."
         ));
     };
+    // BEDROCK CLOUD NODES are configured, never resident: merge every enabled cloud device into the
+    // pool ADDITIVELY, after all LM Studio residency/servability logic (none of it applies to a cloud
+    // endpoint) and after the MAX_NODES cap (a LOCAL node-count instrument). Dedup by id covers the
+    // allow_model_load bootstrap branch, which already copied the full configured list.
+    let enabled: Vec<SwarmDevice> = {
+        let mut pool = enabled;
+        for d in cfg.devices.iter().filter(|d| d.enabled && d.is_cloud()) {
+            if !pool.iter().any(|p| p.id == d.id) {
+                eprintln!(
+                    "  · cloud node: {} → {} via {}",
+                    d.id,
+                    d.model_id,
+                    d.provider_name()
+                );
+                pool.push(d.clone());
+            }
+        }
+        pool
+    };
+    // A cloud-only pool cannot plan on an LM Studio model nobody serves: fall back to the first
+    // cloud model. A mixed pool keeps the configured planner (the local fallback logic above ran).
+    if !enabled.is_empty()
+        && enabled.iter().all(|d| d.is_cloud())
+        && !enabled.iter().any(|d| d.model_id == cfg.planner_model)
+    {
+        eprintln!(
+            "planner '{}' is not in the cloud-only pool — planning on '{}'",
+            cfg.planner_model, enabled[0].model_id
+        );
+        cfg.planner_model = enabled[0].model_id.clone();
+    }
     std::env::set_var("LMSTUDIO_HOST", &cfg.endpoint);
     if let Some(cap) = cfg.context_cap {
         std::env::set_var("GOOSE_LOCAL_CONTEXT_CAP", cap.to_string());
@@ -31326,8 +31741,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Gated by allow_model_load — OFF by default, so the swarm never spins up models on its own.
     if cfg.allow_model_load {
         eprintln!("pre-warming models (idempotent) ...");
-        ensure_loaded(&cfg.planner_model, 1);
-        for d in &enabled {
+        if !enabled
+            .iter()
+            .any(|d| d.is_cloud() && d.model_id == cfg.planner_model)
+        {
+            ensure_loaded(&cfg.planner_model, 1);
+        }
+        for d in enabled.iter().filter(|d| !d.is_cloud()) {
             ensure_loaded(&d.model_id, d.instances);
         }
     } else {
@@ -31424,6 +31844,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         notes_since_ms: run_started_ms,
         worker_max_turns,
         worker_extensions,
+        cloud_models: enabled
+            .iter()
+            .filter(|d| d.is_cloud())
+            .map(|d| (d.model_id.clone(), d.provider_name().to_string()))
+            .collect(),
         planner_model: cfg.planner_model.clone(),
         worker_timeout_secs: cfg.worker_timeout_secs,
         planner_timeout_secs: cfg.planner_timeout_secs,
