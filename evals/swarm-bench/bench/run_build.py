@@ -96,9 +96,14 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     # The engine's repair phase clamps its own deadline to this absolute wall (minus one
     # fix-cap) so runs FINISH inside the harness timeout instead of being truncated
     # mid-round — r9 and r11 were both guillotined by the timeout while mid-repair.
-    deadline_ms = int((time.time() + timeout) * 1000)
-    env = {**env, "GOOSE_SWARM_TELEMETRY_FILE": str(tpath),
-           "GOOSE_SWARM_RUN_DEADLINE_UNIX_MS": str(deadline_ms)}
+    # --timeout 0 = UNCAPPED (Mihai 2026-08-21): no wall deadline, no subprocess kill, and the
+    # engine's GOOSE_SWARM_UNCAPPED switch removes every wall/volume cap — the run stops only
+    # when it finishes, when the judge/repeat-break sees a REAL loop, or when a stream goes dead.
+    env = {**env, "GOOSE_SWARM_TELEMETRY_FILE": str(tpath)}
+    if timeout and timeout > 0:
+        env["GOOSE_SWARM_RUN_DEADLINE_UNIX_MS"] = str(int((time.time() + timeout) * 1000))
+    else:
+        env["GOOSE_SWARM_UNCAPPED"] = "1"
     if entrant in MODELS:
         cmd = [str(GOOSE), "run", "--provider", "aws_bedrock", "--model", MODELS[entrant],
                "-t", prompt]
@@ -147,7 +152,8 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     started = time.time()
     try:
         proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True,
-                              timeout=timeout, env={**os.environ, **env}, start_new_session=True)
+                              timeout=(timeout if timeout and timeout > 0 else None),
+                              env={**os.environ, **env}, start_new_session=True)
         code, tail = proc.returncode, (proc.stdout + proc.stderr)[-1500:]
     except subprocess.TimeoutExpired:
         code, tail = None, "timed out"

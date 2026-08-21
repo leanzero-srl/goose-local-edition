@@ -3063,6 +3063,33 @@ const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
 const OMNI_JUDGE_MAX_LOOKS: u32 = 6;
 
+/// GOOSE_SWARM_UNCAPPED (Mihai 2026-08-21: "remove all caps … let it run and only stop if the
+/// judge identifies loops or other issues"): every WALL-CLOCK and VOLUME cap in the run path is
+/// neutralized — a slow local model must never lose work to a threshold. What stays armed: the
+/// omni-judge (reads the reasoning, stops REAL loops), repeat-break (identical tool calls), and
+/// the pure-idle failsafes that fire only on a dead stream (zero token/tool activity). The
+/// harness expresses the regime as `--timeout 0`, which sets this and sends no run deadline.
+fn uncapped() -> bool {
+    std::env::var("GOOSE_SWARM_UNCAPPED")
+        .map(|v| matches!(v.trim(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+/// A week, in seconds: the stand-in for "no cap" at sites whose arithmetic needs a finite
+/// Duration (deadline sums, headroom division). Far beyond any run; never a real bound.
+const UNCAPPED_SECS: u64 = 604_800;
+
+/// The wall for a planner-side helper call (judge review, question answerer, per-task reviewer,
+/// test generator, finding verifier, split partitioner): the configured no-progress window with
+/// a 90s floor — or no wall at all under GOOSE_SWARM_UNCAPPED.
+fn planner_wall(planner_timeout_secs: u64) -> u64 {
+    if uncapped() {
+        UNCAPPED_SECS
+    } else {
+        planner_timeout_secs.max(90)
+    }
+}
+
 /// #135 global spiral-break: env GOOSE_SWARM_SPIRAL_BREAK_CHARS wins, else config, else 0 (OFF).
 /// A CHAR budget, not a bool, because the safe threshold depends on the model's verbosity — it must be
 /// tunable without a rebuild. Clamped to a floor well above the worst LEGITIMATE call measured (6,312 chars)
@@ -3080,6 +3107,9 @@ fn spiral_break_chars_resolved(env: Option<String>, cfg: Option<usize>) -> usize
 }
 
 fn spiral_break_chars(cfg: Option<usize>) -> usize {
+    if uncapped() {
+        return 0;
+    }
     spiral_break_chars_resolved(std::env::var("GOOSE_SWARM_SPIRAL_BREAK_CHARS").ok(), cfg)
 }
 
@@ -3240,6 +3270,9 @@ fn detail_budget_secs() -> u64 {
     // while the run where it got a 1497-char spec containing the vendor's `/v1` prefix scored 88.7%.
     // The engine was willing to spend 10-19 MINUTES re-drafting a plan and 75 SECONDS writing the
     // specs that plan depends on.
+    if uncapped() {
+        return UNCAPPED_SECS;
+    }
     let ceiling = load_config()
         .worker_timeout_secs
         .max(DETAIL_BUDGET_SECS_DEFAULT);
@@ -13446,6 +13479,16 @@ fn draft_timeout_secs() -> u64 {
     )
 }
 
+/// The draft wall with GOOSE_SWARM_UNCAPPED applied: a slow deep draft is legitimate work, and
+/// killing it is how both qwen3.8 r0 attempts lost their whole draft pool to the solo fallback.
+fn draft_timeout_eff() -> u64 {
+    if uncapped() {
+        UNCAPPED_SECS
+    } else {
+        draft_timeout_secs()
+    }
+}
+
 /// The pure precedence, split out so it is testable (the wrapper reads env + config).
 fn draft_timeout_resolved(env: Option<String>, cfg: Option<u64>) -> u64 {
     env.and_then(|v| v.trim().parse::<u64>().ok())
@@ -13460,6 +13503,9 @@ fn draft_timeout_resolved(env: Option<String>, cfg: Option<u64>) -> u64 {
 /// Never BELOW the worker budget: the sink strictly dominates a worker's job, so a smaller cap could only
 /// ever cut it off sooner — there is no configuration in which that is what someone meant.
 fn sink_max_turns(worker_default: u32) -> u32 {
+    if uncapped() {
+        return worker_default.max(100_000);
+    }
     sink_max_turns_resolved(
         std::env::var("GOOSE_SWARM_SINK_MAX_TURNS").ok(),
         load_config().sink_max_turns,
@@ -13485,6 +13531,9 @@ fn sink_max_turns_resolved(env: Option<String>, cfg: Option<u32>, worker_default
 /// without ever being handed to the model. It is a suspect, not a proven cause: `clarity_fail` now records
 /// whether it was actually a timeout, so raising this can be judged on evidence rather than on my hunch.
 fn clarity_probe_secs() -> u64 {
+    if uncapped() {
+        return UNCAPPED_SECS;
+    }
     let cfg = load_config().clarity_probe_secs;
     std::env::var("GOOSE_SWARM_CLARITY_PROBE_SECS")
         .ok()
@@ -15596,13 +15645,22 @@ impl GooseAgentDispatcher {
             // aborts THIS call only; it can never fail a task or a run (a model verdict has
             // JudgeOutcome.deterministic == false, and scheduler.rs's terminal-fail requires it).
             if omni_judge_on
-                && omni_looks < OMNI_JUDGE_MAX_LOOKS
+                && (omni_looks < OMNI_JUDGE_MAX_LOOKS || uncapped())
                 && thinking_chars >= OMNI_JUDGE_MIN_CHARS
                 && tokio::time::Instant::now() >= omni_next_look
             {
                 omni_looks += 1;
-                omni_next_look = tokio::time::Instant::now()
-                    + std::time::Duration::from_secs(OMNI_JUDGE_INTERVAL_SECS);
+                // UNCAPPED keeps the judge watching for the call's whole life — with every wall and
+                // volume cap gone it is the ONLY stopper left, and a cap on its looks would turn
+                // "the judge decides" into "nothing decides after minute ~7". Past the normal look
+                // budget it backs off to 5-minute checks so a very long call costs bounded judge time.
+                let look_interval = if omni_looks >= OMNI_JUDGE_MAX_LOOKS {
+                    300
+                } else {
+                    OMNI_JUDGE_INTERVAL_SECS
+                };
+                omni_next_look =
+                    tokio::time::Instant::now() + std::time::Duration::from_secs(look_interval);
                 let tail: String = {
                     let c: Vec<char> = last_thinking.chars().collect();
                     c[c.len().saturating_sub(2_000)..].iter().collect()
@@ -16720,7 +16778,11 @@ impl GooseAgentDispatcher {
                 let retry_on =
                     swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry);
                 let attempts = if retry_on { 2 } else { 1 };
-                let stub_budget = me.worker_timeout_secs.max(120);
+                let stub_budget = if uncapped() {
+                    UNCAPPED_SECS
+                } else {
+                    me.worker_timeout_secs.max(120)
+                };
                 // Write a per-module contract digest so the CONTRACTS phase shows live per-node activity (dev
                 // verbosity) instead of a black box — the desktop reads .swarm/activity/contract-<id>.json.
                 let contract_key = format!("contract-{}", spec.id);
@@ -17057,7 +17119,7 @@ impl GooseAgentDispatcher {
             let schema0 = plan_schema.clone();
             // Resolved ONCE per round, outside the spawn: load_config() reads from disk and this would
             // otherwise re-read it per draft.
-            let draft_timeout = draft_timeout_secs();
+            let draft_timeout = draft_timeout_eff();
             // #135 straggler-stop: OFF -> the classic await-all path below runs unchanged.
             let straggler_stop = self.straggler_stop;
             let straggler_grace = self.straggler_grace_secs;
@@ -22999,7 +23061,7 @@ impl GooseAgentDispatcher {
             desc = req.description,
         );
         let text = tokio::time::timeout(
-            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
             self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0, None),
         )
         .await
@@ -23572,10 +23634,14 @@ impl Judge for GooseAgentDispatcher {
         // M3: split-enable is OFF in the default; GOOSE_SWARM_SPLIT=1 turns task-splitting on at runtime
         // so it can be proven live (M4) without a recompile, mirroring the judge/pre-review env gates.
         let cfg = JudgeConfig {
-            split_enabled: std::env::var("GOOSE_SWARM_SPLIT")
-                .ok()
-                .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-                .unwrap_or_else(|| load_config().split.unwrap_or(true)),
+            // UNCAPPED: the split trip is elapsed-wall on a PRODUCTIVE task — exactly the class the
+            // regime removes; the spiral kill is a volume threshold. Both forced off; the judge's
+            // content-based LOOPING verdicts stay.
+            split_enabled: !uncapped()
+                && std::env::var("GOOSE_SWARM_SPLIT")
+                    .ok()
+                    .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+                    .unwrap_or_else(|| load_config().split.unwrap_or(true)),
             // GOOSE_SWARM_SPLIT_SECS overrides the too-big threshold (default 900s) so a live M4 proof can
             // trigger a split on a moderate task without waiting ~15 min for one to cross the default.
             split_threshold_secs: std::env::var("GOOSE_SWARM_SPLIT_SECS")
@@ -23584,10 +23650,14 @@ impl Judge for GooseAgentDispatcher {
                 .unwrap_or_else(|| load_config().split_secs),
             // #134 reasoning-spiral cap: env wins, else config.yaml, else 0 (OFF). Config-reachable so the
             // desktop can enable it (env is discarded by `open -n`).
-            spiral_thinking_chars: std::env::var("GOOSE_SWARM_SPIRAL_THINKING_CHARS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or_else(|| load_config().spiral_thinking_chars),
+            spiral_thinking_chars: if uncapped() {
+                0
+            } else {
+                std::env::var("GOOSE_SWARM_SPIRAL_THINKING_CHARS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or_else(|| load_config().spiral_thinking_chars)
+            },
             ..JudgeConfig::default()
         };
         // c5: the owned-file loop AND the activity-digest read below both derive from this one
@@ -23966,7 +24036,7 @@ impl Judge for GooseAgentDispatcher {
             }
         }
         match tokio::time::timeout(
-            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
             self.run_agent(&req.judge_model_id, system, user, None, 2, &[], 0, None),
         )
         .await
@@ -24066,7 +24136,7 @@ impl PreReviewer for GooseAgentDispatcher {
             "GOAL of the run: {goal}\n\nCURRENT RUN STATE:\n{run_state}\n\nOPERATOR QUESTION:\n{question}\n\nYour answer:"
         );
         let reply = tokio::time::timeout(
-            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
             self.run_agent(model_id, system, user, None, 1, &[], 0, None),
         )
         .await
@@ -24209,7 +24279,7 @@ impl PreReviewer for GooseAgentDispatcher {
             files = files_block,
         );
         let text = tokio::time::timeout(
-            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
             self.run_agent(&req.reviewer_model_id, system, user, None, 2, &[], 0, None),
         )
         .await
@@ -24342,7 +24412,7 @@ impl PreReviewer for GooseAgentDispatcher {
             contracts = frozen_interfaces_block(bundle)
         );
         let reply = tokio::time::timeout(
-            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
             self.run_agent(model_id, system, user, None, 2, &[], 0, None),
         )
         .await
@@ -29804,7 +29874,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
             "GOAL: {goal}\n\nFINDING TO VERIFY: {finding}\n\nFiles produced:\n{files_block}\nYour one-line verdict:"
         );
         let text = tokio::time::timeout(
-            std::time::Duration::from_secs(self.planner_timeout_secs.max(90)),
+            std::time::Duration::from_secs(planner_wall(self.planner_timeout_secs)),
             self.run_agent(model_id, system, user, None, 2, &[], 0, None),
         )
         .await
@@ -30986,6 +31056,9 @@ fn fix_cap_secs() -> u64 {
     // cap with the ETag findings unchanged — indicts the shape of the repair (one monolithic
     // twin per model), not the constant: the S1 shard design and the G-batch progress-shaped cap
     // (rounds-without-mutation) are the fixes with evidence behind them.
+    if uncapped() {
+        return UNCAPPED_SECS;
+    }
     std::env::var("GOOSE_SWARM_FIX_CAP_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -31721,6 +31794,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     if std::env::var("GOOSE_SWARM_SINK_CAP_SECS").is_err() {
         std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", cfg.sink_cap_secs.to_string());
     }
+    if uncapped() {
+        // GOOSE_SWARM_UNCAPPED wins over both config and an explicit env: the sink runs until
+        // done, the thinking-only timer never fires. Idle failsafes and the judge stay armed.
+        std::env::set_var("GOOSE_SWARM_SINK_CAP_SECS", "0");
+        std::env::set_var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", "0");
+        std::env::set_var("GOOSE_SWARM_STRAGGLER_STOP_DEGRADE", "0");
+        eprintln!(
+            "  swarm: UNCAPPED — no wall/volume caps this run; only the judge, repeat-break and dead-stream failsafes can stop a call"
+        );
+    }
     // Same bridge for SINK IDLE-FILL, and it is the FIRST one this lever has ever had.
     // `sink_review_enabled()` reads the environment only, so a desktop run — which cannot set env vars
     // at all — could never switch it on, and `levers.sink_review` is absent from every cell on record:
@@ -31781,7 +31864,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // out of the spawn dir. The breadcrumb is written in the dir the desktop passed us, so it is always
     // where the panel is looking, and it is rewritten at the START of every run.
     publish_current_run(&spawn_dir, &working_dir, &run_id);
-    let worker_max_turns = opts.max_turns.unwrap_or(cfg.worker_max_turns);
+    let worker_max_turns = if uncapped() {
+        100_000
+    } else {
+        opts.max_turns.unwrap_or(cfg.worker_max_turns)
+    };
     // M5: a fresh run must NOT inherit stale .swarm/prereview findings from a previous run in this working
     // dir — they would be injected into THIS run's integrate-verify and describe code that no longer exists.
     let _ = std::fs::remove_dir_all(working_dir.join(".swarm").join("prereview"));
@@ -32208,7 +32295,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     worker_models,
                     ScoutBudget {
                         max_lookups: cfg.scout_max_lookups,
-                        backstop_secs: cfg.scout_budget_secs,
+                        backstop_secs: if uncapped() {
+                            UNCAPPED_SECS
+                        } else {
+                            cfg.scout_budget_secs
+                        },
                     },
                 )
                 .await
@@ -34383,6 +34474,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or_else(|| load_config().complete_cap_secs);
+        let cap_requested = if uncapped() {
+            UNCAPPED_SECS
+        } else {
+            cap_requested
+        };
         // F856 geometry: the phase budget must fit rounds of the SCALED per-fix ceiling, not the
         // static base — a ≥2× tree's twin may legally run to 2× fix_cap_secs, and budgeting the
         // static value reinstates the exact "later rounds unreachable" defect the lift exists to
