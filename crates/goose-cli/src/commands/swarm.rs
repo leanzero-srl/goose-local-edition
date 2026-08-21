@@ -11830,6 +11830,71 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn require_advertised_entry_files_truth_table() {
+        // The sb-7 r1 shape: three advertised invocations, service packages owned WITHOUT their
+        // __main__.py, and notifierd planned FLAT (no files under its package dir at all).
+        let spec = "Run `python -m app --db-dir P`. Standalone: `python3 -m app.ledgerd` and \
+                    `python3 -m app.notifierd`. Tests: `python3 -m pytest`.";
+        let mut v = serde_json::json!({"subtasks":[
+            {"id":"core","files":["app/__init__.py","app/config.py"]},
+            {"id":"ledgerd","files":["app/ledgerd/server.py","app/ledgerd/store.py"]},
+            {"id":"notify","files":["app/notifier.py"]},
+            {"id":"verify","files":[]}
+        ]});
+        let added = require_advertised_entry_files(&mut v, spec);
+        // `app` -> entry into the task owning most under app/ ; `app.ledgerd` -> into ledgerd
+        // (no __init__ added: the package already has owned files); `app.notifierd` -> FRESH
+        // package: entry AND __init__. pytest is denylisted and injects nothing.
+        assert!(added.contains(&"app/__main__.py".to_string()));
+        assert!(added.contains(&"app/ledgerd/__main__.py".to_string()));
+        assert!(!added.contains(&"app/ledgerd/__init__.py".to_string()));
+        assert!(added.contains(&"app/notifierd/__main__.py".to_string()));
+        assert!(added.contains(&"app/notifierd/__init__.py".to_string()));
+        assert_eq!(added.len(), 4);
+        let ledgerd_files: Vec<&str> = v["subtasks"][1]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f.as_str().unwrap())
+            .collect();
+        assert!(ledgerd_files.contains(&"app/ledgerd/__main__.py"));
+        assert!(v["subtasks"][1]["description"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_default()
+            .is_empty()); // no description field on input -> note skipped, never invented
+                          // The verify task (owns nothing) must never be picked.
+        assert!(v["subtasks"][3]["files"].as_array().unwrap().is_empty());
+
+        // Already satisfied (entry owned) and module form (X.py owned): both no-ops.
+        let mut sat = serde_json::json!({"subtasks":[
+            {"id":"a","files":["app/__main__.py"],"description":"d"},
+            {"id":"b","files":["app/ledgerd.py"],"description":"d"}
+        ]});
+        assert!(require_advertised_entry_files(
+            &mut sat,
+            "boot `python -m app` and `python -m app.ledgerd`"
+        )
+        .is_empty());
+        assert_eq!(sat["subtasks"][0]["description"].as_str().unwrap(), "d");
+
+        // A description that exists gains the note exactly once, with the invocation named.
+        let mut d = serde_json::json!({"subtasks":[
+            {"id":"a","files":["app/server.py"],"description":"Build the server."}
+        ]});
+        let a2 = require_advertised_entry_files(&mut d, "run `python -m app`");
+        assert_eq!(a2, vec!["app/__main__.py".to_string()]);
+        let desc = d["subtasks"][0]["description"].as_str().unwrap();
+        assert!(desc.starts_with("Build the server."));
+        assert!(desc.contains("python -m app"));
+        assert!(desc.contains("app/__main__.py"));
+
+        // No advertised invocations -> byte-identical plan.
+        let mut n = serde_json::json!({"subtasks":[{"id":"a","files":["x.py"]}]});
+        assert!(require_advertised_entry_files(&mut n, "build a CLI tool").is_empty());
+    }
+
+    #[test]
     fn run_pillar_checks_flags_only_failing_checks() {
         let dir = tempfile::tempdir().unwrap();
         let swarm = dir.path().join(".swarm");
@@ -12544,7 +12609,14 @@ self.server.store — set BEFORE serve_forever, never patched in after.
 treats the whole string as a hostname and fails DNS ('nodename nor servname provided'). Parse the \
 base URL first (urllib.parse.urlsplit) and pass host and port separately — or use urllib.request \
 which accepts full URLs. Verify the server BINDS and answers before layering features: a server \
-that cannot boot makes every other line of the app worthless.\
+that cannot boot makes every other line of the app worthless.
+17. `python -m X` boots a PACKAGE X only through X/__main__.py: without that file the invocation fails \
+instantly with 'No module named X.__main__' even when the package imports fine and its code is perfect \
+(measured: two builds shipped service packages without __main__.py and two of three advertised \
+invocations could never boot, zeroing the delivery). EVERY invocation the spec advertises must boot — \
+each package form needs its own __main__.py (argparse the documented flags, then start the service), a \
+subpackage needs __init__.py at every level, and the proof is running each advertised command and \
+watching it bind its port, not reading the code.\
 ";
 
 /// Triggers are deliberately UNAMBIGUOUS, not merely topical. A first cut used bare words like "page",
@@ -12680,6 +12752,7 @@ const PITFALL_TRIGGERS: &[&[&str]] = &[
         "meridianclient",
         "vendor client",
     ],
+    &["python -m", "python3 -m", "__main__"],
 ];
 
 /// The DOMAIN_PITFALLS items relevant to this task's text, or None when nothing matches.
@@ -20476,6 +20549,97 @@ fn spec_python_invocations(spec: &str) -> Vec<String> {
         })
         .filter(|p| seen.insert(p.clone()))
         .collect()
+}
+
+/// PACKAGE-ENTRY TRUTH (sb-7 r1+r3 forensics): a `python -m X` the spec advertises boots ONLY through
+/// `X/__main__.py` when X is a package — and in both fleet runs the shipped service packages had none,
+/// so two of three advertised invocations could never boot regardless of code quality, zeroing every
+/// runtime tier. Deterministic post-pass on the plan the run will dispatch: for every advertised
+/// invocation whose entry no task owns (neither the package entry `X/__main__.py` nor the module form
+/// `X.py`), inject the entry file into the owned files of the task best placed to write it — most files
+/// under the package dir, else most under the parent package, else the first task owning anything —
+/// plus `__init__.py` when the package has no other owned file, and append one sentence to that task's
+/// description saying exactly what the entry must do. Returns the injected paths (empty = no-op,
+/// byte-identical plan). Adds no tasks and touches no deps, so the already-built DAG stays valid.
+fn require_advertised_entry_files(v: &mut serde_json::Value, spec: &str) -> Vec<String> {
+    let invocations = spec_python_invocations(spec);
+    if invocations.is_empty() {
+        return Vec::new();
+    }
+    let Some(subtasks) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
+        return Vec::new();
+    };
+    let owned: Vec<String> = subtasks
+        .iter()
+        .filter_map(|s| s.get("files").and_then(|f| f.as_array()))
+        .flatten()
+        .filter_map(|f| f.as_str().map(str::to_string))
+        .collect();
+    let count_under = |st: &serde_json::Value, pre: &str| {
+        st.get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter(|f| f.as_str().is_some_and(|s| s.starts_with(pre)))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    let mut added = Vec::new();
+    for inv in invocations {
+        let dir = inv.replace('.', "/");
+        let entry = format!("{dir}/__main__.py");
+        let module = format!("{dir}.py");
+        if owned.iter().any(|f| f == &entry || f == &module) {
+            continue;
+        }
+        let prefix = format!("{dir}/");
+        let parent_prefix = dir.rsplit_once('/').map(|(p, _)| format!("{p}/"));
+        let best_by = |pre: &str| {
+            subtasks
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, st)| count_under(st, pre))
+                .filter(|(_, st)| count_under(st, pre) > 0)
+                .map(|(i, _)| i)
+        };
+        let pick = best_by(&prefix)
+            .or_else(|| parent_prefix.as_deref().and_then(best_by))
+            .or_else(|| {
+                subtasks.iter().position(|st| {
+                    st.get("files")
+                        .and_then(|f| f.as_array())
+                        .is_some_and(|a| !a.is_empty())
+                })
+            });
+        let Some(ti) = pick else { continue };
+        let fresh_package = !owned.iter().any(|f| f.starts_with(&prefix));
+        let st = &mut subtasks[ti];
+        let Some(files) = st.get_mut("files").and_then(|f| f.as_array_mut()) else {
+            continue;
+        };
+        files.push(serde_json::Value::String(entry.clone()));
+        added.push(entry.clone());
+        if fresh_package {
+            let init = format!("{dir}/__init__.py");
+            files.push(serde_json::Value::String(init.clone()));
+            added.push(init);
+        }
+        let note = format!(
+            "\nPACKAGE ENTRY (engine-required): the spec advertises `python -m {inv}`, and that \
+             invocation boots ONLY if `{entry}` exists — without it Python fails instantly with \
+             'No module named {inv}.__main__' no matter how good the rest of the code is. Write \
+             `{entry}`: parse the flags the spec documents for this invocation and start the \
+             service (bind its documented port). Prove it: run `python3 -m {inv}` with the \
+             documented flags and watch it bind before calling this task done."
+        );
+        if let Some(desc) = st.get_mut("description") {
+            if let Some(s) = desc.as_str() {
+                *desc = serde_json::Value::String(format!("{s}{note}"));
+            }
+        }
+    }
+    added
 }
 
 /// The advertised server port when the spec literally names one. Pure/testable.
@@ -33016,6 +33180,31 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
     } else {
         (plan_json, dag)
+    };
+
+    // PACKAGE-ENTRY TRUTH (sb-7 r1+r3): runs on the FINAL plan regardless of which path produced it
+    // (parallel loop, solo fallback, resume) — the one seam every dispatch reads. Mutates only owned
+    // files + descriptions of existing tasks, so the dag above stays valid untouched. A plan that
+    // fails to re-parse here is impossible (it just round-tripped), but degrade to unchanged rather
+    // than kill the run over an instrument.
+    let plan_json = match serde_json::from_str::<serde_json::Value>(&plan_json) {
+        Ok(mut v) => {
+            let added = require_advertised_entry_files(&mut v, &opts.prompt);
+            if added.is_empty() {
+                plan_json
+            } else {
+                eprintln!(
+                    "  · package-entry: spec-advertised `python -m` entry file(s) nobody owned, injected into the plan: {}",
+                    added.join(", ")
+                );
+                sink.write_value(serde_json::json!({
+                    "event": "package_entry_injected",
+                    "files": added,
+                }));
+                v.to_string()
+            }
+        }
+        Err(_) => plan_json,
     };
 
     // PILLARS OFF THE CRITICAL PATH (speed hunt 2026-08-16). This was one serial planner call
