@@ -305,6 +305,52 @@ function PresetBar({ active, onApply }: { active: PresetId; onApply: () => void 
   );
 }
 
+/** Free-form JSON object editor for the LM Studio extra-body passthrough. Commits on blur only
+ *  when the text parses as a JSON OBJECT; a bad parse shows a solid red border and commits
+ *  nothing. Empty = clears the field. */
+function ExtraBodyField({
+  value,
+  onCommit,
+}: {
+  value: Record<string, unknown> | undefined;
+  onCommit: (v: Record<string, unknown> | undefined) => void;
+}) {
+  const [text, setText] = useState(value ? JSON.stringify(value) : '');
+  const [bad, setBad] = useState(false);
+  useEffect(() => {
+    setText(value ? JSON.stringify(value) : '');
+    setBad(false);
+  }, [value]);
+  return (
+    <Input
+      className="w-64 font-mono text-xs"
+      style={{ borderRadius: 3, ...(bad ? { borderColor: '#e5484d', borderWidth: 2 } : {}) }}
+      placeholder="{}"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => {
+        const t = text.trim();
+        if (!t) {
+          setBad(false);
+          onCommit(undefined);
+          return;
+        }
+        try {
+          const v = JSON.parse(t) as unknown;
+          if (v && typeof v === 'object' && !Array.isArray(v)) {
+            setBad(false);
+            onCommit(v as Record<string, unknown>);
+          } else {
+            setBad(true);
+          }
+        } catch {
+          setBad(true);
+        }
+      }}
+    />
+  );
+}
+
 /** The last CLI error line, human-readable — the engine prints one-line `Error: …` messages. */
 function bedrockErr(r: { stdout: string; stderr: string; error: string | null }): string {
   const m = (r.stderr || '').match(/Error:\s*([\s\S]+)/);
@@ -312,21 +358,37 @@ function bedrockErr(r: { stdout: string; stderr: string; error: string | null })
   return (r.stderr || r.error || 'the goose engine call failed').trim();
 }
 
-const NODE_PROVIDERS = ['LM Studio', 'Bedrock'] as const;
-type NodeProvider = (typeof NODE_PROVIDERS)[number];
+/** The cloud providers the panel can add nodes from — mirrors the engine's CLOUD_DEFS (cli =
+ *  the `goose swarm cloud <cli>` name and the SwarmDevice.provider value). Distinct SOLID chip
+ *  hues per provider, per the UI rules. */
+const CLOUD_PROVIDERS = [
+  { seg: 'Bedrock', cli: 'bedrock', label: 'Amazon Bedrock', keyPlaceholder: 'Bedrock API key (ABSK…)', region: true, chip: '#8e4ec6' },
+  { seg: 'Z.ai', cli: 'zai', label: 'Z.ai', keyPlaceholder: 'Z.ai API key', region: false, chip: '#f76b15' },
+  { seg: 'Gemini', cli: 'google', label: 'Google Gemini', keyPlaceholder: 'Gemini API key (AIza…)', region: false, chip: '#12a594' },
+  { seg: 'DeepSeek', cli: 'deepseek', label: 'DeepSeek', keyPlaceholder: 'DeepSeek API key (sk-…)', region: false, chip: '#d6409f' },
+] as const;
+type CloudProviderDef = (typeof CLOUD_PROVIDERS)[number];
+const chipFor = (provider: string | null | undefined) =>
+  CLOUD_PROVIDERS.find((c) => c.cli === provider) ?? null;
+
+const NODE_PROVIDERS = ['LM Studio', ...CLOUD_PROVIDERS.map((c) => c.seg)] as [string, ...string[]];
+type NodeProvider = string;
 
 /**
- * Amazon Bedrock cloud nodes. The panel's whole contract runs through the engine CLI over IPC
- * (`goose swarm bedrock … --json`) — the same code path the terminal uses, so desktop and CLI can
- * never disagree: key validation happens ENGINE-side (stored only when the region accepts it), the
- * model roster AUTO-POPULATES from what the key can actually invoke, and add/rm write the device
- * list through the engine. After any device mutation the parent re-reads the swarm config
- * (onChanged) so the panel's in-memory copy never clobbers CLI-written devices on a later save.
+ * A cloud provider's nodes (Bedrock, Z.ai, Gemini, DeepSeek). The panel's whole contract runs
+ * through the engine CLI over IPC (`goose swarm cloud <provider> … --json`) — the same code path
+ * the terminal uses, so desktop and CLI can never disagree: key validation happens ENGINE-side
+ * (stored only when the provider accepts it), the model roster AUTO-POPULATES from what the key
+ * can actually invoke, and add/rm write the device list through the engine. After any device
+ * mutation the parent re-reads the swarm config (onChanged) so the panel's in-memory copy never
+ * clobbers CLI-written devices on a later save.
  */
-function BedrockPane({
+function CloudPane({
+  def,
   devices,
   onChanged,
 }: {
+  def: CloudProviderDef;
   devices: SwarmDeviceRow[];
   onChanged: () => Promise<void>;
 }) {
@@ -340,7 +402,7 @@ function BedrockPane({
   const [editKey, setEditKey] = useState(false);
 
   const refresh = useCallback(async () => {
-    const r = await window.electron.swarmBedrock(['models', '--json']);
+    const r = await window.electron.swarmCloud(def.cli, ['models', '--json']);
     if (r.ok) {
       try {
         const v = JSON.parse(r.stdout) as { region?: string; models?: string[] };
@@ -352,13 +414,13 @@ function BedrockPane({
       } catch {
         setError('unreadable roster answer from the engine');
       }
-    } else if (/no Bedrock API key/i.test(`${r.stderr} ${r.error ?? ''}`)) {
+    } else if (/no .* API key stored/i.test(`${r.stderr} ${r.error ?? ''}`)) {
       setError(null);
     } else {
       setError(bedrockErr(r));
     }
     setPhase('no-key');
-  }, []);
+  }, [def.cli]);
 
   useEffect(() => {
     void refresh();
@@ -371,8 +433,8 @@ function BedrockPane({
     setError(null);
     const args = ['key', key, '--json'];
     const reg = region.trim();
-    if (reg) args.push('--region', reg);
-    const r = await window.electron.swarmBedrock(args);
+    if (def.region && reg) args.push('--region', reg);
+    const r = await window.electron.swarmCloud(def.cli, args);
     setBusy(null);
     if (r.ok) {
       try {
@@ -388,13 +450,13 @@ function BedrockPane({
     } else {
       setError(bedrockErr(r));
     }
-  }, [keyText, region]);
+  }, [keyText, region, def.cli, def.region]);
 
   const addNode = useCallback(
     async (modelId: string) => {
       setBusy(modelId);
       setError(null);
-      const r = await window.electron.swarmBedrock(['add', modelId, '--weight', '2']);
+      const r = await window.electron.swarmCloud(def.cli, ['add', modelId, '--weight', '2']);
       setBusy(null);
       if (!r.ok) setError(bedrockErr(r));
       await onChanged();
@@ -406,7 +468,7 @@ function BedrockPane({
     async (modelId: string) => {
       setBusy(modelId);
       setError(null);
-      const r = await window.electron.swarmBedrock(['rm', modelId]);
+      const r = await window.electron.swarmCloud(def.cli, ['rm', modelId]);
       setBusy(null);
       if (!r.ok) setError(bedrockErr(r));
       await onChanged();
@@ -421,26 +483,28 @@ function BedrockPane({
   const keyEntry = (
     <div className="space-y-2">
       <div className="text-xs text-text-secondary max-w-[92ch]">
-        Paste an Amazon Bedrock API key. goose validates it against the region first — the key is
-        stored (encrypted, in your goose secret store) only when Bedrock accepts it, and the models
-        it can run auto-populate below.
+        Paste a {def.label} API key. goose validates it live first — the key is stored (encrypted,
+        in your goose secret store) only when {def.label} accepts it, and the models it can run
+        auto-populate below.
       </div>
       <div className="flex items-center gap-2">
         <Input
           type="password"
           className="flex-1"
           style={{ borderRadius: 3 }}
-          placeholder="Bedrock API key (ABSK…)"
+          placeholder={def.keyPlaceholder}
           value={keyText}
           onChange={(e) => setKeyText(e.target.value)}
         />
-        <Input
-          className="w-28"
-          style={{ borderRadius: 3 }}
-          placeholder="region"
-          value={region}
-          onChange={(e) => setRegion(e.target.value)}
-        />
+        {def.region && (
+          <Input
+            className="w-28"
+            style={{ borderRadius: 3 }}
+            placeholder="region"
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+          />
+        )}
         <button
           type="button"
           disabled={busy === 'validate' || !keyText.trim()}
@@ -503,9 +567,9 @@ function BedrockPane({
               <span className="min-w-0 flex items-center gap-2">
                 <span
                   className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary shrink-0"
-                  style={{ backgroundColor: '#8e4ec6', borderRadius: 3 }}
+                  style={{ backgroundColor: def.chip, borderRadius: 3 }}
                 >
-                  BEDROCK
+                  {def.seg.toUpperCase()}
                 </span>
                 <span className="text-xs font-mono text-text-primary truncate" title={d.model_id}>
                   {d.model_id}
@@ -689,19 +753,22 @@ export default function SwarmSettingsSection() {
   // fleet models when the pool is empty. weightFor mirrors the scheduler's speed_weight_for (first key the
   // device id contains, else 1) so the UI shows the ACTUAL effective weight — including pool-set keys.
   const configuredDevices: SwarmDeviceRow[] = Array.isArray(cfg.devices) ? cfg.devices : [];
-  const cloudDevices = configuredDevices.filter((d) => (d.provider ?? 'lmstudio') !== 'lmstudio');
+  const activeCloud = CLOUD_PROVIDERS.find((c) => c.seg === nodeProvider) ?? null;
+  const activeCloudDevices = activeCloud
+    ? configuredDevices.filter((d) => d.provider === activeCloud.cli)
+    : [];
   const weightRows =
     configuredDevices.length > 0
       ? configuredDevices.map((d) => {
-          const cloud = (d.provider ?? 'lmstudio') !== 'lmstudio';
+          const chip = chipFor(d.provider);
           return {
             id: d.id,
-            // A Bedrock id like `us.anthropic.claude-…` has no `<node>-` prefix; derive nothing from it.
-            name: cloud ? d.model_id : deviceFromModelId(d.model_id) || d.id,
-            cloud,
+            // A cloud id like `us.anthropic.claude-…` has no `<node>-` prefix; derive nothing from it.
+            name: chip ? d.model_id : deviceFromModelId(d.model_id) || d.id,
+            chip,
           };
         })
-      : fleet.models.map((m) => ({ id: m, name: deviceFromModelId(m), cloud: false }));
+      : fleet.models.map((m) => ({ id: m, name: deviceFromModelId(m), chip: null }));
   const weightFor = (id: string): number => {
     const sw = cfg.speed_weights ?? {};
     if (id in sw) return sw[id] ?? 1; // exact device-id key wins (avoids substring collisions)
@@ -732,7 +799,8 @@ export default function SwarmSettingsSection() {
               </span>
             ) : (
               <span className="text-text-secondary">
-                {cloudDevices.length} cloud node{cloudDevices.length === 1 ? '' : 's'} in the pool
+                {activeCloudDevices.length} {activeCloud?.label} node
+                {activeCloudDevices.length === 1 ? '' : 's'} in the pool
               </span>
             )}
           </div>
@@ -744,9 +812,14 @@ export default function SwarmSettingsSection() {
                 No fleet detected. Start LM Studio (LM Link) at {cfg.endpoint} to see your nodes.
               </div>
             )
-          ) : (
-            <BedrockPane devices={cloudDevices} onChanged={reloadSwarm} />
-          )}
+          ) : activeCloud ? (
+            <CloudPane
+              key={activeCloud.cli}
+              def={activeCloud}
+              devices={activeCloudDevices}
+              onChanged={reloadSwarm}
+            />
+          ) : null}
 
           {weightRows.length > 0 && (
             <div className="pt-2 mt-1 border-t border-border-primary space-y-1.5">
@@ -757,12 +830,12 @@ export default function SwarmSettingsSection() {
               {weightRows.map((row) => (
                 <div key={row.id} className="flex items-center justify-between gap-3 py-0.5">
                   <span className="min-w-0 flex items-center gap-2">
-                    {row.cloud && (
+                    {row.chip && (
                       <span
                         className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary shrink-0"
-                        style={{ backgroundColor: '#8e4ec6', borderRadius: 3 }}
+                        style={{ backgroundColor: row.chip.chip, borderRadius: 3 }}
                       >
-                        BEDROCK
+                        {row.chip.seg.toUpperCase()}
                       </span>
                     )}
                     <span className="text-sm font-mono text-text-primary truncate" title={row.id}>
@@ -912,6 +985,15 @@ export default function SwarmSettingsSection() {
                     />
                   </Row>
                 ))}
+                <Row
+                  label="Extra LM Studio request fields (JSON)"
+                  hint='Merged verbatim into every LM Studio request body — the passthrough for fields LM Studio honors per request. Note: per-model CUSTOM fields (like this model&apos;s thinking effort) are applied by LM Studio itself, not per request — set those in LM Studio&apos;s model settings on each host. Example: {"seed": 7}'
+                >
+                  <ExtraBodyField
+                    value={cfg.lm_extra_body}
+                    onCommit={(v) => set({ lm_extra_body: v })}
+                  />
+                </Row>
               </Group>
 
               <Group title="Pool & planner">

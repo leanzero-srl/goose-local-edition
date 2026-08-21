@@ -65,6 +65,11 @@ export interface SwarmConfig {
    *  and dead-stream failsafes may stop a call. The desktop's route into full parity with headless
    *  uncapped runs (GOOSE_SWARM_UNCAPPED env wins when present). Engine default false. */
   uncapped?: boolean;
+  /** Extra request-body fields merged verbatim into every LM Studio call (never cloud providers).
+   *  The passthrough for LM Studio custom fields — measured: per-model custom fields (e.g. qwen3.8's
+   *  thinking effort) are NOT honored per-request by current LM Studio; set those in the LM Studio
+   *  model settings on each host. This carries fields LM Studio does honor per request. */
+  lm_extra_body?: Record<string, unknown>;
   /** Confidence floor (1-100) below which the swarm asks the USER clarifying questions before building,
    *  instead of guessing. 0 / undefined = never ask. Surfaced live in the run panel's clarify prompt. */
   ask_floor?: number;

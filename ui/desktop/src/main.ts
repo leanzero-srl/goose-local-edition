@@ -3793,10 +3793,11 @@ ipcMain.handle('import-claude-code', async (_event, args: string[]) => {
   }
 });
 
-// Run `goose swarm bedrock <args>` — the desktop seam for Bedrock cloud nodes (validate/store the
-// API key, auto-populate the model roster via --json, add/rm devices). Same live-binary locator as
-// import-claude-code so it works packaged. The args can carry the API key: never log them.
-ipcMain.handle('swarm-bedrock', async (_event, args: string[]) => {
+// Run `goose swarm cloud <provider> <args>` — the desktop seam for cloud swarm nodes
+// (bedrock/zai/google/deepseek: validate/store the API key, auto-populate the model roster via
+// --json, add/rm devices). Same live-binary locator as import-claude-code so it works packaged.
+// The args can carry the API key: never log them.
+ipcMain.handle('swarm-cloud', async (_event, provider: string, args: string[]) => {
   try {
     const goosePath = findGooseBinaryPath({
       isPackaged: app.isPackaged,
@@ -3810,7 +3811,7 @@ ipcMain.handle('swarm-bedrock', async (_event, args: string[]) => {
     return await new Promise((resolve) => {
       execFile(
         goosePath,
-        ['swarm', 'bedrock', ...args],
+        ['swarm', 'cloud', String(provider), ...args],
         { env, timeout: 60000 },
         (err, stdout, stderr) => {
           resolve({

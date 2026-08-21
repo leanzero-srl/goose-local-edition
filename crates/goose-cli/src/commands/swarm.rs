@@ -468,6 +468,15 @@ pub struct SwarmConfig {
     /// both directions when present (the bench harness pins it per run).
     #[serde(default)]
     pub uncapped: bool,
+    /// Extra request-body fields merged VERBATIM into every LM Studio call (workers and planner
+    /// alike; never sent to cloud providers). The generic passthrough for LM Studio custom fields
+    /// — MEASURED (2026-08-21, 8 probes at temperature 0): qwen3.8's thinking-effort field is NOT
+    /// honored per-request on any current API surface (OpenAI-compat, native v0, template kwargs,
+    /// soft switches) — it is a model-level setting in the LM Studio UI. This passthrough exists so
+    /// the day LM Studio honors a per-request field, goose already carries it, and for request
+    /// fields LM Studio does honor today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lm_extra_body: Option<serde_json::Map<String, serde_json::Value>>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
     /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #135 OMNI-JUDGE — the JUDGE, active in EVERY phase, not just build.
@@ -1283,6 +1292,7 @@ impl Default for SwarmConfig {
             repeat_break: Some(true),
             spiral_break_chars: Some(12000),
             uncapped: false,
+            lm_extra_body: None,
             omni_judge: Some(true),
             delegated_decisions_ok: Some(true),
             homogeneous_models: false,
@@ -1455,11 +1465,19 @@ pub enum SwarmCommand {
         #[command(subcommand)]
         command: Option<PoolCommand>,
     },
-    /// Amazon Bedrock cloud nodes: validate/store an API key, auto-populate the usable model ids,
-    /// and add per-model swarm devices (mix cloud models into the local fleet).
+    /// Amazon Bedrock cloud nodes (alias for `cloud bedrock`).
     Bedrock {
         #[command(subcommand)]
-        command: Option<BedrockCommand>,
+        command: Option<CloudCommand>,
+    },
+    /// Cloud swarm nodes from any supported provider: validate/store an API key, auto-populate
+    /// the usable model ids, and add per-model swarm devices (mix cloud models into the fleet).
+    /// Providers: bedrock, zai (GLM), google (Gemini), deepseek.
+    Cloud {
+        /// One of: bedrock | zai | google | deepseek.
+        provider: String,
+        #[command(subcommand)]
+        command: Option<CloudCommand>,
     },
     /// Serve the swarm as an MCP extension over stdio, so an interactive `goose session` can offload work
     /// to the local worker fleet. Scaffold: a read-only `swarm_status` tool (async dispatch/collect later).
@@ -1515,7 +1533,7 @@ pub enum PoolCommand {
 }
 
 #[derive(clap::Subcommand, Debug)]
-pub enum BedrockCommand {
+pub enum CloudCommand {
     /// Validate a Bedrock API key against the region, store it (AWS_BEARER_TOKEN_BEDROCK secret +
     /// AWS_REGION) ONLY if it is good, then print the auto-populated model roster.
     Key {
@@ -1544,16 +1562,192 @@ pub enum BedrockCommand {
     Rm { model_id: String },
 }
 
-/// The stored/ambient Bedrock API key: env first (a harness override), then the goose secret store.
-fn bedrock_stored_key() -> Option<String> {
-    std::env::var("AWS_BEARER_TOKEN_BEDROCK")
+/// The cloud providers the swarm can add nodes from. `name` is what `SwarmDevice.provider`
+/// stores and what the CLI/desktop present; `registry` is the goose provider factory's EXACT
+/// key (the two differ — storing "bedrock" while the registry says "aws_bedrock" was a live
+/// dispatch bug the provider-recon audit caught before any run hit it).
+struct CloudDef {
+    name: &'static str,
+    registry: &'static str,
+    secret_key: &'static str,
+    needs_region: bool,
+    label: &'static str,
+}
+
+const CLOUD_DEFS: &[CloudDef] = &[
+    CloudDef {
+        name: "bedrock",
+        registry: "aws_bedrock",
+        secret_key: "AWS_BEARER_TOKEN_BEDROCK",
+        needs_region: true,
+        label: "Amazon Bedrock",
+    },
+    CloudDef {
+        name: "zai",
+        registry: "zai",
+        secret_key: "ZHIPU_API_KEY",
+        needs_region: false,
+        label: "Z.ai",
+    },
+    CloudDef {
+        name: "google",
+        registry: "google",
+        secret_key: "GOOGLE_API_KEY",
+        needs_region: false,
+        label: "Google Gemini",
+    },
+    CloudDef {
+        name: "deepseek",
+        registry: "custom_deepseek",
+        secret_key: "DEEPSEEK_API_KEY",
+        needs_region: false,
+        label: "DeepSeek",
+    },
+];
+
+fn cloud_def(name: &str) -> Option<&'static CloudDef> {
+    let lower = name.to_lowercase();
+    CLOUD_DEFS.iter().find(|d| d.name == lower)
+}
+
+/// goose provider-registry key for a swarm cloud provider name; identity for anything unmapped
+/// (the local "lmstudio" and forward-compat names pass through).
+fn cloud_registry_name(name: &str) -> &str {
+    cloud_def(name).map(|d| d.registry).unwrap_or(name)
+}
+
+/// The stored/ambient key for a cloud provider: env first (a harness override), then the goose
+/// secret store — the same precedence the provider's own from_env uses, so a key that validates
+/// here is exactly the key the dispatcher's provider will read.
+fn cloud_stored_key(def: &CloudDef) -> Option<String> {
+    std::env::var(def.secret_key)
         .ok()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| {
             goose::config::Config::global()
-                .get_secret::<String>("AWS_BEARER_TOKEN_BEDROCK")
+                .get_secret::<String>(def.secret_key)
                 .ok()
         })
+}
+
+/// The provider's usable model ids, fetched with ONLY the API key — the shared
+/// validate-by-listing seam. A rejection is a bad key; a listing is both proof and roster.
+async fn cloud_roster(provider: &str, key: &str, region: &str) -> Result<Vec<String>> {
+    match provider {
+        "bedrock" => bedrock_roster(key, region).await,
+        // OpenAI-shaped /models listings (Authorization: Bearer).
+        "zai" => openai_style_roster("https://api.z.ai/api/paas/v4/models", key, "Z.ai").await,
+        "deepseek" => openai_style_roster("https://api.deepseek.com/models", key, "DeepSeek").await,
+        "google" => google_roster(key).await,
+        other => anyhow::bail!(
+            "unknown cloud provider '{other}' — one of: bedrock, zai, google, deepseek"
+        ),
+    }
+}
+
+/// GET an OpenAI-shaped model listing (`{"data":[{"id":…}]}`) with a bearer key. Pure transport;
+/// 401/403 = the key is bad, anything non-2xx is reported verbatim.
+async fn openai_style_roster(url: &str, key: &str, label: &str) -> Result<Vec<String>> {
+    let resp = reqwest::Client::new()
+        .get(url)
+        .bearer_auth(key)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| anyhow!("cannot reach {label}: {e}"))?;
+    let status = resp.status();
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        anyhow::bail!("{label} REJECTED the API key (HTTP {status}) — bad, expired, or revoked");
+    }
+    if !status.is_success() {
+        anyhow::bail!("{label} answered HTTP {status} listing models");
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| anyhow!("{label} model listing was not JSON: {e}"))?;
+    let mut ids: Vec<String> = v["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m["id"].as_str().map(str::to_string))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        anyhow::bail!("{label} accepted the key but returned no model ids");
+    }
+    Ok(ids)
+}
+
+/// Gemini's model listing with the provider's own auth scheme (x-goog-api-key), paginated —
+/// the in-repo provider never paginates and the catalog exceeds one page. Only models that can
+/// generateContent are runnable as swarm nodes. Google answers a BAD key with HTTP 400
+/// (API_KEY_INVALID), not 401 — treated as rejection.
+async fn google_roster(key: &str) -> Result<Vec<String>> {
+    let client = reqwest::Client::new();
+    let mut ids: Vec<String> = Vec::new();
+    let mut token: Option<String> = None;
+    loop {
+        let url = match &token {
+            Some(t) => format!(
+                "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&pageToken={t}"
+            ),
+            None => "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"
+                .to_string(),
+        };
+        let resp = client
+            .get(&url)
+            .header("x-goog-api-key", key)
+            .timeout(std::time::Duration::from_secs(20))
+            .send()
+            .await
+            .map_err(|e| anyhow!("cannot reach Google Gemini: {e}"))?;
+        let status = resp.status();
+        if matches!(status.as_u16(), 400 | 401 | 403) {
+            anyhow::bail!(
+                "Google Gemini REJECTED the API key (HTTP {status}) — bad, expired, or restricted"
+            );
+        }
+        if !status.is_success() {
+            anyhow::bail!("Google Gemini answered HTTP {status} listing models");
+        }
+        let v: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| anyhow!("Gemini model listing was not JSON: {e}"))?;
+        ids.extend(google_ids_from_models(&v));
+        token = v["nextPageToken"].as_str().map(str::to_string);
+        if token.is_none() {
+            break;
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        anyhow::bail!("the key authenticates but no generateContent-capable models came back");
+    }
+    Ok(ids)
+}
+
+/// generateContent-capable model ids from a Gemini ListModels page ("models/x" -> "x").
+/// Pure/testable.
+fn google_ids_from_models(v: &serde_json::Value) -> Vec<String> {
+    v["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| {
+            m["supportedGenerationMethods"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|x| x.as_str() == Some("generateContent")))
+        })
+        .filter_map(|m| {
+            m["name"]
+                .as_str()
+                .map(|s| s.strip_prefix("models/").unwrap_or(s).to_string())
+        })
+        .collect()
 }
 
 fn bedrock_stored_region() -> Option<String> {
@@ -1663,55 +1857,82 @@ fn bedrock_ids_from_models(v: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
-fn bedrock_print_roster(region: &str, roster: &[String]) {
-    println!(
-        "Bedrock key is GOOD in {region} — {} usable model id(s):",
-        roster.len()
-    );
-    for id in roster {
-        println!("  {id}");
-    }
-    println!("\nAdd one as a swarm node:  goose swarm bedrock add <model-id> [--weight N]");
-}
-
-async fn handle_bedrock(cmd: Option<BedrockCommand>) -> Result<()> {
-    let need_key = || {
-        bedrock_stored_key().ok_or_else(|| {
-            anyhow!(
-                "no Bedrock API key stored — set one with `goose swarm bedrock key <KEY> --region <REGION>` \
-                 (or export AWS_BEARER_TOKEN_BEDROCK)"
+async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Result<()> {
+    let label = def.label;
+    let name = def.name;
+    let need_key =
+        || {
+            cloud_stored_key(def).ok_or_else(|| {
+                anyhow!(
+                "no {label} API key stored — set one with `goose swarm cloud {name} key <KEY>{}` \
+                 (or export {})",
+                if def.needs_region { " --region <REGION>" } else { "" },
+                def.secret_key
             )
-        })
+            })
+        };
+    let region_now = || {
+        if def.needs_region {
+            bedrock_stored_region().unwrap_or_else(|| "us-east-1".to_string())
+        } else {
+            String::new()
+        }
     };
-    let region_now = || bedrock_stored_region().unwrap_or_else(|| "us-east-1".to_string());
+    let print_roster = |region: &str, roster: &[String]| {
+        println!(
+            "{label} key is GOOD{} — {} usable model id(s):",
+            if region.is_empty() {
+                String::new()
+            } else {
+                format!(" in {region}")
+            },
+            roster.len()
+        );
+        for id in roster {
+            println!("  {id}");
+        }
+        println!(
+            "\nAdd one as a swarm node:  goose swarm cloud {name} add <model-id> [--weight N]"
+        );
+    };
     match cmd {
-        Some(BedrockCommand::Key { key, region, json }) => {
-            let region = region.unwrap_or_else(region_now);
-            let roster = bedrock_roster(&key, &region).await?;
+        Some(CloudCommand::Key { key, region, json }) => {
+            let region = if def.needs_region {
+                region.unwrap_or_else(region_now)
+            } else {
+                String::new()
+            };
+            let roster = cloud_roster(name, &key, &region).await?;
             let config = goose::config::Config::global();
-            config.set_secret("AWS_BEARER_TOKEN_BEDROCK", &serde_json::json!(key))?;
-            config.set_param("AWS_REGION", serde_json::json!(region.clone()))?;
+            config.set_secret(def.secret_key, &serde_json::json!(key))?;
+            if def.needs_region {
+                config.set_param("AWS_REGION", serde_json::json!(region.clone()))?;
+            }
             if json {
                 println!(
                     "{}",
-                    serde_json::json!({ "region": region, "models": roster })
+                    serde_json::json!({ "provider": name, "region": region, "models": roster })
                 );
             } else {
                 println!("key validated and stored.");
-                bedrock_print_roster(&region, &roster);
+                print_roster(&region, &roster);
             }
             Ok(())
         }
-        None | Some(BedrockCommand::Models { json: false }) => {
+        None | Some(CloudCommand::Models { json: false }) => {
             let key = need_key()?;
             let region = region_now();
-            let roster = bedrock_roster(&key, &region).await?;
-            bedrock_print_roster(&region, &roster);
+            let roster = cloud_roster(name, &key, &region).await?;
+            print_roster(&region, &roster);
             let cfg = load_config();
-            let cloud: Vec<&SwarmDevice> = cfg.devices.iter().filter(|d| d.is_cloud()).collect();
-            if !cloud.is_empty() {
-                println!("\nConfigured Bedrock swarm nodes:");
-                for d in cloud {
+            let mine: Vec<&SwarmDevice> = cfg
+                .devices
+                .iter()
+                .filter(|d| d.provider_name() == name)
+                .collect();
+            if !mine.is_empty() {
+                println!("\nConfigured {label} swarm nodes:");
+                for d in mine {
                     println!(
                         "  {} → {} (weight {}{})",
                         d.id,
@@ -1723,15 +1944,15 @@ async fn handle_bedrock(cmd: Option<BedrockCommand>) -> Result<()> {
             }
             Ok(())
         }
-        Some(BedrockCommand::Models { json: true }) => {
+        Some(CloudCommand::Models { json: true }) => {
             let key = need_key()?;
             let region = region_now();
-            let roster = bedrock_roster(&key, &region).await?;
+            let roster = cloud_roster(name, &key, &region).await?;
             let cfg = load_config();
             let devices: Vec<serde_json::Value> = cfg
                 .devices
                 .iter()
-                .filter(|d| d.is_cloud())
+                .filter(|d| d.provider_name() == name)
                 .map(|d| {
                     serde_json::json!({
                         "id": d.id, "model_id": d.model_id, "weight": d.weight,
@@ -1741,14 +1962,16 @@ async fn handle_bedrock(cmd: Option<BedrockCommand>) -> Result<()> {
                 .collect();
             println!(
                 "{}",
-                serde_json::json!({ "region": region, "models": roster, "devices": devices })
+                serde_json::json!({
+                    "provider": name, "region": region, "models": roster, "devices": devices
+                })
             );
             Ok(())
         }
-        Some(BedrockCommand::Add { model_id, weight }) => {
+        Some(CloudCommand::Add { model_id, weight }) => {
             let key = need_key()?;
             let region = region_now();
-            let roster = bedrock_roster(&key, &region).await?;
+            let roster = cloud_roster(name, &key, &region).await?;
             if !roster.contains(&model_id) {
                 let near: Vec<&String> = roster
                     .iter()
@@ -1762,9 +1985,9 @@ async fn handle_bedrock(cmd: Option<BedrockCommand>) -> Result<()> {
                     .take(8)
                     .collect();
                 anyhow::bail!(
-                    "'{model_id}' is not in the key's usable roster for {region}.{}",
+                    "'{model_id}' is not in the key's usable {label} roster.{}",
                     if near.is_empty() {
-                        " Run `goose swarm bedrock models` for the full list.".to_string()
+                        format!(" Run `goose swarm cloud {name} models` for the full list.")
                     } else {
                         format!(
                             " Closest usable ids:\n  {}",
@@ -1780,20 +2003,20 @@ async fn handle_bedrock(cmd: Option<BedrockCommand>) -> Result<()> {
             if cfg
                 .devices
                 .iter()
-                .any(|d| d.is_cloud() && d.model_id == model_id)
+                .any(|d| d.provider_name() == name && d.model_id == model_id)
             {
-                println!("'{model_id}' is already a configured Bedrock node.");
+                println!("'{model_id}' is already a configured {label} node.");
                 return Ok(());
             }
-            let id = format!("bedrock-{}", model_id.replace([':', '.', '/'], "-"));
+            let id = format!("{name}-{}", model_id.replace([':', '.', '/'], "-"));
             cfg.devices.push(SwarmDevice {
                 id: id.clone(),
                 model_id: model_id.clone(),
                 weight,
                 enabled: true,
                 instances: 1,
-                host: Some("bedrock".to_string()),
-                provider: Some("bedrock".to_string()),
+                host: Some(name.to_string()),
+                provider: Some(name.to_string()),
             });
             save_config(&cfg)?;
             println!(
@@ -1802,16 +2025,16 @@ async fn handle_bedrock(cmd: Option<BedrockCommand>) -> Result<()> {
             );
             Ok(())
         }
-        Some(BedrockCommand::Rm { model_id }) => {
+        Some(CloudCommand::Rm { model_id }) => {
             let mut cfg = load_config();
             let before = cfg.devices.len();
             cfg.devices
-                .retain(|d| !(d.is_cloud() && d.model_id == model_id));
+                .retain(|d| !(d.provider_name() == name && d.model_id == model_id));
             if cfg.devices.len() == before {
-                anyhow::bail!("no configured Bedrock node has model id '{model_id}'");
+                anyhow::bail!("no configured {label} node has model id '{model_id}'");
             }
             save_config(&cfg)?;
-            println!("removed the Bedrock node for {model_id}");
+            println!("removed the {label} node for {model_id}");
             Ok(())
         }
     }
@@ -1847,7 +2070,19 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             None => pool_menu(),
             Some(pc) => pool_op(pc),
         },
-        SwarmCommand::Bedrock { command } => handle_bedrock(command).await,
+        SwarmCommand::Bedrock { command } => {
+            handle_cloud(
+                cloud_def("bedrock").expect("bedrock is in CLOUD_DEFS"),
+                command,
+            )
+            .await
+        }
+        SwarmCommand::Cloud { provider, command } => match cloud_def(&provider) {
+            Some(def) => handle_cloud(def, command).await,
+            None => Err(anyhow!(
+                "unknown cloud provider '{provider}' — one of: bedrock, zai, google, deepseek"
+            )),
+        },
         SwarmCommand::Serve => crate::commands::swarm_serve::run().await,
     }
 }
@@ -12267,6 +12502,34 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn cloud_defs_map_friendly_names_to_real_registry_keys() {
+        // The dispatch bug this pins: "bedrock" stored on devices, "aws_bedrock" in the registry.
+        assert_eq!(cloud_registry_name("bedrock"), "aws_bedrock");
+        assert_eq!(cloud_registry_name("zai"), "zai");
+        assert_eq!(cloud_registry_name("google"), "google");
+        assert_eq!(cloud_registry_name("deepseek"), "custom_deepseek");
+        // identity for local + unknown names (forward compat)
+        assert_eq!(cloud_registry_name("lmstudio"), "lmstudio");
+        assert_eq!(cloud_registry_name("whatever"), "whatever");
+        for d in CLOUD_DEFS {
+            assert!(cloud_def(d.name).is_some());
+        }
+    }
+
+    #[test]
+    fn google_roster_parser_keeps_only_generate_content_models() {
+        let v = serde_json::json!({"models":[
+            {"name":"models/gemini-3.1-pro","supportedGenerationMethods":["generateContent","countTokens"]},
+            {"name":"models/embedding-001","supportedGenerationMethods":["embedContent"]},
+            {"name":"models/gemini-3.7-flash","supportedGenerationMethods":["generateContent"]}
+        ]});
+        assert_eq!(
+            google_ids_from_models(&v),
+            vec!["gemini-3.1-pro".to_string(), "gemini-3.7-flash".to_string()]
+        );
+    }
+
+    #[test]
     fn bedrock_roster_parsers_keep_only_runnable_ids() {
         // Real ListInferenceProfiles / ListFoundationModels shapes (fields the parsers read).
         let profiles = serde_json::json!({"inferenceProfileSummaries":[
@@ -14831,14 +15094,17 @@ impl GooseAgentDispatcher {
         let Some(pname) = self.cloud_models.get(model_id) else {
             return Ok(self.provider.clone());
         };
+        let registry = cloud_registry_name(pname);
         let mut cache = self.cloud_providers.lock().await;
-        if let Some(p) = cache.get(pname) {
+        if let Some(p) = cache.get(registry) {
             return Ok(p.clone());
         }
-        let p = goose::providers::create(pname, vec![]).await.map_err(|e| {
-            anyhow!("creating the '{pname}' provider for cloud node model '{model_id}': {e}")
-        })?;
-        cache.insert(pname.clone(), p.clone());
+        let p = goose::providers::create(registry, vec![])
+            .await
+            .map_err(|e| {
+                anyhow!("creating the '{registry}' provider for cloud node model '{model_id}': {e}")
+            })?;
+        cache.insert(registry.to_string(), p.clone());
         Ok(p)
     }
 
@@ -15316,7 +15582,7 @@ impl GooseAgentDispatcher {
         let session_id = session.id.clone();
 
         let mut model_config = goose::model_config::model_config_from_user_config(
-            self.provider_name(model_id),
+            cloud_registry_name(self.provider_name(model_id)),
             model_id,
         )?;
         // Follow LM Studio's own temperature: pass the sampling temperature through verbatim, which is
@@ -15328,6 +15594,11 @@ impl GooseAgentDispatcher {
         // params; a cloud provider (bedrock) neither understands nor needs them, so a cloud model's
         // config carries only the temperature.
         if !self.cloud_models.contains_key(model_id) {
+            if let Some(body) = load_config().lm_extra_body {
+                for (k, v) in body {
+                    extra.insert(k, v);
+                }
+            }
             if let Some(v) = self.sampling.top_p {
                 extra.insert("top_p".to_string(), serde_json::json!(v));
             }

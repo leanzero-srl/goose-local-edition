@@ -214,8 +214,9 @@ type ElectronAPI = {
   importClaudeCode: (
     args: string[]
   ) => Promise<{ ok: boolean; stdout: string; stderr: string; error: string | null }>;
-  /** `goose swarm bedrock <args>` — cloud-node key validation, roster auto-population, add/rm. */
-  swarmBedrock: (
+  /** `goose swarm cloud <provider> <args>` — cloud-node key validation, roster auto-population, add/rm. */
+  swarmCloud: (
+    provider: string,
     args: string[]
   ) => Promise<{ ok: boolean; stdout: string; stderr: string; error: string | null }>;
   getAllowedExtensions: () => Promise<string[]>;
@@ -365,7 +366,7 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.invoke('copy-dir', src, dest, opts),
   skillDrift: (src: string, dest: string) => ipcRenderer.invoke('skill-drift', src, dest),
   importClaudeCode: (args: string[]) => ipcRenderer.invoke('import-claude-code', args),
-  swarmBedrock: (args: string[]) => ipcRenderer.invoke('swarm-bedrock', args),
+  swarmCloud: (provider: string, args: string[]) => ipcRenderer.invoke('swarm-cloud', provider, args),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getAllowedExtensions: () => ipcRenderer.invoke('get-allowed-extensions'),
   setMenuBarIcon: (show: boolean) => ipcRenderer.invoke('set-menu-bar-icon', show),
