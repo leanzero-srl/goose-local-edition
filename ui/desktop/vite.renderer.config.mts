@@ -15,6 +15,12 @@ export default defineConfig({
   // Dev-server only — release builds ignore optimizeDeps.
   optimizeDeps: {
     exclude: ['@aaif/goose-sdk'],
+    // Pin the dep scan to the app's real entry. Without this Vite globs **/*.html from the
+    // project root, walks into out/ (packaged app + DMG staging from a release build — the
+    // dmgstage/Applications SYMLINK even pulled in every app on the machine), and the scan
+    // error KILLS the dev server: `pnpm start-gui` then boots Electron against a dead
+    // localhost:5173 and shows a blank error page.
+    entries: ['index.html'],
   },
 
   build: {
