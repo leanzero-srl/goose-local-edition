@@ -1479,6 +1479,22 @@ pub enum SwarmCommand {
         #[command(subcommand)]
         command: Option<CloudCommand>,
     },
+    /// REPLAY the delivery gate against an existing build tree — the spec-contract check (advertised
+    /// entry boots, every advertised invocation boots, advertised endpoints answer) without a run.
+    ///
+    /// A gate or boot fix used to be testable only by launching a multi-hour build. This makes it a
+    /// minutes-long command against a tree that already exists, which is the difference between
+    /// proving a fix and hoping for one.
+    #[command(
+        about = "Replay the delivery gate (spec-contract + boot probes) against a built tree"
+    )]
+    Gate {
+        /// The build tree to check (contains app/, tests/, …).
+        tree: PathBuf,
+        /// Spec file. Default: the prompt recorded in the tree's own run log.
+        #[arg(long)]
+        spec: Option<PathBuf>,
+    },
     /// Serve the swarm as an MCP extension over stdio, so an interactive `goose session` can offload work
     /// to the local worker fleet. Scaffold: a read-only `swarm_status` tool (async dispatch/collect later).
     #[command(
@@ -1857,6 +1873,90 @@ fn bedrock_ids_from_models(v: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+/// The spec a tree was built from: an explicit file, else the `run_started.prompt` recorded in the
+/// tree's own run log (searched recursively — the bench harness nests its log path).
+fn spec_for_tree(tree: &Path, spec: Option<PathBuf>) -> Result<String> {
+    if let Some(p) = spec {
+        return std::fs::read_to_string(&p).map_err(|e| anyhow!("reading {}: {e}", p.display()));
+    }
+    let mut logs: Vec<PathBuf> = Vec::new();
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
+        if depth > 4 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() && !p.ends_with(".swarm") {
+                walk(&p, out, depth + 1);
+            } else if p.file_name().is_some_and(|n| n == "run.jsonl") {
+                out.push(p);
+            }
+        }
+    }
+    walk(tree, &mut logs, 0);
+    for log in logs {
+        let Ok(text) = std::fs::read_to_string(&log) else {
+            continue;
+        };
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if v.get("event").and_then(|e| e.as_str()) == Some("run_started") {
+                if let Some(p) = v.get("prompt").and_then(|p| p.as_str()) {
+                    return Ok(p.to_string());
+                }
+            }
+        }
+    }
+    Err(anyhow!(
+        "no spec: pass --spec <file>, or build the tree with a run log carrying run_started.prompt"
+    ))
+}
+
+async fn handle_gate(tree: PathBuf, spec: Option<PathBuf>) -> Result<()> {
+    if !tree.is_dir() {
+        anyhow::bail!("{} is not a directory", tree.display());
+    }
+    let spec_text = spec_for_tree(&tree, spec)?;
+    let existing = existing_files_manifest(&tree);
+    let lang = detect_language(&spec_text, &existing);
+    eprintln!(
+        "gate replay: {} | spec {} chars | lang {:?} | {} existing file(s)",
+        tree.display(),
+        spec_text.len(),
+        lang,
+        existing.len()
+    );
+    let r = run_spec_contract(&tree, &spec_text, lang).await;
+    println!(
+        "{}",
+        serde_json::json!({
+            "tree": tree.display().to_string(),
+            "verified": r.verified,
+            "findings": r.findings,
+            "inconclusive": r.inconclusive,
+        })
+    );
+    if r.findings.is_empty() && r.verified > 0 {
+        eprintln!(
+            "gate replay: PASS — {} advertised check(s) verified",
+            r.verified
+        );
+    } else if r.findings.is_empty() {
+        eprintln!("gate replay: INCONCLUSIVE — nothing was affirmatively verified");
+    } else {
+        eprintln!("gate replay: {} FINDING(S)", r.findings.len());
+        for f in &r.findings {
+            eprintln!("  · {f}");
+        }
+    }
+    Ok(())
+}
+
 async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Result<()> {
     let label = def.label;
     let name = def.name;
@@ -2077,6 +2177,7 @@ pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
             )
             .await
         }
+        SwarmCommand::Gate { tree, spec } => handle_gate(tree, spec).await,
         SwarmCommand::Cloud { provider, command } => match cloud_def(&provider) {
             Some(def) => handle_cloud(def, command).await,
             None => Err(anyhow!(
