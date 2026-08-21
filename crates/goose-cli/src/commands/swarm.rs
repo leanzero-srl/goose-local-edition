@@ -3328,6 +3328,19 @@ const UNCAPPED_SECS: u64 = 604_800;
 /// The wall for a planner-side helper call (judge review, question answerer, per-task reviewer,
 /// test generator, finding verifier, split partitioner): the configured no-progress window with
 /// a 90s floor — or no wall at all under GOOSE_SWARM_UNCAPPED.
+/// Turn budget for small planner-side agent loops (detail specs, contract stubs). 6 was sized on
+/// qwen3.6's habits; qwen3.8 spends turns on tool reads plus deep thinking and hits it BEFORE
+/// emitting the deliverable — MEASURED uncapped r0: 6 of the first 8 detail calls returned the
+/// max-turns filler and core modules fell back to one-line skeleton briefs (the 44%-vs-90% class).
+/// Under uncapped the loop gets room; the judge/repeat-break govern runaway loops, not a turn count.
+fn planner_side_turns() -> u32 {
+    if uncapped() {
+        60
+    } else {
+        6
+    }
+}
+
 fn planner_wall(planner_timeout_secs: u64) -> u64 {
     if uncapped() {
         UNCAPPED_SECS
@@ -17079,7 +17092,7 @@ impl GooseAgentDispatcher {
                             system.clone(),
                             user.clone(),
                             None,
-                            6,
+                            planner_side_turns(),
                             &[],
                             0,
                             Some(contract_key.as_str()),
@@ -18552,7 +18565,7 @@ impl GooseAgentDispatcher {
                         system,
                         user,
                         None,
-                        6,
+                        planner_side_turns(),
                         &[],
                         0,
                         Some(detail_key.as_str()),
