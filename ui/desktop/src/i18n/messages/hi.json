@@ -2742,7 +2742,7 @@
     "defaultMessage": "जारी रखें"
   },
   "providerConfigForm.deviceCodeFlowHint": {
-    "defaultMessage": "एक ब्राउज़र विंडो खुलेगी और सत्यापन कोड आपके क्लिपबोर्ड पर कॉपी हो जाएगा। साइन-इन पूरा करने के लिए इसे ब्राउज़र में पेस्ट करें।"
+    "defaultMessage": "एक ब्राउज़र विंडो खुलेगी। सत्यापन कोड यहाँ दिखाई देगा, ताकि आप उसे दर्ज करके साइन-इन पूरा कर सकें।"
   },
   "providerConfigForm.noApiKey": {
     "defaultMessage": "क्या आपके पास API कुंजी नहीं है?"
@@ -2781,7 +2781,7 @@
     "defaultMessage": "यह वर्तमान प्रदाता कॉन्फ़िगरेशन को स्थायी रूप से हटा देगा।"
   },
   "providerConfigurationModal.deviceCodeFlowHint": {
-    "defaultMessage": "एक ब्राउज़र विंडो खुलेगी और सत्यापन कोड आपके क्लिपबोर्ड पर कॉपी हो जाएगा। साइन-इन पूरा करने के लिए इसे ब्राउज़र में पेस्ट करें।"
+    "defaultMessage": "एक ब्राउज़र विंडो खुलेगी। सत्यापन कोड यहाँ दिखाई देगा, ताकि आप उसे दर्ज करके साइन-इन पूरा कर सकें।"
   },
   "providerConfigurationModal.errorCheckingConfig": {
     "defaultMessage": "इस प्रदाता कॉन्फ़िगरेशन की जाँच करने में त्रुटि हुई।"
@@ -4666,5 +4666,23 @@
   },
   "acpReadinessPanel.connectionNotChecked": {
     "defaultMessage": "आगे बढ़ने से पहले अपने खाते का कनेक्शन जाँचें।"
+  },
+  "providerConfigForm.deviceCodeAndEnter": {
+    "defaultMessage": "और दर्ज करें:"
+  },
+  "providerConfigForm.deviceCodeCopy": {
+    "defaultMessage": "कॉपी करें"
+  },
+  "providerConfigForm.deviceCodeVisit": {
+    "defaultMessage": "जाएं"
+  },
+  "providerConfigurationModal.deviceCodeAndEnter": {
+    "defaultMessage": "और दर्ज करें:"
+  },
+  "providerConfigurationModal.deviceCodeCopy": {
+    "defaultMessage": "कॉपी करें"
+  },
+  "providerConfigurationModal.deviceCodeVisit": {
+    "defaultMessage": "जाएं"
   }
 }
