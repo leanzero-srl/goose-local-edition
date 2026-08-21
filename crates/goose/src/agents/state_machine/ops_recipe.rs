@@ -1,6 +1,7 @@
 //! Applies recipe commands and enforces their structured final output.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -8,8 +9,8 @@ use rmcp::model::{CallToolResult, ContentBlock, Tool};
 use tracing_futures::Instrument;
 
 use crate::agents::final_output_tool::{
-    FinalOutputTool, FINAL_OUTPUT_CONTINUATION_MESSAGE, FINAL_OUTPUT_SUCCESS_MESSAGE,
-    FINAL_OUTPUT_TOOL_NAME,
+    structured_output_unsupported_message, FinalOutputTool, FINAL_OUTPUT_CONTINUATION_MESSAGE,
+    FINAL_OUTPUT_SUCCESS_MESSAGE, FINAL_OUTPUT_TOOL_NAME,
 };
 use crate::agents::state_machine::ops_toolcalling::{
     emit_post_tool_use, pending_tool_requests, run_pre_tool_hooks, tool_span, ToolDisposition,
@@ -23,15 +24,20 @@ use crate::config::GooseMode;
 use crate::conversation::message::{Message, MessageContent};
 use crate::conversation::{Conversation, EffectiveRole};
 use crate::hooks::HookManager;
+use crate::providers::base::Provider;
 use crate::session::Session;
 
 pub struct RecipeOperation {
+    provider: Arc<dyn Provider>,
     hook_manager: HookManager,
 }
 
 impl RecipeOperation {
-    pub fn new(hook_manager: HookManager) -> Self {
-        Self { hook_manager }
+    pub fn new(provider: Arc<dyn Provider>, hook_manager: HookManager) -> Self {
+        Self {
+            provider,
+            hook_manager,
+        }
     }
 
     fn final_output(session: &Session) -> Result<Option<FinalOutputTool>> {
@@ -281,6 +287,16 @@ impl Operation<Session, GooseEffect> for RecipeOperation {
         let Some(mut final_output) = Self::final_output(session)? else {
             return not_applicable();
         };
+
+        if !self.provider.supports_builtin_tools() {
+            return self
+                .command_error(
+                    conversation,
+                    structured_output_unsupported_message(self.provider.get_name()),
+                    emit,
+                )
+                .await;
+        }
 
         let messages = messages_since_kickoff(conversation)?;
         let pending = pending_tool_requests(messages)

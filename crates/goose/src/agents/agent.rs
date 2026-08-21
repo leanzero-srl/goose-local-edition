@@ -22,7 +22,10 @@ use crate::agents::extension::{ExtensionConfig, ExtensionResult, ToolInfo};
 use crate::agents::extension_manager::{
     get_parameter_names, ExtensionManager, ExtensionManagerCapabilities,
 };
-use crate::agents::final_output_tool::{FINAL_OUTPUT_CONTINUATION_MESSAGE, FINAL_OUTPUT_TOOL_NAME};
+use crate::agents::final_output_tool::{
+    structured_output_unsupported_message, FINAL_OUTPUT_CONTINUATION_MESSAGE,
+    FINAL_OUTPUT_TOOL_NAME,
+};
 use crate::agents::platform_extensions::MANAGE_EXTENSIONS_TOOL_NAME_COMPLETE;
 use crate::agents::prompt_manager::PromptManager;
 use crate::agents::retry::{RetryManager, RetryResult};
@@ -1724,7 +1727,10 @@ impl Agent {
             Arc::new(DoctorOperation),
             Arc::new(ProjectOperation),
             Arc::new(SkillOperation::new(self.hook_manager.clone())),
-            Arc::new(RecipeOperation::new(self.hook_manager.clone())),
+            Arc::new(RecipeOperation::new(
+                provider.clone(),
+                self.hook_manager.clone(),
+            )),
             Arc::new(ToolExecutionOperation::new(
                 &self.current_goose_mode,
                 self.extension_manager.clone(),
@@ -2145,6 +2151,30 @@ impl Agent {
             .conversation
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Session {} has no conversation", session_config.id))?;
+
+        if self.final_output_tool.lock().await.is_some() {
+            let provider = self.provider().await?;
+            if !provider.supports_builtin_tools() {
+                let provider_name = provider.get_name();
+                warn!(
+                    provider = %provider_name,
+                    "Recipe declares structured response, but this provider can't receive the final_output tool; failing before inference"
+                );
+                let message = Message::assistant()
+                    .with_text(structured_output_unsupported_message(provider_name))
+                    .with_generated_id_if_missing();
+                session_manager
+                    .add_message(&session_config.id, &message)
+                    .await?;
+
+                return Ok(Box::pin(async_stream::try_stream! {
+                    for event in command_preamble {
+                        yield event;
+                    }
+                    yield AgentEvent::Message(message);
+                }));
+            }
+        }
 
         let needs_auto_compact = check_if_compaction_needed(
             self.provider().await?.as_ref(),

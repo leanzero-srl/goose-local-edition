@@ -12,6 +12,15 @@ pub const FINAL_OUTPUT_SUCCESS_MESSAGE: &str = "Final output successfully collec
 pub const FINAL_OUTPUT_CONTINUATION_MESSAGE: &str =
     "You MUST call the `final_output` tool NOW with the final output for the user.";
 
+pub(crate) fn structured_output_unsupported_message(provider_name: &str) -> String {
+    format!(
+        "This recipe declares a structured `response`, but provider `{provider_name}` can't \
+         support it because it never receives goose's built-in `final_output` tool, so the \
+         model can never satisfy this recipe. Remove the entire `response` block from the recipe \
+         or run it with a different provider."
+    )
+}
+
 pub struct FinalOutputTool {
     pub response: Response,
     /// The final output collected for the user. It will be a single line string for easy script extraction from output.
