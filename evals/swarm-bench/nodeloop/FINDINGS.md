@@ -20872,3 +20872,23 @@ call's WHOLE life under uncapped (backs off to 5-min looks past its budget; befo
 supervision silently ENDED ~7 min into every call) — repeat-break, pure-idle dead-stream
 watchdogs, round budgets (stop scheduling, never cut in-flight work), subprocess probe bounds.
 Harness: --timeout 0 = uncapped. qwen3.8 r0 relaunched under the regime; wall unknown by design.
+
+## F915 — the first REAL loop of the campaign, caught by hand; the judge's recurrence test was blind to the classic shape
+
+qwen3.8 r0v2, detail-ledger-server (mihai node): after 130k chars of genuinely productive
+spec-thinking the call degenerated into repeating "Let me write the two files. First,
+`app/ledgerd/server.py`:" verbatim — repetition rate 1.00 for 25+ minutes, ~2.4k chars/min,
+under UNCAPPED with the judge as sole stopper. The judge looked and never fired: its
+two-consecutive-LOOPING streak required the tail HASH to recur, and a repeating sentence
+SHIFTS through the fixed 2000-char window — every look hashed "new content", streak pinned
+at 1. The identical artifact blinded my own tick monitor (exact tail-hash compare).
+Operator kill: bounced mihai's model instance (unload + exact-identifier reload; blast
+radius verified = only the looping call; reload initially refused on the memory guardrail
+until the dev desktop stack was freed). Second hole exposed by the kill: the dropped stream
+read as a clean end and the 146-char fragment was ACCEPTED as ledger-server's whole spec —
+shorter than its own 805-char brief. Fixes (both live-caught, both pinned by tests, next
+binary): shingle-set recurrence (48-char windows, stride 1 — a coarser stride is
+phase-sensitive, caught by its own test) for the judge streak; a detail shorter than its
+brief falls back (shorter_than_brief). Run continuity: inbox note marks ledger-server's
+brief+contracts authoritative for its worker; detail fan otherwise clean — 21 completed,
+0 fallbacks (the 60-turn fix holding at n=21 vs 6-of-8 lost yesterday).
