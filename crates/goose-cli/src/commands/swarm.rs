@@ -5639,34 +5639,64 @@ mod tests {
     /// This test covers the PARSER half, which is what runs without python.
     /// The advertised invocation is what makes the contract check able to conclude at all.
     #[test]
-    fn the_advertised_invocation_is_parsed_with_a_chosen_port_and_db() {
-        // The REAL bench spec line, verbatim, prose and all.
-        let spec = "### 5. `vendorsync/__main__.py` — the entry point\n\
-                    `python -m vendorsync --db PATH --port N` starts the backend serving both the \
-                    API and the page.\n";
-        let argv = spec_run_argv(spec, "vendorsync", "/tmp/x.db", 54321);
+    fn spec_run_argv_v2_fills_each_placeholder_by_kind() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let spec = "Run `python -m vendorsync --db PATH --port N` to serve.";
+        let (argv, ports) = spec_run_argv_v2(spec, "vendorsync", tmp.path(), 8999);
+        assert_eq!(argv[0], "--db");
+        assert!(argv[1].starts_with(&*tmp.path().to_string_lossy()));
+        assert_eq!(argv[2], "--port");
+        assert_eq!(ports.len(), 1);
+        assert_eq!(argv[3], ports[0].to_string());
+
+        // F910 defect 1, pinned: the sb-7 combined boot — TWO DISTINCT ports, a created
+        // scratch dir, the spec's vendor base for URL, a scratch tokens file.
+        let sb7 = "Boot: `python -m app --db-dir P --ledger-port N --notifier-port M --vendor URL --tokens-file T`";
+        let (a, p2) = spec_run_argv_v2(sb7, "app", tmp.path(), 8901);
+        assert_eq!(p2.len(), 2, "each port-flag gets its OWN port: {a:?}");
+        assert_ne!(
+            p2[0], p2[1],
+            "the two services must never share a probe port"
+        );
+        let vendor = a[a.iter().position(|t| t == "--vendor").unwrap() + 1].clone();
         assert_eq!(
-            argv,
-            vec!["--db", "/tmp/x.db", "--port", "54321"],
-            "{argv:?}"
+            vendor, "http://127.0.0.1:8901",
+            "URL fills with the spec's vendor base"
         );
-
-        // PROSE MUST NOT SURVIVE. Taking the line instead of the backticked span would append
-        // "starts the backend serving both the API and the page." as arguments.
+        let dbdir = a[a.iter().position(|t| t == "--db-dir").unwrap() + 1].clone();
         assert!(
-            !argv
-                .iter()
-                .any(|a| a.contains("starts") || a.contains("backend")),
-            "{argv:?}"
+            std::path::Path::new(&dbdir).is_dir(),
+            "dir-flag gets a CREATED directory"
+        );
+        let tok = a[a.iter().position(|t| t == "--tokens-file").unwrap() + 1].clone();
+        assert!(
+            std::path::Path::new(&tok).is_file(),
+            "token-flag gets a scratch file"
         );
 
-        // A literal in the spec is honoured, not treated as a placeholder to overwrite.
-        let lit = spec_run_argv("`python -m app serve --port N`", "app", "/tmp/d", 9);
-        assert_eq!(lit, vec!["serve", "--port", "9"], "{lit:?}");
+        // Literals survive; no invocation / wrong package = empty.
+        let (lit, _) = spec_run_argv_v2("`python -m app serve --port N`", "app", tmp.path(), 9);
+        assert_eq!(lit[0], "serve");
+        assert!(
+            spec_run_argv_v2("Build a CLI. It should be fast.", "app", tmp.path(), 9)
+                .0
+                .is_empty()
+        );
+        assert!(
+            spec_run_argv_v2("`python -m other --port N`", "app", tmp.path(), 9)
+                .0
+                .is_empty()
+        );
+    }
 
-        // No advertised invocation => empty => the caller keeps its old behaviour byte-for-byte.
-        assert!(spec_run_argv("Build a CLI. It should be fast.", "app", "/tmp/d", 9).is_empty());
-        assert!(spec_run_argv("`python -m other --port N`", "app", "/tmp/d", 9).is_empty());
+    #[test]
+    fn spec_python_invocations_lists_every_advertised_entry_once() {
+        let spec = "`python -m app --db-dir P` boots both. `python -m app.ledgerd --port N` alone. `python -m app.notifierd --port M` alone. Test with `python -m pytest`. Again: `python -m app --db-dir P`.";
+        assert_eq!(
+            spec_python_invocations(spec),
+            vec!["app", "app.ledgerd", "app.notifierd"],
+            "deduped, spec order, tool modules excluded"
+        );
     }
 
     #[test]
@@ -19882,52 +19912,53 @@ struct SpecContractResult {
 /// spec-contract spawn (advertised argv, our own free port, fresh scratch db).
 async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
     let pkg = spec_python_entry(spec)?;
-    let free_port = std::net::TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|l| l.local_addr().ok())
-        .map(|a| a.port())?;
-    let scratch = std::env::temp_dir().join(format!(
-        "goose-boot-probe-{}-{}.db",
-        std::process::id(),
-        free_port
-    ));
-    let _ = std::fs::remove_file(&scratch);
-    let argv = spec_run_argv(spec, &pkg, &scratch.to_string_lossy(), free_port);
-    // The port the app will ACTUALLY bind. spec_run_argv substitutes free_port only for an
-    // ALL-CAPS placeholder after a port flag; a spec with a literal port (or no parseable
-    // invocation) boots the app on its OWN port — polling free_port there reads a healthy
-    // app as permanently dead and feeds unverified "repairs" into a green tree (adversarial
-    // review, boot-floor 1b). Mirror spec_contract's fallback; and when the fallback port is
-    // already bound pre-spawn (vendor mock, squatter) the bind cannot be attributed, so the
-    // probe refuses to conclude rather than concluding wrong.
-    let probe_port = if argv.iter().any(|a| *a == free_port.to_string()) {
-        free_port
-    } else if let Some(p) = spec_port_opt(spec) {
-        p
-    } else {
-        let _ = std::fs::remove_file(&scratch);
-        return None; // spec advertises no server port — a no-server app is not "dead"
-    };
-    if probe_port != free_port
-        && tokio::net::TcpStream::connect(("127.0.0.1", probe_port))
+    let scratch = std::env::temp_dir().join(format!("goose-boot-probe-{}", std::process::id()));
+    let (argv, ports) = spec_run_argv_v2(spec, &pkg, &scratch, spec_port(spec));
+    // No port placeholder substituted: the app boots on its OWN advertised literal port —
+    // and when that port is already bound pre-spawn (vendor mock, squatter) the bind cannot
+    // be attributed, so the probe refuses to conclude rather than concluding wrong. A spec
+    // with no server port at all has no boot floor.
+    let probe_ports: Vec<u16> = if ports.is_empty() {
+        let p = spec_port_opt(spec)?;
+        if tokio::net::TcpStream::connect(("127.0.0.1", p))
             .await
             .is_ok()
-    {
-        let _ = std::fs::remove_file(&scratch);
-        return None;
-    }
+        {
+            return None;
+        }
+        vec![p]
+    } else {
+        ports
+    };
+    Some(boot_invocation(root, &pkg, &argv, &probe_ports, &scratch).await)
+}
+
+/// Spawn ONE `python3 -m pkg argv` and decide bind-or-die: `None` = some probe port bound
+/// (alive), `Some(tail)` = it never bound, with the normalized output tail as evidence. The
+/// shared core of the boot floor AND the gate's every-advertised-invocation check (F910
+/// defect 2). Pipes are drained during the poll (an undrained pipe wedges a chatty child at
+/// ~64KB and misreads as dead); per-probe randomness (ports, scratch paths) is normalized
+/// OUT of the tail so the repair loop's identical-traceback stop can actually stop.
+async fn boot_invocation(
+    root: &Path,
+    pkg: &str,
+    argv: &[String],
+    probe_ports: &[u16],
+    scratch: &Path,
+) -> Option<String> {
     let mut cmd = tokio::process::Command::new("python3");
-    cmd.args(["-m", &pkg])
-        .args(&argv)
+    cmd.args(["-m", pkg])
+        .args(argv)
         .current_dir(root)
         .env("PYTHONPATH", "src")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    let mut child = cmd.spawn().ok()?;
-    // Drain the pipes WHILE polling: an undrained pipe wedges a chatty child at ~64KB of
-    // pre-bind output, which this probe would then misread as a dead app.
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return Some(format!("spawn failed: {e}")),
+    };
     async fn pipe_tail(
         stream: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>,
     ) -> String {
@@ -19952,13 +19983,15 @@ async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
     let stdout_task = tokio::spawn(pipe_tail(child.stdout.take()));
     let stderr_task = tokio::spawn(pipe_tail(child.stderr.take()));
     let mut up = false;
-    for _ in 0..80 {
-        if tokio::net::TcpStream::connect(("127.0.0.1", probe_port))
-            .await
-            .is_ok()
-        {
-            up = true;
-            break;
+    'poll: for _ in 0..80 {
+        for p in probe_ports {
+            if tokio::net::TcpStream::connect(("127.0.0.1", *p))
+                .await
+                .is_ok()
+            {
+                up = true;
+                break 'poll;
+            }
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
@@ -19969,30 +20002,25 @@ async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
         stdout_task.await.unwrap_or_default(),
         stderr_task.await.unwrap_or_default()
     );
-    let _ = std::fs::remove_file(&scratch);
     if up {
-        Some(None)
+        return None;
+    }
+    let tail: String = combined
+        .chars()
+        .rev()
+        .take(1200)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    let mut tail = tail.replace(&*scratch.to_string_lossy(), "SCRATCH");
+    for p in probe_ports {
+        tail = tail.replace(&p.to_string(), "PORT");
+    }
+    if tail.trim().is_empty() {
+        Some("no output captured".to_string())
     } else {
-        let tail: String = combined
-            .chars()
-            .rev()
-            .take(1200)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-        // Normalize per-probe randomness OUT of the tail: the repair loop's only progress
-        // signal is "did the traceback change", and a tail embedding this probe's scratch
-        // path or port would read as fresh progress every attempt, defeating the
-        // identical-traceback stop and always burning the full attempt budget.
-        let tail = tail
-            .replace(&*scratch.to_string_lossy(), "SCRATCH_DB")
-            .replace(&free_port.to_string(), "PORT");
-        if tail.trim().is_empty() {
-            Some(Some("no output captured".to_string()))
-        } else {
-            Some(Some(tail))
-        }
+        Some(tail)
     }
 }
 
@@ -20354,41 +20382,100 @@ fn spec_unprobed_advertised(spec: &str) -> Vec<String> {
 ///
 /// Returns the args AFTER the package name; empty when the spec advertises no such invocation, and
 /// the caller then behaves exactly as before. Pure/testable.
-fn spec_run_argv(spec: &str, pkg: &str, db_path: &str, port: u16) -> Vec<String> {
+/// v2 (F910 defect 1): fill EVERY placeholder with the right KIND of value. The old form
+/// handed ONE port to every port-flag — sb-7's combined boot takes --ledger-port AND
+/// --notifier-port, so the second service could never bind and the boot-repair loop chased a
+/// phantom for 33 minutes — and stuffed the scratch DB PATH into --vendor and --tokens-file.
+/// Rules, all generic: each port-flag gets its OWN fresh free port; a dir-flag gets a created
+/// scratch DIRECTORY; a vendor/url-flag gets the spec's own advertised vendor base; a
+/// token/file-flag gets a scratch file; anything else keeps the scratch db path. Returns the
+/// substituted ports so the caller accepts ANY of them binding as boot proof. Pure aside from
+/// scratch-dir/file creation and ephemeral port allocation.
+fn spec_run_argv_v2(
+    spec: &str,
+    pkg: &str,
+    scratch_base: &Path,
+    spec_vendor_port: u16,
+) -> (Vec<String>, Vec<u16>) {
     let needle = format!("-m {pkg}");
-    // Take the BACKTICKED span, not the line: the spec writes prose after the closing backtick
-    // ("… --port N` starts the backend serving both the API and the page.") and swallowing that
-    // would hand the app "starts" as an argument.
     let span = spec
         .split('`')
         .find(|s| s.contains(&needle))
         .unwrap_or_default();
     let mut it = span.split_whitespace().skip_while(|t| *t != pkg);
     if it.next().is_none() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
+    let _ = std::fs::create_dir_all(scratch_base);
+    // Listeners stay alive until the end so every allocated port is DISTINCT.
+    let mut holders: Vec<std::net::TcpListener> = Vec::new();
+    let mut fresh_port = || -> u16 {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("ephemeral bind");
+        let p = l.local_addr().map(|a| a.port()).unwrap_or(0);
+        holders.push(l);
+        p
+    };
     let mut out: Vec<String> = Vec::new();
+    let mut ports: Vec<u16> = Vec::new();
     let mut prev_flag = String::new();
+    let mut dir_n = 0usize;
     for tok in it {
         if tok.starts_with('-') {
             prev_flag = tok.to_lowercase();
             out.push(tok.to_string());
             continue;
         }
-        // A placeholder is ALL-CAPS (PATH, N, DB_FILE). Anything else is a literal the spec means.
         let is_placeholder = tok.chars().any(|c| c.is_ascii_alphabetic())
             && tok
                 .chars()
                 .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit());
-        out.push(if !is_placeholder {
+        let filled = if !is_placeholder {
             tok.to_string()
         } else if prev_flag.contains("port") {
-            port.to_string()
+            let p = fresh_port();
+            ports.push(p);
+            p.to_string()
+        } else if prev_flag.contains("vendor") || prev_flag.contains("url") || tok == "URL" {
+            format!("http://127.0.0.1:{spec_vendor_port}")
+        } else if prev_flag.contains("dir") {
+            dir_n += 1;
+            let d = scratch_base.join(format!("dir{dir_n}"));
+            let _ = std::fs::create_dir_all(&d);
+            d.to_string_lossy().into_owned()
+        } else if prev_flag.contains("token") || prev_flag.contains("file") {
+            let f = scratch_base.join("probe-tokens.json");
+            if !f.exists() {
+                let _ = std::fs::write(&f, "{}");
+            }
+            f.to_string_lossy().into_owned()
         } else {
-            db_path.to_string()
-        });
+            scratch_base.join("probe.db").to_string_lossy().into_owned()
+        };
+        out.push(filled);
     }
-    out
+    drop(holders);
+    (out, ports)
+}
+
+/// EVERY `python -m X` package the spec advertises (tool modules excluded, deduped,
+/// spec order). F910 defect 2's parser: the gate must boot each of these, not just the
+/// first — the sb-7 fleet run shipped ledgerd/notifierd packages with no __main__.py and
+/// nothing in-run could see it. Pure/testable.
+fn spec_python_invocations(spec: &str) -> Vec<String> {
+    let Ok(re) = regex::Regex::new(r"python3?\s+-m\s+([A-Za-z_][\w.]*)") else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::HashSet::new();
+    re.captures_iter(spec)
+        .map(|c| c[1].to_string())
+        .filter(|p| {
+            !matches!(
+                p.as_str(),
+                "pytest" | "pip" | "venv" | "unittest" | "http.server" | "compileall" | "build"
+            )
+        })
+        .filter(|p| seen.insert(p.clone()))
+        .collect()
 }
 
 /// The advertised server port when the spec literally names one. Pure/testable.
@@ -20658,13 +20745,23 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         SPEC_DB_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let _ = std::fs::remove_file(&scratch_db);
-    let advertised = free_port
-        .map(|p| spec_run_argv(spec, &pkg, &scratch_db.to_string_lossy(), p))
-        .unwrap_or_default();
-    let port = match (advertised.is_empty(), free_port) {
-        (false, Some(p)) => p,
-        _ => spec_port(spec),
+    // v2 (F910): kind-aware placeholder filling — each port-flag gets its own fresh port, so
+    // multi-service specs (sb-7's --ledger-port/--notifier-port) boot correctly; the API
+    // probes below target the FIRST substituted port (the primary service in every spec form).
+    let contract_scratch = std::env::temp_dir().join(format!(
+        "goose-spec-contract-scratch-{}-{}",
+        std::process::id(),
+        SPEC_DB_SEQ.load(std::sync::atomic::Ordering::Relaxed)
+    ));
+    let (advertised, advertised_ports) = if free_port.is_some() {
+        spec_run_argv_v2(spec, &pkg, &contract_scratch, spec_port(spec))
+    } else {
+        (Vec::new(), Vec::new())
     };
+    let port = advertised_ports
+        .first()
+        .copied()
+        .unwrap_or_else(|| spec_port(spec));
     // Read the port's state BEFORE spawning — after the spawn it is unknowable whether we or a
     // squatter opened it, and that ambiguity is exactly what produced two false 404 findings.
     let port_was_free_before_spawn = tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -21496,8 +21593,13 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     // the h_durability class the fleet shipped blind — now an in-run finding. Reuses the
     // existing spawn machinery and probe budgets; no new time constants.
     if up && post_ok > 0 && app_total_rows.unwrap_or(0) > 0 {
-        let db_str = scratch_db.to_string_lossy().to_string();
-        if advertised.contains(&db_str) {
+        let scratch_prefix = contract_scratch.to_string_lossy().to_string();
+        let db_str = advertised
+            .iter()
+            .find(|a| a.starts_with(&scratch_prefix))
+            .cloned()
+            .unwrap_or_default();
+        if !db_str.is_empty() {
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             let mut reboot = tokio::process::Command::new("python3");
             reboot
@@ -21596,6 +21698,39 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             unprobed.len(),
             unprobed.join(", ")
         ));
+    }
+    // F910 defect 2: EVERY advertised invocation must BOOT, not just the primary — the sb-7
+    // fleet run shipped app.ledgerd/app.notifierd as packages with no __main__.py; the
+    // combined boot worked, the standalone advertised forms crashed, and nothing in-run could
+    // see it, so the scorer's server_runs critical was the first place the defect surfaced.
+    // A bind failure here is a FINDING the fix loop can repair; a portless invocation stays
+    // inconclusive (bind unverifiable).
+    {
+        let inv_scratch =
+            std::env::temp_dir().join(format!("goose-spec-invocations-{}", std::process::id()));
+        for other in spec_python_invocations(spec) {
+            if other == pkg {
+                continue;
+            }
+            let (oargv, oports) = spec_run_argv_v2(spec, &other, &inv_scratch, spec_port(spec));
+            if oports.is_empty() {
+                inconclusive.push(format!(
+                    "spec-contract: `python -m {other}` is advertised without a port placeholder \
+                     — bind unverifiable"
+                ));
+                continue;
+            }
+            match boot_invocation(root, &other, &oargv, &oports, &inv_scratch).await {
+                None => verified += 1,
+                Some(tail) => findings.push(format!(
+                    "the spec ALSO advertises `python3 -m {other} {}` and that invocation NEVER \
+                     BINDS. Every documented boot form must work — a package entry needs its own \
+                     __main__.py, and the entry must BLOCK while serving. Output tail: {}",
+                    oargv.join(" "),
+                    elide_middle(&tail, 150, 500)
+                )),
+            }
+        }
     }
     SpecContractResult {
         findings,
