@@ -29675,6 +29675,20 @@ impl GooseAgentDispatcher {
         } else {
             self.worker_max_turns
         };
+        // FORCE-WRITE DECISION, HOISTED AND INSTRUMENTED. It used to be computed inline inside the
+        // call's argument list, which made it unobservable: a run could not show whether the lever
+        // armed for a task, and the only way to ask was to read the source and infer. Emitted per
+        // dispatch so "is force-write actually live?" is answered by the log, never by inference.
+        let force_write_armed = force_write_tool()
+            && !req.owned_files.is_empty()
+            && !req.owned_files.iter().any(|f| root.join(f).is_file());
+        self.events.write_value(serde_json::json!({
+            "event": "force_write_decision",
+            "task_id": req.task_id,
+            "armed": force_write_armed,
+            "lever_on": force_write_tool(),
+            "owns_files": req.owned_files.len(),
+        }));
         let outcome = self
             .run_agent_in(
                 root.clone(),
@@ -29712,14 +29726,7 @@ impl GooseAgentDispatcher {
                 // a worker is never trapped in a forced-call loop and the rest of its session is
                 // unchanged. A worker that owns nothing (the sink, a read-only verify shard) is never
                 // forced — its job may legitimately end in prose.
-                if force_write_tool()
-                    && !req.owned_files.is_empty()
-                    && !req.owned_files.iter().any(|f| root.join(f).is_file())
-                {
-                    Some("write")
-                } else {
-                    None
-                },
+                force_write_armed.then_some("write"),
                 None,
                 // K5: exactly one owned file -> core repairs a write/edit call whose `path` the
                 // weak model omitted, instead of the tool erroring and burning a turn.
