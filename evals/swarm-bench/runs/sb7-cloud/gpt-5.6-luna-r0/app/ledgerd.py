@@ -109,8 +109,9 @@ class Ledger:
                     pass
 
     def meta(self, key, default=None):
-        row = self.db.execute("SELECT v FROM meta WHERE k=?", (key,)).fetchone()
-        return row[0] if row else default
+        with self.lock:
+            row = self.db.execute("SELECT v FROM meta WHERE k=?", (key,)).fetchone()
+            return row[0] if row else default
 
     def set_meta(self, key, value):
         self.db.execute("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", (key, str(value)))
@@ -224,17 +225,28 @@ class Ledger:
                 if status == 304:
                     cached = self.meta(key + ":body")
                     if not cached:
+                        # A validator without a durable body is not useful.  This can
+                        # happen after an interrupted first sync, so recover with one
+                        # unconditional request rather than treating an empty cache as
+                        # a successful page.
                         body, response_headers, status = self.vendor_request("GET", "/v3/payments" +
                             (("?cursor=" + urllib.parse.quote(cursor, safe="")) if cursor else ""), headers={})
+                        generation = response_headers.get("X-Collection-Generation")
                     else:
                         body = json.loads(cached)
-                else:
-                    self.set_page_cache(key, body, response_headers.get("ETag"), generation)
-                if generation:
-                    with self.lock, self.db:
-                        self.set_meta("generation", generation)
                 page_records = []
+                # The page body, validator, generation, payment mutations, and
+                # last-known generation are one durable unit.  A crash cannot leave
+                # a page cache claiming work which was never applied.
                 with self.lock, self.db:
+                    if status != 304:
+                        self.set_meta(key + ":body", json.dumps(body, separators=(",", ":")))
+                        if response_headers.get("ETag"):
+                            self.set_meta(key + ":etag", response_headers["ETag"])
+                        if generation:
+                            self.set_meta(key + ":generation", generation)
+                    if generation:
+                        self.set_meta("generation", generation)
                     for payment in body.get("data", []):
                         fetched += 1
                         old = self.db.execute("SELECT version FROM payments WHERE id=?", (payment["id"],)).fetchone()
