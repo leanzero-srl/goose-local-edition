@@ -461,6 +461,13 @@ pub struct SwarmConfig {
     /// env GOOSE_SWARM_SPIRAL_BREAK_CHARS overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spiral_break_chars: Option<usize>,
+    /// UNCAPPED regime (Mihai 2026-08-21): remove EVERY wall-clock and volume cap — the run
+    /// finishes when it finishes; only the omni-judge's content-based LOOPING verdicts,
+    /// repeat-break, and the pure-idle dead-stream failsafes may stop a call. This config field is
+    /// the DESKTOP's route into the regime (it cannot set env); GOOSE_SWARM_UNCAPPED env wins in
+    /// both directions when present (the bench harness pins it per run).
+    #[serde(default)]
+    pub uncapped: bool,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
     /// "off by default" wording below describes the PRE-BAKE world and is kept for its reasoning (F392).
     /// #135 OMNI-JUDGE — the JUDGE, active in EVERY phase, not just build.
@@ -1275,6 +1282,7 @@ impl Default for SwarmConfig {
             detail_memo: Some(true),
             repeat_break: Some(true),
             spiral_break_chars: Some(12000),
+            uncapped: false,
             omni_judge: Some(true),
             delegated_decisions_ok: Some(true),
             homogeneous_models: false,
@@ -3070,9 +3078,12 @@ const OMNI_JUDGE_MAX_LOOKS: u32 = 6;
 /// the pure-idle failsafes that fire only on a dead stream (zero token/tool activity). The
 /// harness expresses the regime as `--timeout 0`, which sets this and sends no run deadline.
 fn uncapped() -> bool {
-    std::env::var("GOOSE_SWARM_UNCAPPED")
-        .map(|v| matches!(v.trim(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false)
+    // Env wins in BOTH directions (the harness pins the regime per run); the config field is the
+    // DESKTOP's route — it cannot set env, and parity with headless runs is mandatory (Mihai).
+    match std::env::var("GOOSE_SWARM_UNCAPPED") {
+        Ok(v) => matches!(v.trim(), "1" | "on" | "true" | "yes"),
+        Err(_) => load_config().uncapped,
+    }
 }
 
 /// A week, in seconds: the stand-in for "no cap" at sites whose arithmetic needs a finite
