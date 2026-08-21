@@ -20892,3 +20892,22 @@ phase-sensitive, caught by its own test) for the judge streak; a detail shorter 
 brief falls back (shorter_than_brief). Run continuity: inbox note marks ledger-server's
 brief+contracts authoritative for its worker; detail fan otherwise clean — 21 completed,
 0 fallbacks (the 60-turn fix holding at n=21 vs 6-of-8 lost yesterday).
+
+## F916 — qwen3.8's build-wave failure is F423 (narrate, never act) — and the purpose-built lever for it had never been ON
+
+r0v2 build wave, first 38 dispatches: 23 retries. 16 were MY fault (the F915 node bounce
+made mihai's alias briefly unservable; those workers received LM Studio's "model not found,
+available: …" text as their whole answer, finished without writing, and the engine retried —
+the mechanism worked, the operator caused the burst). The remaining 7 are the real signal
+and they are pure F423: workers reasoning 10-56k chars with tool_calls == 0, ending the turn
+having written nothing, re-dispatched with "You finished WITHOUT writing your owned file(s)".
+qwen3.8 at xhigh effort deliberates past the act. ROOT CAUSE OF THE COST: `force_write_tool`
+— which sets tool_choice to `write` ONLY while the worker owns files and NONE exists on disk
+yet, and which the format layer drops the moment the conversation carries any tool call —
+has defaulted OFF since it was built (config None, not in the golden bake), so goose has
+never once used tool_choice against the failure its own retry message names. Enabled LIVE in
+config.yaml at 22:20 (load_config() reads disk per dispatch — no restart, verified by the
+running engine picking it up on the next worker). think_off_test_authors deliberately left
+OFF: suppressing deliberation is a quality risk on a model whose depth is its strength.
+Disclosure: this run therefore carries a mid-run treatment change (plus the F915 bounce and
+inbox note) and its published notes must say so.
