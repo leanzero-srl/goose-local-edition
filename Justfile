@@ -46,6 +46,10 @@ copy-binary BUILD_MODE="release":
         echo "Copying goose CLI binary from target/{{BUILD_MODE}}..."; \
         rm -f ./ui/desktop/src/bin/goose; \
         cp -p ./target/{{BUILD_MODE}}/goose ./ui/desktop/src/bin/; \
+        if [ "$(uname)" = "Darwin" ]; then \
+            codesign --force -s - ./ui/desktop/src/bin/goose; \
+        fi; \
+        ./ui/desktop/src/bin/goose --version >/dev/null || { echo "copied binary does not EXECUTE (broken code signature = silent SIGKILL on Apple Silicon)"; exit 1; }; \
     else \
         echo "goose CLI binary not found in target/{{BUILD_MODE}}"; \
         exit 1; \
