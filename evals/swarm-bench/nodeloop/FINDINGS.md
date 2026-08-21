@@ -20858,3 +20858,17 @@ telemetry_summary (proven on r0's live rows: workhorse 18 / mihai 3 / gabee 1). 
 rates: decode ~14.1 tok/s median, prefill ~244 — decode a touch faster than 3.6, prefill
 slower on early small calls. r0 relaunched on the fixed binary; this run posts as a NEW
 sb-7 submission per Mihai (the 3.6 entry stays).
+
+## F914 — THE UNCAPPED REGIME (Mihai's order): every wall/volume cap removed; the judge is the only stopper
+
+Both qwen3.8 r0 attempts died to the 60k thinking-char budget on the solo planner (the model's
+NORMAL planning volume). Mihai's order: remove ALL caps including the 180-min wall; stop only on
+judge-identified loops/issues. Shipped 188d8915e after an adversarially-verified audit
+(wf_a3ce822e) enumerated every kill in the run path: 17 wall/volume caps neutralized under
+GOOSE_SWARM_UNCAPPED (deadline, spiral budgets, watchdog, sink/complete/fix caps, draft timeout,
+detail/contract-stub/scout/clarity budgets, six planner walls, turn caps, judge split trip +
+volume kill, degrade straggler-stop). KEPT: omni-judge content verdicts — now watching for a
+call's WHOLE life under uncapped (backs off to 5-min looks past its budget; before this,
+supervision silently ENDED ~7 min into every call) — repeat-break, pure-idle dead-stream
+watchdogs, round budgets (stop scheduling, never cut in-flight work), subprocess probe bounds.
+Harness: --timeout 0 = uncapped. qwen3.8 r0 relaunched under the regime; wall unknown by design.
