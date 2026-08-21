@@ -16374,7 +16374,19 @@ impl GooseAgentDispatcher {
             // Wait at most the quiet budget, but no later than the sink cap (when set) so the cap
             // fires promptly. Before the FIRST event the budget carries the prefill grace — a big
             // prompt legitimately streams nothing while the backend prefills it.
-            let quiet_budget = if first_event_seen {
+            // MID-STREAM SILENCE IS ALSO PREFILL, NOT DEATH — MEASURED on the uncapped qwen3.8 run:
+            // `api` (the whole HTTP surface) and `drafts` (the approval workflow) each burned all 4
+            // attempts on "no progress for 420s (no token/tool activity)" AFTER streaming ~48k
+            // reasoning chars, and both modules were lost from the build. A call that has started
+            // streaming still goes quiet for minutes at a time on this model class: the agent loop
+            // COMPACTS a conversation whose thinking blocks run past 100k chars, and a compaction
+            // re-prefills the whole context as a separate call that emits nothing to this stream —
+            // at the run's own measured prefill rate a full context is many minutes of legitimate
+            // silence. Under the uncapped regime the same measured grace therefore applies for the
+            // WHOLE call, not just before the first token: the failsafe still catches a genuinely
+            // dead socket (it stays finite), but it can no longer mistake a compaction for a death.
+            // Capped runs are byte-identical.
+            let quiet_budget = if first_event_seen && !uncapped() {
                 idle
             } else {
                 idle + prefill_grace
