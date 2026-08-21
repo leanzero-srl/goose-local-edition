@@ -3306,6 +3306,41 @@ const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
 const OMNI_JUDGE_MAX_LOOKS: u32 = 6;
 
+/// The tail's 48-char shingle set (16-char stride), for RECURRENCE comparison across judge looks.
+/// An exact tail hash cannot see the most classic loop: a repeating sentence SHIFTS through the
+/// fixed-size tail window, so every look hashes differently and the two-consecutive-LOOPING streak
+/// never arms — MEASURED live (qwen3.8 r0v2): a detail call repeated one sentence verbatim for 25+
+/// minutes at repetition rate 1.00 while the judge looked on, streak pinned at 1. Shingle overlap
+/// is shift-invariant: the same loop shows ≥ half-shared shingles on every look.
+fn tail_shingle_set(tail: &str) -> std::collections::HashSet<u64> {
+    use std::hash::{Hash, Hasher};
+    let norm: String = tail.split_whitespace().collect::<Vec<_>>().join(" ");
+    let b: Vec<char> = norm.chars().collect();
+    let mut out = std::collections::HashSet::new();
+    // Stride 1: any window shift still shares nearly all shingles. A coarser stride is
+    // phase-sensitive — a shift not divisible by it can yield DISJOINT shingles of the same
+    // loop (the unit test caught exactly that with stride 16).
+    let (win, step) = (48usize, 1usize);
+    let mut i = 0;
+    while i + win <= b.len() {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        b[i..i + win].iter().collect::<String>().hash(&mut h);
+        out.insert(h.finish());
+        i += step;
+    }
+    out
+}
+
+/// Do two judge-look tails show the SAME recurring content? Shift-invariant: true when at least
+/// half of the smaller set's shingles recur in the other. Pure/testable.
+fn tails_recur(a: &std::collections::HashSet<u64>, b: &std::collections::HashSet<u64>) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let inter = a.intersection(b).count();
+    inter * 2 >= a.len().min(b.len())
+}
+
 /// GOOSE_SWARM_UNCAPPED (Mihai 2026-08-21: "remove all caps … let it run and only stop if the
 /// judge identifies loops or other issues"): every WALL-CLOCK and VOLUME cap in the run path is
 /// neutralized — a slow local model must never lose work to a threshold. What stays armed: the
@@ -11416,6 +11451,14 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn complete_cap_fits_its_own_rounds() {
+        // The geometry this guards exists only in the CAPPED regime: under GOOSE_SWARM_UNCAPPED
+        // (env or the operator's config.yaml — which this test host may genuinely have on) both
+        // sides read UNCAPPED_SECS-scale values and the read site substitutes cap_requested
+        // itself, so the invariant is vacuous there. Skip rather than pin env: tests run in
+        // parallel and env mutation races every other uncapped() reader.
+        if uncapped() {
+            return;
+        }
         let rounds = complete_rounds_from(None) as u64;
         let fixes = rounds; // a fix is dispatched on every round EXCEPT the last (`round == rounds`)
         let need = fixes * fix_cap_secs();
@@ -12461,6 +12504,30 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             0
         );
         assert_eq!(v2["subtasks"][0]["files"][0].as_str().unwrap(), "stats.py");
+    }
+
+    #[test]
+    fn a_shifting_repetition_loop_recurs_across_judge_looks() {
+        // The measured pathology: one sentence repeated verbatim; the window SHIFTS between looks.
+        let sentence = "Let me write the two files. First, `app/ledgerd/server.py`: ";
+        let looped = sentence.repeat(60);
+        let look1 = looped.get(..2000).unwrap();
+        let look2 = looped.get(137..2137).unwrap(); // shifted window — exact-hash saw "new content" here
+        let (s1, s2) = (tail_shingle_set(look1), tail_shingle_set(look2));
+        assert!(
+            tails_recur(&s1, &s2),
+            "a shifted repetition window must RECUR"
+        );
+        // Healthy advancing reasoning must NOT recur: two disjoint passages.
+        let h1 = tail_shingle_set(
+            &"the sync module pages the vendor with cursors and applies rows by version "
+                .repeat(30),
+        );
+        let h2 = tail_shingle_set(
+            &"the webhook consumer verifies signatures over raw bytes then stages txn groups "
+                .repeat(30),
+        );
+        assert!(!tails_recur(&h1, &h2), "distinct content must not recur");
     }
 
     #[test]
@@ -15920,7 +15987,7 @@ impl GooseAgentDispatcher {
         // Consecutive LOOPING verdicts on the SAME content. One is not enough, and two on DIFFERENT
         // content is a slow-starting call misread twice, not a loop — see the abort site.
         let mut omni_looping_streak: u32 = 0;
-        let mut omni_prev_looping_tail: Option<u64> = None;
+        let mut omni_prev_looping_tail: Option<std::collections::HashSet<u64>> = None;
         // F790-1: in-session redirects issued for this task (bounded by JUDGE_NUDGE_MAX).
         let mut nudges_used: u32 = 0;
         let mut repeat_hash: Option<u64> = None;
@@ -16006,16 +16073,7 @@ impl GooseAgentDispatcher {
                     // because 60s was not enough for a slow call to move on, and each look independently
                     // said LOOPING. Requiring the tail to RECUR — not just a second verdict — means a call
                     // that advanced between looks is never killed.
-                    let tail_hash = {
-                        use std::hash::{Hash, Hasher};
-                        let mut h = std::collections::hash_map::DefaultHasher::new();
-                        // Coarse: whitespace-collapsed, so trivial reformatting is not "new content".
-                        tail.split_whitespace()
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                            .hash(&mut h);
-                        h.finish()
-                    };
+                    let tail_set = tail_shingle_set(&tail);
                     let omni_hint = {
                         let h = parse_judge_reply(&o.text).hint;
                         let h = h.trim();
@@ -16026,13 +16084,16 @@ impl GooseAgentDispatcher {
                         }
                     };
                     if omni_judge_says_looping(&o.text) {
-                        if omni_prev_looping_tail == Some(tail_hash) {
+                        if omni_prev_looping_tail
+                            .as_ref()
+                            .is_some_and(|prev| tails_recur(prev, &tail_set))
+                        {
                             omni_looping_streak += 1;
                         } else {
                             // First LOOPING on this content — arm, but do not yet count toward the kill.
                             omni_looping_streak = 1;
                         }
-                        omni_prev_looping_tail = Some(tail_hash);
+                        omni_prev_looping_tail = Some(tail_set);
                     } else {
                         omni_looping_streak = 0;
                         omni_prev_looping_tail = None;
@@ -18576,7 +18637,19 @@ impl GooseAgentDispatcher {
                     // Accept the detailed spec only if it is a real detail — NOT the agent-loop max-turns
                     // filler (which a weak worker returns when it exhausts its 6 turns); fall back to the
                     // proven-good skeleton brief otherwise, so filler never becomes a worker's whole spec.
-                    Ok(Ok(o)) if !is_agent_loop_filler(&o.text) => (o.text, ""),
+                    // A detail SHORTER than its own one-line brief is never a real spec — it is a
+                    // truncated stream (measured: a node restart mid-write left a 146-char fragment
+                    // that sailed through as ledger-server's whole spec) or a lazy stub. The brief
+                    // is the proven-good floor; never ship below it.
+                    Ok(Ok(o))
+                        if !is_agent_loop_filler(&o.text)
+                            && o.text.trim().len() >= brief.trim().len() =>
+                    {
+                        (o.text, "")
+                    }
+                    Ok(Ok(o)) if !is_agent_loop_filler(&o.text) => {
+                        (brief.clone(), "shorter_than_brief")
+                    }
                     Ok(Ok(_)) => (brief.clone(), "filler"),
                     Ok(Err(_)) => (brief.clone(), "agent_error"),
                     Err(_) => (brief.clone(), "timeout"),
