@@ -3793,6 +3793,40 @@ ipcMain.handle('import-claude-code', async (_event, args: string[]) => {
   }
 });
 
+// Run `goose swarm bedrock <args>` — the desktop seam for Bedrock cloud nodes (validate/store the
+// API key, auto-populate the model roster via --json, add/rm devices). Same live-binary locator as
+// import-claude-code so it works packaged. The args can carry the API key: never log them.
+ipcMain.handle('swarm-bedrock', async (_event, args: string[]) => {
+  try {
+    const goosePath = findGooseBinaryPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    });
+    const pathKey = process.platform === 'win32' ? 'Path' : 'PATH';
+    const env = {
+      ...process.env,
+      [pathKey]: `${path.dirname(goosePath)}${path.delimiter}${process.env[pathKey] ?? ''}`,
+    };
+    return await new Promise((resolve) => {
+      execFile(
+        goosePath,
+        ['swarm', 'bedrock', ...args],
+        { env, timeout: 60000 },
+        (err, stdout, stderr) => {
+          resolve({
+            ok: !err,
+            stdout: String(stdout ?? ''),
+            stderr: String(stderr ?? ''),
+            error: err ? err.message : null,
+          });
+        }
+      );
+    });
+  } catch (error) {
+    return { ok: false, stdout: '', stderr: '', error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
 ipcMain.handle('show-message-box', async (_event, options) => {
   return dialog.showMessageBox(options);
 });

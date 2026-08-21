@@ -20,7 +20,7 @@ describe('swarm golden preset', () => {
       endpoint: 'http://192.168.8.220:1234',
       planner_model: 'qwopus3.6-27b-coder',
       temperature: 0.2,
-      devices: [{ id: 'a', model_id: 'm', weight: 2 }],
+      devices: [{ id: 'a', model_id: 'm', weight: 2, enabled: true }],
       speed_weights: { worksmacstudio: 3 },
     };
     expect(detectPreset(withFleet)).toBe('golden');
@@ -43,7 +43,7 @@ describe('swarm golden preset', () => {
       ...DEFAULTS,
       best_of_n_skeletons: 99,
       worker_timeout_secs: 60,
-      devices: [{ id: 'mac', model_id: 'x', weight: 2 }],
+      devices: [{ id: 'mac', model_id: 'x', weight: 2, enabled: true }],
       speed_weights: { worksmacstudio: 3, local: 2, gabee: 1 },
       endpoint: 'http://192.168.8.220:1234',
     };

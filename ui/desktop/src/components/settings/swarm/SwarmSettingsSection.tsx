@@ -15,6 +15,7 @@ import { useFleet, deviceFromModelId } from '../../swarm/useFleet';
 import { useSwarmLogMode, SWARM_LOG_MODES } from '../../swarm/useVerboseSwarm';
 import {
   type SwarmConfig,
+  type SwarmDeviceRow,
   DEFAULTS,
   RESEARCH_MODES,
   type ResearchMode,
@@ -304,6 +305,277 @@ function PresetBar({ active, onApply }: { active: PresetId; onApply: () => void 
   );
 }
 
+/** The last CLI error line, human-readable — the engine prints one-line `Error: …` messages. */
+function bedrockErr(r: { stdout: string; stderr: string; error: string | null }): string {
+  const m = (r.stderr || '').match(/Error:\s*([\s\S]+)/);
+  if (m) return m[1].trim();
+  return (r.stderr || r.error || 'the goose engine call failed').trim();
+}
+
+const NODE_PROVIDERS = ['LM Studio', 'Bedrock'] as const;
+type NodeProvider = (typeof NODE_PROVIDERS)[number];
+
+/**
+ * Amazon Bedrock cloud nodes. The panel's whole contract runs through the engine CLI over IPC
+ * (`goose swarm bedrock … --json`) — the same code path the terminal uses, so desktop and CLI can
+ * never disagree: key validation happens ENGINE-side (stored only when the region accepts it), the
+ * model roster AUTO-POPULATES from what the key can actually invoke, and add/rm write the device
+ * list through the engine. After any device mutation the parent re-reads the swarm config
+ * (onChanged) so the panel's in-memory copy never clobbers CLI-written devices on a later save.
+ */
+function BedrockPane({
+  devices,
+  onChanged,
+}: {
+  devices: SwarmDeviceRow[];
+  onChanged: () => Promise<void>;
+}) {
+  const [phase, setPhase] = useState<'checking' | 'no-key' | 'ready'>('checking');
+  const [error, setError] = useState<string | null>(null);
+  const [region, setRegion] = useState('us-east-1');
+  const [keyText, setKeyText] = useState('');
+  const [roster, setRoster] = useState<string[]>([]);
+  const [filter, setFilter] = useState('');
+  const [busy, setBusy] = useState<string | null>(null); // 'validate' | model_id being added/removed
+  const [editKey, setEditKey] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const r = await window.electron.swarmBedrock(['models', '--json']);
+    if (r.ok) {
+      try {
+        const v = JSON.parse(r.stdout) as { region?: string; models?: string[] };
+        setRoster(Array.isArray(v.models) ? v.models : []);
+        if (v.region) setRegion(v.region);
+        setPhase('ready');
+        setError(null);
+        return;
+      } catch {
+        setError('unreadable roster answer from the engine');
+      }
+    } else if (/no Bedrock API key/i.test(`${r.stderr} ${r.error ?? ''}`)) {
+      setError(null);
+    } else {
+      setError(bedrockErr(r));
+    }
+    setPhase('no-key');
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const validateKey = useCallback(async () => {
+    const key = keyText.trim();
+    if (!key) return;
+    setBusy('validate');
+    setError(null);
+    const args = ['key', key, '--json'];
+    const reg = region.trim();
+    if (reg) args.push('--region', reg);
+    const r = await window.electron.swarmBedrock(args);
+    setBusy(null);
+    if (r.ok) {
+      try {
+        const v = JSON.parse(r.stdout) as { region?: string; models?: string[] };
+        setRoster(Array.isArray(v.models) ? v.models : []);
+        if (v.region) setRegion(v.region);
+        setKeyText('');
+        setEditKey(false);
+        setPhase('ready');
+      } catch {
+        setError('unreadable roster answer from the engine');
+      }
+    } else {
+      setError(bedrockErr(r));
+    }
+  }, [keyText, region]);
+
+  const addNode = useCallback(
+    async (modelId: string) => {
+      setBusy(modelId);
+      setError(null);
+      const r = await window.electron.swarmBedrock(['add', modelId, '--weight', '2']);
+      setBusy(null);
+      if (!r.ok) setError(bedrockErr(r));
+      await onChanged();
+    },
+    [onChanged]
+  );
+
+  const rmNode = useCallback(
+    async (modelId: string) => {
+      setBusy(modelId);
+      setError(null);
+      const r = await window.electron.swarmBedrock(['rm', modelId]);
+      setBusy(null);
+      if (!r.ok) setError(bedrockErr(r));
+      await onChanged();
+    },
+    [onChanged]
+  );
+
+  const configured = new Set(devices.map((d) => d.model_id));
+  const shown = roster.filter(
+    (m) => !filter.trim() || m.toLowerCase().includes(filter.trim().toLowerCase())
+  );
+  const keyEntry = (
+    <div className="space-y-2">
+      <div className="text-xs text-text-secondary max-w-[92ch]">
+        Paste an Amazon Bedrock API key. goose validates it against the region first — the key is
+        stored (encrypted, in your goose secret store) only when Bedrock accepts it, and the models
+        it can run auto-populate below.
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          type="password"
+          className="flex-1"
+          style={{ borderRadius: 3 }}
+          placeholder="Bedrock API key (ABSK…)"
+          value={keyText}
+          onChange={(e) => setKeyText(e.target.value)}
+        />
+        <Input
+          className="w-28"
+          style={{ borderRadius: 3 }}
+          placeholder="region"
+          value={region}
+          onChange={(e) => setRegion(e.target.value)}
+        />
+        <button
+          type="button"
+          disabled={busy === 'validate' || !keyText.trim()}
+          onClick={() => void validateKey()}
+          className="px-3 py-1.5 text-xs font-semibold text-background-primary disabled:opacity-50"
+          style={{ backgroundColor: '#2e8bff', borderRadius: 3 }}
+        >
+          {busy === 'validate' ? 'Validating…' : 'Validate & save'}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-2">
+      {phase === 'checking' ? (
+        <div className="text-sm text-text-secondary">Checking for a stored Bedrock key…</div>
+      ) : phase === 'no-key' || editKey ? (
+        keyEntry
+      ) : (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs">
+            <span style={{ color: '#2ecc71' }} className="font-semibold">
+              key valid
+            </span>
+            <span className="text-text-secondary">
+              {' '}
+              · {region} · {roster.length} model{roster.length === 1 ? '' : 's'} available
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setEditKey(true)}
+            className="px-2.5 py-1 text-xs border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors"
+            style={{ borderRadius: 3 }}
+          >
+            Replace key
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <div
+          className="text-xs font-semibold px-3 py-2 text-background-primary"
+          style={{ backgroundColor: '#e5484d', borderRadius: 3 }}
+        >
+          {error}
+        </div>
+      )}
+
+      {devices.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-xs text-text-secondary">Cloud nodes in your swarm pool:</div>
+          {devices.map((d) => (
+            <div
+              key={d.id}
+              className="flex items-center justify-between gap-3 border border-border-primary px-2.5 py-1.5"
+              style={{ borderRadius: 3 }}
+            >
+              <span className="min-w-0 flex items-center gap-2">
+                <span
+                  className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary shrink-0"
+                  style={{ backgroundColor: '#8e4ec6', borderRadius: 3 }}
+                >
+                  BEDROCK
+                </span>
+                <span className="text-xs font-mono text-text-primary truncate" title={d.model_id}>
+                  {d.model_id}
+                </span>
+              </span>
+              <button
+                type="button"
+                disabled={busy === d.model_id}
+                onClick={() => void rmNode(d.model_id)}
+                className="px-2 py-0.5 text-xs border border-border-primary text-text-secondary hover:text-text-primary hover:border-text-secondary transition-colors shrink-0 disabled:opacity-50"
+                style={{ borderRadius: 3 }}
+              >
+                {busy === d.model_id ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {phase === 'ready' && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs text-text-secondary">
+              Available models — <span className="text-text-primary font-medium">add one as a swarm node</span>:
+            </div>
+            <Input
+              className="w-44"
+              style={{ borderRadius: 3 }}
+              placeholder="filter…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+          </div>
+          <div
+            className="max-h-52 overflow-y-auto border border-border-primary divide-y divide-border-primary"
+            style={{ borderRadius: 3 }}
+          >
+            {shown.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-text-secondary">no model matches the filter</div>
+            ) : (
+              shown.map((m) => (
+                <div key={m} className="flex items-center justify-between gap-3 px-2.5 py-1.5">
+                  <span className="text-xs font-mono text-text-primary truncate" title={m}>
+                    {m}
+                  </span>
+                  {configured.has(m) ? (
+                    <span className="text-[10px] font-bold shrink-0" style={{ color: '#2ecc71' }}>
+                      IN POOL
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy === m}
+                      onClick={() => void addNode(m)}
+                      className="px-2 py-0.5 text-xs font-semibold text-background-primary shrink-0 disabled:opacity-50"
+                      style={{ backgroundColor: '#2e8bff', borderRadius: 3 }}
+                    >
+                      {busy === m ? 'Adding…' : '+ Add'}
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SwarmSettingsSection() {
   const { read, upsert } = useConfig();
   const fleet = useFleet();
@@ -397,17 +669,39 @@ export default function SwarmSettingsSection() {
   const applyPreset = useCallback(() => set(presetPatch(DEFAULTS)), [set]);
   const activePreset = detectPreset(cfg);
 
+  // Which node source the fleet card is showing. Pure view state — the run pool always uses BOTH
+  // (local residents + configured cloud devices merge engine-side).
+  const [nodeProvider, setNodeProvider] = useState<NodeProvider>('LM Studio');
+
+  // Re-read the swarm config after an ENGINE-side device mutation (`goose swarm bedrock add/rm`).
+  // Mandatory: every UI edit upserts the WHOLE swarm object from this state, so a stale in-memory
+  // copy would silently clobber the CLI-written device list on the next toggle.
+  const reloadSwarm = useCallback(async () => {
+    try {
+      const raw = (await read('swarm', false)) as SwarmConfig | null;
+      setCfg({ ...DEFAULTS, ...(raw ?? {}) });
+    } catch {
+      // keep the current state; the next mount re-reads
+    }
+  }, [read]);
+
   // Node weight rows: the configured pool (its ids are what speed_weights keys match against), or the live
   // fleet models when the pool is empty. weightFor mirrors the scheduler's speed_weight_for (first key the
   // device id contains, else 1) so the UI shows the ACTUAL effective weight — including pool-set keys.
-  const configuredDevices = (Array.isArray(cfg.devices) ? cfg.devices : []) as Array<{
-    id: string;
-    model_id: string;
-  }>;
+  const configuredDevices: SwarmDeviceRow[] = Array.isArray(cfg.devices) ? cfg.devices : [];
+  const cloudDevices = configuredDevices.filter((d) => (d.provider ?? 'lmstudio') !== 'lmstudio');
   const weightRows =
     configuredDevices.length > 0
-      ? configuredDevices.map((d) => ({ id: d.id, name: deviceFromModelId(d.model_id) || d.id }))
-      : fleet.models.map((m) => ({ id: m, name: deviceFromModelId(m) }));
+      ? configuredDevices.map((d) => {
+          const cloud = (d.provider ?? 'lmstudio') !== 'lmstudio';
+          return {
+            id: d.id,
+            // A Bedrock id like `us.anthropic.claude-…` has no `<node>-` prefix; derive nothing from it.
+            name: cloud ? d.model_id : deviceFromModelId(d.model_id) || d.id,
+            cloud,
+          };
+        })
+      : fleet.models.map((m) => ({ id: m, name: deviceFromModelId(m), cloud: false }));
   const weightFor = (id: string): number => {
     const sw = cfg.speed_weights ?? {};
     if (id in sw) return sw[id] ?? 1; // exact device-id key wins (avoids substring collisions)
@@ -425,20 +719,33 @@ export default function SwarmSettingsSection() {
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-4 px-4 space-y-2">
-          <div className="text-xs flex items-center justify-between">
-            <span className="text-text-secondary">{cfg.endpoint}</span>
-            <span style={{ color: fleet.online ? '#2ecc71' : '#878787' }}>
-              {fleet.online
-                ? `${fleet.lanes.length} node${fleet.lanes.length === 1 ? '' : 's'} live`
-                : 'offline'}
-            </span>
+          <div className="text-xs flex items-center justify-between gap-3">
+            <Segmented options={NODE_PROVIDERS} value={nodeProvider} onChange={setNodeProvider} />
+            {nodeProvider === 'LM Studio' ? (
+              <span className="flex items-center gap-2 min-w-0">
+                <span className="text-text-secondary truncate">{cfg.endpoint}</span>
+                <span className="shrink-0" style={{ color: fleet.online ? '#2ecc71' : '#878787' }}>
+                  {fleet.online
+                    ? `${fleet.lanes.length} node${fleet.lanes.length === 1 ? '' : 's'} live`
+                    : 'offline'}
+                </span>
+              </span>
+            ) : (
+              <span className="text-text-secondary">
+                {cloudDevices.length} cloud node{cloudDevices.length === 1 ? '' : 's'} in the pool
+              </span>
+            )}
           </div>
-          {fleet.online && fleet.lanes.length > 0 ? (
-            <FanInCard dispatch="fleet · live" lanes={fleet.lanes} />
+          {nodeProvider === 'LM Studio' ? (
+            fleet.online && fleet.lanes.length > 0 ? (
+              <FanInCard dispatch="fleet · live" lanes={fleet.lanes} />
+            ) : (
+              <div className="text-sm text-text-secondary border border-border-primary px-3 py-4 text-center" style={{ borderRadius: 3 }}>
+                No fleet detected. Start LM Studio (LM Link) at {cfg.endpoint} to see your nodes.
+              </div>
+            )
           ) : (
-            <div className="text-sm text-text-secondary border border-border-primary px-3 py-4 text-center" style={{ borderRadius: 3 }}>
-              No fleet detected. Start LM Studio (LM Link) at {cfg.endpoint} to see your nodes.
-            </div>
+            <BedrockPane devices={cloudDevices} onChanged={reloadSwarm} />
           )}
 
           {weightRows.length > 0 && (
@@ -449,8 +756,18 @@ export default function SwarmSettingsSection() {
               </div>
               {weightRows.map((row) => (
                 <div key={row.id} className="flex items-center justify-between gap-3 py-0.5">
-                  <span className="text-sm font-mono text-text-primary truncate" title={row.id}>
-                    {row.name}
+                  <span className="min-w-0 flex items-center gap-2">
+                    {row.cloud && (
+                      <span
+                        className="text-[10px] font-bold px-1.5 py-0.5 text-background-primary shrink-0"
+                        style={{ backgroundColor: '#8e4ec6', borderRadius: 3 }}
+                      >
+                        BEDROCK
+                      </span>
+                    )}
+                    <span className="text-sm font-mono text-text-primary truncate" title={row.id}>
+                      {row.name}
+                    </span>
                   </span>
                   <WeightStepper value={weightFor(row.id)} onChange={(v) => setWeight(row.id, v)} />
                 </div>
