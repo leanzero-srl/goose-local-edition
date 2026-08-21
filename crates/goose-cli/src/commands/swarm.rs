@@ -12163,6 +12163,29 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn bind_first_hint_fires_only_on_a_crashless_tail() {
+        // Alive-but-never-listens: the hint carries the bind-first diagnosis.
+        assert!(
+            bind_first_hint("poll: no port answered after 4.0s; tail: sync starting…")
+                .contains("never started listening")
+        );
+        // A real crash: the traceback speaks for itself, no hint.
+        assert_eq!(bind_first_hint("Traceback (most recent call last): …"), "");
+        assert_eq!(bind_first_hint("ValueError: tokens file missing keys"), "");
+        // And the AUTHOR hears the same rule at write time: a server-shaped task text pulls
+        // pitfall 18 through the deterministic retrieval.
+        let hits = relevant_pitfalls(
+            "Implement ledgerd: binds 127.0.0.1, listening within 10 seconds; \
+             on boot it starts its first sync unprompted",
+        )
+        .unwrap();
+        assert!(
+            hits.contains("BIND FIRST"),
+            "server task text must retrieve the bind-first pitfall: {hits}"
+        );
+    }
+
+    #[test]
     fn spec_json_stub_reproduces_the_documented_shape() {
         // The real sb-7 wording: the tokens-file shape is documented inline after the flag.
         let spec = "…- `--tokens-file` names a JSON file the harness writes before boot:\n  \
@@ -13008,7 +13031,15 @@ instantly with 'No module named X.__main__' even when the package imports fine a
 invocations could never boot, zeroing the delivery). EVERY invocation the spec advertises must boot — \
 each package form needs its own __main__.py (argparse the documented flags, then start the service), a \
 subpackage needs __init__.py at every level, and the proof is running each advertised command and \
-watching it bind its port, not reading the code.\
+watching it bind its port, not reading the code.
+18. BIND FIRST, work after: a service's boot deadline applies to LISTENING, never to data readiness. \
+Create the server socket, bind, and start serving BEFORE any vendor/network call, initial sync, or \
+long init — run those in a background thread started AFTER the socket listens, e.g. \
+threading.Thread(target=first_sync, daemon=True).start() right after serve begins (measured: an app \
+that attempted its first vendor sync before binding never listened at all while the vendor was \
+unreachable, and the delivery scored zero although the code behind the port was fine). The background \
+sync loop must tolerate a dead vendor forever — retry on a timer while the server keeps serving \
+local data; a dead vendor must never keep the port closed.\
 ";
 
 /// Triggers are deliberately UNAMBIGUOUS, not merely topical. A first cut used bare words like "page",
@@ -13145,6 +13176,14 @@ const PITFALL_TRIGGERS: &[&[&str]] = &[
         "vendor client",
     ],
     &["python -m", "python3 -m", "__main__"],
+    &[
+        "serve_forever",
+        "listening within",
+        "binds",
+        "bind 127",
+        "first sync",
+        "--port",
+    ],
 ];
 
 /// The DOMAIN_PITFALLS items relevant to this task's text, or None when nothing matches.
@@ -20965,6 +21004,22 @@ fn spec_run_argv_v2(
     }
     drop(holders);
     (out, ports)
+}
+
+/// The boot-repair brief's extra diagnosis when the probe's tail shows NO crash: the process ran
+/// and simply never listened. Without this the repair worker hunts for a traceback that does not
+/// exist (r4's shipped app: alive with valid inputs, never bound — the classic cause is pre-serve
+/// work, e.g. a first vendor sync attempted BEFORE bind, blocking on an unreachable vendor).
+/// Empty when the tail carries a real crash — the traceback then speaks for itself.
+fn bind_first_hint(err_tail: &str) -> &'static str {
+    if err_tail.contains("Traceback") || err_tail.contains("Error") {
+        return "";
+    }
+    "\n\nThe process RAN and did not crash — it simply never started listening. The usual cause \
+     on this stack is pre-serve work done BEFORE bind: a first vendor sync, a network call, a \
+     blocking init. The boot deadline applies to LISTENING, not data readiness. Restructure so \
+     the server socket binds and serving starts FIRST, and the sync/init runs in a background \
+     thread started AFTER the socket listens — a dead vendor must never keep the port closed."
 }
 
 /// The spec's OWN documented JSON shape for a harness-written file (tokens file etc.):
@@ -36065,7 +36120,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                              request INSIDE __init__ — use class attributes or self.server.*); \
                              http.client.HTTPConnection given a full URL instead of host:port. \
                              When done, verify by running the documented invocation yourself and \
-                             confirming the port answers."
+                             confirming the port answers.{}",
+                            bind_first_hint(&err_tail)
                         ),
                         device_id: dev_id,
                         model_id,
