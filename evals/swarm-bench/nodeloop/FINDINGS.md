@@ -20797,3 +20797,22 @@ T 0.04) — the same web-viz/styles family that dominates the stall class. Next 
 lever: the frontend task family (skeleton-fill split or dedicated viz pitfalls). Wall
 trend: 177 → 158 → 122/147 with full mechanisms. Fleet decode: wh 12.7 / mihai 9.6 /
 gabee 8.7; prefill 276 tok/s (per-run measured, in the verdict).
+
+## F910 — overnight close: swarm sb-7 entry posted, v1.41.102 released; the 0.0138 is two missing files, not a broken engine
+
+The swarm's first sb-7 run (r1, 177 min, cut at the harness wall during final boot
+repair): EVERY batch mechanism verified in-log (clamp, measured fix target, promotion
+fix::r0::app/__main__.py, findings 5->3 — the campaign's first verified reduction, 6
+node-moving retries, no stall loops). Hermetic 0.0138 posted honestly as a floor
+(brun-fleet-qwen-sb70, real telemetry: 284 calls, wh 15.0 tok/s). ROOT CAUSE by hand:
+the combined `python -m app` boot WORKS (both services bind — the promoted repair fixed
+it), but app/ledgerd and app/notifierd are packages with NO __main__.py, so the spec's
+advertised standalone invocations crash — server_runs critical 0 -> multiplier collapse.
+Two five-line files from a different score. TWO ENGINE DEFECTS EXPOSED for the next
+batch: (1) spec_run_argv garbles multi-flag invocations (both port flags get the same
+probe port; db paths stuffed into --vendor/--tokens-file) — the boot-repair loop chased
+a phantom for 33 min; (2) no in-run check boots the OTHER advertised invocations, so a
+missing __main__.py is scorer-only knowledge. Release: v1.41.102 live on
+leanzero-srl/goose-local-edition (DMG+zip, in-app engine checksum == target/release,
+main merged, tag pushed). GitHub auth restored via the leanzero-srl token (stored in the
+goose skill per order); aaif remote is read-only and out of the release path.
