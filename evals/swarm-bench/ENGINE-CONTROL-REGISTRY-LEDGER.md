@@ -7,8 +7,13 @@ repair, SB7, or scoring behavior.
 
 The Rust source of truth is
 `crates/goose-cli/src/commands/swarm_control_registry.rs`. It contains exactly 116 persisted
-`SwarmConfig` controls, the audited 30/8/32/12/34 dispositions, all 50 environment-only controls,
-canonical aliases, serialized config defaults, and the exact 142 `GOOSE_SWARM_*` production reader names.
+`SwarmConfig` controls, the audited 30/8/32/12/34 dispositions, all current environment-only controls,
+canonical aliases, serialized config defaults, and the exact `GOOSE_SWARM_*` production reader names.
+
+The task-compiler slice retired `GOOSE_SWARM_DETAIL_BUDGET_SECS` rather than leaving a catalog-only knob:
+typed details are no longer cut off and replaced by one-line briefs. The current inventory therefore has 49
+environment-only controls and 141 literal production readers. The bidirectional source test derives those
+sets rather than preserving the former counts as inert compatibility names.
 
 ## Enforced truths
 

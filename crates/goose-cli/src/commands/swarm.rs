@@ -3635,54 +3635,6 @@ fn detail_memo_key(goal: &str, id: &str, brief: &str, files: &str, findings: &st
 /// keeps a 5-point margin above the lone adoption so the guard never skips a historically-useful re-draft.
 const BACKBONE_SKIP_CONF_FLOOR: u8 = 90;
 
-/// Wall-clock budget for ONE subtask's detail expansion. Load-bearing: exceeding it does not fail the
-/// task, it silently hands the worker the architect's one-line brief as its entire spec.
-const DETAIL_BUDGET_SECS_DEFAULT: u64 = 75;
-
-/// How long ONE detail expansion may take. Env > default; clamped [30, 900]. Default unchanged, so a
-/// run that sets nothing is byte-identical.
-///
-/// 75 is a bare literal pinned at the OBSERVED MAXIMUM of the call it bounds, which is the wrong place
-/// for a ceiling: normal variance then lands on the far side of it. Measured across the runs on disk —
-/// the SAME `meridian` brief was detailed in 44.5s on one run and blew through 75s on another, and the
-/// run that lost it shipped a 95-character spec for the module tier C exists to grade, scoring 14.3%
-/// there against 85.7% for the run that kept it. The sibling CONTRACT fanout — same call shape, same
-/// fleet — already abandoned a small fixed budget for `worker_timeout_secs.max(120)` after a mass stub
-/// failure, and its comment records exactly that reasoning.
-///
-/// Deliberately NOT raised here. The default stays 75 so the campaign's baseline arm is unchanged and
-/// a `detail_budget` arm is attributable to this one constant; the number gets baked once a replicated
-/// arm says what it should be, not because the argument sounds right.
-fn detail_budget_secs() -> u64 {
-    // DERIVED, not a bare literal — the same source its SIBLING fan-out already uses. `contracts`
-    // clamps its straggler grace to `worker_timeout_secs.max(10)` (baked 900); `detail` had a
-    // hardcoded 75. Two fan-outs, same fleet, same model, both asking a worker to author a spec, and
-    // a 12x disparity in what they are allowed.
-    //
-    // MEASURED across the six runs on disk: 19 contract calls produced 1 empty/unparsed (5%), while
-    // detail produced **27 failures, 25 of them checked and ALL `timeout`** — zero filler, zero agent
-    // errors. So the detail failure mode is entirely this ceiling, and a retry at the same ceiling
-    // would fail identically; the ceiling is the fix, not a retry.
-    //
-    // It matters because the detail call produces the worker's ENTIRE spec, and losing it is the
-    // measured predictor of a bad build: `meridian` (the module owning the vendor contract) is the
-    // most frequent victim at 6 of 25, and the run where it shipped a 122-char brief scored 42.7%
-    // while the run where it got a 1497-char spec containing the vendor's `/v1` prefix scored 88.7%.
-    // The engine was willing to spend 10-19 MINUTES re-drafting a plan and 75 SECONDS writing the
-    // specs that plan depends on.
-    if uncapped() {
-        return UNCAPPED_SECS;
-    }
-    let ceiling = load_config()
-        .worker_timeout_secs
-        .max(DETAIL_BUDGET_SECS_DEFAULT);
-    std::env::var("GOOSE_SWARM_DETAIL_BUDGET_SECS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(ceiling)
-        .clamp(30, 900)
-}
-
 /// #122 pure decision: should the backbone-lock round-2 re-draft actually run? It runs whenever the backbone
 /// lever is on, EXCEPT when the skip lever is on AND round-1 agreement already clears the floor — then the
 /// free drafts share the structure the lock would pin, so the ~250s round can only be discarded (0/11 adopted
@@ -9890,6 +9842,66 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(SwarmConfig::default().spec_sized_plan, None);
     }
 
+    #[test]
+    fn typed_task_detail_keeps_exact_requirements_files_and_acceptance_closure() {
+        let source = "Expose GET /v1/payments with the X-Trace header.\nBuild the API module.";
+        let raw = serde_json::json!({
+            "objective": "Implement the payments read endpoint",
+            "requirement_citations": [{
+                "quote": "Expose GET /v1/payments with the X-Trace header.",
+                "applies_as": "The handler must keep the exact route and header spelling."
+            }],
+            "interfaces": ["get_payments(request) -> JSON response"],
+            "implementation_steps": ["Register GET /v1/payments in app/api.py"],
+            "edge_cases": ["Reject a missing X-Trace header with the specified error response"],
+            "acceptance_checks": ["Request GET /v1/payments with X-Trace and assert the exact JSON payload"]
+        })
+        .to_string();
+        let compiled = compile_task_detail(
+            &raw,
+            "payments-api",
+            "Build the API module.",
+            "app/api.py",
+            source,
+        )
+        .unwrap();
+        assert!(compiled
+            .rendered
+            .contains("Owned files (exclusive): app/api.py"));
+        assert!(compiled.rendered.contains("GET /v1/payments"));
+        assert!(compiled.rendered.contains("X-Trace"));
+        assert!(compiled.rendered.contains("Acceptance closure:"));
+        assert_eq!(compiled.citations, 1);
+        assert_eq!(compiled.acceptance_checks, 1);
+    }
+
+    #[test]
+    fn typed_task_detail_rejects_a_fabricated_requirement_citation() {
+        let raw = serde_json::json!({
+            "objective": "Implement the payments read endpoint",
+            "requirement_citations": [{
+                "quote": "Also expose DELETE /v1/payments.",
+                "applies_as": "Add a delete route."
+            }],
+            "interfaces": [],
+            "implementation_steps": ["Add the route"],
+            "edge_cases": [],
+            "acceptance_checks": ["Call the route"]
+        })
+        .to_string();
+        let error = compile_task_detail(
+            &raw,
+            "payments-api",
+            "Build GET /v1/payments.",
+            "app/api.py",
+            "Build GET /v1/payments.",
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("not present in the supplied task sources"));
+    }
+
     /// F852: the JOB decides how many pieces exist (~2 commands per shard), the fleet only caps how
     /// many can run concurrently. A shard that owns nothing still costs a dispatch and a fleet slot,
     /// and makespan is the MAX shard — so cutting past the number of real pieces buys idle shards,
@@ -15122,6 +15134,12 @@ fn build_research_exts(enabled: bool) -> Vec<ExtensionConfig> {
 // Dispatcher (M1.1) — drives one Goose agent per task over the shared lmstudio provider
 // ---------------------------------------------------------------------------------------------
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentToolSurface {
+    Developer,
+    ResponseOnly,
+}
+
 pub struct GooseAgentDispatcher {
     provider: Arc<dyn Provider>,
     /// model_id → provider name for CLOUD pool devices; consulted at the single update_provider
@@ -15655,6 +15673,7 @@ impl GooseAgentDispatcher {
             response,
             max_turns,
             extensions,
+            AgentToolSurface::Developer,
             self.planner_timeout_secs,
             activity_key,
             None, // no assistant prefill on this path
@@ -15687,12 +15706,46 @@ impl GooseAgentDispatcher {
             response,
             max_turns,
             extensions,
+            AgentToolSurface::Developer,
             idle_secs,
             activity_key,
             None, // no assistant prefill on this path
             None, // planner-side calls are never forced to a tool
             None,
             None, // generic path: no owned-file repair target
+        )
+        .await
+    }
+
+    /// A planner-side generation with no filesystem or shell tools. When `response` is present the recipe's
+    /// typed `final_output` tool remains available; no developer extension is installed. Detail and contract
+    /// compilation use this path so planning cannot create, edit, or remove project artifacts.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_response_only_agent(
+        &self,
+        model_id: &str,
+        system_prompt: String,
+        user_text: String,
+        response: Option<Response>,
+        max_turns: u32,
+        idle_secs: u64,
+        activity_key: Option<&str>,
+    ) -> Result<RunAgentOut> {
+        self.run_agent_in(
+            self.working_dir.clone(),
+            model_id,
+            system_prompt,
+            user_text,
+            response,
+            max_turns,
+            &[],
+            AgentToolSurface::ResponseOnly,
+            idle_secs,
+            activity_key,
+            None,
+            None,
+            None,
+            None,
         )
         .await
     }
@@ -15710,6 +15763,7 @@ impl GooseAgentDispatcher {
         response: Option<Response>,
         max_turns: u32,
         extensions: &[ExtensionConfig],
+        tool_surface: AgentToolSurface,
         idle_secs: u64,
         // When Some(task_id), emit a per-turn activity heartbeat to `.swarm/activity/<task_id>.json` so
         // the idle-model judge can see how many actions this worker has taken — letting it catch a
@@ -15825,29 +15879,31 @@ impl GooseAgentDispatcher {
             .await
             .map_err(|e| anyhow!("update_provider: {e}"))?;
 
-        agent
-            .add_extension(
-                ExtensionConfig::Builtin {
-                    name: "developer".to_string(),
-                    display_name: None,
-                    description: String::new(),
-                    timeout: None,
-                    bundled: Some(true),
-                    // Whitelist the developer tools the worker actually uses; DROP `read_image` — it is only
-                    // for images and every worker call to it was 100% wasted (a source/text/dir path it then
-                    // recovers from via `cat`). The whitelist hides it from the menu AND rejects it if the
-                    // model hallucinates it.
-                    available_tools: vec![
-                        "write".to_string(),
-                        "edit".to_string(),
-                        "shell".to_string(),
-                        "tree".to_string(),
-                    ],
-                },
-                &session_id,
-            )
-            .await
-            .map_err(|e| anyhow!("add developer extension: {e}"))?;
+        if tool_surface == AgentToolSurface::Developer {
+            agent
+                .add_extension(
+                    ExtensionConfig::Builtin {
+                        name: "developer".to_string(),
+                        display_name: None,
+                        description: String::new(),
+                        timeout: None,
+                        bundled: Some(true),
+                        // Whitelist the developer tools the worker actually uses; DROP `read_image` — it is only
+                        // for images and every worker call to it was 100% wasted (a source/text/dir path it then
+                        // recovers from via `cat`). The whitelist hides it from the menu AND rejects it if the
+                        // model hallucinates it.
+                        available_tools: vec![
+                            "write".to_string(),
+                            "edit".to_string(),
+                            "shell".to_string(),
+                            "tree".to_string(),
+                        ],
+                    },
+                    &session_id,
+                )
+                .await
+                .map_err(|e| anyhow!("add developer extension: {e}"))?;
+        }
 
         // Worker MCP extensions (none for the planner). A failed connection is non-fatal so a down
         // server doesn't kill the task.
@@ -18531,7 +18587,7 @@ impl GooseAgentDispatcher {
                         .is_some_and(|i| i.starts_with("verify::"))
                 })
             });
-        let items: Vec<(usize, String, String, String, bool)> = v
+        let items: Vec<(usize, String, String, String)> = v
             .get("subtasks")
             .and_then(|s| s.as_array())
             .ok_or_else(|| anyhow!("skeleton has no subtasks array"))?
@@ -18585,21 +18641,11 @@ impl GooseAgentDispatcher {
                             .join(", ")
                     })
                     .unwrap_or_default();
-                // S3 i2 (the missing half found during i3's wiring read): only a prompt that ASKS
-                // for the line ever produces one — parser + field without this ask was the F105
-                // dark-mechanism pattern, a consumer whose producer never fires. Hard tasks owning
-                // exactly one .py file are the fill fan's whole domain.
-                let subsplit_ok = st["difficulty"].as_str() == Some("hard")
-                    && st["files"]
-                        .as_array()
-                        .map(|a| a.len() == 1 && a[0].as_str().is_some_and(|f| f.ends_with(".py")))
-                        .unwrap_or(false);
                 (
                     i,
                     st["id"].as_str().unwrap_or("").to_string(),
                     st["description"].as_str().unwrap_or("").to_string(),
                     files,
-                    subsplit_ok,
                 )
             })
             .collect();
@@ -18622,18 +18668,18 @@ impl GooseAgentDispatcher {
         // (~75s LLM call). OFF => `items` passes through and `memo_keys` stays empty and unread => byte-identical.
         let mut memo_keys: std::collections::HashMap<usize, (String, String)> =
             std::collections::HashMap::new();
-        let items: Vec<(usize, String, String, String, bool)> = if self.detail_memo_on {
+        let items: Vec<(usize, String, String, String)> = if self.detail_memo_on {
             let cache = self.detail_memo.lock().unwrap();
             let mut remaining = Vec::with_capacity(items.len());
             let mut reused = 0usize;
-            for (idx, id, brief, files, subsplit_ok) in items {
+            for (idx, id, brief, files) in items {
                 let key = detail_memo_key(&goal, &id, &brief, &files, &findings);
                 if let Some(desc) = cache.get(&key) {
                     v["subtasks"][idx]["description"] = serde_json::Value::String(desc.clone());
                     reused += 1;
                 } else {
                     memo_keys.insert(idx, (key, brief.clone()));
-                    remaining.push((idx, id, brief, files, subsplit_ok));
+                    remaining.push((idx, id, brief, files));
                 }
             }
             drop(cache);
@@ -18648,25 +18694,24 @@ impl GooseAgentDispatcher {
         } else {
             items
         };
-        // #135 degrade-straggler-stop for detail: an aborted detail task keeps its skeleton brief (the existing
-        // `_ => brief` fallback), so stopping the lone lagger only costs one module a richer spec — never
-        // corruption. Usually near-inert: #subtasks > #devices makes it fall back to await-all. grace 0 => OFF.
-        let detail_grace = if self.straggler_stop_degrade {
-            // Was clamp(10, 75) — a second hardcoded 75 that capped the straggler grace far below the
-            // sibling contracts fanout's `worker_timeout_secs.max(10)`. Same call kind, same fleet;
-            // the ceiling now comes from the same place.
-            self.straggler_grace_secs
-                .unwrap_or(45)
-                .clamp(10, self.worker_timeout_secs.max(10))
-        } else {
-            0
-        };
+        self.events.write_value(serde_json::json!({
+            "event": "plan_compile_resolved",
+            "detail_format": "typed-v1",
+            "detail_tool_surface": "response-only",
+            "detail_straggler_abort": false,
+            "configured_straggler_stop_degrade": self.straggler_stop_degrade,
+            "task_count_source": "job",
+            "detail_items": items.len(),
+            "lane_identity": "distinct-model-host",
+            "full_goal_context": true,
+        }));
         let me = self.clone();
-        // One detail call per device (work-stealing): a weight-1 node never has a second detail queued
-        // behind the first. Each item grabs the next free node, so the fleet stays busy without
-        // over-dispatching; on timeout/empty/error we fall back to the architect's brief line.
-        let results =
-            fanout_over_fleet_straggler(one_lane_per_host(wm), items, detail_grace, "detail", move |(idx, id, brief, files, subsplit_ok), model| {
+        // Detail is build authority, so an admitted request is never sacrificed to shorten the fan tail and a
+        // failed compiler can never silently collapse a module back to the architect's one-line brief.
+        let results = fanout_over_fleet(
+            one_lane_per_host(wm),
+            items,
+            move |(idx, id, brief, files), model| {
             let me = me.clone();
             let goal = goal.clone();
             let findings = findings.clone();
@@ -18678,164 +18723,121 @@ impl GooseAgentDispatcher {
                     style(&id).bold(),
                     model
                 );
-                let fb = if findings.is_empty() {
-                    String::new()
-                } else {
-                    format!("\n\nResearch findings:\n{findings}")
-                };
-                let system = "You are detailing ONE subtask of a larger plan into a precise, implementation-ready \
-                    spec for the worker who will build it: exact function/class names and signatures, key logic, the \
-                    files it owns, edge cases to handle, and what its tests must check. Use the EXACT file paths the \
-                    subtask owns (given below) verbatim — NEVER invent, rename, or pluralize a filename. \
-                    CARRY THROUGH EVERY EXTERNAL LITERAL from the research findings EXACTLY as written — API paths \
-                    and their version prefixes, header names, query parameters, status codes, field names. These \
-                    cannot be re-derived by the worker and a near-miss is a total failure: an endpoint off by a \
-                    `/v1` returns 404 on every call. If the findings give an endpoint, WRITE THE ENDPOINT. Be \
-                    concrete and self-contained, and BRIEF — about 150 words excluding those literals, which are \
-                    never the thing to cut. Output ONLY the spec prose; do NOT write code files or restate the \
-                    whole project."
+                let system = "Compile ONE task into a typed, implementation-ready contract. You have no \
+                    filesystem or shell tools and must not prototype code. Call final_output as soon as the \
+                    contract is complete. The objective, implementation steps, interfaces, edge cases, and \
+                    acceptance checks must be specific to this task. Each requirement_citations.quote must be \
+                    copied VERBATIM from the supplied overall goal, architect brief, or research findings; \
+                    applies_as explains exactly what this task must do because of that quote. Preserve every \
+                    external literal that applies: paths, command shapes, API prefixes, headers, parameters, \
+                    statuses, field names, units, and expected values. Do not invent requirements or generic \
+                    filler. The engine owns the file list, so never rename or add a path."
                     .to_string();
-                let system = if subsplit_ok {
-                    format!(
-                        "{system}\n\nIf this module naturally decomposes, END your spec with ONE line \
-                         `SUBSPLIT: name1, name2` — 2-4 top-level function/class names, each independently \
-                         implementable against the module's interface; OMIT the line when the module is one \
-                         coherent piece. Never list more than 4."
-                    )
-                } else {
-                    system
-                };
-                let files_line = if files.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        "\n\nThis subtask owns EXACTLY these file(s): {files}\nYour spec MUST refer to the \
-                         worker's files by these EXACT paths — do NOT use a different name (e.g. do not write \
-                         formula_parser.py when the owned file is parser.py): a mismatched filename makes the \
-                         worker write the wrong file and the task FAILS its owned-file check on every attempt."
-                    )
-                };
-                let user = format!("Overall goal: {goal}\n\nThis subtask: [{id}] {brief}{files_line}{fb}");
+                let user = format!(
+                    "## Overall goal\n{goal}\n\n## Architect brief\n[{id}] {brief}\n\n## Exact owned \
+                     files\n{}\n\n## Research findings\n{}",
+                    if files.is_empty() { "(none)" } else { &files },
+                    if findings.is_empty() {
+                        "(none)"
+                    } else {
+                        &findings
+                    }
+                );
                 // Per-subtask detailer digest so the PLAN-detailing fan-out shows live per-node activity.
                 let detail_key = format!("detail-{id}");
-                // #43: the fallback class is PREFILL, not generation — the modules that time out
-                // every run (api, store, meridian) are exactly the ones whose research-findings
-                // block is largest, and a flat budget cannot see prompt size. Same physics and
-                // same cure as the first-token watchdog: extend THIS call's budget by its own
-                // estimated prefill time at the run's worst measured prefill rate (chars/4 ≈
-                // tokens; prologue calls have already populated the telemetry; none → flat
-                // budget, byte-identical). Measured stake: the 44.2%-vs-90.0% spread across
-                // identical configs traced to which modules kept the one-line brief.
-                let detail_budget = detail_budget_secs();
-                let detail_grace = telemetry_prefill_floor(&model)
-                    .map(|r| ((system.len() + user.len()) as f64 / 4.0 / r) as u64)
-                    .unwrap_or(0);
-                let detail_budget_eff = detail_budget + detail_grace;
-                let (desc, fallback_reason) = match tokio::time::timeout(
-                    std::time::Duration::from_secs(detail_budget_eff),
-                    me.run_agent(
+                let source = format!("{goal}\n{brief}\n{findings}");
+                let compiled = match me
+                    .run_response_only_agent(
                         &model,
                         system,
                         user,
-                        None,
+                        Some(Response {
+                            json_schema: Some(task_detail_schema()),
+                        }),
                         planner_side_turns(),
-                        &[],
-                        0,
+                        me.planner_timeout_secs,
                         Some(detail_key.as_str()),
-                    ),
-                )
-                .await
+                    )
+                    .await
                 {
-                    // Accept the detailed spec only if it is a real detail — NOT the agent-loop max-turns
-                    // filler (which a weak worker returns when it exhausts its 6 turns); fall back to the
-                    // proven-good skeleton brief otherwise, so filler never becomes a worker's whole spec.
-                    // A detail SHORTER than its own one-line brief is never a real spec — it is a
-                    // truncated stream (measured: a node restart mid-write left a 146-char fragment
-                    // that sailed through as ledger-server's whole spec) or a lazy stub. The brief
-                    // is the proven-good floor; never ship below it.
-                    Ok(Ok(o))
-                        if !is_agent_loop_filler(&o.text)
-                            && o.text.trim().len() >= brief.trim().len() =>
-                    {
-                        (o.text, "")
-                    }
-                    Ok(Ok(o)) if !is_agent_loop_filler(&o.text) => {
-                        (brief.clone(), "shorter_than_brief")
-                    }
-                    Ok(Ok(_)) => (brief.clone(), "filler"),
-                    Ok(Err(_)) => (brief.clone(), "agent_error"),
-                    Err(_) => (brief.clone(), "timeout"),
+                    Ok(o) => o
+                        .final_output
+                        .filter(|raw| !raw.trim().is_empty())
+                        .or_else(|| (!o.text.trim().is_empty()).then_some(o.text))
+                        .ok_or_else(|| "no typed final output".to_string())
+                        .and_then(|raw| {
+                            compile_task_detail(&raw, &id, &brief, &files, &source)
+                                .map_err(|e| e.to_string())
+                        }),
+                    Err(e) => Err(format!("agent error: {e}")),
                 };
-                // The fallback keeps the architect's ONE-LINE brief as the worker's entire spec. That is
-                // the thinnest instruction the engine can produce, and until now it was indistinguishable
-                // from an architect who simply wrote a short line: no event, and the same green ✓ printed
-                // on the failure path. MEASURED on three runs of an identical config — 2, 1 and 0 tasks
-                // kept the brief, and the builds scored 44.2%, 86.7% and 90.0%. In the 44.2% run the
-                // vendor-client module was dispatched with 95 characters and its tier of the grade
-                // collapsed to 14.3%. That spread was written off as noise precisely because this path
-                // emitted no signal. Both sibling fanouts already report their failures (contracts prints
-                // the per-module reason, the scout fanout splices its budget overrun into the findings);
-                // detail was the only one that failed invisibly.
-                // A TIMEOUT SAYS ">budget" AND NOTHING ELSE, so the log could never say what the
-                // budget should BE — every value was a judgement call. Recording the SUCCESSFUL calls
-                // gives the distribution the ceiling has to clear, and pairs duration with the size of
-                // the spec produced, which is what actually drives the time.
-                if fallback_reason.is_empty() {
+                if let Ok(detail) = &compiled {
                     me.events.write_value(serde_json::json!({
                         "event": "detail_completed",
                         "task_id": id,
                         "secs": started.elapsed().as_secs_f64().round(),
-                        "spec_chars": desc.len(),
+                        "spec_chars": detail.rendered.len(),
                         "brief_chars": brief.len(),
-                        "budget_secs": detail_budget_eff,
-                        "prefill_grace_secs": detail_grace,
-                        "subsplit": goose_swarm::extract_subsplit(&desc).len(),
-                    }));
-                }
-                if !fallback_reason.is_empty() {
-                    me.events.write_value(serde_json::json!({
-                        "event": "detail_fallback",
-                        "task_id": id,
-                        "reason": fallback_reason,
-                        "brief_chars": brief.len(),
-                        "budget_secs": detail_budget_eff,
-                        "prefill_grace_secs": detail_grace,
+                        "format": "typed-v1",
+                        "tool_surface": "response-only",
+                        "requirement_citations": detail.citations,
+                        "interfaces": detail.interfaces,
+                        "acceptance_checks": detail.acceptance_checks,
                     }));
                     eprintln!(
-                        "  {} detail {} ({:.0}s) — {} at {}s; the worker gets the skeleton line, not a spec",
+                        "  {} detail {} ({:.0}s, {} acceptance checks)",
+                        style("✓").green().bold(),
+                        style(&id).bold(),
+                        started.elapsed().as_secs_f64(),
+                        detail.acceptance_checks,
+                    );
+                } else if let Err(reason) = &compiled {
+                    me.events.write_value(serde_json::json!({
+                        "event": "detail_compile_failed",
+                        "task_id": id,
+                        "reason": reason,
+                        "brief_chars": brief.len(),
+                        "format": "typed-v1",
+                        "fallback": false,
+                    }));
+                    eprintln!(
+                        "  {} detail {} ({:.0}s) — compiler rejected output: {}",
                         style("⚠").yellow().bold(),
                         style(&id).bold(),
                         started.elapsed().as_secs_f64(),
-                        fallback_reason,
-                        detail_budget_eff,
-                    );
-                } else {
-                    eprintln!(
-                        "  {} detail {} ({:.0}s)",
-                        style("✓").green().bold(),
-                        style(&id).bold(),
-                        started.elapsed().as_secs_f64()
+                        reason,
                     );
                 }
-                (idx, desc)
+                (idx, id, brief, compiled)
             }
-        })
+        },
+        )
         .await;
-        for (idx, desc) in results {
-            // #122: cache only a REAL detail. The fanout returns the skeleton `brief` verbatim on
-            // timeout/error/filler (the `_ => brief` fallback), so `desc == brief` means "no real detail this
-            // round" — never cache that, else a transient failure freezes in and later rounds never retry.
+        let mut failures = Vec::new();
+        for (idx, id, _brief, compiled) in results {
+            let detail = match compiled {
+                Ok(detail) => detail,
+                Err(reason) => {
+                    failures.push(format!("{id}: {reason}"));
+                    continue;
+                }
+            };
             if self.detail_memo_on {
-                if let Some((key, brief)) = memo_keys.get(&idx) {
-                    if &desc != brief {
-                        self.detail_memo
-                            .lock()
-                            .unwrap()
-                            .insert(key.clone(), desc.clone());
-                    }
+                if let Some((key, _)) = memo_keys.get(&idx) {
+                    self.detail_memo
+                        .lock()
+                        .unwrap()
+                        .insert(key.clone(), detail.rendered.clone());
                 }
             }
-            v["subtasks"][idx]["description"] = serde_json::Value::String(desc);
+            v["subtasks"][idx]["description"] = serde_json::Value::String(detail.rendered);
+        }
+        if !failures.is_empty() {
+            bail!(
+                "typed task compiler rejected {} task(s); no one-line fallback was dispatched: {}",
+                failures.len(),
+                failures.join(" | ")
+            );
         }
         // T2: force the integrate-verify SINK to the canonical golden-value spec regardless of whether the
         // architect included it in the skeleton (it did in 6/6 runs, so the detailer — high variance — was
@@ -29889,6 +29891,7 @@ impl GooseAgentDispatcher {
                 None,
                 max_turns,
                 &self.worker_extensions,
+                AgentToolSurface::Developer,
                 self.worker_timeout_secs,
                 Some(&req.task_id),
                 // PRE-CLOSE THE THINKING BLOCK for a worker whose job is to WRITE A FILE.
@@ -30666,6 +30669,155 @@ fn plan_schema() -> serde_json::Value {
             },
             "integration": {"type": "string"}
         }
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskDetailCitation {
+    quote: String,
+    applies_as: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskDetailDraft {
+    objective: String,
+    requirement_citations: Vec<TaskDetailCitation>,
+    interfaces: Vec<String>,
+    implementation_steps: Vec<String>,
+    edge_cases: Vec<String>,
+    acceptance_checks: Vec<String>,
+}
+
+#[derive(Debug)]
+struct CompiledTaskDetail {
+    rendered: String,
+    citations: usize,
+    interfaces: usize,
+    acceptance_checks: usize,
+}
+
+fn task_detail_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+            "objective",
+            "requirement_citations",
+            "interfaces",
+            "implementation_steps",
+            "edge_cases",
+            "acceptance_checks"
+        ],
+        "properties": {
+            "objective": {"type": "string"},
+            "requirement_citations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["quote", "applies_as"],
+                    "properties": {
+                        "quote": {"type": "string"},
+                        "applies_as": {"type": "string"}
+                    }
+                }
+            },
+            "interfaces": {"type": "array", "items": {"type": "string"}},
+            "implementation_steps": {"type": "array", "items": {"type": "string"}},
+            "edge_cases": {"type": "array", "items": {"type": "string"}},
+            "acceptance_checks": {"type": "array", "items": {"type": "string"}}
+        }
+    })
+}
+
+fn compile_task_detail(
+    raw: &str,
+    task_id: &str,
+    brief: &str,
+    owned_files: &str,
+    source: &str,
+) -> Result<CompiledTaskDetail> {
+    let raw = strip_code_fences(raw);
+    let detail: TaskDetailDraft = serde_json::from_str(raw.trim())
+        .map_err(|e| anyhow!("typed detail JSON did not parse: {e}"))?;
+
+    let require_nonempty = |name: &str, values: &[String]| -> Result<()> {
+        if values.is_empty() || values.iter().any(|value| value.trim().is_empty()) {
+            bail!("typed detail field `{name}` must contain concrete non-empty entries");
+        }
+        Ok(())
+    };
+    if detail.objective.trim().is_empty() {
+        bail!("typed detail objective is empty");
+    }
+    require_nonempty("implementation_steps", &detail.implementation_steps)?;
+    require_nonempty("acceptance_checks", &detail.acceptance_checks)?;
+    if detail.requirement_citations.is_empty() {
+        bail!("typed detail has no requirement citation");
+    }
+    for citation in &detail.requirement_citations {
+        let quote = citation.quote.trim();
+        if quote.is_empty() || citation.applies_as.trim().is_empty() {
+            bail!("typed detail has an empty requirement citation");
+        }
+        if !source.contains(quote) {
+            bail!("typed detail citation is not present in the supplied task sources: {quote:?}");
+        }
+    }
+
+    let render_list = |heading: &str, values: &[String], out: &mut String| {
+        if values.is_empty() {
+            return;
+        }
+        out.push_str(heading);
+        out.push('\n');
+        for value in values {
+            out.push_str("- ");
+            out.push_str(value.trim());
+            out.push('\n');
+        }
+    };
+    let mut rendered = format!(
+        "TASK [{task_id}]\nObjective: {}\nOwned files (exclusive): {}\n\nRequirement trace:\n",
+        detail.objective.trim(),
+        if owned_files.trim().is_empty() {
+            "(read-only; no file ownership)"
+        } else {
+            owned_files
+        }
+    );
+    for citation in &detail.requirement_citations {
+        rendered.push_str("- SOURCE: ");
+        rendered.push_str(citation.quote.trim());
+        rendered.push_str("\n  APPLIES AS: ");
+        rendered.push_str(citation.applies_as.trim());
+        rendered.push('\n');
+    }
+    rendered.push('\n');
+    render_list(
+        "Interfaces and invariants:",
+        &detail.interfaces,
+        &mut rendered,
+    );
+    render_list(
+        "Implementation steps:",
+        &detail.implementation_steps,
+        &mut rendered,
+    );
+    render_list("Edge cases:", &detail.edge_cases, &mut rendered);
+    render_list(
+        "Acceptance closure:",
+        &detail.acceptance_checks,
+        &mut rendered,
+    );
+    rendered.push_str("\nArchitect brief retained for provenance:\n");
+    rendered.push_str(brief.trim());
+
+    Ok(CompiledTaskDetail {
+        rendered,
+        citations: detail.requirement_citations.len(),
+        interfaces: detail.interfaces.len(),
+        acceptance_checks: detail.acceptance_checks.len(),
     })
 }
 
@@ -33472,9 +33624,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(cfg.sink_cap_ref_bytes),
-            // A lever nobody can see resolve is a lever nobody can keep: this budget decides whether a
-            // worker gets a real spec or the architect's one-liner, so the run must say what it was.
-            "detail_budget_secs": detail_budget_secs(),
             "struct_stop": std::env::var("GOOSE_SWARM_STRUCT_STOP")
                 .ok()
                 .and_then(|value| value.parse::<u8>().ok())
@@ -34516,7 +34665,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // loop-resident survives past this point.
     let (plan_json, dag) = if plan_needs_detail {
         let wm: Vec<String> = fleet_slot_models(&devices);
-        match dispatcher
+        dispatcher
             .detail_plan(
                 &cfg.planner_model,
                 wm,
@@ -34525,19 +34674,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 &plan_json,
             )
             .await
-        {
-            Ok(pair) => pair,
-            // Structurally near-unreachable (the fan only rewrites descriptions of a plan the loop
-            // already parsed), but the old in-loop failure mode was "fall back to the solo planner",
-            // never "abort the run" — degrade to dispatching the skeleton briefs instead.
-            Err(e) => {
-                eprintln!(
-                    "  {} detail fan skipped ({e}) — dispatching on the skeleton briefs",
-                    style("!").yellow()
-                );
-                (plan_json, dag)
-            }
-        }
+            .map_err(|e| anyhow!("typed task compilation failed before dispatch: {e}"))?
     } else {
         (plan_json, dag)
     };
