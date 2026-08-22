@@ -105,6 +105,12 @@ DEFAULT_WEBSITE_BASE_URL = "https://leanzero.net"
 DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS = 900.0
 DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS = 15.0
 DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS = 900.0
+INTERRUPTED_PUBLICATION_STATES = {
+    "PUBLISH_VALIDATING",
+    "PUBLISHING",
+    "REVALIDATING",
+    "VERIFYING_RENDERED",
+}
 
 
 def utc_now() -> str:
@@ -185,6 +191,28 @@ def parse_env_file(path: Path) -> Dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip().strip("'\"")
     return values
+
+
+def normalized_website_base_url(value: str) -> str:
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        parsed.port
+    except ValueError:
+        raise SystemExit("website base URL is malformed") from None
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise SystemExit(
+            "website base URL must be an https origin without credentials, path, "
+            "query, or fragment"
+        )
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
 def entrants(manifest: Mapping[str, Any]) -> list[Dict[str, Any]]:
@@ -754,8 +782,7 @@ def init_campaign(
             "cloud campaign init requires explicit --publish-live; dry-run-only campaigns "
             "cannot satisfy the publication contract"
         )
-    if not website_base_url.startswith("https://"):
-        raise SystemExit("website base URL must use https")
+    website_base_url = normalized_website_base_url(website_base_url)
     if (
         publish_verify_timeout_seconds <= 0
         or publish_verify_interval_seconds <= 0
@@ -1705,6 +1732,34 @@ def recover_dead_manager(root: Path) -> bool:
     return True
 
 
+def recover_interrupted_publication(root: Path) -> None:
+    for state in status_rows(root):
+        if state["status"] not in INTERRUPTED_PUBLICATION_STATES:
+            continue
+        clean = stop_recorded_group(
+            state.get("publisher_pid"),
+            state.get("publisher_pgid"),
+            state.get("publisher_identity"),
+        )
+        if not clean:
+            raise SystemExit(
+                f"{state['entrant']} publisher process group survived recovery"
+            )
+        update_state(
+            root,
+            str(state["entrant"]),
+            status="PUBLISH_FAILED",
+            publisher_pid=None,
+            publisher_pgid=None,
+            publisher_identity=None,
+            publisher_recovered_at=utc_now(),
+            failure=(
+                "publication was interrupted; deterministic remote receipt must be "
+                "checked before any retry"
+            ),
+        )
+
+
 class PublicationError(RuntimeError):
     pass
 
@@ -1960,6 +2015,7 @@ def run_publisher(
             entrant_id,
             publisher_pid=proc.pid,
             publisher_pgid=proc.pid,
+            publisher_identity=process_identity(proc.pid),
             publisher_phase=phase,
             publisher_started_at=utc_now(),
         )
@@ -1978,6 +2034,7 @@ def run_publisher(
         entrant_id,
         publisher_pid=None,
         publisher_pgid=None,
+        publisher_identity=None,
         publisher_finished_at=utc_now(),
     )
     return result
@@ -2536,6 +2593,7 @@ def publication_failed(
         publication_failure_stage=stage,
         publisher_pid=None,
         publisher_pgid=None,
+        publisher_identity=None,
         failure=f"publication {stage} failed: {safe}",
     )
 
@@ -2830,26 +2888,29 @@ def score_one(root: Path, entrant_id: str) -> bool:
 
 def score_all(root: Path, row_ids: list[str], finalize_campaign: bool = True) -> bool:
     recover_interrupted_scoring(root)
-    manager_state(root, status="SCORING")
+    manager_state(root, status="SCORING", active_entrant=None, failure=None)
     update_campaign(root, status="SCORING", score_started_at=utc_now())
     for entrant_id in row_ids:
         if not score_one(root, entrant_id):
-            manager_state(root, status="ATTENTION", failure=f"scoring failed: {entrant_id}")
-            campaign = load_json(campaign_file(root))
-            campaign["status"] = "ATTENTION"
-            atomic_json(campaign_file(root), campaign)
-            return False
-        manager_state(root, status="PUBLISHING", active_entrant=entrant_id)
-        if not publish_one(root, entrant_id):
+            failure = f"scoring failed: {entrant_id}"
             manager_state(
                 root,
                 status="ATTENTION",
-                failure=f"publication failed: {entrant_id}",
+                failure=failure,
                 active_entrant=entrant_id,
             )
-            campaign = load_json(campaign_file(root))
-            campaign["status"] = "ATTENTION"
-            atomic_json(campaign_file(root), campaign)
+            update_campaign(root, status="ATTENTION", failure=failure)
+            return False
+        manager_state(root, status="PUBLISHING", active_entrant=entrant_id)
+        if not publish_one(root, entrant_id):
+            failure = f"publication failed: {entrant_id}"
+            manager_state(
+                root,
+                status="ATTENTION",
+                failure=failure,
+                active_entrant=entrant_id,
+            )
+            update_campaign(root, status="ATTENTION", failure=failure)
             return False
     if finalize_campaign:
         manager_state(
@@ -2857,11 +2918,14 @@ def score_all(root: Path, row_ids: list[str], finalize_campaign: bool = True) ->
             status="PUBLISHED",
             active_entrant=None,
             finished_at=utc_now(),
+            failure=None,
         )
-        campaign = load_json(campaign_file(root))
-        campaign["status"] = "PUBLISHED"
-        campaign["finished_at"] = utc_now()
-        atomic_json(campaign_file(root), campaign)
+        update_campaign(
+            root,
+            status="PUBLISHED",
+            finished_at=utc_now(),
+            failure=None,
+        )
     return True
 
 
@@ -2985,10 +3049,13 @@ def stop(root: Path) -> int:
         state = read_state(root, entrant_id)
         publisher_pgid = state.get("publisher_pgid")
         if (
-            state["status"] in {"PUBLISH_VALIDATING", "PUBLISHING"}
+            state["status"] in INTERRUPTED_PUBLICATION_STATES
             and publisher_pgid
-            and process_alive(publisher_pgid)
-            and not stop_group(int(publisher_pgid))
+            and not stop_recorded_group(
+                state.get("publisher_pid"),
+                publisher_pgid,
+                state.get("publisher_identity"),
+            )
         ):
             failures.append(f"{entrant_id}:publisher-pgid={publisher_pgid}")
         pgid = state.get("supervisor_pgid")
@@ -3200,6 +3267,7 @@ def main() -> int:
         return 0 if score_all(root, ids) else 1
     if args.command == "resume":
         recover_dead_manager(root)
+        recover_interrupted_publication(root)
         campaign = load_json(campaign_file(root))
         for state in status_rows(root):
             if state["status"] == "PRE_ADMISSION_FAILURE":
@@ -3242,33 +3310,14 @@ def main() -> int:
                     status="SCORE_FAILED",
                     failure="scorer was interrupted; raw build remains sealed",
                 )
-            elif state["status"] in {
-                "PUBLISH_VALIDATING",
-                "PUBLISHING",
-                "REVALIDATING",
-                "VERIFYING_RENDERED",
-            }:
-                publisher_pgid = state.get("publisher_pgid")
-                if publisher_pgid and process_group_members(int(publisher_pgid)):
-                    if not stop_group(int(publisher_pgid)):
-                        raise SystemExit(
-                            f"stale publisher group survived recovery: pgid={publisher_pgid}"
-                        )
-                update_state(
-                    root,
-                    state["entrant"],
-                    status="PUBLISH_FAILED",
-                    publisher_pid=None,
-                    publisher_pgid=None,
-                    failure=(
-                        "publication process was interrupted; deterministic remote receipt "
-                        "must be checked before any retry"
-                    ),
-                )
-        campaign = load_json(campaign_file(root))
-        campaign["status"] = "ATTENTION"
-        atomic_json(campaign_file(root), campaign)
-        manager_state(root, status="ATTENTION", pid=None, pgid=None)
+        update_campaign(root, status="ATTENTION")
+        manager_state(
+            root,
+            status="ATTENTION",
+            pid=None,
+            pgid=None,
+            identity=None,
+        )
         return start(root)
     return 2
 
