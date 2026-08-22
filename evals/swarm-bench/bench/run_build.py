@@ -172,6 +172,15 @@ def run(entrant: str, rep: int, out_root: Path, timeout: int, port: int) -> Dict
     # engine's GOOSE_SWARM_RESUME: the engine reloads the plan from its log (skipping the
     # ~20-min prologue) and re-runs tasks against the warm tree. Deliberately re-runs rather
     # than trusts unfinished tasks — the engine's own resume semantics.
+    # STATUS 2026-08-22: RESUME WORKS. It was broken from the day it shipped — the engine rebuilt
+    # the recovered plan under "tasks" while its parser required "subtasks", so every resume died
+    # with 'missing field `subtasks`' AFTER paying the full scout phase and this harness then
+    # scored the unbuilt tree. Fixed in the engine (4c9530e70, test a_resumed_plan_parses_into_a_dag).
+    # Do not read the older FINDINGS entries and conclude it is still broken.
+    # REMAINING TRAP (not fixed): the bridge below reads <prev>/run.jsonl, but this bench passes
+    # --log-file as a workdir-relative path that lands NESTED at
+    # <tree>/runs/<out>/<entrant>-rN/run.jsonl — copy that nested log to <prev>/run.jsonl first or
+    # the bridge silently finds nothing and the engine re-plans from scratch.
     resume_from = os.environ.get("BENCH_RESUME_FROM", "")
     if resume_from:
         prev = Path(resume_from)

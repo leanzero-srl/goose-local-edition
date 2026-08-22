@@ -21024,3 +21024,18 @@ package-entry truth, spec-shaped probe tokens, bind-first pitfall + repair hint,
 spiral exemption, node-first ids, uncapped regime (+ mid-stream prefill grace), 60-turn planner
 side loops, shift-invariant loop recurrence, detail-shorter-than-brief floor, note-skip
 reporting, force-write instrumentation, and gate replay.
+
+## F922 — STATUS NOTE FOR THE NEXT SESSION: RESUME WORKS (since 4c9530e70, 2026-08-22)
+
+Written because the ledger above is confusing on this point and Mihai asked for it to be
+unambiguous: F920 and the first half of F921 describe resume as broken. That was TRUE UNTIL
+2026-08-22 and is FALSE NOW. Resume was fixed the same night (4c9530e70): the recovered plan is
+rebuilt with BOTH `subtasks` (what Dag::from_planner_json requires) and `tasks` (what the
+task-count banner reads), and `a_resumed_plan_parses_into_a_dag` asserts a plan recovered from a
+log parses into a Dag. If that test is green, resume parses — do not re-derive "resume is broken"
+from the older entries. The status is also recorded at the two places you would actually touch it:
+the BENCH_RESUME_FROM block in bench/run_build.py and the doc comment on resume_state_from_dir.
+ONE REMAINING TRAP, unfixed by design choice: the harness bridges the prior log from
+`<prev>/run.jsonl` while this bench's --log-file lands NESTED, so copy the nested log to the
+partial tree's top level before resuming. And resume RE-RUNS previously completed tasks on
+purpose (a worker overwrites its own files).
