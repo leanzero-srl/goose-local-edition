@@ -150,6 +150,8 @@ fn unix_shell() -> String {
 const OUTPUT_LIMIT_LINES: usize = 2000;
 pub const OUTPUT_LIMIT_BYTES: usize = 50_000;
 const OUTPUT_PREVIEW_LINES: usize = 50;
+const OUTPUT_PREVIEW_BYTES: usize = 10_000;
+const BYTE_PREVIEW_ELISION: &str = "… [middle bytes omitted — full output saved to file] …";
 
 const OUTPUT_SLOTS: usize = 8;
 
@@ -838,20 +840,32 @@ fn truncate_output(
     let output_path = save_full_output(full_output, label, output_dir)?;
 
     // Show BOTH ends, not just the tail: header imports/signatures live at the TOP of a file, so a
-    // tail-only preview forced the caller to issue a SECOND head/sed read on every large file. Split the
-    // budget between head and tail with an elision marker so the head is never lost.
+    // tail-only preview forced the caller to issue a SECOND head/sed read on every large file. Split
+    // the byte budget between head and tail with an elision marker so the head is never lost.
     let preview = if total_lines > OUTPUT_PREVIEW_LINES {
         let head = OUTPUT_PREVIEW_LINES / 2;
         let tail = OUTPUT_PREVIEW_LINES - head;
         let tail_start = total_lines.saturating_sub(tail);
         let omitted = tail_start.saturating_sub(head);
-        format!(
-            "{}\n… [{omitted} lines omitted — full output saved to file] …\n{}",
-            lines[..head].join("\n"),
-            lines[tail_start..].join("\n"),
-        )
+        let head = lines[..head].join("\n");
+        let tail = lines[tail_start..].join("\n");
+        let line_marker = format!("… [{omitted} lines omitted — full output saved to file] …");
+        let marker = if head
+            .len()
+            .saturating_add(line_marker.len())
+            .saturating_add(tail.len())
+            .saturating_add(2)
+            > OUTPUT_PREVIEW_BYTES
+        {
+            format!(
+                "… [{omitted} middle lines omitted; retained head/tail shortened to byte budget — full output saved to file] …"
+            )
+        } else {
+            line_marker
+        };
+        bounded_head_tail_preview(&head, &marker, &tail)
     } else {
-        lines.join("\n")
+        bounded_head_tail_preview(full_output, BYTE_PREVIEW_ELISION, full_output)
     };
 
     let reason = if exceeded_lines {
@@ -870,6 +884,59 @@ fn truncate_output(
             reason,
         }),
     })
+}
+
+fn bounded_head_tail_preview(head: &str, marker: &str, tail: &str) -> String {
+    let unbounded_bytes = head
+        .len()
+        .saturating_add(marker.len())
+        .saturating_add(tail.len())
+        .saturating_add(2);
+    if unbounded_bytes <= OUTPUT_PREVIEW_BYTES {
+        return format!("{head}\n{marker}\n{tail}");
+    }
+
+    let content_budget = OUTPUT_PREVIEW_BYTES.saturating_sub(marker.len().saturating_add(2));
+    let mut head_end = prefix_end_at_most_bytes(head, content_budget / 2);
+    let mut tail_start = suffix_start_at_most_bytes(tail, content_budget - head_end);
+
+    let selected_bytes = head_end + tail.len().saturating_sub(tail_start);
+    let mut remaining = content_budget.saturating_sub(selected_bytes);
+    if remaining > 0 {
+        let expanded_head_end = prefix_end_at_most_bytes(head, head_end + remaining);
+        remaining -= expanded_head_end - head_end;
+        head_end = expanded_head_end;
+    }
+    if remaining > 0 {
+        let tail_bytes = tail.len() - tail_start;
+        tail_start = suffix_start_at_most_bytes(tail, tail_bytes + remaining);
+    }
+
+    let bounded_head = head
+        .get(..head_end)
+        .expect("head endpoint must be a UTF-8 boundary");
+    let bounded_tail = tail
+        .get(tail_start..)
+        .expect("tail start must be a UTF-8 boundary");
+    let preview = format!("{bounded_head}\n{marker}\n{bounded_tail}");
+    debug_assert!(preview.len() <= OUTPUT_PREVIEW_BYTES);
+    preview
+}
+
+fn prefix_end_at_most_bytes(text: &str, max_bytes: usize) -> usize {
+    let mut end = text.len().min(max_bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}
+
+fn suffix_start_at_most_bytes(text: &str, max_bytes: usize) -> usize {
+    let mut start = text.len().saturating_sub(max_bytes);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    start
 }
 
 fn save_full_output(
@@ -1153,6 +1220,62 @@ mod tests {
 
         let notice = truncation_notice(info);
         assert!(notice.contains("Full output saved to"));
+    }
+
+    #[test]
+    fn render_output_byte_bounds_one_large_ascii_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = format!("ASCII-HEAD{}ASCII-TAIL", "x".repeat(200_000));
+
+        let result = render_output(&input, "ascii_line", dir.path()).unwrap();
+
+        assert!(result.text.len() <= OUTPUT_PREVIEW_BYTES);
+        assert!(result.text.starts_with("ASCII-HEAD"));
+        assert!(result.text.ends_with("ASCII-TAIL"));
+        assert!(result.text.contains("middle bytes omitted"));
+    }
+
+    #[test]
+    fn render_output_byte_bounds_one_large_multibyte_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = format!("UNICODE-HEAD{}UNICODE-TAIL", "🪿é".repeat(40_000));
+
+        let result = render_output(&input, "multibyte_line", dir.path()).unwrap();
+
+        assert!(result.text.len() <= OUTPUT_PREVIEW_BYTES);
+        assert!(result.text.starts_with("UNICODE-HEAD"));
+        assert!(result.text.ends_with("UNICODE-TAIL"));
+        assert!(result.text.contains("🪿é"));
+    }
+
+    #[test]
+    fn render_output_byte_bounds_large_selected_line_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = (0..2500)
+            .map(|index| format!("line-{index:04}-{}", "x".repeat(1000)))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let result = render_output(&input, "selected_lines", dir.path()).unwrap();
+
+        assert!(result.text.len() <= OUTPUT_PREVIEW_BYTES);
+        assert!(result.text.starts_with("line-0000-"));
+        assert!(result
+            .text
+            .ends_with(&format!("line-2499-{}", "x".repeat(1000))));
+        assert!(result.text.contains("lines omitted"));
+        assert!(result.text.contains("shortened to byte budget"));
+    }
+
+    #[test]
+    fn render_output_byte_bound_preserves_spill_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = format!("SPILL-HEAD{}SPILL-TAIL", "🪿".repeat(60_000));
+
+        let result = render_output(&input, "spill_identity", dir.path()).unwrap();
+        let info = result.truncation.expect("expected truncation info");
+
+        assert_eq!(std::fs::read(info.path).unwrap(), input.as_bytes());
     }
 
     #[test]
