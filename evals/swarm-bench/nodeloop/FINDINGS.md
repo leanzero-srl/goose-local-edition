@@ -20947,3 +20947,16 @@ applies for the WHOLE call, still finite so a genuinely dead socket is caught (t
 reasoning; a dead stream produces none, so infinity is not an option). ALSO CORRECTED HERE: I
 reported "12 tasks completed" from counting task_completed events without reading their `status`
 field — the event fires for both outcomes. Done vs failed is the only honest count.
+
+## F917-CORRECTION — the tool-discipline advantage was an artifact of a 10-call sample; it does not exist
+
+F917 claimed qwen3.8 had materially better tool discipline off "10 tool calls, 0 errors" — that was
+PROLOGUE ONLY and I over-read it. At 246 build-wave calls the rate is 7.3% errors, statistically
+indistinguishable from qwen3.6's r1 (6.1%, 131 calls) and r3 (7.2%, 139 calls); only r4's 19.5%
+was the outlier, and comparing to it flattered 3.8. Both model generations still emit ZERO
+malformed calls. What SURVIVES from F917 is the artifact evidence, which is unaffected:
+thread-safe sqlite (check_same_thread=False, absent from every 3.6 tree on a threaded-server
+spec), integer-minor money with per-currency exponent, real per-module test suites where the
+published 3.6 entry shipped none, and 94-95% cross-draft plan convergence. Against it: two lost
+modules (F918) and a wall-clock cost roughly 10x per hard call. Rule reasserted: an early sample
+is a hypothesis, not a result — and a favourable early number is exactly the one to re-measure.
