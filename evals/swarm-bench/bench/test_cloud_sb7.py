@@ -178,6 +178,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "id": "fixture-model",
             "provider": "fixture",
             "model": "fixture-model",
+            "accepted_reported_models": ["fixture-model"],
             "secret_env": "FIXTURE_API_KEY",
             "provider_lane": "fixture-model",
             "endpoint_family": "fixture",
@@ -370,24 +371,140 @@ class CloudSb7HarnessTest(unittest.TestCase):
         )
 
     def test_lifecycle_summary_requires_matching_admission_and_terminal(self) -> None:
+        def event(state: str, **extra: object) -> dict[str, object]:
+            value: dict[str, object] = {
+                "schema_version": 1,
+                "timestamp": "now",
+                "request_id": "request-1",
+                "provider": "google",
+                "model": "gemini-3.7-flash",
+                "session": "session-1",
+                "state": state,
+            }
+            value.update(extra)
+            return value
+
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "lifecycle.jsonl"
             path.write_text(
                 "\n".join(
                     [
-                        json.dumps({"state": "queued"}),
-                        json.dumps({"state": "admitted"}),
-                        json.dumps({"state": "first_item", "at": "now"}),
-                        json.dumps({"state": "provider_terminal"}),
+                        json.dumps(event("queued")),
+                        json.dumps(event("admitted")),
+                        json.dumps(event("first_item")),
+                        json.dumps(event("usage_reported", usage={"total_tokens": 3})),
+                        json.dumps(event("provider_terminal", usage={"total_tokens": 3})),
                     ]
                 )
                 + "\n"
             )
-            summary = cloud_sb7.lifecycle_summary(path)
+            summary = cloud_sb7.lifecycle_summary(
+                path,
+                expected_provider="google",
+                expected_model="gemini-3.7-flash",
+            )
         self.assertEqual(summary["admitted"], 1)
         self.assertEqual(summary["terminal"], 1)
         self.assertEqual(summary["first_output_at"], "now")
         self.assertEqual(summary["malformed_lines"], 0)
+        self.assertEqual(summary["transition_errors"], [])
+        self.assertEqual(summary["ambiguous_request_ids"], [])
+        self.assertIs(summary["valid"], True)
+
+    def test_lifecycle_equal_counts_cannot_cross_match_request_ids(self) -> None:
+        base = {
+            "schema_version": 1,
+            "timestamp": "now",
+            "provider": "google",
+            "model": "gemini-3.7-flash",
+            "session": "session-1",
+        }
+        events = [
+            {**base, "request_id": "request-a", "state": "queued"},
+            {**base, "request_id": "request-a", "state": "admitted"},
+            {
+                **base,
+                "request_id": "request-b",
+                "state": "provider_terminal",
+                "usage": {"total_tokens": 3},
+            },
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "lifecycle.jsonl"
+            path.write_text("\n".join(map(json.dumps, events)) + "\n")
+            summary = cloud_sb7.lifecycle_summary(
+                path,
+                expected_provider="google",
+                expected_model="gemini-3.7-flash",
+            )
+
+        self.assertEqual(summary["admitted"], 1)
+        self.assertEqual(summary["terminal"], 0)
+        self.assertIn("request-a", summary["ambiguous_request_ids"])
+        self.assertTrue(summary["transition_errors"])
+        self.assertIs(summary["valid"], False)
+
+    def test_lifecycle_rejects_identity_drift_and_duplicate_terminal(self) -> None:
+        def event(state: str, **extra: object) -> dict[str, object]:
+            value: dict[str, object] = {
+                "schema_version": 1,
+                "timestamp": "now",
+                "request_id": "request-1",
+                "provider": "google",
+                "model": "gemini-3.7-flash",
+                "session": "session-1",
+                "state": state,
+            }
+            value.update(extra)
+            return value
+
+        events = [
+            event("queued"),
+            event("admitted"),
+            event("usage_reported", usage={"total_tokens": 3}),
+            event("provider_terminal", usage={"total_tokens": 3}),
+            event("provider_terminal", usage={"total_tokens": 3}),
+            event("first_item", model="gemini-3.1-pro-preview"),
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "lifecycle.jsonl"
+            path.write_text("\n".join(map(json.dumps, events)) + "\n")
+            summary = cloud_sb7.lifecycle_summary(
+                path,
+                expected_provider="google",
+                expected_model="gemini-3.7-flash",
+            )
+
+        self.assertEqual(summary["admitted"], 1)
+        self.assertEqual(summary["terminal"], 1)
+        self.assertEqual(len(summary["transition_errors"]), 2)
+        self.assertIs(summary["valid"], False)
+
+    def test_lifecycle_rejects_consistently_wrong_entrant_identity(self) -> None:
+        events = [
+            {
+                "schema_version": 1,
+                "timestamp": "now",
+                "request_id": "request-1",
+                "provider": "zai_api",
+                "model": "glm-5.3",
+                "session": "session-1",
+                "state": state,
+            }
+            for state in ("queued", "error")
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "lifecycle.jsonl"
+            path.write_text("\n".join(map(json.dumps, events)) + "\n")
+            summary = cloud_sb7.lifecycle_summary(
+                path,
+                expected_provider="google",
+                expected_model="gemini-3.7-flash",
+            )
+
+        self.assertEqual(len(summary["transition_errors"]), 2)
+        self.assertEqual(summary["request_states"], {})
+        self.assertIs(summary["valid"], False)
 
     def test_outstanding_budget_reservation_makes_ambiguous_work_visible(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
