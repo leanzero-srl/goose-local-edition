@@ -28,6 +28,8 @@ pub const GOOGLE_DEFAULT_MODEL: &str = "gemini-2.5-pro";
 pub const GOOGLE_DEFAULT_FAST_MODEL: &str = "gemini-2.5-flash";
 pub const GOOGLE_KNOWN_MODELS: &[&str] = &[
     // Gemini 3 models
+    "gemini-3.7-flash",
+    "gemini-3.1-pro-preview",
     "gemini-3-pro-preview",
     "gemini-3-pro-image-preview",
     // Gemini 2.5 Pro models

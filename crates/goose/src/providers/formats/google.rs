@@ -9,6 +9,7 @@ use rmcp::model::{
 };
 use serde::Serialize;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::conversation::message::{Message, MessageContent, ProviderMetadata};
@@ -16,13 +17,24 @@ use serde_json::{json, Map, Value};
 use std::ops::Deref;
 
 pub const THOUGHT_SIGNATURE_KEY: &str = "thoughtSignature";
+pub const FUNCTION_CALL_NAME_KEY: &str = "google.functionCallName";
 const SYNTHETIC_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
 const GEMINI25_DEFAULT_THINKING_BUDGET: i32 = 8192;
 
-pub fn metadata_with_signature(signature: &str) -> ProviderMetadata {
-    let mut map = ProviderMetadata::new();
-    map.insert(THOUGHT_SIGNATURE_KEY.to_string(), json!(signature));
-    map
+fn metadata_for_function_call(name: &str, signature: Option<&str>) -> ProviderMetadata {
+    let mut metadata = ProviderMetadata::new();
+    metadata.insert(FUNCTION_CALL_NAME_KEY.to_string(), json!(name));
+    if let Some(signature) = signature {
+        metadata.insert(THOUGHT_SIGNATURE_KEY.to_string(), json!(signature));
+    }
+    metadata
+}
+
+fn get_function_call_name(metadata: &Option<ProviderMetadata>) -> Option<&str> {
+    metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get(FUNCTION_CALL_NAME_KEY))
+        .and_then(|value| value.as_str())
 }
 
 pub fn get_thought_signature(metadata: &Option<ProviderMetadata>) -> Option<&str> {
@@ -44,18 +56,10 @@ fn insert_thought_signature(part: &mut Map<String, Value>, signature: &str) {
     part.insert(THOUGHT_SIGNATURE_KEY.to_string(), json!(signature));
 }
 
-fn maybe_insert_signature_from_metadata(
-    part: &mut Map<String, Value>,
-    metadata: &Option<ProviderMetadata>,
-) {
-    if let Some(signature) = get_thought_signature(metadata) {
-        insert_thought_signature(part, signature);
-    }
-}
-
-fn build_function_response_part(name: &str, text: String) -> Map<String, Value> {
+fn build_function_response_part(id: &str, name: &str, text: String) -> Map<String, Value> {
     let mut part = Map::new();
     let mut function_response = Map::new();
+    function_response.insert("id".to_string(), json!(id));
     function_response.insert("name".to_string(), json!(name));
     function_response.insert("response".to_string(), json!({"content": {"text": text}}));
     part.insert("functionResponse".to_string(), json!(function_response));
@@ -84,6 +88,19 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
         .find(|(_, m)| is_user_loop_boundary(m))
         .map(|(i, _)| i);
 
+    let function_names_by_id: HashMap<&str, &str> = filtered
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|content| match content {
+            MessageContent::ToolRequest(request) => request
+                .tool_call
+                .as_ref()
+                .ok()
+                .map(|tool_call| (request.id.as_str(), tool_call.name.as_ref())),
+            _ => None,
+        })
+        .collect();
+
     filtered
         .iter()
         .enumerate()
@@ -109,6 +126,7 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
                     MessageContent::ToolRequest(request) => match &request.tool_call {
                         Ok(tool_call) => {
                             let mut function_call_part = Map::new();
+                            function_call_part.insert("id".to_string(), json!(request.id));
                             function_call_part.insert(
                                 "name".to_string(),
                                 json!(sanitize_function_name(&tool_call.name)),
@@ -175,18 +193,21 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
                             if text.is_empty() {
                                 text = "Tool call is done.".to_string();
                             }
-                            let mut part = build_function_response_part(&response.id, text);
-                            if include_signature {
-                                maybe_insert_signature_from_metadata(&mut part, &response.metadata);
-                            }
+                            let name = get_function_call_name(&response.metadata)
+                                .or_else(|| function_names_by_id.get(response.id.as_str()).copied())
+                                .unwrap_or(response.id.as_str());
+                            let part = build_function_response_part(&response.id, name, text);
                             parts.push(json!(part));
                         }
                         Err(e) => {
-                            let mut part =
-                                build_function_response_part(&response.id, format!("Error: {}", e));
-                            if include_signature {
-                                maybe_insert_signature_from_metadata(&mut part, &response.metadata);
-                            }
+                            let name = get_function_call_name(&response.metadata)
+                                .or_else(|| function_names_by_id.get(response.id.as_str()).copied())
+                                .unwrap_or(response.id.as_str());
+                            let part = build_function_response_part(
+                                &response.id,
+                                name,
+                                format!("Error: {}", e),
+                            );
                             parts.push(json!(part));
                         }
                     },
@@ -234,19 +255,12 @@ pub fn format_tools(tools: &[Tool]) -> Vec<Value> {
         .collect()
 }
 
-fn process_response_part_impl(
-    part: &Value,
-    last_signature: &mut Option<String>,
-) -> Option<MessageContent> {
+fn process_response_part_impl(part: &Value) -> Option<MessageContent> {
     let signature = part.get(THOUGHT_SIGNATURE_KEY).and_then(|v| v.as_str());
     let is_thought = part
         .get("thought")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-
-    if let Some(sig) = signature {
-        *last_signature = Some(sig.to_string());
-    }
 
     let text_value = part.get("text");
     if let Some(text) = text_value.and_then(|v| v.as_str()) {
@@ -268,7 +282,11 @@ fn process_response_part_impl(
         );
         None
     } else if let Some(function_call) = part.get("functionCall") {
-        let id = Uuid::new_v4().to_string();
+        let id = function_call
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         let name = function_call["name"].as_str().unwrap_or_default();
 
         if !is_valid_function_name(name) {
@@ -285,8 +303,7 @@ fn process_response_part_impl(
             let arguments = function_call
                 .get("args")
                 .map(|params| object(params.clone()));
-            let effective_signature = signature.or(last_signature.as_deref());
-            let metadata = effective_signature.map(metadata_with_signature);
+            let metadata = metadata_for_function_call(name, signature);
 
             Some(MessageContent::tool_request_with_metadata(
                 id,
@@ -297,7 +314,7 @@ fn process_response_part_impl(
                     }
                     params
                 }),
-                metadata.as_ref(),
+                Some(&metadata),
             ))
         }
     } else {
@@ -322,10 +339,8 @@ pub fn response_to_message(response: Value) -> Result<Message> {
     };
 
     let mut content = Vec::new();
-    let mut last_signature: Option<String> = None;
-
     for part in parts {
-        if let Some(msg_content) = process_response_part_impl(part, &mut last_signature) {
+        if let Some(msg_content) = process_response_part_impl(part) {
             content.push(msg_content);
         }
     }
@@ -339,10 +354,20 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
             .get("promptTokenCount")
             .and_then(|v| v.as_u64())
             .map(|v| v as i32);
-        let output_tokens = usage_meta_data
+        let candidate_tokens = usage_meta_data
             .get("candidatesTokenCount")
             .and_then(|v| v.as_u64())
             .map(|v| v as i32);
+        let thought_tokens = usage_meta_data
+            .get("thoughtsTokenCount")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as i32);
+        let output_tokens = match (candidate_tokens, thought_tokens) {
+            (Some(candidates), Some(thoughts)) => Some(candidates.saturating_add(thoughts)),
+            (Some(candidates), None) => Some(candidates),
+            (None, Some(thoughts)) => Some(thoughts),
+            (None, None) => None,
+        };
         let total_tokens = usage_meta_data
             .get("totalTokenCount")
             .and_then(|v| v.as_u64())
@@ -375,7 +400,6 @@ where
 
     try_stream! {
         let mut final_usage: Option<ProviderUsage> = None;
-        let mut last_signature: Option<String> = None;
         let stream_id = Uuid::new_v4().to_string();
         let mut incomplete_data: Option<String> = None;
 
@@ -464,7 +488,7 @@ where
 
             if let Some(parts) = parts {
                 for part in parts {
-                    if let Some(content) = process_response_part_impl(part, &mut last_signature) {
+                    if let Some(content) = process_response_part_impl(part) {
                         let message = Message::new(
                             Role::Assistant,
                             chrono::Utc::now().timestamp(),
@@ -513,6 +537,7 @@ struct GenerationConfig {
 #[serde(rename_all = "lowercase")]
 enum ThinkingLevel {
     Low,
+    Medium,
     High,
 }
 
@@ -538,6 +563,34 @@ struct GoogleRequest<'a> {
 }
 
 fn get_thinking_config(model_config: &ModelConfig) -> Option<ThinkingConfig> {
+    let model_name = model_config.model_name.to_lowercase();
+    let is_gemini_3 = model_name.starts_with("gemini-3");
+    let is_gemini_25 = model_name.starts_with("gemini-2.5");
+
+    if is_gemini_3 {
+        let default_effort = if model_name.starts_with("gemini-3.7-flash") {
+            ThinkingEffort::Medium
+        } else {
+            ThinkingEffort::High
+        };
+        let effort = if model_config.reasoning == Some(false) {
+            ThinkingEffort::Low
+        } else {
+            model_config.thinking_effort().unwrap_or(default_effort)
+        };
+        let thinking_level = match effort {
+            ThinkingEffort::Off | ThinkingEffort::Low => ThinkingLevel::Low,
+            ThinkingEffort::Medium => ThinkingLevel::Medium,
+            ThinkingEffort::High | ThinkingEffort::Max => ThinkingLevel::High,
+        };
+
+        return Some(ThinkingConfig {
+            thinking_level: Some(thinking_level),
+            thinking_budget: None,
+            include_thoughts: true,
+        });
+    }
+
     if model_config.reasoning == Some(false)
         || model_config.thinking_effort() == Some(ThinkingEffort::Off)
     {
@@ -556,33 +609,11 @@ fn get_thinking_config(model_config: &ModelConfig) -> Option<ThinkingConfig> {
         }
         return None;
     }
-    let model_name = model_config.model_name.to_lowercase();
-    let is_gemini_3 = model_name.starts_with("gemini-3");
-    let is_gemini_25 = model_name.starts_with("gemini-2.5");
-    if !is_gemini_3 && !is_gemini_25 {
+    if !is_gemini_25 {
         return None;
     }
 
-    if is_gemini_3 {
-        let effort = model_config
-            .thinking_effort()
-            .unwrap_or(ThinkingEffort::Off);
-        if effort == ThinkingEffort::Off {
-            return None;
-        }
-        let thinking_level = match effort {
-            ThinkingEffort::Off | ThinkingEffort::Low | ThinkingEffort::Medium => {
-                ThinkingLevel::Low
-            }
-            ThinkingEffort::High | ThinkingEffort::Max => ThinkingLevel::High,
-        };
-
-        Some(ThinkingConfig {
-            thinking_level: Some(thinking_level),
-            thinking_budget: None,
-            include_thoughts: true,
-        })
-    } else {
+    {
         let thinking_budget = match model_config
             .request_param::<i32>("thinking_budget")
             .or_else(|| {
@@ -625,9 +656,19 @@ pub fn create_request(
     };
 
     let thinking_config = get_thinking_config(model_config);
+    let temperature = if model_config
+        .model_name
+        .eq_ignore_ascii_case("gemini-3.7-flash")
+    {
+        None
+    } else {
+        model_config
+            .temperature
+            .map(|temperature| temperature as f64)
+    };
 
     let generation_config = Some(GenerationConfig {
-        temperature: model_config.temperature.map(|t| t as f64),
+        temperature,
         max_output_tokens: Some(model_config.max_output_tokens()),
         thinking_config,
     });
@@ -659,7 +700,7 @@ mod tests {
 
     fn set_up_tool_request_message(id: &str, tool_call: CallToolRequestParams) -> Message {
         Message::new(
-            Role::User,
+            Role::Assistant,
             0,
             vec![MessageContent::tool_request(id.to_string(), Ok(tool_call))],
         )
@@ -680,7 +721,7 @@ mod tests {
 
     fn set_up_tool_response_message(id: &str, tool_response: Vec<Content>) -> Message {
         Message::new(
-            Role::Assistant,
+            Role::User,
             0,
             vec![MessageContent::tool_response(
                 id.to_string(),
@@ -722,6 +763,23 @@ mod tests {
         assert_eq!(usage.total_tokens, Some(120));
         assert_eq!(usage.cache_read_input_tokens, Some(80));
         assert_eq!(usage.cache_write_input_tokens, None);
+    }
+
+    #[test]
+    fn test_get_usage_counts_thinking_as_output() {
+        let data = json!({
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 20,
+                "thoughtsTokenCount": 30,
+                "totalTokenCount": 150
+            }
+        });
+
+        let usage = get_usage(&data).unwrap();
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.output_tokens, Some(50));
+        assert_eq!(usage.total_tokens, Some(150));
     }
 
     #[test]
@@ -787,7 +845,8 @@ mod tests {
         ];
         let payload = format_messages(&messages);
         assert_eq!(payload.len(), 1);
-        assert_eq!(payload[0]["role"], "user");
+        assert_eq!(payload[0]["role"], "model");
+        assert_eq!(payload[0]["parts"][0]["functionCall"]["id"], "id");
         assert_eq!(payload[0]["parts"][0]["functionCall"]["args"], arguments);
     }
 
@@ -797,7 +856,11 @@ mod tests {
         let messages = vec![set_up_tool_response_message("response_id", tool_result)];
         let payload = format_messages(&messages);
         assert_eq!(payload.len(), 1);
-        assert_eq!(payload[0]["role"], "model");
+        assert_eq!(payload[0]["role"], "user");
+        assert_eq!(
+            payload[0]["parts"][0]["functionResponse"]["id"],
+            "response_id"
+        );
         assert_eq!(
             payload[0]["parts"][0]["functionResponse"]["name"],
             "response_id"
@@ -820,10 +883,11 @@ mod tests {
         let payload = format_messages(&messages);
 
         let expected_payload = vec![json!({
-            "role": "model",
+            "role": "user",
             "parts": [
                 {
                     "functionResponse": {
+                        "id": "response_id",
                         "name": "response_id",
                         "response": {
                             "content": {
@@ -977,10 +1041,11 @@ mod tests {
         let payload = format_messages(&messages);
 
         let expected_payload = vec![json!({
-            "role": "model",
+            "role": "user",
             "parts": [
                 {
                     "functionResponse": {
+                        "id": "response_id",
                         "name": "response_id",
                         "response": {
                             "content": {
@@ -1028,8 +1093,8 @@ mod tests {
 
         let response_with_tools = google_response(vec![
             json!({"text": "Let me think...", "thought": true, "thoughtSignature": SIG}),
-            json!({"functionCall": {"name": "shell", "args": {"cmd": "ls"}}, "thoughtSignature": SIG}),
-            json!({"functionCall": {"name": "read", "args": {}}}),
+            json!({"functionCall": {"id": "call-shell", "name": "shell", "args": {"cmd": "ls"}}, "thoughtSignature": SIG}),
+            json!({"functionCall": {"id": "call-read", "name": "read", "args": {}}}),
         ]);
 
         let native = response_to_message(response_with_tools).unwrap();
@@ -1047,11 +1112,9 @@ mod tests {
             .as_tool_request()
             .expect("Third part should be ToolRequest");
         assert_eq!(get_thought_signature(&req1.metadata), Some(SIG));
-        assert_eq!(
-            get_thought_signature(&req2.metadata),
-            Some(SIG),
-            "Should inherit"
-        );
+        assert_eq!(req1.id, "call-shell");
+        assert_eq!(req2.id, "call-read");
+        assert_eq!(get_thought_signature(&req2.metadata), None);
 
         let mut tool_response = Message::user();
         tool_response.add_tool_response_with_metadata(
@@ -1063,7 +1126,21 @@ mod tests {
         let google_out =
             format_messages(&[user_prompt.clone(), native.clone(), tool_response.clone()]);
         assert_eq!(google_out[1]["parts"][0]["thoughtSignature"], SIG);
-        assert_eq!(google_out[2]["parts"][0]["thoughtSignature"], SIG);
+        assert!(google_out[1]["parts"][1].get("thoughtSignature").is_none());
+        assert_eq!(
+            google_out[1]["parts"][0]["functionCall"]["id"],
+            "call-shell"
+        );
+        assert_eq!(google_out[1]["parts"][1]["functionCall"]["id"], "call-read");
+        assert!(google_out[2]["parts"][0].get("thoughtSignature").is_none());
+        assert_eq!(
+            google_out[2]["parts"][0]["functionResponse"]["id"],
+            "call-shell"
+        );
+        assert_eq!(
+            google_out[2]["parts"][0]["functionResponse"]["name"],
+            "shell"
+        );
 
         let second_assistant = response_to_message(google_response(vec![json!({
             "functionCall": {"name": "echo", "args": {}},
@@ -1072,7 +1149,9 @@ mod tests {
         .unwrap();
         let google_multi = format_messages(&[user_prompt, native, tool_response, second_assistant]);
         assert_eq!(google_multi[1]["parts"][0]["thoughtSignature"], SIG);
-        assert_eq!(google_multi[2]["parts"][0]["thoughtSignature"], SIG);
+        assert!(google_multi[2]["parts"][0]
+            .get("thoughtSignature")
+            .is_none());
         assert_eq!(google_multi[3]["parts"][0]["thoughtSignature"], "sig_456");
 
         let final_response_with_sig =
@@ -1224,6 +1303,100 @@ mod tests {
         }
 
         assert_eq!(tool_calls, vec!["test_tool"]);
+    }
+
+    #[tokio::test]
+    async fn gemini_37_parallel_tool_contract_replays_native_ids_and_signature() {
+        use futures::StreamExt;
+
+        let captured: Value =
+            serde_json::from_str(include_str!("fixtures/gemini_3_7_parallel_tools.json")).unwrap();
+        let lines = vec![Ok(format!("data: {}", captured))];
+        let stream = Box::pin(futures::stream::iter(lines));
+        let mut parsed = std::pin::pin!(response_to_streaming_message(stream));
+        let mut requests = Vec::new();
+        let mut reported_usage = None;
+
+        while let Some(result) = parsed.next().await {
+            let (message, usage) = result.unwrap();
+            if let Some(message) = message {
+                requests.extend(
+                    message
+                        .content
+                        .into_iter()
+                        .filter_map(|content| match content {
+                            MessageContent::ToolRequest(request) => Some(request),
+                            _ => None,
+                        }),
+                );
+            }
+            if usage.is_some() {
+                reported_usage = usage;
+            }
+        }
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].id, "call_shell_001");
+        assert_eq!(requests[1].id, "call_read_002");
+        assert_eq!(
+            get_thought_signature(&requests[0].metadata),
+            Some("native-signature-001")
+        );
+        assert_eq!(get_thought_signature(&requests[1].metadata), None);
+        assert_eq!(get_function_call_name(&requests[0].metadata), Some("shell"));
+        assert_eq!(get_function_call_name(&requests[1].metadata), Some("read"));
+
+        let usage = reported_usage.unwrap();
+        assert_eq!(usage.model, "gemini-3.7-flash-20260813");
+        assert_eq!(usage.usage.input_tokens, Some(100));
+        assert_eq!(usage.usage.output_tokens, Some(20));
+        assert_eq!(usage.usage.total_tokens, Some(120));
+
+        let assistant = Message::new(
+            Role::Assistant,
+            0,
+            requests
+                .iter()
+                .cloned()
+                .map(MessageContent::ToolRequest)
+                .collect(),
+        );
+        let mut responses = Message::user();
+        for request in &requests {
+            responses.add_tool_response_with_metadata(
+                request.id.clone(),
+                Ok(tool_result("ok")),
+                request.metadata.as_ref(),
+            );
+        }
+
+        let wire = format_messages(&[
+            set_up_text_message("Inspect the project", Role::User),
+            assistant,
+            responses,
+        ]);
+        assert_eq!(wire[1]["parts"][0]["functionCall"]["id"], "call_shell_001");
+        assert_eq!(
+            wire[1]["parts"][0][THOUGHT_SIGNATURE_KEY],
+            "native-signature-001"
+        );
+        assert_eq!(wire[1]["parts"][1]["functionCall"]["id"], "call_read_002");
+        assert!(wire[1]["parts"][1].get(THOUGHT_SIGNATURE_KEY).is_none());
+        assert_eq!(
+            wire[2]["parts"][0]["functionResponse"]["id"],
+            "call_shell_001"
+        );
+        assert_eq!(wire[2]["parts"][0]["functionResponse"]["name"], "shell");
+        assert_eq!(
+            wire[2]["parts"][1]["functionResponse"]["id"],
+            "call_read_002"
+        );
+        assert_eq!(wire[2]["parts"][1]["functionResponse"]["name"], "read");
+        assert!(wire[2]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|part| part.get(THOUGHT_SIGNATURE_KEY).is_none()));
     }
 
     #[tokio::test]
@@ -1494,5 +1667,44 @@ data: [DONE]"#;
         let config = ModelConfig::new("gpt-4o");
         let result = get_thinking_config(&config);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn gemini_37_request_uses_native_sampling_and_medium_thinking_default() {
+        let config = ModelConfig::new("gemini-3.7-flash")
+            .with_canonical_limits("google")
+            .with_temperature(Some(0.7));
+
+        let request = create_request(&config, "system", &[], &[]).unwrap();
+        let generation = &request["generationConfig"];
+        assert!(generation.get("temperature").is_none());
+        assert!(generation.get("topP").is_none());
+        assert!(generation.get("topK").is_none());
+        assert_eq!(generation["maxOutputTokens"], 65_536);
+        assert_eq!(generation["thinkingConfig"]["thinkingLevel"], "medium");
+        assert_eq!(generation["thinkingConfig"]["includeThoughts"], true);
+    }
+
+    #[test]
+    fn gemini_31_pro_uses_high_default_and_maps_off_to_low() {
+        let default = ModelConfig::new("gemini-3.1-pro-preview")
+            .with_canonical_limits("google")
+            .with_temperature(Some(0.7));
+        let default_request = create_request(&default, "system", &[], &[]).unwrap();
+        assert_eq!(
+            default_request["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "high"
+        );
+        assert_eq!(
+            default_request["generationConfig"]["maxOutputTokens"],
+            65_536
+        );
+
+        let low = default.with_thinking_effort(ThinkingEffort::Off);
+        let low_request = create_request(&low, "system", &[], &[]).unwrap();
+        assert_eq!(
+            low_request["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "low"
+        );
     }
 }

@@ -1,0 +1,38 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "id": "call_shell_001",
+              "name": "shell",
+              "args": {
+                "cmd": "pwd"
+              }
+            },
+            "thoughtSignature": "native-signature-001"
+          },
+          {
+            "functionCall": {
+              "id": "call_read_002",
+              "name": "read",
+              "args": {
+                "path": "Cargo.toml"
+              }
+            }
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 100,
+    "candidatesTokenCount": 7,
+    "thoughtsTokenCount": 13,
+    "totalTokenCount": 120
+  },
+  "modelVersion": "gemini-3.7-flash-20260813"
+}
