@@ -29886,6 +29886,23 @@ impl GooseAgentDispatcher {
                 // start. OFF by default so the change is byte-identical until the lever is set.
                 if think_off_test_authors() && is_test_author {
                     Some("<think>\n\n</think>\n\n")
+                } else if force_write_armed && req.attempt > 0 {
+                    // WRITE-FIRST ON THE RETRY, because tool_choice is INERT on this stack.
+                    //
+                    // MEASURED against the live server (qwen3.8 on LM Studio, temperature 0):
+                    // `tool_choice:"required"` — the strongest form the endpoint accepts, and what
+                    // this engine sends — returns HTTP 200 with ZERO tool calls, twice. The named
+                    // form ({"type":"function",...}) is rejected outright with HTTP 400. So the
+                    // force-write lever CANNOT compel this model to act; a worker that narrates
+                    // instead of writing will narrate again on every retry.
+                    //
+                    // The prefill IS honored (it is template text, not a server feature): closing
+                    // the thinking block before generation starts turns a 47s/974-char no-tool-call
+                    // turn into a tool call as the FIRST token. Applied ONLY from the second attempt
+                    // of a task whose owned files are still missing — the first attempt keeps the
+                    // deep deliberation that is this model's strength, and only a demonstrated
+                    // narrate-without-acting failure buys the constraint.
+                    Some("<think>\n\n</think>\n\n")
                 } else {
                     None
                 },

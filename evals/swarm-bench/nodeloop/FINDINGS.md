@@ -20960,3 +20960,24 @@ spec), integer-minor money with per-currency exponent, real per-module test suit
 published 3.6 entry shipped none, and 94-95% cross-draft plan convergence. Against it: two lost
 modules (F918) and a wall-clock cost roughly 10x per hard call. Rule reasserted: an early sample
 is a hypothesis, not a result — and a favourable early number is exactly the one to re-measure.
+
+## F919 — force_write_tool is INERT on LM Studio; my "it's working" reports were a correlation, not a mechanism
+
+RETRACTION. I flipped force_write_tool live (F916), then reported it working across 4, 9, 11, 17,
+20, 25, 30, 41 dispatches on "zero narration retries since the flip". That was a PROXY, and it was
+wrong. Direct test against the live server (qwen3.8 on LM Studio, temperature 0, tools offered):
+  tool_choice absent      -> 0 tool calls
+  tool_choice "required"  -> 0 tool calls   (HTTP 200; SILENTLY IGNORED)
+  tool_choice {"type":"function","function":{"name":"write"}} -> HTTP 400 Bad Request
+"required" is exactly what the engine sends (the named form was already known to 400). So the
+lever cannot compel this model to act, and never did. The live counter-example was in front of me
+the whole time: `sync` at 64k reasoning chars with tool_calls == 0 while I was quoting the
+zero-retry streak. The streak's real cause is unknown — most likely the post-flip tasks were
+smaller modules, plus long narrating calls (sync, ledger-server) had not yet ENDED, and a retry is
+only counted when a call ends.
+FIX (write-first-on-retry): the PREFILL is honored on this stack — it is template text, not a
+server feature — and pre-closing the thinking block was measured to turn a 47s/974-char no-tool-call
+turn into a tool call as the first token. Now applied when a task's owned files are still missing
+AND attempt > 0: the first attempt keeps the deep deliberation that is this model's strength; only a
+demonstrated narrate-without-acting failure buys the constraint. Rule reasserted (the CV-parser
+lesson, again): never declare a mechanism working from a downstream count — test the mechanism.
