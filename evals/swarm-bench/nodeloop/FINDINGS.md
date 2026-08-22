@@ -20981,3 +20981,25 @@ turn into a tool call as the first token. Now applied when a task's owned files 
 AND attempt > 0: the first attempt keeps the deep deliberation that is this model's strength; only a
 demonstrated narrate-without-acting failure buys the constraint. Rule reasserted (the CV-parser
 lesson, again): never declare a mechanism working from a downstream count — test the mechanism.
+
+## F920 — r0v2 stopped at 6.5h with 3 core modules dead; relaunched WARM on the fixed binary
+
+Final state of r0v2 before the stop: 34 done, 3 FAILED — `api` (ledgerd HTTP surface), `drafts`
+(approval workflow) and `sync` (the vendor sync, 91 min and 137k reasoning chars on its 4th
+attempt, zero tool calls, no file) — every one on the F918 idle misread. `app/ledgerd/__init__.py`
+eagerly imports all nine siblings, so a tree missing three of them CANNOT boot: the run's ceiling
+was already ~0 and its repair phase would have had to author three core modules with the same
+model that had just failed to write them four times each. Per Mihai's standing order (stop, fix,
+restart, don't waste time) the run was stopped and relaunched on the binary carrying BOTH fixes
+(mid-stream prefill grace 3c3d3bd4b, write-first-on-retry 286f1f215).
+RESUME DID NOT WORK AS DOCUMENTED, and the reason is worth keeping: the harness bridges the prior
+log from `<prev>/run.jsonl`, but this bench passes --log-file as a path that resolves NESTED
+(cwd=workdir + a workdir-relative arg), so the top-level file the bridge looks for never exists
+and the engine silently re-planned. Bridging by hand (copy the nested log to the partial dir's
+top level) placed run-swarm-00-resumed.jsonl correctly and the engine STILL re-ran the prologue —
+resume's own reader is not satisfied by that file alone. What DID carry over is better than
+nothing and arguably better than resume: the partial tree is restored, so the engine detects
+existing sources (the amendment-only `codebase` scout lens is live) and plans against the modules
+that survived — db, events, vendor, webhooks, all of notifierd, five test files, the web files.
+Cost: the prologue is paid again. Open item: resume is advertised in the harness and does not
+work on this bench's log layout — fix or delete it, do not leave it as a trap.
