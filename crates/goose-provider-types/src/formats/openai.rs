@@ -1108,12 +1108,20 @@ where
         // reasoning_content in a later chunk would produce duplicated reasoning.
         let mut pending_inline_thinking = String::new();
         let mut last_seen_model: Option<String> = None;
+        let mut terminal_proven = false;
+        let mut pending_usage: Option<ProviderUsage> = None;
+        let mut usage_yielded = false;
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
             let line = strip_data_prefix(&response_str);
 
             if line.is_some_and(|l| l == "[DONE]") {
+                if !usage_yielded {
+                    if let Some(usage) = pending_usage.take() {
+                        yield (None, Some(usage));
+                    }
+                }
                 break 'outer;
             }
 
@@ -1126,6 +1134,13 @@ where
             )?;
             if let Some(model) = &chunk.model {
                 last_seen_model = Some(model.clone());
+            }
+            if chunk
+                .choices
+                .iter()
+                .any(|choice| choice.finish_reason.is_some())
+            {
+                terminal_proven = true;
             }
 
             if !chunk.choices.is_empty() {
@@ -1141,7 +1156,22 @@ where
                 }
             }
 
-            let mut usage = extract_usage_with_output_tokens(&chunk, last_seen_model.as_deref());
+            if !usage_yielded {
+                if let Some(chunk_usage) =
+                    extract_usage_with_output_tokens(&chunk, last_seen_model.as_deref())
+                {
+                    pending_usage = Some(chunk_usage);
+                }
+            }
+            let mut usage = if terminal_proven && !usage_yielded {
+                let usage = pending_usage.take();
+                if usage.is_some() {
+                    usage_yielded = true;
+                }
+                usage
+            } else {
+                None
+            };
 
             if chunk.choices.is_empty() {
                 yield (None, usage)
@@ -1166,16 +1196,42 @@ where
                             let response_str = response_chunk?;
                             if let Some(line) = strip_data_prefix(&response_str) {
                                 if line == "[DONE]" {
-                                    break 'outer;
+                                    terminal_proven = true;
+                                    if !usage_yielded {
+                                        usage = pending_usage.take();
+                                        if usage.is_some() {
+                                            usage_yielded = true;
+                                        }
+                                    }
+                                    done = true;
+                                    continue;
                                 }
 
                                 let tool_chunk: StreamingChunk = parse_streaming_chunk(line)?;
                                 if let Some(model) = &tool_chunk.model {
                                     last_seen_model = Some(model.clone());
                                 }
+                                if tool_chunk
+                                    .choices
+                                    .iter()
+                                    .any(|choice| choice.finish_reason.is_some())
+                                {
+                                    terminal_proven = true;
+                                }
 
-                                if let Some(chunk_usage) = extract_usage_with_output_tokens(&tool_chunk, last_seen_model.as_deref()) {
-                                    usage = Some(chunk_usage);
+                                if !usage_yielded {
+                                    if let Some(chunk_usage) = extract_usage_with_output_tokens(
+                                        &tool_chunk,
+                                        last_seen_model.as_deref(),
+                                    ) {
+                                        pending_usage = Some(chunk_usage);
+                                    }
+                                }
+                                if terminal_proven && !usage_yielded {
+                                    usage = pending_usage.take();
+                                    if usage.is_some() {
+                                        usage_yielded = true;
+                                    }
                                 }
 
                                 if !tool_chunk.choices.is_empty() {
@@ -2901,6 +2957,54 @@ mod tests {
             Some("glm-5.3-fixture-revision")
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn deepseek_content_usage_without_finish_at_eof_is_not_terminal() -> anyhow::Result<()> {
+        let response_lines = r#"data: {"id":"deepseek-cut","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}"#;
+
+        let result = run_streaming_test(response_lines).await?;
+
+        assert!(result.has_text_content);
+        assert_eq!(result.usage_count, 0);
+        assert!(result.usage.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn zai_usage_only_chunk_without_done_at_eof_is_not_terminal() -> anyhow::Result<()> {
+        let response_lines = r#"data: {"id":"zai-cut","model":"glm-5.3","choices":[],"usage":{"prompt_tokens":40,"completion_tokens":60,"total_tokens":100}}"#;
+
+        let result = run_streaming_test(response_lines).await?;
+
+        assert_eq!(result.usage_count, 0);
+        assert!(result.usage.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn deepseek_partial_tool_usage_at_eof_is_not_terminal() -> anyhow::Result<()> {
+        let response_lines = r#"data: {"id":"deepseek-tool-cut","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"developer__shell","arguments":"{}"}}]},"finish_reason":null}],"usage":{"prompt_tokens":50,"completion_tokens":25,"total_tokens":75}}"#;
+
+        let result = run_streaming_test(response_lines).await?;
+
+        assert_eq!(result.tool_calls, vec!["developer__shell"]);
+        assert_eq!(result.usage_count, 0);
+        assert!(result.usage.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn zai_done_marker_proves_buffered_usage_terminal() -> anyhow::Result<()> {
+        let response_lines = concat!(
+            "data: {\"id\":\"zai-done\",\"model\":\"glm-5.3\",\"choices\":[],\"usage\":{\"prompt_tokens\":40,\"completion_tokens\":60,\"total_tokens\":100}}\n",
+            "data: [DONE]\n",
+        );
+
+        let result = run_streaming_test(response_lines).await?;
+
+        assert_usage_yielded_once(&result, 40, 60, 100);
         Ok(())
     }
 
