@@ -21003,3 +21003,24 @@ existing sources (the amendment-only `codebase` scout lens is live) and plans ag
 that survived — db, events, vendor, webhooks, all of notifierd, five test files, the web files.
 Cost: the prologue is paid again. Open item: resume is advertised in the harness and does not
 work on this bench's log layout — fix or delete it, do not leave it as a trap.
+
+## F921 — RESUME WAS NEVER FUNCTIONAL (root cause), and r1 restarts clean on LM Studio's own sampling
+
+The resumed r0 died 20 minutes in, after the full scout phase, with "the resumed plan will not
+parse: missing field `subtasks`" — exit 1 — and the harness then scored the untouched warm tree
+at 0.0131. ROOT CAUSE: resume_state_from_dir rebuilds the recovered plan as {"tasks": [...]},
+its only consumer Dag::from_planner_json requires the planner's field name "subtasks". The two
+readers never agreed, so resume could not have worked on any run, ever — it was advertised in
+the harness (BENCH_RESUME_FROM), documented in comments, and dead. FIXED 4c9530e70: emit BOTH
+keys (subtasks for the parser, tasks for the banner that counts them) + a test that recovers a
+plan from a log and asserts it parses into a Dag.
+r1 (Mihai's call): RESTART clean, not resume, and hand ALL sampling back to LM Studio —
+temperature/top_p/top_k/min_p/repeat_penalty are now null in config, `swarm pool show` reports
+"sampling model defaults", and no env override is set, so goose sends no sampling fields at all
+and each host's own model settings govern. Kept ON deliberately: uncapped, and force_write_tool
+— the latter is no longer the (inert) tool_choice path but the GATE for write-first-on-retry,
+so switching it off would disarm the prefill fix. Engine carries every fix from tonight:
+package-entry truth, spec-shaped probe tokens, bind-first pitfall + repair hint, solo-planner
+spiral exemption, node-first ids, uncapped regime (+ mid-stream prefill grace), 60-turn planner
+side loops, shift-invariant loop recurrence, detail-shorter-than-brief floor, note-skip
+reporting, force-write instrumentation, and gate replay.
