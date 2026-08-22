@@ -45,6 +45,7 @@ GOOSE = Path(os.environ["BENCH_GOOSE"]) if os.environ.get("BENCH_GOOSE") \
     else Path.home() / "Projects/goose/target/release/goose"
 MODELS = {
     "opus-5": "us.anthropic.claude-opus-5",
+    "fable-5": "us.anthropic.claude-fable-5",
     "sonnet-5": "us.anthropic.claude-sonnet-5",
     "haiku-4.5": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     # OpenAI on Bedrock — the region inference-profile form is REQUIRED (the bare id fails with
@@ -150,11 +151,19 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         raise SystemExit(f"unknown entrant {entrant!r}")
 
     started = time.time()
+    # F924: stream the engine's console to a file INSTEAD of buffering it to exit.
+    # `capture_output=True` held every byte in memory until the process ended, so during a live
+    # run the engine's stderr was unreadable — and the omni-judge reports its looks ONLY there.
+    # That cost a whole 5-hour run: a call was looping in plain sight with no way to ask whether
+    # the judge had even fired. The console now lands next to the tree while the run is going.
+    console = workdir / "engine-console.log"
     try:
-        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True,
-                              timeout=(timeout if timeout and timeout > 0 else None),
-                              env={**os.environ, **env}, start_new_session=True)
-        code, tail = proc.returncode, (proc.stdout + proc.stderr)[-1500:]
+        with console.open("w", buffering=1) as fh:
+            proc = subprocess.run(cmd, cwd=workdir, stdout=fh, stderr=subprocess.STDOUT, text=True,
+                                  timeout=(timeout if timeout and timeout > 0 else None),
+                                  env={**os.environ, **env}, start_new_session=True)
+        code = proc.returncode
+        tail = console.read_text(errors="replace")[-1500:]
     except subprocess.TimeoutExpired:
         code, tail = None, "timed out"
     return {"exit": code, "secs": round(time.time() - started, 1), "tail": tail,
