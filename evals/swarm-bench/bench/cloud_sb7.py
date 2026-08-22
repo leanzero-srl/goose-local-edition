@@ -611,6 +611,7 @@ def child_env(
             str(row["secret_env"]): secret_value,
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME": str(profile),
+            "TMPDIR": str(tool_home / "tmp"),
             "GOOSE_PATH_ROOT": str(state["profile"]),
             "GOOSE_PROVIDER": str(row["provider"]),
             "GOOSE_MODEL": str(row["model"]),
