@@ -10,9 +10,11 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-const CONFIG_ENV: &str = "GOOSE_BENCH_BUDGET_CONFIG";
-const CONFIG_SHA_ENV: &str = "GOOSE_BENCH_BUDGET_CONFIG_SHA256";
-const LEDGER_ENV: &str = "GOOSE_BENCH_BUDGET_LEDGER";
+pub(crate) const CONFIG_ENV: &str = "GOOSE_BENCH_BUDGET_CONFIG";
+pub(crate) const CONFIG_SHA_ENV: &str = "GOOSE_BENCH_BUDGET_CONFIG_SHA256";
+pub(crate) const LEDGER_ENV: &str = "GOOSE_BENCH_BUDGET_LEDGER";
+pub(crate) const EXPECTED_PROVIDER_ENV: &str = "GOOSE_BENCH_EXPECTED_PROVIDER";
+pub(crate) const SECRET_ENV_NAME_ENV: &str = "GOOSE_BENCH_SECRET_ENV_NAME";
 const TOKENS_PER_MILLION: f64 = 1_000_000.0;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -135,6 +137,7 @@ pub struct BenchmarkBudgetReservation {
     model: String,
     reserved_usd: f64,
     pricing: Pricing,
+    config: BudgetConfig,
     ledger_path: PathBuf,
 }
 
@@ -145,13 +148,14 @@ impl BenchmarkBudgetReservation {
 
     pub fn release_unadmitted(self) -> Result<(), ProviderError> {
         with_locked_ledger(&self.ledger_path, |ledger| {
+            validate_ledger(ledger, &self.config)?;
             ledger.outstanding.remove(&self.request_id).ok_or_else(|| {
                 ProviderError::ExecutionError(format!(
                     "budget reservation {} is missing",
                     self.request_id
                 ))
             })?;
-            Ok(())
+            validate_ledger(ledger, &self.config)
         })
     }
 
@@ -185,6 +189,7 @@ impl BenchmarkBudgetReservation {
         }
 
         with_locked_ledger(&self.ledger_path, |ledger| {
+            validate_ledger(ledger, &self.config)?;
             let record = ledger.outstanding.remove(&self.request_id).ok_or_else(|| {
                 ProviderError::ExecutionError(format!(
                     "budget reservation {} is missing",
@@ -207,7 +212,7 @@ impl BenchmarkBudgetReservation {
                 reserved_usd: record.reserved_usd,
                 settled_at_unix_ms: unix_ms(),
             });
-            Ok(())
+            validate_ledger(ledger, &self.config)
         })
     }
 }
@@ -233,6 +238,62 @@ pub fn reserve_request(
             "benchmark budget requires {CONFIG_ENV}, {CONFIG_SHA_ENV}, and {LEDGER_ENV} together"
         ))),
     }
+}
+
+pub(crate) fn guard_requested() -> bool {
+    [CONFIG_ENV, CONFIG_SHA_ENV, LEDGER_ENV]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
+        || std::env::var_os(crate::agents::provider_lifecycle::LIFECYCLE_STRICT_ENV).is_some()
+}
+
+pub(crate) fn scrub_bootstrap_secret(provider: &str) -> Result<(), ProviderError> {
+    if !guard_requested() {
+        return Ok(());
+    }
+    let expected = std::env::var(EXPECTED_PROVIDER_ENV).map_err(|_| {
+        ProviderError::ExecutionError(format!("benchmark guard requires {EXPECTED_PROVIDER_ENV}"))
+    })?;
+    if provider != expected {
+        return Ok(());
+    }
+    let name = std::env::var(SECRET_ENV_NAME_ENV).map_err(|_| {
+        ProviderError::ExecutionError(format!("benchmark guard requires {SECRET_ENV_NAME_ENV}"))
+    })?;
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        || std::env::var_os(&name).is_none()
+    {
+        return Err(ProviderError::ExecutionError(
+            "benchmark bootstrap secret declaration is invalid".to_string(),
+        ));
+    }
+    std::env::remove_var(&name);
+    if std::env::var_os(&name).is_some() {
+        return Err(ProviderError::ExecutionError(
+            "benchmark bootstrap secret could not be removed from the agent environment"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn assert_bootstrap_secret_scrubbed() -> Result<(), ProviderError> {
+    if !guard_requested() {
+        return Ok(());
+    }
+    let name = std::env::var(SECRET_ENV_NAME_ENV).map_err(|_| {
+        ProviderError::ExecutionError(format!("benchmark guard requires {SECRET_ENV_NAME_ENV}"))
+    })?;
+    if std::env::var_os(&name).is_some() {
+        return Err(ProviderError::ExecutionError(
+            "benchmark provider was not initialized and its bootstrap secret remains exposed"
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn reserve_from_paths(
@@ -336,6 +397,7 @@ fn reserve_from_paths(
         model: model_owned,
         reserved_usd,
         pricing: model.pricing.clone(),
+        config,
         ledger_path: ledger_path.to_path_buf(),
     })
 }
@@ -396,12 +458,128 @@ fn validate_ledger(ledger: &BudgetLedger, config: &BudgetConfig) -> Result<(), P
         || ledger.provider_caps != config.provider_caps
         || !ledger.spent_upper_bound.is_finite()
         || ledger.spent_upper_bound < 0.0
+        || ledger
+            .provider_spent_upper_bound
+            .keys()
+            .collect::<std::collections::HashSet<_>>()
+            != config
+                .provider_caps
+                .keys()
+                .collect::<std::collections::HashSet<_>>()
     {
         return Err(ProviderError::ExecutionError(
             "benchmark budget ledger does not match its frozen config".to_string(),
         ));
     }
+
+    let invalid = || {
+        ProviderError::ExecutionError(
+            "benchmark budget ledger contains inconsistent accounting evidence".to_string(),
+        )
+    };
+    if ledger
+        .provider_spent_upper_bound
+        .values()
+        .any(|amount| !amount.is_finite() || *amount < 0.0)
+        || ledger.spent_upper_bound > config.total_cap + f64::EPSILON
+    {
+        return Err(invalid());
+    }
+
+    let mut request_ids = std::collections::HashSet::new();
+    let mut outstanding_total = 0.0;
+    let mut outstanding_by_provider: HashMap<&str, f64> = HashMap::new();
+    for (request_id, reservation) in &ledger.outstanding {
+        let model_key = format!("{}/{}", reservation.provider, reservation.model);
+        let Some(model) = config.models.get(&model_key) else {
+            return Err(invalid());
+        };
+        let expected_reserve = model
+            .pricing
+            .cost(model.context_limit, model.max_output_tokens as usize);
+        if request_id != &reservation.request_id
+            || !request_ids.insert(request_id.as_str())
+            || reservation.request_id.is_empty()
+            || reservation.provider != model.provider
+            || reservation.model != model.model
+            || !reservation.reserved_usd.is_finite()
+            || reservation.reserved_usd < 0.0
+            || !money_eq(reservation.reserved_usd, expected_reserve)
+            || reservation.input_reserve_tokens != model.context_limit
+            || reservation.output_reserve_tokens != model.max_output_tokens as usize
+        {
+            return Err(invalid());
+        }
+        outstanding_total += reservation.reserved_usd;
+        *outstanding_by_provider
+            .entry(reservation.provider.as_str())
+            .or_default() += reservation.reserved_usd;
+    }
+
+    let mut settled_total = 0.0;
+    let mut settled_by_provider: HashMap<&str, f64> = HashMap::new();
+    for settlement in &ledger.settled {
+        let model_key = format!("{}/{}", settlement.provider, settlement.model);
+        let Some(model) = config.models.get(&model_key) else {
+            return Err(invalid());
+        };
+        let expected_reserve = model
+            .pricing
+            .cost(model.context_limit, model.max_output_tokens as usize);
+        let expected_charge = model
+            .pricing
+            .cost(settlement.input_tokens, settlement.output_tokens);
+        if settlement.request_id.is_empty()
+            || !request_ids.insert(settlement.request_id.as_str())
+            || settlement.provider != model.provider
+            || settlement.model != model.model
+            || settlement.reported_model.is_empty()
+            || !settlement.charged_upper_bound_usd.is_finite()
+            || settlement.charged_upper_bound_usd < 0.0
+            || !settlement.reserved_usd.is_finite()
+            || settlement.reserved_usd < 0.0
+            || !money_eq(settlement.reserved_usd, expected_reserve)
+            || !money_eq(settlement.charged_upper_bound_usd, expected_charge)
+            || settlement.charged_upper_bound_usd > settlement.reserved_usd + f64::EPSILON
+        {
+            return Err(invalid());
+        }
+        settled_total += settlement.charged_upper_bound_usd;
+        *settled_by_provider
+            .entry(settlement.provider.as_str())
+            .or_default() += settlement.charged_upper_bound_usd;
+    }
+
+    if !money_eq(ledger.spent_upper_bound, settled_total)
+        || !money_eq(
+            ledger.spent_upper_bound,
+            ledger.provider_spent_upper_bound.values().sum(),
+        )
+    {
+        return Err(invalid());
+    }
+    for (provider, cap) in &config.provider_caps {
+        let recorded = ledger.provider_spent_upper_bound[provider];
+        let derived = settled_by_provider
+            .get(provider.as_str())
+            .copied()
+            .unwrap_or_default();
+        let outstanding = outstanding_by_provider
+            .get(provider.as_str())
+            .copied()
+            .unwrap_or_default();
+        if !money_eq(recorded, derived) || recorded + outstanding > *cap + f64::EPSILON {
+            return Err(invalid());
+        }
+    }
+    if ledger.spent_upper_bound + outstanding_total > config.total_cap + f64::EPSILON {
+        return Err(invalid());
+    }
     Ok(())
+}
+
+fn money_eq(left: f64, right: f64) -> bool {
+    (left - right).abs() <= 1e-9_f64.max(left.abs().max(right.abs()) * 1e-12)
 }
 
 fn with_locked_ledger<T>(
@@ -609,5 +787,108 @@ mod tests {
         let after: BudgetLedger = serde_json::from_slice(&fs::read(&ledger).unwrap()).unwrap();
         assert!(after.outstanding.is_empty());
         assert_eq!(after.spent_upper_bound, 0.0);
+    }
+
+    fn assert_ledger_tamper_refused(tamper: impl FnOnce(&mut serde_json::Value)) {
+        let root = tempfile::tempdir().unwrap();
+        let (config, sha, ledger, model) = fixture(root.path(), 1.0);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&ledger).unwrap()).unwrap();
+        tamper(&mut value);
+        fs::write(&ledger, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+
+        let error = reserve_from_paths(&config, &sha, &ledger, "test", &model)
+            .err()
+            .expect("tampered accounting must fail closed");
+        assert!(error.to_string().contains("budget ledger"));
+    }
+
+    #[test]
+    fn rejects_negative_missing_and_unreconciled_accounting() {
+        assert_ledger_tamper_refused(|ledger| ledger["spent_upper_bound"] = (-0.01).into());
+        assert_ledger_tamper_refused(|ledger| {
+            ledger["provider_spent_upper_bound"] = serde_json::json!({})
+        });
+        assert_ledger_tamper_refused(|ledger| ledger["spent_upper_bound"] = 0.01.into());
+    }
+
+    #[test]
+    fn rejects_forged_outstanding_reservations() {
+        assert_ledger_tamper_refused(|ledger| {
+            ledger["outstanding"] = serde_json::json!({
+                "forged": {
+                    "request_id": "different-id",
+                    "provider": "test",
+                    "model": "model",
+                    "reserved_usd": 0.2,
+                    "input_reserve_tokens": 1000,
+                    "output_reserve_tokens": 1000,
+                    "created_at_unix_ms": 1
+                }
+            });
+        });
+        assert_ledger_tamper_refused(|ledger| {
+            ledger["outstanding"] = serde_json::json!({
+                "forged": {
+                    "request_id": "forged",
+                    "provider": "unknown",
+                    "model": "model",
+                    "reserved_usd": 0.2,
+                    "input_reserve_tokens": 1000,
+                    "output_reserve_tokens": 1000,
+                    "created_at_unix_ms": 1
+                }
+            });
+        });
+    }
+
+    #[test]
+    fn rejects_removed_or_mutated_settlement_evidence() {
+        for mutation in ["remove", "negative", "duplicate"] {
+            let root = tempfile::tempdir().unwrap();
+            let (config, sha, ledger, model) = fixture(root.path(), 1.0);
+            reserve_from_paths(&config, &sha, &ledger, "test", &model)
+                .unwrap()
+                .settle(&ProviderUsage::new(
+                    "reported-model".to_string(),
+                    Usage::new(Some(100), Some(200), Some(300)),
+                ))
+                .unwrap();
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&fs::read(&ledger).unwrap()).unwrap();
+            match mutation {
+                "remove" => value["settled"] = serde_json::json!([]),
+                "negative" => value["settled"][0]["charged_upper_bound_usd"] = (-0.03).into(),
+                "duplicate" => {
+                    let duplicate = value["settled"][0].clone();
+                    value["settled"].as_array_mut().unwrap().push(duplicate);
+                }
+                _ => unreachable!(),
+            }
+            fs::write(&ledger, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+            let error = reserve_from_paths(&config, &sha, &ledger, "test", &model)
+                .err()
+                .expect("corrupt settlement evidence must fail closed");
+            assert!(error.to_string().contains("budget ledger"));
+        }
+    }
+
+    #[test]
+    fn benchmark_secret_must_be_consumed_by_the_expected_provider() {
+        let _guard = env_lock::lock_env([
+            (
+                crate::agents::provider_lifecycle::LIFECYCLE_STRICT_ENV,
+                Some("true"),
+            ),
+            (EXPECTED_PROVIDER_ENV, Some("google")),
+            (SECRET_ENV_NAME_ENV, Some("GOOSE_TEST_PROVIDER_SECRET")),
+            ("GOOSE_TEST_PROVIDER_SECRET", Some("never-visible-to-tools")),
+        ]);
+
+        scrub_bootstrap_secret("lmstudio").unwrap();
+        assert!(assert_bootstrap_secret_scrubbed().is_err());
+        scrub_bootstrap_secret("google").unwrap();
+        assert_bootstrap_secret_scrubbed().unwrap();
+        assert!(std::env::var_os("GOOSE_TEST_PROVIDER_SECRET").is_none());
     }
 }

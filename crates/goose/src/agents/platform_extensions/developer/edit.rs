@@ -43,7 +43,10 @@ impl EditTools {
         params: FileReadParams,
         working_dir: Option<&Path>,
     ) -> CallToolResult {
-        let path = resolve_path(&params.path, working_dir);
+        let path = match super::sandbox::checked_path(resolve_path(&params.path, working_dir)) {
+            Ok(path) => path,
+            Err(error) => return sandbox_error(error),
+        };
 
         match fs::read_to_string(&path) {
             Ok(content) => {
@@ -67,7 +70,10 @@ impl EditTools {
         params: FileWriteParams,
         working_dir: Option<&Path>,
     ) -> CallToolResult {
-        let path = resolve_path(&params.path, working_dir);
+        let path = match super::sandbox::checked_path(resolve_path(&params.path, working_dir)) {
+            Ok(path) => path,
+            Err(error) => return sandbox_error(error),
+        };
 
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -111,7 +117,10 @@ impl EditTools {
         params: FileEditParams,
         working_dir: Option<&Path>,
     ) -> CallToolResult {
-        let path = resolve_path(&params.path, working_dir);
+        let path = match super::sandbox::checked_path(resolve_path(&params.path, working_dir)) {
+            Ok(path) => path,
+            Err(error) => return sandbox_error(error),
+        };
 
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
@@ -147,6 +156,10 @@ impl EditTools {
             .with_priority(0.0)]),
         }
     }
+}
+
+fn sandbox_error(error: String) -> CallToolResult {
+    CallToolResult::error(vec![Content::text(error).with_priority(0.0)])
 }
 
 impl Default for EditTools {

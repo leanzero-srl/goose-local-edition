@@ -1,4 +1,4 @@
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -519,7 +519,7 @@ async fn run_command(
 ) -> Result<ExecutionOutput, String> {
     let timeout_secs = Some(resolve_shell_timeout(timeout_secs));
 
-    let mut command = build_shell_command(command_line, working_dir, login_path);
+    let mut command = build_shell_command(command_line, working_dir, login_path)?;
 
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -608,7 +608,7 @@ fn build_shell_command(
     command_line: &str,
     working_dir: Option<&std::path::Path>,
     login_path: Option<&str>,
-) -> tokio::process::Command {
+) -> Result<tokio::process::Command, String> {
     #[cfg(windows)]
     let mut command = {
         let shell = windows_shell();
@@ -652,6 +652,24 @@ fn build_shell_command(
                 .args(unix_shell_command_args(command_line));
             command
         } else {
+            #[cfg(target_os = "macos")]
+            if let Some(root) = super::sandbox::root()? {
+                return build_macos_sandbox_command(
+                    &shell,
+                    command_line,
+                    working_dir,
+                    login_path,
+                    &root,
+                );
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            if super::sandbox::root()?.is_some() {
+                return Err(
+                    "benchmark tool sandbox is unsupported on this operating system".to_string(),
+                );
+            }
+
             let mut command = tokio::process::Command::new(shell);
             command.args(unix_shell_command_args(command_line));
             if let Some(path) = working_dir {
@@ -665,7 +683,63 @@ fn build_shell_command(
     };
 
     command.set_no_window();
+    Ok(command)
+}
+
+#[cfg(target_os = "macos")]
+fn build_macos_sandbox_command(
+    shell: &str,
+    command_line: &str,
+    working_dir: Option<&Path>,
+    login_path: Option<&str>,
+    root: &Path,
+) -> Result<tokio::process::Command, String> {
+    let working_dir = working_dir.unwrap_or(root);
+    super::sandbox::checked_path(working_dir.to_path_buf())?;
+    let home = std::env::var_os(super::sandbox::HOME_ENV)
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            format!(
+                "{} is required when {} is set",
+                super::sandbox::HOME_ENV,
+                super::sandbox::ROOT_ENV
+            )
+        })?;
+    std::fs::create_dir_all(&home)
+        .map_err(|error| format!("cannot create tool sandbox home: {error}"))?;
+    let home = home
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve tool sandbox home: {error}"))?;
+    let temp = home.join("tmp");
+    std::fs::create_dir_all(&temp)
+        .map_err(|error| format!("cannot create tool sandbox temp: {error}"))?;
+    let temp = temp
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve tool sandbox temp: {error}"))?;
+    let profile = super::sandbox::macos_profile(root, &home, &temp)?;
+
+    let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
     command
+        .args(["-p", &profile, shell])
+        .args(unix_shell_command_args(command_line))
+        .current_dir(working_dir)
+        .env_clear();
+    let path = login_path
+        .map(str::to_string)
+        .or_else(|| std::env::var("PATH").ok())
+        .unwrap_or_else(|| "/usr/bin:/bin".to_string());
+    command
+        .env("PATH", path)
+        .env("HOME", &home)
+        .env("TMPDIR", &temp)
+        .env("SHELL", shell);
+    for name in ["USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "NO_COLOR"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    command.set_no_window();
+    Ok(command)
 }
 
 /// Split tagged lines into (stdout, stderr, interleaved) strings.
@@ -826,6 +900,105 @@ mod tests {
             .clone()
             .expect("expected structured content");
         serde_json::from_value(value).expect("expected shell output structured content")
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn benchmark_shell_cannot_observe_secrets_or_escape_its_tree() {
+        fn quote(path: &Path) -> String {
+            format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+        }
+
+        let real_home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        let base = tempfile::Builder::new()
+            .prefix("goose-benchmark-sandbox-")
+            .tempdir_in(&real_home)
+            .unwrap();
+        let root = base.path().join("tree");
+        let tool_home = base.path().join("tool-home");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&tool_home).unwrap();
+        let outside = base.path().join("campaign-ledger.json");
+        std::fs::write(&outside, b"immutable-accounting-canary").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape-ledger")).unwrap();
+        let original = std::fs::read(&outside).unwrap();
+        let root_value = root.to_string_lossy().to_string();
+        let tool_home_value = tool_home.to_string_lossy().to_string();
+        let real_home_value = real_home.to_string_lossy().to_string();
+        let ledger_value = outside.to_string_lossy().to_string();
+        let _guard = env_lock::lock_env([
+            (super::super::sandbox::ROOT_ENV, Some(root_value.as_str())),
+            (
+                super::super::sandbox::HOME_ENV,
+                Some(tool_home_value.as_str()),
+            ),
+            (
+                super::super::sandbox::DENY_ROOT_ENV,
+                Some(real_home_value.as_str()),
+            ),
+            ("GOOGLE_API_KEY", Some("provider-secret-canary")),
+            ("SSH_AUTH_SOCK", Some("/private/tmp/agent.sock")),
+            ("GOOSE_BENCH_BUDGET_LEDGER", Some(ledger_value.as_str())),
+            (
+                "GOOSE_PROVIDER_LIFECYCLE_FILE",
+                Some("/private/tmp/provider-lifecycle.jsonl"),
+            ),
+            ("PATH", Some("/usr/bin:/bin:/usr/sbin:/sbin")),
+        ]);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let env_output = runtime
+            .block_on(run_command("env", Some(10), Some(&root), None))
+            .unwrap();
+        let (stdout, stderr, _) = split_lines(&env_output.lines);
+        assert_eq!(env_output.exit_code, Some(0), "{stderr}");
+        assert!(stdout.contains(&format!("HOME={}", tool_home.display())));
+        for forbidden in [
+            "provider-secret-canary",
+            "GOOGLE_API_KEY",
+            "SSH_AUTH_SOCK",
+            "GOOSE_BENCH_BUDGET_LEDGER",
+            "GOOSE_PROVIDER_LIFECYCLE_FILE",
+        ] {
+            assert!(!stdout.contains(forbidden), "sandbox leaked {forbidden}");
+        }
+        assert!(!stdout
+            .lines()
+            .any(|line| line == format!("HOME={}", real_home.display())));
+
+        for denied in [&outside, &root.join("escape-ledger")] {
+            let read = runtime
+                .block_on(run_command(
+                    &format!("cat {}", quote(denied)),
+                    Some(10),
+                    Some(&root),
+                    None,
+                ))
+                .unwrap();
+            assert_ne!(read.exit_code, Some(0));
+            let write = runtime
+                .block_on(run_command(
+                    &format!("printf hacked > {}", quote(denied)),
+                    Some(10),
+                    Some(&root),
+                    None,
+                ))
+                .unwrap();
+            assert_ne!(write.exit_code, Some(0));
+        }
+        assert_eq!(std::fs::read(&outside).unwrap(), original);
+
+        let inside = root.join("inside.txt");
+        let allowed = runtime
+            .block_on(run_command(
+                &format!("printf allowed > {}", quote(&inside)),
+                Some(10),
+                Some(&root),
+                None,
+            ))
+            .unwrap();
+        assert_eq!(allowed.exit_code, Some(0));
+        assert_eq!(std::fs::read_to_string(inside).unwrap(), "allowed");
     }
 
     #[tokio::test]

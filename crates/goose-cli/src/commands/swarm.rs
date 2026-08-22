@@ -15349,17 +15349,13 @@ impl GooseAgentDispatcher {
             return Ok(self.provider.clone());
         };
         let registry = cloud_registry_name(pname);
-        let mut cache = self.cloud_providers.lock().await;
+        let cache = self.cloud_providers.lock().await;
         if let Some(p) = cache.get(registry) {
             return Ok(p.clone());
         }
-        let p = goose::providers::create(registry, vec![])
-            .await
-            .map_err(|e| {
-                anyhow!("creating the '{registry}' provider for cloud node model '{model_id}': {e}")
-            })?;
-        cache.insert(registry.to_string(), p.clone());
-        Ok(p)
+        Err(anyhow!(
+            "cloud provider '{registry}' for model '{model_id}' was not initialized before dispatch"
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -15383,6 +15379,21 @@ impl GooseAgentDispatcher {
         repeat_break: bool,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
+        let mut cloud_providers = std::collections::HashMap::new();
+        for provider_name in cloud_models.values() {
+            let registry = cloud_registry_name(provider_name);
+            if cloud_providers.contains_key(registry) {
+                continue;
+            }
+            let cloud_provider =
+                goose::providers::create(registry, vec![])
+                    .await
+                    .map_err(|error| {
+                        anyhow!("creating the '{registry}' provider before dispatch: {error}")
+                    })?;
+            cloud_providers.insert(registry.to_string(), cloud_provider);
+        }
+        goose::benchmark_budget::assert_bootstrap_secret_scrubbed()?;
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
         std::fs::create_dir_all(&session_root)?;
         // Use the global session store so each worker's full trace is fetchable by its logged
@@ -15392,7 +15403,7 @@ impl GooseAgentDispatcher {
         Ok(Self {
             provider,
             cloud_models,
-            cloud_providers: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            cloud_providers: tokio::sync::Mutex::new(cloud_providers),
             session_manager,
             permission_manager,
             events,

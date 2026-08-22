@@ -736,6 +736,10 @@ pub async fn build_session(session_config: SessionBuilderConfig) -> CliSession {
                 process::exit(1);
             }
         };
+    goose::benchmark_budget::assert_bootstrap_secret_scrubbed().unwrap_or_else(|error| {
+        output::render_error(&format!("Benchmark provider bootstrap failed: {error}"));
+        process::exit(1);
+    });
     tracing::info!("🤖 Using model: {}", effective_model_name);
 
     validate_provider_override_context(

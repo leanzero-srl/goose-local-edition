@@ -84,7 +84,9 @@ impl ProviderEntry {
     }
 
     pub async fn create(&self, extensions: Vec<ExtensionConfig>) -> Result<Arc<dyn Provider>> {
-        (self.constructor)(extensions, None, self.tls_config.clone()).await
+        let provider = (self.constructor)(extensions, None, self.tls_config.clone()).await?;
+        crate::benchmark_budget::scrub_bootstrap_secret(provider.get_name())?;
+        Ok(super::benchmark_guard::BenchmarkGuardProvider::wrap_if_requested(provider))
     }
 
     pub async fn create_with_working_dir(
@@ -92,7 +94,10 @@ impl ProviderEntry {
         extensions: Vec<ExtensionConfig>,
         working_dir: PathBuf,
     ) -> Result<Arc<dyn Provider>> {
-        (self.constructor)(extensions, Some(working_dir), self.tls_config.clone()).await
+        let provider =
+            (self.constructor)(extensions, Some(working_dir), self.tls_config.clone()).await?;
+        crate::benchmark_budget::scrub_bootstrap_secret(provider.get_name())?;
+        Ok(super::benchmark_guard::BenchmarkGuardProvider::wrap_if_requested(provider))
     }
 }
 

@@ -59,6 +59,14 @@ fn apply_request_timeout(
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
 }
 
+fn apply_replay_policy(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    if goose_provider_types::retry::terminal_safe_retries_enabled() {
+        builder.redirect(reqwest::redirect::Policy::none())
+    } else {
+        builder
+    }
+}
+
 #[cfg(test)]
 mod timeout_semantics_tests {
     use super::*;
@@ -310,7 +318,8 @@ impl ApiClient {
         timeout: Duration,
         tls_config: Option<TlsConfig>,
     ) -> Result<Self> {
-        let mut client_builder = apply_request_timeout(Client::builder(), timeout);
+        let mut client_builder =
+            apply_replay_policy(apply_request_timeout(Client::builder(), timeout));
 
         if let Some(ref config) = tls_config {
             client_builder = Self::configure_tls(client_builder, config)?;
@@ -335,8 +344,9 @@ impl ApiClient {
     }
 
     fn rebuild_client(&mut self) -> Result<()> {
-        let mut client_builder = apply_request_timeout(Client::builder(), self.timeout)
-            .default_headers(self.default_headers.clone());
+        let mut client_builder =
+            apply_replay_policy(apply_request_timeout(Client::builder(), self.timeout))
+                .default_headers(self.default_headers.clone());
 
         // Configure TLS if needed
         if let Some(ref tls_config) = self.tls_config {
@@ -655,6 +665,9 @@ ShGoCNbfNS+COlPMRAujyDlATZcLs9p4tA==
 #[cfg(test)]
 mod tests {
     use super::*;
+    use goose_provider_types::retry::TERMINAL_SAFE_RETRIES_ENV;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_request_builder_decorator() {
@@ -682,5 +695,74 @@ mod tests {
                 .and_then(|value| value.to_str().ok());
             assert_eq!(actual, Some("test-session_id-456"));
         });
+    }
+
+    #[tokio::test]
+    async fn terminal_safe_client_never_replays_a_post_through_redirects() {
+        let _guard = env_lock::lock_env([(TERMINAL_SAFE_RETRIES_ENV, Some("true"))]);
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/first"))
+            .respond_with(
+                ResponseTemplate::new(307)
+                    .insert_header("Location", format!("{}/second", server.uri())),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/second"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        let response = client
+            .response_post(
+                "/first",
+                &serde_json::json!({"payload": "one physical post"}),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].url.path(), "/first");
+    }
+
+    #[tokio::test]
+    async fn terminal_safe_retry_wrapper_sends_one_physical_post_on_500() {
+        let _guard = env_lock::lock_env([(TERMINAL_SAFE_RETRIES_ENV, Some("true"))]);
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/fail"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let client = ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        let config = goose_provider_types::retry::RetryConfig::default();
+
+        let result: Result<(), goose_provider_types::errors::ProviderError> =
+            goose_provider_types::retry::retry_operation(&config, || async {
+                let response = client
+                    .response_post("/fail", &serde_json::json!({"one": "post"}))
+                    .await
+                    .map_err(|error| {
+                        goose_provider_types::errors::ProviderError::NetworkError(error.to_string())
+                    })?;
+                if response.status().is_server_error() {
+                    return Err(goose_provider_types::errors::ProviderError::ServerError(
+                        response.status().to_string(),
+                    ));
+                }
+                Ok(())
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(goose_provider_types::errors::ProviderError::ServerError(_))
+        ));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 }
