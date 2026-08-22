@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Mutex, Notify};
 
-/// GOOSE_SWARM_SPLIT_INHERIT_SPEC (default OFF): give a split CHILD the parent's full implementation spec,
+/// GOOSE_SWARM_SPLIT_INHERIT_SPEC (default ON): give a split CHILD the parent's full implementation spec,
 /// scoped to the child's own files — instead of the ~40-char label it gets today.
 ///
 /// MEASURED (loop-04): PLAN spent 48.4 min (40% of the whole run) writing a 2038-char implementation-ready
@@ -38,9 +38,9 @@ use tokio::sync::{Mutex, Notify};
 ///
 /// The splitter is default-ON on the desktop path, so this fires on real runs.
 ///
-/// Default OFF because it is a real behaviour change, not merely a restoration: handing a child the parent's
-/// whole spec risks it writing its SIBLINGS' files. `child_description` therefore leads with a hard
-/// file-scope header, and the lever gets an A/B before it is trusted.
+/// The default was flipped on after the file-scoped child path was reviewed. Handing a child the parent's
+/// whole spec risks it writing its SIBLINGS' files, so `child_description` leads with the hard scope header;
+/// an explicit 0/off/false/no remains the rollback.
 /// The ONE resolution of GOOSE_SWARM_SINK_REVIEW. Both halves of the mechanism — this crate's
 /// producer and goose-cli's drain — must read the same answer, or the run reports a lever it is not
 /// running.
@@ -99,7 +99,7 @@ pub fn testgen_enabled() -> bool {
         .unwrap_or(false)
 }
 
-fn split_inherit_spec_enabled() -> bool {
+pub fn split_inherit_spec_enabled() -> bool {
     // DEFAULT ON (2026-08-16 review). The deterministic no-first-write split hands each child a
     // file list; without inheritance its ONLY instruction is "(split of <parent>)" — a child with
     // no statement builds nothing (the F457 lesson: split children buy +0.036 WITH a 43-char
@@ -151,7 +151,7 @@ fn child_description(
 /// worker DID produce output — discarding it also fails its dependents (esp. the integrate-verify sink), which
 /// reports a WORKING app as FAILED (observed UNIQ9: the entry spun on its final fix -> integrate-verify blocked
 /// -> run FAILED though the app runs). Salvaging lets integrate-verify be the real gate. Off with 0/off/false/no.
-fn salvage_spin_enabled() -> bool {
+pub fn salvage_spin_enabled() -> bool {
     std::env::var("GOOSE_SWARM_SALVAGE_SPIN")
         .map(|v| {
             !matches!(
@@ -206,7 +206,7 @@ fn looks_like_manifest_file(f: &str) -> bool {
 
 /// GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL (#134, default OFF = byte-identical `.any()`): when a stalled/spinning
 /// task is salvaged to Done, require its CRITICAL owned files to be present, not just ANY file.
-fn salvage_require_critical() -> bool {
+pub fn salvage_require_critical() -> bool {
     std::env::var("GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL")
         .map(|v| {
             matches!(
