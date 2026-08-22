@@ -29,6 +29,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
         )
         self.assertEqual(len({row["vendor_port"] for row in rows}), 5)
         self.assertEqual(rows[0]["provider"], "zai_api")
+        policy = cloud_sb7.spend_policy(manifest, rows)
+        self.assertEqual(policy["total_cap"], 400.0)
+        self.assertEqual(policy["provider_caps"]["google"], 250.0)
 
     def test_secret_parser_rejects_group_readable_file(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -52,7 +55,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "context_limit": 100,
             "max_output_tokens": 20,
         }
-        state = {"profile": "/tmp/profile", "tree": "/tmp/campaign/entrant/tree"}
+        state = {
+            "profile": "/tmp/profile",
+            "tree": "/tmp/campaign/entrant/tree",
+            "provider_lifecycle": "/tmp/campaign/entrant/provider-lifecycle.jsonl",
+        }
         with mock.patch.dict(
             os.environ,
             {
@@ -67,6 +74,8 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertNotIn("ANTHROPIC_API_KEY", env)
         self.assertNotIn("DEEPSEEK_API_KEY", env)
         self.assertEqual(env["GOOSE_THINKING_EFFORT"], "medium")
+        self.assertEqual(env["GOOSE_PROVIDER_LIFECYCLE_STRICT"], "true")
+        self.assertEqual(env["GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES"], "true")
 
     def test_admitted_failure_is_never_retryable(self) -> None:
         self.assertEqual(cloud_sb7.classify_build_exit(0, 3), ("BUILD_COMPLETE", None))
@@ -90,10 +99,42 @@ class CloudSb7HarnessTest(unittest.TestCase):
         state = {
             "profile": "/tmp/campaign/entrants/glm/profile",
             "tree": "/tmp/campaign/entrants/glm/tree",
+            "provider_lifecycle": "/tmp/campaign/entrants/glm/provider-lifecycle.jsonl",
         }
         with mock.patch.dict(os.environ, {"PATH": "/bin"}, clear=True):
             env = cloud_sb7.child_env(row, state, "secret")
         self.assertEqual(env["GOOSE_BENCH_CAMPAIGN"], "/tmp/campaign")
+        self.assertEqual(
+            env["GOOSE_BENCH_BUDGET_LEDGER"], "/tmp/campaign/budget-ledger.json"
+        )
+
+    def test_lifecycle_summary_requires_matching_admission_and_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "lifecycle.jsonl"
+            path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"state": "queued"}),
+                        json.dumps({"state": "admitted"}),
+                        json.dumps({"state": "first_item", "at": "now"}),
+                        json.dumps({"state": "provider_terminal"}),
+                    ]
+                )
+                + "\n"
+            )
+            summary = cloud_sb7.lifecycle_summary(path)
+        self.assertEqual(summary["admitted"], 1)
+        self.assertEqual(summary["terminal"], 1)
+        self.assertEqual(summary["first_output_at"], "now")
+        self.assertEqual(summary["malformed_lines"], 0)
+
+    def test_binary_marker_scan_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            binary = Path(raw) / "goose"
+            binary.write_bytes(b"prefix GOOSE_PROVIDER_LIFECYCLE_FILE suffix")
+            missing = cloud_sb7.binary_missing_markers(binary)
+        self.assertIn("GOOSE_BENCH_BUDGET_LEDGER", missing)
+        self.assertNotIn("GOOSE_PROVIDER_LIFECYCLE_FILE", missing)
 
     def test_hash_tree_changes_with_content_not_mtime(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

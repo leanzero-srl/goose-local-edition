@@ -46,6 +46,13 @@ TERMINAL_BUILD_STATES = {
 }
 RETRYABLE_BUILD_STATES = {"PLANNED", "PRE_ADMISSION_FAILURE"}
 CAMPAIGN_SCHEMA = 1
+REQUIRED_BINARY_MARKERS = (
+    "GOOSE_PROVIDER_LIFECYCLE_FILE",
+    "GOOSE_PROVIDER_LIFECYCLE_STRICT",
+    "GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES",
+    "GOOSE_BENCH_BUDGET_CONFIG",
+    "GOOSE_BENCH_BUDGET_LEDGER",
+)
 
 
 def utc_now() -> str:
@@ -123,6 +130,7 @@ def entrants(manifest: Mapping[str, Any]) -> list[Dict[str, Any]]:
         "context_limit",
         "max_output_tokens",
         "vendor_port",
+        "pricing",
     }
     for raw in rows:
         if not isinstance(raw, dict):
@@ -142,6 +150,62 @@ def entrants(manifest: Mapping[str, Any]) -> list[Dict[str, Any]]:
         seen_ports.add(port)
         out.append(dict(raw))
     return out
+
+
+def spend_policy(manifest: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    policy = manifest.get("spend_policy")
+    if not isinstance(policy, dict):
+        raise SystemExit("entrant manifest has no spend_policy")
+    total_cap = float(policy.get("total_cap", 0))
+    provider_caps = policy.get("provider_caps")
+    if total_cap <= 0 or not isinstance(provider_caps, dict):
+        raise SystemExit("spend_policy requires a positive total_cap and provider_caps")
+    if sum(float(value) for value in provider_caps.values()) > total_cap:
+        raise SystemExit("provider spend caps exceed the total campaign cap")
+    for row in rows:
+        provider = str(row["provider"])
+        if float(provider_caps.get(provider, 0)) <= 0:
+            raise SystemExit(f"spend_policy has no positive cap for {provider}")
+        pricing = row.get("pricing")
+        if not isinstance(pricing, dict):
+            raise SystemExit(f"entrant has no pricing record: {row['id']}")
+        for key in ("input_per_million", "output_per_million", "source", "verified_at"):
+            if key not in pricing:
+                raise SystemExit(f"pricing for {row['id']} is missing {key}")
+        input_rate = float(
+            pricing.get("input_over_threshold_per_million", pricing["input_per_million"])
+        )
+        output_rate = float(
+            pricing.get("output_over_threshold_per_million", pricing["output_per_million"])
+        )
+        if input_rate < 0 or output_rate < 0:
+            raise SystemExit(f"pricing rates must be non-negative: {row['id']}")
+        worst_single = (
+            int(row["context_limit"]) * input_rate
+            + int(row["max_output_tokens"]) * output_rate
+        ) / 1_000_000
+        if worst_single > float(provider_caps[provider]):
+            raise SystemExit(
+                f"one worst-case {row['id']} request (${worst_single:.2f}) exceeds "
+                f"the {provider} cap"
+            )
+    return dict(policy)
+
+
+def binary_missing_markers(binary: Path) -> list[str]:
+    needles = {marker: marker.encode() for marker in REQUIRED_BINARY_MARKERS}
+    found: set[str] = set()
+    tail = b""
+    with binary.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            data = tail + chunk
+            for marker, needle in needles.items():
+                if marker not in found and needle in data:
+                    found.add(marker)
+            if len(found) == len(needles):
+                break
+            tail = data[-max(map(len, needles.values())) :]
+    return sorted(set(needles) - found)
 
 
 def campaign_file(root: Path) -> Path:
@@ -291,8 +355,15 @@ def validate_rosters(rows: Iterable[Mapping[str, Any]], rosters: Mapping[str, se
 def preflight(binary: Path, manifest_path: Path, secret_path: Path) -> Dict[str, Any]:
     manifest = load_json(manifest_path)
     rows = entrants(manifest)
+    spend_policy(manifest, rows)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise SystemExit(f"goose binary is missing or not executable: {binary}")
+    missing_markers = binary_missing_markers(binary)
+    if missing_markers:
+        raise SystemExit(
+            "goose binary lacks required cloud safety capabilities: "
+            + ", ".join(missing_markers)
+        )
     dirty = git_value("status", "--porcelain", "--untracked-files=all")
     if dirty:
         raise SystemExit("cloud benchmark source worktree must be clean before it is frozen")
@@ -324,6 +395,7 @@ def init_campaign(
     checked = preflight(binary, manifest_path, secret_path)
     manifest = load_json(manifest_path)
     rows = entrants(manifest)
+    policy = spend_policy(manifest, rows)
     root.mkdir(parents=True, exist_ok=False)
     (root / "instrument").mkdir()
     (root / "entrants").mkdir()
@@ -335,6 +407,41 @@ def init_campaign(
 
     manifest_copy = root / "instrument/cloud-sb7-entrants.json"
     shutil.copy2(manifest_path, manifest_copy)
+    budget_config_path = root / "instrument/budget-config.json"
+    budget_config = {
+        "schema_version": 1,
+        "currency": policy.get("currency", "USD"),
+        "total_cap": float(policy["total_cap"]),
+        "provider_caps": policy["provider_caps"],
+        "models": {
+            f"{row['provider']}/{row['model']}": {
+                "provider": row["provider"],
+                "model": row["model"],
+                "context_limit": row["context_limit"],
+                "max_output_tokens": row["max_output_tokens"],
+                "pricing": row["pricing"],
+            }
+            for row in rows
+        },
+    }
+    atomic_json(budget_config_path, budget_config)
+    budget_ledger_path = root / "budget-ledger.json"
+    atomic_json(
+        budget_ledger_path,
+        {
+            "schema_version": 1,
+            "currency": policy.get("currency", "USD"),
+            "total_cap": float(policy["total_cap"]),
+            "provider_caps": policy["provider_caps"],
+            "spent_upper_bound": 0.0,
+            "provider_spent_upper_bound": {
+                provider: 0.0 for provider in policy["provider_caps"]
+            },
+            "outstanding": {},
+            "settled": [],
+            "updated_at": utc_now(),
+        },
+    )
     hashes = instrument_hashes()
     prompt_source = (REPO / "evals/swarm-bench/spec-build-sb7.md").read_bytes()
     campaign = {
@@ -349,6 +456,9 @@ def init_campaign(
         "binary_sha256": sha256_file(frozen_binary),
         "entrant_manifest": str(manifest_copy),
         "entrant_manifest_sha256": sha256_file(manifest_copy),
+        "budget_config": str(budget_config_path),
+        "budget_config_sha256": sha256_file(budget_config_path),
+        "budget_ledger": str(budget_ledger_path),
         "instrument_hashes": hashes,
         "instrument_set_sha256": sha256_bytes(
             json.dumps(hashes, sort_keys=True).encode()
@@ -385,6 +495,7 @@ def init_campaign(
             "profile": str(unit / "profile"),
             "build_log": str(unit / "logs/build.log"),
             "vendor_trace": str(unit / "vendor-trace-build.jsonl"),
+            "provider_lifecycle": str(unit / "provider-lifecycle.jsonl"),
             "thinking_effort": row["thinking_effort"],
             "context_limit": int(row["context_limit"]),
             "max_output_tokens": int(row["max_output_tokens"]),
@@ -457,6 +568,15 @@ def child_env(
             "GOOSE_MAX_TOKENS": str(row["max_output_tokens"]),
             "GOOSE_SWARM_TELEMETRY_FILE": str(
                 Path(str(state["tree"])) / ".swarm/telemetry.jsonl"
+            ),
+            "GOOSE_PROVIDER_LIFECYCLE_FILE": str(state["provider_lifecycle"]),
+            "GOOSE_PROVIDER_LIFECYCLE_STRICT": "true",
+            "GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES": "true",
+            "GOOSE_BENCH_BUDGET_CONFIG": str(
+                Path(str(state["tree"])).parents[2] / "instrument/budget-config.json"
+            ),
+            "GOOSE_BENCH_BUDGET_LEDGER": str(
+                Path(str(state["tree"])).parents[2] / "budget-ledger.json"
             ),
             "GOOSE_BENCH_CAMPAIGN": str(Path(str(state["tree"])).parents[2]),
             "GOOSE_BENCH_ENTRANT": str(row["id"]),
@@ -543,6 +663,36 @@ def classify_build_exit(exit_code: int, admitted_requests: int) -> tuple[str, st
     )
 
 
+def lifecycle_summary(path: Path) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {
+        "admitted": 0,
+        "terminal": 0,
+        "first_output_at": None,
+        "malformed_lines": 0,
+        "events": 0,
+    }
+    if not path.is_file():
+        return summary
+    for raw in path.read_text(errors="replace").splitlines():
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            summary["malformed_lines"] += 1
+            continue
+        if not isinstance(event, dict):
+            summary["malformed_lines"] += 1
+            continue
+        summary["events"] += 1
+        state = event.get("state")
+        if state == "admitted":
+            summary["admitted"] += 1
+        elif state == "provider_terminal":
+            summary["terminal"] += 1
+        elif state == "first_item" and summary["first_output_at"] is None:
+            summary["first_output_at"] = event.get("at") or event.get("timestamp")
+    return summary
+
+
 @contextlib.contextmanager
 def provider_lane(root: Path, lane: str) -> Iterator[None]:
     path = root / "locks" / f"{lane}.lock"
@@ -615,6 +765,8 @@ def supervise(root: Path, entrant_id: str) -> int:
         telemetry = Path(str(state["tree"])) / ".swarm/telemetry.jsonl"
         telemetry.parent.mkdir(parents=True, exist_ok=True)
         telemetry.write_text("")
+        lifecycle_path = Path(str(state["provider_lifecycle"]))
+        lifecycle_path.unlink(missing_ok=True)
         env = child_env(row, state, secret_value)
         cmd = [
             str(binary),
@@ -658,8 +810,27 @@ def supervise(root: Path, entrant_id: str) -> int:
             server.shutdown()
 
         elapsed = round(time.time() - started, 3)
+        lifecycle = lifecycle_summary(lifecycle_path)
+        counters["admitted"] = lifecycle["admitted"]
+        counters["terminal"] = lifecycle["terminal"]
+        counters["first_output_at"] = lifecycle["first_output_at"]
         completed = exit_code == 0
         status, failure = classify_build_exit(exit_code, counters["admitted"])
+        if completed and lifecycle["malformed_lines"]:
+            status = "INCOMPLETE"
+            failure = "provider lifecycle ledger contains malformed evidence"
+            completed = False
+        elif completed and counters["admitted"] == 0:
+            status = "INCOMPLETE"
+            failure = "goose exited successfully without a proven provider admission"
+            completed = False
+        elif completed and counters["admitted"] != counters["terminal"]:
+            status = "INCOMPLETE"
+            failure = (
+                f"{counters['admitted']} requests admitted but only "
+                f"{counters['terminal']} reached proven provider terminal"
+            )
+            completed = False
         tree_hash = hash_tree(Path(str(state["tree"])))
         final = update_state(
             root,
@@ -671,6 +842,8 @@ def supervise(root: Path, entrant_id: str) -> int:
             elapsed_seconds=elapsed,
             admitted_requests=counters["admitted"],
             provider_terminal_requests=counters["terminal"],
+            lifecycle_events=lifecycle["events"],
+            lifecycle_malformed_lines=lifecycle["malformed_lines"],
             first_output_at=counters["first_output_at"],
             raw_tree_sha256=tree_hash,
         )
@@ -991,6 +1164,14 @@ def print_status(root: Path) -> None:
         f"campaign={campaign.get('status')} manager={manager.get('status')} "
         f"pid={manager.get('pid')} alive={process_alive(manager.get('pid'))}"
     )
+    budget_path = campaign.get("budget_ledger")
+    if budget_path and Path(str(budget_path)).is_file():
+        budget = load_json(Path(str(budget_path)))
+        print(
+            f"budget=${float(budget.get('spent_upper_bound', 0)):.4f}/"
+            f"${float(budget.get('total_cap', 0)):.2f} "
+            f"outstanding={len(budget.get('outstanding', {}))}"
+        )
     for state in status_rows(root):
         score = state.get("score")
         suffix = f" score={100 * float(score):.2f}%" if score is not None else ""
@@ -1023,11 +1204,15 @@ def results(root: Path) -> Dict[str, Any]:
             "failure": state.get("failure"),
         }
         rows.append(row)
+    budget = None
+    if campaign.get("budget_ledger") and Path(str(campaign["budget_ledger"])).is_file():
+        budget = load_json(Path(str(campaign["budget_ledger"])))
     return {
         "campaign": campaign["campaign_id"],
         "status": campaign["status"],
         "binary_sha256": campaign["binary_sha256"],
         "instrument_set_sha256": campaign["instrument_set_sha256"],
+        "budget": budget,
         "results": rows,
     }
 
