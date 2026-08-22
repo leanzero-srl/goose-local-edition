@@ -1400,17 +1400,34 @@ def classify_build_exit(exit_code: int, admitted_requests: int) -> tuple[str, st
     )
 
 
-def lifecycle_summary(path: Path) -> Dict[str, Any]:
+def lifecycle_summary(
+    path: Path, *, expected_provider: str, expected_model: str
+) -> Dict[str, Any]:
     summary: Dict[str, Any] = {
         "admitted": 0,
         "terminal": 0,
         "first_output_at": None,
         "malformed_lines": 0,
         "events": 0,
+        "transition_errors": [],
+        "ambiguous_request_ids": [],
+        "request_states": {},
+        "valid": True,
     }
     if not path.is_file():
         return summary
-    for raw in path.read_text(errors="replace").splitlines():
+    requests: Dict[str, Dict[str, Any]] = {}
+    terminal_states = {"provider_terminal", "stream_ambiguous", "error"}
+    known_states = {
+        "queued",
+        "admitted",
+        "first_item",
+        "usage_reported",
+        *terminal_states,
+    }
+    for line_number, raw in enumerate(
+        path.read_text(errors="replace").splitlines(), start=1
+    ):
         try:
             event = json.loads(raw)
         except json.JSONDecodeError:
@@ -1420,14 +1437,131 @@ def lifecycle_summary(path: Path) -> Dict[str, Any]:
             summary["malformed_lines"] += 1
             continue
         summary["events"] += 1
-        state = event.get("state")
+        state = str(event.get("state", ""))
+        request_id = event.get("request_id")
+        provider = event.get("provider")
+        model = event.get("model")
+        session = event.get("session")
+        timestamp = event.get("timestamp")
+        if (
+            event.get("schema_version") != 1
+            or state not in known_states
+            or not isinstance(request_id, str)
+            or not request_id
+            or not isinstance(provider, str)
+            or not provider
+            or not isinstance(model, str)
+            or not model
+            or not isinstance(session, str)
+            or not session
+            or not isinstance(timestamp, str)
+            or not timestamp
+        ):
+            summary["malformed_lines"] += 1
+            summary["transition_errors"].append(
+                f"line {line_number}: malformed lifecycle event"
+            )
+            continue
+        if state in {"usage_reported", "provider_terminal"} and not isinstance(
+            event.get("usage"), dict
+        ):
+            summary["malformed_lines"] += 1
+            summary["transition_errors"].append(
+                f"line {line_number}: {state} has no usage evidence"
+            )
+            continue
+        if provider != expected_provider or model != expected_model:
+            summary["transition_errors"].append(
+                f"line {line_number} request {request_id}: lifecycle identity "
+                f"{provider}/{model} does not match entrant "
+                f"{expected_provider}/{expected_model}"
+            )
+            continue
+
+        identity = (provider, model, session)
+        request = requests.setdefault(
+            request_id, {"identity": identity, "states": []}
+        )
+        states = request["states"]
+        transition_error: str | None = None
+        if request["identity"] != identity:
+            transition_error = "provider, model, or session identity drifted"
+        elif state == "queued":
+            if states:
+                transition_error = "queued was not the first and only queue event"
+        elif not states or states[0] != "queued":
+            transition_error = f"{state} occurred without queued"
+        elif states[-1] in terminal_states:
+            transition_error = f"{state} occurred after terminal state {states[-1]}"
+        elif state == "admitted":
+            if "admitted" in states:
+                transition_error = "admitted was duplicated"
+            elif states != ["queued"]:
+                transition_error = "admitted occurred out of order"
+        elif state == "first_item":
+            if "admitted" not in states:
+                transition_error = "first_item occurred before admission"
+            elif "first_item" in states:
+                transition_error = "first_item was duplicated"
+            elif "usage_reported" in states:
+                transition_error = "first_item occurred after usage"
+        elif state == "usage_reported":
+            if "admitted" not in states:
+                transition_error = "usage was reported before admission"
+            elif "usage_reported" in states:
+                transition_error = "usage_reported was duplicated"
+        elif state == "provider_terminal":
+            if "admitted" not in states:
+                transition_error = "provider_terminal occurred without admission"
+            elif "usage_reported" not in states:
+                transition_error = "provider_terminal occurred without prior usage"
+        elif state == "error" and "admitted" in states:
+            transition_error = "error was recorded after admission"
+
+        if transition_error is not None:
+            summary["transition_errors"].append(
+                f"line {line_number} request {request_id}: {transition_error}"
+            )
+            continue
+        states.append(state)
         if state == "admitted":
             summary["admitted"] += 1
         elif state == "provider_terminal":
             summary["terminal"] += 1
         elif state == "first_item" and summary["first_output_at"] is None:
-            summary["first_output_at"] = event.get("at") or event.get("timestamp")
+            summary["first_output_at"] = timestamp
+
+    ambiguous_request_ids = []
+    for request_id, request in requests.items():
+        states = request["states"]
+        if not states or states[-1] not in terminal_states:
+            ambiguous_request_ids.append(request_id)
+        elif states[-1] == "stream_ambiguous":
+            ambiguous_request_ids.append(request_id)
+    summary["request_states"] = {
+        request_id: request["states"] for request_id, request in sorted(requests.items())
+    }
+    summary["ambiguous_request_ids"] = sorted(ambiguous_request_ids)
+    summary["valid"] = not (
+        summary["malformed_lines"]
+        or summary["transition_errors"]
+        or summary["ambiguous_request_ids"]
+    )
     return summary
+
+
+def lifecycle_failure(summary: Mapping[str, Any]) -> str | None:
+    reasons = []
+    malformed = int(summary.get("malformed_lines", 0))
+    transition_errors = summary.get("transition_errors") or []
+    ambiguous_ids = summary.get("ambiguous_request_ids") or []
+    if malformed:
+        reasons.append(f"{malformed} malformed lifecycle line(s)")
+    if transition_errors:
+        reasons.append(f"{len(transition_errors)} invalid lifecycle transition(s)")
+    if ambiguous_ids:
+        reasons.append(f"{len(ambiguous_ids)} ambiguous lifecycle request(s)")
+    return "; ".join(reasons) if reasons else None
 
 
 def entrant_outstanding_reservations(
@@ -1630,7 +1764,11 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         )
 
         elapsed = round(time.time() - started, 3)
-        lifecycle = lifecycle_summary(lifecycle_path)
+        lifecycle = lifecycle_summary(
+            lifecycle_path,
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
         counters["admitted"] = lifecycle["admitted"]
         counters["terminal"] = lifecycle["terminal"]
         counters["first_output_at"] = lifecycle["first_output_at"]
@@ -1648,9 +1786,9 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
                 "admission or terminal usage is ambiguous and the episode is never retried"
             )
             completed = False
-        elif completed and lifecycle["malformed_lines"]:
+        elif lifecycle_failure(lifecycle) is not None:
             status = "INCOMPLETE"
-            failure = "provider lifecycle ledger contains malformed evidence"
+            failure = f"provider lifecycle evidence is invalid: {lifecycle_failure(lifecycle)}"
             completed = False
         elif completed and counters["admitted"] == 0:
             status = "INCOMPLETE"
@@ -1684,6 +1822,8 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
             provider_terminal_requests=counters["terminal"],
             lifecycle_events=lifecycle["events"],
             lifecycle_malformed_lines=lifecycle["malformed_lines"],
+            lifecycle_transition_errors=lifecycle["transition_errors"],
+            lifecycle_ambiguous_request_ids=lifecycle["ambiguous_request_ids"],
             budget_outstanding_request_ids=outstanding_ids,
             secret_scan_hits=secret_hits,
             first_output_at=counters["first_output_at"],
@@ -1858,14 +1998,18 @@ def wait_for_builds(
                 ):
                     pgid = int(state.get("supervisor_pgid") or 0)
                     group_clean = not process_group_members(pgid) or stop_group(pgid)
-                    lifecycle = lifecycle_summary(Path(str(state["provider_lifecycle"])))
                     row = manifest_row(root, str(state["entrant"]))
+                    lifecycle = lifecycle_summary(
+                        Path(str(state["provider_lifecycle"])),
+                        expected_provider=str(row["provider"]),
+                        expected_model=str(row["model"]),
+                    )
                     outstanding_ids, budget_error = entrant_outstanding_reservations(
                         campaign, row
                     )
                     ambiguous = bool(
                         lifecycle["admitted"]
-                        or lifecycle["malformed_lines"]
+                        or lifecycle_failure(lifecycle)
                         or outstanding_ids
                         or budget_error
                         or not group_clean
@@ -1890,6 +2034,10 @@ def wait_for_builds(
                         provider_terminal_requests=lifecycle["terminal"],
                         lifecycle_events=lifecycle["events"],
                         lifecycle_malformed_lines=lifecycle["malformed_lines"],
+                        lifecycle_transition_errors=lifecycle["transition_errors"],
+                        lifecycle_ambiguous_request_ids=lifecycle[
+                            "ambiguous_request_ids"
+                        ],
                         budget_outstanding_request_ids=outstanding_ids,
                     )
         time.sleep(10)
@@ -3586,7 +3734,11 @@ def main() -> int:
         for state in status_rows(root):
             if state["status"] == "PRE_ADMISSION_FAILURE":
                 row = manifest_row(root, str(state["entrant"]))
-                lifecycle = lifecycle_summary(Path(str(state["provider_lifecycle"])))
+                lifecycle = lifecycle_summary(
+                    Path(str(state["provider_lifecycle"])),
+                    expected_provider=str(row["provider"]),
+                    expected_model=str(row["model"]),
+                )
                 outstanding_ids, budget_error = entrant_outstanding_reservations(
                     campaign, row
                 )
@@ -3594,7 +3746,7 @@ def main() -> int:
                 members = process_group_members(pgid) if pgid else []
                 if (
                     lifecycle["admitted"]
-                    or lifecycle["malformed_lines"]
+                    or lifecycle_failure(lifecycle)
                     or outstanding_ids
                     or budget_error
                     or members
@@ -3606,6 +3758,10 @@ def main() -> int:
                         failure="resume denied: reconstructed provider/process evidence is ambiguous",
                         admitted_requests=lifecycle["admitted"],
                         provider_terminal_requests=lifecycle["terminal"],
+                        lifecycle_transition_errors=lifecycle["transition_errors"],
+                        lifecycle_ambiguous_request_ids=lifecycle[
+                            "ambiguous_request_ids"
+                        ],
                         budget_outstanding_request_ids=outstanding_ids,
                     )
                     raise SystemExit(
