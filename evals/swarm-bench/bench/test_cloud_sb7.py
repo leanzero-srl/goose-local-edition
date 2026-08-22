@@ -154,6 +154,19 @@ class CloudSb7HarnessTest(unittest.TestCase):
         cloud_sb7.atomic_json(root / "manager.json", {"status": "IDLE"})
         return verdict_path, verdict
 
+    def publisher_campaign(
+        self,
+        root: Path,
+        row: dict[str, object],
+        snapshot: dict[str, object],
+    ) -> dict[str, object]:
+        manifest = root / "publisher-entrant-manifest.json"
+        manifest.write_text(json.dumps({"entrants": [row]}))
+        return {
+            "entrant_manifest": str(manifest),
+            "publisher": snapshot,
+        }
+
     def make_publisher_repo(self, root: Path) -> tuple[Path, dict[str, object]]:
         repo = root / "site"
         (repo / "scripts/lib").mkdir(parents=True)
@@ -162,7 +175,21 @@ class CloudSb7HarnessTest(unittest.TestCase):
         (repo / "node_modules/dotenv").mkdir(parents=True)
         row: dict[str, object] = {
             "id": "fixture-model",
+            "provider": "fixture",
             "model": "fixture-model",
+            "secret_env": "FIXTURE_API_KEY",
+            "provider_lane": "fixture-model",
+            "endpoint_family": "fixture",
+            "thinking_effort": "medium",
+            "context_limit": 100,
+            "max_output_tokens": 20,
+            "vendor_port": 9999,
+            "pricing": {
+                "input_per_million": 1,
+                "output_per_million": 1,
+                "source": "https://example.invalid",
+                "verified_at": "now",
+            },
         }
         manifest = {
             "expectedChecks": 91,
@@ -185,13 +212,20 @@ class CloudSb7HarnessTest(unittest.TestCase):
         (repo / "node_modules/@sanity/client/package.json").write_text(
             '{"name":"@sanity/client","version":"fixture"}\n'
         )
+        (repo / "node_modules/@sanity/client/index.js").write_text(
+            "export const client = 'fixture';\n"
+        )
         (repo / "node_modules/dotenv/package.json").write_text(
             '{"name":"dotenv","version":"fixture"}\n'
+        )
+        (repo / "node_modules/dotenv/index.js").write_text(
+            "export const dotenv = 'fixture';\n"
         )
         (repo / ".env.local").write_text(
             "SANITY_WRITE_TOKEN=publisher-super-secret\n"
             "NEXT_PUBLIC_SANITY_PROJECT_ID=fixture-project\n"
         )
+        (repo / ".env.local").chmod(0o600)
         (repo / ".gitignore").write_text(".env.local\nnode_modules/\n")
         subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
         subprocess.run(
@@ -443,6 +477,58 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 if manager.poll() is None:
                     cloud_sb7.stop_group(manager.pid, grace_seconds=0.1)
 
+    def test_dead_manager_during_scoring_stops_scorer_and_keeps_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            old_tree = root / "scores/model/attempt-1/tree"
+            old_tree.mkdir(parents=True)
+            manager = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            scorer = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            try:
+                cloud_sb7.atomic_json(
+                    root / "manager.json",
+                    {
+                        "status": "SCORING",
+                        "pid": manager.pid,
+                        "pgid": manager.pid,
+                        "identity": cloud_sb7.process_identity(manager.pid),
+                    },
+                )
+                cloud_sb7.update_state(
+                    root,
+                    "model",
+                    status="SCORING",
+                    score_attempts=1,
+                    score_pid=scorer.pid,
+                    score_pgid=scorer.pid,
+                    score_identity=cloud_sb7.process_identity(scorer.pid),
+                )
+                os.kill(manager.pid, 9)
+                manager.wait(timeout=5)
+
+                self.assertTrue(cloud_sb7.recover_dead_manager(root))
+                scorer.wait(timeout=5)
+                state = cloud_sb7.read_state(root, "model")
+                self.assertEqual(state["status"], "SCORE_FAILED")
+                self.assertEqual(cloud_sb7.next_score_attempt(root, "model", state), 2)
+                self.assertTrue(old_tree.is_dir())
+                self.assertEqual(
+                    cloud_sb7.load_json(root / "manager.json")["status"],
+                    "RECOVERED",
+                )
+            finally:
+                if manager.poll() is None:
+                    cloud_sb7.stop_group(manager.pid, grace_seconds=0.1)
+                if scorer.poll() is None:
+                    cloud_sb7.stop_group(scorer.pid, grace_seconds=0.1)
+
     def test_interrupted_scorer_is_stopped_and_next_attempt_is_immutable(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -501,6 +587,32 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 if publisher.poll() is None:
                     cloud_sb7.stop_group(publisher.pid, grace_seconds=0.1)
 
+    def test_reused_publisher_pid_is_never_signaled(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            cloud_sb7.update_state(
+                root,
+                "model",
+                status="PUBLISHING",
+                publisher_pid=4321,
+                publisher_pgid=4321,
+                publisher_identity="recorded-old-process",
+            )
+            with (
+                mock.patch.object(
+                    cloud_sb7,
+                    "process_identity",
+                    return_value="different-reused-process",
+                ),
+                mock.patch.object(cloud_sb7, "stop_group") as stop,
+            ):
+                cloud_sb7.recover_interrupted_publication(root)
+            stop.assert_not_called()
+            state = cloud_sb7.read_state(root, "model")
+            self.assertEqual(state["status"], "PUBLISH_FAILED")
+            self.assertIsNone(state["publisher_pid"])
+
     def test_website_base_url_is_an_https_origin_without_credentials(self) -> None:
         self.assertEqual(
             cloud_sb7.normalized_website_base_url("https://leanzero.net/"),
@@ -545,15 +657,94 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
             self.assertIn(str(cloud_sb7.PUBLISHER_SCRIPT), snapshot["tracked_hashes"])
             self.assertIn(
-                "node_modules/@sanity/client/package.json",
+                "node_modules/@sanity/client",
                 snapshot["runtime_hashes"],
             )
+            self.assertEqual(
+                snapshot["sanity_target"],
+                {"project_id": "fixture-project", "dataset": "production"},
+            )
+            self.assertEqual(snapshot["env_file_mode"], "0600")
             self.assertNotIn("publisher-super-secret", serialized)
-            self.assertNotIn("fixture-project", serialized)
 
             (repo / cloud_sb7.PUBLISHER_SCRIPT).write_text("console.log('changed')\n")
             with self.assertRaisesRegex(SystemExit, "must be clean"):
                 cloud_sb7.publisher_snapshot(repo, [row])
+
+    def test_ignored_runtime_javascript_mutation_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            campaign = self.publisher_campaign(root, row, snapshot)
+            runtime = repo / "node_modules/@sanity/client/index.js"
+            runtime.write_text("export const client = 'mutated';\n")
+
+            mismatch = cloud_sb7.publisher_mismatch(campaign)
+            self.assertIn("runtime_hashes", mismatch or "")
+
+    def test_environment_target_or_token_mutation_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            campaign = self.publisher_campaign(root, row, snapshot)
+            env_file = repo / ".env.local"
+            env_file.write_text(
+                "SANITY_WRITE_TOKEN=different-publisher-secret\n"
+                "NEXT_PUBLIC_SANITY_PROJECT_ID=different-project\n"
+                "NEXT_PUBLIC_SANITY_DATASET=staging\n"
+            )
+
+            mismatch = cloud_sb7.publisher_mismatch(campaign)
+            self.assertIn("env_file_sha256", mismatch or "")
+            with self.assertRaisesRegex(
+                cloud_sb7.PublicationError,
+                "environment changed after freeze",
+            ):
+                cloud_sb7.pinned_publisher_env_values(campaign)
+
+    def test_group_readable_publisher_environment_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            repo, row = self.make_publisher_repo(Path(raw))
+            (repo / ".env.local").chmod(0o640)
+            with self.assertRaisesRegex(SystemExit, "must be mode 0600"):
+                cloud_sb7.publisher_snapshot(repo, [row])
+
+    def test_clean_website_commit_drift_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            campaign = self.publisher_campaign(root, row, snapshot)
+            (repo / "README.md").write_text("new clean commit\n")
+            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "move website commit"],
+                cwd=repo,
+                check=True,
+            )
+
+            mismatch = cloud_sb7.publisher_mismatch(campaign)
+            self.assertIn("commit", mismatch or "")
+
+    def test_frozen_publisher_runtime_is_independent_and_sealed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            frozen = cloud_sb7.freeze_publisher_runtime(root / "frozen", snapshot)
+            campaign = {"publisher": {**snapshot, "frozen": frozen}}
+
+            (repo / "node_modules/@sanity/client/index.js").write_text(
+                "export const client = 'mutated live source';\n"
+            )
+            self.assertIsNone(cloud_sb7.frozen_publisher_mismatch(campaign))
+            (Path(frozen["root"]) / "node_modules/@sanity/client/index.js").unlink()
+            self.assertIn(
+                "changed after freeze",
+                cloud_sb7.frozen_publisher_mismatch(campaign) or "",
+            )
 
     def test_publication_stage_is_sealed_and_never_overwritten(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -905,6 +1096,54 @@ class CloudSb7HarnessTest(unittest.TestCase):
             final = cloud_sb7.read_state(root, "fixture-model")
             self.assertEqual(final["status"], "PUBLISHED")
             self.assertTrue(final["publisher_write_adopted"])
+
+    def test_successful_live_process_with_remote_mismatch_is_not_rewritten(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_scored_campaign(root)
+            runs = cloud_sb7.publication_stage(root, "fixture-model")
+            cloud_sb7.update_state(
+                root,
+                "fixture-model",
+                publisher_plan=[
+                    {
+                        "name": "loaded",
+                        "caption": "Final render",
+                        "source": str(
+                            runs / "fixture-model-r0/sb7-shots/100-loaded.png"
+                        ),
+                        "sha1": "a" * 40,
+                        "sha256": "b" * 64,
+                    }
+                ],
+            )
+            mismatch = {"matched": False, "reasons": ["remote document differs"]}
+            completed = {
+                "exit_code": 0,
+                "timed_out": False,
+                "log": "publisher.log",
+                "log_sha256": "log",
+                "pid": 1,
+            }
+            with (
+                mock.patch.object(
+                    cloud_sb7,
+                    "remote_publication_receipt",
+                    return_value=mismatch,
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "run_publisher",
+                    return_value=completed,
+                ) as publisher,
+            ):
+                self.assertFalse(cloud_sb7.publish_one(root, "fixture-model"))
+                self.assertFalse(cloud_sb7.publish_one(root, "fixture-model"))
+            publisher.assert_called_once()
+            final = cloud_sb7.read_state(root, "fixture-model")
+            self.assertEqual(final["status"], "PUBLISH_FAILED")
+            self.assertIsNotNone(final["publisher_live_succeeded_at"])
+            self.assertIn("diverged", final["failure"])
 
     def test_score_all_publishes_each_entrant_before_scoring_the_next(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
