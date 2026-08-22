@@ -77,10 +77,12 @@ class CloudSb7HarnessTest(unittest.TestCase):
             ],
         )
         self.assertEqual(len({row["vendor_port"] for row in rows}), 5)
+        self.assertEqual(len({row["provider_lane"] for row in rows}), 5)
         self.assertEqual(rows[0]["provider"], "zai_api")
         policy = cloud_sb7.spend_policy(manifest, rows)
         self.assertEqual(policy["total_cap"], 400.0)
         self.assertEqual(policy["provider_caps"]["google"], 250.0)
+        self.assertIs(policy["launch_all_entrants_concurrently"], True)
 
     def test_secret_parser_rejects_group_readable_file(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
