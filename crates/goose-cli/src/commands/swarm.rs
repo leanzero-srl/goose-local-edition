@@ -26748,6 +26748,11 @@ struct ResumeState {
 /// Returns None when there is nothing to resume FROM (no log, no plan_loaded) or nothing to resume INTO
 /// (the run already emitted run_finished — a finished run is not a candidate, resuming it would rebuild an
 /// app that is already there).
+/// STATUS 2026-08-22: RESUME WORKS. It never did before — this rebuilt the plan under `tasks`
+/// while `Dag::from_planner_json` (its only consumer) requires `subtasks`, so every resume exited
+/// with "the resumed plan will not parse: missing field `subtasks`" after paying a full scout
+/// phase. Both keys are emitted now and `a_resumed_plan_parses_into_a_dag` pins it: if that test
+/// is green, a recovered plan parses. Do not "re-discover" the old breakage from the ledger.
 fn resume_state_from_dir(dir: &std::path::Path) -> Option<ResumeState> {
     let mut logs: Vec<_> = std::fs::read_dir(dir.join(".swarm"))
         .ok()?
