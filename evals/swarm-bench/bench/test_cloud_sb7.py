@@ -63,6 +63,59 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
         )
 
+    def make_publisher_repo(self, root: Path) -> tuple[Path, dict[str, object]]:
+        repo = root / "site"
+        (repo / "scripts/lib").mkdir(parents=True)
+        (repo / "scripts/data").mkdir(parents=True)
+        (repo / "node_modules/@sanity/client").mkdir(parents=True)
+        (repo / "node_modules/dotenv").mkdir(parents=True)
+        row: dict[str, object] = {
+            "id": "fixture-model",
+            "model": "fixture-model",
+        }
+        manifest = {
+            "entrants": [
+                {
+                    "key": "fixture-model",
+                    "label": "Fixture Model",
+                    "model": "fixture-model",
+                    "docId": "brun-baseline-fixture-model-sb70",
+                }
+            ]
+        }
+        (repo / cloud_sb7.PUBLISHER_SCRIPT).write_text("console.log('fixture')\n")
+        (repo / "scripts/lib/sb7-cloud-publisher.mjs").write_text(
+            "export const fixture = true;\n"
+        )
+        (repo / cloud_sb7.PUBLISHER_MANIFEST).write_text(json.dumps(manifest))
+        (repo / "package.json").write_text('{"type":"module"}\n')
+        (repo / "package-lock.json").write_text('{"lockfileVersion":3}\n')
+        (repo / "node_modules/@sanity/client/package.json").write_text(
+            '{"name":"@sanity/client","version":"fixture"}\n'
+        )
+        (repo / "node_modules/dotenv/package.json").write_text(
+            '{"name":"dotenv","version":"fixture"}\n'
+        )
+        (repo / ".env.local").write_text(
+            "SANITY_WRITE_TOKEN=publisher-super-secret\n"
+            "NEXT_PUBLIC_SANITY_PROJECT_ID=fixture-project\n"
+        )
+        (repo / ".gitignore").write_text(".env.local\nnode_modules/\n")
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "fixture@example.invalid"],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Fixture"], cwd=repo, check=True
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "fixture publisher"], cwd=repo, check=True
+        )
+        return repo, row
+
     def test_manifest_has_exact_unique_models_and_ports(self) -> None:
         manifest = cloud_sb7.load_json(cloud_sb7.DEFAULT_ENTRANTS)
         rows = cloud_sb7.entrants(manifest)
@@ -344,6 +397,28 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 self.assertEqual(
                     cloud_sb7.load_json(root / "manager.json")["status"], "STARTING"
                 )
+
+    def test_publisher_snapshot_pins_commit_inputs_runtime_without_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            repo, row = self.make_publisher_repo(Path(raw))
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            serialized = json.dumps(snapshot)
+            self.assertEqual(snapshot["repo"], str(repo.resolve()))
+            self.assertEqual(
+                snapshot["entries"]["fixture-model"]["doc_id"],
+                "brun-baseline-fixture-model-sb70",
+            )
+            self.assertIn(str(cloud_sb7.PUBLISHER_SCRIPT), snapshot["tracked_hashes"])
+            self.assertIn(
+                "node_modules/@sanity/client/package.json",
+                snapshot["runtime_hashes"],
+            )
+            self.assertNotIn("publisher-super-secret", serialized)
+            self.assertNotIn("fixture-project", serialized)
+
+            (repo / cloud_sb7.PUBLISHER_SCRIPT).write_text("console.log('changed')\n")
+            with self.assertRaisesRegex(SystemExit, "must be clean"):
+                cloud_sb7.publisher_snapshot(repo, [row])
 
 
 if __name__ == "__main__":
