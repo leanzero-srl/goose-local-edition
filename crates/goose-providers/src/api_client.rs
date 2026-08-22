@@ -59,11 +59,26 @@ fn apply_request_timeout(
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
 }
 
-fn apply_replay_policy(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransportReplayPolicy {
+    Default,
+    Never,
+}
+
+fn transport_replay_policy() -> TransportReplayPolicy {
     if goose_provider_types::retry::terminal_safe_retries_enabled() {
-        builder.redirect(reqwest::redirect::Policy::none())
+        TransportReplayPolicy::Never
     } else {
-        builder
+        TransportReplayPolicy::Default
+    }
+}
+
+fn apply_replay_policy(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    match transport_replay_policy() {
+        TransportReplayPolicy::Default => builder,
+        TransportReplayPolicy::Never => builder
+            .retry(reqwest::retry::never())
+            .redirect(reqwest::redirect::Policy::none()),
     }
 }
 
@@ -728,6 +743,13 @@ mod tests {
         let received = server.received_requests().await.unwrap();
         assert_eq!(received.len(), 1);
         assert_eq!(received[0].url.path(), "/first");
+    }
+
+    #[test]
+    fn terminal_safe_client_disables_reqwest_protocol_retries() {
+        let _guard = env_lock::lock_env([(TERMINAL_SAFE_RETRIES_ENV, Some("true"))]);
+
+        assert_eq!(transport_replay_policy(), TransportReplayPolicy::Never);
     }
 
     #[tokio::test]
