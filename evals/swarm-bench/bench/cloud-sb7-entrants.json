@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "suite": "sb-7.0-rc",
+  "calibration": "uncalibrated",
+  "spec": "../spec-build-sb7.md",
+  "entrants": [
+    {
+      "id": "glm-5.3",
+      "provider": "zai_api",
+      "model": "glm-5.3",
+      "secret_env": "ZHIPU_API_KEY",
+      "provider_lane": "zai-primary-key",
+      "endpoint_family": "https://api.z.ai/api/paas/v4",
+      "thinking_effort": "max",
+      "context_limit": 204800,
+      "max_output_tokens": 131072,
+      "vendor_port": 9120
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "provider": "google",
+      "model": "gemini-3.7-flash",
+      "secret_env": "GOOGLE_API_KEY",
+      "provider_lane": "google-primary-key",
+      "endpoint_family": "https://generativelanguage.googleapis.com/v1beta",
+      "thinking_effort": "medium",
+      "context_limit": 1048576,
+      "max_output_tokens": 65536,
+      "vendor_port": 9121
+    },
+    {
+      "id": "gemini-3.1-pro-preview",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "secret_env": "GOOGLE_API_KEY",
+      "provider_lane": "google-primary-key",
+      "endpoint_family": "https://generativelanguage.googleapis.com/v1beta",
+      "thinking_effort": "high",
+      "context_limit": 1048576,
+      "max_output_tokens": 65536,
+      "vendor_port": 9122
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "provider": "custom_deepseek",
+      "model": "deepseek-v4-flash",
+      "secret_env": "DEEPSEEK_API_KEY",
+      "provider_lane": "deepseek-primary-key",
+      "endpoint_family": "https://api.deepseek.com",
+      "thinking_effort": "high",
+      "context_limit": 1000000,
+      "max_output_tokens": 393216,
+      "vendor_port": 9123
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "provider": "custom_deepseek",
+      "model": "deepseek-v4-pro",
+      "secret_env": "DEEPSEEK_API_KEY",
+      "provider_lane": "deepseek-primary-key",
+      "endpoint_family": "https://api.deepseek.com",
+      "thinking_effort": "high",
+      "context_limit": 1000000,
+      "max_output_tokens": 393216,
+      "vendor_port": 9124
+    }
+  ]
+}
