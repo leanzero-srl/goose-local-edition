@@ -698,6 +698,34 @@ def lifecycle_summary(path: Path) -> Dict[str, Any]:
     return summary
 
 
+def entrant_outstanding_reservations(
+    campaign: Mapping[str, Any], row: Mapping[str, Any]
+) -> tuple[list[str], str | None]:
+    ledger_value = campaign.get("budget_ledger")
+    if not ledger_value:
+        return [], "campaign has no budget ledger"
+    ledger_path = Path(str(ledger_value))
+    if not ledger_path.is_file():
+        return [], f"budget ledger is missing: {ledger_path}"
+    try:
+        ledger = load_json(ledger_path)
+    except (OSError, json.JSONDecodeError, SystemExit) as error:
+        return [], f"budget ledger cannot be read after provider exit: {error}"
+    outstanding = ledger.get("outstanding")
+    if not isinstance(outstanding, dict):
+        return [], "budget ledger outstanding field is malformed"
+    request_ids = []
+    for request_id, reservation in outstanding.items():
+        if not isinstance(reservation, dict):
+            return [], "budget ledger contains a malformed reservation"
+        if (
+            reservation.get("provider") == row.get("provider")
+            and reservation.get("model") == row.get("model")
+        ):
+            request_ids.append(str(request_id))
+    return sorted(request_ids), None
+
+
 @contextlib.contextmanager
 def provider_lane(root: Path, lane: str) -> Iterator[None]:
     path = root / "locks" / f"{lane}.lock"
@@ -821,7 +849,19 @@ def supervise(root: Path, entrant_id: str) -> int:
         counters["first_output_at"] = lifecycle["first_output_at"]
         completed = exit_code == 0
         status, failure = classify_build_exit(exit_code, counters["admitted"])
-        if completed and lifecycle["malformed_lines"]:
+        outstanding_ids, budget_error = entrant_outstanding_reservations(campaign, row)
+        if budget_error:
+            status = "INCOMPLETE"
+            failure = budget_error
+            completed = False
+        elif outstanding_ids:
+            status = "INCOMPLETE"
+            failure = (
+                f"{len(outstanding_ids)} provider request(s) retain full budget reserves; "
+                "admission or terminal usage is ambiguous and the episode is never retried"
+            )
+            completed = False
+        elif completed and lifecycle["malformed_lines"]:
             status = "INCOMPLETE"
             failure = "provider lifecycle ledger contains malformed evidence"
             completed = False
@@ -849,6 +889,7 @@ def supervise(root: Path, entrant_id: str) -> int:
             provider_terminal_requests=counters["terminal"],
             lifecycle_events=lifecycle["events"],
             lifecycle_malformed_lines=lifecycle["malformed_lines"],
+            budget_outstanding_request_ids=outstanding_ids,
             first_output_at=counters["first_output_at"],
             raw_tree_sha256=tree_hash,
         )

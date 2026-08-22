@@ -340,6 +340,25 @@ fn reserve_from_paths(
     })
 }
 
+#[cfg(test)]
+pub(crate) fn reserve_from_paths_for_test(
+    config_path: &Path,
+    ledger_path: &Path,
+    provider: &str,
+    model_config: &ModelConfig,
+) -> Result<BenchmarkBudgetReservation, ProviderError> {
+    let config = fs::read(config_path).map_err(|error| {
+        ProviderError::ExecutionError(format!("cannot read benchmark budget config: {error}"))
+    })?;
+    reserve_from_paths(
+        config_path,
+        &sha256_hex(&config),
+        ledger_path,
+        provider,
+        model_config,
+    )
+}
+
 fn validate_config(config: &BudgetConfig) -> Result<(), ProviderError> {
     if config.schema_version != 1
         || config.currency != "USD"
