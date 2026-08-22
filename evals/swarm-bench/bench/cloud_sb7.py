@@ -228,6 +228,7 @@ def entrants(manifest: Mapping[str, Any]) -> list[Dict[str, Any]]:
 
 
 def spend_policy(manifest: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    rows = list(rows)
     policy = manifest.get("spend_policy")
     if not isinstance(policy, dict):
         raise SystemExit("entrant manifest has no spend_policy")
@@ -235,6 +236,11 @@ def spend_policy(manifest: Mapping[str, Any], rows: Iterable[Mapping[str, Any]])
         raise SystemExit("cloud benchmark transport retry policy must be exactly zero")
     if policy.get("max_full_episodes_per_model") != 2:
         raise SystemExit("cloud benchmark allows one initial episode plus one restart")
+    if policy.get("launch_all_entrants_concurrently") is not True:
+        raise SystemExit("cloud benchmark must launch every entrant concurrently")
+    lanes = [str(row["provider_lane"]) for row in rows]
+    if len(set(lanes)) != len(lanes):
+        raise SystemExit("concurrent cloud entrants require distinct provider lanes")
     total_cap = float(policy.get("total_cap", 0))
     provider_caps = policy.get("provider_caps")
     if total_cap <= 0 or not isinstance(provider_caps, dict):
