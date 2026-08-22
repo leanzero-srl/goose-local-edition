@@ -32,7 +32,7 @@ use goose_swarm::{
     SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
@@ -3524,7 +3524,13 @@ fn spiral_budget_for(activity_key: Option<&str>, base: usize) -> usize {
         Some(k) if k.starts_with("plandraft-") => 0,
         // Details and contracts author build authority and have no safe continuation/fallback. Their typed,
         // response-only compilers are bounded by schema and tool surface, never by output volume.
-        Some(k) if k.starts_with("contract-") || k.starts_with("detail-") => 0,
+        Some(k)
+            if k.starts_with("contract-")
+                || k.starts_with("detail-")
+                || k.starts_with("reqbind-") =>
+        {
+            0
+        }
         // Scouts: healthy p90 5,882 and worst healthy 6,673, against a measured 46,191 pathology — a ~7x
         // gap, the one kind where volume separates cleanly. Base applies.
         Some(k) if k.starts_with("scout-") => base,
@@ -4857,6 +4863,7 @@ mod tests {
         // Authority-bearing compilers are also disarmed: losing one means losing required build input.
         assert_eq!(spiral_budget_for(Some("detail-cli"), base), 0);
         assert_eq!(spiral_budget_for(Some("contract-db"), base), 0);
+        assert_eq!(spiral_budget_for(Some("reqbind-canonical"), base), 0);
         // The sink keeps its own wall-clock cap.
         assert_eq!(spiral_budget_for(Some("integrate-verify"), base), 0);
         // OFF stays OFF for every kind.
@@ -9823,11 +9830,15 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn typed_task_detail_keeps_exact_requirements_files_and_acceptance_closure() {
-        let source = "Expose GET /v1/payments with the X-Trace header.\nBuild the API module.";
+        let requirement = RequirementRecord {
+            id: "REQ-payments".to_string(),
+            section: "API".to_string(),
+            quote: "Expose GET /v1/payments with the X-Trace header.".to_string(),
+        };
         let raw = serde_json::json!({
             "objective": "Implement the payments read endpoint",
             "requirement_citations": [{
-                "quote": "Expose GET /v1/payments with the X-Trace header.",
+                "requirement_id": "REQ-payments",
                 "applies_as": "The handler must keep the exact route and header spelling."
             }],
             "interfaces": ["get_payments(request) -> JSON response"],
@@ -9839,9 +9850,9 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         let compiled = compile_task_detail(
             &raw,
             "payments-api",
-            "Build the API module.",
+            "read-endpoint",
             "app/api.py",
-            source,
+            &[requirement],
         )
         .unwrap();
         assert!(compiled
@@ -9855,11 +9866,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn typed_task_detail_rejects_a_fabricated_requirement_citation() {
+    fn typed_task_detail_rejects_a_requirement_outside_its_slice() {
         let raw = serde_json::json!({
             "objective": "Implement the payments read endpoint",
             "requirement_citations": [{
-                "quote": "Also expose DELETE /v1/payments.",
+                "requirement_id": "REQ-delete",
                 "applies_as": "Add a delete route."
             }],
             "interfaces": [],
@@ -9871,14 +9882,241 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         let error = compile_task_detail(
             &raw,
             "payments-api",
-            "Build GET /v1/payments.",
+            "read-endpoint",
             "app/api.py",
-            "Build GET /v1/payments.",
+            &[RequirementRecord {
+                id: "REQ-payments".to_string(),
+                section: "API".to_string(),
+                quote: "Build GET /v1/payments.".to_string(),
+            }],
         )
         .unwrap_err();
-        assert!(error
+        assert!(error.to_string().contains("outside its owned slice"));
+    }
+
+    #[test]
+    fn normalized_inventory_preserves_authored_markdown_units_and_stable_ids() {
+        let spec = "# Payments API\nExpose `GET /v1/payments` exactly.\n\n- Require `X-Trace` on every request.\n  Return status 400 when it is absent.\n\n```json\n{\"ok\":true}\n```\n\nExpose `GET /v1/payments` exactly.";
+        let first = normalized_requirement_inventory(spec);
+        let second = normalized_requirement_inventory(spec);
+        assert_eq!(
+            first.iter().map(|record| &record.id).collect::<Vec<_>>(),
+            second.iter().map(|record| &record.id).collect::<Vec<_>>()
+        );
+        assert_eq!(first.len(), 4);
+        assert_eq!(first[0].section, "Payments API");
+        assert_eq!(first[0].quote, "Expose `GET /v1/payments` exactly.");
+        assert!(first[1].quote.contains("Return status 400"));
+        assert_eq!(first[2].quote, "```json\n{\"ok\":true}\n```");
+        assert_ne!(
+            first[0].id, first[3].id,
+            "duplicate authored clauses retain distinct source positions"
+        );
+        assert!(first.iter().all(|record| spec.contains(&record.quote)));
+
+        let decisions = normalized_requirement_inventory(
+            "## USER DECISIONS — BINDING\nQ: Which separator?\nA: Pipe (`|`).\nQ: Which order?\nA: Oldest first.",
+        );
+        assert_eq!(decisions.len(), 2);
+        assert_eq!(decisions[0].quote, "Q: Which separator?\nA: Pipe (`|`).");
+        assert_eq!(decisions[1].quote, "Q: Which order?\nA: Oldest first.");
+    }
+
+    fn requirement_binding_fixture() -> (
+        String,
+        Vec<RequirementRecord>,
+        Vec<EvidenceRecord>,
+        serde_json::Value,
+    ) {
+        let plan = serde_json::json!({
+            "subtasks": [
+                {"id":"api", "description":"Build payments API", "difficulty":"hard", "model":"qwen", "depends_on":[], "files":["src/api.py"]},
+                {"id":"test-api", "description":"Test payments API", "difficulty":"easy", "model":"qwen", "depends_on":["api"], "files":["tests/test_api.py"]},
+                {"id":"integrate-verify", "description":"Integrate and verify", "difficulty":"hard", "model":"qwen", "depends_on":["api","test-api"], "files":[]}
+            ],
+            "integration": "verify"
+        });
+        let requirements = [
+            ("REQ-route", "Expose GET /v1/payments."),
+            ("REQ-header", "Require X-Trace and return 400 when absent."),
+            ("REQ-test", "Prove the exact JSON and status values."),
+        ]
+        .into_iter()
+        .map(|(id, quote)| RequirementRecord {
+            id: id.to_string(),
+            section: "Payments".to_string(),
+            quote: quote.to_string(),
+        })
+        .collect::<Vec<_>>();
+        let evidence = [
+            (
+                "EVID-route",
+                "Framework route registration uses router.get.",
+            ),
+            ("EVID-header", "Header lookup is case insensitive."),
+            ("EVID-unrelated", "An unrelated storage note."),
+        ]
+        .into_iter()
+        .map(|(id, quote)| EvidenceRecord {
+            id: id.to_string(),
+            quote: quote.to_string(),
+            authority: "advisory-research",
+        })
+        .collect::<Vec<_>>();
+        let binding = serde_json::json!({
+            "bindings": [
+                {
+                    "task_id":"api",
+                    "owns_requirement_ids":["REQ-route","REQ-header"],
+                    "applies_requirement_ids":[],
+                    "verifies_requirement_ids":[],
+                    "depends_on":[],
+                    "owned_files":["src/api.py"],
+                    "slices":[
+                        {"id":"route", "objective":"Implement the exact route", "requirement_ids":["REQ-route"], "evidence_ids":["EVID-route"], "acceptance_evidence":["GET /v1/payments returns the exact JSON"]},
+                        {"id":"header", "objective":"Enforce the exact header contract", "requirement_ids":["REQ-header"], "evidence_ids":["EVID-header"], "acceptance_evidence":["Missing X-Trace returns status 400"]}
+                    ]
+                },
+                {
+                    "task_id":"test-api",
+                    "owns_requirement_ids":["REQ-test"],
+                    "applies_requirement_ids":[],
+                    "verifies_requirement_ids":["REQ-route","REQ-header"],
+                    "depends_on":["api"],
+                    "owned_files":["tests/test_api.py"],
+                    "slices":[{"id":"oracle", "objective":"Test route and header outcomes", "requirement_ids":["REQ-test","REQ-route","REQ-header"], "evidence_ids":[], "acceptance_evidence":["Assertions compare exact JSON and status values"]}]
+                },
+                {
+                    "task_id":"integrate-verify",
+                    "owns_requirement_ids":[],
+                    "applies_requirement_ids":[],
+                    "verifies_requirement_ids":["REQ-route","REQ-header","REQ-test"],
+                    "depends_on":["api","test-api"],
+                    "owned_files":[],
+                    "slices":[{"id":"golden", "objective":"Run the advertised endpoint end to end", "requirement_ids":["REQ-route","REQ-header","REQ-test"], "evidence_ids":[], "acceptance_evidence":["Golden request proves all three requirements"]}]
+                }
+            ],
+            "interfaces":[{
+                "producer_task_id":"api",
+                "consumer_task_ids":["integrate-verify"],
+                "requirement_ids":["REQ-route"],
+                "contract":"GET /v1/payments returns the specified JSON response",
+                "requires_completed_artifact":true
+            }]
+        });
+        (plan.to_string(), requirements, evidence, binding)
+    }
+
+    #[test]
+    fn semantic_binding_has_complete_primary_ownership_and_slices_context() {
+        let (plan, requirements, evidence, raw) = requirement_binding_fixture();
+        let detail_ids = vec![
+            "api".to_string(),
+            "test-api".to_string(),
+            "integrate-verify".to_string(),
+        ];
+        let compiled = compile_requirement_binding(
+            &raw.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap();
+        assert_eq!(compiled.owned_requirements, requirements.len());
+        assert_eq!(compiled.slice_count, 4);
+        assert!(compiled.interfaces[0].id.starts_with("IFACE-"));
+
+        let plan_value: serde_json::Value = serde_json::from_str(&plan).unwrap();
+        let inputs =
+            build_task_detail_inputs(&plan_value, &compiled, &requirements, &evidence).unwrap();
+        let route = inputs
+            .iter()
+            .find(|input| input.id == "api" && input.slice_id == "route")
+            .unwrap();
+        assert_eq!(
+            route
+                .requirements
+                .iter()
+                .map(|requirement| requirement.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["REQ-route"]
+        );
+        assert_eq!(route.evidence[0].id, "EVID-route");
+        assert!(!route
+            .requirements
+            .iter()
+            .any(|requirement| requirement.quote.contains("X-Trace")));
+        assert!(!route
+            .evidence
+            .iter()
+            .any(|record| record.id == "EVID-unrelated"));
+    }
+
+    #[test]
+    fn semantic_binding_rejects_an_unowned_raw_requirement() {
+        let (plan, requirements, evidence, mut raw) = requirement_binding_fixture();
+        raw["bindings"][1]["owns_requirement_ids"] = serde_json::json!([]);
+        raw["bindings"][1]["slices"][0]["requirement_ids"] =
+            serde_json::json!(["REQ-route", "REQ-header"]);
+        let error = compile_requirement_binding(
+            &raw.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &["api".into(), "test-api".into(), "integrate-verify".into()],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("uncovered"));
+    }
+
+    #[test]
+    fn semantic_binding_rejects_duplicate_ownership_overlap_and_missing_artifact_edges() {
+        let (plan, requirements, evidence, original) = requirement_binding_fixture();
+        let detail_ids = ["api".into(), "test-api".into(), "integrate-verify".into()];
+
+        let mut duplicate = original.clone();
+        duplicate["bindings"][1]["owns_requirement_ids"] =
+            serde_json::json!(["REQ-test", "REQ-route"]);
+        duplicate["bindings"][1]["verifies_requirement_ids"] = serde_json::json!(["REQ-header"]);
+        let duplicate_error = compile_requirement_binding(
+            &duplicate.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap_err();
+        assert!(duplicate_error
             .to_string()
-            .contains("not present in the supplied task sources"));
+            .contains("multiple primary owners"));
+
+        let mut overlap = original.clone();
+        overlap["bindings"][1]["owned_files"] =
+            serde_json::json!(["src/api.py", "tests/test_api.py"]);
+        let overlap_error = compile_requirement_binding(
+            &overlap.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap_err();
+        assert!(overlap_error.to_string().contains("overlaps tasks"));
+
+        let mut missing_edge = original;
+        missing_edge["bindings"][2]["depends_on"] = serde_json::json!(["test-api"]);
+        let edge_error = compile_requirement_binding(
+            &missing_edge.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap_err();
+        assert!(edge_error
+            .to_string()
+            .contains("requires completed artifact"));
     }
 
     /// F852: the JOB decides how many pieces exist (~2 commands per shard), the fleet only caps how
@@ -16085,8 +16323,11 @@ impl GooseAgentDispatcher {
         // the old decode terminal can overlap two requests. Keep their activity digest, but do not let an
         // elapsed/volume/repetition heuristic or synchronous judge terminate them.
         let authority_compiler = tool_surface == AgentToolSurface::ResponseOnly
-            && activity_key
-                .is_some_and(|key| key.starts_with("detail-") || key.starts_with("contract-"));
+            && activity_key.is_some_and(|key| {
+                key.starts_with("detail-")
+                    || key.starts_with("contract-")
+                    || key.starts_with("reqbind-")
+            });
         // PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS): the `idle` watchdog above only fires when the
         // stream goes SILENT. A task that streams THINKING tokens continuously resets it forever — measured
         // live, tasks ran 899s/348s/26min while emitting reasoning tokens and were never cut (the pathology
@@ -18568,9 +18809,9 @@ impl GooseAgentDispatcher {
     /// min per retargeting run, and detail fallbacks hit the hardest modules before dispatch. The
     /// loop's own machinery (skeleton drafts, agreement, clarity, retarget/ask) reads only prompt +
     /// skeleton, so the fan now runs exactly ONCE, here, on the plan the loop finally ships: the SAME fan
-    /// once-selected skeleton is compiled here, later. `user_prompt`/`research_findings` are the POST-ask
-    /// values — the ask's answers are folded into both before the loop exits, so specs are written against
-    /// the answered spec. Invalid typed output fails before dispatch; there is no brief fallback.
+    /// once-selected skeleton is compiled here, later. `binding_spec` contains only the frozen operator spec
+    /// plus verbatim human decisions; model-authored research stays a separately identified advisory-evidence
+    /// channel. Invalid typed output fails before dispatch; there is no brief fallback.
     ///
     /// Returns the ONLY (plan_json, dag) pair downstream (pillars/contracts/plan_loaded/fill-fan/
     /// Scheduler::run) may ever see — the single seam. Nothing loop-resident survives past it.
@@ -18578,13 +18819,13 @@ impl GooseAgentDispatcher {
         self: &Arc<Self>,
         planner_model: &str,
         worker_models: Vec<String>,
-        user_prompt: &str,
+        binding_spec: &str,
         research_findings: &str,
         plan_json: &str,
     ) -> Result<(String, Dag)> {
         let mut v: serde_json::Value = serde_json::from_str(plan_json)?;
         let existing_files = existing_files_manifest(&self.working_dir);
-        let lang = detect_language(user_prompt, &existing_files);
+        let lang = detect_language(binding_spec, &existing_files);
         // Re-derived from the plan itself rather than threaded through the loop: `verify::` ids exist
         // exactly when fan_verify_split split the sink in the round that drafted this plan (the model
         // never emits them — they are engine-installed), so the plan string is the authoritative carrier
@@ -18599,99 +18840,222 @@ impl GooseAgentDispatcher {
                         .is_some_and(|i| i.starts_with("verify::"))
                 })
             });
-        let items: Vec<(usize, String, String, Vec<String>)> = v
+        let authored_deterministically = |id: &str| {
+            id.starts_with("verify::")
+                || id.starts_with("verify-e2e::")
+                || (fan_verify_applied && id == "integrate-verify")
+        };
+        let detail_task_ids: Vec<String> = v
             .get("subtasks")
-            .and_then(|s| s.as_array())
+            .and_then(|subtasks| subtasks.as_array())
             .ok_or_else(|| anyhow!("skeleton has no subtasks array"))?
             .iter()
-            .enumerate()
-            // A `verify::<M>` task's spec is AUTHORED deterministically by per_module_verify_spec, and its
-            // read-only invariants ("you own NOTHING and must WRITE NO files", "do NOT run the whole program
-            // end-to-end, do NOT verify sibling modules") are the ONLY thing keeping the fanned half scoped.
-            // Detailing it hands those invariants to the weak model to re-word, which can drop them entirely —
-            // and it burns one ~75s fleet call per verify task to do it. Skip them: the authored spec is
-            // already implementation-ready. Only reachable when fan_verify is ON (no such id otherwise), so
-            // the default path is byte-identical.
-            // Both fanned families are AUTHORED deterministically (per_module_verify_spec / e2e_shard_spec)
-            // and carry invariants the detailer would paraphrase away: "you own NOTHING", and — for a shard
-            // — WHICH slice of the command list it owns. A shard whose slice is reworded checks everything
-            // or nothing, which silently undoes the split. `verify-e2e::` does NOT start with `verify::`,
-            // so it needs its own arm; missing it is exactly how the first fan_e2e run got its specs
-            // rewritten.
-            // And the JOIN itself, once fan_verify has split the sink: `fan_verify_split` installs
-            // `thin_integrate_verify_spec` as its description, so from that moment integrate-verify is
-            // authored deterministically exactly like the two families above, and all three reasons apply
-            // unchanged. Detailing it is worse than wasteful here — on a detail fallback the brief written
-            // back IS the thin spec, and T2 below then appends it under the canonical joined spec, so the
-            // join is told "Do NOT re-run that whole sweep; it has happened" and, 1081 characters later,
-            // "run EVERY command/usage the SPEC advertises ... For EACH command do a GOLDEN-VALUE CHECK".
-            // MEASURED: 10 of 11 fan_e2e-shaped runs in ~/goose-builds carry the thin spec appended
-            // VERBATIM — byte-identical across five different app specs, which no model-authored detail
-            // could be — and h1-e2e-4's join then ran 4327s, 63.7% of all node-busy time, WORSE than the
-            // 47% single-sink figure that motivated sharding the e2e run in the first place.
-            // Skipping it also reclaims one detail-budget call from the pre-dispatch critical path.
-            // Only reachable when fan_verify actually split (no thin spec otherwise), so the default path
-            // with fan_verify OFF is byte-identical.
-            .filter(|(_, st)| {
-                let id = st["id"].as_str().unwrap_or("");
-                let authored_deterministically = id.starts_with("verify::")
-                    || id.starts_with("verify-e2e::")
-                    || (fan_verify_applied && id == "integrate-verify");
-                !authored_deterministically
-            })
-            .map(|(i, st)| {
-                // The EXACT paths this subtask owns — passed to the detailer so its spec refers to them
-                // verbatim. Without this the detailer invents a filename that contradicts the owned_files
-                // (e.g. spec says formula_parser.py while the plan owns parser.py); the worker follows the
-                // spec, never writes the owned file, and the task fails its owned-file check every attempt.
-                let files = st["files"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|f| f.as_str().map(str::to_string))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                (
-                    i,
-                    st["id"].as_str().unwrap_or("").to_string(),
-                    st["description"].as_str().unwrap_or("").to_string(),
-                    files,
-                )
-            })
+            .filter_map(|task| task["id"].as_str())
+            .filter(|id| !authored_deterministically(id))
+            .map(str::to_string)
             .collect();
-        if items.is_empty() {
-            return Err(anyhow!("skeleton had zero subtasks"));
+        if detail_task_ids.is_empty() {
+            return Err(anyhow!("skeleton had zero model-authored subtasks"));
         }
+        let requirements = normalized_requirement_inventory(binding_spec);
+        let evidence = normalized_evidence_inventory(research_findings);
+        if requirements.is_empty() {
+            return Err(anyhow!(
+                "operator specification has no binding requirement clauses"
+            ));
+        }
+        let binding_started = std::time::Instant::now();
+        self.events.write_value(serde_json::json!({
+            "event": "requirement_binding_started",
+            "inventory_format": "raw-clause-v1",
+            "binding_format": "semantic-slices-v1",
+            "requirement_units": requirements.len(),
+            "advisory_evidence_units": evidence.len(),
+            "detail_tasks": detail_task_ids.len(),
+            "task_count_source": "selected-job-graph",
+            "roster_used_for_task_or_slice_count": false,
+            "tool_surface": "response-only",
+            "authority": "frozen-user-spec-plus-human-decisions",
+        }));
+        let binding_system = "Bind a selected task skeleton to the supplied normalized requirement and \
+            evidence registries. This is a typed planning compiler, not a code-writing task: you have no \
+            filesystem or shell tools. Preserve every requirement exactly once as primary implementation \
+            ownership in owns_requirement_ids; use applies_requirement_ids only for cross-cutting constraints \
+            another task must obey, and verifies_requirement_ids for tests or checks. Every model-authored task \
+            must appear exactly once. Keep the selected task IDs fixed. Repair files and dependency edges only \
+            when the requirement/interface meaning demands it; file ownership must remain non-overlapping. \
+            Record each producer/consumer interface and whether the consumer truly needs the completed artifact \
+            or can build against a frozen signature. Divide a task into more than one detail slice only when the \
+            slices have distinct semantic acceptance outcomes that can be specified independently. Never split \
+            by filename count, text length, token budget, fleet size, or available nodes, and never merge \
+            unrelated outcomes to reduce the number of calls. A slice references only requirements and advisory \
+            evidence needed for that outcome and names concrete acceptance evidence. Research is advisory and \
+            cannot create, remove, or override a requirement. Call final_output when the binding is complete.";
+        let binding_skeleton = serde_json::json!({
+            "subtasks": v["subtasks"]
+                .as_array()
+                .expect("subtasks validated above")
+                .iter()
+                .map(|task| serde_json::json!({
+                    "id": task["id"],
+                    "description": task["description"],
+                    "depends_on": task["depends_on"],
+                    "files": task["files"],
+                }))
+                .collect::<Vec<_>>(),
+        });
+        let binding_input = serde_json::json!({
+            "requirements": requirements,
+            "advisory_evidence": evidence,
+            "selected_skeleton": binding_skeleton,
+            "model_authored_task_ids": detail_task_ids,
+        });
+        let binding_output = self
+            .run_response_only_agent(
+                planner_model,
+                binding_system.to_string(),
+                serde_json::to_string_pretty(&binding_input)?,
+                Some(Response {
+                    json_schema: Some(requirement_binding_schema()),
+                }),
+                0,
+                Some("reqbind-canonical"),
+            )
+            .await
+            .map_err(|error| anyhow!("requirement binding agent error: {error}"))?;
+        let binding_raw = binding_output
+            .final_output
+            .filter(|raw| !raw.trim().is_empty())
+            .or_else(|| (!binding_output.text.trim().is_empty()).then_some(binding_output.text))
+            .ok_or_else(|| anyhow!("requirement binding produced no typed final output"))?;
+        let binding = compile_requirement_binding(
+            &binding_raw,
+            &requirements,
+            &evidence,
+            plan_json,
+            &detail_task_ids,
+        )?;
+        let mut task_slice_summary = binding
+            .tasks
+            .values()
+            .map(|task| {
+                serde_json::json!({
+                    "task_id": task.task_id,
+                    "owns": task.owns_requirement_ids.len(),
+                    "applies": task.applies_requirement_ids.len(),
+                    "verifies": task.verifies_requirement_ids.len(),
+                    "slices": task.slices.iter().map(|slice| slice.id.as_str()).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        task_slice_summary
+            .sort_by(|left, right| left["task_id"].as_str().cmp(&right["task_id"].as_str()));
+        self.events.write_value(serde_json::json!({
+            "event": "requirement_binding_resolved",
+            "secs": binding_started.elapsed().as_secs_f64().round(),
+            "inventory_format": "raw-clause-v1",
+            "binding_format": "semantic-slices-v1",
+            "requirement_units": requirements.len(),
+            "requirements_with_primary_owner": binding.owned_requirements,
+            "coverage_complete": binding.owned_requirements == requirements.len(),
+            "interfaces": binding.interfaces.len(),
+            "semantic_slices": binding.slice_count,
+            "detail_tasks": binding.tasks.len(),
+            "roster_used_for_task_or_slice_count": false,
+            "authority": "frozen-user-spec-plus-human-decisions",
+            "research_authority": "advisory-only",
+            "requirement_ids": requirements.iter().map(|record| record.id.as_str()).collect::<Vec<_>>(),
+            "interface_ids": binding.interfaces.iter().map(|interface| interface.id.as_str()).collect::<Vec<_>>(),
+            "task_slices": task_slice_summary,
+        }));
+
+        if let Some(subtasks) = v.get_mut("subtasks").and_then(|value| value.as_array_mut()) {
+            for task in subtasks {
+                let Some(id) = task["id"].as_str() else {
+                    continue;
+                };
+                let Some(task_binding) = binding.tasks.get(id) else {
+                    continue;
+                };
+                task["files"] = serde_json::json!(task_binding.owned_files);
+                task["depends_on"] = serde_json::json!(task_binding.depends_on);
+                task["requirement_ownership"] = serde_json::json!({
+                    "owns": task_binding.owns_requirement_ids,
+                    "applies": task_binding.applies_requirement_ids,
+                    "verifies": task_binding.verifies_requirement_ids,
+                    "slices": task_binding.slices.iter().map(|slice| serde_json::json!({
+                        "id": slice.id,
+                        "requirement_ids": slice.requirement_ids,
+                        "evidence_ids": slice.evidence_ids,
+                        "acceptance_evidence": slice.acceptance_evidence,
+                    })).collect::<Vec<_>>(),
+                });
+            }
+        }
+        v["requirement_inventory"] = serde_json::json!({
+            "format": "raw-clause-v1",
+            "requirements": requirements,
+            "interfaces": binding.interfaces,
+        });
+        v["evidence_inventory"] = serde_json::json!({
+            "format": "advisory-block-v1",
+            "evidence": evidence,
+        });
+
+        let items = build_task_detail_inputs(&v, &binding, &requirements, &evidence)?;
         eprintln!(
-            "  skeleton: {} subtask(s) → detailing IN PARALLEL across the fleet:",
-            items.len()
+            "  requirement inventory: {} clause(s) → {} semantic detail slice(s) across {} task(s)",
+            requirements.len(),
+            items.len(),
+            binding.tasks.len(),
         );
         let wm = if worker_models.is_empty() {
             vec![planner_model.to_string()]
         } else {
             worker_models
         };
-        let goal = user_prompt.to_string();
-        let findings = research_findings.to_string();
-        // #122 DETAIL MEMO: reuse an already-generated detail for a subtask whose FULL detailer input (goal + id
-        // + brief + owned files + findings) is byte-identical to a previous round, instead of re-detailing it
-        // (~75s LLM call). OFF => `items` passes through and `memo_keys` stays empty and unread => byte-identical.
+        let goal = binding_spec.to_string();
+        // DETAIL MEMO now keys the exact normalized slices rather than the full global goal/research body. A
+        // hit skips all slices for that task; a partial slice can never masquerade as a complete task spec.
         let mut memo_keys: std::collections::HashMap<usize, (String, String)> =
             std::collections::HashMap::new();
-        let items: Vec<(usize, String, String, Vec<String>)> = if self.detail_memo_on {
+        let items: Vec<TaskDetailInput> = if self.detail_memo_on {
             let cache = self.detail_memo.lock().unwrap();
-            let mut remaining = Vec::with_capacity(items.len());
+            let mut remaining = items;
             let mut reused = 0usize;
-            for (idx, id, brief, files) in items {
-                let files_text = files.join(", ");
-                let key = detail_memo_key(&goal, &id, &brief, &files_text, &findings);
+            for task_id in &detail_task_ids {
+                let Some(first) = remaining.iter().find(|item| &item.id == task_id) else {
+                    continue;
+                };
+                let context = remaining
+                    .iter()
+                    .filter(|item| &item.id == task_id)
+                    .map(|item| {
+                        serde_json::json!({
+                            "slice": item.slice_id,
+                            "requirements": item.requirements,
+                            "evidence": item.evidence,
+                            "interfaces": item.interfaces,
+                            "objective": item.objective,
+                            "acceptance_evidence": item.acceptance_evidence,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let files_text = first.owned_files.join(", ");
+                let key = detail_memo_key(
+                    binding_spec,
+                    task_id,
+                    &first.brief,
+                    &files_text,
+                    &serde_json::to_string(&context).unwrap_or_default(),
+                );
                 if let Some(desc) = cache.get(&key) {
-                    v["subtasks"][idx]["description"] = serde_json::Value::String(desc.clone());
+                    v["subtasks"][first.index]["description"] =
+                        serde_json::Value::String(desc.clone());
+                    remaining.retain(|item| &item.id != task_id);
                     reused += 1;
                 } else {
-                    memo_keys.insert(idx, (key, brief.clone()));
-                    remaining.push((idx, id, brief, files));
+                    memo_keys.insert(first.index, (key, first.brief.clone()));
                 }
             }
             drop(cache);
@@ -18709,7 +19073,7 @@ impl GooseAgentDispatcher {
         let contracts_on = swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts);
         self.events.write_value(serde_json::json!({
             "event": "plan_compile_resolved",
-            "detail_format": "typed-v1",
+            "detail_format": "typed-requirement-slice-v2",
             "detail_tool_surface": "response-only",
             "detail_straggler_abort": false,
             "detail_timeout_policy": "no-wall-volume-or-turn-cap",
@@ -18722,12 +19086,15 @@ impl GooseAgentDispatcher {
             "configured_straggler_stop_degrade": self.straggler_stop_degrade,
             "task_count_source": "job",
             "detail_items": items.len(),
+            "requirement_units": requirements.len(),
+            "semantic_slices": binding.slice_count,
+            "slice_count_source": "semantic-acceptance-closure",
+            "binding_roster_input": false,
             "lane_identity": "distinct-model-host",
-            "full_goal_context": true,
+            "full_goal_context": false,
+            "context_policy": "owned-requirements-relevant-evidence-and-interfaces",
         }));
         let detail_dispatcher = self.clone();
-        let detail_goal = goal.clone();
-        let detail_findings = findings.clone();
         let contract_dispatcher = self.clone();
         let contract_goal = goal.clone();
         let event_sink = self.events.clone();
@@ -18738,45 +19105,43 @@ impl GooseAgentDispatcher {
         let pipeline = fanout_staged(
             one_lane_per_host(wm),
             items,
-            move |(idx, id, brief, files), model| {
+            move |input: TaskDetailInput, model| {
                 let me = detail_dispatcher.clone();
-                let goal = detail_goal.clone();
-                let findings = detail_findings.clone();
                 async move {
                     let started = std::time::Instant::now();
                     eprintln!(
-                        "  {} detail {} → {}",
+                        "  {} detail {}/{} → {}",
                         style("▸").cyan().bold(),
-                        style(&id).bold(),
+                        style(&input.id).bold(),
+                        input.slice_id,
                         model
                     );
-                    let system = "Compile ONE task into a typed, implementation-ready contract. You have no \
+                    let system = "Compile ONE semantic acceptance slice into a typed, implementation-ready \
+                        task contract. You have no \
                         filesystem or shell tools and must not prototype code. Call final_output as soon as the \
                         contract is complete. The objective, implementation steps, interfaces, edge cases, and \
-                        acceptance checks must be specific to this task. Each requirement_citations.quote must be \
-                        copied VERBATIM from the supplied overall goal, architect brief, or research findings; \
-                        applies_as explains exactly what this task must do because of that quote. Preserve every \
+                        acceptance checks must be specific to this slice. Cite every supplied requirement exactly \
+                        once by requirement_id; the engine renders the authoritative source text. applies_as \
+                        explains exactly what this task must do because of it. Research evidence \
+                        is advisory context, never a requirement. Preserve every \
                         external literal that applies: paths, command shapes, API prefixes, headers, parameters, \
                         statuses, field names, units, and expected values. Do not invent requirements or generic \
                         filler. The engine owns the file list, so never rename or add a path."
                         .to_string();
-                    let files_text = files.join(", ");
-                    let user = format!(
-                        "## Overall goal\n{goal}\n\n## Architect brief\n[{id}] {brief}\n\n## Exact owned \
-                         files\n{}\n\n## Research findings\n{}",
-                        if files_text.is_empty() {
-                            "(none)"
-                        } else {
-                            &files_text
-                        },
-                        if findings.is_empty() {
-                            "(none)"
-                        } else {
-                            &findings
-                        }
-                    );
-                    let detail_key = format!("detail-{id}");
-                    let source = format!("{goal}\n{brief}\n{findings}");
+                    let files_text = input.owned_files.join(", ");
+                    let user = serde_json::to_string_pretty(&serde_json::json!({
+                        "task_id": input.id,
+                        "slice_id": input.slice_id,
+                        "slice_objective": input.objective,
+                        "exact_owned_files": input.owned_files,
+                        "requirements": input.requirements,
+                        "advisory_evidence": input.evidence,
+                        "interfaces": input.interfaces,
+                        "required_acceptance_evidence": input.acceptance_evidence,
+                    }))
+                    .unwrap_or_default();
+                    let context_chars = user.len();
+                    let detail_key = format!("detail-{}-{}", input.id, input.slice_id);
                     let compiled = match me
                         .run_response_only_agent(
                             &model,
@@ -18796,54 +19161,75 @@ impl GooseAgentDispatcher {
                             .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
                             .ok_or_else(|| "no typed final output".to_string())
                             .and_then(|raw| {
-                                compile_task_detail(&raw, &id, &brief, &files_text, &source)
-                                    .map_err(|error| error.to_string())
+                                compile_task_detail(
+                                    &raw,
+                                    &input.id,
+                                    &input.slice_id,
+                                    &files_text,
+                                    &input.requirements,
+                                )
+                                .map_err(|error| error.to_string())
                             }),
                         Err(error) => Err(format!("agent error: {error}")),
                     };
                     if let Ok(detail) = &compiled {
                         me.events.write_value(serde_json::json!({
                             "event": "detail_completed",
-                            "task_id": &id,
+                            "task_id": &input.id,
+                            "slice_id": &input.slice_id,
+                            "slice_index": input.slice_index,
+                            "slice_count": input.slice_count,
                             "secs": started.elapsed().as_secs_f64().round(),
                             "spec_chars": detail.rendered.len(),
-                            "brief_chars": brief.len(),
-                            "format": "typed-v1",
+                            "brief_chars": input.brief.len(),
+                            "context_chars": context_chars,
+                            "full_goal_context": false,
+                            "format": "typed-requirement-slice-v2",
                             "tool_surface": "response-only",
                             "timeout_policy": "no-wall-volume-or-turn-cap",
+                            "requirement_ids": input.requirements.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+                            "advisory_evidence_ids": input.evidence.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
                             "requirement_citations": detail.citations,
                             "interfaces": detail.interfaces,
                             "acceptance_checks": detail.acceptance_checks,
                         }));
                         eprintln!(
-                            "  {} detail {} ({:.0}s, {} acceptance checks)",
+                            "  {} detail {}/{} ({:.0}s, {} acceptance checks)",
                             style("✓").green().bold(),
-                            style(&id).bold(),
+                            style(&input.id).bold(),
+                            input.slice_id,
                             started.elapsed().as_secs_f64(),
                             detail.acceptance_checks,
                         );
                     } else if let Err(reason) = &compiled {
                         me.events.write_value(serde_json::json!({
                             "event": "detail_compile_failed",
-                            "task_id": &id,
+                            "task_id": &input.id,
+                            "slice_id": &input.slice_id,
                             "reason": reason,
-                            "brief_chars": brief.len(),
-                            "format": "typed-v1",
+                            "brief_chars": input.brief.len(),
+                            "context_chars": context_chars,
+                            "full_goal_context": false,
+                            "format": "typed-requirement-slice-v2",
                             "fallback": false,
                         }));
                         eprintln!(
-                            "  {} detail {} ({:.0}s) — compiler rejected output: {}",
+                            "  {} detail {}/{} ({:.0}s) — compiler rejected output: {}",
                             style("⚠").yellow().bold(),
-                            style(&id).bold(),
+                            style(&input.id).bold(),
+                            input.slice_id,
                             started.elapsed().as_secs_f64(),
                             reason,
                         );
                     }
                     TaskDetailOutcome {
-                        index: idx,
-                        id,
-                        brief,
-                        owned_files: files,
+                        index: input.index,
+                        id: input.id,
+                        slice_id: input.slice_id,
+                        slice_index: input.slice_index,
+                        slice_count: input.slice_count,
+                        brief: input.brief,
+                        owned_files: input.owned_files,
                         compiled,
                     }
                 }
@@ -18872,10 +19258,11 @@ impl GooseAgentDispatcher {
             },
             move |detail| {
                 contracts_on
+                    && detail.slice_count == 1
                     && detail.compiled.is_ok()
                     && task_needs_frozen_contract(&detail.id, &detail.owned_files, lang)
             },
-            |item| item.1.clone(),
+            |item| format!("{}/{}", item.id, item.slice_id),
             move |observation| {
                 let state = match observation.kind {
                     StagedFanObservationKind::DetailTailStarted => "detail_tail_started",
@@ -18916,26 +19303,37 @@ impl GooseAgentDispatcher {
             "produced": prefetched_nonempty,
             "empty": prefetched.saturating_sub(prefetched_nonempty),
             "later_phase_will_regenerate_empty": false,
+            "multi_slice_tasks_deferred_until_complete": binding.tasks.values().filter(|task| task.slices.len() > 1).count(),
         }));
         let mut failures = Vec::new();
+        let mut compiled_by_task = HashMap::<
+            usize,
+            (
+                String,
+                String,
+                Vec<String>,
+                usize,
+                Vec<(usize, CompiledTaskDetail)>,
+            ),
+        >::new();
         for outcome in pipeline.details {
             let detail = match outcome.compiled {
                 Ok(detail) => detail,
                 Err(reason) => {
-                    failures.push(format!("{}: {reason}", outcome.id));
+                    failures.push(format!("{}/{}: {reason}", outcome.id, outcome.slice_id));
                     continue;
                 }
             };
-            if self.detail_memo_on {
-                if let Some((key, _)) = memo_keys.get(&outcome.index) {
-                    self.detail_memo
-                        .lock()
-                        .unwrap()
-                        .insert(key.clone(), detail.rendered.clone());
-                }
-            }
-            v["subtasks"][outcome.index]["description"] =
-                serde_json::Value::String(detail.rendered);
+            let entry = compiled_by_task.entry(outcome.index).or_insert_with(|| {
+                (
+                    outcome.id.clone(),
+                    outcome.brief.clone(),
+                    outcome.owned_files.clone(),
+                    outcome.slice_count,
+                    Vec::new(),
+                )
+            });
+            entry.4.push((outcome.slice_index, detail));
         }
         if !failures.is_empty() {
             bail!(
@@ -18943,6 +19341,24 @@ impl GooseAgentDispatcher {
                 failures.len(),
                 failures.join(" | ")
             );
+        }
+        for (index, (id, brief, files, expected_slices, slices)) in compiled_by_task {
+            if slices.len() != expected_slices {
+                bail!(
+                    "typed task compiler returned {} of {expected_slices} semantic slices for `{id}`",
+                    slices.len()
+                );
+            }
+            let rendered = merge_compiled_task_slices(&id, &brief, &files, slices);
+            if self.detail_memo_on {
+                if let Some((key, _)) = memo_keys.get(&index) {
+                    self.detail_memo
+                        .lock()
+                        .unwrap()
+                        .insert(key.clone(), rendered.clone());
+                }
+            }
+            v["subtasks"][index]["description"] = serde_json::Value::String(rendered);
         }
         // T2: force the integrate-verify SINK to the canonical golden-value spec regardless of whether the
         // architect included it in the skeleton (it did in 6/6 runs, so the detailer — high variance — was
@@ -31160,9 +31576,612 @@ fn plan_schema() -> serde_json::Value {
     })
 }
 
+fn markdown_heading(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    let hashes = trimmed.chars().take_while(|c| *c == '#').count();
+    (hashes > 0 && hashes <= 6)
+        .then(|| trimmed.get(hashes..).map(str::trim))
+        .flatten()
+        .filter(|heading| !heading.is_empty())
+}
+
+fn markdown_list_item(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("Q: ") {
+        return true;
+    }
+    if ["- ", "* ", "+ "]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+    {
+        return true;
+    }
+    let digit_bytes = trimmed
+        .as_bytes()
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    digit_bytes > 0
+        && trimmed
+            .get(digit_bytes..)
+            .is_some_and(|rest| rest.starts_with(". ") || rest.starts_with(") "))
+}
+
+fn stable_inventory_id(prefix: &str, text: &str, occurrence: usize) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    if occurrence == 0 {
+        format!("{prefix}-{hash:016x}")
+    } else {
+        format!("{prefix}-{hash:016x}-{}", occurrence + 1)
+    }
+}
+
+/// Split Markdown by its authored semantic boundaries: paragraphs, list items, and fenced examples. This is
+/// deliberately blind to filenames, token counts, task counts, and roster size. Headings provide section
+/// provenance but are not themselves obligations. Every other non-empty authored block becomes one source
+/// record, preserving its exact text for bidirectional citation.
+fn normalized_markdown_units(text: &str, prefix: &str) -> Vec<(String, String, String)> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum BlockKind {
+        Paragraph,
+        ListItem,
+        Fence,
+    }
+
+    let mut section = String::new();
+    let mut block = Vec::<String>::new();
+    let mut kind = BlockKind::Paragraph;
+    let mut units = Vec::<(String, String)>::new();
+    let flush = |block: &mut Vec<String>, section: &str, units: &mut Vec<(String, String)>| {
+        let quote = block.join("\n").trim().to_string();
+        if !quote.is_empty() {
+            units.push((section.to_string(), quote));
+        }
+        block.clear();
+    };
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if kind == BlockKind::Fence {
+            block.push(line.to_string());
+            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                flush(&mut block, &section, &mut units);
+                kind = BlockKind::Paragraph;
+            }
+            continue;
+        }
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            flush(&mut block, &section, &mut units);
+            kind = BlockKind::Fence;
+            block.push(line.to_string());
+            continue;
+        }
+        if let Some(heading) = markdown_heading(line) {
+            flush(&mut block, &section, &mut units);
+            section = heading.to_string();
+            kind = BlockKind::Paragraph;
+            continue;
+        }
+        if trimmed.is_empty() {
+            flush(&mut block, &section, &mut units);
+            kind = BlockKind::Paragraph;
+            continue;
+        }
+        if markdown_list_item(line) {
+            flush(&mut block, &section, &mut units);
+            kind = BlockKind::ListItem;
+            block.push(line.to_string());
+            continue;
+        }
+        let qa_answer = kind == BlockKind::ListItem && trimmed.starts_with("A: ");
+        if kind == BlockKind::ListItem && !line.starts_with(char::is_whitespace) && !qa_answer {
+            flush(&mut block, &section, &mut units);
+            kind = BlockKind::Paragraph;
+        }
+        block.push(line.to_string());
+    }
+    flush(&mut block, &section, &mut units);
+
+    let mut seen = HashMap::<String, usize>::new();
+    units
+        .into_iter()
+        .map(|(section, quote)| {
+            let occurrence = seen.entry(quote.clone()).or_default();
+            let id = stable_inventory_id(prefix, &quote, *occurrence);
+            *occurrence += 1;
+            (id, section, quote)
+        })
+        .collect()
+}
+
+fn normalized_requirement_inventory(spec: &str) -> Vec<RequirementRecord> {
+    normalized_markdown_units(spec, "REQ")
+        .into_iter()
+        .map(|(id, section, quote)| RequirementRecord { id, section, quote })
+        .collect()
+}
+
+fn normalized_evidence_inventory(research: &str) -> Vec<EvidenceRecord> {
+    normalized_markdown_units(research, "EVID")
+        .into_iter()
+        .map(|(id, _section, quote)| EvidenceRecord {
+            id,
+            quote,
+            authority: "advisory-research",
+        })
+        .collect()
+}
+
+fn requirement_binding_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["bindings", "interfaces"],
+        "properties": {
+            "bindings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "task_id", "owns_requirement_ids", "applies_requirement_ids",
+                        "verifies_requirement_ids", "depends_on", "owned_files", "slices"
+                    ],
+                    "properties": {
+                        "task_id": {"type": "string"},
+                        "owns_requirement_ids": {"type": "array", "items": {"type": "string"}},
+                        "applies_requirement_ids": {"type": "array", "items": {"type": "string"}},
+                        "verifies_requirement_ids": {"type": "array", "items": {"type": "string"}},
+                        "depends_on": {"type": "array", "items": {"type": "string"}},
+                        "owned_files": {"type": "array", "items": {"type": "string"}},
+                        "slices": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                    "id", "objective", "requirement_ids", "evidence_ids",
+                                    "acceptance_evidence"
+                                ],
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "objective": {"type": "string"},
+                                    "requirement_ids": {"type": "array", "items": {"type": "string"}},
+                                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                                    "acceptance_evidence": {"type": "array", "items": {"type": "string"}}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "interfaces": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "producer_task_id", "consumer_task_ids", "requirement_ids", "contract",
+                        "requires_completed_artifact"
+                    ],
+                    "properties": {
+                        "producer_task_id": {"type": "string"},
+                        "consumer_task_ids": {"type": "array", "items": {"type": "string"}},
+                        "requirement_ids": {"type": "array", "items": {"type": "string"}},
+                        "contract": {"type": "string"},
+                        "requires_completed_artifact": {"type": "boolean"}
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn require_unique_known_ids(
+    field: &str,
+    values: &[String],
+    known: &HashSet<String>,
+) -> Result<HashSet<String>> {
+    let mut out = HashSet::new();
+    for value in values {
+        if value.trim().is_empty() {
+            bail!("requirement binding field `{field}` contains an empty id");
+        }
+        if !known.contains(value) {
+            bail!("requirement binding field `{field}` references unknown id `{value}`");
+        }
+        if !out.insert(value.clone()) {
+            bail!("requirement binding field `{field}` repeats id `{value}`");
+        }
+    }
+    Ok(out)
+}
+
+fn compile_requirement_binding(
+    raw: &str,
+    requirements: &[RequirementRecord],
+    evidence: &[EvidenceRecord],
+    plan_json: &str,
+    detail_task_ids: &[String],
+) -> Result<CompiledRequirementBinding> {
+    let raw = strip_code_fences(raw);
+    let mut draft: RequirementBindingDraft = serde_json::from_str(raw.trim())
+        .map_err(|error| anyhow!("typed requirement binding JSON did not parse: {error}"))?;
+    let specs = goose_swarm::specs_from_plan_json(plan_json)?;
+    let all_task_ids: HashSet<String> = specs.iter().map(|spec| spec.id.clone()).collect();
+    let expected_task_ids: HashSet<String> = detail_task_ids.iter().cloned().collect();
+    let requirement_ids: HashSet<String> = requirements
+        .iter()
+        .map(|record| record.id.clone())
+        .collect();
+    let evidence_ids: HashSet<String> = evidence.iter().map(|record| record.id.clone()).collect();
+    if requirement_ids.is_empty() {
+        bail!("binding specification has no authored requirement clauses");
+    }
+
+    let mut tasks = HashMap::new();
+    let mut owners = HashMap::<String, String>::new();
+    let mut total_slices = 0usize;
+    for binding in draft.bindings {
+        if !expected_task_ids.contains(&binding.task_id) {
+            bail!(
+                "requirement binding contains unknown or engine-authored task `{}`",
+                binding.task_id
+            );
+        }
+        if tasks.contains_key(&binding.task_id) {
+            bail!("requirement binding repeats task `{}`", binding.task_id);
+        }
+        let owns = require_unique_known_ids(
+            "owns_requirement_ids",
+            &binding.owns_requirement_ids,
+            &requirement_ids,
+        )?;
+        let applies = require_unique_known_ids(
+            "applies_requirement_ids",
+            &binding.applies_requirement_ids,
+            &requirement_ids,
+        )?;
+        let verifies = require_unique_known_ids(
+            "verifies_requirement_ids",
+            &binding.verifies_requirement_ids,
+            &requirement_ids,
+        )?;
+        if !owns.is_disjoint(&applies)
+            || !owns.is_disjoint(&verifies)
+            || !applies.is_disjoint(&verifies)
+        {
+            bail!(
+                "task `{}` assigns one requirement more than one semantic role",
+                binding.task_id
+            );
+        }
+        for requirement_id in &owns {
+            if let Some(previous) = owners.insert(requirement_id.clone(), binding.task_id.clone()) {
+                bail!(
+                    "requirement `{requirement_id}` has multiple primary owners: `{previous}` and `{}`",
+                    binding.task_id
+                );
+            }
+        }
+        let relevant: HashSet<String> = owns
+            .iter()
+            .chain(applies.iter())
+            .chain(verifies.iter())
+            .cloned()
+            .collect();
+        if relevant.is_empty() {
+            bail!("task `{}` has no requirement role", binding.task_id);
+        }
+        if binding.slices.is_empty() {
+            bail!(
+                "task `{}` has no semantic acceptance slice",
+                binding.task_id
+            );
+        }
+        let mut sliced = HashSet::new();
+        let mut slice_ids = HashSet::new();
+        for slice in &binding.slices {
+            let safe_slice_id = !slice.id.is_empty()
+                && slice.id.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+                });
+            if !safe_slice_id || !slice_ids.insert(slice.id.clone()) {
+                bail!(
+                    "task `{}` has an unsafe or repeated slice id `{}`",
+                    binding.task_id,
+                    slice.id
+                );
+            }
+            if slice.objective.trim().is_empty()
+                || slice.acceptance_evidence.is_empty()
+                || slice
+                    .acceptance_evidence
+                    .iter()
+                    .any(|value| value.trim().is_empty())
+            {
+                bail!(
+                    "task `{}` slice `{}` lacks a concrete objective or acceptance evidence",
+                    binding.task_id,
+                    slice.id
+                );
+            }
+            let ids = require_unique_known_ids(
+                "slice.requirement_ids",
+                &slice.requirement_ids,
+                &requirement_ids,
+            )?;
+            if ids.is_empty() || !ids.is_subset(&relevant) {
+                bail!(
+                    "task `{}` slice `{}` contains no owned/applicable/verifying requirement set",
+                    binding.task_id,
+                    slice.id
+                );
+            }
+            for id in ids {
+                if !sliced.insert(id.clone()) {
+                    bail!(
+                        "task `{}` repeats requirement `{id}` across semantic slices",
+                        binding.task_id
+                    );
+                }
+            }
+            require_unique_known_ids("slice.evidence_ids", &slice.evidence_ids, &evidence_ids)?;
+        }
+        if sliced != relevant {
+            let missing: Vec<&String> = relevant.difference(&sliced).collect();
+            let extra: Vec<&String> = sliced.difference(&relevant).collect();
+            bail!(
+                "task `{}` semantic slices do not exactly cover its requirement roles (missing={missing:?}, extra={extra:?})",
+                binding.task_id
+            );
+        }
+        let mut deps = HashSet::new();
+        for dep in &binding.depends_on {
+            if dep == &binding.task_id || !all_task_ids.contains(dep) || !deps.insert(dep.clone()) {
+                bail!(
+                    "task `{}` has an invalid, self, or repeated dependency `{dep}`",
+                    binding.task_id
+                );
+            }
+        }
+        if binding
+            .owned_files
+            .iter()
+            .any(|file| file.trim().is_empty())
+        {
+            bail!("task `{}` has an empty owned file", binding.task_id);
+        }
+        total_slices += binding.slices.len();
+        tasks.insert(
+            binding.task_id.clone(),
+            CompiledTaskBinding {
+                task_id: binding.task_id,
+                owns_requirement_ids: binding.owns_requirement_ids,
+                applies_requirement_ids: binding.applies_requirement_ids,
+                verifies_requirement_ids: binding.verifies_requirement_ids,
+                depends_on: binding.depends_on,
+                owned_files: binding.owned_files,
+                slices: binding.slices,
+            },
+        );
+    }
+    if tasks.keys().cloned().collect::<HashSet<_>>() != expected_task_ids {
+        let actual: HashSet<String> = tasks.keys().cloned().collect();
+        let missing: Vec<&String> = expected_task_ids.difference(&actual).collect();
+        let extra: Vec<&String> = actual.difference(&expected_task_ids).collect();
+        bail!("requirement binding task coverage mismatch (missing={missing:?}, extra={extra:?})");
+    }
+    if owners.len() != requirement_ids.len() {
+        let uncovered: Vec<&String> = requirement_ids
+            .iter()
+            .filter(|id| !owners.contains_key(*id))
+            .collect();
+        bail!("requirement inventory is not fully owned; uncovered={uncovered:?}");
+    }
+
+    let mut updated_specs = specs.clone();
+    for spec in &mut updated_specs {
+        if let Some(binding) = tasks.get(&spec.id) {
+            spec.deps = binding.depends_on.clone();
+            spec.owned_files = binding.owned_files.clone();
+        }
+    }
+    let original_files: HashSet<&str> = specs
+        .iter()
+        .flat_map(|spec| spec.owned_files.iter().map(String::as_str))
+        .collect();
+    let updated_files: HashSet<&str> = updated_specs
+        .iter()
+        .flat_map(|spec| spec.owned_files.iter().map(String::as_str))
+        .collect();
+    if !original_files.is_subset(&updated_files) {
+        let missing: Vec<&&str> = original_files.difference(&updated_files).collect();
+        bail!("requirement binding dropped selected-plan owned files: {missing:?}");
+    }
+    let mut file_owners = HashMap::<String, String>::new();
+    for spec in &updated_specs {
+        for file in &spec.owned_files {
+            if let Some(previous) = file_owners.insert(file.clone(), spec.id.clone()) {
+                bail!(
+                    "owned file `{file}` overlaps tasks `{previous}` and `{}` after requirement binding",
+                    spec.id
+                );
+            }
+        }
+    }
+    Dag::from_specs(updated_specs)?;
+
+    let mut interface_ids = HashSet::new();
+    for interface in &mut draft.interfaces {
+        interface.consumer_task_ids.sort();
+        interface.requirement_ids.sort();
+        if interface.contract.trim().is_empty()
+            || !all_task_ids.contains(&interface.producer_task_id)
+            || interface.consumer_task_ids.is_empty()
+        {
+            bail!("requirement interface has an empty contract or invalid endpoint");
+        }
+        let mut consumers = HashSet::new();
+        for consumer in &interface.consumer_task_ids {
+            if consumer == &interface.producer_task_id
+                || !all_task_ids.contains(consumer)
+                || !consumers.insert(consumer.clone())
+            {
+                bail!(
+                    "interface from `{}` has an invalid or repeated consumer `{consumer}`",
+                    interface.producer_task_id
+                );
+            }
+            let consumer_deps = tasks
+                .get(consumer)
+                .map(|binding| binding.depends_on.as_slice())
+                .or_else(|| {
+                    specs
+                        .iter()
+                        .find(|spec| &spec.id == consumer)
+                        .map(|spec| spec.deps.as_slice())
+                })
+                .unwrap_or(&[]);
+            if interface.requires_completed_artifact
+                && !consumer_deps.contains(&interface.producer_task_id)
+            {
+                bail!(
+                    "interface consumer `{consumer}` requires completed artifact from `{}` but lacks that dependency",
+                    interface.producer_task_id
+                );
+            }
+        }
+        let refs = require_unique_known_ids(
+            "interface.requirement_ids",
+            &interface.requirement_ids,
+            &requirement_ids,
+        )?;
+        if refs.is_empty() {
+            bail!("requirement interface has no requirement reference");
+        }
+        let stable_material = format!(
+            "{}\n{}\n{}\n{}",
+            interface.producer_task_id,
+            interface.consumer_task_ids.join("\n"),
+            interface.requirement_ids.join("\n"),
+            interface.contract.trim()
+        );
+        interface.id = stable_inventory_id("IFACE", &stable_material, 0);
+        if !interface_ids.insert(interface.id.clone()) {
+            bail!("requirement interface is duplicated: `{}`", interface.id);
+        }
+    }
+
+    Ok(CompiledRequirementBinding {
+        tasks,
+        interfaces: draft.interfaces,
+        owned_requirements: owners.len(),
+        slice_count: total_slices,
+    })
+}
+
+fn build_task_detail_inputs(
+    plan: &serde_json::Value,
+    binding: &CompiledRequirementBinding,
+    requirements: &[RequirementRecord],
+    evidence: &[EvidenceRecord],
+) -> Result<Vec<TaskDetailInput>> {
+    let requirements_by_id: HashMap<&str, &RequirementRecord> = requirements
+        .iter()
+        .map(|requirement| (requirement.id.as_str(), requirement))
+        .collect();
+    let evidence_by_id: HashMap<&str, &EvidenceRecord> = evidence
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect();
+    let subtasks = plan
+        .get("subtasks")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow!("requirement-bound plan has no subtasks array"))?;
+    let mut items = Vec::new();
+    for (index, task) in subtasks.iter().enumerate() {
+        let id = task["id"].as_str().unwrap_or("");
+        let Some(task_binding) = binding.tasks.get(id) else {
+            continue;
+        };
+        let brief = task["description"].as_str().unwrap_or("").to_string();
+        let slice_count = task_binding.slices.len();
+        for (slice_index, slice) in task_binding.slices.iter().enumerate() {
+            let slice_requirement_ids: HashSet<&str> =
+                slice.requirement_ids.iter().map(String::as_str).collect();
+            let interfaces = binding
+                .interfaces
+                .iter()
+                .filter(|interface| {
+                    interface.producer_task_id == id
+                        || interface
+                            .consumer_task_ids
+                            .iter()
+                            .any(|consumer| consumer == id)
+                        || interface
+                            .requirement_ids
+                            .iter()
+                            .any(|requirement| slice_requirement_ids.contains(requirement.as_str()))
+                })
+                .cloned()
+                .collect();
+            let slice_requirements = slice
+                .requirement_ids
+                .iter()
+                .map(|requirement_id| {
+                    requirements_by_id
+                        .get(requirement_id.as_str())
+                        .map(|record| (*record).clone())
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "task `{id}` slice `{}` lost requirement `{requirement_id}`",
+                                slice.id
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let slice_evidence = slice
+                .evidence_ids
+                .iter()
+                .map(|evidence_id| {
+                    evidence_by_id
+                        .get(evidence_id.as_str())
+                        .map(|record| (*record).clone())
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "task `{id}` slice `{}` lost evidence `{evidence_id}`",
+                                slice.id
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            items.push(TaskDetailInput {
+                index,
+                id: id.to_string(),
+                slice_id: slice.id.clone(),
+                slice_index,
+                slice_count,
+                brief: brief.clone(),
+                owned_files: task_binding.owned_files.clone(),
+                requirements: slice_requirements,
+                evidence: slice_evidence,
+                interfaces,
+                objective: slice.objective.clone(),
+                acceptance_evidence: slice.acceptance_evidence.clone(),
+            });
+        }
+    }
+    Ok(items)
+}
+
 #[derive(Debug, Deserialize)]
 struct TaskDetailCitation {
-    quote: String,
+    requirement_id: String,
     applies_as: String,
 }
 
@@ -31188,9 +32207,98 @@ struct CompiledTaskDetail {
 struct TaskDetailOutcome {
     index: usize,
     id: String,
+    slice_id: String,
+    slice_index: usize,
+    slice_count: usize,
     brief: String,
     owned_files: Vec<String>,
     compiled: std::result::Result<CompiledTaskDetail, String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct RequirementRecord {
+    id: String,
+    section: String,
+    quote: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct EvidenceRecord {
+    id: String,
+    quote: String,
+    authority: &'static str,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct RequirementSliceDraft {
+    id: String,
+    objective: String,
+    requirement_ids: Vec<String>,
+    evidence_ids: Vec<String>,
+    acceptance_evidence: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct TaskRequirementBindingDraft {
+    task_id: String,
+    owns_requirement_ids: Vec<String>,
+    applies_requirement_ids: Vec<String>,
+    verifies_requirement_ids: Vec<String>,
+    depends_on: Vec<String>,
+    owned_files: Vec<String>,
+    slices: Vec<RequirementSliceDraft>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RequirementInterfaceDraft {
+    #[serde(default)]
+    id: String,
+    producer_task_id: String,
+    consumer_task_ids: Vec<String>,
+    requirement_ids: Vec<String>,
+    contract: String,
+    requires_completed_artifact: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RequirementBindingDraft {
+    bindings: Vec<TaskRequirementBindingDraft>,
+    interfaces: Vec<RequirementInterfaceDraft>,
+}
+
+#[derive(Clone, Debug)]
+struct CompiledTaskBinding {
+    task_id: String,
+    owns_requirement_ids: Vec<String>,
+    applies_requirement_ids: Vec<String>,
+    verifies_requirement_ids: Vec<String>,
+    depends_on: Vec<String>,
+    owned_files: Vec<String>,
+    slices: Vec<RequirementSliceDraft>,
+}
+
+#[derive(Clone, Debug)]
+struct CompiledRequirementBinding {
+    tasks: HashMap<String, CompiledTaskBinding>,
+    interfaces: Vec<RequirementInterfaceDraft>,
+    owned_requirements: usize,
+    slice_count: usize,
+}
+
+#[derive(Clone, Debug)]
+struct TaskDetailInput {
+    index: usize,
+    id: String,
+    slice_id: String,
+    slice_index: usize,
+    slice_count: usize,
+    brief: String,
+    owned_files: Vec<String>,
+    requirements: Vec<RequirementRecord>,
+    evidence: Vec<EvidenceRecord>,
+    interfaces: Vec<RequirementInterfaceDraft>,
+    objective: String,
+    acceptance_evidence: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -31274,9 +32382,9 @@ fn task_detail_schema() -> serde_json::Value {
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["quote", "applies_as"],
+                    "required": ["requirement_id", "applies_as"],
                     "properties": {
-                        "quote": {"type": "string"},
+                        "requirement_id": {"type": "string"},
                         "applies_as": {"type": "string"}
                     }
                 }
@@ -31292,9 +32400,9 @@ fn task_detail_schema() -> serde_json::Value {
 fn compile_task_detail(
     raw: &str,
     task_id: &str,
-    brief: &str,
+    slice_id: &str,
     owned_files: &str,
-    source: &str,
+    requirements: &[RequirementRecord],
 ) -> Result<CompiledTaskDetail> {
     let raw = strip_code_fences(raw);
     let detail: TaskDetailDraft = serde_json::from_str(raw.trim())
@@ -31314,14 +32422,26 @@ fn compile_task_detail(
     if detail.requirement_citations.is_empty() {
         bail!("typed detail has no requirement citation");
     }
+    let expected: HashMap<&str, &str> = requirements
+        .iter()
+        .map(|requirement| (requirement.id.as_str(), requirement.quote.as_str()))
+        .collect();
+    let mut cited = HashSet::new();
     for citation in &detail.requirement_citations {
-        let quote = citation.quote.trim();
-        if quote.is_empty() || citation.applies_as.trim().is_empty() {
+        let requirement_id = citation.requirement_id.trim();
+        if requirement_id.is_empty() || citation.applies_as.trim().is_empty() {
             bail!("typed detail has an empty requirement citation");
         }
-        if !source.contains(quote) {
-            bail!("typed detail citation is not present in the supplied task sources: {quote:?}");
+        expected.get(requirement_id).ok_or_else(|| {
+            anyhow!("typed detail cites requirement id outside its owned slice: `{requirement_id}`")
+        })?;
+        if !cited.insert(requirement_id) {
+            bail!("typed detail repeats requirement citation `{requirement_id}`");
         }
+    }
+    if cited.len() != expected.len() {
+        let missing: Vec<&&str> = expected.keys().filter(|id| !cited.contains(**id)).collect();
+        bail!("typed detail omitted requirement ids from its slice: {missing:?}");
     }
 
     let render_list = |heading: &str, values: &[String], out: &mut String| {
@@ -31337,7 +32457,7 @@ fn compile_task_detail(
         }
     };
     let mut rendered = format!(
-        "TASK [{task_id}]\nObjective: {}\nOwned files (exclusive): {}\n\nRequirement trace:\n",
+        "ACCEPTANCE SLICE [{task_id}/{slice_id}]\nObjective: {}\nOwned files (exclusive): {}\n\nRequirement trace:\n",
         detail.objective.trim(),
         if owned_files.trim().is_empty() {
             "(read-only; no file ownership)"
@@ -31346,8 +32466,14 @@ fn compile_task_detail(
         }
     );
     for citation in &detail.requirement_citations {
-        rendered.push_str("- SOURCE: ");
-        rendered.push_str(citation.quote.trim());
+        rendered.push_str("- REQUIREMENT [");
+        rendered.push_str(citation.requirement_id.trim());
+        rendered.push_str("] SOURCE: ");
+        rendered.push_str(
+            expected
+                .get(citation.requirement_id.trim())
+                .expect("requirement citation validated above"),
+        );
         rendered.push_str("\n  APPLIES AS: ");
         rendered.push_str(citation.applies_as.trim());
         rendered.push('\n');
@@ -31369,8 +32495,6 @@ fn compile_task_detail(
         &detail.acceptance_checks,
         &mut rendered,
     );
-    rendered.push_str("\nArchitect brief retained for provenance:\n");
-    rendered.push_str(brief.trim());
 
     Ok(CompiledTaskDetail {
         rendered,
@@ -31378,6 +32502,33 @@ fn compile_task_detail(
         interfaces: detail.interfaces.len(),
         acceptance_checks: detail.acceptance_checks.len(),
     })
+}
+
+fn merge_compiled_task_slices(
+    task_id: &str,
+    brief: &str,
+    owned_files: &[String],
+    mut slices: Vec<(usize, CompiledTaskDetail)>,
+) -> String {
+    slices.sort_by_key(|(index, _)| *index);
+    let files = if owned_files.is_empty() {
+        "(read-only; no file ownership)".to_string()
+    } else {
+        owned_files.join(", ")
+    };
+    let mut rendered = format!(
+        "TASK [{task_id}]\nOwned files (exclusive): {files}\n\nSemantic acceptance slices:\n\n"
+    );
+    for (position, (_, slice)) in slices.into_iter().enumerate() {
+        if position > 0 {
+            rendered.push_str("\n---\n\n");
+        }
+        rendered.push_str(slice.rendered.trim());
+        rendered.push('\n');
+    }
+    rendered.push_str("\nArchitect brief retained for provenance:\n");
+    rendered.push_str(brief.trim());
+    rendered
 }
 
 fn pillars_schema() -> serde_json::Value {
@@ -33468,7 +34619,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // the live prompt would let model prose invent a "your call" region and silence a question the user
     // actually needed to answer — research output routinely contains "either is defensible", which is one of
     // the markers verbatim. Captured after the turn-context strip so it is the spec and nothing else.
-    *dispatcher.spec_frozen.lock().unwrap() = opts.prompt.clone();
+    let raw_user_spec = opts.prompt.clone();
+    *dispatcher.spec_frozen.lock().unwrap() = raw_user_spec.clone();
 
     // Parallel research-planning: scope independent research questions, run them across the fleet,
     // feed the findings into the planner. Best-effort — never blocks the run.
@@ -35224,11 +36376,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // loop-resident survives past this point.
     let (plan_json, dag) = if plan_needs_detail {
         let wm: Vec<String> = fleet_slot_models(&devices);
+        let binding_spec = if user_decisions.trim().is_empty() {
+            raw_user_spec.clone()
+        } else {
+            format!("{}{}", raw_user_spec.trim_end(), user_decisions)
+        };
         dispatcher
             .detail_plan(
                 &cfg.planner_model,
                 wm,
-                &opts.prompt,
+                &binding_spec,
                 &research_findings,
                 &plan_json,
             )
