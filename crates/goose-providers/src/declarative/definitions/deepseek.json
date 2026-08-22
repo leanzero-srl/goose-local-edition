@@ -7,6 +7,16 @@
   "base_url": "https://api.deepseek.com",
   "models": [
     {
+      "name": "deepseek-v4-flash",
+      "context_limit": 1000000,
+      "reasoning": true
+    },
+    {
+      "name": "deepseek-v4-pro",
+      "context_limit": 1000000,
+      "reasoning": true
+    },
+    {
       "name": "deepseek-chat",
       "context_limit": 128000,
       "input_token_cost": null,
@@ -26,5 +36,6 @@
   "headers": null,
   "timeout_seconds": null,
   "preserves_thinking": true,
+  "openai_request_profile": "deepseek_v4",
   "supports_streaming": true
 }
