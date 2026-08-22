@@ -131,6 +131,32 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(summary["first_output_at"], "now")
         self.assertEqual(summary["malformed_lines"], 0)
 
+    def test_outstanding_budget_reservation_makes_ambiguous_work_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            ledger = Path(raw) / "budget-ledger.json"
+            ledger.write_text(
+                json.dumps(
+                    {
+                        "outstanding": {
+                            "req-match": {
+                                "provider": "google",
+                                "model": "gemini-3.7-flash",
+                            },
+                            "req-other": {
+                                "provider": "zai_api",
+                                "model": "glm-5.3",
+                            },
+                        }
+                    }
+                )
+            )
+            ids, error = cloud_sb7.entrant_outstanding_reservations(
+                {"budget_ledger": str(ledger)},
+                {"provider": "google", "model": "gemini-3.7-flash"},
+            )
+        self.assertIsNone(error)
+        self.assertEqual(ids, ["req-match"])
+
     def test_binary_marker_scan_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             binary = Path(raw) / "goose"

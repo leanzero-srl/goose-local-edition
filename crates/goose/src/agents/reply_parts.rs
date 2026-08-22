@@ -293,12 +293,15 @@ impl Agent {
         lifecycle_settings: LifecycleSettings,
     ) -> Result<MessageStream, ProviderError> {
         let config = model_config.clone();
-        let lifecycle = ProviderRequestLifecycle::begin(
+        let reservation =
+            crate::benchmark_budget::reserve_request(provider.get_name(), &model_config)?;
+        let mut lifecycle = ProviderRequestLifecycle::begin(
             lifecycle_settings,
             provider.get_name().to_string(),
             model_config.model_name.clone(),
             session_id.to_string(),
-        );
+            reservation,
+        )?;
 
         let filtered_messages: Vec<Message> = messages
             .iter()
@@ -339,16 +342,19 @@ impl Agent {
         // If there was an error creating the stream, return a stream that yields that error
         let stream = match stream_result {
             Ok(s) => {
-                lifecycle.admitted();
+                lifecycle.admitted()?;
                 s
             }
             Err(e) => {
                 let enhanced_error = enhance_model_error(e, &provider, config.toolshim).await;
-                lifecycle.pre_admission_error(&enhanced_error);
+                let emitted_error = match lifecycle.pre_admission_error(&enhanced_error) {
+                    Ok(_) => enhanced_error,
+                    Err(lifecycle_error) => lifecycle_error,
+                };
                 // Return a stream that immediately yields the error
                 // This allows the error to be caught by existing error handling in agent.rs
                 return Ok(Box::pin(try_stream! {
-                    yield Err(enhanced_error)?;
+                    yield Err(emitted_error)?;
                 }));
             }
         };
