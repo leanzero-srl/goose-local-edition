@@ -676,6 +676,9 @@ pub struct MessageMetadata {
     pub agent_visible: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inference: Option<InferenceMetadata>,
+    /// Whether the provider stopped generation at its output-token limit.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub output_token_limit_reached: bool,
     /// Whether this message is a steer injected into an active run. UI-only:
     /// surfaced as `_meta.goose.steer` so clients can mark the steer boundary
     /// without matching user-visible text. Never sent to providers.
@@ -689,6 +692,7 @@ impl Default for MessageMetadata {
             user_visible: true,
             agent_visible: true,
             inference: None,
+            output_token_limit_reached: false,
             steer: false,
         }
     }
