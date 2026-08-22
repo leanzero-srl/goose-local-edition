@@ -201,11 +201,9 @@ pub struct SwarmConfig {
     /// is in. Clamped to [10, draft_timeout]. None => default 45. env GOOSE_SWARM_STRAGGLER_GRACE_SECS wins.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub straggler_grace_secs: Option<u64>,
-    /// #135 degrade-straggler-stop: extend straggler-stop to the CONTRACTS and DETAIL planning fanouts.
-    /// SEPARATE from `straggler_stop` because these CAN change a worker's build inputs — a stopped straggler
-    /// drops that module's frozen interface / detailed spec, degrading exactly like a timed-out contract/
-    /// detail (the module builds from its brief; integrate-verify reconciles). At most one module degrades.
-    /// None => OFF. env GOOSE_SWARM_STRAGGLER_STOP_DEGRADE overrides. Reuses `straggler_grace_secs`.
+    /// #135 legacy degrade-straggler gate. It now applies only to complementary research scouts. Detail and
+    /// contract compilers author required build input and are never aborted. None => OFF.
+    /// env GOOSE_SWARM_STRAGGLER_STOP_DEGRADE overrides. Reuses `straggler_grace_secs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub straggler_stop_degrade: Option<bool>,
     /// MCP extensions (by builder name) every worker gets: "context7" | "web-search" | "doc-processor".
@@ -3466,21 +3464,11 @@ fn uncapped() -> bool {
 /// Duration (deadline sums, headroom division). Far beyond any run; never a real bound.
 const UNCAPPED_SECS: u64 = 604_800;
 
-/// The wall for a planner-side helper call (judge review, question answerer, per-task reviewer,
-/// test generator, finding verifier, split partitioner): the configured no-progress window with
-/// a 90s floor — or no wall at all under GOOSE_SWARM_UNCAPPED.
-/// Turn budget for small planner-side agent loops (detail specs, contract stubs). 6 was sized on
-/// qwen3.6's habits; qwen3.8 spends turns on tool reads plus deep thinking and hits it BEFORE
-/// emitting the deliverable — MEASURED uncapped r0: 6 of the first 8 detail calls returned the
-/// max-turns filler and core modules fell back to one-line skeleton briefs (the 44%-vs-90% class).
-/// Under uncapped the loop gets room; the judge/repeat-break govern runaway loops, not a turn count.
-fn planner_side_turns() -> u32 {
-    if uncapped() {
-        60
-    } else {
-        6
-    }
-}
+/// `SessionConfig::max_turns = None` means "use the global default", not unlimited. Authority compilers use
+/// this sentinel so a hidden global GOOSE_MAX_TURNS cannot truncate required plan input. It is operationally
+/// unbounded (one compiler session cannot execute 4.29 billion agent turns), without changing core semantics
+/// for other callers that deliberately rely on `None`.
+const UNBOUNDED_AGENT_TURNS: u32 = u32::MAX;
 
 fn planner_wall(planner_timeout_secs: u64) -> u64 {
     if uncapped() {
@@ -3513,24 +3501,15 @@ fn spiral_break_chars(cfg: Option<usize>) -> usize {
     spiral_break_chars_resolved(std::env::var("GOOSE_SWARM_SPIRAL_BREAK_CHARS").ok(), cfg)
 }
 
-/// #135: hard floor for the spiral budget.
-///
-/// CORRECTED 2026-07-20 — the original floor was derived from ONE scout in ONE run (6,312 chars) and was
-/// WRONG. Re-measured over 428 terminal call digests across every run on disk:
-///   kind        n   p50     p90     max     %cut@12k
-///   worker    205  2,359  19,524  46,165     16.6%
-///   plandraft 116 11,008  24,220  57,443     44.8%   <-- MEDIAN alone is ~the old floor
-///   detail     58      2     511   1,384      0.0%
-///   scout      33  2,635   5,882  46,191      3.0%   (the 46,191 IS the pathology)
-///   contract   17  2,820  11,158  18,518      5.9%
-/// A single global budget cannot serve `detail` (max 1,384) and `plandraft` (max 57,443) — they are 40x
-/// apart — so the budget is now scaled PER CALL KIND by `spiral_budget_for`. This floor applies to the
-/// SMALL kinds (scout/detail) where 12,000 is still ~1.8x the worst healthy observation.
+/// #135: hard floor for call kinds that still use the legacy volume breaker. Authority compilers do not:
+/// the later Qwen3.8 corpus invalidated the old claim that healthy details top out at 1,384 characters
+/// (completed details reached 63,878, with one interrupted at 203,447). Volume cannot distinguish a deep
+/// detail from a loop, and losing one deletes required build input. The floor remains only for call kinds
+/// whose caller has an explicit safe degrade/retry path.
 const SPIRAL_BREAK_MIN_CHARS: usize = 12_000;
 
-/// #135: per-kind multiplier on the configured spiral budget. Derived from the table above — each kind's
-/// budget must sit ABOVE that kind's healthy maximum, or the lever silently kills legitimate work that has
-/// NO retry path. Returns 0 to DISARM the kind entirely.
+/// #135: per-kind multiplier on the configured spiral budget. Returns 0 when the call has no proven safe
+/// continuation/fallback; a configured generic lever cannot override that admission invariant.
 fn spiral_budget_for(activity_key: Option<&str>, base: usize) -> usize {
     if base == 0 {
         return 0;
@@ -3543,13 +3522,12 @@ fn spiral_budget_for(activity_key: Option<&str>, base: usize) -> usize {
         // volume threshold that separates a healthy deep draft from a spiral here, and a killed draft is
         // simply gone from best-of-N. Refusing to guess is the correct answer for this kind.
         Some(k) if k.starts_with("plandraft-") => 0,
-        // Healthy contracts reach 18,518.
-        Some(k) if k.starts_with("contract-") => base.saturating_mul(3),
+        // Details and contracts author build authority and have no safe continuation/fallback. Their typed,
+        // response-only compilers are bounded by schema and tool surface, never by output volume.
+        Some(k) if k.starts_with("contract-") || k.starts_with("detail-") => 0,
         // Scouts: healthy p90 5,882 and worst healthy 6,673, against a measured 46,191 pathology — a ~7x
         // gap, the one kind where volume separates cleanly. Base applies.
         Some(k) if k.starts_with("scout-") => base,
-        // Details are tiny (max 1,384). Base applies with enormous headroom.
-        Some(k) if k.starts_with("detail-") => base,
         // WORKERS: healthy reach 46,165. 5x the floor (60k) clears that with margin.
         _ => base.saturating_mul(5),
     }
@@ -4865,8 +4843,6 @@ mod tests {
         let base = SPIRAL_BREAK_MIN_CHARS; // 12_000
         for (key, healthy_max) in [
             (Some("scout-libraries"), 6_673usize),
-            (Some("detail-cli"), 1_384),
-            (Some("contract-db"), 18_518),
             (Some("cli-module"), 46_165), // a worker: activity_key is the task id
         ] {
             let b = spiral_budget_for(key, base);
@@ -4878,6 +4854,9 @@ mod tests {
         // Plan drafts are DISARMED: healthy ones reach 57,443 with zero tool calls, so no volume
         // threshold separates deep reasoning from a spiral for this kind.
         assert_eq!(spiral_budget_for(Some("plandraft-0"), base), 0);
+        // Authority-bearing compilers are also disarmed: losing one means losing required build input.
+        assert_eq!(spiral_budget_for(Some("detail-cli"), base), 0);
+        assert_eq!(spiral_budget_for(Some("contract-db"), base), 0);
         // The sink keeps its own wall-clock cap.
         assert_eq!(spiral_budget_for(Some("integrate-verify"), base), 0);
         // OFF stays OFF for every kind.
@@ -15168,6 +15147,10 @@ pub struct GooseAgentDispatcher {
     /// cross-module drift. Empty until the GOOSE_SWARM_CONTRACTS stub pass populates it (stage 2b); set
     /// once before the EXECUTE phase, then read by every worker. Empty -> the injection is a no-op.
     contracts: std::sync::OnceLock<String>,
+    /// Contract stubs compiled opportunistically after their typed detail completes. The later CONTRACTS
+    /// phase drains these by module id and generates only genuinely missing stubs, preserving one canonical
+    /// frozen bundle while removing the global detail→contract barrier.
+    prefetched_contracts: Mutex<HashMap<String, String>>,
     /// APP PILLARS (GOOSE_SWARM_GOALS): a small set of distilled, app-level acceptance criteria (the
     /// non-negotiable goals + interface/invariant shape) injected — as a pre-rendered block — into EVERY
     /// worker prompt so modules cohere to the same north star through context compaction. Distilled once
@@ -15255,11 +15238,11 @@ pub struct GooseAgentDispatcher {
     straggler_stop: bool,
     /// #135: grace window (seconds, unclamped) for the last lagging draft; clamped to [10, draft_timeout] at
     /// the drafting call site. Resolved once at construction (default 45).
-    /// G1: None = derive per round (drafts); Some = explicit env/config, fixed. Non-draft fans
-    /// (scouts, contracts/details straggler) keep the pre-G1 fixed default via unwrap_or(45).
+    /// G1: None = derive per round (drafts); Some = explicit env/config, fixed. The scout fan keeps the
+    /// pre-G1 fixed default via unwrap_or(45).
     straggler_grace_secs: Option<u64>,
-    /// #135 degrade: extend straggler-stop to the contracts + detail fanouts (which can change build inputs).
-    /// Resolved once at construction (default OFF).
+    /// #135 legacy degrade gate, retained for advisory scouts only. Required detail/contract compilers ignore
+    /// it and await every admitted request. Resolved once at construction (default OFF).
     straggler_stop_degrade: bool,
     /// #122 DETAIL MEMO: full-input detail key -> detailed spec, reused across retarget/replan rounds so an
     /// UNCHANGED subtask is not re-detailed (~75s) every round. Empty + never read/written unless
@@ -15359,6 +15342,7 @@ impl GooseAgentDispatcher {
             allow_model_load,
             sampling,
             contracts: std::sync::OnceLock::new(),
+            prefetched_contracts: Mutex::new(HashMap::new()),
             pillars: std::sync::OnceLock::new(),
             sink_tree_files: std::sync::OnceLock::new(),
             spec_shadows: Mutex::new(HashMap::new()),
@@ -15671,7 +15655,7 @@ impl GooseAgentDispatcher {
             system_prompt,
             user_text,
             response,
-            max_turns,
+            Some(max_turns),
             extensions,
             AgentToolSurface::Developer,
             self.planner_timeout_secs,
@@ -15684,7 +15668,6 @@ impl GooseAgentDispatcher {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     async fn run_agent(
         &self,
@@ -15704,7 +15687,7 @@ impl GooseAgentDispatcher {
             system_prompt,
             user_text,
             response,
-            max_turns,
+            Some(max_turns),
             extensions,
             AgentToolSurface::Developer,
             idle_secs,
@@ -15719,7 +15702,8 @@ impl GooseAgentDispatcher {
 
     /// A planner-side generation with no filesystem or shell tools. When `response` is present the recipe's
     /// typed `final_output` tool remains available; no developer extension is installed. Detail and contract
-    /// compilation use this path so planning cannot create, edit, or remove project artifacts.
+    /// compilation use this path so planning cannot create, edit, or remove project artifacts. These compiler
+    /// sessions have no fixed turn ceiling; their typed output/tool surface is the bound.
     #[allow(clippy::too_many_arguments)]
     async fn run_response_only_agent(
         &self,
@@ -15727,7 +15711,6 @@ impl GooseAgentDispatcher {
         system_prompt: String,
         user_text: String,
         response: Option<Response>,
-        max_turns: u32,
         idle_secs: u64,
         activity_key: Option<&str>,
     ) -> Result<RunAgentOut> {
@@ -15737,7 +15720,7 @@ impl GooseAgentDispatcher {
             system_prompt,
             user_text,
             response,
-            max_turns,
+            Some(UNBOUNDED_AGENT_TURNS),
             &[],
             AgentToolSurface::ResponseOnly,
             idle_secs,
@@ -15761,7 +15744,7 @@ impl GooseAgentDispatcher {
         system_prompt: String,
         user_text: String,
         response: Option<Response>,
-        max_turns: u32,
+        max_turns: Option<u32>,
         extensions: &[ExtensionConfig],
         tool_surface: AgentToolSurface,
         idle_secs: u64,
@@ -15920,7 +15903,7 @@ impl GooseAgentDispatcher {
         let session_config = SessionConfig {
             id: session_id.clone(),
             schedule_id: None,
-            max_turns: Some(max_turns),
+            max_turns,
             retry_config: None,
         };
 
@@ -16097,6 +16080,13 @@ impl GooseAgentDispatcher {
         }
         let sink_deadline = sink_cap_plan
             .map(|(_, secs, _)| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
+        // Detail and contract compilers author build authority but have no safe continuation protocol yet.
+        // Cutting their stream loses the only admitted result; replying with a nudge before the provider proves
+        // the old decode terminal can overlap two requests. Keep their activity digest, but do not let an
+        // elapsed/volume/repetition heuristic or synchronous judge terminate them.
+        let authority_compiler = tool_surface == AgentToolSurface::ResponseOnly
+            && activity_key
+                .is_some_and(|key| key.starts_with("detail-") || key.starts_with("contract-"));
         // PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS): the `idle` watchdog above only fires when the
         // stream goes SILENT. A task that streams THINKING tokens continuously resets it forever — measured
         // live, tasks ran 899s/348s/26min while emitting reasoning tokens and were never cut (the pathology
@@ -16104,10 +16094,10 @@ impl GooseAgentDispatcher {
         // may spend WITHOUT a PRODUCTIVE event (a real tool call/result, final_output, or non-empty non-thinking
         // text). It is PROGRESS-shaped, not wall-clock: a slow-but-working local model emits a tool event every
         // turn and resets it, so a legitimate long build survives while a thinking-only spiral is cut. 0 = OFF
-        // (byte-identical). Gated OFF for the integrate-verify SINK: the sink owns no deliverables and is bounded
-        // by its own wall-clock cap (GOOSE_SWARM_SINK_CAP_SECS above); re-routing it on a thinking stall would
-        // only re-prefill the whole tree.
-        let thinking_only_budget = if activity_key == Some("integrate-verify") {
+        // (byte-identical). Gated OFF for the integrate-verify SINK and authority-bearing response compilers:
+        // neither has a safe re-route/continuation path.
+        let thinking_only_budget = if activity_key == Some("integrate-verify") || authority_compiler
+        {
             None
         } else {
             std::env::var("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS")
@@ -16124,28 +16114,27 @@ impl GooseAgentDispatcher {
         // they have no retry path — cutting one loses the whole planning round. The integrate-verify SINK is
         // exempt for the same reason the thinking watchdog exempts it (it owns no deliverable and is bounded by
         // its own wall-clock cap). OFF => these stay untouched and nothing below runs => byte-identical.
-        let repeat_break_on =
-            self.repeat_break && activity_key.is_some() && activity_key != Some("integrate-verify");
-        // #135 GLOBAL SPIRAL BREAK — the ONLY supervision that exists outside EXECUTE.
-        // Armed for EVERY call in EVERY phase (scout, plan draft, detail, contract, worker), because this
-        // shared agent seam is the single point they all pass through and the judge never sees any of them
-        // except workers. The SINK is exempt for the same reason thinking_only_budget exempts it: it owns no
-        // deliverable, is already bounded by its own wall-clock cap, and re-routing it re-prefills the tree.
-        // SAFE TO ARM EVERYWHERE because every planner-side phase already degrades gracefully on a lost call:
-        // a scout -> "proceeding on N of 3" (research tolerates a missing lens), a plan draft -> best-of-N
-        // drops it ("proceeding on 2 valid of 3"), a detail -> falls back to the skeleton brief (`_ => brief`),
-        // a contract -> the module builds without its frozen interface (identical to a contract timeout),
-        // a worker -> the existing stall path (salvage / degrade_on_stall / bounded retry). 0 => OFF.
-        let spiral_budget = spiral_budget_for(
-            activity_key,
-            spiral_break_chars(load_config().spiral_break_chars),
-        );
-        // #135 OMNI-JUDGE: the JUDGE itself, in EVERY phase. Armed for any call with an activity_key except
-        // the sink. Unlike spiral_budget this READS the reasoning, so it covers the kind a threshold cannot
-        // police at all — plan drafts, where healthy calls reach 57k chars and look identical by volume.
+        let repeat_break_on = self.repeat_break
+            && activity_key.is_some()
+            && activity_key != Some("integrate-verify")
+            && !authority_compiler;
+        // #135 GLOBAL SPIRAL BREAK. Authority-bearing response compilers are exempt: detail no longer has a
+        // one-line fallback, and silently dropping a contract result is not equivalent to finishing it.
+        let spiral_budget = if authority_compiler {
+            0
+        } else {
+            spiral_budget_for(
+                activity_key,
+                spiral_break_chars(load_config().spiral_break_chars),
+            )
+        };
+        // #135 OMNI-JUDGE: armed for calls with an activity key that have a safe continuation path. It is
+        // deliberately not synchronous supervision for authority compilers until provider-terminal
+        // cancellation and same-session continuation are proven end to end.
         let omni_judge_on = omni_judge_enabled(load_config().omni_judge)
             && activity_key.is_some()
-            && activity_key != Some("integrate-verify");
+            && activity_key != Some("integrate-verify")
+            && !authority_compiler;
         let mut omni_next_look = tokio::time::Instant::now()
             + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
         let mut omni_looks: u32 = 0;
@@ -16948,9 +16937,8 @@ impl GooseAgentDispatcher {
         let me = self.clone();
         let prompt = user_prompt.to_string();
         let lenses = select_lenses(is_amendment, max_lenses);
-        // #135 straggler-stop for scouts, now gated by `straggler_stop_degrade` (default OFF) rather than
-        // `straggler_stop` (default ON) — the same category CONTRACTS and DETAIL already sit in, and for the
-        // same stated reason: these fanouts CAN CHANGE A WORKER'S BUILD INPUTS.
+        // #135 straggler-stop for scouts, gated by the legacy `straggler_stop_degrade` switch (default OFF).
+        // Required contract/detail compilation no longer reads this gate; those requests are always awaited.
         //
         // THE ASYMMETRY THAT WAS MISSED. Plan drafts are REDUNDANT — best-of-N produces N candidates and one
         // is kept, so aborting the slowest costs nothing. Scout lenses are COMPLEMENTARY — each covers ground
@@ -17252,10 +17240,106 @@ impl GooseAgentDispatcher {
         p
     }
 
-    /// Generate signature-only interface stubs per module IN PARALLEL across the fleet and assemble them
-    /// into one frozen-contract bundle, so parallel workers build against the SAME interfaces (kills the
-    /// cross-module drift that passing isolation tests hide). One call per module, work-stolen over the
-    /// fleet; a slow/empty/failed stub just drops out of the bundle.
+    /// Compile one module's frozen interface. Contract compilation is response-only: the model cannot touch
+    /// the shared project tree. There is no wall-clock or volume cutoff on this authority-bearing request;
+    /// an explicitly configured retry begins only after the previous stream ended cleanly with empty output.
+    async fn generate_contract_stub(
+        self: &Arc<Self>,
+        module: ContractModuleInput,
+        model: String,
+        goal: String,
+        lang: TargetLang,
+        pipeline_stage: &'static str,
+    ) -> (String, String) {
+        let started = std::time::Instant::now();
+        let files = module
+            .owned_files
+            .iter()
+            .filter(|file| lang.is_source_file(file.as_str()))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "  {} contract {} → {}",
+            style("▸").cyan().bold(),
+            style(&module.id).bold(),
+            model
+        );
+        self.events.write_value(serde_json::json!({
+            "event": "contract_compile_started",
+            "task_id": &module.id,
+            "model": &model,
+            "pipeline_stage": pipeline_stage,
+            "tool_surface": "response-only",
+            "timeout_policy": "no-wall-volume-or-turn-cap",
+        }));
+        let (system_str, comment) = contract_stub_spec(lang);
+        let system = system_str.to_string();
+        let user = format!(
+            "Overall program: {goal}\n\nModule subtask [{}]: {}\nFiles it owns: {files}\n\n\
+             Emit signature-only stubs, each file preceded by a `{comment} <path>` header.",
+            module.id, module.description
+        );
+        let retry_on = swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry);
+        let attempts = if retry_on { 2 } else { 1 };
+        let contract_key = format!("contract-{}", module.id);
+        let mut stub = String::new();
+        let mut reason = "empty_text".to_string();
+        let mut attempts_used = 0usize;
+        for _ in 0..attempts {
+            attempts_used += 1;
+            match self
+                .run_response_only_agent(
+                    &model,
+                    system.clone(),
+                    user.clone(),
+                    None,
+                    0,
+                    Some(contract_key.as_str()),
+                )
+                .await
+            {
+                Ok(output) if !output.text.trim().is_empty() => {
+                    stub = output.text;
+                    break;
+                }
+                Ok(_) => reason = "empty_text".to_string(),
+                Err(error) => {
+                    reason = format!("agent_error: {}", error.to_string().replace('\n', " "));
+                    // A local stream error is not proof that LM Studio released the decode. Starting another
+                    // request here could overlap the still-admitted one, so only clean terminal emptiness is
+                    // eligible for the explicitly configured retry.
+                    break;
+                }
+            }
+        }
+        let stub = sanitize_generated_source(&strip_code_fences(&stub));
+        if stub.trim().is_empty() {
+            eprintln!(
+                "  {} contract {} produced NO stub ({}) — this module has no frozen interface; siblings may diverge",
+                style("⚠").yellow().bold(),
+                style(&module.id).bold(),
+                reason,
+            );
+        }
+        self.events.write_value(serde_json::json!({
+            "event": "contract_compile_completed",
+            "task_id": &module.id,
+            "pipeline_stage": pipeline_stage,
+            "tool_surface": "response-only",
+            "attempts": attempts_used,
+            "retry_configured": retry_on,
+            "stub_chars": stub.chars().count(),
+            "produced": !stub.trim().is_empty(),
+            "empty_reason": if stub.trim().is_empty() { Some(reason) } else { None },
+            "secs": started.elapsed().as_secs_f64(),
+        }));
+        (module.id, stub)
+    }
+
+    /// Assemble one canonical frozen-contract bundle. Stubs already compiled behind the detail fan are
+    /// drained by module id; only genuinely missing demand enters this fan, and every admitted request is
+    /// awaited. Requested module order, rather than completion order, determines the bundle.
     async fn generate_contracts(
         self: &Arc<Self>,
         modules: Vec<TaskSpec>,
@@ -17263,121 +17347,49 @@ impl GooseAgentDispatcher {
         goal: &str,
         lang: TargetLang,
     ) -> String {
-        let goal = goal.to_string();
-        // #135 degrade-straggler-stop: once every contract but one is in, stop the lone lagging one (measured
-        // 7+ min on one node while two idled). Safe because a dropped contract == a timed-out/empty contract:
-        // the bundle-assembly loop already skips empty stubs, the module builds without a frozen self-
-        // interface, and integrate-verify reconciles. grace 0 => OFF => byte-identical await-all.
-        let contract_grace = if self.straggler_stop_degrade {
-            self.straggler_grace_secs
-                .unwrap_or(45)
-                .clamp(10, self.worker_timeout_secs.max(10))
-        } else {
-            0
+        let modules: Vec<ContractModuleInput> =
+            modules.into_iter().map(ContractModuleInput::from).collect();
+        let demand = {
+            let mut cache = self.prefetched_contracts.lock().unwrap();
+            resolve_contract_demand(modules, &mut cache)
         };
+        let requested = demand.requested_order.len();
+        let prefetched = demand.prefetched_by_id.len();
+        let missing = demand.missing.len();
+        self.events.write_value(serde_json::json!({
+            "event": "contract_pipeline_resolved",
+            "requested": requested,
+            "prefetched": prefetched,
+            "missing": missing,
+            "auxiliary_policy": "required-production-contracts-only",
+            "tool_surface": "response-only",
+            "straggler_abort": false,
+            "timeout_policy": "no-wall-volume-or-turn-cap",
+            "supervision": "activity-only-no-abort",
+        }));
         let me = self.clone();
-        let stubs =
-            fanout_over_fleet_straggler(one_lane_per_host(worker_models), modules, contract_grace, "contract", move |spec, model| {
-            let me = me.clone();
-            let goal = goal.clone();
-            async move {
-                let files = spec
-                    .owned_files
-                    .iter()
-                    .filter(|f| lang.is_source_file(f.as_str()))
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                eprintln!(
-                    "  {} contract {} → {}",
-                    style("▸").cyan().bold(),
-                    style(&spec.id).bold(),
-                    model
-                );
-                let (system_str, comment) = contract_stub_spec(lang);
-                let system = system_str.to_string();
-                let user = format!(
-                    "Overall program: {goal}\n\nModule subtask [{}]: {}\nFiles it owns: {files}\n\n\
-                     Emit signature-only stubs, each file preceded by a `{comment} <path>` header.",
-                    spec.id, spec.description
-                );
-                // The contract stub is a model call on the SAME fleet as workers, but the old 75/150s budget
-                // was ~5x below the worker budget — measured on mustsolve-test2 it TIMED OUT on all 3 modules
-                // on the 262k-ctx fleet, so every module lost its frozen interface and the granular modules
-                // cascade-FAILED into an unusable app. Give the stub the worker budget (the proven-adequate
-                // fleet timeout) so it actually completes; the gated retry is then a second full-budget attempt.
-                // The per-module empty-reason warning below is ALWAYS on so a silently-empty CONTRACTS phase —
-                // which strips every module's frozen interface — can never recur unseen.
-                let retry_on =
-                    swarm_gate_cfg("GOOSE_SWARM_CONTRACT_RETRY", load_config().contract_retry);
-                let attempts = if retry_on { 2 } else { 1 };
-                let stub_budget = if uncapped() {
-                    UNCAPPED_SECS
-                } else {
-                    me.worker_timeout_secs.max(120)
-                };
-                // Write a per-module contract digest so the CONTRACTS phase shows live per-node activity (dev
-                // verbosity) instead of a black box — the desktop reads .swarm/activity/contract-<id>.json.
-                let contract_key = format!("contract-{}", spec.id);
-                let mut stub = String::new();
-                let mut reason = "empty_text".to_string();
-                for _attempt in 0..attempts {
-                    let budget = std::time::Duration::from_secs(stub_budget);
-                    match tokio::time::timeout(
-                        budget,
-                        me.run_agent(
-                            &model,
-                            system.clone(),
-                            user.clone(),
-                            None,
-                            planner_side_turns(),
-                            &[],
-                            0,
-                            Some(contract_key.as_str()),
-                        ),
-                    )
-                    .await
-                    {
-                        Ok(Ok(o)) if !o.text.trim().is_empty() => {
-                            stub = o.text;
-                            break;
-                        }
-                        Ok(Ok(_)) => reason = "empty_text".to_string(),
-                        Ok(Err(e)) => {
-                            reason = format!("agent_error: {}", e.to_string().replace('\n', " "))
-                        }
-                        Err(_) => reason = "timeout".to_string(),
-                    }
+        let goal = goal.to_string();
+        let generated = fanout_over_fleet(
+            one_lane_per_host(worker_models),
+            demand.missing,
+            move |module, model| {
+                let me = me.clone();
+                let goal = goal.clone();
+                async move {
+                    me.generate_contract_stub(module, model, goal, lang, "contract_phase")
+                        .await
                 }
-                if stub.trim().is_empty() {
-                    eprintln!(
-                        "  {} contract {} produced NO stub ({}) — this module has no frozen interface; siblings may diverge",
-                        style("⚠").yellow().bold(),
-                        style(&spec.id).bold(),
-                        reason,
-                    );
-                }
-                (spec.id, stub)
-            }
-        })
+            },
+        )
         .await;
-        let mut bundle = String::new();
-        for (id, stub) in stubs {
-            // Sanitize BEFORE freezing: a stub whose only defect is an em-dash is a real interface that
-            // merely does not parse, and freezing it as-is hands the worker prose instead of a signature.
-            let stub = sanitize_generated_source(&strip_code_fences(&stub));
-            let stub = stub.trim();
-            if !stub.is_empty() {
-                bundle.push_str(&format!("### module: {id}\n{stub}\n\n"));
-            }
-        }
-        bundle
+        let mut stubs_by_id = demand.prefetched_by_id;
+        stubs_by_id.extend(generated);
+        render_contract_bundle(demand.requested_order, stubs_by_id)
     }
 
-    /// Parallel planning: the 27B drafts a STRUCTURAL SKELETON (brief one-line descriptions) fast, then
-    /// the fleet writes every subtask's implementation-ready spec IN PARALLEL, and we assemble the final
-    /// plan deterministically. Returns the same plan JSON `plan()` would — callers fall back to `plan()`
-    /// on Err. The skeleton itself is a valid plan, so a total detailer failure degrades gracefully.
+    /// Parallel planning: the fleet drafts structural skeleton candidates and this method returns the selected
+    /// skeleton. `detail_plan` is the single post-loop seam that compiles it into implementation-ready tasks;
+    /// invalid detail output fails before dispatch rather than silently shipping a brief.
     #[allow(clippy::too_many_arguments)]
     async fn parallel_plan(
         self: &Arc<Self>,
@@ -18553,12 +18565,12 @@ impl GooseAgentDispatcher {
     /// DEFER_DETAIL (speed hunt 2026-08-19): the detail fan, hoisted OUT of `'plan_loop`. It used to run
     /// at the tail of every parallel_plan call, so each retarget/ask redraft re-bought the whole fan —
     /// MEASURED baseline-n3-r0: 3× fan = 26 detail_completed with 18/18 same-id rework by round 2, ~11-30
-    /// min per retargeting run, and detail_fallback timeouts hit the hardest modules before dispatch. The
+    /// min per retargeting run, and detail fallbacks hit the hardest modules before dispatch. The
     /// loop's own machinery (skeleton drafts, agreement, clarity, retarget/ask) reads only prompt +
     /// skeleton, so the fan now runs exactly ONCE, here, on the plan the loop finally ships: the SAME fan
-    /// (same prompts, same memo, same detail_completed/detail_fallback events, same T2 sink shaping), just
-    /// later. `user_prompt`/`research_findings` are the POST-ask values — the ask's answers are folded into
-    /// both before the loop exits, so specs are written against the answered spec.
+    /// once-selected skeleton is compiled here, later. `user_prompt`/`research_findings` are the POST-ask
+    /// values — the ask's answers are folded into both before the loop exits, so specs are written against
+    /// the answered spec. Invalid typed output fails before dispatch; there is no brief fallback.
     ///
     /// Returns the ONLY (plan_json, dag) pair downstream (pillars/contracts/plan_loaded/fill-fan/
     /// Scheduler::run) may ever see — the single seam. Nothing loop-resident survives past it.
@@ -18587,7 +18599,7 @@ impl GooseAgentDispatcher {
                         .is_some_and(|i| i.starts_with("verify::"))
                 })
             });
-        let items: Vec<(usize, String, String, String)> = v
+        let items: Vec<(usize, String, String, Vec<String>)> = v
             .get("subtasks")
             .and_then(|s| s.as_array())
             .ok_or_else(|| anyhow!("skeleton has no subtasks array"))?
@@ -18636,9 +18648,8 @@ impl GooseAgentDispatcher {
                     .as_array()
                     .map(|a| {
                         a.iter()
-                            .filter_map(|f| f.as_str())
+                            .filter_map(|f| f.as_str().map(str::to_string))
                             .collect::<Vec<_>>()
-                            .join(", ")
                     })
                     .unwrap_or_default();
                 (
@@ -18668,12 +18679,13 @@ impl GooseAgentDispatcher {
         // (~75s LLM call). OFF => `items` passes through and `memo_keys` stays empty and unread => byte-identical.
         let mut memo_keys: std::collections::HashMap<usize, (String, String)> =
             std::collections::HashMap::new();
-        let items: Vec<(usize, String, String, String)> = if self.detail_memo_on {
+        let items: Vec<(usize, String, String, Vec<String>)> = if self.detail_memo_on {
             let cache = self.detail_memo.lock().unwrap();
             let mut remaining = Vec::with_capacity(items.len());
             let mut reused = 0usize;
             for (idx, id, brief, files) in items {
-                let key = detail_memo_key(&goal, &id, &brief, &files, &findings);
+                let files_text = files.join(", ");
+                let key = detail_memo_key(&goal, &id, &brief, &files_text, &findings);
                 if let Some(desc) = cache.get(&key) {
                     v["subtasks"][idx]["description"] = serde_json::Value::String(desc.clone());
                     reused += 1;
@@ -18694,143 +18706,236 @@ impl GooseAgentDispatcher {
         } else {
             items
         };
+        let contracts_on = swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts);
         self.events.write_value(serde_json::json!({
             "event": "plan_compile_resolved",
             "detail_format": "typed-v1",
             "detail_tool_surface": "response-only",
             "detail_straggler_abort": false,
+            "detail_timeout_policy": "no-wall-volume-or-turn-cap",
+            "detail_supervision": "activity-only-no-abort",
+            "contract_pipeline": contracts_on,
+            "contract_tool_surface": "response-only",
+            "contract_straggler_abort": false,
+            "contract_supervision": "activity-only-no-abort",
+            "auxiliary_policy": "required-production-contracts-only",
             "configured_straggler_stop_degrade": self.straggler_stop_degrade,
             "task_count_source": "job",
             "detail_items": items.len(),
             "lane_identity": "distinct-model-host",
             "full_goal_context": true,
         }));
-        let me = self.clone();
+        let detail_dispatcher = self.clone();
+        let detail_goal = goal.clone();
+        let detail_findings = findings.clone();
+        let contract_dispatcher = self.clone();
+        let contract_goal = goal.clone();
+        let event_sink = self.events.clone();
         // Detail is build authority, so an admitted request is never sacrificed to shorten the fan tail and a
-        // failed compiler can never silently collapse a module back to the architect's one-line brief.
-        let results = fanout_over_fleet(
+        // failed compiler can never silently collapse a module back to the architect's one-line brief. Once all
+        // details have been admitted, a released lane may compile an already-required contract for a completed
+        // module; pending detail always wins, and no work is invented merely to occupy a lane.
+        let pipeline = fanout_staged(
             one_lane_per_host(wm),
             items,
             move |(idx, id, brief, files), model| {
-            let me = me.clone();
-            let goal = goal.clone();
-            let findings = findings.clone();
-            async move {
-                let started = std::time::Instant::now();
-                eprintln!(
-                    "  {} detail {} → {}",
-                    style("▸").cyan().bold(),
-                    style(&id).bold(),
-                    model
-                );
-                let system = "Compile ONE task into a typed, implementation-ready contract. You have no \
-                    filesystem or shell tools and must not prototype code. Call final_output as soon as the \
-                    contract is complete. The objective, implementation steps, interfaces, edge cases, and \
-                    acceptance checks must be specific to this task. Each requirement_citations.quote must be \
-                    copied VERBATIM from the supplied overall goal, architect brief, or research findings; \
-                    applies_as explains exactly what this task must do because of that quote. Preserve every \
-                    external literal that applies: paths, command shapes, API prefixes, headers, parameters, \
-                    statuses, field names, units, and expected values. Do not invent requirements or generic \
-                    filler. The engine owns the file list, so never rename or add a path."
-                    .to_string();
-                let user = format!(
-                    "## Overall goal\n{goal}\n\n## Architect brief\n[{id}] {brief}\n\n## Exact owned \
-                     files\n{}\n\n## Research findings\n{}",
-                    if files.is_empty() { "(none)" } else { &files },
-                    if findings.is_empty() {
-                        "(none)"
-                    } else {
-                        &findings
+                let me = detail_dispatcher.clone();
+                let goal = detail_goal.clone();
+                let findings = detail_findings.clone();
+                async move {
+                    let started = std::time::Instant::now();
+                    eprintln!(
+                        "  {} detail {} → {}",
+                        style("▸").cyan().bold(),
+                        style(&id).bold(),
+                        model
+                    );
+                    let system = "Compile ONE task into a typed, implementation-ready contract. You have no \
+                        filesystem or shell tools and must not prototype code. Call final_output as soon as the \
+                        contract is complete. The objective, implementation steps, interfaces, edge cases, and \
+                        acceptance checks must be specific to this task. Each requirement_citations.quote must be \
+                        copied VERBATIM from the supplied overall goal, architect brief, or research findings; \
+                        applies_as explains exactly what this task must do because of that quote. Preserve every \
+                        external literal that applies: paths, command shapes, API prefixes, headers, parameters, \
+                        statuses, field names, units, and expected values. Do not invent requirements or generic \
+                        filler. The engine owns the file list, so never rename or add a path."
+                        .to_string();
+                    let files_text = files.join(", ");
+                    let user = format!(
+                        "## Overall goal\n{goal}\n\n## Architect brief\n[{id}] {brief}\n\n## Exact owned \
+                         files\n{}\n\n## Research findings\n{}",
+                        if files_text.is_empty() {
+                            "(none)"
+                        } else {
+                            &files_text
+                        },
+                        if findings.is_empty() {
+                            "(none)"
+                        } else {
+                            &findings
+                        }
+                    );
+                    let detail_key = format!("detail-{id}");
+                    let source = format!("{goal}\n{brief}\n{findings}");
+                    let compiled = match me
+                        .run_response_only_agent(
+                            &model,
+                            system,
+                            user,
+                            Some(Response {
+                                json_schema: Some(task_detail_schema()),
+                            }),
+                            0,
+                            Some(detail_key.as_str()),
+                        )
+                        .await
+                    {
+                        Ok(output) => output
+                            .final_output
+                            .filter(|raw| !raw.trim().is_empty())
+                            .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+                            .ok_or_else(|| "no typed final output".to_string())
+                            .and_then(|raw| {
+                                compile_task_detail(&raw, &id, &brief, &files_text, &source)
+                                    .map_err(|error| error.to_string())
+                            }),
+                        Err(error) => Err(format!("agent error: {error}")),
+                    };
+                    if let Ok(detail) = &compiled {
+                        me.events.write_value(serde_json::json!({
+                            "event": "detail_completed",
+                            "task_id": &id,
+                            "secs": started.elapsed().as_secs_f64().round(),
+                            "spec_chars": detail.rendered.len(),
+                            "brief_chars": brief.len(),
+                            "format": "typed-v1",
+                            "tool_surface": "response-only",
+                            "timeout_policy": "no-wall-volume-or-turn-cap",
+                            "requirement_citations": detail.citations,
+                            "interfaces": detail.interfaces,
+                            "acceptance_checks": detail.acceptance_checks,
+                        }));
+                        eprintln!(
+                            "  {} detail {} ({:.0}s, {} acceptance checks)",
+                            style("✓").green().bold(),
+                            style(&id).bold(),
+                            started.elapsed().as_secs_f64(),
+                            detail.acceptance_checks,
+                        );
+                    } else if let Err(reason) = &compiled {
+                        me.events.write_value(serde_json::json!({
+                            "event": "detail_compile_failed",
+                            "task_id": &id,
+                            "reason": reason,
+                            "brief_chars": brief.len(),
+                            "format": "typed-v1",
+                            "fallback": false,
+                        }));
+                        eprintln!(
+                            "  {} detail {} ({:.0}s) — compiler rejected output: {}",
+                            style("⚠").yellow().bold(),
+                            style(&id).bold(),
+                            started.elapsed().as_secs_f64(),
+                            reason,
+                        );
                     }
-                );
-                // Per-subtask detailer digest so the PLAN-detailing fan-out shows live per-node activity.
-                let detail_key = format!("detail-{id}");
-                let source = format!("{goal}\n{brief}\n{findings}");
-                let compiled = match me
-                    .run_response_only_agent(
-                        &model,
-                        system,
-                        user,
-                        Some(Response {
-                            json_schema: Some(task_detail_schema()),
-                        }),
-                        planner_side_turns(),
-                        me.planner_timeout_secs,
-                        Some(detail_key.as_str()),
+                    TaskDetailOutcome {
+                        index: idx,
+                        id,
+                        brief,
+                        owned_files: files,
+                        compiled,
+                    }
+                }
+            },
+            move |detail: TaskDetailOutcome, model| {
+                let me = contract_dispatcher.clone();
+                let goal = contract_goal.clone();
+                async move {
+                    let description = detail
+                        .compiled
+                        .map(|compiled| compiled.rendered)
+                        .unwrap_or(detail.brief);
+                    me.generate_contract_stub(
+                        ContractModuleInput {
+                            id: detail.id,
+                            description,
+                            owned_files: detail.owned_files,
+                        },
+                        model,
+                        goal,
+                        lang,
+                        "detail_pipeline",
                     )
                     .await
-                {
-                    Ok(o) => o
-                        .final_output
-                        .filter(|raw| !raw.trim().is_empty())
-                        .or_else(|| (!o.text.trim().is_empty()).then_some(o.text))
-                        .ok_or_else(|| "no typed final output".to_string())
-                        .and_then(|raw| {
-                            compile_task_detail(&raw, &id, &brief, &files, &source)
-                                .map_err(|e| e.to_string())
-                        }),
-                    Err(e) => Err(format!("agent error: {e}")),
-                };
-                if let Ok(detail) = &compiled {
-                    me.events.write_value(serde_json::json!({
-                        "event": "detail_completed",
-                        "task_id": id,
-                        "secs": started.elapsed().as_secs_f64().round(),
-                        "spec_chars": detail.rendered.len(),
-                        "brief_chars": brief.len(),
-                        "format": "typed-v1",
-                        "tool_surface": "response-only",
-                        "requirement_citations": detail.citations,
-                        "interfaces": detail.interfaces,
-                        "acceptance_checks": detail.acceptance_checks,
-                    }));
-                    eprintln!(
-                        "  {} detail {} ({:.0}s, {} acceptance checks)",
-                        style("✓").green().bold(),
-                        style(&id).bold(),
-                        started.elapsed().as_secs_f64(),
-                        detail.acceptance_checks,
-                    );
-                } else if let Err(reason) = &compiled {
-                    me.events.write_value(serde_json::json!({
-                        "event": "detail_compile_failed",
-                        "task_id": id,
-                        "reason": reason,
-                        "brief_chars": brief.len(),
-                        "format": "typed-v1",
-                        "fallback": false,
-                    }));
-                    eprintln!(
-                        "  {} detail {} ({:.0}s) — compiler rejected output: {}",
-                        style("⚠").yellow().bold(),
-                        style(&id).bold(),
-                        started.elapsed().as_secs_f64(),
-                        reason,
-                    );
                 }
-                (idx, id, brief, compiled)
-            }
-        },
+            },
+            move |detail| {
+                contracts_on
+                    && detail.compiled.is_ok()
+                    && task_needs_frozen_contract(&detail.id, &detail.owned_files, lang)
+            },
+            |item| item.1.clone(),
+            move |observation| {
+                let state = match observation.kind {
+                    StagedFanObservationKind::DetailTailStarted => "detail_tail_started",
+                    StagedFanObservationKind::AuxiliaryDemandDrained => {
+                        "required_auxiliary_demand_drained"
+                    }
+                };
+                event_sink.write_value(serde_json::json!({
+                    "event": "plan_compile_tail_state",
+                    "state": state,
+                    "state_basis": "logical-admitted-requests",
+                    "outstanding_detail": observation.outstanding_detail,
+                    "pending_details": observation.pending_details,
+                    "in_flight_details": observation.in_flight_details,
+                    "completed_details": observation.completed_details,
+                    "pending_auxiliary": observation.pending_auxiliary,
+                    "in_flight_auxiliary": observation.in_flight_auxiliary,
+                    "completed_auxiliary": observation.completed_auxiliary,
+                    "logically_free_lanes": observation.logically_free_lanes,
+                    "physical_idle_lanes": serde_json::Value::Null,
+                }));
+            },
         )
-        .await;
+        .await?;
+        let prefetched = pipeline.auxiliary.len();
+        let prefetched_nonempty = pipeline
+            .auxiliary
+            .iter()
+            .filter(|(_, stub)| !stub.trim().is_empty())
+            .count();
+        self.prefetched_contracts
+            .lock()
+            .unwrap()
+            .extend(pipeline.auxiliary);
+        self.events.write_value(serde_json::json!({
+            "event": "contract_prefetch_cached",
+            "requested": prefetched,
+            "produced": prefetched_nonempty,
+            "empty": prefetched.saturating_sub(prefetched_nonempty),
+            "later_phase_will_regenerate_empty": false,
+        }));
         let mut failures = Vec::new();
-        for (idx, id, _brief, compiled) in results {
-            let detail = match compiled {
+        for outcome in pipeline.details {
+            let detail = match outcome.compiled {
                 Ok(detail) => detail,
                 Err(reason) => {
-                    failures.push(format!("{id}: {reason}"));
+                    failures.push(format!("{}: {reason}", outcome.id));
                     continue;
                 }
             };
             if self.detail_memo_on {
-                if let Some((key, _)) = memo_keys.get(&idx) {
+                if let Some((key, _)) = memo_keys.get(&outcome.index) {
                     self.detail_memo
                         .lock()
                         .unwrap()
                         .insert(key.clone(), detail.rendered.clone());
                 }
             }
-            v["subtasks"][idx]["description"] = serde_json::Value::String(detail.rendered);
+            v["subtasks"][outcome.index]["description"] =
+                serde_json::Value::String(detail.rendered);
         }
         if !failures.is_empty() {
             bail!(
@@ -19548,9 +19653,8 @@ fn scope_dirs(planned: &[String]) -> Vec<String> {
     d
 }
 
-/// Language-aware sibling of `collect_py_files` — collects source files for `lang` (used by the CONTRACTS
-/// stray-stub cleanup so a TS/Rust tree removes leftover `.ts`/`.rs` stubs, not just `.py`). Python behavior
-/// matches `collect_py_files` (both accept a `.py` file); other callers keep using `collect_py_files`.
+/// Language-aware sibling of `collect_py_files` used by the post-build orphan scan. Python behavior matches
+/// `collect_py_files` (both accept a `.py` file); other callers keep using `collect_py_files`.
 /// ORPHAN detection: source files on disk that NO task was planned to own. Pure over path strings so it is
 /// testable without a tree. A worker sometimes creates an unplanned stopgap (loop-04 shipped a 2-line
 /// `dummy.swift` "// NotesLibrary stub" that was in no task's owned_files) and never cleans it — the worker
@@ -19626,10 +19730,28 @@ fn collect_lang_files(root: &Path, lang: TargetLang) -> Vec<PathBuf> {
     out
 }
 
+/// Whether this task contributes a production interface that sibling modules can consume. Contract demand
+/// is derived from the task's actual owned source files, never from fleet width or from a desire to keep a
+/// lane occupied. Test-only and read-only tasks have no production interface to freeze.
+fn task_needs_frozen_contract(id: &str, owned_files: &[String], lang: TargetLang) -> bool {
+    if id == "integrate-verify" {
+        return false;
+    }
+    let source_files: Vec<&str> = owned_files
+        .iter()
+        .map(String::as_str)
+        .filter(|file| lang.is_source_file(file))
+        .collect();
+    !source_files.is_empty()
+        && source_files.iter().any(|file| {
+            let base = file.rsplit('/').next().unwrap_or(file);
+            !lang.is_test_file(base)
+        })
+}
+
 /// Per-language interface-stub instructions for the CONTRACTS phase. Returns (system prompt, per-file header
-/// comment prefix). Python is the ORIGINAL prompt verbatim — byte-identical behavior on Python trees. TS/Rust/
-/// Go emit language-native public-interface stubs; the generic arm handles ANY other language so contracts are
-/// language-AGNOSTIC, not Python-only. All arms carry the same anti-drift SCHEMA rule that made contracts valuable.
+/// comment prefix). Every arm is response-only and emits a language-native public interface; the generic arm
+/// handles any unprofiled language. All arms carry the same anti-drift schema rule that made contracts valuable.
 fn contract_stub_spec(lang: TargetLang) -> (&'static str, &'static str) {
     match lang {
         TargetLang::Python => (
@@ -19643,8 +19765,8 @@ fn contract_stub_spec(lang: TargetLang) -> (&'static str, &'static str) {
              that reads or writes those tables MUST use the SAME column names — a drift (one module \
              using `league_id` while another uses `league`, or `home_team` vs `home`) is a top \
              integration failure that passing isolation unit-tests hide. NO implementations, NO \
-             private helpers, NO prose, NO code fences. You have file/shell tools but MUST NOT use \
-             them: do NOT create, write, or edit ANY file — put the stubs in your reply TEXT only. \
+             private helpers, NO prose, NO code fences. You have no file or shell tools; put the stubs \
+             in your reply TEXT only. \
              Keep it tight.",
             "#",
         ),
@@ -19658,8 +19780,8 @@ fn contract_stub_spec(lang: TargetLang) -> (&'static str, &'static str) {
              each record/table and its EXACT field/column names (and types), because every module that \
              reads or writes it MUST use the SAME names — a drift (one module using `homeTeam` while \
              another uses `home`) is a top integration failure that passing isolation unit-tests hide. NO \
-             implementations, NO private helpers, NO prose, NO code fences. You have file/shell tools but \
-             MUST NOT use them: do NOT create, write, or edit ANY file — put the stubs in your reply TEXT \
+             implementations, NO private helpers, NO prose, NO code fences. You have no file or shell tools; \
+             put the stubs in your reply TEXT \
              only. Keep it tight.",
             "//",
         ),
@@ -19673,8 +19795,8 @@ fn contract_stub_spec(lang: TargetLang) -> (&'static str, &'static str) {
              listing each record and its EXACT field names (and types), because every module that reads or \
              writes it MUST use the SAME names — a drift (one module using `parent_hash` while another uses \
              `parent`) is a top integration failure that passing isolation unit-tests hide. NO function \
-             bodies beyond `unimplemented!()`, NO private items, NO prose, NO code fences. You have \
-             file/shell tools but MUST NOT use them: do NOT create, write, or edit ANY file — put the stubs \
+             bodies beyond `unimplemented!()`, NO private items, NO prose, NO code fences. You have no file \
+             or shell tools; put the stubs \
              in your reply TEXT only. Keep it tight.",
             "//",
         ),
@@ -19688,7 +19810,7 @@ fn contract_stub_spec(lang: TargetLang) -> (&'static str, &'static str) {
              its EXACT field names (and types), because every module that reads or writes it MUST use the SAME \
              names — a drift (one module using `ParentHash` while another uses `Parent`) is a top integration \
              failure that passing isolation unit-tests hide. NO unexported items, NO prose, NO code fences. You \
-             have file/shell tools but MUST NOT use them: do NOT create, write, or edit ANY file — put the \
+             have no file or shell tools; put the \
              stubs in your reply TEXT only. Keep it tight.",
             "//",
         ),
@@ -19706,8 +19828,8 @@ fn contract_stub_spec(lang: TargetLang) -> (&'static str, &'static str) {
              the file's own comment syntax) listing each record/table and its EXACT field/column names (and \
              types), because every module that reads or writes it MUST use the SAME names — a drift is a top \
              integration failure that passing isolation unit-tests hide. NO implementations, NO private \
-             helpers, NO prose, NO code fences. You have file/shell tools but MUST NOT use them: do NOT create, \
-             write, or edit ANY file — put the stubs in your reply TEXT only. Keep it tight.",
+             helpers, NO prose, NO code fences. You have no file or shell tools; put the stubs in your reply \
+             TEXT only. Keep it tight.",
             "//",
         ),
     }
@@ -23293,6 +23415,176 @@ mod fan_order_tests {
             "prologue fans run ONE call per host"
         );
     }
+
+    #[test]
+    fn frozen_contract_demand_comes_from_production_ownership_not_fleet_demand() {
+        let files = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert!(task_needs_frozen_contract(
+            "store",
+            &files(&["src/store.py"]),
+            TargetLang::Python
+        ));
+        assert!(task_needs_frozen_contract(
+            "store-and-tests",
+            &files(&["src/store.py", "tests/test_store.py"]),
+            TargetLang::Python
+        ));
+        assert!(!task_needs_frozen_contract(
+            "test-store",
+            &files(&["tests/test_store.py"]),
+            TargetLang::Python
+        ));
+        assert!(!task_needs_frozen_contract(
+            "docs",
+            &files(&["README.md"]),
+            TargetLang::Python
+        ));
+        assert!(!task_needs_frozen_contract(
+            "integrate-verify",
+            &files(&["src/join.py"]),
+            TargetLang::Python
+        ));
+    }
+
+    #[test]
+    fn an_admitted_empty_contract_is_not_silently_replaced_and_bundle_order_is_stable() {
+        let module = |id: &str| ContractModuleInput {
+            id: id.to_string(),
+            description: format!("compile the {id} interface"),
+            owned_files: vec![format!("src/{id}.py")],
+        };
+        let mut cache = HashMap::from([
+            ("api".to_string(), String::new()),
+            ("store".to_string(), "def load() -> list: ...".to_string()),
+        ]);
+        let demand = resolve_contract_demand(
+            vec![module("api"), module("store"), module("cli")],
+            &mut cache,
+        );
+        assert_eq!(demand.requested_order, vec!["api", "store", "cli"]);
+        assert!(demand
+            .prefetched_by_id
+            .get("api")
+            .is_some_and(String::is_empty));
+        assert_eq!(
+            demand
+                .missing
+                .iter()
+                .map(|module| module.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cli"],
+            "an empty but terminal admitted result is completed demand, not a license to re-run it"
+        );
+        let mut stubs = demand.prefetched_by_id;
+        stubs.insert("cli".to_string(), "def main() -> int: ...".to_string());
+        let bundle = render_contract_bundle(demand.requested_order, stubs);
+        assert!(!bundle.contains("module: api"));
+        assert!(bundle.find("module: store").unwrap() < bundle.find("module: cli").unwrap());
+    }
+
+    #[tokio::test]
+    async fn staged_fan_uses_required_contract_work_during_the_real_27_item_detail_tail() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../evals/swarm-bench/fixtures/f924-detail-tail-shape.json"
+        ))
+        .unwrap();
+        let total = fixture["total_detail_calls"].as_u64().unwrap() as usize;
+        let completed_before_tail = fixture["completed_before_tail"].as_u64().unwrap() as usize;
+        let tail_id = fixture["tail_task_id"].as_str().unwrap().to_string();
+        assert_eq!(completed_before_tail + 1, total);
+        assert_eq!(fixture["sole_logical_tail_minutes"], 17.7);
+        assert_eq!(fixture["tail_reasoning_chars_at_interruption"], 203_447);
+        assert_eq!(fixture["physical_idle_interval_proven"], false);
+
+        // Replay the corrected r2 scheduling shape with notifications instead of 17.7 wall minutes. This
+        // proves the state transition and intentionally makes no speed or physical-idleness claim.
+        let release_tail = Arc::new(tokio::sync::Notify::new());
+        let tail_started = Arc::new(tokio::sync::Notify::new());
+        let auxiliary_started = Arc::new(tokio::sync::Semaphore::new(0));
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let items: Vec<(String, bool)> = (0..total)
+            .map(|index| {
+                if index == completed_before_tail {
+                    (tail_id.clone(), true)
+                } else {
+                    (format!("detail-{index}"), false)
+                }
+            })
+            .collect();
+
+        let run = tokio::spawn(fanout_staged(
+            vec!["mihai".into(), "workhorse".into(), "gabee".into()],
+            items,
+            {
+                let release_tail = release_tail.clone();
+                let tail_started = tail_started.clone();
+                move |(id, is_tail): (String, bool), _device| {
+                    let release_tail = release_tail.clone();
+                    let tail_started = tail_started.clone();
+                    async move {
+                        if is_tail {
+                            tail_started.notify_one();
+                            release_tail.notified().await;
+                        }
+                        id
+                    }
+                }
+            },
+            {
+                let auxiliary_started = auxiliary_started.clone();
+                move |id: String, _device| {
+                    let auxiliary_started = auxiliary_started.clone();
+                    async move {
+                        auxiliary_started.add_permits(1);
+                        format!("contract-{id}")
+                    }
+                }
+            },
+            |_detail| true,
+            |item| item.0.clone(),
+            {
+                let observations = observations.clone();
+                move |observation| observations.lock().unwrap().push(observation)
+            },
+        ));
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), tail_started.notified())
+            .await
+            .expect("the replay reached the final admitted detail");
+        let permits = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            auxiliary_started.clone().acquire_many_owned(2),
+        )
+        .await
+        .expect("both released nodes started existing contract demand")
+        .unwrap();
+        permits.forget();
+        assert!(
+            !run.is_finished(),
+            "the admitted detail must still be running while contract work uses released lanes"
+        );
+        release_tail.notify_waiters();
+        let output = run.await.unwrap().unwrap();
+        assert_eq!(output.details.len(), total);
+        assert_eq!(output.auxiliary.len(), total);
+        let tail = observations
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|observation| observation.kind == StagedFanObservationKind::DetailTailStarted)
+            .cloned()
+            .expect("the logical tail is factual telemetry");
+        assert_eq!(tail.outstanding_detail, tail_id);
+        assert_eq!(tail.completed_details, completed_before_tail);
+        assert_eq!(tail.in_flight_details, 1);
+        assert_eq!(tail.in_flight_auxiliary, 2);
+        assert_eq!(tail.logically_free_lanes, 0);
+    }
 }
 
 async fn fanout_over_fleet<T, R, F, Fut>(devices: Vec<String>, items: Vec<T>, f: F) -> Vec<R>
@@ -23343,12 +23635,212 @@ where
     results
 }
 
-/// #135: like `fanout_over_fleet`, but stops the lone lagging task once the others are in. Used for the SCOUT
-/// phase (advisory) and, under the degrade gate, CONTRACTS/DETAIL (measured: 2 scouts done at ~85s, the 3rd
-/// ran to 199s → 111s of two nodes idle; a contract ran 7+ min while two nodes idled). Straggler-stop is sound
-/// ONLY when every item runs concurrently (items <= devices, so nothing is queued behind a busy device) and
-/// there is a lone last item to race (>=3 items); `grace_secs == 0` (feature off) or any other shape falls
-/// back to the byte-identical await-all fanout. `noun` labels the phase in the logs (scout/contract/detail).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StagedFanObservationKind {
+    DetailTailStarted,
+    AuxiliaryDemandDrained,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StagedFanObservation {
+    kind: StagedFanObservationKind,
+    outstanding_detail: String,
+    pending_details: usize,
+    in_flight_details: usize,
+    completed_details: usize,
+    pending_auxiliary: usize,
+    in_flight_auxiliary: usize,
+    completed_auxiliary: usize,
+    logically_free_lanes: usize,
+}
+
+#[derive(Debug)]
+struct StagedFanOutput<D, A> {
+    details: Vec<D>,
+    auxiliary: Vec<A>,
+}
+
+enum StagedFanCompletion<D, A> {
+    Detail {
+        index: usize,
+        device: String,
+        output: D,
+    },
+    Auxiliary {
+        index: usize,
+        device: String,
+        output: A,
+    },
+}
+
+/// Run a required two-stage fan without a global barrier between its stages. New detail work always has
+/// priority. Once every detail has been admitted, a lane released by a completed detail may consume already-
+/// required auxiliary work from earlier details while the remaining detail requests continue. Every admitted
+/// future is awaited; the helper has no timeout, straggler abort, replacement, or fabricated fill task.
+#[allow(clippy::too_many_arguments)]
+async fn fanout_staged<T, D, A, DetailFn, DetailFut, AuxFn, AuxFut, NeedsAux, Label, Observe>(
+    devices: Vec<String>,
+    items: Vec<T>,
+    detail_fn: DetailFn,
+    auxiliary_fn: AuxFn,
+    needs_auxiliary: NeedsAux,
+    label: Label,
+    observe: Observe,
+) -> Result<StagedFanOutput<D, A>>
+where
+    T: Send + 'static,
+    D: Clone + Send + 'static,
+    A: Send + 'static,
+    DetailFn: Fn(T, String) -> DetailFut + Clone + Send + 'static,
+    DetailFut: std::future::Future<Output = D> + Send + 'static,
+    AuxFn: Fn(D, String) -> AuxFut + Clone + Send + 'static,
+    AuxFut: std::future::Future<Output = A> + Send + 'static,
+    NeedsAux: Fn(&D) -> bool + Clone + Send + 'static,
+    Label: Fn(&T) -> String + Send + 'static,
+    Observe: Fn(StagedFanObservation) + Send + 'static,
+{
+    use std::collections::VecDeque;
+
+    let devices = if devices.is_empty() {
+        vec![String::new()]
+    } else {
+        order_fleet_by_speed(devices, &load_config().speed_weights)
+    };
+    let labels: Vec<String> = items.iter().map(label).collect();
+    let item_count = items.len();
+    let mut pending_details: VecDeque<(usize, T)> = items.into_iter().enumerate().collect();
+    let mut pending_auxiliary: VecDeque<(usize, D)> = VecDeque::new();
+    let mut free_devices: VecDeque<String> = devices.into_iter().collect();
+    let mut completions = tokio::task::JoinSet::new();
+    let mut details: Vec<Option<D>> = (0..item_count).map(|_| None).collect();
+    let mut auxiliary: Vec<Option<A>> = (0..item_count).map(|_| None).collect();
+    let mut in_flight_details = 0usize;
+    let mut in_flight_auxiliary = 0usize;
+    let mut completed_details = 0usize;
+    let mut completed_auxiliary = 0usize;
+    let mut detail_tail_reported = false;
+    let mut auxiliary_drained_reported = false;
+
+    loop {
+        while let Some(device) = free_devices.pop_front() {
+            if let Some((index, item)) = pending_details.pop_front() {
+                let detail_fn = detail_fn.clone();
+                in_flight_details += 1;
+                completions.spawn(async move {
+                    let output = detail_fn(item, device.clone()).await;
+                    StagedFanCompletion::Detail {
+                        index,
+                        device,
+                        output,
+                    }
+                });
+            } else if let Some((index, detail)) = pending_auxiliary.pop_front() {
+                let auxiliary_fn = auxiliary_fn.clone();
+                in_flight_auxiliary += 1;
+                completions.spawn(async move {
+                    let output = auxiliary_fn(detail, device.clone()).await;
+                    StagedFanCompletion::Auxiliary {
+                        index,
+                        device,
+                        output,
+                    }
+                });
+            } else {
+                free_devices.push_front(device);
+                break;
+            }
+        }
+
+        if pending_details.is_empty() && in_flight_details == 1 {
+            let outstanding = details
+                .iter()
+                .position(Option::is_none)
+                .and_then(|index| labels.get(index))
+                .cloned()
+                .unwrap_or_default();
+            if !detail_tail_reported {
+                observe(StagedFanObservation {
+                    kind: StagedFanObservationKind::DetailTailStarted,
+                    outstanding_detail: outstanding.clone(),
+                    pending_details: 0,
+                    in_flight_details,
+                    completed_details,
+                    pending_auxiliary: pending_auxiliary.len(),
+                    in_flight_auxiliary,
+                    completed_auxiliary,
+                    logically_free_lanes: free_devices.len(),
+                });
+                detail_tail_reported = true;
+            }
+            if !auxiliary_drained_reported
+                && pending_auxiliary.is_empty()
+                && in_flight_auxiliary == 0
+                && !free_devices.is_empty()
+            {
+                observe(StagedFanObservation {
+                    kind: StagedFanObservationKind::AuxiliaryDemandDrained,
+                    outstanding_detail: outstanding,
+                    pending_details: 0,
+                    in_flight_details,
+                    completed_details,
+                    pending_auxiliary: 0,
+                    in_flight_auxiliary: 0,
+                    completed_auxiliary,
+                    logically_free_lanes: free_devices.len(),
+                });
+                auxiliary_drained_reported = true;
+            }
+        }
+
+        if completions.is_empty() {
+            if pending_details.is_empty() && pending_auxiliary.is_empty() {
+                break;
+            }
+            bail!("staged fan has queued work but no admitted request");
+        }
+
+        let completion = completions
+            .join_next()
+            .await
+            .ok_or_else(|| anyhow!("staged fan ended before its admitted requests"))?
+            .map_err(|e| anyhow!("staged fan request panicked: {e}"))?;
+        match completion {
+            StagedFanCompletion::Detail {
+                index,
+                device,
+                output,
+            } => {
+                in_flight_details = in_flight_details.saturating_sub(1);
+                completed_details += 1;
+                if needs_auxiliary(&output) {
+                    pending_auxiliary.push_back((index, output.clone()));
+                }
+                details[index] = Some(output);
+                free_devices.push_back(device);
+            }
+            StagedFanCompletion::Auxiliary {
+                index,
+                device,
+                output,
+            } => {
+                in_flight_auxiliary = in_flight_auxiliary.saturating_sub(1);
+                completed_auxiliary += 1;
+                auxiliary[index] = Some(output);
+                free_devices.push_back(device);
+            }
+        }
+    }
+
+    Ok(StagedFanOutput {
+        details: details.into_iter().flatten().collect(),
+        auxiliary: auxiliary.into_iter().flatten().collect(),
+    })
+}
+
+/// #135: like `fanout_over_fleet`, but stops the lone lagging advisory scout once the others are in. Detail
+/// and contract compilers are authority-bearing and must use `fanout_staged`; they are never admitted here.
+/// `grace_secs == 0` (feature off) or a fan smaller than three falls back to await-all. `noun` labels the
+/// generic helper in logs and tests; the only production caller is the scout fan.
 async fn fanout_over_fleet_straggler<T, R, F, Fut>(
     devices: Vec<String>,
     items: Vec<T>,
@@ -23363,12 +23855,8 @@ where
     Fut: std::future::Future<Output = R> + Send + 'static,
 {
     let n = items.len();
-    // The `n > devices.len()` bail-out that used to be here made straggler-stop DEAD for the fans that need
-    // it most. MEASURED: detail fans are 4-11 items on a 3-device fleet, so 0 of 52 measured detail fans were
-    // EVER eligible; contracts bail out the moment modules > devices. The arming rule below is
-    // "every item but one has finished" — i.e. exactly ONE call outstanding and every other node idle — which
-    // is the true tail of a fan and is correct whether or not the items had to queue. With more items than
-    // devices the items simply queue through the semaphore first and the grace still arms at the real tail.
+    // The arming rule is "every item but one has finished". With more items than devices, items first queue
+    // through the semaphore and grace arms only at the true logical tail.
     if grace_secs == 0 || n < 3 {
         return fanout_over_fleet(devices, items, f).await;
     }
@@ -29889,7 +30377,7 @@ impl GooseAgentDispatcher {
                 system_prompt,
                 worker_user_text,
                 None,
-                max_turns,
+                Some(max_turns),
                 &self.worker_extensions,
                 AgentToolSurface::Developer,
                 self.worker_timeout_secs,
@@ -30688,12 +31176,83 @@ struct TaskDetailDraft {
     acceptance_checks: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct CompiledTaskDetail {
     rendered: String,
     citations: usize,
     interfaces: usize,
     acceptance_checks: usize,
+}
+
+#[derive(Clone, Debug)]
+struct TaskDetailOutcome {
+    index: usize,
+    id: String,
+    brief: String,
+    owned_files: Vec<String>,
+    compiled: std::result::Result<CompiledTaskDetail, String>,
+}
+
+#[derive(Clone, Debug)]
+struct ContractModuleInput {
+    id: String,
+    description: String,
+    owned_files: Vec<String>,
+}
+
+impl From<TaskSpec> for ContractModuleInput {
+    fn from(spec: TaskSpec) -> Self {
+        Self {
+            id: spec.id,
+            description: spec.description,
+            owned_files: spec.owned_files,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ResolvedContractDemand {
+    requested_order: Vec<String>,
+    prefetched_by_id: HashMap<String, String>,
+    missing: Vec<ContractModuleInput>,
+}
+
+fn resolve_contract_demand(
+    modules: Vec<ContractModuleInput>,
+    prefetched: &mut HashMap<String, String>,
+) -> ResolvedContractDemand {
+    let requested_order = modules.iter().map(|module| module.id.clone()).collect();
+    let mut prefetched_by_id = HashMap::new();
+    let mut missing = Vec::new();
+    for module in modules {
+        if let Some(stub) = prefetched.remove(&module.id) {
+            // Some("") is still a completed admitted result. Reclassifying it as missing here would silently
+            // replace the request and can overlap a decoder whose provider-terminal state was never proven.
+            prefetched_by_id.insert(module.id, stub);
+        } else {
+            missing.push(module);
+        }
+    }
+    ResolvedContractDemand {
+        requested_order,
+        prefetched_by_id,
+        missing,
+    }
+}
+
+fn render_contract_bundle(
+    requested_order: Vec<String>,
+    mut stubs_by_id: HashMap<String, String>,
+) -> String {
+    let mut bundle = String::new();
+    for id in requested_order {
+        let stub = stubs_by_id.remove(&id).unwrap_or_default();
+        let stub = stub.trim();
+        if !stub.is_empty() {
+            bundle.push_str(&format!("### module: {id}\n{stub}\n\n"));
+        }
+    }
+    bundle
 }
 
 fn task_detail_schema() -> serde_json::Value {
@@ -34734,35 +35293,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // cross-module interface drift on every tree, not just Python — the coherence gap Mihai flagged.
     let contract_lang = detect_language(&opts.prompt, &[]);
     if contracts_on {
-        let modules: Vec<TaskSpec> = dag
+        let mut modules: Vec<TaskSpec> = dag
             .tasks
             .values()
             .map(|n| n.spec.clone())
-            .filter(|s| {
-                // A TEST module has no interface a sibling needs — nobody imports `test_store` to call it —
-                // so freezing one buys nothing and costs a full worker-budget model call (up to
-                // worker_timeout_secs) on the same fleet the build is waiting for.
-                //
-                // MEASURED h1-treat-4: 3 of the 6 contract calls were for test modules (test-store,
-                // test-cli, test-main) — half the CONTRACTS phase spent on interfaces nobody consumes.
-                // They are also the most reliable source of unparseable stubs: test-store failed
-                // `invalid syntax` in BOTH h1-treat-4 and h1-treat-5, at 3092 and 2086 bytes, because a
-                // test file has no signature-only form to distil.
-                //
-                // is_test_file takes a BASE name, so pass the file name, not the full path.
-                let base_of = |f: &String| -> String {
-                    f.rsplit('/').next().unwrap_or(f.as_str()).to_string()
-                };
-                s.id != "integrate-verify"
-                    && s.owned_files
-                        .iter()
-                        .any(|f| contract_lang.is_source_file(f))
-                    && !s
-                        .owned_files
-                        .iter()
-                        .all(|f| contract_lang.is_test_file(&base_of(f)))
-            })
+            // Contract demand is one shared predicate at both producer sites. A test-only module has no
+            // production interface a sibling consumes, so spending a generation on it adds latency without
+            // adding coherence; a mixed production+test owner still receives a contract.
+            .filter(|spec| task_needs_frozen_contract(&spec.id, &spec.owned_files, contract_lang))
             .collect();
+        modules.sort_by(|left, right| left.id.cmp(&right.id));
         if !modules.is_empty() {
             phase_banner(
                 "CONTRACTS",
@@ -34770,30 +35310,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             );
             let n_modules = modules.len();
             let wm: Vec<String> = fleet_slot_models(&devices);
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let before: std::collections::HashSet<PathBuf> =
-                collect_lang_files(&cwd, contract_lang)
-                    .into_iter()
-                    .collect();
             let bundle = dispatcher
                 .generate_contracts(modules, wm, &opts.prompt, contract_lang)
                 .await;
-            // The stub-gen workers must emit TEXT, but a weak model sometimes writes a `...`-body stub
-            // file anyway. Remove any source file that appeared so EXECUTE starts from a clean tree — a
-            // leftover stub would otherwise risk a lazy worker shipping it as "done".
-            let stray: Vec<PathBuf> = collect_lang_files(&cwd, contract_lang)
-                .into_iter()
-                .filter(|p| !before.contains(p))
-                .collect();
-            for p in &stray {
-                let _ = std::fs::remove_file(p);
-            }
-            if !stray.is_empty() {
-                eprintln!(
-                    "  contracts: removed {} stray stub file(s) the stub-gen wrote (interfaces kept in-prompt)",
-                    stray.len()
-                );
-            }
             if bundle.trim().is_empty() {
                 eprintln!("  contracts: no stubs produced — skipping injection");
             } else {
