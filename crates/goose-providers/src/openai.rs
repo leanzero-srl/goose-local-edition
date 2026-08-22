@@ -363,9 +363,11 @@ impl OpenAiProvider {
         "moonshot",
         "nearai",
         "ovhcloud",
+        "zai_api",
     ];
 
-    const PROVIDERS_NEEDING_STANDARD_CHAT_PARAMS: &[&str] = &["nearai"];
+    const PROVIDERS_NEEDING_STANDARD_CHAT_PARAMS: &[&str] =
+        &["custom_deepseek", "nearai", "zai_api"];
 
     fn sanitize_request_for_compat(
         &self,
@@ -460,6 +462,7 @@ impl OpenAiProvider {
                 payload.insert("reasoning_effort".to_string(), serde_json::json!(effort));
             }
             OpenAiRequestProfile::ZaiGlm if model_name == "glm-5.3" => {
+                payload.remove("stream_options");
                 payload.insert(
                     "thinking".to_string(),
                     serde_json::json!({
@@ -1204,6 +1207,83 @@ mod tests {
 
         let default = provider.sanitize_request_for_compat(payload, &ModelConfig::new("glm-5.3"));
         assert_eq!(default["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn zai_glm_53_streaming_payload_matches_native_contract() {
+        let mut provider = make_provider("zai_api");
+        provider.request_profile = OpenAiRequestProfile::ZaiGlm;
+        let payload = json!({
+            "model": "glm-5.3",
+            "messages": [
+                {"role": "developer", "content": "system instructions"},
+                {"role": "user", "content": "hello"}
+            ],
+            "max_completion_tokens": 65_536,
+            "reasoning_effort": "medium",
+            "stream": true,
+            "stream_options": {"include_usage": true}
+        });
+
+        let result = provider.sanitize_request_for_compat(
+            payload,
+            &ModelConfig::new("glm-5.3").with_thinking_effort(ThinkingEffort::Medium),
+        );
+
+        assert_eq!(
+            result,
+            json!({
+                "model": "glm-5.3",
+                "messages": [
+                    {"role": "system", "content": "system instructions"},
+                    {"role": "user", "content": "hello"}
+                ],
+                "max_tokens": 65_536,
+                "reasoning_effort": "high",
+                "stream": true,
+                "thinking": {"type": "enabled", "clear_thinking": true}
+            })
+        );
+    }
+
+    #[test]
+    fn deepseek_v4_streaming_payload_matches_native_chat_contract() {
+        let mut provider = make_provider("custom_deepseek");
+        provider.request_profile = OpenAiRequestProfile::DeepseekV4;
+        let payload = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {"role": "developer", "content": "system instructions"},
+                {"role": "user", "content": "hello"}
+            ],
+            "max_completion_tokens": 65_536,
+            "reasoning_effort": "medium",
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "stream": true,
+            "stream_options": {"include_usage": true}
+        });
+
+        let result = provider.sanitize_request_for_compat(
+            payload,
+            &ModelConfig::new("deepseek-v4-pro").with_thinking_effort(ThinkingEffort::High),
+        );
+
+        assert_eq!(
+            result,
+            json!({
+                "model": "deepseek-v4-pro",
+                "messages": [
+                    {"role": "system", "content": "system instructions"},
+                    {"role": "user", "content": "hello"}
+                ],
+                "max_tokens": 65_536,
+                "reasoning_effort": "high",
+                "stream": true,
+                "stream_options": {"include_usage": true},
+                "thinking": {"type": "enabled"}
+            })
+        );
     }
 
     #[test]
