@@ -954,7 +954,12 @@ def authenticated_rosters(secret_values: Mapping[str, str]) -> Dict[str, Any]:
 def validate_rosters(rows: Iterable[Mapping[str, Any]], rosters: Mapping[str, Any]) -> None:
     models = rosters.get("models")
     reported_models = rosters.get("accepted_reported_models")
-    if not isinstance(models, dict) or not isinstance(reported_models, dict):
+    evidence = rosters.get("evidence")
+    if (
+        not isinstance(models, dict)
+        or not isinstance(reported_models, dict)
+        or not isinstance(evidence, dict)
+    ):
         raise SystemExit("authenticated roster snapshot is malformed")
     for row in rows:
         provider = str(row["provider"])
@@ -972,6 +977,34 @@ def validate_rosters(rows: Iterable[Mapping[str, Any]], rosters: Mapping[str, An
             raise SystemExit(
                 f"accepted reported models do not match authenticated roster metadata: {model}"
             )
+        if provider == "google":
+            provider_evidence = evidence.get(provider)
+            metadata = (
+                provider_evidence.get(model)
+                if isinstance(provider_evidence, dict)
+                else None
+            )
+            if not isinstance(metadata, dict):
+                raise SystemExit(
+                    f"authenticated Google roster has no metadata for exact model: {model}"
+                )
+            for roster_key, manifest_key in (
+                ("inputTokenLimit", "context_limit"),
+                ("outputTokenLimit", "max_output_tokens"),
+            ):
+                authenticated_limit = metadata.get(roster_key)
+                if isinstance(authenticated_limit, bool) or not isinstance(
+                    authenticated_limit, int
+                ):
+                    raise SystemExit(
+                        f"authenticated Google roster has no integer {roster_key}: {model}"
+                    )
+                if authenticated_limit != int(row[manifest_key]):
+                    raise SystemExit(
+                        f"manifest {manifest_key} does not match authenticated Google "
+                        f"{roster_key} for {model}: {row[manifest_key]} != "
+                        f"{authenticated_limit}"
+                    )
 
 
 def preflight(
