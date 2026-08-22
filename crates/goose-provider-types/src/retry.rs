@@ -9,6 +9,7 @@ pub const DEFAULT_MAX_RETRIES: usize = 3;
 pub const DEFAULT_INITIAL_RETRY_INTERVAL_MS: u64 = 1000;
 pub const DEFAULT_BACKOFF_MULTIPLIER: f64 = 2.0;
 pub const DEFAULT_MAX_RETRY_INTERVAL_MS: u64 = 30_000;
+pub const TERMINAL_SAFE_RETRIES_ENV: &str = "GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES";
 
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
@@ -96,7 +97,29 @@ fn is_permanent_request_failure(message: &str) -> bool {
         .any(|marker| message.contains(marker))
 }
 
-pub fn should_retry(error: &ProviderError, config: &RetryConfig) -> bool {
+pub fn terminal_safe_retries_enabled() -> bool {
+    std::env::var(TERMINAL_SAFE_RETRIES_ENV)
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
+fn should_retry_with_terminal_safety(
+    error: &ProviderError,
+    config: &RetryConfig,
+    terminal_safe: bool,
+) -> bool {
+    if terminal_safe {
+        return matches!(
+            error,
+            ProviderError::RateLimitExceeded { .. } | ProviderError::ServerError(_)
+        );
+    }
+
     match error {
         ProviderError::RateLimitExceeded { .. }
         | ProviderError::ServerError(_)
@@ -104,6 +127,28 @@ pub fn should_retry(error: &ProviderError, config: &RetryConfig) -> bool {
         ProviderError::RequestFailed(message) if is_permanent_request_failure(message) => false,
         ProviderError::RequestFailed(_) => !config.transient_only,
         _ => false,
+    }
+}
+
+pub fn should_retry(error: &ProviderError, config: &RetryConfig) -> bool {
+    should_retry_with_terminal_safety(error, config, terminal_safe_retries_enabled())
+}
+
+fn retry_limit(config: &RetryConfig, terminal_safe: bool) -> usize {
+    if terminal_safe {
+        config.max_retries.min(DEFAULT_MAX_RETRIES)
+    } else {
+        config.max_retries
+    }
+}
+
+fn retry_delay(error: &ProviderError, config: &RetryConfig, attempt: usize) -> Duration {
+    match error {
+        ProviderError::RateLimitExceeded {
+            retry_delay: Some(provider_delay),
+            ..
+        } => *provider_delay,
+        _ => config.delay_for_attempt(attempt),
     }
 }
 
@@ -117,27 +162,25 @@ where
     T: Send,
 {
     let mut attempts = 0;
+    let terminal_safe = terminal_safe_retries_enabled();
+    let max_retries = retry_limit(config, terminal_safe);
 
     loop {
         match operation().await {
             Ok(result) => return Ok(result),
             Err(error) => {
-                if should_retry(&error, config) && attempts < config.max_retries {
+                if should_retry_with_terminal_safety(&error, config, terminal_safe)
+                    && attempts < max_retries
+                {
                     attempts += 1;
                     tracing::warn!(
                         "Request failed, retrying ({}/{}): {:?}",
                         attempts,
-                        config.max_retries,
+                        max_retries,
                         error
                     );
 
-                    let delay = match &error {
-                        ProviderError::RateLimitExceeded {
-                            retry_delay: Some(d),
-                            ..
-                        } => *d,
-                        _ => config.delay_for_attempt(attempts),
-                    };
+                    let delay = retry_delay(&error, config, attempts);
 
                     sleep(delay).await;
                     continue;
@@ -195,6 +238,8 @@ impl<P: Provider> ProviderRetry for P {
     {
         let mut attempts = 0;
         let mut auth_retried = false;
+        let terminal_safe = terminal_safe_retries_enabled();
+        let max_retries = retry_limit(&config, terminal_safe);
 
         loop {
             return match operation().await {
@@ -202,7 +247,10 @@ impl<P: Provider> ProviderRetry for P {
                 Err(error) => {
                     // Auth retry is separate from transient-error retries: we get
                     // at most 1 credential refresh, independent of max_retries.
-                    if matches!(error, ProviderError::Authentication(_)) && !auth_retried {
+                    if !terminal_safe
+                        && matches!(error, ProviderError::Authentication(_))
+                        && !auth_retried
+                    {
                         auth_retried = true;
                         match self.refresh_credentials().await {
                             Ok(()) => {
@@ -221,22 +269,18 @@ impl<P: Provider> ProviderRetry for P {
                         }
                     }
 
-                    if should_retry(&error, &config) && attempts < config.max_retries {
+                    if should_retry_with_terminal_safety(&error, &config, terminal_safe)
+                        && attempts < max_retries
+                    {
                         attempts += 1;
                         tracing::warn!(
                             "Request failed, retrying ({}/{}): {:?}",
                             attempts,
-                            config.max_retries,
+                            max_retries,
                             error
                         );
 
-                        let delay = match &error {
-                            ProviderError::RateLimitExceeded {
-                                retry_delay: Some(provider_delay),
-                                ..
-                            } => *provider_delay,
-                            _ => config.delay_for_attempt(attempts),
-                        };
+                        let delay = retry_delay(&error, &config, attempts);
 
                         let skip_backoff = std::env::var("GOOSE_PROVIDER_SKIP_BACKOFF")
                             .unwrap_or_default()
@@ -341,5 +385,57 @@ mod tests {
             &ProviderError::Authentication("invalid key".into()),
             &config
         ));
+    }
+
+    #[test]
+    fn terminal_safe_policy_retries_only_proven_provider_rejections() {
+        let config = RetryConfig::default();
+        assert!(should_retry_with_terminal_safety(
+            &ProviderError::RateLimitExceeded {
+                details: "too many requests".into(),
+                retry_delay: None,
+            },
+            &config,
+            true,
+        ));
+        assert!(should_retry_with_terminal_safety(
+            &ProviderError::ServerError("500 internal".into()),
+            &config,
+            true,
+        ));
+        assert!(!should_retry_with_terminal_safety(
+            &ProviderError::NetworkError("connection reset".into()),
+            &config,
+            true,
+        ));
+        assert!(!should_retry_with_terminal_safety(
+            &ProviderError::RequestFailed("unknown request failure".into()),
+            &config,
+            true,
+        ));
+        assert!(!should_retry_with_terminal_safety(
+            &ProviderError::Authentication("invalid key".into()),
+            &config,
+            true,
+        ));
+    }
+
+    #[test]
+    fn terminal_safe_policy_caps_custom_retry_counts_at_three() {
+        let config = RetryConfig::new(12, 1, 1.0, 1);
+        assert_eq!(retry_limit(&config, true), DEFAULT_MAX_RETRIES);
+        assert_eq!(retry_limit(&config, false), 12);
+    }
+
+    #[test]
+    fn provider_retry_delay_takes_precedence_over_backoff() {
+        let provider_delay = Duration::from_secs(17);
+        let error = ProviderError::RateLimitExceeded {
+            details: "slow down".into(),
+            retry_delay: Some(provider_delay),
+        };
+        let config = RetryConfig::new(3, 1, 2.0, 8);
+
+        assert_eq!(retry_delay(&error, &config, 1), provider_delay);
     }
 }
