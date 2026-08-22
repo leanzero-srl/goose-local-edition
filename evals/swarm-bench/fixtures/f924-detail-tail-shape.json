@@ -1,0 +1,10 @@
+{
+  "source": "SWARM-ENGINE-AUDIT-2026-08-22.md#interrupted-qwen38-r2",
+  "total_detail_calls": 27,
+  "completed_before_tail": 26,
+  "tail_task_id": "api-server-api",
+  "tail_reasoning_chars_at_interruption": 203447,
+  "tail_activity_minutes": 60.7,
+  "sole_logical_tail_minutes": 17.7,
+  "physical_idle_interval_proven": false
+}
