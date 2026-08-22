@@ -473,6 +473,49 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 if scorer.poll() is None:
                     cloud_sb7.stop_group(scorer.pid, grace_seconds=0.1)
 
+    def test_interrupted_publisher_is_stopped_and_requires_remote_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            publisher = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            try:
+                cloud_sb7.update_state(
+                    root,
+                    "model",
+                    status="PUBLISHING",
+                    publisher_pid=publisher.pid,
+                    publisher_pgid=publisher.pid,
+                    publisher_identity=cloud_sb7.process_identity(publisher.pid),
+                )
+                cloud_sb7.recover_interrupted_publication(root)
+                publisher.wait(timeout=5)
+                state = cloud_sb7.read_state(root, "model")
+                self.assertEqual(state["status"], "PUBLISH_FAILED")
+                self.assertIn("remote receipt", state["failure"])
+                self.assertIsNone(state["publisher_pid"])
+                self.assertIsNone(state["publisher_identity"])
+            finally:
+                if publisher.poll() is None:
+                    cloud_sb7.stop_group(publisher.pid, grace_seconds=0.1)
+
+    def test_website_base_url_is_an_https_origin_without_credentials(self) -> None:
+        self.assertEqual(
+            cloud_sb7.normalized_website_base_url("https://leanzero.net/"),
+            "https://leanzero.net",
+        )
+        for value in (
+            "http://leanzero.net",
+            "https://leanzero.net/path",
+            "https://leanzero.net?next=evil",
+            "https://token@leanzero.net",
+            "https://leanzero.net#fragment",
+        ):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                cloud_sb7.normalized_website_base_url(value)
+
     def test_restart_accepts_build_complete_and_scoring_campaigns(self) -> None:
         class Launched:
             pid = 99999999
