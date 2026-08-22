@@ -337,7 +337,7 @@ impl Agent {
         debug!("WAITING_LLM_STREAM_END");
 
         // If there was an error creating the stream, return a stream that yields that error
-        let mut stream = match stream_result {
+        let stream = match stream_result {
             Ok(s) => {
                 lifecycle.admitted();
                 s
@@ -352,6 +352,7 @@ impl Agent {
                 }));
             }
         };
+        let mut stream = lifecycle.wrap(stream);
 
         let processed_stream = Box::pin(try_stream! {
             if config.toolshim {
@@ -410,7 +411,7 @@ impl Agent {
             }
         });
 
-        Ok(lifecycle.wrap(processed_stream))
+        Ok(processed_stream)
     }
 
     /// Categorize tool requests from the response into different types
