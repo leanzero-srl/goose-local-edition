@@ -4,20 +4,27 @@
 //! device pool with the goose-swarm weighted work-queue scheduler. `goose swarm pool` manages the
 //! pool (devices, weights, enable/disable) via an interactive menu, persisted in the Goose config.
 
+use super::swarm_control_registry::{
+    apply_uncapped_effective_values, control_registry_manifest, merge_effective_config_controls,
+    resolve_control_precedence,
+};
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use console::style;
 use futures::StreamExt;
 use goose::agents::{
-    Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform, SessionConfig,
+    large_text_threshold, Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform,
+    SessionConfig,
 };
 use goose::config::permission::PermissionManager;
 use goose::config::{Config, GooseMode};
+use goose::context_mgmt::local_context_cap;
 use goose::conversation::message::{Message, MessageContent};
 use goose::providers::base::Provider;
 use goose::recipe::Response;
 use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
+use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
     deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
     DispatchRequest, EventSink, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
@@ -701,9 +708,6 @@ pub struct SwarmConfig {
     /// measures quality parity.
     #[serde(default)]
     pub fix_sched: bool,
-    /// Run the repro oracle: try to PROVE a reported crash by running it twice in a clean snapshot.
-    /// Was env-only (GOOSE_SWARM_REVIEW_REPRO) and therefore unreachable from the desktop app, which is
-    /// launched via `open` and never receives the caller's environment. None = the previous behaviour
     /// How many clarifying questions the run may put to the user at once. Default 3.
     /// MEASURED: a run's probe found FIVE material open decisions, every one on the spec's explicit
     /// "do NOT guess them" list, and the cap of 3 meant two were guessed regardless — silently. Raising
@@ -714,7 +718,8 @@ pub struct SwarmConfig {
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
     /// Let the judge SPLIT a task that is too big for one worker into file-partitioned children.
     /// MEASURED live: a 4-file api task split into `routes` + `app-entry` and BOTH delivered, where the
-    /// unsplit run produced no api module at all. Was env-only (GOOSE_SWARM_SPLIT). None = off.
+    /// unsplit run produced no api module at all. Was env-only (GOOSE_SWARM_SPLIT). `None` follows the
+    /// shipped default ON; an explicit false is the rollback.
     #[serde(default)]
     pub split: Option<bool>,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig` (F393).
@@ -1120,9 +1125,9 @@ pub struct SwarmConfig {
     ///
     /// THE FEATURE IS UNREACHABLE TODAY — the same dead-lever trap already recorded on `goals`. Its gate is
     /// `swarm_gate("GOOSE_SWARM_PARALLEL_TESTS", true)`, and that `true` is `in_assured_bundle`, NOT a
-    /// default: `resolve_gate` computes `in_assured_bundle && assured`. Nothing sets GOOSE_SWARM_ASSURED (the
-    /// desktop provider force-sets SMOKE/SPLIT/CONTRACTS/COMPLETE and not ASSURED), so it resolves FALSE on
-    /// every desktop run, and with no config field it could not be switched on from the settings UI at all.
+    /// default: `resolve_gate` computes `in_assured_bundle && assured`. At the time of that corpus the desktop
+    /// launch never set GOOSE_SWARM_ASSURED, so it resolved FALSE on every desktop run, and with no config
+    /// field it could not be switched on from the settings UI at all.
     /// PROVEN by the corpus: `parallel_tests` is absent from every levers_resolved echo, and 0 of 40 plans
     /// carry per-module `test-<module>` subtasks — they carry ONE app-wide test task.
     ///
@@ -9002,8 +9007,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     /// APP PILLARS HAS NEVER RUN. NOT ONCE, IN ANY RUN EVER MADE.
     ///
     /// `swarm_gate("GOOSE_SWARM_GOALS", true)` reads that `true` as `in_assured_bundle`, NOT as a default —
-    /// resolve_gate computes `in_assured_bundle && assured`. Nothing sets GOOSE_SWARM_ASSURED (the desktop
-    /// provider force-sets SMOKE/SPLIT/CONTRACTS/COMPLETE and not ASSURED), so it resolved FALSE on every run.
+    /// resolve_gate computes `in_assured_bundle && assured`. Nothing in those measured runs set
+    /// GOOSE_SWARM_ASSURED, so it resolved FALSE on every run.
     /// PROVEN: the live run's own run_started says `assured:false, gates.goals:false`, and `pillars` appears
     /// in ZERO logs across the entire corpus. The feature injects "NON-NEGOTIABLE" acceptance criteria into
     /// EVERY worker — and no worker has ever seen one.
@@ -13478,7 +13483,7 @@ fn research_lookups(tool_calls: &[ToolCallRecord]) -> Vec<String> {
 }
 
 /// A fixed CORRECTNESS-review angle, fanned one-per-model across the idle fleet in the post-execute
-/// REVIEW phase (GOOSE_SWARM_REVIEW_FANOUT). Read-only + ADVISORY: it surfaces defects, drives no fix.
+/// review phase. Read-only + ADVISORY: it surfaces defects, drives no fix.
 struct ReviewDimension {
     id: &'static str,
     brief: &'static str,
@@ -24185,8 +24190,8 @@ fn me_events_skip(events: &Arc<dyn EventSink>, task_id: &str, reason: &str) {
 #[async_trait]
 impl Judge for GooseAgentDispatcher {
     async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
-        // M3: split-enable is OFF in the default; GOOSE_SWARM_SPLIT=1 turns task-splitting on at runtime
-        // so it can be proven live (M4) without a recompile, mirroring the judge/pre-review env gates.
+        // The split decision is env > config > shipped default ON. Uncapped disables elapsed-wall splitting
+        // because a productive slow task is exactly the class that profile preserves.
         let cfg = JudgeConfig {
             // UNCAPPED: the split trip is elapsed-wall on a PRODUCTIVE task — exactly the class the
             // regime removes; the spiral kill is a volume threshold. Both forced off; the judge's
@@ -27984,13 +27989,42 @@ fn swarm_gate(name: &str, in_assured_bundle: bool) -> bool {
 /// toggle), else the config value. This is how a swarm lever becomes a real user-facing TUNABLE while keeping
 /// the env escape hatch.
 fn swarm_gate_cfg(name: &str, cfg_default: bool) -> bool {
-    match std::env::var(name).ok() {
-        Some(v) => matches!(
-            v.trim().to_lowercase().as_str(),
-            "1" | "on" | "true" | "yes"
-        ),
-        None => cfg_default,
-    }
+    resolve_control_precedence(
+        std::env::var(name).ok().map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        }),
+        Some(cfg_default),
+        None,
+        false,
+    )
+    .value
+}
+
+fn default_on_environment_gate(name: &str) -> bool {
+    resolve_control_precedence(
+        std::env::var(name)
+            .ok()
+            .map(|value| !matches!(value.to_lowercase().as_str(), "0" | "off" | "false" | "no")),
+        None,
+        None,
+        true,
+    )
+    .value
+}
+
+fn idle_judge_enabled() -> bool {
+    default_on_environment_gate("GOOSE_SWARM_JUDGE")
+}
+
+fn prereview_enabled() -> bool {
+    default_on_environment_gate("GOOSE_SWARM_PREREVIEW")
+}
+
+fn ship_best_enabled() -> bool {
+    swarm_gate_cfg("GOOSE_SWARM_SHIP_BEST", true)
 }
 
 /// The finding a FAILED planned task contributes to the fix loop. Pure (the caller does the stat) so
@@ -28054,13 +28088,18 @@ fn green_blocking_failed(
 
 /// Pure precedence logic for `swarm_gate` (no env I/O so it is unit-testable without env races).
 fn resolve_gate(explicit: Option<String>, assured: bool, in_assured_bundle: bool) -> bool {
-    if let Some(v) = explicit {
-        return matches!(
-            v.trim().to_lowercase().as_str(),
-            "1" | "on" | "true" | "yes"
-        );
-    }
-    in_assured_bundle && assured
+    resolve_control_precedence(
+        explicit.map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        }),
+        None,
+        (in_assured_bundle && assured).then_some(true),
+        false,
+    )
+    .value
 }
 
 /// `swarm_gate` + a config field: env wins, then config.yaml if the key is SET, else the existing
@@ -28093,10 +28132,18 @@ fn resolve_gate_cfg(
     assured: bool,
     in_assured_bundle: bool,
 ) -> bool {
-    if explicit.is_some() {
-        return resolve_gate(explicit, assured, in_assured_bundle);
-    }
-    cfg_val.unwrap_or_else(|| resolve_gate(None, assured, in_assured_bundle))
+    resolve_control_precedence(
+        explicit.map(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "1" | "on" | "true" | "yes"
+            )
+        }),
+        cfg_val,
+        (in_assured_bundle && assured).then_some(true),
+        false,
+    )
+    .value
 }
 
 /// APP PILLARS — the distilled app-wide acceptance criteria injected into EVERY worker prompt as
@@ -28104,8 +28151,8 @@ fn resolve_gate_cfg(
 ///
 /// THIS FEATURE HAS NEVER RUN. NOT ONCE. It read `swarm_gate("GOOSE_SWARM_GOALS", true)`, and that `true` is
 /// `in_assured_bundle`, NOT a default — `resolve_gate` computes `in_assured_bundle && assured`. Nothing sets
-/// GOOSE_SWARM_ASSURED (the desktop provider force-sets SMOKE/SPLIT/CONTRACTS/COMPLETE and not ASSURED), so
-/// it resolved to FALSE on every run ever made. PROVEN from the engine's own run_started event on the live
+/// GOOSE_SWARM_ASSURED was absent from the measured desktop launches, so it resolved to FALSE on every run
+/// in that corpus. PROVEN from the engine's own run_started event on the live
 /// run: `assured: false, gates.goals: false`, and `pillars` appears in ZERO run logs across the whole corpus.
 ///
 /// This is the SAME TRAP that already bit the AST wiring review — see the comment at its gate, which records
@@ -32726,9 +32773,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     ext_names.extend(opts.mcp.iter().cloned());
     ext_names.sort();
     ext_names.dedup();
-    let worker_extensions: Vec<ExtensionConfig> = ext_names
+    let resolved_extensions: Vec<(String, ExtensionConfig)> = ext_names
+        .into_iter()
+        .filter_map(|name| build_worker_extension(&name).map(|extension| (name, extension)))
+        .collect();
+    let ext_names: Vec<String> = resolved_extensions
         .iter()
-        .filter_map(|n| build_worker_extension(n))
+        .map(|(name, _)| name.clone())
+        .collect();
+    let worker_extensions: Vec<ExtensionConfig> = resolved_extensions
+        .into_iter()
+        .map(|(_, extension)| extension)
         .collect();
     if !worker_extensions.is_empty() {
         eprintln!("worker MCP extensions: {}", ext_names.join(", "));
@@ -33234,9 +33289,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // that NOTHING outside this process can reproduce. Everything that tried, lied:
     //   * the harness printed "arm env: GOOSE_SWARM_X=1 ..." for a week while `open -n` discarded every
     //     one of them (LaunchServices hands the app its own environment);
-    //   * reading config.yaml back is not enough either — the DESKTOP PROVIDER force-sets six of these
-    //     at spawn (providers/swarm.rs:240-272) and env BEATS config, so `split` reads false in every
-    //     config file on disk while the engine splits at 300s on every run;
+    //   * the desktop provider historically force-set six controls. They are config-backed now, but
+    //     per-run sampling, CLI overrides, runtime profiles, and environment overrides still mean a config
+    //     file alone is not the value the engine executed;
     //   * the arm labels in the campaign's ledger were hand-written, so five arms were recorded under
     //     names describing a run that never happened.
     // These values are computed by calling THE SAME expressions the engine itself branches on, so this
@@ -33257,6 +33312,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         "version": option_env!("GOOSE_BUILD_VERSION").unwrap_or("dev"),
         "build_sha": option_env!("GOOSE_BUILD_SHA").unwrap_or("dev"),
         "crate_version": env!("CARGO_PKG_VERSION"),
+        "control_registry": control_registry_manifest(),
         "levers": {
             "ask_floor": ask_floor,
             "ask_max_q": ask_max_q,
@@ -33364,29 +33420,21 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // and drove a demote. The echo's whole purpose is completeness.
             "review": swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review),
             "user_notes": swarm_gate_cfg("GOOSE_SWARM_USER_NOTES", load_config().user_notes),
-            // FORCED ON by the desktop provider at spawn and unsettable from config — recorded so a
-            // "control" arm can never be mistaken for one that had them off.
-            "split": std::env::var("GOOSE_SWARM_SPLIT")
+            // Effective splitter values. These are real env > config controls; the old campaign's
+            // APP_FORCED classification is obsolete.
+            "split": !uncapped() && std::env::var("GOOSE_SWARM_SPLIT")
                 .ok()
                 .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
                 .unwrap_or_else(|| load_config().split.unwrap_or(true)),
-            "split_secs": std::env::var("GOOSE_SWARM_SPLIT_SECS").ok(),
-            // The splitter defaults ON and this lever defaults OFF, so a split child's ENTIRE task
-            // statement is "(split of <parent>) <child-id>" — 43 characters, after the run paid ~40%
-            // of its wall-clock producing the spec that is discarded at the moment of use. It lives
-            // in crates/goose-swarm (which cannot see SwarmConfig) so it is env-only, and it was
-            // ABSENT from this map — meaning a run could not say whether it was on, and a campaign
-            // screen reading only this map would score it INERT whether or not it fired. A lever
-            // nobody can see resolve is a lever nobody can keep. Read here the same way the engine
-            // reads it, so the echo cannot drift from the behaviour.
-            "split_inherit_spec": matches!(
-                std::env::var("GOOSE_SWARM_SPLIT_INHERIT_SPEC")
-                    .unwrap_or_default()
-                    .trim()
-                    .to_lowercase()
-                    .as_str(),
-                "1" | "on" | "true" | "yes"
-            ),
+            "split_secs": std::env::var("GOOSE_SWARM_SPLIT_SECS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(cfg.split_secs),
+            // This control lives in goose-swarm and is env-only. Its default is ON; the former inline
+            // parser treated an absent env as false and made every run claim the opposite of what the
+            // scheduler executed. Call the scheduler's one public resolver so behavior and evidence are
+            // the same value by construction.
+            "split_inherit_spec": split_inherit_spec_enabled(),
             // Enumerated rather than fixed one at a time: these are every OTHER lever read from env
             // inside crates/goose-swarm and therefore missing from this map for the same reason.
             // salvage_spin turns a terminal finalize-spin failure into Done — it decides whether a
@@ -33396,12 +33444,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // 1/on/true/yes) so the echo cannot drift from the behaviour it reports.
             "e2e_oracle": swarm_gate_cfg("GOOSE_SWARM_E2E_ORACLE", load_config().e2e_oracle.unwrap_or(true)),
             "spec_sized_plan": swarm_gate_cfg("GOOSE_SWARM_SPEC_SIZED_PLAN", load_config().spec_sized_plan.unwrap_or(true)),
-            "salvage_spin": std::env::var("GOOSE_SWARM_SALVAGE_SPIN")
-                .map(|v| !matches!(v.trim().to_lowercase().as_str(), "0" | "off" | "false" | "no"))
-                .unwrap_or(true),
-            "salvage_require_critical": std::env::var("GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL")
-                .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-                .unwrap_or(false),
+            "salvage_spin": goose_swarm::salvage_spin_enabled(),
+            "salvage_require_critical": goose_swarm::salvage_require_critical(),
             "complete": swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete),
             "contracts": swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts),
             "smoke": swarm_gate_cfg("GOOSE_SWARM_SMOKE", load_config().smoke),
@@ -33440,6 +33484,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .unwrap_or_else(|| load_config().progress_watchdog_secs),
         },
     });
+    // Start from the complete persisted schema, then let the execution expressions above replace raw
+    // values. This makes omission impossible: adding a SwarmConfig field adds it to the serialized base,
+    // while the registry test requires an explicit disposition before the build can pass.
+    if let Some(effective) = levers_event
+        .get_mut("levers")
+        .and_then(|value| value.as_object_mut())
+    {
+        merge_effective_config_controls(&cfg, effective);
+    }
+
     // Split from the literal above ONLY because a single json! macro of this width blows the macro
     // recursion limit. It is the same event and the same object.
     let extra_levers = serde_json::json!({
@@ -33450,44 +33504,100 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // BOOL lever plus the tuning numerics a campaign arm would vary. Device rows (weight/enabled/
             // instances) and per-run CLI overrides stay out: they are echoed by run_started, not levers.
             "goals": goals_enabled(),
-            "occupancy": load_config().occupancy,
-            "write_first": load_config().write_first,
-            "ask_away": load_config().ask_away,
-            "research_scouts": load_config().research_scouts,
-            "parallel_planning": load_config().parallel_planning,
-            "dynamic_replan_cfg": load_config().dynamic_replan,
-            "planner_also_works": load_config().planner_also_works,
+            "judge": idle_judge_enabled(),
+            "prereview": prereview_enabled(),
+            "tail_review": goose_swarm::tail_review_enabled(),
+            "testgen": goose_swarm::testgen_enabled(),
+            "ship_best": ship_best_enabled(),
+            "sink_shard": sink_shard(),
+            "occupancy": occupancy_on(),
+            "write_first": write_first_on(),
+            "ask_away": swarm_gate_cfg("GOOSE_SWARM_ASK_AWAY", cfg.ask_away),
+            "research_planning": do_research,
+            "research_scouts": cfg.research_scouts,
+            "parallel_planning": use_parallel,
+            "dynamic_replan": opts.dynamic_replan.unwrap_or(cfg.dynamic_replan),
+            "planner_also_works": swarm_gate_cfg(
+                "GOOSE_SWARM_PLANNER_ALSO_WORKS",
+                cfg.planner_also_works,
+            ),
             "homogeneous_models": load_config().homogeneous_models,
+            "devices": devices.iter().map(|device| serde_json::json!({
+                "id": device.id,
+                "model_id": device.model_id,
+                "weight": device.weight,
+                "speed_weight": device.speed_weight,
+            })).collect::<Vec<_>>(),
+            "speed_weights": devices.iter().map(|device| {
+                (device.id.clone(), device.speed_weight)
+            }).collect::<HashMap<_, _>>(),
+            "sink_review": goose_swarm::sink_review_enabled(),
             "allow_model_load": load_config().allow_model_load,
-            "worker_max_turns": load_config().worker_max_turns,
+            "worker_extensions": ext_names,
+            "worker_max_turns": worker_max_turns,
             "worker_timeout_secs": load_config().worker_timeout_secs,
-            "planner_timeout_secs": load_config().planner_timeout_secs,
+            "planner_timeout_secs": planner_wall(cfg.planner_timeout_secs),
             "max_attempts": load_config().max_attempts,
             "max_replans": load_config().max_replans,
             "max_research_questions": load_config().max_research_questions,
-            "best_of_n_skeletons": load_config().best_of_n_skeletons,
-            "scout_budget_secs": load_config().scout_budget_secs,
+            "best_of_n_skeletons": best_of_n,
+            "scout_budget_secs": if uncapped() { UNCAPPED_SECS } else { cfg.scout_budget_secs },
             "scout_max_lookups": load_config().scout_max_lookups,
-            "sink_cap_secs": load_config().sink_cap_secs,
+            "sink_cap_secs": std::env::var("GOOSE_SWARM_SINK_CAP_SECS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(cfg.sink_cap_secs),
+            "sink_cap_ref_bytes": std::env::var("GOOSE_SWARM_SINK_CAP_REF_BYTES")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(cfg.sink_cap_ref_bytes),
             // A lever nobody can see resolve is a lever nobody can keep: this budget decides whether a
             // worker gets a real spec or the architect's one-liner, so the run must say what it was.
             "detail_budget_secs": detail_budget_secs(),
-            "struct_stop": load_config().struct_stop,
-            "spiral_thinking_chars": load_config().spiral_thinking_chars,
-            "planner_weight": load_config().planner_weight,
-            "ask_rounds_max": load_config().ask_rounds_max,
-            "sink_max_turns": load_config().sink_max_turns,
-            "clarity_probe_secs": load_config().clarity_probe_secs,
-            "draft_timeout_secs": load_config().draft_timeout_secs,
-            "draft_temp": load_config().draft_temp,
-            "straggler_grace_secs": load_config().straggler_grace_secs,
-            "context_cap": load_config().context_cap,
-            "max_tool_response_chars": load_config().max_tool_response_chars,
-            "temperature": swarm_temp_resolved(load_config().temperature),
-            "top_p": swarm_top_p_resolved(load_config().top_p),
-            "top_k": swarm_top_k_resolved(load_config().top_k),
-            "min_p": swarm_min_p_resolved(load_config().min_p),
-            "repeat_penalty": swarm_repeat_penalty_resolved(load_config().repeat_penalty),
+            "struct_stop": std::env::var("GOOSE_SWARM_STRUCT_STOP")
+                .ok()
+                .and_then(|value| value.parse::<u8>().ok())
+                .unwrap_or(cfg.struct_stop),
+            "spiral_thinking_chars": if uncapped() {
+                0
+            } else {
+                std::env::var("GOOSE_SWARM_SPIRAL_THINKING_CHARS")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(cfg.spiral_thinking_chars)
+            },
+            "planner_weight": cfg.planner_weight.max(1),
+            "ask_rounds_max": std::env::var("GOOSE_SWARM_ASK_ROUNDS")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                .or(cfg.ask_rounds_max)
+                .unwrap_or(3)
+                .clamp(1, 6),
+            "sink_max_turns": sink_max_turns(worker_max_turns),
+            "clarity_probe_secs": clarity_probe_secs(),
+            "draft_timeout_secs": draft_timeout_eff(),
+            "draft_temp": std::env::var("GOOSE_SWARM_DRAFT_TEMP")
+                .ok()
+                .and_then(|value| value.parse::<f32>().ok())
+                .or(cfg.draft_temp)
+                .map(|value| value.clamp(0.0, 1.0)),
+            "straggler_grace_secs": straggler_grace_secs(cfg.straggler_grace_secs),
+            "context_cap": local_context_cap(),
+            "max_tool_response_chars": large_text_threshold(),
+            "temperature": swarm_temp_resolved(cfg.temperature),
+            "top_p": swarm_top_p_resolved(cfg.top_p),
+            "top_k": swarm_top_k_resolved(cfg.top_k),
+            "min_p": swarm_min_p_resolved(cfg.min_p),
+            "repeat_penalty": swarm_repeat_penalty_resolved(cfg.repeat_penalty),
+            "uncapped": uncapped(),
+            "complete_cap_secs": if uncapped() {
+                UNCAPPED_SECS
+            } else {
+                std::env::var("GOOSE_SWARM_COMPLETE_CAP_SECS")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(cfg.complete_cap_secs)
+            },
     });
     if let (Some(dst), Some(src)) = (
         levers_event
@@ -33498,6 +33608,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         for (k, v) in src {
             dst.insert(k.clone(), v.clone());
         }
+        apply_uncapped_effective_values(dst, uncapped(), UNCAPPED_SECS, worker_max_turns);
     }
     sink.write_value(levers_event);
 
@@ -34972,9 +35083,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     }
     // Idle-model judge: a node that would sit idle while tasks run inspects a busy worker and may kill +
     // re-dispatch a stuck one. On by default; GOOSE_SWARM_JUDGE=0 disables it.
-    let judge_on = std::env::var("GOOSE_SWARM_JUDGE")
-        .map(|v| !matches!(v.to_lowercase().as_str(), "0" | "off" | "false" | "no"))
-        .unwrap_or(true);
+    let judge_on = idle_judge_enabled();
     if judge_on {
         eprintln!("idle-model judge: on (GOOSE_SWARM_JUDGE=0 to disable)");
         scheduler =
@@ -34984,9 +35093,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // for the local fleet so a node never sleeps while completed work is unreviewed (it now runs CONCURRENTLY
     // with the judge, bounded by idle_capacity, instead of being starved by the single judge slot). Opt out
     // with GOOSE_SWARM_PREREVIEW=0.
-    let prereview_on = std::env::var("GOOSE_SWARM_PREREVIEW")
-        .map(|v| !matches!(v.to_lowercase().as_str(), "0" | "off" | "false" | "no"))
-        .unwrap_or(true);
+    let prereview_on = prereview_enabled();
     if prereview_on {
         eprintln!("idle-node pre-review: on (correctness-checks completed tasks)");
         scheduler = scheduler.with_pre_reviewer(dispatcher.clone() as Arc<dyn PreReviewer>);
@@ -35224,7 +35331,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // not a default — the first build of this rail resolved OFF with the var unset and
         // zero snapshots fired on a live unit before anyone noticed (silently, because the
         // failure path emitted nothing — also fixed below).
-        let ship_best = swarm_gate_cfg("GOOSE_SWARM_SHIP_BEST", true);
+        let ship_best = ship_best_enabled();
         let mut best_verified: Option<(u32, usize)> = None; // (round, findings)
                                                             // ESTABLISHED-AWARE SHIP CHAIN (contract-gap audit rank 1): a verify that RAN but
                                                             // established nothing produces a count that is not comparable to an established one —

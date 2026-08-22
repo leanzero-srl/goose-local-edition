@@ -6,7 +6,8 @@ use std::io::Write;
 
 const DEFAULT_LARGE_TEXT_THRESHOLD: usize = 200_000;
 
-fn large_text_threshold() -> usize {
+/// Effective character threshold above which tool output spills to a file.
+pub fn large_text_threshold() -> usize {
     Config::global()
         .get_param::<usize>("GOOSE_MAX_TOOL_RESPONSE_SIZE")
         .unwrap_or(DEFAULT_LARGE_TEXT_THRESHOLD)

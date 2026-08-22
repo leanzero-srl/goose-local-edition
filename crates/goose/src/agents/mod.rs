@@ -27,6 +27,7 @@ pub use container::Container;
 pub use execute_commands::COMPACT_TRIGGERS;
 pub use extension::{ExtensionConfig, ExtensionError};
 pub use extension_manager::ExtensionManager;
+pub use large_response_handler::large_text_threshold;
 pub use prompt_manager::PromptManager;
 pub use subagent_handler::SUBAGENT_TOOL_REQUEST_TYPE;
 pub use subagent_task_config::TaskConfig;

@@ -28,6 +28,14 @@ fn tool_pair_summarization_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// Effective optional hard cap applied to a provider's advertised context window.
+pub fn local_context_cap() -> Option<usize> {
+    Config::global()
+        .get_param::<usize>("GOOSE_LOCAL_CONTEXT_CAP")
+        .ok()
+        .filter(|cap| *cap > 0)
+}
+
 const CONVERSATION_CONTINUATION_TEXT: &str =
     "Your context was compacted. The previous message contains a summary of the conversation so far.
 Do not mention that you read a summary or that conversation summarization occurred.
@@ -290,10 +298,9 @@ pub async fn check_if_compaction_needed(
     // hybrid local models like Qwen3.6). Read via Config here — the same path that reads the
     // threshold above — so it reliably gates the auto-compaction trigger regardless of any
     // provider wrapping. No-op when GOOSE_LOCAL_CONTEXT_CAP is unset or 0.
-    let context_limit = match config.get_param::<usize>("GOOSE_LOCAL_CONTEXT_CAP") {
-        Ok(cap) if cap > 0 => context_limit.min(cap),
-        _ => context_limit,
-    };
+    let context_limit = local_context_cap()
+        .map(|cap| context_limit.min(cap))
+        .unwrap_or(context_limit);
 
     let (current_tokens, _token_source) = match session.usage.total_tokens {
         Some(tokens) => (tokens as usize, "session metadata"),

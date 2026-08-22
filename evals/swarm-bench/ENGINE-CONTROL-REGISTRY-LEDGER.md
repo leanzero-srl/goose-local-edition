@@ -1,0 +1,65 @@
+# Engine control registry ledger
+
+## Scope
+
+This foundation change accounts for the engine controls without changing judge, planning, fanning,
+repair, SB7, or scoring behavior.
+
+The Rust source of truth is
+`crates/goose-cli/src/commands/swarm_control_registry.rs`. It contains exactly 116 persisted
+`SwarmConfig` controls, the audited 30/8/32/12/34 dispositions, all 50 environment-only controls,
+canonical aliases, serialized config defaults, and the exact 142 `GOOSE_SWARM_*` production reader names.
+
+## Enforced truths
+
+- A config field missing from the registry, duplicated in it, or replaced by a catalog-only name fails a
+  unit test.
+- A literal environment reader without a registry row fails, as does a registry environment name with no
+  production reader.
+- The obsolete comment-only `GOOSE_SWARM_REVIEW_FANOUT` and `GOOSE_SWARM_REVIEW_REPRO` names are absent from
+  production source and pinned by a regression test.
+- Ordinary resolution uses one tested precedence primitive: environment, config, runtime profile, default.
+- `levers_resolved.control_registry` exports the machine-readable registry on every run.
+- `levers_resolved.levers` starts from all 116 config fields and overlays the expressions execution uses;
+  absent optional fields therefore appear as `null` rather than disappearing.
+- CLI- and runtime-shaped values are echoed after resolution: actual worker devices and speed weights,
+  successfully built worker extensions, parallel-planning activation, planner/worker budgets, sampling,
+  the shared local-context resolver, and the shared tool-response spill threshold.
+- `split_inherit_spec` is echoed by calling the scheduler's resolver. Its unset value is now reported as
+  enabled, matching execution.
+- The default-on environment-only paths called out by the audit (`judge`, `prereview`, `qa`, `tail_review`,
+  `spec_repair`, `salvage_spin`, `ship_best`, and `sink_shard`) have effective event values. Judge,
+  pre-review, ship-best, and salvage now share their resolver between the branch and the echo instead of
+  duplicating parsers.
+- Registry rows state whether an environment-only control has a run-level effective echo. That metadata is
+  checked bidirectionally against the event; controls without one remain registered but must be read from
+  their phase-specific evidence rather than being presented as run-level values.
+- Uncapped runs echo the effective values actually executed: disabled sink/progress/spiral/split controls,
+  expanded planner/scout/complete/draft/clarity ceilings, and expanded worker/sink turn budgets.
+- `dynamic_replan` is canonical. The former `dynamic_replan_cfg` event spelling remains only as a declared
+  compatibility alias.
+
+## Integration boundary
+
+The external campaign script at `~/goose-builds/loop-state/arm_config.py` remains a hand-maintained live
+operator tool and is deliberately not edited from this isolated engine branch. Its stale `APP_FORCED`,
+`ENV_ONLY`, and inert names must not be treated as engine truth. The campaign integration commit must consume
+the emitted `control_registry` manifest (or a checked export derived from it) and refuse a run when its local
+allowlist differs. Until that lands, Rust plus each run's own event is authoritative; the Python catalog is
+not.
+
+## Verification gate
+
+Run:
+
+```bash
+source bin/activate-hermit
+cargo fmt -p goose-cli
+cargo fmt -p goose-swarm
+cargo fmt -p goose
+cargo test -p goose-cli swarm_control_registry
+cargo test -p goose-cli config_backed_gate_sits_between_env_and_the_assured_default
+cargo test -p goose-swarm tail_review_gate_defaults_on_and_respects_the_env
+cargo test -p goose large_response_handler
+cargo clippy -p goose -p goose-cli -p goose-swarm --all-targets -- -D warnings
+```
