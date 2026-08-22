@@ -51,6 +51,7 @@ REQUIRED_BINARY_MARKERS = (
     "GOOSE_PROVIDER_LIFECYCLE_STRICT",
     "GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES",
     "GOOSE_BENCH_BUDGET_CONFIG",
+    "GOOSE_BENCH_BUDGET_CONFIG_SHA256",
     "GOOSE_BENCH_BUDGET_LEDGER",
 )
 
@@ -496,6 +497,7 @@ def init_campaign(
             "build_log": str(unit / "logs/build.log"),
             "vendor_trace": str(unit / "vendor-trace-build.jsonl"),
             "provider_lifecycle": str(unit / "provider-lifecycle.jsonl"),
+            "budget_config_sha256": campaign["budget_config_sha256"],
             "thinking_effort": row["thinking_effort"],
             "context_limit": int(row["context_limit"]),
             "max_output_tokens": int(row["max_output_tokens"]),
@@ -574,6 +576,9 @@ def child_env(
             "GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES": "true",
             "GOOSE_BENCH_BUDGET_CONFIG": str(
                 Path(str(state["tree"])).parents[2] / "instrument/budget-config.json"
+            ),
+            "GOOSE_BENCH_BUDGET_CONFIG_SHA256": str(
+                state["budget_config_sha256"]
             ),
             "GOOSE_BENCH_BUDGET_LEDGER": str(
                 Path(str(state["tree"])).parents[2] / "budget-ledger.json"

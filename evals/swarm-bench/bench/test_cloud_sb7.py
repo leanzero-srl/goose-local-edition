@@ -59,6 +59,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "profile": "/tmp/profile",
             "tree": "/tmp/campaign/entrant/tree",
             "provider_lifecycle": "/tmp/campaign/entrant/provider-lifecycle.jsonl",
+            "budget_config_sha256": "abc123",
         }
         with mock.patch.dict(
             os.environ,
@@ -76,6 +77,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(env["GOOSE_THINKING_EFFORT"], "medium")
         self.assertEqual(env["GOOSE_PROVIDER_LIFECYCLE_STRICT"], "true")
         self.assertEqual(env["GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES"], "true")
+        self.assertEqual(env["GOOSE_BENCH_BUDGET_CONFIG_SHA256"], "abc123")
 
     def test_admitted_failure_is_never_retryable(self) -> None:
         self.assertEqual(cloud_sb7.classify_build_exit(0, 3), ("BUILD_COMPLETE", None))
@@ -100,6 +102,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "profile": "/tmp/campaign/entrants/glm/profile",
             "tree": "/tmp/campaign/entrants/glm/tree",
             "provider_lifecycle": "/tmp/campaign/entrants/glm/provider-lifecycle.jsonl",
+            "budget_config_sha256": "def456",
         }
         with mock.patch.dict(os.environ, {"PATH": "/bin"}, clear=True):
             env = cloud_sb7.child_env(row, state, "secret")

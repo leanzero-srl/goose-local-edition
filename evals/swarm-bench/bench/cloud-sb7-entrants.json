@@ -23,7 +23,7 @@
       "provider_lane": "zai-primary-key",
       "endpoint_family": "https://api.z.ai/api/paas/v4",
       "thinking_effort": "max",
-      "context_limit": 1048576,
+      "context_limit": 1000000,
       "max_output_tokens": 131072,
       "vendor_port": 9120,
       "pricing": {
@@ -80,9 +80,9 @@
       "secret_env": "DEEPSEEK_API_KEY",
       "provider_lane": "deepseek-primary-key",
       "endpoint_family": "https://api.deepseek.com",
-      "thinking_effort": "high",
+      "thinking_effort": "max",
       "context_limit": 1000000,
-      "max_output_tokens": 393216,
+      "max_output_tokens": 384000,
       "vendor_port": 9123,
       "pricing": {
         "input_per_million": 0.14,
@@ -98,9 +98,9 @@
       "secret_env": "DEEPSEEK_API_KEY",
       "provider_lane": "deepseek-primary-key",
       "endpoint_family": "https://api.deepseek.com",
-      "thinking_effort": "high",
+      "thinking_effort": "max",
       "context_limit": 1000000,
-      "max_output_tokens": 393216,
+      "max_output_tokens": 384000,
       "vendor_port": 9124,
       "pricing": {
         "input_per_million": 0.435,
