@@ -16,6 +16,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -52,7 +53,22 @@ RESTARTABLE_CAMPAIGN_STATES = {
     "SCORING",
     "ATTENTION",
 }
-CAMPAIGN_SCHEMA = 1
+POST_BUILD_STATES = {
+    "SCORING",
+    "SCORE_FAILED",
+    "SCORED",
+    "PUBLISH_VALIDATING",
+    "PUBLISH_VALIDATED",
+    "PUBLISHING",
+    "PUBLISHED_UNVERIFIED",
+    "REVALIDATING",
+    "REVALIDATED",
+    "VERIFYING_RENDERED",
+    "PUBLISH_FAILED",
+    "PUBLISHED",
+}
+BUILD_SUCCESS_STATES = {"BUILD_COMPLETE"} | POST_BUILD_STATES
+CAMPAIGN_SCHEMA = 2
 REQUIRED_BINARY_MARKERS = (
     "GOOSE_PROVIDER_LIFECYCLE_FILE",
     "GOOSE_PROVIDER_LIFECYCLE_STRICT",
@@ -65,6 +81,24 @@ REQUIRED_BINARY_MARKERS = (
     "GOOSE_BENCH_TOOL_ALLOWLIST",
     "GOOSE_TOOL_SANDBOX_ROOT",
 )
+PUBLISHER_SCRIPT = Path("scripts/seed-baseline-sb7.mjs")
+PUBLISHER_MANIFEST = Path("scripts/data/sb7-cloud-entrants.json")
+PUBLISHER_FILES = (
+    PUBLISHER_SCRIPT,
+    Path("scripts/lib/sb7-cloud-publisher.mjs"),
+    PUBLISHER_MANIFEST,
+    Path("package.json"),
+    Path("package-lock.json"),
+)
+PUBLISHER_RUNTIME_FILES = (
+    Path("node_modules/@sanity/client/package.json"),
+    Path("node_modules/dotenv/package.json"),
+)
+PUBLISHER_REQUIRED_ENV = ("SANITY_WRITE_TOKEN", "NEXT_PUBLIC_SANITY_PROJECT_ID")
+DEFAULT_WEBSITE_BASE_URL = "https://leanzero.net"
+DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS = 900.0
+DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS = 15.0
+DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS = 900.0
 
 
 def utc_now() -> str:
@@ -112,6 +146,21 @@ def parse_secret_file(path: Path) -> Dict[str, str]:
     mode = path.stat().st_mode & 0o777
     if mode & 0o077:
         raise SystemExit(f"secret file must be mode 0600, found {mode:04o}: {path}")
+    values: Dict[str, str] = {}
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
+def parse_env_file(path: Path) -> Dict[str, str]:
+    if not path.is_file():
+        raise SystemExit(f"environment file is missing: {path}")
     values: Dict[str, str] = {}
     for raw in path.read_text().splitlines():
         line = raw.strip()
@@ -302,6 +351,164 @@ def git_value(*args: str) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else "unknown"
 
 
+def git_value_at(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=repo, text=True, capture_output=True, check=False
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.strip().splitlines()
+        suffix = f": {detail[-1]}" if detail else ""
+        raise SystemExit(f"git {' '.join(args)} failed in {repo}{suffix}")
+    return proc.stdout.strip()
+
+
+def publisher_entries(
+    manifest: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]
+) -> Dict[str, Dict[str, str]]:
+    raw_entries = manifest.get("entrants")
+    if not isinstance(raw_entries, list):
+        raise SystemExit("publisher manifest has no entrants array")
+    by_key: Dict[str, Mapping[str, Any]] = {}
+    for raw in raw_entries:
+        if not isinstance(raw, dict) or not isinstance(raw.get("key"), str):
+            raise SystemExit("publisher manifest contains a malformed entrant")
+        key = str(raw["key"])
+        if key in by_key:
+            raise SystemExit(f"publisher manifest repeats entrant: {key}")
+        by_key[key] = raw
+
+    resolved: Dict[str, Dict[str, str]] = {}
+    for row in rows:
+        entrant_id = str(row["id"])
+        entry = by_key.get(entrant_id)
+        if entry is None:
+            raise SystemExit(f"publisher manifest is missing cloud entrant: {entrant_id}")
+        model = str(entry.get("model", ""))
+        if model != str(row["model"]):
+            raise SystemExit(
+                f"publisher model mismatch for {entrant_id}: {model or '<missing>'}"
+            )
+        label = str(entry.get("label", "")).strip()
+        doc_id = str(entry.get("docId", ""))
+        stable_stem = re.sub(r"[^a-z0-9]+", "-", entrant_id).strip("-")
+        expected_doc_id = f"brun-baseline-{stable_stem}-sb70"
+        if not label:
+            raise SystemExit(f"publisher label is missing for {entrant_id}")
+        if doc_id != expected_doc_id:
+            raise SystemExit(
+                f"publisher doc id for {entrant_id} must be {expected_doc_id}"
+            )
+        resolved[entrant_id] = {
+            "key": entrant_id,
+            "label": label,
+            "model": model,
+            "doc_id": doc_id,
+        }
+    return resolved
+
+
+def publisher_snapshot(
+    publisher_repo: Path, rows: Iterable[Mapping[str, Any]]
+) -> Dict[str, Any]:
+    repo = publisher_repo.resolve()
+    if not repo.is_dir():
+        raise SystemExit(f"publisher repo is missing: {repo}")
+    top = Path(git_value_at(repo, "rev-parse", "--show-toplevel")).resolve()
+    if top != repo:
+        raise SystemExit(f"publisher repo must be its git root: {repo} (found {top})")
+    dirty = git_value_at(repo, "status", "--porcelain", "--untracked-files=all")
+    if dirty:
+        raise SystemExit("publisher website worktree must be clean before it is pinned")
+
+    tracked_hashes: Dict[str, str] = {}
+    for relative in PUBLISHER_FILES:
+        path = repo / relative
+        if not path.is_file():
+            raise SystemExit(f"publisher input is missing: {path}")
+        git_value_at(repo, "ls-files", "--error-unmatch", str(relative))
+        tracked_hashes[str(relative)] = sha256_file(path)
+
+    runtime_hashes: Dict[str, str] = {}
+    for relative in PUBLISHER_RUNTIME_FILES:
+        path = repo / relative
+        if not path.is_file():
+            raise SystemExit(f"publisher runtime dependency is missing: {path}")
+        runtime_hashes[str(relative)] = sha256_file(path)
+
+    node_from_path = shutil.which("node")
+    if not node_from_path:
+        raise SystemExit("node is not available for the website publisher")
+    node_path = Path(node_from_path).resolve()
+    node_version = subprocess.run(
+        [str(node_path), "--version"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if node_version.returncode != 0 or not node_version.stdout.strip():
+        raise SystemExit(f"cannot execute pinned publisher node runtime: {node_path}")
+
+    env_file = repo / ".env.local"
+    env_values = parse_env_file(env_file)
+    missing_env = [name for name in PUBLISHER_REQUIRED_ENV if not env_values.get(name)]
+    if missing_env:
+        raise SystemExit(
+            f"publisher .env.local is missing variables: {', '.join(missing_env)}"
+        )
+
+    manifest = load_json(repo / PUBLISHER_MANIFEST)
+    entries = publisher_entries(manifest, rows)
+    all_hashes = {**tracked_hashes, **runtime_hashes}
+    return {
+        "repo": str(repo),
+        "commit": git_value_at(repo, "rev-parse", "HEAD"),
+        "branch": git_value_at(repo, "branch", "--show-current"),
+        "script": str(PUBLISHER_SCRIPT),
+        "manifest": str(PUBLISHER_MANIFEST),
+        "tracked_hashes": tracked_hashes,
+        "runtime_hashes": runtime_hashes,
+        "instrument_set_sha256": sha256_bytes(
+            json.dumps(all_hashes, sort_keys=True).encode()
+        ),
+        "node": {
+            "path": str(node_path),
+            "sha256": sha256_file(node_path),
+            "version": node_version.stdout.strip(),
+        },
+        "env_file": str(env_file),
+        "required_env_present": list(PUBLISHER_REQUIRED_ENV),
+        "entries": entries,
+    }
+
+
+def publisher_mismatch(campaign: Mapping[str, Any]) -> str | None:
+    expected = campaign.get("publisher")
+    if not isinstance(expected, dict):
+        return "campaign has no pinned publisher"
+    try:
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        current = publisher_snapshot(
+            Path(str(expected["repo"])), entrants(manifest)
+        )
+    except (OSError, json.JSONDecodeError, SystemExit) as error:
+        return f"pinned publisher cannot be verified: {error}"
+    compared = (
+        "repo",
+        "commit",
+        "script",
+        "manifest",
+        "tracked_hashes",
+        "runtime_hashes",
+        "instrument_set_sha256",
+        "node",
+        "entries",
+    )
+    changed = [key for key in compared if current.get(key) != expected.get(key)]
+    if changed:
+        return f"publisher changed after freeze: {', '.join(changed)}"
+    return None
+
+
 def instrument_files() -> list[Path]:
     paths = [
         REPO / "evals/swarm-bench/spec-build-sb7.md",
@@ -399,7 +606,12 @@ def validate_rosters(rows: Iterable[Mapping[str, Any]], rosters: Mapping[str, se
             )
 
 
-def preflight(binary: Path, manifest_path: Path, secret_path: Path) -> Dict[str, Any]:
+def preflight(
+    binary: Path,
+    manifest_path: Path,
+    secret_path: Path,
+    publisher_repo: Path,
+) -> Dict[str, Any]:
     if sys.platform != "darwin" or not os.access("/usr/bin/sandbox-exec", os.X_OK):
         raise SystemExit("cloud benchmark requires the verified macOS tool sandbox")
     manifest = load_json(manifest_path)
@@ -422,6 +634,7 @@ def preflight(binary: Path, manifest_path: Path, secret_path: Path) -> Dict[str,
     busy = [str(row["vendor_port"]) for row in rows if not port_is_free(int(row["vendor_port"]))]
     if busy:
         raise SystemExit(f"vendor ports are already occupied: {', '.join(busy)}")
+    publisher = publisher_snapshot(publisher_repo, rows)
     return {
         "checked_at": utc_now(),
         "binary_sha256": sha256_file(binary),
@@ -429,11 +642,21 @@ def preflight(binary: Path, manifest_path: Path, secret_path: Path) -> Dict[str,
         "requested_models": [str(row["model"]) for row in rows],
         "ports_free": True,
         "credential_file_mode": f"{secret_path.stat().st_mode & 0o777:04o}",
+        "publisher": publisher,
     }
 
 
 def init_campaign(
-    root: Path, binary: Path, manifest_path: Path, secret_path: Path
+    root: Path,
+    binary: Path,
+    manifest_path: Path,
+    secret_path: Path,
+    publisher_repo: Path,
+    publish_live: bool,
+    website_base_url: str = DEFAULT_WEBSITE_BASE_URL,
+    publish_verify_timeout_seconds: float = DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS,
+    publish_verify_interval_seconds: float = DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS,
+    publish_process_timeout_seconds: float = DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
 ) -> Dict[str, Any]:
     if campaign_file(root).exists():
         existing = load_json(campaign_file(root))
@@ -441,7 +664,21 @@ def init_campaign(
             return existing
         raise SystemExit(f"campaign already exists with status {existing.get('status')}: {root}")
 
-    checked = preflight(binary, manifest_path, secret_path)
+    if not publish_live:
+        raise SystemExit(
+            "cloud campaign init requires explicit --publish-live; dry-run-only campaigns "
+            "cannot satisfy the publication contract"
+        )
+    if not website_base_url.startswith("https://"):
+        raise SystemExit("website base URL must use https")
+    if (
+        publish_verify_timeout_seconds <= 0
+        or publish_verify_interval_seconds <= 0
+        or publish_process_timeout_seconds <= 0
+    ):
+        raise SystemExit("publisher process and rendered-verification timing must be positive")
+
+    checked = preflight(binary, manifest_path, secret_path, publisher_repo)
     manifest = load_json(manifest_path)
     rows = entrants(manifest)
     policy = spend_policy(manifest, rows)
@@ -450,6 +687,7 @@ def init_campaign(
     (root / "entrants").mkdir()
     (root / "locks").mkdir()
     (root / "scores").mkdir()
+    (root / "publish").mkdir()
     frozen_binary = root / "instrument/goose"
     shutil.copy2(binary, frozen_binary)
     frozen_binary.chmod(frozen_binary.stat().st_mode | 0o100)
@@ -493,6 +731,19 @@ def init_campaign(
     )
     hashes = instrument_hashes()
     prompt_source = (REPO / "evals/swarm-bench/spec-build-sb7.md").read_bytes()
+    publisher = dict(checked["publisher"])
+    publisher.update(
+        {
+            "mode": "live",
+            "website_base_url": website_base_url.rstrip("/"),
+            "revalidate_endpoint": (
+                f"{website_base_url.rstrip('/')}/api/revalidate-benchmarks"
+            ),
+            "verify_timeout_seconds": publish_verify_timeout_seconds,
+            "verify_interval_seconds": publish_verify_interval_seconds,
+            "process_timeout_seconds": publish_process_timeout_seconds,
+        }
+    )
     campaign = {
         "schema_version": CAMPAIGN_SCHEMA,
         "campaign_id": root.name,
@@ -515,8 +766,11 @@ def init_campaign(
         "prompt_source_sha256": sha256_bytes(prompt_source),
         "secret_file": str(secret_path),
         "preflight": {
-            key: value for key, value in checked.items() if key != "models"
+            key: value
+            for key, value in checked.items()
+            if key not in {"models", "publisher"}
         },
+        "publisher": publisher,
         "requested_models": checked["requested_models"],
         "scorer_version": manifest.get("suite"),
         "calibration": manifest.get("calibration"),
@@ -554,6 +808,8 @@ def init_campaign(
             "updated_at": utc_now(),
             "admitted_requests": 0,
             "provider_terminal_requests": 0,
+            "publish_doc_id": publisher["entries"][entrant_id]["doc_id"],
+            "publish_label": publisher["entries"][entrant_id]["label"],
         }
         atomic_json(state_file(root, entrant_id), state)
     manager_state(root, status="IDLE", pid=None, pgid=None)
@@ -1645,12 +1901,31 @@ def main() -> int:
     p_preflight.add_argument("--binary", type=Path, required=True)
     p_preflight.add_argument("--manifest", type=Path, default=DEFAULT_ENTRANTS)
     p_preflight.add_argument("--secrets", type=Path, default=DEFAULT_SECRET_FILE)
+    p_preflight.add_argument("--publisher-repo", type=Path, required=True)
 
     p_init = sub.add_parser("init")
     root_arg(p_init)
     p_init.add_argument("--binary", type=Path, required=True)
     p_init.add_argument("--manifest", type=Path, default=DEFAULT_ENTRANTS)
     p_init.add_argument("--secrets", type=Path, default=DEFAULT_SECRET_FILE)
+    p_init.add_argument("--publisher-repo", type=Path, required=True)
+    p_init.add_argument("--publish-live", action="store_true")
+    p_init.add_argument("--website-base-url", default=DEFAULT_WEBSITE_BASE_URL)
+    p_init.add_argument(
+        "--publish-verify-timeout-seconds",
+        type=float,
+        default=DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS,
+    )
+    p_init.add_argument(
+        "--publish-verify-interval-seconds",
+        type=float,
+        default=DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS,
+    )
+    p_init.add_argument(
+        "--publish-process-timeout-seconds",
+        type=float,
+        default=DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
+    )
 
     for name in ("start", "status", "watch", "results", "stop", "score", "resume"):
         root_arg(sub.add_parser(name))
@@ -1662,7 +1937,12 @@ def main() -> int:
 
     args = parser.parse_args()
     if args.command == "preflight":
-        value = preflight(args.binary.resolve(), args.manifest.resolve(), args.secrets.resolve())
+        value = preflight(
+            args.binary.resolve(),
+            args.manifest.resolve(),
+            args.secrets.resolve(),
+            args.publisher_repo.resolve(),
+        )
         print(json.dumps(value, indent=2))
         return 0
     if args.command == "init":
@@ -1671,6 +1951,12 @@ def main() -> int:
             args.binary.resolve(),
             args.manifest.resolve(),
             args.secrets.resolve(),
+            args.publisher_repo.resolve(),
+            args.publish_live,
+            args.website_base_url,
+            args.publish_verify_timeout_seconds,
+            args.publish_verify_interval_seconds,
+            args.publish_process_timeout_seconds,
         )
         print(f"initialized {value['campaign_id']} at {args.root.resolve()}")
         return 0
