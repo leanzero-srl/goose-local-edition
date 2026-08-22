@@ -2716,6 +2716,13 @@ mod tests {
             )
         }
 
+        fn terminal_safe_retries_env(enabled: bool) -> env_lock::EnvGuard<'static> {
+            env_lock::lock_env([(
+                goose_providers::retry::TERMINAL_SAFE_RETRIES_ENV,
+                enabled.then_some("true"),
+            )])
+        }
+
         /// Yields empty responses (no text, no tool calls) for the first
         /// `empty_count` provider calls, then a normal text response.
         struct EmptyThenTextProvider {
@@ -2792,7 +2799,8 @@ mod tests {
             provider: Arc<dyn Provider>,
             session_name: &str,
         ) -> Result<(Vec<Message>, Vec<Message>)> {
-            let agent = Agent::new();
+            let mut agent = Agent::new();
+            agent.config.disable_session_naming = true;
             let session = agent
                 .config
                 .session_manager
@@ -2859,6 +2867,7 @@ mod tests {
         /// delivering the real text response instead of stopping silently.
         #[tokio::test]
         async fn test_empty_turn_retries_then_recovers() -> Result<()> {
+            let _env = terminal_safe_retries_env(false);
             let provider = Arc::new(EmptyThenTextProvider::new(2));
             let (messages, persisted) = run_reply(provider, "empty-retry-recover").await?;
 
@@ -2882,6 +2891,7 @@ mod tests {
         /// silently — after the retry budget it surfaces a visible message.
         #[tokio::test]
         async fn test_persistent_empty_turn_surfaces_message() -> Result<()> {
+            let _env = terminal_safe_retries_env(false);
             let provider = Arc::new(EmptyThenTextProvider::new(usize::MAX));
             let (messages, persisted) = run_reply(provider, "empty-persistent").await?;
 
@@ -2904,11 +2914,28 @@ mod tests {
             Ok(())
         }
 
+        #[tokio::test]
+        async fn test_terminal_safe_empty_turn_is_not_retried() -> Result<()> {
+            let _env = terminal_safe_retries_env(true);
+            let provider = Arc::new(EmptyThenTextProvider::new(usize::MAX));
+            let (messages, persisted) = run_reply(provider.clone(), "empty-terminal-safe").await?;
+
+            assert_eq!(
+                provider.call_count.load(Ordering::SeqCst),
+                1,
+                "terminal-safe mode must not replay a paid empty response"
+            );
+            assert!(concat_text(&messages).contains("empty response"));
+            assert!(!persisted.iter().any(is_empty_assistant));
+            Ok(())
+        }
+
         /// An empty response with a queued steer hands the turn to the steer
         /// rather than the empty-turn fallback, but the empty assistant message
         /// must still not be persisted ahead of the steer.
         #[tokio::test]
         async fn test_empty_response_with_steer_drops_empty_message() -> Result<()> {
+            let _env = terminal_safe_retries_env(false);
             let agent = Agent::new();
             let session = agent
                 .config
@@ -2981,6 +3008,7 @@ mod tests {
             use goose::agents::final_output_tool::FINAL_OUTPUT_CONTINUATION_MESSAGE;
             use goose::recipe::Response;
 
+            let _env = terminal_safe_retries_env(false);
             let agent = Agent::new();
             let session = agent
                 .config
@@ -3047,6 +3075,7 @@ mod tests {
         async fn test_empty_turn_defers_to_recipe_retry() -> Result<()> {
             use goose::agents::types::{RetryConfig, SuccessCheck};
 
+            let _env = terminal_safe_retries_env(false);
             let agent = Agent::new();
             let session = agent
                 .config
@@ -3108,6 +3137,7 @@ mod tests {
         async fn test_recipe_max_retries_surfaces_failure() -> Result<()> {
             use goose::agents::types::{RetryConfig, SuccessCheck};
 
+            let _env = terminal_safe_retries_env(false);
             let agent = Agent::new();
             let session = agent
                 .config
