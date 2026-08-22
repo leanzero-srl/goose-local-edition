@@ -96,10 +96,7 @@ PUBLISHER_FILES = (
     Path("package.json"),
     Path("package-lock.json"),
 )
-PUBLISHER_RUNTIME_FILES = (
-    Path("node_modules/@sanity/client/package.json"),
-    Path("node_modules/dotenv/package.json"),
-)
+PUBLISHER_RUNTIME_PACKAGES = ("@sanity/client", "dotenv")
 PUBLISHER_REQUIRED_ENV = ("SANITY_WRITE_TOKEN", "NEXT_PUBLIC_SANITY_PROJECT_ID")
 DEFAULT_WEBSITE_BASE_URL = "https://leanzero.net"
 DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS = 900.0
@@ -135,6 +132,24 @@ def sha1_file(path: Path) -> str:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def sha256_tree_exact(root: Path) -> str:
+    if not root.is_dir() or root.is_symlink():
+        raise SystemExit(f"runtime package is missing or linked: {root}")
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise SystemExit(f"runtime package contains a symbolic link: {path}")
+        if not path.is_file():
+            continue
+        relative = str(path.relative_to(root)).encode()
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
 
 
 def atomic_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -181,8 +196,12 @@ def parse_secret_file(path: Path) -> Dict[str, str]:
 def parse_env_file(path: Path) -> Dict[str, str]:
     if not path.is_file():
         raise SystemExit(f"environment file is missing: {path}")
+    return parse_env_text(path.read_text())
+
+
+def parse_env_text(raw_text: str) -> Dict[str, str]:
     values: Dict[str, str] = {}
-    for raw in path.read_text().splitlines():
+    for raw in raw_text.splitlines():
         line = raw.strip()
         if line.startswith("export "):
             line = line[7:].strip()
@@ -455,6 +474,125 @@ def publisher_entries(
     return resolved
 
 
+def resolve_runtime_package(repo: Path, start: Path, name: str) -> Path | None:
+    cursor = start
+    while True:
+        candidate = cursor / "node_modules" / name
+        if (candidate / "package.json").is_file():
+            if candidate.is_symlink():
+                raise SystemExit(f"publisher runtime package is linked: {candidate}")
+            try:
+                candidate.resolve().relative_to(repo.resolve())
+            except ValueError:
+                raise SystemExit(
+                    f"publisher runtime package escapes the website repo: {candidate}"
+                ) from None
+            return candidate
+        if cursor == repo:
+            return None
+        parent = cursor.parent
+        if parent == cursor:
+            return None
+        cursor = parent
+
+
+def publisher_runtime_hashes(repo: Path) -> Dict[str, str]:
+    pending = [(name, repo, True) for name in PUBLISHER_RUNTIME_PACKAGES]
+    packages: Dict[str, str] = {}
+    visited: set[Path] = set()
+    while pending:
+        name, start, required = pending.pop(0)
+        package = resolve_runtime_package(repo, start, name)
+        if package is None:
+            if required:
+                raise SystemExit(
+                    f"publisher runtime dependency cannot be resolved: {name}"
+                )
+            continue
+        resolved = package.resolve()
+        if resolved in visited:
+            continue
+        visited.add(resolved)
+        manifest = load_json(package / "package.json")
+        relative = str(package.relative_to(repo))
+        packages[relative] = sha256_tree_exact(package)
+
+        dependencies = manifest.get("dependencies")
+        if dependencies is not None and not isinstance(dependencies, dict):
+            raise SystemExit(f"publisher package dependencies are malformed: {relative}")
+        for dependency in sorted((dependencies or {}).keys()):
+            pending.append((str(dependency), package, True))
+
+        optional = manifest.get("optionalDependencies")
+        if optional is not None and not isinstance(optional, dict):
+            raise SystemExit(
+                f"publisher package optionalDependencies are malformed: {relative}"
+            )
+        for dependency in sorted((optional or {}).keys()):
+            pending.append((str(dependency), package, False))
+
+        peers = manifest.get("peerDependencies")
+        peer_meta = manifest.get("peerDependenciesMeta")
+        if peers is not None and not isinstance(peers, dict):
+            raise SystemExit(
+                f"publisher package peerDependencies are malformed: {relative}"
+            )
+        if peer_meta is not None and not isinstance(peer_meta, dict):
+            raise SystemExit(
+                f"publisher package peerDependenciesMeta are malformed: {relative}"
+            )
+        for dependency in sorted((peers or {}).keys()):
+            metadata = (peer_meta or {}).get(dependency, {})
+            is_optional = isinstance(metadata, dict) and metadata.get("optional") is True
+            pending.append((str(dependency), package, not is_optional))
+    return dict(sorted(packages.items()))
+
+
+def read_publisher_env(repo: Path) -> tuple[Dict[str, Any], Dict[str, str]]:
+    env_file = repo / ".env.local"
+    if env_file.is_symlink():
+        raise SystemExit(f"publisher environment file cannot be a symbolic link: {env_file}")
+    if not env_file.is_file():
+        raise SystemExit(f"environment file is missing: {env_file}")
+    mode = env_file.stat().st_mode & 0o777
+    if mode & 0o077:
+        raise SystemExit(
+            f"publisher environment file must be mode 0600, found {mode:04o}: "
+            f"{env_file}"
+        )
+    try:
+        raw = env_file.read_bytes()
+        values = parse_env_text(raw.decode())
+    except UnicodeDecodeError:
+        raise SystemExit(f"publisher environment file is not UTF-8: {env_file}") from None
+    missing_env = [name for name in PUBLISHER_REQUIRED_ENV if not values.get(name)]
+    if missing_env:
+        raise SystemExit(
+            f"publisher .env.local is missing variables: {', '.join(missing_env)}"
+        )
+    project_id = values["NEXT_PUBLIC_SANITY_PROJECT_ID"]
+    dataset = values.get("NEXT_PUBLIC_SANITY_DATASET", "production")
+    if not re.fullmatch(r"[a-z0-9-]+", project_id):
+        raise SystemExit("publisher Sanity project id is malformed")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", dataset):
+        raise SystemExit("publisher Sanity dataset is malformed")
+    identity = {
+        "env_file": str(env_file),
+        "env_file_mode": f"{mode:04o}",
+        "env_file_sha256": sha256_bytes(raw),
+        "sanity_target": {
+            "project_id": project_id,
+            "dataset": dataset,
+        },
+    }
+    return identity, values
+
+
+def publisher_env_identity(repo: Path) -> Dict[str, Any]:
+    identity, _ = read_publisher_env(repo)
+    return identity
+
+
 def publisher_snapshot(
     publisher_repo: Path, rows: Iterable[Mapping[str, Any]]
 ) -> Dict[str, Any]:
@@ -476,12 +614,7 @@ def publisher_snapshot(
         git_value_at(repo, "ls-files", "--error-unmatch", str(relative))
         tracked_hashes[str(relative)] = sha256_file(path)
 
-    runtime_hashes: Dict[str, str] = {}
-    for relative in PUBLISHER_RUNTIME_FILES:
-        path = repo / relative
-        if not path.is_file():
-            raise SystemExit(f"publisher runtime dependency is missing: {path}")
-        runtime_hashes[str(relative)] = sha256_file(path)
+    runtime_hashes = publisher_runtime_hashes(repo)
 
     node_from_path = shutil.which("node")
     if not node_from_path:
@@ -496,20 +629,18 @@ def publisher_snapshot(
     if node_version.returncode != 0 or not node_version.stdout.strip():
         raise SystemExit(f"cannot execute pinned publisher node runtime: {node_path}")
 
-    env_file = repo / ".env.local"
-    env_values = parse_env_file(env_file)
-    missing_env = [name for name in PUBLISHER_REQUIRED_ENV if not env_values.get(name)]
-    if missing_env:
-        raise SystemExit(
-            f"publisher .env.local is missing variables: {', '.join(missing_env)}"
-        )
+    env_identity = publisher_env_identity(repo)
 
     manifest = load_json(repo / PUBLISHER_MANIFEST)
     entries = publisher_entries(manifest, rows)
     expected_checks = manifest.get("expectedChecks")
     if not isinstance(expected_checks, int) or expected_checks <= 0:
         raise SystemExit("publisher manifest expectedChecks must be a positive integer")
-    all_hashes = {**tracked_hashes, **runtime_hashes}
+    all_hashes = {
+        **tracked_hashes,
+        **runtime_hashes,
+        ".env.local": str(env_identity["env_file_sha256"]),
+    }
     return {
         "repo": str(repo),
         "commit": git_value_at(repo, "rev-parse", "HEAD"),
@@ -526,7 +657,7 @@ def publisher_snapshot(
             "sha256": sha256_file(node_path),
             "version": node_version.stdout.strip(),
         },
-        "env_file": str(env_file),
+        **env_identity,
         "required_env_present": list(PUBLISHER_REQUIRED_ENV),
         "expected_checks": expected_checks,
         "entries": entries,
@@ -553,12 +684,83 @@ def publisher_mismatch(campaign: Mapping[str, Any]) -> str | None:
         "runtime_hashes",
         "instrument_set_sha256",
         "node",
+        "env_file",
+        "env_file_mode",
+        "env_file_sha256",
+        "sanity_target",
         "expected_checks",
         "entries",
     )
     changed = [key for key in compared if current.get(key) != expected.get(key)]
     if changed:
         return f"publisher changed after freeze: {', '.join(changed)}"
+    return None
+
+
+def freeze_publisher_runtime(
+    destination: Path, publisher: Mapping[str, Any]
+) -> Dict[str, Any]:
+    repo = Path(str(publisher["repo"]))
+    destination.mkdir(parents=True, exist_ok=False)
+    tracked = publisher.get("tracked_hashes")
+    runtime = publisher.get("runtime_hashes")
+    if not isinstance(tracked, dict) or not isinstance(runtime, dict):
+        raise SystemExit("publisher snapshot has no executable input hashes")
+    for relative in tracked:
+        source = repo / str(relative)
+        target = destination / str(relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    for relative in runtime:
+        source = repo / str(relative)
+        target = destination / str(relative)
+        shutil.copytree(source, target, dirs_exist_ok=True)
+
+    copied_tracked = {
+        str(relative): sha256_file(destination / str(relative))
+        for relative in tracked
+    }
+    copied_runtime = {
+        str(relative): sha256_tree_exact(destination / str(relative))
+        for relative in runtime
+    }
+    if copied_tracked != tracked or copied_runtime != runtime:
+        raise SystemExit("publisher executable inputs changed while they were frozen")
+    return {
+        "root": str(destination),
+        "tracked_hashes": copied_tracked,
+        "runtime_hashes": copied_runtime,
+        "instrument_set_sha256": sha256_bytes(
+            json.dumps(
+                {**copied_tracked, **copied_runtime}, sort_keys=True
+            ).encode()
+        ),
+    }
+
+
+def frozen_publisher_mismatch(campaign: Mapping[str, Any]) -> str | None:
+    publisher = campaign.get("publisher")
+    frozen = publisher.get("frozen") if isinstance(publisher, dict) else None
+    if not isinstance(frozen, dict):
+        return "campaign has no frozen publisher runtime"
+    root = Path(str(frozen.get("root", "")))
+    tracked = frozen.get("tracked_hashes")
+    runtime = frozen.get("runtime_hashes")
+    if not isinstance(tracked, dict) or not isinstance(runtime, dict):
+        return "campaign frozen publisher hashes are malformed"
+    try:
+        current_tracked = {
+            str(relative): sha256_file(root / str(relative))
+            for relative in tracked
+        }
+        current_runtime = {
+            str(relative): sha256_tree_exact(root / str(relative))
+            for relative in runtime
+        }
+    except (OSError, SystemExit) as error:
+        return f"frozen publisher runtime cannot be verified: {error}"
+    if current_tracked != tracked or current_runtime != runtime:
+        return "frozen publisher runtime changed after freeze"
     return None
 
 
@@ -847,6 +1049,9 @@ def init_campaign(
         instrument_root / "evals/swarm-bench/spec-build-sb7.md"
     ).read_bytes()
     publisher = dict(checked["publisher"])
+    publisher["frozen"] = freeze_publisher_runtime(
+        root / "instrument/publisher", publisher
+    )
     publisher.update(
         {
             "mode": "live",
@@ -1772,17 +1977,47 @@ def redact_text(value: str, redactions: Iterable[str]) -> str:
     return redacted
 
 
-def publisher_environment(campaign: Mapping[str, Any]) -> tuple[Dict[str, str], list[str]]:
+def pinned_publisher_env_values(campaign: Mapping[str, Any]) -> Dict[str, str]:
     publisher = campaign.get("publisher")
     if not isinstance(publisher, dict):
         raise PublicationError("campaign has no pinned publisher")
-    values = parse_env_file(Path(str(publisher["env_file"])))
-    missing = [name for name in PUBLISHER_REQUIRED_ENV if not values.get(name)]
-    if missing:
-        raise PublicationError(
-            f"publisher environment is missing variables: {', '.join(missing)}"
-        )
+    try:
+        current, values = read_publisher_env(Path(str(publisher["repo"])))
+    except (OSError, SystemExit) as error:
+        raise PublicationError(f"pinned publisher environment cannot be read: {error}") from None
+    for field in (
+        "env_file",
+        "env_file_mode",
+        "env_file_sha256",
+        "sanity_target",
+    ):
+        if current.get(field) != publisher.get(field):
+            raise PublicationError(
+                f"pinned publisher environment changed after freeze: {field}"
+            )
+    return values
+
+
+def publisher_environment(
+    campaign: Mapping[str, Any], include_credentials: bool = False
+) -> tuple[Dict[str, str], list[str]]:
+    publisher = campaign.get("publisher")
+    if not isinstance(publisher, dict):
+        raise PublicationError("campaign has no pinned publisher")
+    values = pinned_publisher_env_values(campaign)
     env = {key: value for key, value in os.environ.items() if key in SAFE_ENV_NAMES}
+    if include_credentials:
+        env.update(
+            {
+                "SANITY_WRITE_TOKEN": values["SANITY_WRITE_TOKEN"],
+                "NEXT_PUBLIC_SANITY_PROJECT_ID": values[
+                    "NEXT_PUBLIC_SANITY_PROJECT_ID"
+                ],
+                "NEXT_PUBLIC_SANITY_DATASET": values.get(
+                    "NEXT_PUBLIC_SANITY_DATASET", "production"
+                ),
+            }
+        )
     redactions = sorted(
         {value for value in values.values() if isinstance(value, str) and len(value) >= 8},
         key=len,
@@ -1988,23 +2223,27 @@ def run_publisher(
     mismatch = publisher_mismatch(campaign)
     if mismatch:
         raise PublicationError(mismatch)
+    mismatch = frozen_publisher_mismatch(campaign)
+    if mismatch:
+        raise PublicationError(mismatch)
     publisher = campaign["publisher"]
     repo = Path(str(publisher["repo"]))
+    frozen_repo = Path(str(publisher["frozen"]["root"]))
     node = str(publisher["node"]["path"])
     cmd = [
         node,
-        str(repo / str(publisher["script"])),
+        str(frozen_repo / str(publisher["script"])),
         "--runs",
         str(runs),
         "--manifest",
-        str(repo / str(publisher["manifest"])),
+        str(frozen_repo / str(publisher["manifest"])),
         "--only",
         entrant_id,
     ]
     phase = "live" if live else "dry-run"
     if live:
         cmd.append("--live")
-    env, redactions = publisher_environment(campaign)
+    env, redactions = publisher_environment(campaign, include_credentials=live)
     state = read_state(root, entrant_id)
     attempt = int(state["score_attempts"])
     log_path = root / "publish" / entrant_id / f"attempt-{attempt}" / f"publisher-{phase}.log"
@@ -2082,7 +2321,7 @@ def sanity_document(
     campaign: Mapping[str, Any], document_id: str
 ) -> Dict[str, Any] | None:
     publisher = campaign["publisher"]
-    values = parse_env_file(Path(str(publisher["env_file"])))
+    values = pinned_publisher_env_values(campaign)
     token = values.get("SANITY_WRITE_TOKEN", "")
     project_id = values.get("NEXT_PUBLIC_SANITY_PROJECT_ID", "")
     dataset = values.get("NEXT_PUBLIC_SANITY_DATASET", "production")
@@ -2326,7 +2565,7 @@ def revalidate_publication(
     campaign: Mapping[str, Any], entry: Mapping[str, str]
 ) -> Dict[str, Any]:
     publisher = campaign["publisher"]
-    values = parse_env_file(Path(str(publisher["env_file"])))
+    values = pinned_publisher_env_values(campaign)
     token = values.get("SANITY_WRITE_TOKEN", "")
     if not token:
         raise PublicationError("SANITY_WRITE_TOKEN is missing for revalidation")
@@ -2668,7 +2907,19 @@ def publish_one(root: Path, entrant_id: str) -> bool:
             stage = "live-write"
             update_state(root, entrant_id, status="PUBLISHING")
             live = run_publisher(root, entrant_id, runs, live=True)
-            update_state(root, entrant_id, publisher_live=live)
+            live_succeeded_at = None
+            if live["exit_code"] == 0 and not live["timed_out"]:
+                live_succeeded_at = utc_now()
+            update_state(
+                root,
+                entrant_id,
+                publisher_live=live,
+                **(
+                    {"publisher_live_succeeded_at": live_succeeded_at}
+                    if live_succeeded_at
+                    else {}
+                ),
+            )
             stage = "post-write-receipt"
             post_write_receipt = remote_publication_receipt(
                 campaign,
@@ -2695,7 +2946,7 @@ def publish_one(root: Path, entrant_id: str) -> bool:
                 root,
                 entrant_id,
                 status="PUBLISHED_UNVERIFIED",
-                publisher_live_succeeded_at=utc_now(),
+                publisher_live_succeeded_at=live_succeeded_at or utc_now(),
                 publisher_remote_receipt=post_write_receipt,
                 publisher_write_adopted=(
                     live["exit_code"] != 0 or live["timed_out"]
