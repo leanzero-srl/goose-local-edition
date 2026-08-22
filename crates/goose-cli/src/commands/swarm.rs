@@ -13540,7 +13540,12 @@ through zoneinfo. Unix time is SECONDS since 1970 UTC; JS Date.now()/many APIs a
 4. Range inclusivity: range(a,b) and Python slices are END-EXCLUSIVE; cron 'a-b', SQL BETWEEN, and most human \
 'from a to b' are END-INCLUSIVE. An inclusive upper bound needs range(a, b+1). Time buckets are usually [start,end).
 5. Money/currency MUST NOT be a binary float (0.1+0.2 != 0.3). Use integer minor units (cents) or Decimal with \
-an explicit rounding mode. round() in Python 3 is banker's rounding (round half to even): round(0.5)==0.
+an explicit rounding mode. round() in Python 3 is banker's rounding (round half to even): round(0.5)==0. \
+THE EXPONENT IS PER CURRENCY, NOT 2: JPY has 0 decimals, KWD has 3, EUR/USD have 2 — dividing every \
+amount by 100 renders JPY 100x too small and KWD 10x too large, and a UI that hardcodes two decimals is \
+WRONG for half the rows (MEASURED: a build lost its whole money tier exactly this way). And NEVER SUM \
+ACROSS CURRENCIES: a total over mixed EUR/USD/JPY/KWD rows is meaningless whatever the arithmetic — \
+group by currency and total each separately, or the sum is a bug the tests will find.
 6. Off-by-one at boundaries: <= vs <, first/last element, fencepost (N items -> N-1 gaps), inclusive date-diff \
 (today..today is 1 day inclusive), pagination page N offset = (N-1)*size.
 7. Leap years: Feb has 29 days when year%4==0 AND (year%100!=0 OR year%400==0); a year is not always 365 days.
@@ -13655,6 +13660,10 @@ const PITFALL_TRIGGERS: &[&[&str]] = &[
         "rounding",
         "floating point",
         "float",
+        "amount_minor",
+        "minor unit",
+        "total",
+        "sum",
     ],
     &[
         "off-by-one",
