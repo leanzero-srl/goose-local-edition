@@ -1,24 +1,24 @@
 use crate::conversation::message::{Message, MessageContent, ProviderMetadata};
 use crate::conversation::token_usage::{ProviderUsage, Usage};
 use crate::errors::ProviderError;
-use crate::images::{convert_image, detect_image_path, load_image_file, ImageFormat};
+use crate::images::{ImageFormat, convert_image, detect_image_path, load_image_file};
 use crate::json::{parse_tool_arguments, truncation_error_message};
 use crate::mcp_utils::extract_text_from_resource;
 use crate::model::ModelConfig;
 use crate::thinking::{
-    split_think_blocks, ThinkFilter, ThinkingEffort, GEMINI_THOUGHT_SIGNATURE_KEY,
+    GEMINI_THOUGHT_SIGNATURE_KEY, ThinkFilter, ThinkingEffort, split_think_blocks,
 };
-use anyhow::{anyhow, Error};
+use anyhow::{Error, anyhow};
 use async_stream::try_stream;
 use chrono;
 use futures::Stream;
 use regex::Regex;
 use rmcp::model::{
-    object, AnnotateAble, CallToolRequestParams, Content, ErrorCode, ErrorData, RawContent, Role,
-    Tool,
+    AnnotateAble, CallToolRequestParams, Content, ErrorCode, ErrorData, RawContent, Role, Tool,
+    object,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -367,14 +367,16 @@ pub fn format_messages_with_options(
                                     }
                                 }
                             }
-                            let tool_response_content: Value = json!(tool_content
-                                .iter()
-                                .map(|content| match content.deref() {
-                                    RawContent::Text(text) => text.text.clone(),
-                                    _ => String::new(),
-                                })
-                                .collect::<Vec<String>>()
-                                .join(" "));
+                            let tool_response_content: Value = json!(
+                                tool_content
+                                    .iter()
+                                    .map(|content| match content.deref() {
+                                        RawContent::Text(text) => text.text.clone(),
+                                        _ => String::new(),
+                                    })
+                                    .collect::<Vec<String>>()
+                                    .join(" ")
+                            );
 
                             // First add the tool response with all content
                             output.push(json!({
@@ -1031,6 +1033,27 @@ fn strip_data_prefix(line: &str) -> Option<&str> {
         .map(|s| s.trim())
 }
 
+const OUTPUT_TRUNCATION_MARKER: &str = "\n\n[OUTPUT TRUNCATED: the model hit its output-token limit mid-generation — this response is INCOMPLETE]";
+
+fn terminal_error_from_finish_reason(chunk: &StreamingChunk) -> Option<ProviderError> {
+    chunk.choices.iter().find_map(|choice| {
+        let reason = choice.finish_reason.as_deref()?;
+        let model = chunk.model.as_deref().unwrap_or("provider");
+        let details = format!("{model} reported finish_reason={reason}");
+
+        match reason {
+            "content_filter" | "sensitive" => Some(ProviderError::Refusal {
+                details,
+                category: Some(reason.to_string()),
+            }),
+            "model_context_window_exceeded" => Some(ProviderError::ContextLengthExceeded(details)),
+            "network_error" => Some(ProviderError::NetworkError(details)),
+            "insufficient_system_resource" => Some(ProviderError::ServerError(details)),
+            _ => None,
+        }
+    })
+}
+
 fn parse_streaming_chunk(line: &str) -> Result<StreamingChunk, ProviderError> {
     let value: Value = serde_json::from_str(line).map_err(|e| {
         ProviderError::stream_decode_error(format!(
@@ -1054,11 +1077,17 @@ fn parse_streaming_chunk(line: &str) -> Result<StreamingChunk, ProviderError> {
         return Err(ProviderError::ServerError(message.to_string()));
     }
 
-    serde_json::from_value(value).map_err(|e| {
+    let chunk = serde_json::from_value(value).map_err(|e| {
         ProviderError::stream_decode_error(format!(
             "Failed to parse streaming chunk: {e}: {line:?}"
         ))
-    })
+    })?;
+
+    if let Some(error) = terminal_error_from_finish_reason(&chunk) {
+        return Err(error);
+    }
+
+    Ok(chunk)
 }
 
 pub fn response_to_streaming_message<S>(
@@ -1322,7 +1351,10 @@ where
                     Some(msg),
                     usage,
                 )
-            } else if chunk.choices[0].delta.content.is_some() || chunk.choices[0].delta.reasoning_text().is_some() {
+            } else if chunk.choices[0].delta.content.is_some()
+                || chunk.choices[0].delta.reasoning_text().is_some()
+                || chunk.choices[0].finish_reason.as_deref() == Some("length")
+            {
                 let mut content = Vec::new();
 
                 if let Some(reasoning) = chunk.choices[0].delta.reasoning_text() {
@@ -1366,10 +1398,7 @@ where
                     // deterministic text every downstream reader sees: a truncated final_output no
                     // longer passes as complete, and the retry machinery has a signal to re-ask.
                     if chunk.choices[0].finish_reason.as_deref() == Some("length") {
-                        msg = msg.with_text(
-                            "\n\n[OUTPUT TRUNCATED: the model hit its output-token limit \
-                             mid-generation — this response is INCOMPLETE]",
-                        );
+                        msg = msg.with_text(OUTPUT_TRUNCATION_MARKER);
                     }
 
                     yield (
@@ -1380,6 +1409,12 @@ where
                             None
                         },
                     )
+                } else if chunk.choices[0].finish_reason.as_deref() == Some("length") {
+                    let mut msg = Message::assistant().with_text(OUTPUT_TRUNCATION_MARKER);
+                    if let Some(id) = chunk.id {
+                        msg = msg.with_id(id);
+                    }
+                    yield (Some(msg), usage)
                 } else if usage.is_some() {
                     yield (None, usage)
                 }
@@ -1952,10 +1987,14 @@ mod tests {
 
     #[test]
     fn test_format_messages_multiple_content() -> anyhow::Result<()> {
-        let mut messages = vec![Message::assistant().with_tool_request(
-            "tool1",
-            Ok(CallToolRequestParams::new("example").with_arguments(object!({"param1": "value1"}))),
-        )];
+        let mut messages =
+            vec![
+                Message::assistant().with_tool_request(
+                    "tool1",
+                    Ok(CallToolRequestParams::new("example")
+                        .with_arguments(object!({"param1": "value1"}))),
+                ),
+            ];
 
         // Get the ID from the tool request to use in the response
         let tool_id = if let MessageContent::ToolRequest(request) = &messages[0].content[0] {
@@ -2015,10 +2054,12 @@ mod tests {
 
         let result = format_tools(&[tool1, tool2]);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Duplicate tool name"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Duplicate tool name")
+        );
 
         Ok(())
     }
@@ -2056,10 +2097,12 @@ mod tests {
         assert_eq!(content[0]["type"], "text");
         assert!(content[0]["text"].as_str().unwrap().contains(png_path_str));
         assert_eq!(content[1]["type"], "image_url");
-        assert!(content[1]["image_url"]["url"]
-            .as_str()
-            .unwrap()
-            .starts_with("data:image/png;base64,"));
+        assert!(
+            content[1]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
 
         // Create assistant message with same text - should NOT load the image
         let assistant_message =
@@ -2782,6 +2825,144 @@ mod tests {
         assert_eq!(usage.usage.total_tokens, Some(expected_total));
     }
 
+    #[tokio::test]
+    async fn deepseek_v4_fixture_preserves_parallel_tool_reasoning_and_usage() -> anyhow::Result<()>
+    {
+        let response_lines = include_str!("fixtures/deepseek_v4_parallel_tools.sse");
+        let response_stream =
+            tokio_stream::iter(response_lines.lines().map(|line| Ok(line.to_string())));
+        let mut messages = std::pin::pin!(response_to_streaming_message(response_stream));
+
+        let mut history = Vec::new();
+        let mut usage = None;
+        while let Some(result) = messages.next().await {
+            let (message, response_usage) = result?;
+            if let Some(message) = message {
+                history.push(message);
+            }
+            if response_usage.is_some() {
+                usage = response_usage;
+            }
+        }
+
+        let usage = usage.expect("fixture must report terminal usage");
+        assert_eq!(usage.model, "deepseek-v4-pro-fixture-revision");
+        assert_eq!(usage.usage.input_tokens, Some(100));
+        assert_eq!(usage.usage.output_tokens, Some(50));
+        assert_eq!(usage.usage.total_tokens, Some(150));
+
+        let parsed_tools: Vec<_> = history
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|content| match content {
+                MessageContent::ToolRequest(request) => request
+                    .tool_call
+                    .as_ref()
+                    .ok()
+                    .map(|call| (request.id.as_str(), call.name.as_ref())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            parsed_tools,
+            vec![("call_read", "read"), ("call_shell", "shell")]
+        );
+
+        history.push(Message::user().with_tool_response(
+            "call_read",
+            Ok(CallToolResult::success(vec![Content::text("manifest")])),
+        ));
+        history.push(Message::user().with_tool_response(
+            "call_shell",
+            Ok(CallToolResult::success(vec![Content::text("workspace")])),
+        ));
+
+        let replay = format_messages_with_options(
+            &history,
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions {
+                preserve_thinking_context: true,
+            },
+        );
+        assert_eq!(replay.len(), 3);
+        assert_eq!(replay[0]["role"], "assistant");
+        assert_eq!(
+            replay[0]["reasoning_content"],
+            "Inspect both targets before editing."
+        );
+        assert_eq!(replay[0]["content"], json!(null));
+        assert_eq!(replay[0]["tool_calls"].as_array().unwrap().len(), 2);
+        assert_eq!(replay[1]["role"], "tool");
+        assert_eq!(replay[1]["tool_call_id"], "call_read");
+        assert_eq!(replay[2]["role"], "tool");
+        assert_eq!(replay[2]["tool_call_id"], "call_shell");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn zai_glm_53_fixture_preserves_reported_model_and_usage() -> anyhow::Result<()> {
+        let result = run_streaming_test(include_str!("fixtures/zai_glm_5_3_usage.sse")).await?;
+
+        assert!(result.has_text_content);
+        assert_usage_yielded_once(&result, 40, 60, 100);
+        assert_eq!(
+            result.usage.as_ref().map(|usage| usage.model.as_str()),
+            Some("glm-5.3-fixture-revision")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn provider_terminal_reason_fixtures_are_typed_and_keep_model_evidence() {
+        let fixtures = include_str!("fixtures/provider_terminal_reasons.jsonl");
+        let expected = [
+            ("server", "deepseek-v4-pro-fixture-revision"),
+            ("refusal", "glm-5.3-fixture-revision"),
+            ("context_length", "glm-5.3-fixture-revision"),
+            ("network", "glm-5.3-fixture-revision"),
+            ("refusal", "compat-model-version"),
+        ];
+
+        for (line, (telemetry_type, model)) in fixtures.lines().zip(expected) {
+            let error = parse_streaming_chunk(line).expect_err("fixture must be terminal error");
+            assert_eq!(error.telemetry_type(), telemetry_type);
+            assert!(error.to_string().contains(model));
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_length_terminal_chunk_emits_truncation_evidence() -> anyhow::Result<()> {
+        let response_lines = concat!(
+            "data: {\"id\":\"cutoff\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n",
+            "data: {\"id\":\"cutoff\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20,\"total_tokens\":30}}\n",
+            "data: [DONE]\n",
+        );
+        let response_stream =
+            tokio_stream::iter(response_lines.lines().map(|line| Ok(line.to_string())));
+        let mut messages = std::pin::pin!(response_to_streaming_message(response_stream));
+
+        let mut text = String::new();
+        let mut usage = None;
+        while let Some(result) = messages.next().await {
+            let (message, response_usage) = result?;
+            if let Some(message) = message {
+                for content in message.content {
+                    if let MessageContent::Text(content) = content {
+                        text.push_str(&content.text);
+                    }
+                }
+            }
+            usage = response_usage.or(usage);
+        }
+
+        assert_eq!(text, format!("partial{OUTPUT_TRUNCATION_MARKER}"));
+        assert_eq!(usage.unwrap().usage.output_tokens, Some(20));
+
+        Ok(())
+    }
+
     #[test]
     fn test_get_usage_preserves_provider_totals_with_cache_fields() {
         let usage = get_usage(&json!({
@@ -2871,10 +3052,12 @@ data: [DONE]
             "Expected 2 tool calls, got {}",
             result.tool_calls.len()
         );
-        assert!(result
-            .tool_calls
-            .iter()
-            .all(|name| name == "developer__shell"));
+        assert!(
+            result
+                .tool_calls
+                .iter()
+                .all(|name| name == "developer__shell")
+        );
 
         assert_usage_yielded_once(&result, 4982, 122, 5104);
 
@@ -3172,8 +3355,8 @@ data: [DONE]"#;
     }
 
     #[tokio::test]
-    async fn test_streaming_suppresses_inline_think_when_structured_reasoning_follows(
-    ) -> anyhow::Result<()> {
+    async fn test_streaming_suppresses_inline_think_when_structured_reasoning_follows()
+    -> anyhow::Result<()> {
         // Inline <think>...</think> arrives in an early content chunk, then
         // reasoning_content arrives in a later chunk. The inline thinking
         // should be discarded in favor of the structured reasoning so users
@@ -3281,8 +3464,8 @@ data: [DONE]"#;
     }
 
     #[test]
-    fn test_response_to_message_prefers_structured_reasoning_over_inline_think(
-    ) -> anyhow::Result<()> {
+    fn test_response_to_message_prefers_structured_reasoning_over_inline_think()
+    -> anyhow::Result<()> {
         let response = json!({
             "choices": [{
                 "role": "assistant",
@@ -4358,9 +4541,11 @@ mod cache_prefix_stability_tests {
             a.len(),
             "no extra message may appear without a block"
         );
-        assert!(!serde_json::to_string(&out)
-            .unwrap()
-            .contains("<turn-context>"));
+        assert!(
+            !serde_json::to_string(&out)
+                .unwrap()
+                .contains("<turn-context>")
+        );
     }
 }
 

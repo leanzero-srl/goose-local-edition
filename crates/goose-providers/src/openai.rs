@@ -8,16 +8,16 @@ use crate::declarative::{DeclarativeProviderConfig, KeyResolver, OpenAiRequestPr
 use crate::errors::ProviderError;
 use crate::formats::openai::is_openai_responses_model;
 use crate::formats::openai::{
-    create_request_with_options, get_usage, response_to_message, OpenAiFormatOptions,
+    OpenAiFormatOptions, create_request_with_options, get_usage, response_to_message,
 };
 use crate::formats::openai_responses::{
-    create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
+    ResponsesApiResponse, create_responses_request, get_responses_usage, responses_api_to_message,
 };
 use crate::images::ImageFormat;
 use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
 };
-use crate::request_log::{start_log, LoggerHandleExt};
+use crate::request_log::{LoggerHandleExt, start_log};
 use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::StatusCode;
@@ -462,7 +462,10 @@ impl OpenAiProvider {
             OpenAiRequestProfile::ZaiGlm if model_name == "glm-5.3" => {
                 payload.insert(
                     "thinking".to_string(),
-                    serde_json::json!({"type": "enabled"}),
+                    serde_json::json!({
+                        "type": "enabled",
+                        "clear_thinking": !self.preserve_thinking_context,
+                    }),
                 );
 
                 let effort = match model_config.thinking_effort() {
@@ -1179,7 +1182,8 @@ mod tests {
 
     #[test]
     fn zai_glm_53_keeps_thinking_enabled_and_normalizes_effort() {
-        let provider = make_profile_provider(OpenAiRequestProfile::ZaiGlm);
+        let mut provider = make_profile_provider(OpenAiRequestProfile::ZaiGlm);
+        provider.preserve_thinking_context = true;
         let payload = json!({"model": "glm-5.3", "messages": []});
 
         for (effort, expected) in [
@@ -1191,7 +1195,10 @@ mod tests {
                 payload.clone(),
                 &ModelConfig::new("glm-5.3").with_thinking_effort(effort),
             );
-            assert_eq!(result["thinking"], json!({"type": "enabled"}));
+            assert_eq!(
+                result["thinking"],
+                json!({"type": "enabled", "clear_thinking": false})
+            );
             assert_eq!(result["reasoning_effort"], expected);
         }
 
