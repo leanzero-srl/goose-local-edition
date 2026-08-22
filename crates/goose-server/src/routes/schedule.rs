@@ -82,12 +82,12 @@ pub struct SessionDisplayInfo {
     working_dir: String,
     schedule_id: Option<String>,
     message_count: usize,
-    total_tokens: Option<i32>,
-    input_tokens: Option<i32>,
-    output_tokens: Option<i32>,
-    accumulated_total_tokens: Option<i32>,
-    accumulated_input_tokens: Option<i32>,
-    accumulated_output_tokens: Option<i32>,
+    total_tokens: Option<i64>,
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    accumulated_total_tokens: Option<i64>,
+    accumulated_input_tokens: Option<i64>,
+    accumulated_output_tokens: Option<i64>,
 }
 
 #[utoipa::path(

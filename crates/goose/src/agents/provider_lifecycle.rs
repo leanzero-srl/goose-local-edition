@@ -93,9 +93,9 @@ pub(crate) fn pre_admission_disposition(error: &ProviderError) -> PreAdmissionDi
 #[derive(Debug, Serialize)]
 struct LifecycleUsage {
     reported_model: String,
-    input_tokens: Option<i32>,
-    output_tokens: Option<i32>,
-    total_tokens: Option<i32>,
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    total_tokens: Option<i64>,
 }
 
 impl From<&goose_providers::conversation::token_usage::ProviderUsage> for LifecycleUsage {
@@ -401,6 +401,7 @@ mod tests {
                     "provider/model": {
                         "provider": "provider",
                         "model": "model",
+                        "accepted_reported_models": ["model"],
                         "context_limit": 1000,
                         "max_output_tokens": 1000,
                         "pricing": {

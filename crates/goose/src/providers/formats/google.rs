@@ -353,15 +353,15 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
         let input_tokens = usage_meta_data
             .get("promptTokenCount")
             .and_then(|v| v.as_u64())
-            .map(|v| v as i32);
+            .and_then(|value| i64::try_from(value).ok());
         let candidate_tokens = usage_meta_data
             .get("candidatesTokenCount")
             .and_then(|v| v.as_u64())
-            .map(|v| v as i32);
+            .and_then(|value| i64::try_from(value).ok());
         let thought_tokens = usage_meta_data
             .get("thoughtsTokenCount")
             .and_then(|v| v.as_u64())
-            .map(|v| v as i32);
+            .and_then(|value| i64::try_from(value).ok());
         let output_tokens = match (candidate_tokens, thought_tokens) {
             (Some(candidates), Some(thoughts)) => Some(candidates.saturating_add(thoughts)),
             (Some(candidates), None) => Some(candidates),
@@ -371,12 +371,12 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
         let total_tokens = usage_meta_data
             .get("totalTokenCount")
             .and_then(|v| v.as_u64())
-            .map(|v| v as i32);
+            .and_then(|value| i64::try_from(value).ok());
         // promptTokenCount already includes cachedContentTokenCount
         let cached_tokens = usage_meta_data
             .get("cachedContentTokenCount")
             .and_then(|v| v.as_u64())
-            .map(|v| v as i32);
+            .and_then(|value| i64::try_from(value).ok());
         Ok(Usage::new(input_tokens, output_tokens, total_tokens)
             .with_cache_tokens(cached_tokens, None))
     } else {
@@ -404,6 +404,7 @@ where
         let mut incomplete_data: Option<String> = None;
         let mut terminal_proven = false;
         let mut malformed_data = false;
+        let mut last_seen_model: Option<String> = None;
 
         while let Some(line_result) = stream.next().await {
             let line = line_result?;
@@ -472,17 +473,15 @@ where
                 )))?;
             }
 
-            if let Ok(usage) = get_usage(&chunk) {
-                if usage.input_tokens.is_some() || usage.output_tokens.is_some() {
-                    let model = chunk.get("modelVersion")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    final_usage = Some(ProviderUsage::new(model, usage));
-                }
+            if let Some(model) = chunk
+                .get("modelVersion")
+                .and_then(|value| value.as_str())
+                .filter(|model| !model.is_empty())
+            {
+                last_seen_model = Some(model.to_string());
             }
 
-            terminal_proven |= chunk
+            let chunk_terminal = chunk
                 .get("candidates")
                 .and_then(|value| value.as_array())
                 .is_some_and(|candidates| {
@@ -493,6 +492,17 @@ where
                             .is_some_and(|reason| !reason.is_empty())
                     })
                 });
+            if (terminal_proven || chunk_terminal) && !malformed_data {
+                if let Ok(usage) = get_usage(&chunk) {
+                    if usage.input_tokens.is_some() || usage.output_tokens.is_some() {
+                        let model = last_seen_model
+                            .clone()
+                            .unwrap_or_else(|| "unknown".to_string());
+                        final_usage = Some(ProviderUsage::new(model, usage));
+                    }
+                }
+            }
+            terminal_proven |= chunk_terminal;
 
             let parts = chunk
                 .get("candidates")
@@ -801,6 +811,22 @@ mod tests {
         assert_eq!(usage.input_tokens, Some(100));
         assert_eq!(usage.output_tokens, Some(50));
         assert_eq!(usage.total_tokens, Some(150));
+    }
+
+    #[test]
+    fn test_get_usage_does_not_wrap_large_provider_counts() {
+        let data = json!({
+            "usageMetadata": {
+                "promptTokenCount": 4_294_967_297_u64,
+                "candidatesTokenCount": 4_294_967_298_u64,
+                "totalTokenCount": 8_589_934_595_u64
+            }
+        });
+
+        let usage = get_usage(&data).unwrap();
+        assert_eq!(usage.input_tokens, Some(4_294_967_297));
+        assert_eq!(usage.output_tokens, Some(4_294_967_298));
+        assert_eq!(usage.total_tokens, Some(8_589_934_595));
     }
 
     #[test]
@@ -1350,6 +1376,63 @@ mod tests {
         }
 
         assert!(saw_text);
+        assert!(!saw_usage);
+    }
+
+    #[tokio::test]
+    async fn terminal_usage_retains_model_version_from_an_earlier_chunk() {
+        use futures::StreamExt;
+
+        let lines = vec![
+            Ok(concat!(
+                r#"data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}],"#,
+                r#""modelVersion":"gemini-3.7-flash-08-2026"}"#
+            )
+            .to_string()),
+            Ok(concat!(
+                r#"data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}],"#,
+                r#""usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"totalTokenCount":12}}"#
+            )
+            .to_string()),
+        ];
+        let stream = Box::pin(futures::stream::iter(lines));
+        let mut parsed = std::pin::pin!(response_to_streaming_message(stream));
+        let mut reported_usage = None;
+
+        while let Some(result) = parsed.next().await {
+            let (_, usage) = result.unwrap();
+            reported_usage = usage.or(reported_usage);
+        }
+
+        let usage = reported_usage.expect("terminal usage must be emitted");
+        assert_eq!(usage.model, "gemini-3.7-flash-08-2026");
+        assert_eq!(usage.usage.total_tokens, Some(12));
+    }
+
+    #[tokio::test]
+    async fn intermediate_usage_is_not_reused_by_a_later_terminal_chunk() {
+        use futures::StreamExt;
+
+        let lines = vec![
+            Ok(concat!(
+                r#"data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}],"#,
+                r#""modelVersion":"gemini-3.7-flash-08-2026","usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"totalTokenCount":12}}"#
+            )
+            .to_string()),
+            Ok(
+                r#"data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}],"modelVersion":"gemini-3.7-flash-08-2026"}"#
+                    .to_string(),
+            ),
+        ];
+        let stream = Box::pin(futures::stream::iter(lines));
+        let mut parsed = std::pin::pin!(response_to_streaming_message(stream));
+        let mut saw_usage = false;
+
+        while let Some(result) = parsed.next().await {
+            let (_, usage) = result.unwrap();
+            saw_usage |= usage.is_some();
+        }
+
         assert!(!saw_usage);
     }
 

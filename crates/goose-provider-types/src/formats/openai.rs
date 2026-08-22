@@ -867,14 +867,12 @@ pub fn get_usage(usage: &Value) -> Usage {
     let input_tokens = usage
         .get("prompt_tokens")
         .and_then(|v| v.as_i64())
-        .or_else(|| usage.get("prompt_eval_count").and_then(|v| v.as_i64()))
-        .map(|v| v as i32);
+        .or_else(|| usage.get("prompt_eval_count").and_then(|v| v.as_i64()));
 
     let output_tokens = usage
         .get("completion_tokens")
         .and_then(|v| v.as_i64())
-        .or_else(|| usage.get("eval_count").and_then(|v| v.as_i64()))
-        .map(|v| v as i32);
+        .or_else(|| usage.get("eval_count").and_then(|v| v.as_i64()));
 
     let cache_read_input_tokens = usage
         .get("cache_read_input_tokens")
@@ -884,18 +882,15 @@ pub fn get_usage(usage: &Value) -> Usage {
                 .get("prompt_tokens_details")
                 .and_then(|d| d.get("cached_tokens"))
                 .and_then(|v| v.as_i64())
-        })
-        .map(|v| v as i32);
+        });
 
     let cache_write_input_tokens = usage
         .get("cache_creation_input_tokens")
-        .and_then(|v| v.as_i64())
-        .map(|v| v as i32);
+        .and_then(|v| v.as_i64());
 
     let total_tokens = usage
         .get("total_tokens")
         .and_then(|v| v.as_i64())
-        .map(|v| v as i32)
         .or_else(|| match (input_tokens, output_tokens) {
             (Some(input), Some(output)) => Some(input.saturating_add(output)),
             _ => None,
@@ -1157,11 +1152,8 @@ where
             }
 
             if !usage_yielded {
-                if let Some(chunk_usage) =
-                    extract_usage_with_output_tokens(&chunk, last_seen_model.as_deref())
-                {
-                    pending_usage = Some(chunk_usage);
-                }
+                pending_usage =
+                    extract_usage_with_output_tokens(&chunk, last_seen_model.as_deref());
             }
             let mut usage = if terminal_proven && !usage_yielded {
                 let usage = pending_usage.take();
@@ -1220,12 +1212,10 @@ where
                                 }
 
                                 if !usage_yielded {
-                                    if let Some(chunk_usage) = extract_usage_with_output_tokens(
+                                    pending_usage = extract_usage_with_output_tokens(
                                         &tool_chunk,
                                         last_seen_model.as_deref(),
-                                    ) {
-                                        pending_usage = Some(chunk_usage);
-                                    }
+                                    );
                                 }
                                 if terminal_proven && !usage_yielded {
                                     usage = pending_usage.take();
@@ -2855,9 +2845,9 @@ mod tests {
 
     fn assert_usage_yielded_once(
         result: &StreamingUsageTestResult,
-        expected_input: i32,
-        expected_output: i32,
-        expected_total: i32,
+        expected_input: i64,
+        expected_output: i64,
+        expected_total: i64,
     ) {
         assert_eq!(
             result.usage_count, 1,
@@ -2973,6 +2963,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn early_usage_is_not_reused_by_a_later_finish_chunk() -> anyhow::Result<()> {
+        let response_lines = [
+            r#"data: {"id":"early","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}"#,
+            r#"data: {"id":"finish","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+        ];
+        let response_stream =
+            tokio_stream::iter(response_lines.into_iter().map(|line| Ok(line.to_string())));
+        let mut messages = std::pin::pin!(response_to_streaming_message(response_stream));
+        let mut saw_usage = false;
+
+        while let Some(result) = messages.next().await {
+            let (_, usage) = result?;
+            saw_usage |= usage.is_some();
+        }
+
+        assert!(!saw_usage);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn zai_usage_only_chunk_without_done_at_eof_is_not_terminal() -> anyhow::Result<()> {
         let response_lines = r#"data: {"id":"zai-cut","model":"glm-5.3","choices":[],"usage":{"prompt_tokens":40,"completion_tokens":60,"total_tokens":100}}"#;
 
@@ -3072,6 +3082,19 @@ mod tests {
         assert_eq!(usage.total_tokens, Some(150));
         assert_eq!(usage.cache_read_input_tokens, Some(80));
         assert_eq!(usage.cache_write_input_tokens, Some(20));
+    }
+
+    #[test]
+    fn test_get_usage_does_not_wrap_large_provider_counts() {
+        let usage = get_usage(&json!({
+            "prompt_tokens": 4_294_967_297_i64,
+            "completion_tokens": 4_294_967_298_i64,
+            "total_tokens": 8_589_934_595_i64
+        }));
+
+        assert_eq!(usage.input_tokens, Some(4_294_967_297));
+        assert_eq!(usage.output_tokens, Some(4_294_967_298));
+        assert_eq!(usage.total_tokens, Some(8_589_934_595));
     }
 
     #[test]

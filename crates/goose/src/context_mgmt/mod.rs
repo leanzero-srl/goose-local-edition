@@ -296,7 +296,10 @@ pub async fn check_if_compaction_needed(
     };
 
     let (current_tokens, _token_source) = match session.usage.total_tokens {
-        Some(tokens) => (tokens as usize, "session metadata"),
+        Some(tokens) => (
+            usize::try_from(tokens).unwrap_or_default(),
+            "session metadata",
+        ),
         None => {
             let token_counter = create_token_counter()
                 .await

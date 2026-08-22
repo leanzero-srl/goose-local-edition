@@ -820,7 +820,7 @@ fn builtin_to_extension_config(name: &str) -> ExtensionConfig {
     }
 }
 
-fn to_nonnegative_u64(value: Option<i32>) -> Option<u64> {
+fn to_nonnegative_u64(value: Option<i64>) -> Option<u64> {
     value.and_then(|v| u64::try_from(v).ok())
 }
 
@@ -837,7 +837,7 @@ pub(super) struct UsageUpdates {
 }
 
 pub(super) fn build_usage_updates(session: &Session) -> Option<UsageUpdates> {
-    let used = session.usage.total_tokens.unwrap_or(0).max(0) as u64;
+    let used = to_nonnegative_u64(session.usage.total_tokens).unwrap_or(0);
     let ctx_limit = session.model_config.as_ref()?.context_limit() as u64;
     let accumulated_input_tokens =
         to_nonnegative_u64(session.accumulated_usage.input_tokens).unwrap_or(0);

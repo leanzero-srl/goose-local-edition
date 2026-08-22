@@ -637,12 +637,27 @@ impl Provider for AcpProvider {
                     }
                     AcpUpdate::Complete(_reason, usage) => {
                         if let Some(usage) = usage {
+                            let input_tokens = i64::try_from(usage.input_tokens).map_err(|_| {
+                                ProviderError::UsageError(
+                                    "ACP input token count exceeds the supported range".to_string(),
+                                )
+                            })?;
+                            let output_tokens = i64::try_from(usage.output_tokens).map_err(|_| {
+                                ProviderError::UsageError(
+                                    "ACP output token count exceeds the supported range".to_string(),
+                                )
+                            })?;
+                            let total_tokens = i64::try_from(usage.total_tokens).map_err(|_| {
+                                ProviderError::UsageError(
+                                    "ACP total token count exceeds the supported range".to_string(),
+                                )
+                            })?;
                             let provider_usage = ProviderUsage::new(
                                 model_name.clone(),
                                 Usage::new(
-                                    Some(usage.input_tokens as i32),
-                                    Some(usage.output_tokens as i32),
-                                    Some(usage.total_tokens as i32),
+                                    Some(input_tokens),
+                                    Some(output_tokens),
+                                    Some(total_tokens),
                                 ),
                             );
                             yield (None, Some(provider_usage));

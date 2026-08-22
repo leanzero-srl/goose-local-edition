@@ -253,6 +253,7 @@ mod tests {
                     "provider/model": {
                         "provider": "provider",
                         "model": "model",
+                        "accepted_reported_models": ["model"],
                         "context_limit": 1000,
                         "max_output_tokens": 1000,
                         "pricing": {
