@@ -1,0 +1,5 @@
+{"id":"deepseek-terminal","object":"chat.completion.chunk","model":"deepseek-v4-pro-fixture-revision","choices":[{"index":0,"delta":{},"finish_reason":"insufficient_system_resource"}]}
+{"id":"zai-sensitive","object":"chat.completion.chunk","model":"glm-5.3-fixture-revision","choices":[{"index":0,"delta":{},"finish_reason":"sensitive"}]}
+{"id":"zai-context","object":"chat.completion.chunk","model":"glm-5.3-fixture-revision","choices":[{"index":0,"delta":{},"finish_reason":"model_context_window_exceeded"}]}
+{"id":"zai-network","object":"chat.completion.chunk","model":"glm-5.3-fixture-revision","choices":[{"index":0,"delta":{},"finish_reason":"network_error"}]}
+{"id":"openai-filter","object":"chat.completion.chunk","model":"compat-model-version","choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}
