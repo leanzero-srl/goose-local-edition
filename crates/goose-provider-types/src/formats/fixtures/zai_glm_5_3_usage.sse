@@ -1,0 +1,4 @@
+data: {"id":"zai-contract-1","object":"chat.completion.chunk","created":1786608000,"model":"glm-5.3-fixture-revision","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Check the invariant."},"finish_reason":null}],"usage":null}
+data: {"id":"zai-contract-1","object":"chat.completion.chunk","created":1786608000,"model":"glm-5.3-fixture-revision","choices":[{"index":0,"delta":{"content":"The invariant holds."},"finish_reason":"stop"}],"usage":null}
+data: {"id":"zai-contract-1","object":"chat.completion.chunk","created":1786608000,"model":"glm-5.3-fixture-revision","choices":[],"usage":{"prompt_tokens":40,"completion_tokens":60,"total_tokens":100}}
+data: [DONE]
