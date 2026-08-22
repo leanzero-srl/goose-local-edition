@@ -52,6 +52,16 @@ fn describe_json_value(value: &Value) -> &'static str {
     }
 }
 
+fn output_token_limit_tool_error(function_name: &str, id: &str) -> ErrorData {
+    ErrorData {
+        code: ErrorCode::INVALID_PARAMS,
+        message: Cow::from(format!(
+            "Tool arguments for {function_name} (id {id}) are not executable because the provider reached its output-token limit"
+        )),
+        data: None,
+    }
+}
+
 fn is_reserved_request_param_key(key: &str) -> bool {
     matches!(key, "messages" | "model" | "stream" | "stream_options")
 }
@@ -702,6 +712,10 @@ pub fn format_tools(tools: &[Tool]) -> anyhow::Result<Vec<Value>> {
 
 /// Convert OpenAI's API response to internal Message format
 pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
+    let output_token_limit_reached = response
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+        == Some("length");
     let Some(original) = response
         .get("choices")
         .and_then(|c| c.get(0))
@@ -782,6 +796,15 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
                     })
                     .filter(|m: &serde_json::Map<String, Value>| !m.is_empty());
 
+                if output_token_limit_reached {
+                    content.push(MessageContent::tool_request_with_metadata(
+                        id.clone(),
+                        Err(output_token_limit_tool_error(&function_name, &id)),
+                        metadata.as_ref(),
+                    ));
+                    continue;
+                }
+
                 if function_name.is_empty() {
                     let error = ErrorData {
                         code: ErrorCode::INVALID_REQUEST,
@@ -846,11 +869,9 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
         }
     }
 
-    Ok(Message::new(
-        Role::Assistant,
-        chrono::Utc::now().timestamp(),
-        content,
-    ))
+    let mut message = Message::new(Role::Assistant, chrono::Utc::now().timestamp(), content);
+    message.metadata.output_token_limit_reached = output_token_limit_reached;
+    Ok(message)
 }
 
 pub fn get_usage(usage: &Value) -> Usage {
@@ -1026,7 +1047,7 @@ fn strip_data_prefix(line: &str) -> Option<&str> {
         .map(|s| s.trim())
 }
 
-const OUTPUT_TRUNCATION_MARKER: &str = "\n\n[OUTPUT TRUNCATED: the model hit its output-token limit mid-generation — this response is INCOMPLETE]";
+pub const OUTPUT_TRUNCATION_MARKER: &str = "\n\n[OUTPUT TRUNCATED: the model hit its output-token limit mid-generation — this response is INCOMPLETE]";
 
 fn terminal_error_from_finish_reason(chunk: &StreamingChunk) -> Option<ProviderError> {
     chunk.choices.iter().find_map(|choice| {
@@ -1169,6 +1190,8 @@ where
                 yield (None, usage)
             } else if chunk.choices[0].delta.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
                 let mut tool_call_data: ToolCallData = HashMap::new();
+                let mut output_token_limit_reached =
+                    chunk.choices[0].finish_reason.as_deref() == Some("length");
 
                 if let Some(tool_calls) = &chunk.choices[0].delta.tool_calls {
                     for (position, tool_call) in tool_calls.iter().enumerate() {
@@ -1225,6 +1248,9 @@ where
                                 }
 
                                 if !tool_chunk.choices.is_empty() {
+                                    output_token_limit_reached |=
+                                        tool_chunk.choices[0].finish_reason.as_deref()
+                                            == Some("length");
                                     if let Some(details) = &tool_chunk.choices[0].delta.reasoning_details {
                                         accumulated_reasoning.extend(details.iter().cloned());
                                     }
@@ -1333,7 +1359,13 @@ where
                             extra_fields.as_ref().filter(|m| !m.is_empty()).cloned()
                         };
 
-                        let content = if arguments.is_empty() {
+                        let content = if output_token_limit_reached {
+                            MessageContent::tool_request_with_metadata(
+                                id.clone(),
+                                Err(output_token_limit_tool_error(function_name, id)),
+                                metadata.as_ref(),
+                            )
+                        } else if arguments.is_empty() {
                             MessageContent::tool_request_with_metadata(
                                 id.clone(),
                                 Ok(CallToolRequestParams::new(function_name.clone()).with_arguments(object(json!({})))),
@@ -1390,6 +1422,7 @@ where
                 if let Some(id) = chunk.id {
                     msg = msg.with_id(id);
                 }
+                msg.metadata.output_token_limit_reached = output_token_limit_reached;
 
                 yield (
                     Some(msg),
@@ -1443,6 +1476,7 @@ where
                     // longer passes as complete, and the retry machinery has a signal to re-ask.
                     if chunk.choices[0].finish_reason.as_deref() == Some("length") {
                         msg = msg.with_text(OUTPUT_TRUNCATION_MARKER);
+                        msg.metadata.output_token_limit_reached = true;
                     }
 
                     yield (
@@ -1455,6 +1489,7 @@ where
                     )
                 } else if chunk.choices[0].finish_reason.as_deref() == Some("length") {
                     let mut msg = Message::assistant().with_text(OUTPUT_TRUNCATION_MARKER);
+                    msg.metadata.output_token_limit_reached = true;
                     if let Some(id) = chunk.id {
                         msg = msg.with_id(id);
                     }
@@ -3064,6 +3099,95 @@ mod tests {
         assert_eq!(text, format!("partial{OUTPUT_TRUNCATION_MARKER}"));
         assert_eq!(usage.unwrap().usage.output_tokens, Some(20));
 
+        Ok(())
+    }
+
+    #[test]
+    fn length_terminated_nonstreaming_tools_are_never_executable() -> anyhow::Result<()> {
+        let response = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "call-empty", "type": "function", "function": {"name": "empty_tool", "arguments": ""}},
+                        {"id": "call-valid", "type": "function", "function": {"name": "valid_tool", "arguments": "{\"value\":true}"}}
+                    ]
+                },
+                "finish_reason": "length"
+            }]
+        });
+
+        let message = response_to_message(&response)?;
+
+        assert!(message.metadata.output_token_limit_reached);
+        let persisted: Message = serde_json::from_value(serde_json::to_value(&message)?)?;
+        assert!(persisted.metadata.output_token_limit_reached);
+        assert_eq!(message.content.len(), 2);
+        for content in message.content {
+            let MessageContent::ToolRequest(request) = content else {
+                panic!("expected tool request evidence");
+            };
+            let error = request
+                .tool_call
+                .expect_err("length-terminated tools must not execute");
+            assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+            assert!(error.message.contains("output-token limit"));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn streamed_length_rejects_valid_and_empty_tools_but_normal_empty_tool_executes(
+    ) -> anyhow::Result<()> {
+        for (finish_reason, expect_executable) in [("length", false), ("tool_calls", true)] {
+            let response_lines = format!(
+                concat!(
+                    "data: {{\"id\":\"tool-cutoff\",\"model\":\"deepseek-v4-flash\",\"choices\":[{{\"index\":0,\"delta\":{{\"tool_calls\":[",
+                    "{{\"index\":0,\"id\":\"call-empty\",\"type\":\"function\",\"function\":{{\"name\":\"empty_tool\",\"arguments\":\"\"}}}},",
+                    "{{\"index\":1,\"id\":\"call-valid\",\"type\":\"function\",\"function\":{{\"name\":\"valid_tool\",\"arguments\":\"{{\\\"value\\\":true}}\"}}}}",
+                    "]}},\"finish_reason\":\"{}\"}}],\"usage\":{{\"prompt_tokens\":10,\"completion_tokens\":20,\"total_tokens\":30}}}}\n",
+                    "data: [DONE]\n"
+                ),
+                finish_reason
+            );
+            let response_stream = tokio_stream::iter(
+                response_lines
+                    .lines()
+                    .map(|line| Ok(line.to_string()))
+                    .collect::<Vec<anyhow::Result<String>>>(),
+            );
+            let mut messages = std::pin::pin!(response_to_streaming_message(response_stream));
+            let mut requests = Vec::new();
+
+            while let Some(result) = messages.next().await {
+                let (message, _) = result?;
+                if let Some(message) = message {
+                    assert_eq!(
+                        message.metadata.output_token_limit_reached,
+                        !expect_executable
+                    );
+                    requests.extend(message.content.into_iter().filter_map(|content| {
+                        if let MessageContent::ToolRequest(request) = content {
+                            Some(request)
+                        } else {
+                            None
+                        }
+                    }));
+                }
+            }
+
+            assert_eq!(requests.len(), 2);
+            for request in requests {
+                if expect_executable {
+                    assert!(request.tool_call.is_ok());
+                } else {
+                    let error = request
+                        .tool_call
+                        .expect_err("length-terminated tools must not execute");
+                    assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+                }
+            }
+        }
         Ok(())
     }
 
