@@ -5530,6 +5530,35 @@ mod tests {
     }
 
     #[test]
+    fn a_resumed_plan_parses_into_a_dag() {
+        // The bug this pins: resume rebuilt the plan under "tasks" while Dag::from_planner_json
+        // requires "subtasks", so EVERY resume exited with "missing field `subtasks`" after
+        // paying the whole scout phase.
+        let dir = tempfile::tempdir().unwrap();
+        let sw = dir.path().join(".swarm");
+        std::fs::create_dir_all(&sw).unwrap();
+        let plan_loaded = serde_json::json!({
+            "event": "plan_loaded",
+            "tasks": [
+                {"id": "core", "description": "build core", "files": ["app/core.py"],
+                 "depends_on": [], "difficulty": "easy"},
+                {"id": "api", "description": "build api", "files": ["app/api.py"],
+                 "depends_on": ["core"], "difficulty": "hard"}
+            ]
+        });
+        let log = format!(
+            "{}\n{}\n",
+            plan_loaded,
+            serde_json::json!({"event": "task_completed", "task_id": "core", "status": "done"})
+        );
+        std::fs::write(sw.join("run-swarm-00-resumed.jsonl"), log).unwrap();
+        let r = resume_state_from_dir(dir.path()).expect("resume state must be recovered");
+        assert!(r.completed.contains("core"));
+        Dag::from_planner_json(&r.plan_json)
+            .expect("a resumed plan MUST parse into a Dag — this is the whole point of resume");
+    }
+
+    #[test]
     fn a_seconds_prefixed_note_is_reported_skipped_not_silently_dropped() {
         // The exact operator error: a note named with SECONDS instead of milliseconds parses as
         // 1970, scopes out, and used to vanish without a word — no delivery, no warning, nothing
@@ -26748,7 +26777,15 @@ fn resume_state_from_log(text: &str) -> Option<ResumeState> {
             // LAST plan_loaded wins: a run that re-planned mid-flight ends on the plan it actually built.
             Some("plan_loaded") => {
                 if let Some(t) = e.get("tasks") {
-                    plan_json = Some(serde_json::json!({ "tasks": t }).to_string());
+                    // BOTH KEYS, because the two readers disagreed and resume could never work:
+                    // `Dag::from_planner_json` (the consumer) requires `subtasks` — the planner's
+                    // own field name — while this rebuilt the plan under `tasks`, the name the
+                    // plan_loaded EVENT uses. MEASURED: every resume died instantly with "the
+                    // resumed plan will not parse: missing field `subtasks`", after paying the
+                    // full scout phase, and the harness then scored the unbuilt tree. The banner
+                    // that counts tasks reads `tasks`, so both names are emitted rather than
+                    // renaming one and breaking the other.
+                    plan_json = Some(serde_json::json!({ "subtasks": t, "tasks": t }).to_string());
                 }
             }
             Some("task_completed") => {
