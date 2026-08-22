@@ -589,6 +589,7 @@ fn with_locked_ledger<T>(
     let lock_path = ledger_path.with_extension("lock");
     let lock = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)

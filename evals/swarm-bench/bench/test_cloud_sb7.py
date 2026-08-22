@@ -127,6 +127,8 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(env["GOOSE_PROVIDER_LIFECYCLE_STRICT"], "true")
         self.assertEqual(env["GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES"], "true")
         self.assertEqual(env["GOOSE_BENCH_BUDGET_CONFIG_SHA256"], "abc123")
+        self.assertEqual(env["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")
+        self.assertEqual(env["TMPDIR"], "/tmp/profile/tool-home/tmp")
 
     def test_admitted_failure_is_never_retryable(self) -> None:
         self.assertEqual(cloud_sb7.classify_build_exit(0, 3), ("BUILD_COMPLETE", None))
