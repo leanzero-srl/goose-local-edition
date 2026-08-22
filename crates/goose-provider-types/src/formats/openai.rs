@@ -1317,6 +1317,13 @@ where
                     }
                 }
 
+                if crate::retry::terminal_safe_retries_enabled() && !terminal_proven {
+                    Err::<(), ProviderError>(ProviderError::UsageError(
+                        "Provider stream ended before a recognized terminal tool-call finish reason"
+                            .to_string(),
+                    ))?;
+                }
+
                 let _metadata: Option<ProviderMetadata> = if !accumulated_reasoning.is_empty() {
                     let mut map = ProviderMetadata::new();
                     map.insert("reasoning_details".to_string(), json!(accumulated_reasoning));
@@ -3062,6 +3069,42 @@ mod tests {
         assert_eq!(result.tool_calls, vec!["developer__shell"]);
         assert_eq!(result.usage_count, 0);
         assert!(result.usage.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn terminal_safe_partial_tool_at_eof_is_never_yielded() -> anyhow::Result<()> {
+        let _guard = env_lock::lock_env([(crate::retry::TERMINAL_SAFE_RETRIES_ENV, Some("true"))]);
+        let response_lines = r#"data: {"id":"deepseek-tool-cut","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"developer__shell","arguments":"{}"}}]},"finish_reason":null}],"usage":{"prompt_tokens":50,"completion_tokens":25,"total_tokens":75}}"#;
+        let response_stream = tokio_stream::iter(
+            response_lines
+                .lines()
+                .map(|line| Ok(line.to_string()))
+                .collect::<Vec<anyhow::Result<String>>>(),
+        );
+        let mut messages = std::pin::pin!(response_to_streaming_message(response_stream));
+        let mut saw_tool = false;
+        let mut terminal_error = None;
+
+        while let Some(result) = messages.next().await {
+            match result {
+                Ok((message, _)) => {
+                    saw_tool |= message.is_some_and(|message| {
+                        message
+                            .content
+                            .iter()
+                            .any(|content| matches!(content, MessageContent::ToolRequest(_)))
+                    });
+                }
+                Err(error) => terminal_error = Some(error),
+            }
+        }
+
+        assert!(!saw_tool);
+        assert!(terminal_error
+            .expect("strict partial tool stream must fail")
+            .to_string()
+            .contains("recognized terminal tool-call finish reason"));
         Ok(())
     }
 
