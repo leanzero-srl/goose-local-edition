@@ -3407,141 +3407,6 @@ const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
 const OMNI_JUDGE_MAX_LOOKS: u32 = 6;
 
-/// #F924 — a loop detector whose REACH is the whole call instead of its last 2,400 characters.
-///
-/// Every loop check the engine had read `last_thinking`, which the stream loop truncates to a
-/// 2,400-char rolling tail. A repetition whose PERIOD exceeds that window was therefore invisible
-/// to the omni-judge, to `tails_recur` and to the digest — structurally, not by tuning. MEASURED
-/// live on the sb-7 qwen3.8 r2 straggler (`detail-api-server-api`): 8,205 contiguous characters
-/// captured from the running call carried 47.7% duplicated 48-char shingles and 17 of its 59
-/// sentences were verbatim repeats ("For the buckets endpoint, I'm iterating through all
-/// payments…" twice), yet the judge's 2,000-char window scored 0.00 and its corroboration streak
-/// never once reached 2 across 191,000 characters and two hours. Healthy `detail` calls max out
-/// at 1,384 chars over 58 archived samples, so this one ran at 138x the worst healthy case with
-/// nothing able to see it.
-///
-/// Keeps FINGERPRINTS, never the text: a bounded deque of 48-char shingle hashes plus their
-/// counts, so the rate is available at any instant and a long call costs a few MB. Also keeps one
-/// far-back TEXT snapshot, so the judge can be shown "then" beside "now" rather than being asked
-/// to infer recurrence from a single window it cannot see past.
-struct RecurrenceMeter {
-    counts: std::collections::HashMap<u64, u32>,
-    order: std::collections::VecDeque<u64>,
-    carry: String,
-    recent: String,
-    mid: Option<String>,
-    older: Option<String>,
-    since_rotate: usize,
-}
-
-/// Shingle reach. 65,536 shingles ~= 65k characters of memory at ~3 MB per live call — 16x the
-/// longest repetition period measured (~4,000 chars), and 27x the window that was blind to it.
-const RECURRENCE_REACH: usize = 65_536;
-/// Below this much observed reasoning the rate is noise: a call restating a structured prompt to
-/// itself shares shingles with itself early on. 8,000 is the span the r2 pathology was measured
-/// over, so the threshold below is calibrated on a directly comparable number.
-const RECURRENCE_MIN_SPAN: usize = 8_000;
-/// Duplicated-over-distinct shingle ratio that SUMMONS THE JUDGE. Never kills on its own — under
-/// UNCAPPED the judge decides, and this only makes sure it is looking and knows what was measured.
-/// The r2 pathology read 0.4766; a healthy advancing call reads ~0.00-0.05.
-const RECURRENCE_TRIGGER: f32 = 0.25;
-
-impl RecurrenceMeter {
-    const WIN: usize = 48;
-
-    fn new() -> Self {
-        Self {
-            counts: std::collections::HashMap::new(),
-            order: std::collections::VecDeque::new(),
-            carry: String::new(),
-            recent: String::new(),
-            mid: None,
-            older: None,
-            since_rotate: 0,
-        }
-    }
-
-    fn reset(&mut self) {
-        *self = Self::new();
-    }
-
-    fn push(&mut self, chunk: &str) {
-        if chunk.is_empty() {
-            return;
-        }
-        self.note_text(chunk);
-        self.carry.push_str(chunk);
-        let chars: Vec<char> = self.carry.chars().collect();
-        if chars.len() < Self::WIN {
-            return;
-        }
-        use std::hash::{Hash, Hasher};
-        let mut i = 0;
-        while i + Self::WIN <= chars.len() {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            chars[i..i + Self::WIN]
-                .iter()
-                .collect::<String>()
-                .hash(&mut h);
-            self.push_hash(h.finish());
-            i += 1;
-        }
-        self.carry = chars[chars.len() - (Self::WIN - 1)..].iter().collect();
-    }
-
-    fn push_hash(&mut self, h: u64) {
-        *self.counts.entry(h).or_insert(0) += 1;
-        self.order.push_back(h);
-        if self.order.len() > RECURRENCE_REACH {
-            if let Some(old) = self.order.pop_front() {
-                if let Some(c) = self.counts.get_mut(&old) {
-                    *c -= 1;
-                    if *c == 0 {
-                        self.counts.remove(&old);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Rolls a 1,200-char text snapshot so `earlier()` hands the judge reasoning from 20k-40k
-    /// characters ago — far outside the tail window, which is the whole point.
-    fn note_text(&mut self, chunk: &str) {
-        self.recent.push_str(chunk);
-        if self.recent.chars().count() > 1_600 {
-            self.recent = tail_chars(&self.recent, 1_200);
-        }
-        self.since_rotate += chunk.chars().count();
-        if self.since_rotate >= 20_000 {
-            self.older = self.mid.take();
-            self.mid = Some(self.recent.clone());
-            self.since_rotate = 0;
-        }
-    }
-
-    fn span(&self) -> usize {
-        self.order.len()
-    }
-
-    /// Duplicated shingles over DISTINCT shingles — the same formula the live capture was scored
-    /// with, so 0.4766 in the ledger and 0.4766 here mean the identical thing.
-    fn rate(&self) -> f32 {
-        let distinct = self.counts.len();
-        if distinct == 0 {
-            return 0.0;
-        }
-        (self.order.len().saturating_sub(distinct)) as f32 / distinct as f32
-    }
-
-    fn recurring(&self) -> bool {
-        self.span() >= RECURRENCE_MIN_SPAN && self.rate() >= RECURRENCE_TRIGGER
-    }
-
-    fn earlier(&self) -> Option<&str> {
-        self.older.as_deref().or(self.mid.as_deref())
-    }
-}
-
 /// The tail's 48-char shingle set (16-char stride), for RECURRENCE comparison across judge looks.
 /// An exact tail hash cannot see the most classic loop: a repeating sentence SHIFTS through the
 /// fixed-size tail window, so every look hashes differently and the two-consecutive-LOOPING streak
@@ -9299,7 +9164,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             items,
             0, // grace 0 => the await-all path, which already promised item order
             "test",
-            None,
             |(idx, delay): (usize, u64), _dev: String| async move {
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                 idx
@@ -9314,7 +9178,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             items,
             30, // non-zero grace => the indexed collector path
             "test",
-            None,
             |(idx, delay): (usize, u64), _dev: String| async move {
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                 idx
@@ -10355,146 +10218,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // The whitelist is positive: an EMPTY export forces OFF and shadows a config true. Any harness
         // that exports the var must use a literal 0/1.
         assert!(!straggler_stop_resolved(Some("".into()), Some(true)));
-    }
-
-    /// #F924. The pathology this replays is the one that killed sb-7 qwen3.8 r2: a repetition
-    /// whose PERIOD (~4,000 chars) exceeds the 2,400-char rolling tail every previous detector
-    /// read from. The old machinery is asserted BLIND on the same input, so the test fails if a
-    /// future change quietly narrows the reach back to the tail.
-    #[test]
-    fn a_loop_longer_than_the_tail_window_is_seen() {
-        // A cycle of ~4,500 characters made of DISTINCT sentences, repeated. The sentences must be
-        // distinct WITHIN one period or the period contains a shorter period that the old rule
-        // could see — the first draft of this test made exactly that mistake and the control
-        // assertion below caught it.
-        let period: String = (0..30)
-            .map(|i| {
-                format!(
-                    "Considering the {i}th endpoint, the response envelope carries field_{i} with the \
-                     documented shape and the ordering rule number {} that applies to it, which I \
-                     will now restate once more before moving on. ",
-                    i * 31 + 7
-                )
-            })
-            .collect();
-        let period_len = period.chars().count();
-        assert!(
-            period_len > 2_400,
-            "the period ({period_len}) must exceed the old 2,400-char tail window"
-        );
-
-        let mut looping = RecurrenceMeter::new();
-        for _ in 0..8 {
-            looping.push(&period);
-        }
-        assert!(
-            looping.recurring(),
-            "a repeated {}-char period must register: rate {:.3} over {} chars",
-            period.chars().count(),
-            looping.rate(),
-            looping.span()
-        );
-
-        // The OLD detector, on the SAME stream. Two looks land HALF A PERIOD apart, which is what
-        // consecutive looks do when the interval does not divide the period: their 2,000-char
-        // windows cover disjoint phases of the cycle, `tails_recur` is false, and the
-        // two-consecutive-LOOPING streak could never arm no matter how long the call ran.
-        let stream = period.repeat(8);
-        let chars: Vec<char> = stream.chars().collect();
-        let win = |end: usize| -> String {
-            chars[end.saturating_sub(2_000)..end]
-                .iter()
-                .collect::<String>()
-        };
-        let look_a = tail_shingle_set(&win(20_000));
-        let look_b = tail_shingle_set(&win(20_000 + period_len / 2));
-        assert!(
-            !tails_recur(&look_a, &look_b),
-            "this test is meaningless unless the old tail-vs-tail rule is genuinely blind here"
-        );
-
-        // And an ADVANCING call of the same length must NOT trip it, or the fix trades one
-        // failure mode for a worse one: killing healthy deep reasoning.
-        let mut advancing = RecurrenceMeter::new();
-        for i in 0..900 {
-            advancing.push(&format!(
-                "Step {i}: considering constraint {i} against invariant {} and recording the \
-                 distinct consequence {} for later reconciliation. ",
-                i * 7 + 3,
-                i * 13 + 11
-            ));
-        }
-        assert!(
-            advancing.span() >= RECURRENCE_MIN_SPAN,
-            "the healthy control must be long enough to be judged at all"
-        );
-        assert!(
-            !advancing.recurring(),
-            "advancing reasoning must stay clear: rate {:.3}",
-            advancing.rate()
-        );
-    }
-
-    /// #F924. THE REAL BYTES. Not a synthetic loop — this is 8,205 characters spliced live off
-    /// `detail-api-server-api` while it was looping on mihai during sb-7 qwen3.8 r2, the call that
-    /// held two nodes idle for two hours. If the meter cannot see THIS, the fix is theatre.
-    #[test]
-    fn the_r2_straggler_replays_as_a_loop() {
-        let captured = include_str!("../../tests/fixtures/f924-looping-detail-call.txt");
-        let mut m = RecurrenceMeter::new();
-        // Dribbled the way the stream actually arrives, a few characters at a time.
-        let chars: Vec<char> = captured.chars().collect();
-        for c in chars.chunks(5) {
-            m.push(&c.iter().collect::<String>());
-        }
-        assert!(
-            m.recurring(),
-            "the real pathology must register: rate {:.4} over {} chars",
-            m.rate(),
-            m.span()
-        );
-        // The offline pass over this same file measures 0.6758 with this exact formula (and
-        // 0.4768 over its first 8,205 characters — the rate RISES with how many turns of the
-        // cycle you have seen, which is why a fixed threshold fires earlier the longer a loop
-        // runs). Holding the Rust implementation to the number means the ledger's figure and the
-        // engine's figure are one figure, not two that happen to agree in sign.
-        assert!(
-            (m.rate() - 0.6758).abs() < 0.02,
-            "expected ~0.6758 over the full capture, got {:.4}",
-            m.rate()
-        );
-        // And the judge's actual view of the same stream — the last 2,000 characters — is clean,
-        // which is precisely why it kept answering OK.
-        let tail: String = chars[chars.len() - 2_000..].iter().collect();
-        let mut window_only = RecurrenceMeter::new();
-        window_only.push(&tail);
-        assert!(
-            window_only.rate() < 0.10,
-            "the 2,000-char window should look innocent, measured {:.4}",
-            window_only.rate()
-        );
-    }
-
-    /// #F924. Chunks arrive one token at a time; shingles must bridge the boundaries or the meter
-    /// would only ever see repetition that happens to align with chunk edges.
-    #[test]
-    fn the_meter_is_indifferent_to_how_the_stream_is_chunked() {
-        let text = "the same sentence recurs here and again and again in this stream ".repeat(300);
-        let mut whole = RecurrenceMeter::new();
-        whole.push(&text);
-
-        let mut dribbled = RecurrenceMeter::new();
-        let chars: Vec<char> = text.chars().collect();
-        for c in chars.chunks(3) {
-            dribbled.push(&c.iter().collect::<String>());
-        }
-        assert_eq!(
-            whole.span(),
-            dribbled.span(),
-            "same stream, same shingle count"
-        );
-        assert!((whole.rate() - dribbled.rate()).abs() < 0.001);
-        assert!(dribbled.recurring());
     }
 
     /// ELECTRON PARITY. The desktop provider used to force SMOKE/SPLIT/CONTRACTS/COMPLETE onto the spawned
@@ -16223,9 +15946,6 @@ impl GooseAgentDispatcher {
         // for "over_reading" three times at 457s/450s/430s with tool_calls=0, having read nothing.
         let mut thinking_chars: usize = 0;
         let mut last_thinking: String = String::new();
-        // #F924: `last_thinking` is a 2,400-char rolling tail, so it cannot hold a long-period
-        // loop. This carries the fingerprints the tail throws away.
-        let mut recur = RecurrenceMeter::new();
         let mut final_output: Option<String> = None;
         let mut pending: HashMap<String, (String, bool, bool, String)> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
@@ -16441,10 +16161,7 @@ impl GooseAgentDispatcher {
         // Consecutive LOOPING verdicts on the SAME content. One is not enough, and two on DIFFERENT
         // content is a slow-starting call misread twice, not a loop — see the abort site.
         let mut omni_looping_streak: u32 = 0;
-        // #F924: ALL prior looking tails, not just the immediately previous one. A loop whose
-        // period exceeds one look interval never shows the same window twice in a ROW, so the
-        // old single-slot memory reset the streak forever — measured live at 191,000 chars.
-        let mut omni_prior_looping_tails: Vec<std::collections::HashSet<u64>> = Vec::new();
+        let mut omni_prev_looping_tail: Option<std::collections::HashSet<u64>> = None;
         // F790-1: in-session redirects issued for this task (bounded by JUDGE_NUDGE_MAX).
         let mut nudges_used: u32 = 0;
         let mut repeat_hash: Option<u64> = None;
@@ -16463,13 +16180,10 @@ impl GooseAgentDispatcher {
             // already reasoning past every healthy p90, so a normal call never pays for it. A LOOPING verdict
             // aborts THIS call only; it can never fail a task or a run (a model verdict has
             // JudgeOutcome.deterministic == false, and scheduler.rs's terminal-fail requires it).
-            // #F924: a measured recurrence SUMMONS the judge immediately, ahead of the interval.
-            // It never kills by itself — under UNCAPPED the judge decides, and this only ensures
-            // the judge is looking, and knows what the detector saw, while the loop is running.
             if omni_judge_on
                 && (omni_looks < OMNI_JUDGE_MAX_LOOKS || uncapped())
                 && thinking_chars >= OMNI_JUDGE_MIN_CHARS
-                && (tokio::time::Instant::now() >= omni_next_look || recur.recurring())
+                && tokio::time::Instant::now() >= omni_next_look
             {
                 omni_looks += 1;
                 // UNCAPPED keeps the judge watching for the call's whole life — with every wall and
@@ -16496,35 +16210,11 @@ impl GooseAgentDispatcher {
                 let sys = "You inspect a RUNNING agent call and decide ONE thing: is it LOOPING — repeating \
                      the same reasoning or the same commands without new information? Reply on ONE line as \
                      VERDICT|CONFIDENCE|hint where VERDICT is OK or LOOPING and CONFIDENCE is HIGH or LOW. \
-                     Say LOOPING only if the SAME content clearly recurs. Deep but ADVANCING reasoning is OK. \
-                     You may be shown reasoning from EARLIER in the same call: if the recent reasoning covers \
-                     that same ground again, that is LOOPING even when the words are not identical."
+                     Say LOOPING only if the SAME content clearly recurs. Deep but ADVANCING reasoning is OK."
                     .to_string();
-                // #F924: the judge used to get one 2,000-char window and nothing else, which is why a
-                // ~4,000-char-period loop read as OK on every look. It now also gets the deterministic
-                // recurrence measurement and a snapshot from 20k-40k characters back — evidence the
-                // rolling tail structurally cannot carry.
-                let measured = if recur.span() >= RECURRENCE_MIN_SPAN {
-                    format!(
-                        "\n\nA deterministic detector measured the last {} characters of this call: {:.0}% of \
-                         its 48-character windows are exact repeats of earlier windows in this SAME call \
-                         (a healthy advancing call measures under 5%).",
-                        recur.span(),
-                        recur.rate() * 100.0
-                    )
-                } else {
-                    String::new()
-                };
-                let earlier_block = match recur.earlier() {
-                    Some(e) => format!(
-                        "\n\nReasoning from EARLIER in this same call (tens of thousands of characters \
-                         ago):\n{e}"
-                    ),
-                    None => String::new(),
-                };
                 let user = format!(
-                    "This call has emitted {thinking_chars} characters of reasoning.{measured}{earlier_block}\
-                     \n\nMost recent reasoning:\n{tail}\n\nCommands it ran (most recent first):\n{}",
+                    "This call has emitted {thinking_chars} characters of reasoning.\n\nMost recent \
+                     reasoning:\n{tail}\n\nCommands it ran (most recent first):\n{}",
                     if ran.is_empty() {
                         "(none)".to_string()
                     } else {
@@ -16558,20 +16248,6 @@ impl GooseAgentDispatcher {
                     // said LOOPING. Requiring the tail to RECUR — not just a second verdict — means a call
                     // that advanced between looks is never killed.
                     let tail_set = tail_shingle_set(&tail);
-                    // #F924 OBSERVABILITY: every omni-judge look was `eprintln!` only, and the
-                    // bench harness runs the engine under `capture_output=True`, so the judge was
-                    // invisible for a whole run — five hours of "is the judge even watching?" with
-                    // no way to answer from the artifacts. Its verdict and the measured recurrence
-                    // now land in run.jsonl where every other decision lives.
-                    self.events.write_value(serde_json::json!({
-                        "event": "judge_look",
-                        "task_id": activity_key,
-                        "look": omni_looks,
-                        "thinking_chars": thinking_chars,
-                        "recur_rate": recur.rate(),
-                        "recur_span": recur.span(),
-                        "looping": omni_judge_says_looping(&o.text),
-                    }));
                     let omni_hint = {
                         let h = parse_judge_reply(&o.text).hint;
                         let h = h.trim();
@@ -16582,34 +16258,19 @@ impl GooseAgentDispatcher {
                         }
                     };
                     if omni_judge_says_looping(&o.text) {
-                        // #F924: corroborate against ANY earlier look, and treat a measured
-                        // recurrence as corroboration in its own right — a long-period loop
-                        // presents DIFFERENT windows on consecutive looks by construction, which
-                        // is exactly the case the old same-window-twice-in-a-row rule threw away.
-                        if recur.recurring()
-                            || omni_prior_looping_tails
-                                .iter()
-                                .any(|prev| tails_recur(prev, &tail_set))
+                        if omni_prev_looping_tail
+                            .as_ref()
+                            .is_some_and(|prev| tails_recur(prev, &tail_set))
                         {
                             omni_looping_streak += 1;
                         } else {
                             // First LOOPING on this content — arm, but do not yet count toward the kill.
                             omni_looping_streak = 1;
                         }
-                        omni_prior_looping_tails.push(tail_set);
-                        if omni_prior_looping_tails.len() > 8 {
-                            omni_prior_looping_tails.remove(0);
-                        }
-                    } else if recur.recurring() {
-                        // The judge read one window and saw nothing, but the detector can see past
-                        // it. Hold the case open rather than wiping the evidence.
-                        omni_prior_looping_tails.push(tail_set);
-                        if omni_prior_looping_tails.len() > 8 {
-                            omni_prior_looping_tails.remove(0);
-                        }
+                        omni_prev_looping_tail = Some(tail_set);
                     } else {
                         omni_looping_streak = 0;
-                        omni_prior_looping_tails.clear();
+                        omni_prev_looping_tail = None;
                     }
                     if omni_looping_streak == 1 {
                         eprintln!(
@@ -16662,11 +16323,7 @@ impl GooseAgentDispatcher {
                             last_thinking.clear();
                             omni_looks = 0;
                             omni_looping_streak = 0;
-                            omni_prior_looping_tails.clear();
-                            // The redirect restarts the stream, so the fingerprints of the
-                            // reasoning it was told to abandon must not count against what
-                            // follows.
-                            recur.reset();
+                            omni_prev_looping_tail = None;
                             omni_next_look = tokio::time::Instant::now()
                                 + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
                             continue;
@@ -16843,9 +16500,6 @@ impl GooseAgentDispatcher {
                                 // a time. Append and keep a bounded window so the digest's tail_chars(400) shows
                                 // a readable run of the live reasoning instead of the last fragment.
                                 last_thinking.push_str(&t.thinking);
-                                // #F924: fingerprint BEFORE the truncation below discards it —
-                                // this is the only place the full stream is ever seen.
-                                recur.push(&t.thinking);
                                 if last_thinking.chars().count() > 3000 {
                                     last_thinking = tail_chars(&last_thinking, 2400);
                                 }
@@ -17340,7 +16994,7 @@ impl GooseAgentDispatcher {
         // the same parse three times.
         let (scout_doc_urls, doc_urls) = scout_docs_decision(user_prompt);
         // One scout per device (work-stealing): a weight-1 node never has a second scout queued.
-        fanout_over_fleet_straggler(one_lane_per_host(worker_models), lenses, scout_grace, "scout", Some(self.events.clone()), move |lens, model| {
+        fanout_over_fleet_straggler(one_lane_per_host(worker_models), lenses, scout_grace, "scout", move |lens, model| {
             let me = me.clone();
             let exts = research_extensions.clone();
             let prompt = prompt.clone();
@@ -17632,7 +17286,7 @@ impl GooseAgentDispatcher {
         };
         let me = self.clone();
         let stubs =
-            fanout_over_fleet_straggler(one_lane_per_host(worker_models), modules, contract_grace, "contract", Some(self.events.clone()), move |spec, model| {
+            fanout_over_fleet_straggler(one_lane_per_host(worker_models), modules, contract_grace, "contract", move |spec, model| {
             let me = me.clone();
             let goal = goal.clone();
             async move {
@@ -19086,7 +18740,7 @@ impl GooseAgentDispatcher {
         // behind the first. Each item grabs the next free node, so the fleet stays busy without
         // over-dispatching; on timeout/empty/error we fall back to the architect's brief line.
         let results =
-            fanout_over_fleet_straggler(one_lane_per_host(wm), items, detail_grace, "detail", Some(self.events.clone()), move |(idx, id, brief, files, subsplit_ok), model| {
+            fanout_over_fleet_straggler(one_lane_per_host(wm), items, detail_grace, "detail", move |(idx, id, brief, files, subsplit_ok), model| {
             let me = me.clone();
             let goal = goal.clone();
             let findings = findings.clone();
@@ -23772,7 +23426,6 @@ async fn fanout_over_fleet_straggler<T, R, F, Fut>(
     items: Vec<T>,
     grace_secs: u64,
     noun: &str,
-    events: Option<Arc<dyn EventSink>>,
     f: F,
 ) -> Vec<R>
 where
@@ -23782,50 +23435,6 @@ where
     Fut: std::future::Future<Output = R> + Send + 'static,
 {
     let n = items.len();
-    // #F924 INSTRUMENT — "the whole fleet is now waiting on one call".
-    //
-    // In sb-7 r2 the detail fan reached 26-of-27 done and then sat for two hours on the 27th while
-    // the other two nodes idled. NOTHING said so: the only trace was the absence of one
-    // `detail_completed`, which had to be reconstructed by hand from activity files. Mihai saw the
-    // idle fleet in LM Studio before any instrument did, and that is the wrong order.
-    //
-    // Deliberately NOT a kill. `straggler_stop_degrade` (default OFF) can already abort the lone
-    // lagger, and turning it on would be wrong here: detail calls on this fleet legitimately run
-    // 226-1,193s, so a fixed grace after the second-to-last finishes would kill genuinely slow
-    // work and hand that module a bare one-line brief — the measured detail_fallback class, which
-    // collapsed one module's tier to 14.3%. Under UNCAPPED a slow call is allowed to be slow. The
-    // job here is to make the wait VISIBLE; the loop itself is the judge's to end.
-    let f = {
-        let outstanding = Arc::new(std::sync::atomic::AtomicUsize::new(n));
-        let noun = noun.to_string();
-        let events = events.clone();
-        move |item, model| {
-            let outstanding = outstanding.clone();
-            let noun = noun.clone();
-            let events = events.clone();
-            let fut = f(item, model);
-            async move {
-                let r = fut.await;
-                let left = outstanding
-                    .fetch_sub(1, std::sync::atomic::Ordering::SeqCst)
-                    .saturating_sub(1);
-                if left == 1 && n > 2 {
-                    if let Some(ev) = events.as_ref() {
-                        ev.write_value(serde_json::json!({
-                            "event": "fan_last_outstanding",
-                            "fan": noun,
-                            "total": n,
-                        }));
-                    }
-                    eprintln!(
-                        "  {} {noun} fan: 1 of {n} still running — every other node is now idle behind it",
-                        style("⧗").yellow()
-                    );
-                }
-                r
-            }
-        }
-    };
     // The `n > devices.len()` bail-out that used to be here made straggler-stop DEAD for the fans that need
     // it most. MEASURED: detail fans are 4-11 items on a 3-device fleet, so 0 of 52 measured detail fans were
     // EVER eligible; contracts bail out the moment modules > devices. The arming rule below is
