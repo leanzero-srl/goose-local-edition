@@ -3602,6 +3602,8 @@ fn detail_memo_key(goal: &str, id: &str, brief: &str, files: &str, findings: &st
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut h = DefaultHasher::new();
+    "typed-detail-v3-authoritative-core".hash(&mut h);
+    0u8.hash(&mut h);
     goal.hash(&mut h);
     0u8.hash(&mut h);
     id.hash(&mut h);
@@ -9836,61 +9838,173 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             quote: "Expose GET /v1/payments with the X-Trace header.".to_string(),
         };
         let raw = serde_json::json!({
-            "objective": "Implement the payments read endpoint",
             "requirement_citations": [{
                 "requirement_id": "REQ-payments",
                 "applies_as": "The handler must keep the exact route and header spelling."
             }],
-            "interfaces": ["get_payments(request) -> JSON response"],
             "implementation_steps": ["Register GET /v1/payments in app/api.py"],
             "edge_cases": ["Reject a missing X-Trace header with the specified error response"],
             "acceptance_checks": ["Request GET /v1/payments with X-Trace and assert the exact JSON payload"]
         })
         .to_string();
-        let compiled = compile_task_detail(
-            &raw,
-            "payments-api",
-            "read-endpoint",
-            "app/api.py",
-            &[requirement],
-        )
-        .unwrap();
-        assert!(compiled
-            .rendered
-            .contains("Owned files (exclusive): app/api.py"));
+        let input = TaskDetailInput {
+            index: 0,
+            id: "payments-api".to_string(),
+            slice_id: "read-endpoint".to_string(),
+            slice_index: 0,
+            slice_count: 1,
+            brief: "Build payments".to_string(),
+            owned_files: vec!["app/api.py".to_string()],
+            requirements: vec![requirement],
+            evidence: Vec::new(),
+            interfaces: vec![RequirementInterfaceDraft {
+                id: "IFACE-payments".to_string(),
+                producer_task_id: "payments-api".to_string(),
+                consumer_task_ids: vec!["integrate-verify".to_string()],
+                requirement_ids: vec!["REQ-payments".to_string()],
+                contract: "get_payments(request) -> exact JSON response".to_string(),
+                requires_completed_artifact: true,
+            }],
+            objective: "Implement the exact payments read endpoint".to_string(),
+            acceptance_evidence: vec!["GET /v1/payments returns the exact JSON payload".to_string()],
+        };
+        let compiled = compile_task_detail(&raw, &input).unwrap();
+        assert!(compiled.rendered.contains("- app/api.py"));
         assert!(compiled.rendered.contains("GET /v1/payments"));
         assert!(compiled.rendered.contains("X-Trace"));
-        assert!(compiled.rendered.contains("Acceptance closure:"));
+        assert!(compiled
+            .rendered
+            .contains("Objective: Implement the exact payments read endpoint"));
+        assert!(compiled
+            .rendered
+            .contains("get_payments(request) -> exact JSON response"));
+        assert!(compiled.rendered.contains("Required acceptance evidence:"));
         assert_eq!(compiled.citations, 1);
-        assert_eq!(compiled.acceptance_checks, 1);
+        assert_eq!(compiled.interfaces, 1);
+        assert_eq!(compiled.acceptance_checks, 2);
+    }
+
+    #[test]
+    fn generic_detailer_prose_cannot_erase_the_authoritative_slice_contract() {
+        let input = TaskDetailInput {
+            index: 0,
+            id: "events-surface".to_string(),
+            slice_id: "stream".to_string(),
+            slice_index: 0,
+            slice_count: 1,
+            brief: "Build events".to_string(),
+            owned_files: vec!["web/events.js".to_string()],
+            requirements: vec![RequirementRecord {
+                id: "REQ-events".to_string(),
+                section: "Events".to_string(),
+                quote: "Expose GET /api/events in web/events.js.".to_string(),
+            }],
+            evidence: Vec::new(),
+            interfaces: vec![RequirementInterfaceDraft {
+                id: "IFACE-events".to_string(),
+                producer_task_id: "events-surface".to_string(),
+                consumer_task_ids: vec!["integrate-verify".to_string()],
+                requirement_ids: vec!["REQ-events".to_string()],
+                contract: "GET /api/events returns ascending sequence values".to_string(),
+                requires_completed_artifact: true,
+            }],
+            objective: "Implement the event stream without changing its advertised route"
+                .to_string(),
+            acceptance_evidence: vec![
+                "A request after sequence 4 returns only events with sequence > 4".to_string(),
+            ],
+        };
+        let generic = serde_json::json!({
+            "requirement_citations": [{
+                "requirement_id": "REQ-events",
+                "applies_as": "Implement the requirement."
+            }],
+            "implementation_steps": ["Write the code."],
+            "edge_cases": [],
+            "acceptance_checks": ["Test it."]
+        })
+        .to_string();
+        let compiled = compile_task_detail(&generic, &input).unwrap();
+        for authoritative in [
+            "Implement the event stream without changing its advertised route",
+            "web/events.js",
+            "GET /api/events returns ascending sequence values",
+            "A request after sequence 4 returns only events with sequence > 4",
+        ] {
+            assert!(
+                compiled.rendered.contains(authoritative),
+                "authoritative binder fact was lost: {authoritative}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_task_detail_rejects_missing_authoritative_acceptance_evidence() {
+        let input = TaskDetailInput {
+            index: 0,
+            id: "api".to_string(),
+            slice_id: "route".to_string(),
+            slice_index: 0,
+            slice_count: 1,
+            brief: String::new(),
+            owned_files: vec!["src/api.py".to_string()],
+            requirements: vec![RequirementRecord {
+                id: "REQ-route".to_string(),
+                section: String::new(),
+                quote: "Expose GET /api/items.".to_string(),
+            }],
+            evidence: Vec::new(),
+            interfaces: Vec::new(),
+            objective: "Implement GET /api/items".to_string(),
+            acceptance_evidence: Vec::new(),
+        };
+        let raw = serde_json::json!({
+            "requirement_citations": [{
+                "requirement_id": "REQ-route",
+                "applies_as": "Implement the route."
+            }],
+            "implementation_steps": ["Write the route."],
+            "edge_cases": [],
+            "acceptance_checks": ["Test the route."]
+        })
+        .to_string();
+        let error = compile_task_detail(&raw, &input).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("authoritative acceptance_evidence"));
     }
 
     #[test]
     fn typed_task_detail_rejects_a_requirement_outside_its_slice() {
         let raw = serde_json::json!({
-            "objective": "Implement the payments read endpoint",
             "requirement_citations": [{
                 "requirement_id": "REQ-delete",
                 "applies_as": "Add a delete route."
             }],
-            "interfaces": [],
             "implementation_steps": ["Add the route"],
             "edge_cases": [],
             "acceptance_checks": ["Call the route"]
         })
         .to_string();
-        let error = compile_task_detail(
-            &raw,
-            "payments-api",
-            "read-endpoint",
-            "app/api.py",
-            &[RequirementRecord {
+        let input = TaskDetailInput {
+            index: 0,
+            id: "payments-api".to_string(),
+            slice_id: "read-endpoint".to_string(),
+            slice_index: 0,
+            slice_count: 1,
+            brief: String::new(),
+            owned_files: vec!["app/api.py".to_string()],
+            requirements: vec![RequirementRecord {
                 id: "REQ-payments".to_string(),
                 section: "API".to_string(),
                 quote: "Build GET /v1/payments.".to_string(),
             }],
-        )
-        .unwrap_err();
+            evidence: Vec::new(),
+            interfaces: Vec::new(),
+            objective: "Implement the payments read endpoint".to_string(),
+            acceptance_evidence: vec!["GET /v1/payments returns a response".to_string()],
+        };
+        let error = compile_task_detail(&raw, &input).unwrap_err();
         assert!(error.to_string().contains("outside its owned slice"));
     }
 
@@ -19132,7 +19246,7 @@ impl GooseAgentDispatcher {
         let contracts_on = swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts);
         self.events.write_value(serde_json::json!({
             "event": "plan_compile_resolved",
-            "detail_format": "typed-requirement-slice-v2",
+            "detail_format": "typed-requirement-slice-v3-authoritative-core",
             "detail_tool_surface": "response-only",
             "detail_straggler_abort": false,
             "detail_timeout_policy": "no-wall-volume-or-turn-cap",
@@ -19175,19 +19289,18 @@ impl GooseAgentDispatcher {
                         input.slice_id,
                         model
                     );
-                    let system = "Compile ONE semantic acceptance slice into a typed, implementation-ready \
-                        task contract. You have no \
+                    let system = "Elaborate ONE semantic acceptance slice into implementation steps. You have no \
                         filesystem or shell tools and must not prototype code. Call final_output as soon as the \
-                        contract is complete. The objective, implementation steps, interfaces, edge cases, and \
-                        acceptance checks must be specific to this slice. Cite every supplied requirement exactly \
-                        once by requirement_id; the engine renders the authoritative source text. applies_as \
-                        explains exactly what this task must do because of it. Research evidence \
+                        detail is complete. The engine, not you, renders the authoritative objective, exact owned \
+                        files, interfaces, and required acceptance evidence. Supply only concrete implementation \
+                        steps, edge cases, supplemental checks, and one citation for every supplied requirement. \
+                        Cite every requirement exactly once by requirement_id; applies_as explains exactly what this \
+                        task must do because of it. Research evidence \
                         is advisory context, never a requirement. Preserve every \
                         external literal that applies: paths, command shapes, API prefixes, headers, parameters, \
                         statuses, field names, units, and expected values. Do not invent requirements or generic \
                         filler. The engine owns the file list, so never rename or add a path."
                         .to_string();
-                    let files_text = input.owned_files.join(", ");
                     let user = serde_json::to_string_pretty(&serde_json::json!({
                         "task_id": input.id,
                         "slice_id": input.slice_id,
@@ -19220,13 +19333,7 @@ impl GooseAgentDispatcher {
                             .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
                             .ok_or_else(|| "no typed final output".to_string())
                             .and_then(|raw| {
-                                compile_task_detail(
-                                    &raw,
-                                    &input.id,
-                                    &input.slice_id,
-                                    &files_text,
-                                    &input.requirements,
-                                )
+                                compile_task_detail(&raw, &input)
                                 .map_err(|error| error.to_string())
                             }),
                         Err(error) => Err(format!("agent error: {error}")),
@@ -19243,7 +19350,7 @@ impl GooseAgentDispatcher {
                             "brief_chars": input.brief.len(),
                             "context_chars": context_chars,
                             "full_goal_context": false,
-                            "format": "typed-requirement-slice-v2",
+                            "format": "typed-requirement-slice-v3-authoritative-core",
                             "tool_surface": "response-only",
                             "timeout_policy": "no-wall-volume-or-turn-cap",
                             "requirement_ids": input.requirements.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
@@ -19269,7 +19376,7 @@ impl GooseAgentDispatcher {
                             "brief_chars": input.brief.len(),
                             "context_chars": context_chars,
                             "full_goal_context": false,
-                            "format": "typed-requirement-slice-v2",
+                            "format": "typed-requirement-slice-v3-authoritative-core",
                             "fallback": false,
                         }));
                         eprintln!(
@@ -32261,16 +32368,16 @@ fn build_task_detail_inputs(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TaskDetailCitation {
     requirement_id: String,
     applies_as: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TaskDetailDraft {
-    objective: String,
     requirement_citations: Vec<TaskDetailCitation>,
-    interfaces: Vec<String>,
     implementation_steps: Vec<String>,
     edge_cases: Vec<String>,
     acceptance_checks: Vec<String>,
@@ -32449,15 +32556,12 @@ fn task_detail_schema() -> serde_json::Value {
         "type": "object",
         "additionalProperties": false,
         "required": [
-            "objective",
             "requirement_citations",
-            "interfaces",
             "implementation_steps",
             "edge_cases",
             "acceptance_checks"
         ],
         "properties": {
-            "objective": {"type": "string"},
             "requirement_citations": {
                 "type": "array",
                 "items": {
@@ -32470,7 +32574,6 @@ fn task_detail_schema() -> serde_json::Value {
                     }
                 }
             },
-            "interfaces": {"type": "array", "items": {"type": "string"}},
             "implementation_steps": {"type": "array", "items": {"type": "string"}},
             "edge_cases": {"type": "array", "items": {"type": "string"}},
             "acceptance_checks": {"type": "array", "items": {"type": "string"}}
@@ -32478,13 +32581,7 @@ fn task_detail_schema() -> serde_json::Value {
     })
 }
 
-fn compile_task_detail(
-    raw: &str,
-    task_id: &str,
-    slice_id: &str,
-    owned_files: &str,
-    requirements: &[RequirementRecord],
-) -> Result<CompiledTaskDetail> {
+fn compile_task_detail(raw: &str, input: &TaskDetailInput) -> Result<CompiledTaskDetail> {
     let raw = strip_code_fences(raw);
     let detail: TaskDetailDraft = serde_json::from_str(raw.trim())
         .map_err(|e| anyhow!("typed detail JSON did not parse: {e}"))?;
@@ -32495,15 +32592,23 @@ fn compile_task_detail(
         }
         Ok(())
     };
-    if detail.objective.trim().is_empty() {
-        bail!("typed detail objective is empty");
+    if input.objective.trim().is_empty() {
+        bail!("authoritative task objective is empty");
     }
+    if input.owned_files.iter().any(|file| file.trim().is_empty()) {
+        bail!("authoritative task file ownership contains an empty path");
+    }
+    require_nonempty(
+        "authoritative acceptance_evidence",
+        &input.acceptance_evidence,
+    )?;
     require_nonempty("implementation_steps", &detail.implementation_steps)?;
     require_nonempty("acceptance_checks", &detail.acceptance_checks)?;
     if detail.requirement_citations.is_empty() {
         bail!("typed detail has no requirement citation");
     }
-    let expected: HashMap<&str, &str> = requirements
+    let expected: HashMap<&str, &str> = input
+        .requirements
         .iter()
         .map(|requirement| (requirement.id.as_str(), requirement.quote.as_str()))
         .collect();
@@ -32525,7 +32630,7 @@ fn compile_task_detail(
         bail!("typed detail omitted requirement ids from its slice: {missing:?}");
     }
 
-    let render_list = |heading: &str, values: &[String], out: &mut String| {
+    let render_detailer_list = |heading: &str, values: &[String], out: &mut String| {
         if values.is_empty() {
             return;
         }
@@ -32538,14 +32643,19 @@ fn compile_task_detail(
         }
     };
     let mut rendered = format!(
-        "ACCEPTANCE SLICE [{task_id}/{slice_id}]\nObjective: {}\nOwned files (exclusive): {}\n\nRequirement trace:\n",
-        detail.objective.trim(),
-        if owned_files.trim().is_empty() {
-            "(read-only; no file ownership)"
-        } else {
-            owned_files
-        }
+        "ACCEPTANCE SLICE [{}/{}]\nObjective: {}\nOwned files (exclusive):\n",
+        input.id, input.slice_id, input.objective,
     );
+    if input.owned_files.is_empty() {
+        rendered.push_str("- (read-only; no file ownership)\n");
+    } else {
+        for file in &input.owned_files {
+            rendered.push_str("- ");
+            rendered.push_str(file);
+            rendered.push('\n');
+        }
+    }
+    rendered.push_str("\nRequirement trace:\n");
     for citation in &detail.requirement_citations {
         rendered.push_str("- REQUIREMENT [");
         rendered.push_str(citation.requirement_id.trim());
@@ -32560,19 +32670,43 @@ fn compile_task_detail(
         rendered.push('\n');
     }
     rendered.push('\n');
-    render_list(
-        "Interfaces and invariants:",
-        &detail.interfaces,
-        &mut rendered,
-    );
-    render_list(
+
+    if !input.interfaces.is_empty() {
+        rendered.push_str("Authoritative interfaces and invariants:\n");
+        for interface in &input.interfaces {
+            rendered.push_str("- INTERFACE [");
+            rendered.push_str(&interface.id);
+            rendered.push_str("] PRODUCER: ");
+            rendered.push_str(&interface.producer_task_id);
+            rendered.push_str("; CONSUMERS: ");
+            rendered.push_str(&interface.consumer_task_ids.join(", "));
+            rendered.push_str("; REQUIREMENTS: ");
+            rendered.push_str(&interface.requirement_ids.join(", "));
+            rendered.push_str("; REQUIRES COMPLETED ARTIFACT: ");
+            rendered.push_str(if interface.requires_completed_artifact {
+                "true"
+            } else {
+                "false"
+            });
+            rendered.push_str("\n  CONTRACT: ");
+            rendered.push_str(&interface.contract);
+            rendered.push('\n');
+        }
+    }
+    rendered.push_str("Required acceptance evidence:\n");
+    for evidence in &input.acceptance_evidence {
+        rendered.push_str("- ");
+        rendered.push_str(evidence);
+        rendered.push('\n');
+    }
+    render_detailer_list(
         "Implementation steps:",
         &detail.implementation_steps,
         &mut rendered,
     );
-    render_list("Edge cases:", &detail.edge_cases, &mut rendered);
-    render_list(
-        "Acceptance closure:",
+    render_detailer_list("Edge cases:", &detail.edge_cases, &mut rendered);
+    render_detailer_list(
+        "Additional acceptance checks:",
         &detail.acceptance_checks,
         &mut rendered,
     );
@@ -32580,8 +32714,8 @@ fn compile_task_detail(
     Ok(CompiledTaskDetail {
         rendered,
         citations: detail.requirement_citations.len(),
-        interfaces: detail.interfaces.len(),
-        acceptance_checks: detail.acceptance_checks.len(),
+        interfaces: input.interfaces.len(),
+        acceptance_checks: input.acceptance_evidence.len() + detail.acceptance_checks.len(),
     })
 }
 
