@@ -27,7 +27,10 @@ impl TreeTool {
 
     pub fn tree(&self, params: TreeParams) -> CallToolResult {
         let root = PathBuf::from(&params.path);
-        self.tree_at(root, params.depth)
+        match super::sandbox::checked_path(root) {
+            Ok(root) => self.tree_at(root, params.depth),
+            Err(error) => CallToolResult::error(vec![Content::text(error).with_priority(0.0)]),
+        }
     }
 
     pub fn tree_with_cwd(&self, params: TreeParams, working_dir: Option<&Path>) -> CallToolResult {
@@ -41,7 +44,10 @@ impl TreeTool {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(path)
         };
-        self.tree_at(root, params.depth)
+        match super::sandbox::checked_path(root) {
+            Ok(root) => self.tree_at(root, params.depth),
+            Err(error) => CallToolResult::error(vec![Content::text(error).with_priority(0.0)]),
+        }
     }
 
     fn tree_at(&self, root: PathBuf, depth: u32) -> CallToolResult {

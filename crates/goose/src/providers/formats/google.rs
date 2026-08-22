@@ -402,6 +402,8 @@ where
         let mut final_usage: Option<ProviderUsage> = None;
         let stream_id = Uuid::new_v4().to_string();
         let mut incomplete_data: Option<String> = None;
+        let mut terminal_proven = false;
+        let mut malformed_data = false;
 
         while let Some(line_result) = stream.next().await {
             let line = line_result?;
@@ -436,6 +438,7 @@ where
                             continue;
                         }
                         tracing::warn!("Failed to parse streaming chunk: {}", e);
+                        malformed_data = true;
                         incomplete_data = None;
                         continue;
                     }
@@ -449,6 +452,7 @@ where
                             continue;
                         }
                         tracing::warn!("Failed to parse streaming chunk: {}", e);
+                        malformed_data = true;
                         continue;
                     }
                 }
@@ -478,6 +482,18 @@ where
                 }
             }
 
+            terminal_proven |= chunk
+                .get("candidates")
+                .and_then(|value| value.as_array())
+                .is_some_and(|candidates| {
+                    candidates.iter().any(|candidate| {
+                        candidate
+                            .get("finishReason")
+                            .and_then(|reason| reason.as_str())
+                            .is_some_and(|reason| !reason.is_empty())
+                    })
+                });
+
             let parts = chunk
                 .get("candidates")
                 .and_then(|v| v.as_array())
@@ -500,8 +516,13 @@ where
             }
         }
 
-        if let Some(usage) = final_usage {
+        if incomplete_data.is_some() {
+            malformed_data = true;
+        }
+        if terminal_proven && !malformed_data {
+            if let Some(usage) = final_usage {
             yield (None, Some(usage));
+            }
         }
     }
 }
@@ -1221,7 +1242,7 @@ mod tests {
         r#""parts": [{"text": " world"}]}}]}"#,
         "\n",
         r#"data: {"candidates": [{"content": {"role": "model", "#,
-        r#""parts": [{"text": "!"}]}}], "#,
+        r#""parts": [{"text": "!"}]}, "finishReason": "STOP"}], "#,
         r#""usageMetadata": {"promptTokenCount": 10, "#,
         r#""candidatesTokenCount": 3, "totalTokenCount": 13}}"#
     );
@@ -1229,7 +1250,7 @@ mod tests {
     const GOOGLE_FUNCTION_STREAM: &str = concat!(
         r#"data: {"candidates": [{"content": {"role": "model", "#,
         r#""parts": [{"functionCall": {"name": "test_tool", "#,
-        r#""args": {"param": "value"}}}]}}], "#,
+        r#""args": {"param": "value"}}}]}, "finishReason": "STOP"}], "#,
         r#""usageMetadata": {"promptTokenCount": 5, "#,
         r#""candidatesTokenCount": 2, "totalTokenCount": 7}}"#
     );
@@ -1303,6 +1324,33 @@ mod tests {
         }
 
         assert_eq!(tool_calls, vec!["test_tool"]);
+    }
+
+    #[tokio::test]
+    async fn usage_without_finish_reason_does_not_claim_provider_terminal() {
+        use futures::StreamExt;
+
+        let lines = vec![
+            Ok(concat!(
+                r#"data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}],"#,
+                r#""usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"totalTokenCount":12}}"#
+            )
+            .to_string()),
+            Ok(r#"data: {"candidates":[{"content":{"parts":["#.to_string()),
+        ];
+        let stream = Box::pin(futures::stream::iter(lines));
+        let mut parsed = std::pin::pin!(response_to_streaming_message(stream));
+        let mut saw_text = false;
+        let mut saw_usage = false;
+
+        while let Some(result) = parsed.next().await {
+            let (message, usage) = result.unwrap();
+            saw_text |= message.is_some();
+            saw_usage |= usage.is_some();
+        }
+
+        assert!(saw_text);
+        assert!(!saw_usage);
     }
 
     #[tokio::test]

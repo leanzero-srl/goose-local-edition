@@ -14,6 +14,55 @@ import cloud_sb7
 
 
 class CloudSb7HarnessTest(unittest.TestCase):
+    def make_recovery_campaign(self, root: Path, status: str) -> None:
+        (root / "entrants/model/tree").mkdir(parents=True)
+        (root / "scores/model").mkdir(parents=True)
+        (root / "locks").mkdir()
+        manifest = root / "instrument.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "entrants": [
+                        {
+                            "id": "model",
+                            "provider": "google",
+                            "model": "gemini-3.7-flash",
+                            "secret_env": "GOOGLE_API_KEY",
+                            "provider_lane": "google",
+                            "endpoint_family": "google",
+                            "thinking_effort": "medium",
+                            "context_limit": 100,
+                            "max_output_tokens": 20,
+                            "vendor_port": 9901,
+                            "pricing": {
+                                "input_per_million": 1,
+                                "output_per_million": 1,
+                                "source": "https://example.test",
+                                "verified_at": "now",
+                            },
+                        }
+                    ]
+                }
+            )
+        )
+        (root / "campaign.json").write_text(
+            json.dumps({"status": status, "entrant_manifest": str(manifest)})
+        )
+        (root / "manager.json").write_text(
+            json.dumps({"status": status, "pid": None, "pgid": None})
+        )
+        (root / "entrants/model/state.json").write_text(
+            json.dumps(
+                {
+                    "entrant": "model",
+                    "provider": "google",
+                    "model": "gemini-3.7-flash",
+                    "status": "BUILD_COMPLETE",
+                    "tree": str(root / "entrants/model/tree"),
+                }
+            )
+        )
+
     def test_manifest_has_exact_unique_models_and_ports(self) -> None:
         manifest = cloud_sb7.load_json(cloud_sb7.DEFAULT_ENTRANTS)
         rows = cloud_sb7.entrants(manifest)
@@ -197,6 +246,100 @@ class CloudSb7HarnessTest(unittest.TestCase):
             cloud_sb7.atomic_json(path, {"status": "PLANNED"})
             self.assertEqual(json.loads(path.read_text()), {"status": "PLANNED"})
             self.assertEqual(list(path.parent.glob(".state.json.*")), [])
+
+    def test_dead_manager_recovery_does_not_kill_live_supervisor(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "RUNNING")
+            manager = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            supervisor = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            try:
+                cloud_sb7.atomic_json(
+                    root / "manager.json",
+                    {
+                        "status": "RUNNING",
+                        "pid": manager.pid,
+                        "pgid": manager.pid,
+                        "identity": cloud_sb7.process_identity(manager.pid),
+                    },
+                )
+                cloud_sb7.update_state(
+                    root,
+                    "model",
+                    status="BUILD_RUNNING",
+                    supervisor_pid=supervisor.pid,
+                    supervisor_pgid=supervisor.pid,
+                    supervisor_identity=cloud_sb7.process_identity(supervisor.pid),
+                )
+                os.kill(manager.pid, 9)
+                manager.wait(timeout=5)
+
+                self.assertTrue(cloud_sb7.recover_dead_manager(root))
+                self.assertTrue(cloud_sb7.process_alive(supervisor.pid))
+                self.assertEqual(
+                    cloud_sb7.load_json(root / "manager.json")["status"], "RECOVERED"
+                )
+                self.assertEqual(
+                    cloud_sb7.read_state(root, "model")["status"], "BUILD_RUNNING"
+                )
+            finally:
+                cloud_sb7.stop_group(supervisor.pid, grace_seconds=0.1)
+                supervisor.wait(timeout=5)
+                if manager.poll() is None:
+                    cloud_sb7.stop_group(manager.pid, grace_seconds=0.1)
+
+    def test_interrupted_scorer_is_stopped_and_next_attempt_is_immutable(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            old_tree = root / "scores/model/attempt-1/tree"
+            old_tree.mkdir(parents=True)
+            scorer = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            try:
+                cloud_sb7.update_state(
+                    root,
+                    "model",
+                    status="SCORING",
+                    score_attempts=1,
+                    score_pid=scorer.pid,
+                    score_pgid=scorer.pid,
+                    score_identity=cloud_sb7.process_identity(scorer.pid),
+                )
+                cloud_sb7.recover_interrupted_scoring(root)
+                scorer.wait(timeout=5)
+                state = cloud_sb7.read_state(root, "model")
+                self.assertEqual(state["status"], "SCORE_FAILED")
+                self.assertEqual(cloud_sb7.next_score_attempt(root, "model", state), 2)
+                self.assertTrue(old_tree.is_dir())
+            finally:
+                if scorer.poll() is None:
+                    cloud_sb7.stop_group(scorer.pid, grace_seconds=0.1)
+
+    def test_restart_accepts_build_complete_and_scoring_campaigns(self) -> None:
+        class Launched:
+            pid = 99999999
+
+        for status in ("BUILD_COMPLETE", "SCORING"):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                self.make_recovery_campaign(root, status)
+                with mock.patch.object(
+                    cloud_sb7, "launch_detached", return_value=Launched()
+                ) as launch:
+                    self.assertEqual(cloud_sb7.start(root), 0)
+                launch.assert_called_once()
+                self.assertEqual(
+                    cloud_sb7.load_json(root / "manager.json")["status"], "STARTING"
+                )
 
 
 if __name__ == "__main__":

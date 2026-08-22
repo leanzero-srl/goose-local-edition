@@ -210,6 +210,7 @@ async fn load_url_bytes(url: url::Url) -> Result<Vec<u8>, String> {
 }
 
 fn load_file_bytes(path: PathBuf) -> Result<Vec<u8>, String> {
+    let path = super::sandbox::checked_path(path)?;
     std::fs::read(path).map_err(|error| format!("failed to read image file: {error}"))
 }
 

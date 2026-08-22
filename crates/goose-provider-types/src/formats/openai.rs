@@ -1,24 +1,24 @@
 use crate::conversation::message::{Message, MessageContent, ProviderMetadata};
 use crate::conversation::token_usage::{ProviderUsage, Usage};
 use crate::errors::ProviderError;
-use crate::images::{ImageFormat, convert_image, detect_image_path, load_image_file};
+use crate::images::{convert_image, detect_image_path, load_image_file, ImageFormat};
 use crate::json::{parse_tool_arguments, truncation_error_message};
 use crate::mcp_utils::extract_text_from_resource;
 use crate::model::ModelConfig;
 use crate::thinking::{
-    GEMINI_THOUGHT_SIGNATURE_KEY, ThinkFilter, ThinkingEffort, split_think_blocks,
+    split_think_blocks, ThinkFilter, ThinkingEffort, GEMINI_THOUGHT_SIGNATURE_KEY,
 };
-use anyhow::{Error, anyhow};
+use anyhow::{anyhow, Error};
 use async_stream::try_stream;
 use chrono;
 use futures::Stream;
 use regex::Regex;
 use rmcp::model::{
-    AnnotateAble, CallToolRequestParams, Content, ErrorCode, ErrorData, RawContent, Role, Tool,
-    object,
+    object, AnnotateAble, CallToolRequestParams, Content, ErrorCode, ErrorData, RawContent, Role,
+    Tool,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -367,16 +367,14 @@ pub fn format_messages_with_options(
                                     }
                                 }
                             }
-                            let tool_response_content: Value = json!(
-                                tool_content
-                                    .iter()
-                                    .map(|content| match content.deref() {
-                                        RawContent::Text(text) => text.text.clone(),
-                                        _ => String::new(),
-                                    })
-                                    .collect::<Vec<String>>()
-                                    .join(" ")
-                            );
+                            let tool_response_content: Value = json!(tool_content
+                                .iter()
+                                .map(|content| match content.deref() {
+                                    RawContent::Text(text) => text.text.clone(),
+                                    _ => String::new(),
+                                })
+                                .collect::<Vec<String>>()
+                                .join(" "));
 
                             // First add the tool response with all content
                             output.push(json!({
@@ -1987,14 +1985,10 @@ mod tests {
 
     #[test]
     fn test_format_messages_multiple_content() -> anyhow::Result<()> {
-        let mut messages =
-            vec![
-                Message::assistant().with_tool_request(
-                    "tool1",
-                    Ok(CallToolRequestParams::new("example")
-                        .with_arguments(object!({"param1": "value1"}))),
-                ),
-            ];
+        let mut messages = vec![Message::assistant().with_tool_request(
+            "tool1",
+            Ok(CallToolRequestParams::new("example").with_arguments(object!({"param1": "value1"}))),
+        )];
 
         // Get the ID from the tool request to use in the response
         let tool_id = if let MessageContent::ToolRequest(request) = &messages[0].content[0] {
@@ -2054,12 +2048,10 @@ mod tests {
 
         let result = format_tools(&[tool1, tool2]);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Duplicate tool name")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Duplicate tool name"));
 
         Ok(())
     }
@@ -2097,12 +2089,10 @@ mod tests {
         assert_eq!(content[0]["type"], "text");
         assert!(content[0]["text"].as_str().unwrap().contains(png_path_str));
         assert_eq!(content[1]["type"], "image_url");
-        assert!(
-            content[1]["image_url"]["url"]
-                .as_str()
-                .unwrap()
-                .starts_with("data:image/png;base64,")
-        );
+        assert!(content[1]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
 
         // Create assistant message with same text - should NOT load the image
         let assistant_message =
@@ -3052,12 +3042,10 @@ data: [DONE]
             "Expected 2 tool calls, got {}",
             result.tool_calls.len()
         );
-        assert!(
-            result
-                .tool_calls
-                .iter()
-                .all(|name| name == "developer__shell")
-        );
+        assert!(result
+            .tool_calls
+            .iter()
+            .all(|name| name == "developer__shell"));
 
         assert_usage_yielded_once(&result, 4982, 122, 5104);
 
@@ -3355,8 +3343,8 @@ data: [DONE]"#;
     }
 
     #[tokio::test]
-    async fn test_streaming_suppresses_inline_think_when_structured_reasoning_follows()
-    -> anyhow::Result<()> {
+    async fn test_streaming_suppresses_inline_think_when_structured_reasoning_follows(
+    ) -> anyhow::Result<()> {
         // Inline <think>...</think> arrives in an early content chunk, then
         // reasoning_content arrives in a later chunk. The inline thinking
         // should be discarded in favor of the structured reasoning so users
@@ -3464,8 +3452,8 @@ data: [DONE]"#;
     }
 
     #[test]
-    fn test_response_to_message_prefers_structured_reasoning_over_inline_think()
-    -> anyhow::Result<()> {
+    fn test_response_to_message_prefers_structured_reasoning_over_inline_think(
+    ) -> anyhow::Result<()> {
         let response = json!({
             "choices": [{
                 "role": "assistant",
@@ -4541,11 +4529,9 @@ mod cache_prefix_stability_tests {
             a.len(),
             "no extra message may appear without a block"
         );
-        assert!(
-            !serde_json::to_string(&out)
-                .unwrap()
-                .contains("<turn-context>")
-        );
+        assert!(!serde_json::to_string(&out)
+            .unwrap()
+            .contains("<turn-context>"));
     }
 }
 

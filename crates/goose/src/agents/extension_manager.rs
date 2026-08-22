@@ -57,6 +57,21 @@ use schemars::_private::NoSerialize;
 use serde_json::Value;
 
 type McpClientBox = Arc<dyn McpClientTrait>;
+const BENCHMARK_TOOL_ALLOWLIST_ENV: &str = "GOOSE_BENCH_TOOL_ALLOWLIST";
+
+fn benchmark_extension_allowed(extension_name: &str) -> bool {
+    let Some(value) = std::env::var_os(BENCHMARK_TOOL_ALLOWLIST_ENV) else {
+        return true;
+    };
+    let normalized = name_to_key(extension_name);
+    value
+        .to_string_lossy()
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(name_to_key)
+        .any(|entry| entry == normalized)
+}
 
 struct ActionRequiredStream {
     inner: ReceiverStream<crate::conversation::message::Message>,
@@ -1303,6 +1318,10 @@ impl ExtensionManager {
                     .map(|s| name_to_key(&s))
                     .unwrap_or_else(|| tool.name.split("__").next().unwrap_or("").to_string());
 
+                if !benchmark_extension_allowed(&tool_owner) {
+                    return false;
+                }
+
                 if let Some(ref excluded) = exclude_normalized {
                     if tool_owner == *excluded {
                         return false;
@@ -1792,6 +1811,18 @@ impl ExtensionManager {
         let tool_name_str = tool_call.name.to_string();
         let resolved = self.resolve_tool(&ctx.session_id, &tool_name_str).await?;
 
+        if !benchmark_extension_allowed(&resolved.extension_name) {
+            return Err(ErrorData::new(
+                ErrorCode::RESOURCE_NOT_FOUND,
+                format!(
+                    "Tool '{}' is outside the frozen benchmark tool allowlist",
+                    resolved.tool_name
+                ),
+                None,
+            )
+            .into());
+        }
+
         if let Some(extension) = self.extensions.lock().await.get(&resolved.extension_name) {
             if !extension
                 .config
@@ -2146,6 +2177,44 @@ mod tests {
                 .await
                 .insert(sanitized_name, extension);
             self.invalidate_tools_cache_and_bump_version().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn benchmark_allowlist_hides_every_non_developer_tool_surface() {
+        let _guard = env_lock::lock_env([(BENCHMARK_TOOL_ALLOWLIST_ENV, Some("developer"))]);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extension_manager =
+            ExtensionManager::new_without_provider(temp_dir.path().to_path_buf());
+        let schema = Arc::new(serde_json::Map::new());
+        let tools = [
+            "developer__shell",
+            "analyze__analyze",
+            "extensionmanager__manage_extensions",
+            "computercontroller__computer_control",
+            "summon__summon",
+            "skills__read",
+        ]
+        .into_iter()
+        .map(|name| Tool::new(name.to_string(), "test".to_string(), schema.clone()))
+        .collect::<Vec<_>>();
+
+        let visible = extension_manager.filter_tools(&tools, None, None);
+        assert_eq!(
+            visible
+                .iter()
+                .map(|tool| tool.name.as_ref())
+                .collect::<Vec<_>>(),
+            vec!["developer__shell"]
+        );
+        for denied in [
+            "analyze",
+            "extensionmanager",
+            "computercontroller",
+            "summon",
+            "skills",
+        ] {
+            assert!(!benchmark_extension_allowed(denied));
         }
     }
 

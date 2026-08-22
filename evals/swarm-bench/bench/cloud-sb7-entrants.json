@@ -12,7 +12,7 @@
       "custom_deepseek": 50.0
     },
     "max_full_episodes_per_model": 2,
-    "terminal_safe_retry_limit": 3
+    "terminal_safe_retry_limit": 0
   },
   "entrants": [
     {

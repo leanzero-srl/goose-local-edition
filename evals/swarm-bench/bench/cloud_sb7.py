@@ -45,6 +45,13 @@ TERMINAL_BUILD_STATES = {
     "STOPPED",
 }
 RETRYABLE_BUILD_STATES = {"PLANNED", "PRE_ADMISSION_FAILURE"}
+RESTARTABLE_CAMPAIGN_STATES = {
+    "INITIALIZED",
+    "RUNNING",
+    "BUILD_COMPLETE",
+    "SCORING",
+    "ATTENTION",
+}
 CAMPAIGN_SCHEMA = 1
 REQUIRED_BINARY_MARKERS = (
     "GOOSE_PROVIDER_LIFECYCLE_FILE",
@@ -53,6 +60,10 @@ REQUIRED_BINARY_MARKERS = (
     "GOOSE_BENCH_BUDGET_CONFIG",
     "GOOSE_BENCH_BUDGET_CONFIG_SHA256",
     "GOOSE_BENCH_BUDGET_LEDGER",
+    "GOOSE_BENCH_EXPECTED_PROVIDER",
+    "GOOSE_BENCH_SECRET_ENV_NAME",
+    "GOOSE_BENCH_TOOL_ALLOWLIST",
+    "GOOSE_TOOL_SANDBOX_ROOT",
 )
 
 
@@ -157,6 +168,10 @@ def spend_policy(manifest: Mapping[str, Any], rows: Iterable[Mapping[str, Any]])
     policy = manifest.get("spend_policy")
     if not isinstance(policy, dict):
         raise SystemExit("entrant manifest has no spend_policy")
+    if policy.get("terminal_safe_retry_limit") != 0:
+        raise SystemExit("cloud benchmark transport retry policy must be exactly zero")
+    if policy.get("max_full_episodes_per_model") != 2:
+        raise SystemExit("cloud benchmark allows one initial episode plus one restart")
     total_cap = float(policy.get("total_cap", 0))
     provider_caps = policy.get("provider_caps")
     if total_cap <= 0 or not isinstance(provider_caps, dict):
@@ -223,20 +238,51 @@ def read_state(root: Path, entrant_id: str) -> Dict[str, Any]:
 
 def update_state(root: Path, entrant_id: str, **changes: Any) -> Dict[str, Any]:
     path = state_file(root, entrant_id)
-    state = load_json(path)
-    state.update(changes)
-    state["updated_at"] = utc_now()
-    atomic_json(path, state)
-    return state
+    lock_path = path.with_suffix(".lock")
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            state = load_json(path)
+            state.update(changes)
+            state["updated_at"] = utc_now()
+            atomic_json(path, state)
+            return state
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def manager_state(root: Path, **changes: Any) -> Dict[str, Any]:
     path = root / "manager.json"
-    state = load_json(path) if path.is_file() else {"schema_version": CAMPAIGN_SCHEMA}
-    state.update(changes)
-    state["updated_at"] = utc_now()
-    atomic_json(path, state)
-    return state
+    lock_path = root / "manager.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            state = (
+                load_json(path)
+                if path.is_file()
+                else {"schema_version": CAMPAIGN_SCHEMA}
+            )
+            state.update(changes)
+            state["updated_at"] = utc_now()
+            atomic_json(path, state)
+            return state
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def update_campaign(root: Path, **changes: Any) -> Dict[str, Any]:
+    path = campaign_file(root)
+    lock_path = root / "campaign.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            campaign = load_json(path)
+            campaign.update(changes)
+            campaign["updated_at"] = utc_now()
+            atomic_json(path, campaign)
+            return campaign
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def port_is_free(port: int) -> bool:
@@ -354,6 +400,8 @@ def validate_rosters(rows: Iterable[Mapping[str, Any]], rosters: Mapping[str, se
 
 
 def preflight(binary: Path, manifest_path: Path, secret_path: Path) -> Dict[str, Any]:
+    if sys.platform != "darwin" or not os.access("/usr/bin/sandbox-exec", os.X_OK):
+        raise SystemExit("cloud benchmark requires the verified macOS tool sandbox")
     manifest = load_json(manifest_path)
     rows = entrants(manifest)
     spend_policy(manifest, rows)
@@ -489,7 +537,7 @@ def init_campaign(
             "model": row["model"],
             "provider_lane": row["provider_lane"],
             "status": "PLANNED",
-            "attempt": 1,
+            "provider_episode_attempts": 0,
             "fixture_seed": seed,
             "vendor_port": int(row["vendor_port"]),
             "tree": str(unit / "tree"),
@@ -533,7 +581,6 @@ def build_prompt(port: int) -> str:
 
 
 SAFE_ENV_NAMES = {
-    "HOME",
     "USER",
     "LOGNAME",
     "SHELL",
@@ -543,8 +590,6 @@ SAFE_ENV_NAMES = {
     "LC_ALL",
     "TERM",
     "COLORTERM",
-    "SSH_AUTH_SOCK",
-    "GIT_ASKPASS",
     "GIT_AUTHOR_NAME",
     "GIT_AUTHOR_EMAIL",
     "GIT_COMMITTER_NAME",
@@ -557,9 +602,15 @@ def child_env(
     row: Mapping[str, Any], state: Mapping[str, Any], secret_value: str
 ) -> Dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key in SAFE_ENV_NAMES}
+    profile = Path(str(state["profile"]))
+    tool_home = profile / "tool-home"
+    tool_home.mkdir(parents=True, exist_ok=True)
+    (tool_home / "tmp").mkdir(exist_ok=True)
     env.update(
         {
             str(row["secret_env"]): secret_value,
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": str(profile),
             "GOOSE_PATH_ROOT": str(state["profile"]),
             "GOOSE_PROVIDER": str(row["provider"]),
             "GOOSE_MODEL": str(row["model"]),
@@ -574,6 +625,13 @@ def child_env(
             "GOOSE_PROVIDER_LIFECYCLE_FILE": str(state["provider_lifecycle"]),
             "GOOSE_PROVIDER_LIFECYCLE_STRICT": "true",
             "GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES": "true",
+            "GOOSE_BENCH_EXPECTED_PROVIDER": str(row["provider"]),
+            "GOOSE_BENCH_SECRET_ENV_NAME": str(row["secret_env"]),
+            "GOOSE_BENCH_TOOL_ALLOWLIST": "developer",
+            "GOOSE_FAST_MODEL": str(row["model"]),
+            "GOOSE_TOOL_SANDBOX_ROOT": str(state["tree"]),
+            "GOOSE_TOOL_SANDBOX_HOME": str(tool_home),
+            "GOOSE_TOOL_SANDBOX_DENY_ROOT": str(Path.home()),
             "GOOSE_BENCH_BUDGET_CONFIG": str(
                 Path(str(state["tree"])).parents[2] / "instrument/budget-config.json"
             ),
@@ -601,6 +659,33 @@ def redacted_copy(
         destination.write(line)
         destination.flush()
         on_line(line)
+
+
+def secret_occurrences(paths: Iterable[Path], secret_values: Iterable[str]) -> list[str]:
+    needles = [value.encode() for value in secret_values if value]
+    if not needles:
+        return []
+    overlap = max(map(len, needles)) - 1
+    hits: list[str] = []
+    files: list[Path] = []
+    for path in paths:
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            files.extend(candidate for candidate in path.rglob("*") if candidate.is_file())
+    for path in files:
+        try:
+            with path.open("rb") as stream:
+                tail = b""
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    data = tail + chunk
+                    if any(needle in data for needle in needles):
+                        hits.append(str(path))
+                        break
+                    tail = data[-overlap:] if overlap else b""
+        except OSError:
+            hits.append(f"unreadable:{path}")
+    return sorted(set(hits))
 
 
 def event_from_line(line: str) -> Dict[str, Any] | None:
@@ -737,7 +822,30 @@ def provider_lane(root: Path, lane: str) -> Iterator[None]:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
+@contextlib.contextmanager
+def exclusive_claim(path: Path, blocking: bool = False) -> Iterator[bool]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as lock:
+        flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+        try:
+            fcntl.flock(lock.fileno(), flags)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def supervise(root: Path, entrant_id: str) -> int:
+    with exclusive_claim(root / "locks" / f"entrant-{entrant_id}.claim") as claimed:
+        if not claimed:
+            return 0
+        return supervise_claimed(root, entrant_id)
+
+
+def supervise_claimed(root: Path, entrant_id: str) -> int:
     from vendor_service_v3 import serve  # noqa: PLC0415
 
     campaign = load_json(campaign_file(root))
@@ -767,6 +875,11 @@ def supervise(root: Path, entrant_id: str) -> int:
     )
     with provider_lane(root, str(row["provider_lane"])):
         state = read_state(root, entrant_id)
+        if (
+            state.get("status") != "WAITING_PROVIDER_LANE"
+            or int(state.get("supervisor_pid", -1)) != os.getpid()
+        ):
+            return 0
         port = int(state["vendor_port"])
         if not port_is_free(port):
             update_state(
@@ -816,12 +929,25 @@ def supervise(root: Path, entrant_id: str) -> int:
         log_path = Path(str(state["build_log"]))
         counters, observe = provider_state_observer(root, entrant_id)
         started = time.time()
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
+        episode_attempt = int(state.get("provider_episode_attempts", 0)) + 1
+        if episode_attempt > max_episodes:
+            server.shutdown()
+            update_state(
+                root,
+                entrant_id,
+                status="INCOMPLETE",
+                failure="provider episode limit exhausted before process creation",
+            )
+            return 2
         update_state(
             root,
             entrant_id,
             status="BUILD_RUNNING",
             started_at=utc_now(),
             prompt_sha256=prompt_sha,
+            provider_episode_attempts=episode_attempt,
             command=[str(binary), "run", "--provider", row["provider"], "--model", row["model"], "--output-format", "stream-json", "-t", "[PROMPT]"],
         )
         try:
@@ -841,6 +967,15 @@ def supervise(root: Path, entrant_id: str) -> int:
                 exit_code = proc.wait()
         finally:
             server.shutdown()
+        descendants_clean = stop_group_members(os.getpgrp(), {os.getpid()})
+        secret_hits = secret_occurrences(
+            [
+                Path(str(state["tree"])),
+                Path(str(state["profile"])),
+                log_path,
+            ],
+            secret_values.values(),
+        )
 
         elapsed = round(time.time() - started, 3)
         lifecycle = lifecycle_summary(lifecycle_path)
@@ -876,6 +1011,14 @@ def supervise(root: Path, entrant_id: str) -> int:
                 f"{counters['terminal']} reached proven provider terminal"
             )
             completed = False
+        elif secret_hits:
+            status = "INCOMPLETE"
+            failure = "provider credential appeared in benchmark-controlled artifacts"
+            completed = False
+        elif completed and not descendants_clean:
+            status = "INCOMPLETE"
+            failure = "background tool descendants survived the build process"
+            completed = False
         tree_hash = hash_tree(Path(str(state["tree"])))
         final = update_state(
             root,
@@ -890,6 +1033,7 @@ def supervise(root: Path, entrant_id: str) -> int:
             lifecycle_events=lifecycle["events"],
             lifecycle_malformed_lines=lifecycle["malformed_lines"],
             budget_outstanding_request_ids=outstanding_ids,
+            secret_scan_hits=secret_hits,
             first_output_at=counters["first_output_at"],
             raw_tree_sha256=tree_hash,
         )
@@ -931,7 +1075,7 @@ def launch_detached(cmd: list[str], log_path: Path) -> subprocess.Popen[Any]:
         log.close()
 
 
-def launch_supervisor(root: Path, entrant_id: str) -> int:
+def launch_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
     unit = root / "entrants" / entrant_id
     proc = launch_detached(
         [sys.executable, str(Path(__file__).resolve()), "_supervise", "--root", str(root), "--entrant", entrant_id],
@@ -942,17 +1086,37 @@ def launch_supervisor(root: Path, entrant_id: str) -> int:
         entrant_id,
         supervisor_pid=proc.pid,
         supervisor_pgid=proc.pid,
+        supervisor_identity=process_identity(proc.pid),
         launched_at=utc_now(),
     )
-    return proc.pid
+    return proc
 
 
-def process_alive(pid: Any) -> bool:
+def process_identity(pid: Any) -> str | None:
     try:
-        os.kill(int(pid), 0)
-    except (OSError, TypeError, ValueError):
+        value = int(pid)
+    except (TypeError, ValueError):
+        return None
+    proc = subprocess.run(
+        ["ps", "-p", str(value), "-o", "stat=", "-o", "lstart="],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    raw = proc.stdout.strip()
+    if proc.returncode != 0 or not raw:
+        return None
+    fields = raw.split(maxsplit=1)
+    if not fields or fields[0].startswith("Z"):
+        return None
+    return fields[1] if len(fields) > 1 else "running"
+
+
+def process_alive(pid: Any, expected_identity: Any = None) -> bool:
+    identity = process_identity(pid)
+    if identity is None:
         return False
-    return True
+    return expected_identity is None or identity == str(expected_identity)
 
 
 def process_group_members(pgid: int) -> list[tuple[int, str]]:
@@ -976,19 +1140,90 @@ def process_group_members(pgid: int) -> list[tuple[int, str]]:
     return members
 
 
-def wait_for_builds(root: Path, row_ids: list[str]) -> bool:
+def stop_group_members(
+    pgid: int, excluded_pids: set[int] | None = None, grace_seconds: float = 5.0
+) -> bool:
+    excluded = excluded_pids or set()
+    deadline = time.monotonic() + grace_seconds
+    signaled: set[int] = set()
+    while time.monotonic() < deadline:
+        members = [pid for pid, _ in process_group_members(pgid) if pid not in excluded]
+        if not members:
+            return True
+        for pid in members:
+            if pid in signaled:
+                continue
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGTERM)
+            signaled.add(pid)
+        time.sleep(0.2)
+    members = [pid for pid, _ in process_group_members(pgid) if pid not in excluded]
+    for pid in members:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if not [pid for pid, _ in process_group_members(pgid) if pid not in excluded]:
+            return True
+        time.sleep(0.2)
+    return not [pid for pid, _ in process_group_members(pgid) if pid not in excluded]
+
+
+def wait_for_builds(
+    root: Path,
+    row_ids: list[str],
+    supervisors: Mapping[str, subprocess.Popen[Any]] | None = None,
+) -> bool:
+    handles = dict(supervisors or {})
+    campaign = load_json(campaign_file(root))
     while True:
         states = [read_state(root, entrant_id) for entrant_id in row_ids]
+        for entrant_id, proc in list(handles.items()):
+            if proc.poll() is not None:
+                proc.wait()
+                handles.pop(entrant_id, None)
         if all(state["status"] in TERMINAL_BUILD_STATES for state in states):
             return all(state["status"] == "BUILD_COMPLETE" for state in states)
         for state in states:
             if state["status"] not in TERMINAL_BUILD_STATES and state.get("supervisor_pid"):
-                if not process_alive(state["supervisor_pid"]):
+                if not process_alive(
+                    state["supervisor_pid"], state.get("supervisor_identity")
+                ):
+                    pgid = int(state.get("supervisor_pgid") or 0)
+                    group_clean = not process_group_members(pgid) or stop_group(pgid)
+                    lifecycle = lifecycle_summary(Path(str(state["provider_lifecycle"])))
+                    row = manifest_row(root, str(state["entrant"]))
+                    outstanding_ids, budget_error = entrant_outstanding_reservations(
+                        campaign, row
+                    )
+                    ambiguous = bool(
+                        lifecycle["admitted"]
+                        or lifecycle["malformed_lines"]
+                        or outstanding_ids
+                        or budget_error
+                        or not group_clean
+                    )
+                    reasons = ["supervisor disappeared; silence is not success"]
+                    if lifecycle["admitted"]:
+                        reasons.append(f"{lifecycle['admitted']} request(s) were admitted")
+                    if outstanding_ids:
+                        reasons.append(
+                            f"{len(outstanding_ids)} request(s) retain full budget reserves"
+                        )
+                    if budget_error:
+                        reasons.append(budget_error)
+                    if not group_clean:
+                        reasons.append("owned process group survived cleanup")
                     update_state(
                         root,
                         str(state["entrant"]),
-                        status="INCOMPLETE" if state.get("admitted_requests") else "PRE_ADMISSION_FAILURE",
-                        failure="supervisor disappeared; silence is not success",
+                        status="INCOMPLETE" if ambiguous else "PRE_ADMISSION_FAILURE",
+                        failure="; ".join(reasons),
+                        admitted_requests=lifecycle["admitted"],
+                        provider_terminal_requests=lifecycle["terminal"],
+                        lifecycle_events=lifecycle["events"],
+                        lifecycle_malformed_lines=lifecycle["malformed_lines"],
+                        budget_outstanding_request_ids=outstanding_ids,
                     )
         time.sleep(10)
 
@@ -1019,6 +1254,85 @@ def clone_for_score(root: Path, entrant_id: str, attempt: int) -> Path:
     return dest
 
 
+def next_score_attempt(root: Path, entrant_id: str, state: Mapping[str, Any]) -> int:
+    attempts_root = root / "scores" / entrant_id
+    disk_attempts = []
+    if attempts_root.is_dir():
+        for path in attempts_root.glob("attempt-*"):
+            with contextlib.suppress(ValueError):
+                disk_attempts.append(int(path.name.removeprefix("attempt-")))
+    return max([int(state.get("score_attempts", 0)), *disk_attempts], default=0) + 1
+
+
+def stop_recorded_group(
+    pid: Any,
+    pgid: Any,
+    identity: Any,
+    *,
+    grace_seconds: float = 5.0,
+) -> bool:
+    actual_identity = process_identity(pid)
+    if actual_identity is not None:
+        if identity is not None and actual_identity != str(identity):
+            return True
+        return stop_group(int(pgid or pid), grace_seconds=grace_seconds)
+    group = int(pgid or 0)
+    if group and process_group_members(group):
+        return stop_group(group, grace_seconds=grace_seconds)
+    return True
+
+
+def recover_interrupted_scoring(root: Path) -> None:
+    for state in status_rows(root):
+        if state["status"] != "SCORING":
+            continue
+        clean = stop_recorded_group(
+            state.get("score_pid"),
+            state.get("score_pgid"),
+            state.get("score_identity"),
+        )
+        update_state(
+            root,
+            str(state["entrant"]),
+            status="SCORE_FAILED" if clean else "INCOMPLETE",
+            failure=(
+                "scorer supervision disappeared; the immutable attempt is retained and "
+                "a fresh attempt is required"
+                if clean
+                else "interrupted scorer process group survived recovery"
+            ),
+            score_recovered_at=utc_now(),
+            score_pid=None,
+            score_pgid=None,
+            score_identity=None,
+        )
+
+
+def recover_dead_manager(root: Path) -> bool:
+    manager = load_json(root / "manager.json")
+    pid = manager.get("pid")
+    identity = manager.get("identity")
+    actual_identity = process_identity(pid)
+    if actual_identity is not None and (
+        identity is None or actual_identity == str(identity)
+    ):
+        return False
+    if actual_identity is None and not stop_recorded_group(
+        pid, manager.get("pgid"), identity
+    ):
+        raise SystemExit("dead manager's process group survived recovery")
+    recover_interrupted_scoring(root)
+    manager_state(
+        root,
+        status="RECOVERED",
+        recovered_at=utc_now(),
+        pid=None,
+        pgid=None,
+        identity=None,
+    )
+    return True
+
+
 def score_one(root: Path, entrant_id: str) -> bool:
     state = read_state(root, entrant_id)
     if state["status"] == "SCORED":
@@ -1034,7 +1348,7 @@ def score_one(root: Path, entrant_id: str) -> bool:
     if hash_tree(raw) != state.get("raw_tree_sha256"):
         update_state(root, entrant_id, status="INCOMPLETE", failure="raw tree changed before scoring")
         return False
-    score_attempt = int(state.get("score_attempts", 0)) + 1
+    score_attempt = next_score_attempt(root, entrant_id, state)
     score_tree = clone_for_score(root, entrant_id, score_attempt)
     score_dir = score_tree.parent
     verdict = score_dir / "verdict.json"
@@ -1058,15 +1372,48 @@ def score_one(root: Path, entrant_id: str) -> bool:
         score_started_at=utc_now(),
         score_attempts=score_attempt,
     )
-    with log_path.open("w") as log:
-        proc = subprocess.run(cmd, cwd=REPO, stdout=log, stderr=subprocess.STDOUT, check=False)
-    if proc.returncode != 0 or not verdict.is_file():
+    proc: subprocess.Popen[Any] | None = None
+    try:
+        with log_path.open("w") as log:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=REPO,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+            update_state(
+                root,
+                entrant_id,
+                score_pid=proc.pid,
+                score_pgid=proc.pid,
+                score_identity=process_identity(proc.pid),
+            )
+            exit_code = proc.wait()
+    except BaseException:
+        if proc is not None:
+            stop_recorded_group(proc.pid, proc.pid, process_identity(proc.pid))
         update_state(
             root,
             entrant_id,
             status="SCORE_FAILED",
-            score_exit_code=proc.returncode,
+            failure="hermetic scorer supervision failed; immutable attempt retained",
+            score_pid=None,
+            score_pgid=None,
+            score_identity=None,
+        )
+        raise
+    if exit_code != 0 or not verdict.is_file():
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            score_exit_code=exit_code,
             failure="hermetic scorer failed; raw build remains sealed",
+            score_pid=None,
+            score_pgid=None,
+            score_identity=None,
         )
         return False
     result = load_json(verdict)
@@ -1074,31 +1421,41 @@ def score_one(root: Path, entrant_id: str) -> bool:
         root,
         entrant_id,
         status="SCORED",
-        score_exit_code=proc.returncode,
+        score_exit_code=exit_code,
         score_finished_at=utc_now(),
         score=result.get("score"),
         scorer_version=result.get("scorer_version"),
         calibrated=result.get("calibrated"),
         verdict=str(verdict),
+        score_pid=None,
+        score_pgid=None,
+        score_identity=None,
     )
     return True
 
 
 def score_all(root: Path, row_ids: list[str]) -> bool:
+    recover_interrupted_scoring(root)
     manager_state(root, status="SCORING")
+    update_campaign(root, status="SCORING", score_started_at=utc_now())
     for entrant_id in row_ids:
         if not score_one(root, entrant_id):
             manager_state(root, status="ATTENTION", failure=f"scoring failed: {entrant_id}")
             return False
     manager_state(root, status="SCORED", finished_at=utc_now())
-    campaign = load_json(campaign_file(root))
-    campaign["status"] = "SCORED"
-    campaign["finished_at"] = utc_now()
-    atomic_json(campaign_file(root), campaign)
+    update_campaign(root, status="SCORED", finished_at=utc_now())
     return True
 
 
 def manage(root: Path) -> int:
+    with exclusive_claim(root / "locks/manager-run.claim") as claimed:
+        if not claimed:
+            return 0
+        return manage_claimed(root)
+
+
+def manage_claimed(root: Path) -> int:
+    recover_interrupted_scoring(root)
     campaign = load_json(campaign_file(root))
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
     row_ids = [str(row["id"]) for row in entrants(manifest)]
@@ -1109,39 +1466,52 @@ def manage(root: Path) -> int:
         pgid=os.getpgrp(),
         started_at=utc_now(),
     )
-    campaign["status"] = "RUNNING"
-    campaign["started_at"] = utc_now()
-    atomic_json(campaign_file(root), campaign)
+    update_campaign(root, status="RUNNING", started_at=utc_now())
+    supervisors: dict[str, subprocess.Popen[Any]] = {}
     for entrant_id in row_ids:
         state = read_state(root, entrant_id)
         if state["status"] in RETRYABLE_BUILD_STATES:
-            launch_supervisor(root, entrant_id)
-    builds_ok = wait_for_builds(root, row_ids)
+            supervisors[entrant_id] = launch_supervisor(root, entrant_id)
+    builds_ok = wait_for_builds(root, row_ids, supervisors)
     if not builds_ok:
         manager_state(root, status="ATTENTION", failure="one or more builds did not complete")
-        campaign = load_json(campaign_file(root))
-        campaign["status"] = "ATTENTION"
-        atomic_json(campaign_file(root), campaign)
+        update_campaign(root, status="ATTENTION")
         return 1
-    campaign = load_json(campaign_file(root))
-    campaign["status"] = "BUILD_COMPLETE"
-    campaign["build_finished_at"] = utc_now()
-    atomic_json(campaign_file(root), campaign)
+    update_campaign(root, status="BUILD_COMPLETE", build_finished_at=utc_now())
     return 0 if score_all(root, row_ids) else 1
 
 
 def start(root: Path) -> int:
-    campaign = load_json(campaign_file(root))
-    if campaign["status"] not in {"INITIALIZED", "ATTENTION"}:
-        raise SystemExit(f"campaign cannot start from {campaign['status']}")
-    current = load_json(root / "manager.json")
-    if current.get("pid") and process_alive(current["pid"]):
-        raise SystemExit(f"manager is already running as pid {current['pid']}")
-    proc = launch_detached(
-        [sys.executable, str(Path(__file__).resolve()), "_manage", "--root", str(root)],
-        root / "manager.log",
-    )
-    manager_state(root, status="STARTING", pid=proc.pid, pgid=proc.pid, launched_at=utc_now())
+    with exclusive_claim(root / "locks/manager-launch.claim", blocking=True) as claimed:
+        if not claimed:
+            raise SystemExit("cannot claim cloud benchmark manager launch")
+        campaign = load_json(campaign_file(root))
+        if campaign["status"] not in RESTARTABLE_CAMPAIGN_STATES:
+            raise SystemExit(f"campaign cannot start from {campaign['status']}")
+        current = load_json(root / "manager.json")
+        if current.get("pid") and process_alive(
+            current["pid"], current.get("identity")
+        ):
+            raise SystemExit(f"manager is already running as pid {current['pid']}")
+        recover_dead_manager(root)
+        proc = launch_detached(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "_manage",
+                "--root",
+                str(root),
+            ],
+            root / "manager.log",
+        )
+        manager_state(
+            root,
+            status="STARTING",
+            pid=proc.pid,
+            pgid=proc.pid,
+            identity=process_identity(proc.pid),
+            launched_at=utc_now(),
+        )
     print(f"started cloud SB7 manager pid={proc.pid} root={root}")
     return 0
 
@@ -1176,13 +1546,13 @@ def stop(root: Path) -> int:
         entrant_id = str(row["id"])
         state = read_state(root, entrant_id)
         pgid = state.get("supervisor_pgid")
-        if pgid and process_alive(pgid) and not stop_group(int(pgid)):
+        if pgid and process_group_members(int(pgid)) and not stop_group(int(pgid)):
             failures.append(f"{entrant_id}:pgid={pgid}")
         if state["status"] not in TERMINAL_BUILD_STATES | {"SCORED", "SCORE_FAILED"}:
             update_state(root, entrant_id, status="STOPPED", stopped_at=utc_now())
     manager = load_json(root / "manager.json")
     pgid = manager.get("pgid")
-    if pgid and process_alive(pgid) and not stop_group(int(pgid)):
+    if pgid and process_group_members(int(pgid)) and not stop_group(int(pgid)):
         failures.append(f"manager:pgid={pgid}")
     manager_state(root, status="STOPPED", stop_failures=failures)
     if failures:
@@ -1318,8 +1688,13 @@ def main() -> int:
             while True:
                 print_status(root)
                 manager = load_json(root / "manager.json")
-                if manager.get("status") in {"SCORED", "ATTENTION", "STOPPED"}:
+                campaign = load_json(campaign_file(root))
+                if manager.get("status") == "SCORED" or campaign.get("status") == "SCORED":
                     return 0
+                if manager.get("status") in {"ATTENTION", "STOPPED"}:
+                    return 0
+                if not process_alive(manager.get("pid"), manager.get("identity")):
+                    start(root)
                 print()
                 time.sleep(20)
         except KeyboardInterrupt:
@@ -1333,8 +1708,36 @@ def main() -> int:
         ids = [state["entrant"] for state in status_rows(root)]
         return 0 if score_all(root, ids) else 1
     if args.command == "resume":
+        recover_dead_manager(root)
+        campaign = load_json(campaign_file(root))
         for state in status_rows(root):
             if state["status"] == "PRE_ADMISSION_FAILURE":
+                row = manifest_row(root, str(state["entrant"]))
+                lifecycle = lifecycle_summary(Path(str(state["provider_lifecycle"])))
+                outstanding_ids, budget_error = entrant_outstanding_reservations(
+                    campaign, row
+                )
+                pgid = int(state.get("supervisor_pgid") or 0)
+                members = process_group_members(pgid) if pgid else []
+                if (
+                    lifecycle["admitted"]
+                    or lifecycle["malformed_lines"]
+                    or outstanding_ids
+                    or budget_error
+                    or members
+                ):
+                    update_state(
+                        root,
+                        state["entrant"],
+                        status="INCOMPLETE",
+                        failure="resume denied: reconstructed provider/process evidence is ambiguous",
+                        admitted_requests=lifecycle["admitted"],
+                        provider_terminal_requests=lifecycle["terminal"],
+                        budget_outstanding_request_ids=outstanding_ids,
+                    )
+                    raise SystemExit(
+                        f"{state['entrant']} has ambiguous evidence and cannot be retried"
+                    )
                 update_state(root, state["entrant"], status="PLANNED", failure=None)
             elif state["status"] in {"INCOMPLETE", "STOPPED"}:
                 raise SystemExit(

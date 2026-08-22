@@ -114,10 +114,7 @@ fn should_retry_with_terminal_safety(
     terminal_safe: bool,
 ) -> bool {
     if terminal_safe {
-        return matches!(
-            error,
-            ProviderError::RateLimitExceeded { .. } | ProviderError::ServerError(_)
-        );
+        return false;
     }
 
     match error {
@@ -136,7 +133,7 @@ pub fn should_retry(error: &ProviderError, config: &RetryConfig) -> bool {
 
 fn retry_limit(config: &RetryConfig, terminal_safe: bool) -> usize {
     if terminal_safe {
-        config.max_retries.min(DEFAULT_MAX_RETRIES)
+        0
     } else {
         config.max_retries
     }
@@ -388,9 +385,9 @@ mod tests {
     }
 
     #[test]
-    fn terminal_safe_policy_retries_only_proven_provider_rejections() {
+    fn terminal_safe_policy_never_replays_a_provider_post() {
         let config = RetryConfig::default();
-        assert!(should_retry_with_terminal_safety(
+        assert!(!should_retry_with_terminal_safety(
             &ProviderError::RateLimitExceeded {
                 details: "too many requests".into(),
                 retry_delay: None,
@@ -398,7 +395,7 @@ mod tests {
             &config,
             true,
         ));
-        assert!(should_retry_with_terminal_safety(
+        assert!(!should_retry_with_terminal_safety(
             &ProviderError::ServerError("500 internal".into()),
             &config,
             true,
@@ -421,9 +418,9 @@ mod tests {
     }
 
     #[test]
-    fn terminal_safe_policy_caps_custom_retry_counts_at_three() {
+    fn terminal_safe_policy_forces_zero_retries() {
         let config = RetryConfig::new(12, 1, 1.0, 1);
-        assert_eq!(retry_limit(&config, true), DEFAULT_MAX_RETRIES);
+        assert_eq!(retry_limit(&config, true), 0);
         assert_eq!(retry_limit(&config, false), 12);
     }
 

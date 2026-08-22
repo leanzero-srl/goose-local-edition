@@ -69,9 +69,9 @@ pub(crate) enum PreAdmissionDisposition {
 
 pub(crate) fn pre_admission_disposition(error: &ProviderError) -> PreAdmissionDisposition {
     match error {
-        ProviderError::NetworkError(_) | ProviderError::RequestFailed(_) => {
-            PreAdmissionDisposition::PreserveReservation
-        }
+        ProviderError::NetworkError(_)
+        | ProviderError::RequestFailed(_)
+        | ProviderError::ServerError(_) => PreAdmissionDisposition::PreserveReservation,
         _ => PreAdmissionDisposition::ReleaseReservation,
     }
 }
@@ -421,7 +421,7 @@ mod tests {
         );
         assert_eq!(
             pre_admission_disposition(&ProviderError::ServerError("rejected".into())),
-            PreAdmissionDisposition::ReleaseReservation
+            PreAdmissionDisposition::PreserveReservation
         );
     }
 

@@ -1,5 +1,6 @@
 pub mod edit;
 pub mod image;
+mod sandbox;
 pub mod shell;
 pub mod tree;
 
