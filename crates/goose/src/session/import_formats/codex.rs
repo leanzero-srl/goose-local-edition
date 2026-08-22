@@ -83,18 +83,24 @@ pub fn convert(content: &str) -> Result<String> {
                 .and_then(|u| u.as_object())
             {
                 // Codex input_tokens already includes cached_input_tokens
-                total_input += usage
-                    .get("input_tokens")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                total_cache_read += usage
-                    .get("cached_input_tokens")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                total_output += usage
-                    .get("output_tokens")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
+                total_input = total_input.saturating_add(
+                    usage
+                        .get("input_tokens")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                );
+                total_cache_read = total_cache_read.saturating_add(
+                    usage
+                        .get("cached_input_tokens")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                );
+                total_output = total_output.saturating_add(
+                    usage
+                        .get("output_tokens")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                );
             }
             continue;
         }
@@ -253,14 +259,11 @@ pub fn convert(content: &str) -> Result<String> {
         created_at,
         updated_at,
         usage: Usage::new(
-            (total_input > 0).then_some(total_input as i32),
-            (total_output > 0).then_some(total_output as i32),
+            (total_input > 0).then_some(total_input),
+            (total_output > 0).then_some(total_output),
             None,
         )
-        .with_cache_tokens(
-            (total_cache_read > 0).then_some(total_cache_read as i32),
-            None,
-        ),
+        .with_cache_tokens((total_cache_read > 0).then_some(total_cache_read), None),
         accumulated_cost: None,
         conversation,
     });
