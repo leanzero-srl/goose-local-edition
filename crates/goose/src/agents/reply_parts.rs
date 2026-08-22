@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use super::super::agents::Agent;
+use super::provider_lifecycle::{LifecycleSettings, ProviderRequestLifecycle};
 #[cfg(feature = "code-mode")]
 use crate::agents::platform_extensions::code_execution;
 use crate::config::Config;
@@ -267,7 +268,37 @@ impl Agent {
         tools: &[Tool],
         toolshim_tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
+        Self::stream_response_from_provider_with_settings(
+            provider,
+            model_config,
+            session_id,
+            system_prompt,
+            messages,
+            tools,
+            toolshim_tools,
+            LifecycleSettings::from_env(),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn stream_response_from_provider_with_settings(
+        provider: Arc<dyn Provider>,
+        model_config: ModelConfig,
+        session_id: &str,
+        system_prompt: &str,
+        messages: &[Message],
+        tools: &[Tool],
+        toolshim_tools: &[Tool],
+        lifecycle_settings: LifecycleSettings,
+    ) -> Result<MessageStream, ProviderError> {
         let config = model_config.clone();
+        let lifecycle = ProviderRequestLifecycle::begin(
+            lifecycle_settings,
+            provider.get_name().to_string(),
+            model_config.model_name.clone(),
+            session_id.to_string(),
+        );
 
         let filtered_messages: Vec<Message> = messages
             .iter()
@@ -307,9 +338,13 @@ impl Agent {
 
         // If there was an error creating the stream, return a stream that yields that error
         let mut stream = match stream_result {
-            Ok(s) => s,
+            Ok(s) => {
+                lifecycle.admitted();
+                s
+            }
             Err(e) => {
                 let enhanced_error = enhance_model_error(e, &provider, config.toolshim).await;
+                lifecycle.pre_admission_error(&enhanced_error);
                 // Return a stream that immediately yields the error
                 // This allows the error to be caught by existing error handling in agent.rs
                 return Ok(Box::pin(try_stream! {
@@ -318,7 +353,7 @@ impl Agent {
             }
         };
 
-        Ok(Box::pin(try_stream! {
+        let processed_stream = Box::pin(try_stream! {
             if config.toolshim {
                 // Toolshim mode: accumulate the full response before processing
                 // so that tool-use markers spanning multiple chunks are detected
@@ -373,7 +408,9 @@ impl Agent {
                     yield (message, usage);
                 }
             }
-        }))
+        });
+
+        Ok(lifecycle.wrap(processed_stream))
     }
 
     /// Categorize tool requests from the response into different types
@@ -649,6 +686,240 @@ mod tests {
             let usage = ProviderUsage::new("mock".to_string(), Usage::default());
             Ok(stream_from_single_message(message, usage))
         }
+    }
+
+    #[derive(Clone, Copy)]
+    enum LifecycleBehavior {
+        Complete,
+        PreAdmissionError,
+        PreAdmissionNetworkLoss,
+        AdmittedStreamLoss,
+        MissingUsage,
+    }
+
+    #[derive(Clone)]
+    struct LifecycleMockProvider {
+        behavior: LifecycleBehavior,
+    }
+
+    #[async_trait]
+    impl Provider for LifecycleMockProvider {
+        fn get_name(&self) -> &str {
+            "lifecycle-mock"
+        }
+
+        async fn stream(
+            &self,
+            model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            type StreamItem = Result<(Option<Message>, Option<ProviderUsage>), ProviderError>;
+
+            match self.behavior {
+                LifecycleBehavior::PreAdmissionError => {
+                    Err(ProviderError::ServerError("rejected before stream".into()))
+                }
+                LifecycleBehavior::PreAdmissionNetworkLoss => Err(ProviderError::NetworkError(
+                    "response status unknown".into(),
+                )),
+                LifecycleBehavior::Complete => {
+                    let usage = ProviderUsage::new(
+                        model_config.model_name.clone(),
+                        Usage::new(Some(2), Some(1), Some(3)),
+                    );
+                    let items: Vec<StreamItem> = vec![
+                        Ok((Some(Message::assistant().with_text("ok")), None)),
+                        Ok((None, Some(usage))),
+                    ];
+                    Ok(Box::pin(futures::stream::iter(items)))
+                }
+                LifecycleBehavior::AdmittedStreamLoss => {
+                    let items: Vec<StreamItem> = vec![
+                        Ok((Some(Message::assistant().with_text("partial")), None)),
+                        Err(ProviderError::NetworkError("connection reset".into())),
+                    ];
+                    Ok(Box::pin(futures::stream::iter(items)))
+                }
+                LifecycleBehavior::MissingUsage => {
+                    let items: Vec<StreamItem> =
+                        vec![Ok((Some(Message::assistant().with_text("no usage")), None))];
+                    Ok(Box::pin(futures::stream::iter(items)))
+                }
+            }
+        }
+    }
+
+    async fn run_lifecycle_stream(
+        behavior: LifecycleBehavior,
+        path: &std::path::Path,
+        strict_terminal: bool,
+    ) -> Vec<Result<(Option<Message>, Option<ProviderUsage>), ProviderError>> {
+        let provider: Arc<dyn Provider> = Arc::new(LifecycleMockProvider { behavior });
+        let model_config = ModelConfig::new("lifecycle-model");
+        let messages = vec![Message::user().with_text("test")];
+        let mut stream = Agent::stream_response_from_provider_with_settings(
+            provider,
+            model_config,
+            "lifecycle-session",
+            "system",
+            &messages,
+            &[],
+            &[],
+            LifecycleSettings::for_test(path.to_path_buf(), strict_terminal),
+        )
+        .await
+        .expect("stream wrapper should be created");
+
+        let mut results = Vec::new();
+        while let Some(item) = stream.next().await {
+            results.push(item);
+        }
+        results
+    }
+
+    fn lifecycle_events(path: &std::path::Path) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(path)
+            .expect("lifecycle ledger should exist")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("each ledger line must be JSON"))
+            .collect()
+    }
+
+    fn lifecycle_states(events: &[serde_json::Value]) -> Vec<&str> {
+        events
+            .iter()
+            .map(|event| event["state"].as_str().expect("state must be a string"))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn provider_lifecycle_records_proven_terminal_stream() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("lifecycle.jsonl");
+
+        let results = run_lifecycle_stream(LifecycleBehavior::Complete, &path, true).await;
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(Result::is_ok));
+
+        let events = lifecycle_events(&path);
+        assert_eq!(
+            lifecycle_states(&events),
+            vec![
+                "queued",
+                "admitted",
+                "first_item",
+                "usage_reported",
+                "provider_terminal"
+            ]
+        );
+        assert!(events
+            .iter()
+            .all(|event| event["request_id"] == events[0]["request_id"]));
+        assert!(events
+            .iter()
+            .all(|event| event["provider"] == "lifecycle-mock"));
+        assert!(events
+            .iter()
+            .all(|event| event["model"] == "lifecycle-model"));
+        assert!(events
+            .iter()
+            .all(|event| event["session"] == "lifecycle-session"));
+        assert_eq!(events[4]["usage"]["reported_model"], "lifecycle-model");
+        assert_eq!(events[4]["usage"]["input_tokens"], 2);
+        assert_eq!(events[4]["usage"]["output_tokens"], 1);
+    }
+
+    #[tokio::test]
+    async fn provider_lifecycle_records_pre_admission_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("lifecycle.jsonl");
+
+        let results = run_lifecycle_stream(LifecycleBehavior::PreAdmissionError, &path, true).await;
+        assert!(matches!(
+            results.as_slice(),
+            [Err(ProviderError::ServerError(_))]
+        ));
+
+        let events = lifecycle_events(&path);
+        assert_eq!(lifecycle_states(&events), vec!["queued", "error"]);
+        assert_eq!(events[1]["reason"], "server");
+    }
+
+    #[tokio::test]
+    async fn provider_lifecycle_preserves_reservation_on_pre_admission_network_loss() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("lifecycle.jsonl");
+
+        let results =
+            run_lifecycle_stream(LifecycleBehavior::PreAdmissionNetworkLoss, &path, true).await;
+        assert!(matches!(
+            results.as_slice(),
+            [Err(ProviderError::NetworkError(_))]
+        ));
+
+        let events = lifecycle_events(&path);
+        assert_eq!(
+            lifecycle_states(&events),
+            vec!["queued", "stream_ambiguous"]
+        );
+        assert_eq!(events[1]["reason"], "network");
+    }
+
+    #[tokio::test]
+    async fn provider_lifecycle_marks_admitted_stream_loss_ambiguous() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("lifecycle.jsonl");
+
+        let results =
+            run_lifecycle_stream(LifecycleBehavior::AdmittedStreamLoss, &path, true).await;
+        assert!(results[0].is_ok());
+        assert!(matches!(
+            results.get(1),
+            Some(Err(ProviderError::NetworkError(_)))
+        ));
+
+        let events = lifecycle_events(&path);
+        assert_eq!(
+            lifecycle_states(&events),
+            vec!["queued", "admitted", "first_item", "stream_ambiguous"]
+        );
+        assert_eq!(events[3]["reason"], "network");
+    }
+
+    #[tokio::test]
+    async fn strict_lifecycle_rejects_clean_eof_without_usage() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("lifecycle.jsonl");
+
+        let results = run_lifecycle_stream(LifecycleBehavior::MissingUsage, &path, true).await;
+        assert!(results[0].is_ok());
+        assert!(matches!(
+            results.get(1),
+            Some(Err(ProviderError::UsageError(_)))
+        ));
+
+        let events = lifecycle_events(&path);
+        assert_eq!(
+            lifecycle_states(&events),
+            vec!["queued", "admitted", "first_item", "stream_ambiguous"]
+        );
+        assert_eq!(events[3]["reason"], "missing_usage");
+    }
+
+    #[tokio::test]
+    async fn non_strict_lifecycle_preserves_missing_usage_stream_behavior() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("lifecycle.jsonl");
+
+        let results = run_lifecycle_stream(LifecycleBehavior::MissingUsage, &path, false).await;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_ok());
+
+        let events = lifecycle_events(&path);
+        assert_eq!(events.last().unwrap()["state"], "stream_ambiguous");
+        assert_eq!(events.last().unwrap()["reason"], "missing_usage");
     }
 
     #[tokio::test]

@@ -11,6 +11,7 @@ pub mod moim;
 pub mod platform_extensions;
 pub mod platform_tools;
 pub mod prompt_manager;
+mod provider_lifecycle;
 pub mod reply_parts;
 pub mod retry;
 mod schedule_tool;
