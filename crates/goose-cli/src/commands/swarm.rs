@@ -13097,6 +13097,65 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn advertised_entry_files_rebind_the_exact_dispatch_dag() {
+        let plan = serde_json::json!({
+            "subtasks": [
+                {
+                    "id":"service",
+                    "description":"Build the service.",
+                    "difficulty":"hard",
+                    "model":"qwen",
+                    "depends_on":[],
+                    "files":["app/server.py"]
+                },
+                {
+                    "id":"integrate-verify",
+                    "description":"Run the service.",
+                    "difficulty":"hard",
+                    "model":"qwen",
+                    "depends_on":["service"],
+                    "files":[]
+                }
+            ]
+        })
+        .to_string();
+        let stale_dag = Dag::from_planner_json(&plan).unwrap();
+        assert!(!stale_dag.tasks["service"]
+            .spec
+            .owned_files
+            .contains(&"app/__main__.py".to_string()));
+
+        let (final_json, dispatch_dag, added) = finalize_advertised_entry_plan(
+            plan,
+            stale_dag,
+            "The advertised entry is `python -m app --port 8123`.",
+        )
+        .unwrap();
+        assert_eq!(
+            added,
+            vec!["app/__main__.py".to_string()],
+            "the existing package already owns a source file, so only its entry is missing"
+        );
+        assert!(dispatch_dag.tasks["service"]
+            .spec
+            .owned_files
+            .contains(&"app/__main__.py".to_string()));
+
+        let reparsed = Dag::from_planner_json(&final_json).unwrap();
+        for task_id in ["service", "integrate-verify"] {
+            assert_eq!(
+                dispatch_dag.tasks[task_id].spec.owned_files,
+                reparsed.tasks[task_id].spec.owned_files,
+                "contracts, sink setup, plan_loaded and Scheduler::run must share the same task manifest"
+            );
+            assert_eq!(
+                dispatch_dag.tasks[task_id].spec.deps,
+                reparsed.tasks[task_id].spec.deps
+            );
+        }
+    }
+
+    #[test]
     fn run_pillar_checks_flags_only_failing_checks() {
         let dir = tempfile::tempdir().unwrap();
         let swarm = dir.path().join(".swarm");
@@ -22212,7 +22271,7 @@ fn spec_python_invocations(spec: &str) -> Vec<String> {
 /// under the package dir, else most under the parent package, else the first task owning anything —
 /// plus `__init__.py` when the package has no other owned file, and append one sentence to that task's
 /// description saying exactly what the entry must do. Returns the injected paths (empty = no-op,
-/// byte-identical plan). Adds no tasks and touches no deps, so the already-built DAG stays valid.
+/// byte-identical plan).
 fn require_advertised_entry_files(v: &mut serde_json::Value, spec: &str) -> Vec<String> {
     let invocations = spec_python_invocations(spec);
     if invocations.is_empty() {
@@ -22292,6 +22351,28 @@ fn require_advertised_entry_files(v: &mut serde_json::Value, spec: &str) -> Vec<
         }
     }
     added
+}
+
+/// Apply package-entry ownership to the final plan and rebuild the exact DAG that every downstream
+/// consumer receives. File ownership is scheduler authority: changing JSON without replacing the DAG
+/// creates two contradictory plans, so a mutated plan that does not validate fails before dispatch.
+fn finalize_advertised_entry_plan(
+    plan_json: String,
+    dag: Dag,
+    spec: &str,
+) -> Result<(String, Dag, Vec<String>)> {
+    let mut value: serde_json::Value = serde_json::from_str(&plan_json).map_err(|error| {
+        anyhow!("final plan JSON did not parse before package-entry validation: {error}")
+    })?;
+    let added = require_advertised_entry_files(&mut value, spec);
+    if added.is_empty() {
+        return Ok((plan_json, dag, added));
+    }
+
+    let plan_json = value.to_string();
+    let dag = Dag::from_planner_json(&plan_json)
+        .map_err(|error| anyhow!("package-entry plan did not validate before dispatch: {error}"))?;
+    Ok((plan_json, dag, added))
 }
 
 /// The advertised server port when the spec literally names one. Pure/testable.
@@ -36396,29 +36477,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     };
 
     // PACKAGE-ENTRY TRUTH (sb-7 r1+r3): runs on the FINAL plan regardless of which path produced it
-    // (parallel loop, solo fallback, resume) — the one seam every dispatch reads. Mutates only owned
-    // files + descriptions of existing tasks, so the dag above stays valid untouched. A plan that
-    // fails to re-parse here is impossible (it just round-tripped), but degrade to unchanged rather
-    // than kill the run over an instrument.
-    let plan_json = match serde_json::from_str::<serde_json::Value>(&plan_json) {
-        Ok(mut v) => {
-            let added = require_advertised_entry_files(&mut v, &opts.prompt);
-            if added.is_empty() {
-                plan_json
-            } else {
-                eprintln!(
-                    "  · package-entry: spec-advertised `python -m` entry file(s) nobody owned, injected into the plan: {}",
-                    added.join(", ")
-                );
-                sink.write_value(serde_json::json!({
-                    "event": "package_entry_injected",
-                    "files": added,
-                }));
-                v.to_string()
-            }
-        }
-        Err(_) => plan_json,
-    };
+    // (parallel loop, solo fallback, resume) — the one seam every dispatch reads. Owned files are
+    // execution authority, so any mutation rebuilds and validates the DAG immediately. The rebound pair
+    // below is the only plan contracts, sink setup, plan_loaded, fill-fan expansion, and Scheduler::run see.
+    let (plan_json, dag, package_entries) =
+        finalize_advertised_entry_plan(plan_json, dag, &opts.prompt)?;
+    if !package_entries.is_empty() {
+        eprintln!(
+            "  · package-entry: spec-advertised `python -m` entry file(s) nobody owned, injected into the plan: {}",
+            package_entries.join(", ")
+        );
+        sink.write_value(serde_json::json!({
+            "event": "package_entry_injected",
+            "files": package_entries,
+            "dag_revalidated": true,
+        }));
+    }
 
     // PILLARS OFF THE CRITICAL PATH (speed hunt 2026-08-16). This was one serial planner call
     // wedged BETWEEN two fan phases (contracts fan -> pillars -> dispatch) while every non-planner
