@@ -2637,6 +2637,17 @@ impl Agent {
                     empty_turn_retries = 0;
                 }
 
+                if empty_response
+                    && goose_providers::retry::terminal_safe_retries_enabled()
+                {
+                    warn!("Provider returned an empty response in terminal-safe mode; ending turn");
+                    last_assistant_text = EMPTY_TURN_MESSAGE.to_string();
+                    let message = Message::assistant().with_text(EMPTY_TURN_MESSAGE);
+                    messages_to_add.push(message.clone());
+                    yield AgentEvent::Message(message);
+                    exit_chat = true;
+                }
+
                 if no_tools_called && !exit_chat {
                     // Lock, extract state, drop guard before branching — handle_retry_logic
                     // also locks final_output_tool and tokio::sync::Mutex is not reentrant.
