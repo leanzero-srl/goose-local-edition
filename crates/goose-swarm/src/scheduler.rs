@@ -742,6 +742,12 @@ struct State {
     /// that budget on a model's reasoning-loop abort would leave a genuinely stuck task with no
     /// deterministic supervisor at the point it needs one most.
     omni_aborts: HashMap<TaskId, u32>,
+    /// Attempts lost to a TRANSPORT fault (mid-stream body drop) rather than to the task.
+    /// MEASURED (qwen3.8 r1): one LAN-flaky node dropped streams repeatedly and three modules —
+    /// api, frontend-viz, frontend-page-cli — burned all four attempts on it and were LOST, two of
+    /// them never recovered. A socket that dies mid-generation says nothing about the work, exactly
+    /// like a judge kill, so it must not consume the task's failure budget.
+    transport_drops: HashMap<TaskId, u32>,
     /// Split generation per task: 0 for original tasks, parent+1 for children injected by a split. Feeds
     /// JudgeRequest.split_count so the judge caps splitting at once (a split-child is never re-split).
     split_generation: HashMap<TaskId, u32>,
@@ -1388,9 +1394,21 @@ impl State {
                     // intervention burn the transient-retry budget: exclude it from the exhaustion count.
                     let judge_kills = self.interventions.get(tid).copied().unwrap_or(0)
                         + self.omni_aborts.get(tid).copied().unwrap_or(0);
+                    // A mid-stream body drop is the NETWORK failing, not the task. Counting it
+                    // toward exhaustion let a flaky node delete finished-quality modules from the
+                    // build (r1: three tasks, two never recovered). Excluded like a judge kill;
+                    // bounded because a permanently dead link still exhausts the wall, not the
+                    // budget, and the run's own gates still report the missing deliverable.
+                    if msg.contains("stream decode error") || msg.contains("mid-stream body drop") {
+                        *self.transport_drops.entry(tid.to_string()).or_insert(0) += 1;
+                    }
+                    let transport = self.transport_drops.get(tid).copied().unwrap_or(0);
                     let n = self.dag.tasks.get_mut(tid).unwrap();
                     n.attempts += 1;
-                    n.attempts.saturating_sub(judge_kills) >= self.max_attempts
+                    n.attempts
+                        .saturating_sub(judge_kills)
+                        .saturating_sub(transport)
+                        >= self.max_attempts
                 };
                 if exhausted {
                     // DEGRADE-ON-STALL (#134/#132): a transient exhaustion is usually a mid-generation model
@@ -2935,6 +2953,7 @@ impl Scheduler {
             judge_notes: Vec::new(),
             interventions: HashMap::new(),
             omni_aborts: HashMap::new(),
+            transport_drops: HashMap::new(),
             split_generation: HashMap::new(),
             judge_running: false,
             judge_node: None,
