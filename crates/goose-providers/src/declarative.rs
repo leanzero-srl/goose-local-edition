@@ -48,6 +48,7 @@ pub(crate) mod declarative_providers {
         venice,
         vercel_ai_gateway,
         zai,
+        zai_api,
         zhipu,
     );
 }
@@ -90,6 +91,15 @@ pub enum ProviderEngine {
     Ollama,
     #[serde(alias = "anthropic_compatible")]
     Anthropic,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiRequestProfile {
+    #[default]
+    Standard,
+    DeepseekV4,
+    ZaiGlm,
 }
 
 impl FromStr for ProviderEngine {
@@ -144,6 +154,8 @@ pub struct DeclarativeProviderConfig {
     pub fast_model: Option<String>,
     #[serde(default)]
     pub preserves_thinking: bool,
+    #[serde(default)]
+    pub openai_request_profile: OpenAiRequestProfile,
 }
 
 fn default_requires_auth() -> bool {
@@ -265,6 +277,14 @@ pub fn deserialize_provider_config(json: &str) -> Result<DeclarativeProviderConf
 
 fn config_from_json(json: &str) -> Result<DeclarativeProviderConfig> {
     let mut config = deserialize_provider_config(json)?;
+    if config.engine != ProviderEngine::OpenAI
+        && config.openai_request_profile != OpenAiRequestProfile::Standard
+    {
+        anyhow::bail!(
+            "Provider '{}' sets openai_request_profile but does not use the OpenAI engine",
+            config.name
+        );
+    }
     resolve_config(&mut config)?;
     Ok(config)
 }
@@ -366,6 +386,64 @@ mod tests {
         assert!(config.model_doc_link.is_none());
         assert!(config.setup_steps.is_empty());
         assert!(config.preserves_thinking);
+        assert_eq!(
+            config.openai_request_profile,
+            OpenAiRequestProfile::Standard
+        );
+    }
+
+    #[test]
+    fn openai_request_profile_requires_openai_engine() {
+        let json = json!({
+            "name": "invalid-profile",
+            "engine": "anthropic",
+            "display_name": "Invalid profile",
+            "base_url": "http://localhost:1234",
+            "models": [model_json()],
+            "requires_auth": false,
+            "openai_request_profile": "deepseek_v4"
+        })
+        .to_string();
+
+        let err = config_from_json(&json).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("openai_request_profile but does not use the OpenAI engine"));
+    }
+
+    #[test]
+    fn cloud_benchmark_definitions_pin_native_provider_profiles() {
+        let zai = deserialize_provider_config(include_str!("declarative/definitions/zai_api.json"))
+            .unwrap();
+        assert_eq!(zai.name, "zai_api");
+        assert_eq!(zai.engine, ProviderEngine::OpenAI);
+        assert_eq!(zai.base_url, "${ZAI_API_BASE_URL}");
+        assert_eq!(
+            zai.env_vars.as_ref().unwrap()[0].default.as_deref(),
+            Some("https://api.z.ai/api/paas/v4")
+        );
+        assert_eq!(zai.catalog_provider_id.as_deref(), Some("zai"));
+        assert_eq!(zai.openai_request_profile, OpenAiRequestProfile::ZaiGlm);
+        assert_eq!(zai.models.len(), 1);
+        assert_eq!(zai.models[0].name, "glm-5.3");
+        assert_eq!(zai.models[0].context_limit, 1_000_000);
+
+        let deepseek =
+            deserialize_provider_config(include_str!("declarative/definitions/deepseek.json"))
+                .unwrap();
+        assert_eq!(
+            deepseek.openai_request_profile,
+            OpenAiRequestProfile::DeepseekV4
+        );
+        for model_name in ["deepseek-v4-flash", "deepseek-v4-pro"] {
+            let model = deepseek
+                .models
+                .iter()
+                .find(|model| model.name == model_name)
+                .unwrap();
+            assert_eq!(model.context_limit, 1_000_000);
+            assert!(model.reasoning);
+        }
     }
 
     fn placeholder_var_names(template: &str) -> Vec<String> {

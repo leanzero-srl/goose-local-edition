@@ -1,0 +1,25 @@
+{
+  "name": "zai_api",
+  "engine": "openai",
+  "display_name": "Z.AI API",
+  "description": "Z.AI GLM models via the native OpenAI-compatible API.",
+  "api_key_env": "ZHIPU_API_KEY",
+  "base_url": "${ZAI_API_BASE_URL}",
+  "env_vars": [
+    {
+      "name": "ZAI_API_BASE_URL",
+      "required": false,
+      "secret": false,
+      "default": "https://api.z.ai/api/paas/v4",
+      "description": "Z.AI OpenAI-compatible API base URL."
+    }
+  ],
+  "catalog_provider_id": "zai",
+  "model_doc_link": "https://docs.z.ai/api-reference/llm/chat-completion",
+  "preserves_thinking": true,
+  "openai_request_profile": "zai_glm",
+  "models": [
+    {"name": "glm-5.3", "context_limit": 1000000, "reasoning": true}
+  ],
+  "supports_streaming": true
+}
