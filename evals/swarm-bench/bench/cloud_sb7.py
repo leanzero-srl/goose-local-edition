@@ -251,6 +251,7 @@ def entrants(manifest: Mapping[str, Any]) -> list[Dict[str, Any]]:
         "thinking_effort",
         "context_limit",
         "max_output_tokens",
+        "accepted_reported_models",
         "vendor_port",
         "pricing",
     }
@@ -312,6 +313,16 @@ def spend_policy(manifest: Mapping[str, Any], rows: Iterable[Mapping[str, Any]])
         )
         if input_rate < 0 or output_rate < 0:
             raise SystemExit(f"pricing rates must be non-negative: {row['id']}")
+        reported_models = row["accepted_reported_models"]
+        if (
+            not isinstance(reported_models, list)
+            or not reported_models
+            or any(not isinstance(model, str) or not model for model in reported_models)
+            or len(set(reported_models)) != len(reported_models)
+        ):
+            raise SystemExit(
+                f"accepted reported models must be an explicit non-empty unique list: {row['id']}"
+            )
         worst_single = (
             int(row["context_limit"]) * input_rate
             + int(row["max_output_tokens"]) * output_rate
@@ -881,7 +892,7 @@ def fetch_json(url: str, headers: Mapping[str, str]) -> Dict[str, Any]:
     return value
 
 
-def authenticated_rosters(secret_values: Mapping[str, str]) -> Dict[str, set[str]]:
+def authenticated_rosters(secret_values: Mapping[str, str]) -> Dict[str, Any]:
     required = ("ZHIPU_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY")
     missing = [name for name in required if not secret_values.get(name)]
     if missing:
@@ -899,25 +910,67 @@ def authenticated_rosters(secret_values: Mapping[str, str]) -> Dict[str, set[str
         "https://api.deepseek.com/models",
         {"Authorization": f"Bearer {secret_values['DEEPSEEK_API_KEY']}"},
     )
+    zai_rows = {
+        str(row.get("id", "")): dict(row)
+        for row in zai.get("data", [])
+        if isinstance(row, dict) and row.get("id")
+    }
+    google_rows = {
+        str(row.get("name", "")).split("/")[-1]: dict(row)
+        for row in google.get("models", [])
+        if isinstance(row, dict) and row.get("name")
+    }
+    deepseek_rows = {
+        str(row.get("id", "")): dict(row)
+        for row in deepseek.get("data", [])
+        if isinstance(row, dict) and row.get("id")
+    }
+    reported_models: Dict[str, Dict[str, list[str]]] = {
+        "zai_api": {model: [model] for model in zai_rows},
+        "google": {},
+        "custom_deepseek": {model: [model] for model in deepseek_rows},
+    }
+    for model, metadata in google_rows.items():
+        aliases = {model}
+        version = metadata.get("version")
+        if isinstance(version, str) and version:
+            aliases.add(f"gemini-{version}")
+        reported_models["google"][model] = sorted(aliases)
     return {
-        "zai_api": {str(row.get("id", "")) for row in zai.get("data", [])},
-        "google": {
-            str(row.get("name", "")).split("/")[-1]
-            for row in google.get("models", [])
+        "models": {
+            "zai_api": set(zai_rows),
+            "google": set(google_rows),
+            "custom_deepseek": set(deepseek_rows),
         },
-        "custom_deepseek": {
-            str(row.get("id", "")) for row in deepseek.get("data", [])
+        "accepted_reported_models": reported_models,
+        "evidence": {
+            "zai_api": zai_rows,
+            "google": google_rows,
+            "custom_deepseek": deepseek_rows,
         },
     }
 
 
-def validate_rosters(rows: Iterable[Mapping[str, Any]], rosters: Mapping[str, set[str]]) -> None:
+def validate_rosters(rows: Iterable[Mapping[str, Any]], rosters: Mapping[str, Any]) -> None:
+    models = rosters.get("models")
+    reported_models = rosters.get("accepted_reported_models")
+    if not isinstance(models, dict) or not isinstance(reported_models, dict):
+        raise SystemExit("authenticated roster snapshot is malformed")
     for row in rows:
         provider = str(row["provider"])
         model = str(row["model"])
-        if model not in rosters.get(provider, set()):
+        provider_models = models.get(provider)
+        if not isinstance(provider_models, set) or model not in provider_models:
             raise SystemExit(
                 f"exact model is not in the authenticated {provider} roster: {model}"
+            )
+        provider_aliases = reported_models.get(provider)
+        expected_aliases = (
+            provider_aliases.get(model) if isinstance(provider_aliases, dict) else None
+        )
+        if row["accepted_reported_models"] != expected_aliases:
+            raise SystemExit(
+                f"accepted reported models do not match authenticated roster metadata: {model}"
             )
 
 
@@ -949,11 +1002,20 @@ def preflight(
     busy = [str(row["vendor_port"]) for row in rows if not port_is_free(int(row["vendor_port"]))]
     if busy:
         raise SystemExit(f"vendor ports are already occupied: {', '.join(busy)}")
+    selected_evidence = {
+        provider: {
+            str(row["model"]): rosters["evidence"][provider][str(row["model"])]
+            for row in rows
+            if row["provider"] == provider
+        }
+        for provider in {str(row["provider"]) for row in rows}
+    }
     publisher = publisher_snapshot(publisher_repo, rows)
     return {
         "checked_at": utc_now(),
         "binary_sha256": sha256_file(binary),
-        "models": {key: sorted(value) for key, value in rosters.items()},
+        "models": {key: sorted(value) for key, value in rosters["models"].items()},
+        "roster_evidence": selected_evidence,
         "requested_models": [str(row["model"]) for row in rows],
         "ports_free": True,
         "credential_file_mode": f"{secret_path.stat().st_mode & 0o777:04o}",
@@ -1020,6 +1082,7 @@ def init_campaign(
             f"{row['provider']}/{row['model']}": {
                 "provider": row["provider"],
                 "model": row["model"],
+                "accepted_reported_models": row["accepted_reported_models"],
                 "context_limit": row["context_limit"],
                 "max_output_tokens": row["max_output_tokens"],
                 "pricing": row["pricing"],

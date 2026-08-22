@@ -182,8 +182,8 @@ mod imp {
                 .map_err(mlx_error)?;
             emit_generated_response(&generated_text, request.message_id, tool_mode, request.tx)?;
 
-            let output_tokens = generated_ids.len() as i32;
-            let input_tokens = prompt_tokens.len() as i32;
+            let output_tokens = i64::try_from(generated_ids.len()).unwrap_or(i64::MAX);
+            let input_tokens = i64::try_from(prompt_tokens.len()).unwrap_or(i64::MAX);
             let usage = Usage::new(
                 Some(input_tokens),
                 Some(output_tokens),

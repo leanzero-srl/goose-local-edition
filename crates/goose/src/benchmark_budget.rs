@@ -30,6 +30,7 @@ struct BudgetConfig {
 struct ModelBudget {
     provider: String,
     model: String,
+    accepted_reported_models: Vec<String>,
     context_limit: usize,
     max_output_tokens: i32,
     pricing: Pricing,
@@ -113,6 +114,7 @@ struct Settlement {
     reported_model: String,
     input_tokens: usize,
     output_tokens: usize,
+    total_tokens: usize,
     charged_upper_bound_usd: f64,
     reserved_usd: f64,
     settled_at_unix_ms: u128,
@@ -160,6 +162,23 @@ impl BenchmarkBudgetReservation {
     }
 
     pub fn settle(self, usage: &ProviderUsage) -> Result<(), ProviderError> {
+        let model_key = format!("{}/{}", self.provider, self.model);
+        let model = self.config.models.get(&model_key).ok_or_else(|| {
+            ProviderError::ExecutionError(format!(
+                "benchmark model profile disappeared for {model_key}; reservation {} remains charged",
+                self.request_id
+            ))
+        })?;
+        if !model
+            .accepted_reported_models
+            .iter()
+            .any(|accepted| accepted == &usage.model)
+        {
+            return Err(ProviderError::UsageError(format!(
+                "{} reported unapproved model identity {:?}; reservation {} remains charged",
+                self.model, usage.model, self.request_id
+            )));
+        }
         let input_tokens = usage.usage.input_tokens.ok_or_else(|| {
             ProviderError::UsageError(format!(
                 "{} returned no input usage; reservation {} remains charged",
@@ -172,14 +191,50 @@ impl BenchmarkBudgetReservation {
                 self.model, self.request_id
             ))
         })?;
-        if input_tokens < 0 || output_tokens < 0 {
+        let total_tokens = usage.usage.total_tokens.ok_or_else(|| {
+            ProviderError::UsageError(format!(
+                "{} returned no total usage; reservation {} remains charged",
+                self.model, self.request_id
+            ))
+        })?;
+        if input_tokens < 0 || output_tokens < 0 || total_tokens < 0 {
             return Err(ProviderError::UsageError(format!(
                 "{} returned negative usage; reservation {} remains charged",
                 self.model, self.request_id
             )));
         }
-        let input_tokens = input_tokens as usize;
-        let output_tokens = output_tokens as usize;
+        if input_tokens.checked_add(output_tokens) != Some(total_tokens) {
+            return Err(ProviderError::UsageError(format!(
+                "{} returned inconsistent total usage; reservation {} remains charged",
+                self.model, self.request_id
+            )));
+        }
+        let input_tokens = usize::try_from(input_tokens).map_err(|_| {
+            ProviderError::UsageError(format!(
+                "{} returned unrepresentable input usage; reservation {} remains charged",
+                self.model, self.request_id
+            ))
+        })?;
+        let output_tokens = usize::try_from(output_tokens).map_err(|_| {
+            ProviderError::UsageError(format!(
+                "{} returned unrepresentable output usage; reservation {} remains charged",
+                self.model, self.request_id
+            ))
+        })?;
+        let total_tokens = usize::try_from(total_tokens).map_err(|_| {
+            ProviderError::UsageError(format!(
+                "{} returned unrepresentable total usage; reservation {} remains charged",
+                self.model, self.request_id
+            ))
+        })?;
+        if input_tokens > model.context_limit
+            || output_tokens > usize::try_from(model.max_output_tokens).unwrap_or_default()
+        {
+            return Err(ProviderError::UsageError(format!(
+                "{} returned usage above its frozen request limits; reservation {} remains charged",
+                self.model, self.request_id
+            )));
+        }
         let actual = self.pricing.cost(input_tokens, output_tokens);
         if actual > self.reserved_usd + f64::EPSILON {
             return Err(ProviderError::UsageError(format!(
@@ -208,6 +263,7 @@ impl BenchmarkBudgetReservation {
                 reported_model: usage.model.clone(),
                 input_tokens,
                 output_tokens,
+                total_tokens,
                 charged_upper_bound_usd: actual,
                 reserved_usd: record.reserved_usd,
                 settled_at_unix_ms: unix_ms(),
@@ -439,6 +495,17 @@ fn validate_config(config: &BudgetConfig) -> Result<(), ProviderError> {
     for (key, model) in &config.models {
         if key != &format!("{}/{}", model.provider, model.model)
             || !config.provider_caps.contains_key(&model.provider)
+            || model.accepted_reported_models.is_empty()
+            || model
+                .accepted_reported_models
+                .iter()
+                .any(|reported| reported.is_empty())
+            || model
+                .accepted_reported_models
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != model.accepted_reported_models.len()
             || model.context_limit == 0
             || model.max_output_tokens <= 0
         {
@@ -494,9 +561,10 @@ fn validate_ledger(ledger: &BudgetLedger, config: &BudgetConfig) -> Result<(), P
         let Some(model) = config.models.get(&model_key) else {
             return Err(invalid());
         };
-        let expected_reserve = model
-            .pricing
-            .cost(model.context_limit, model.max_output_tokens as usize);
+        let Ok(max_output_tokens) = usize::try_from(model.max_output_tokens) else {
+            return Err(invalid());
+        };
+        let expected_reserve = model.pricing.cost(model.context_limit, max_output_tokens);
         if request_id != &reservation.request_id
             || !request_ids.insert(request_id.as_str())
             || reservation.request_id.is_empty()
@@ -506,7 +574,7 @@ fn validate_ledger(ledger: &BudgetLedger, config: &BudgetConfig) -> Result<(), P
             || reservation.reserved_usd < 0.0
             || !money_eq(reservation.reserved_usd, expected_reserve)
             || reservation.input_reserve_tokens != model.context_limit
-            || reservation.output_reserve_tokens != model.max_output_tokens as usize
+            || reservation.output_reserve_tokens != max_output_tokens
         {
             return Err(invalid());
         }
@@ -523,17 +591,26 @@ fn validate_ledger(ledger: &BudgetLedger, config: &BudgetConfig) -> Result<(), P
         let Some(model) = config.models.get(&model_key) else {
             return Err(invalid());
         };
-        let expected_reserve = model
-            .pricing
-            .cost(model.context_limit, model.max_output_tokens as usize);
+        let Ok(max_output_tokens) = usize::try_from(model.max_output_tokens) else {
+            return Err(invalid());
+        };
+        let expected_reserve = model.pricing.cost(model.context_limit, max_output_tokens);
         let expected_charge = model
             .pricing
             .cost(settlement.input_tokens, settlement.output_tokens);
+        let expected_total = settlement
+            .input_tokens
+            .checked_add(settlement.output_tokens);
         if settlement.request_id.is_empty()
             || !request_ids.insert(settlement.request_id.as_str())
             || settlement.provider != model.provider
             || settlement.model != model.model
-            || settlement.reported_model.is_empty()
+            || !model
+                .accepted_reported_models
+                .contains(&settlement.reported_model)
+            || expected_total != Some(settlement.total_tokens)
+            || settlement.input_tokens > model.context_limit
+            || settlement.output_tokens > max_output_tokens
             || !settlement.charged_upper_bound_usd.is_finite()
             || settlement.charged_upper_bound_usd < 0.0
             || !settlement.reserved_usd.is_finite()
@@ -682,6 +759,7 @@ mod tests {
                 "test/model": {
                     "provider": "test",
                     "model": "model",
+                    "accepted_reported_models": ["reported-model"],
                     "context_limit": 1000,
                     "max_output_tokens": 1000,
                     "pricing": {
@@ -767,6 +845,46 @@ mod tests {
         let after: BudgetLedger = serde_json::from_slice(&fs::read(&ledger).unwrap()).unwrap();
         assert_eq!(after.outstanding.len(), 1);
         assert_eq!(after.spent_upper_bound, 0.0);
+    }
+
+    #[test]
+    fn unapproved_reported_model_keeps_the_full_reservation() {
+        let root = tempfile::tempdir().unwrap();
+        let (config, sha, ledger, model) = fixture(root.path(), 1.0);
+        let reservation = reserve_from_paths(&config, &sha, &ledger, "test", &model).unwrap();
+        let error = reservation
+            .settle(&ProviderUsage::new(
+                "different-model".to_string(),
+                Usage::new(Some(10), Some(20), Some(30)),
+            ))
+            .unwrap_err();
+
+        assert!(matches!(error, ProviderError::UsageError(_)));
+        let after: BudgetLedger = serde_json::from_slice(&fs::read(&ledger).unwrap()).unwrap();
+        assert_eq!(after.outstanding.len(), 1);
+        assert_eq!(after.spent_upper_bound, 0.0);
+    }
+
+    #[test]
+    fn inconsistent_or_over_limit_usage_keeps_the_full_reservation() {
+        for usage in [
+            Usage::new(Some(10), Some(20), Some(31)),
+            Usage::new(Some(1001), Some(20), Some(1021)),
+            Usage::new(Some(10), Some(1001), Some(1011)),
+            Usage::new(Some(i64::MAX), Some(i64::MAX), Some(i64::MAX)),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let (config, sha, ledger, model) = fixture(root.path(), 1.0);
+            let reservation = reserve_from_paths(&config, &sha, &ledger, "test", &model).unwrap();
+            let error = reservation
+                .settle(&ProviderUsage::new("reported-model".to_string(), usage))
+                .unwrap_err();
+
+            assert!(matches!(error, ProviderError::UsageError(_)));
+            let after: BudgetLedger = serde_json::from_slice(&fs::read(&ledger).unwrap()).unwrap();
+            assert_eq!(after.outstanding.len(), 1);
+            assert_eq!(after.spent_upper_bound, 0.0);
+        }
     }
 
     #[test]

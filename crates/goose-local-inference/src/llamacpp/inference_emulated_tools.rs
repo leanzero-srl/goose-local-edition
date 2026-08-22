@@ -455,7 +455,7 @@ pub(super) fn generate_with_emulated_tools(
         std::mem::take(&mut ctx.model_name),
         "emulator",
         prompt_token_count,
-        output_token_count,
+        i64::from(output_token_count),
         None,
     );
     let _ = ctx.tx.blocking_send(Ok((None, Some(provider_usage))));

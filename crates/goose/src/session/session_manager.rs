@@ -3182,14 +3182,14 @@ mod tests {
 
                 sm.update(&session.id)
                     .user_provided_name(format!("Updated session {}", i))
-                    .usage(Usage::new(None, None, Some(100 * i)))
+                    .usage(Usage::new(None, None, Some(i64::from(100 * i))))
                     .apply()
                     .await
                     .unwrap();
 
                 let updated = sm.get_session(&session.id, true).await.unwrap();
                 assert_eq!(updated.message_count, 2);
-                assert_eq!(updated.usage.total_tokens, Some(100 * i));
+                assert_eq!(updated.usage.total_tokens, Some(i64::from(100 * i)));
 
                 session.id
             });

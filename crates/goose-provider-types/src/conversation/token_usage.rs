@@ -62,19 +62,16 @@ impl ProviderUsage {
 pub struct Usage {
     /// All prompt tokens, including any served from or written to cache.
     /// `cache_read_input_tokens` and `cache_write_input_tokens` are subsets of this.
-    pub input_tokens: Option<i32>,
-    pub output_tokens: Option<i32>,
-    pub total_tokens: Option<i32>,
-    pub cache_read_input_tokens: Option<i32>,
-    pub cache_write_input_tokens: Option<i32>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub cache_read_input_tokens: Option<i64>,
+    pub cache_write_input_tokens: Option<i64>,
 }
 
-fn sum_optionals<T>(a: Option<T>, b: Option<T>) -> Option<T>
-where
-    T: Add<Output = T>,
-{
+fn sum_optionals(a: Option<i64>, b: Option<i64>) -> Option<i64> {
     match (a, b) {
-        (Some(x), Some(y)) => Some(x + y),
+        (Some(x), Some(y)) => Some(x.saturating_add(y)),
         (Some(x), None) => Some(x),
         (None, Some(y)) => Some(y),
         (None, None) => None,
@@ -108,9 +105,9 @@ impl AddAssign for Usage {
 
 impl Usage {
     pub fn new(
-        input_tokens: Option<i32>,
-        output_tokens: Option<i32>,
-        total_tokens: Option<i32>,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        total_tokens: Option<i64>,
     ) -> Self {
         let calculated_total = if total_tokens.is_none() {
             match (input_tokens, output_tokens) {
@@ -134,8 +131,8 @@ impl Usage {
 
     pub fn with_cache_tokens(
         mut self,
-        cache_read_input_tokens: Option<i32>,
-        cache_write_input_tokens: Option<i32>,
+        cache_read_input_tokens: Option<i64>,
+        cache_write_input_tokens: Option<i64>,
     ) -> Self {
         self.cache_read_input_tokens = cache_read_input_tokens;
         self.cache_write_input_tokens = cache_write_input_tokens;
@@ -145,11 +142,11 @@ impl Usage {
     /// For providers whose reported `input_tokens`/`total_tokens` exclude
     /// cache tokens (e.g. Anthropic, Bedrock): folds the cache breakdown in.
     pub fn from_cache_exclusive_input(
-        input_tokens: Option<i32>,
-        output_tokens: Option<i32>,
-        total_tokens: Option<i32>,
-        cache_read_input_tokens: Option<i32>,
-        cache_write_input_tokens: Option<i32>,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        total_tokens: Option<i64>,
+        cache_read_input_tokens: Option<i64>,
+        cache_write_input_tokens: Option<i64>,
     ) -> Self {
         let cache_tokens = cache_read_input_tokens
             .unwrap_or(0)
@@ -213,5 +210,15 @@ mod tests {
         assert_eq!(combined.total_tokens, Some(178));
         assert_eq!(combined.cache_read_input_tokens, Some(14));
         assert_eq!(combined.cache_write_input_tokens, Some(6));
+    }
+
+    #[test]
+    fn test_usage_addition_saturates_instead_of_wrapping() {
+        let combined = Usage::new(Some(i64::MAX), Some(1), Some(i64::MAX))
+            + Usage::new(Some(1), Some(i64::MAX), Some(i64::MAX));
+
+        assert_eq!(combined.input_tokens, Some(i64::MAX));
+        assert_eq!(combined.output_tokens, Some(i64::MAX));
+        assert_eq!(combined.total_tokens, Some(i64::MAX));
     }
 }
