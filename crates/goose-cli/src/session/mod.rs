@@ -68,11 +68,11 @@ struct JsonOutput {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct JsonMetadata {
-    total_tokens: Option<i32>,
+    total_tokens: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    input_tokens: Option<i32>,
+    input_tokens: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    output_tokens: Option<i32>,
+    output_tokens: Option<i64>,
     status: String,
 }
 
@@ -91,11 +91,11 @@ enum StreamEvent {
         error: String,
     },
     Complete {
-        total_tokens: Option<i32>,
+        total_tokens: Option<i64>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        input_tokens: Option<i32>,
+        input_tokens: Option<i64>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        output_tokens: Option<i32>,
+        output_tokens: Option<i64>,
     },
 }
 
@@ -1591,7 +1591,7 @@ impl CliSession {
             .await
     }
 
-    pub async fn get_total_token_usage(&self) -> Result<Option<i32>> {
+    pub async fn get_total_token_usage(&self) -> Result<Option<i64>> {
         let metadata = self.get_session().await?;
         Ok(metadata.accumulated_usage.total_tokens)
     }
@@ -1619,7 +1619,11 @@ impl CliSession {
 
         match self.get_session().await {
             Ok(metadata) => {
-                let total_tokens = metadata.usage.total_tokens.unwrap_or(0) as usize;
+                let total_tokens = metadata
+                    .usage
+                    .total_tokens
+                    .and_then(|tokens| usize::try_from(tokens).ok())
+                    .unwrap_or(0);
 
                 output::display_context_usage(total_tokens, context_limit);
 

@@ -33,6 +33,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                             "id": "model",
                             "provider": "google",
                             "model": "gemini-3.7-flash",
+                            "accepted_reported_models": ["gemini-3.7-flash"],
                             "secret_env": "GOOGLE_API_KEY",
                             "provider_lane": "google",
                             "endpoint_family": "google",
@@ -262,6 +263,31 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(policy["total_cap"], 400.0)
         self.assertEqual(policy["provider_caps"]["google"], 250.0)
         self.assertIs(policy["launch_all_entrants_concurrently"], True)
+
+    def test_reported_model_aliases_must_match_authenticated_roster(self) -> None:
+        row = {
+            "provider": "google",
+            "model": "gemini-3.7-flash",
+            "accepted_reported_models": [
+                "gemini-3.7-flash",
+                "gemini-3.7-flash-08-2026",
+            ],
+        }
+        roster = {
+            "models": {"google": {"gemini-3.7-flash"}},
+            "accepted_reported_models": {
+                "google": {
+                    "gemini-3.7-flash": [
+                        "gemini-3.7-flash",
+                        "gemini-3.7-flash-08-2026",
+                    ]
+                }
+            },
+        }
+        cloud_sb7.validate_rosters([row], roster)
+        row["accepted_reported_models"].append("gemini-3.7-flash-anything")
+        with self.assertRaises(SystemExit):
+            cloud_sb7.validate_rosters([row], roster)
 
     def test_secret_parser_rejects_group_readable_file(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

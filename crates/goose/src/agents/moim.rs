@@ -135,7 +135,7 @@ fn should_skip_moim(context_limit: Option<usize>) -> bool {
 
 fn compose_moim(
     working_dir: &Path,
-    total_tokens: Option<i32>,
+    total_tokens: Option<i64>,
     context_limit: Option<usize>,
     compaction_threshold: f64,
     turns_taken: u32,
@@ -189,7 +189,7 @@ fn escape_xml_text(value: &str) -> String {
 }
 
 fn compaction_remaining_line(
-    total_tokens: Option<i32>,
+    total_tokens: Option<i64>,
     context_limit: Option<usize>,
     threshold: f64,
 ) -> Option<String> {
@@ -200,7 +200,7 @@ fn compaction_remaining_line(
         return None;
     }
 
-    let compaction_at = (context_limit as f64 * threshold) as i32;
+    let compaction_at = (context_limit as f64 * threshold) as i64;
     if compaction_at <= 0 || (total_tokens as f64 / compaction_at as f64) < 0.5 {
         return None;
     }
@@ -372,7 +372,7 @@ mod tests {
         use std::path::Path;
 
         fn moim(
-            total_tokens: Option<i32>,
+            total_tokens: Option<i64>,
             context_limit: Option<usize>,
             turns_taken: u32,
             max_turns: u32,

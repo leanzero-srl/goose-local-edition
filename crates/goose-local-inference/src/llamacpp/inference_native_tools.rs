@@ -218,7 +218,7 @@ pub(super) fn generate_with_native_tools(
         std::mem::take(&mut ctx.model_name),
         "native",
         prompt_token_count,
-        output_token_count,
+        i64::from(output_token_count),
         Some(("generated_text", &generated_text)),
     );
     let _ = ctx.tx.blocking_send(Ok((None, Some(provider_usage))));

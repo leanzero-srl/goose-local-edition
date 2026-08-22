@@ -460,11 +460,11 @@ fn finalize_usage(
     model_name: String,
     path_label: &str,
     prompt_token_count: usize,
-    output_token_count: i32,
+    output_token_count: i64,
     extra_log_fields: Option<(&str, &str)>,
 ) -> ProviderUsage {
-    let input_tokens = prompt_token_count as i32;
-    let total_tokens = input_tokens + output_token_count;
+    let input_tokens = i64::try_from(prompt_token_count).unwrap_or(i64::MAX);
+    let total_tokens = input_tokens.saturating_add(output_token_count);
     let usage = Usage::new(
         Some(input_tokens),
         Some(output_token_count),

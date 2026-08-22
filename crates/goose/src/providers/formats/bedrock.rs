@@ -584,11 +584,11 @@ pub fn from_bedrock_role(role: &bedrock::ConversationRole) -> Result<Role> {
 
 pub fn from_bedrock_usage(usage: &bedrock::TokenUsage) -> Usage {
     Usage::from_cache_exclusive_input(
-        Some(usage.input_tokens),
-        Some(usage.output_tokens),
-        Some(usage.total_tokens),
-        usage.cache_read_input_tokens,
-        usage.cache_write_input_tokens,
+        Some(i64::from(usage.input_tokens)),
+        Some(i64::from(usage.output_tokens)),
+        Some(i64::from(usage.total_tokens)),
+        usage.cache_read_input_tokens.map(i64::from),
+        usage.cache_write_input_tokens.map(i64::from),
     )
 }
 

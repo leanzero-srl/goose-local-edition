@@ -92,11 +92,15 @@ pub fn convert(content: &str) -> Result<String> {
                 .get("cacheWrite")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
-            total_input += usage.get("input").and_then(|v| v.as_i64()).unwrap_or(0);
-            total_input += cache_read + cache_write;
-            total_cache_read += cache_read;
-            total_cache_write += cache_write;
-            total_output += usage.get("output").and_then(|v| v.as_i64()).unwrap_or(0);
+            total_input = total_input
+                .saturating_add(usage.get("input").and_then(|v| v.as_i64()).unwrap_or(0));
+            total_input = total_input
+                .saturating_add(cache_read)
+                .saturating_add(cache_write);
+            total_cache_read = total_cache_read.saturating_add(cache_read);
+            total_cache_write = total_cache_write.saturating_add(cache_write);
+            total_output = total_output
+                .saturating_add(usage.get("output").and_then(|v| v.as_i64()).unwrap_or(0));
             if let Some(cost) = usage
                 .get("cost")
                 .and_then(|c| c.get("total"))
@@ -214,11 +218,10 @@ pub fn convert(content: &str) -> Result<String> {
         name: &name,
         created_at,
         updated_at,
-        usage: Usage::new(Some(total_input as i32), Some(total_output as i32), None)
-            .with_cache_tokens(
-                (total_cache_read > 0).then_some(total_cache_read as i32),
-                (total_cache_write > 0).then_some(total_cache_write as i32),
-            ),
+        usage: Usage::new(Some(total_input), Some(total_output), None).with_cache_tokens(
+            (total_cache_read > 0).then_some(total_cache_read),
+            (total_cache_write > 0).then_some(total_cache_write),
+        ),
         accumulated_cost: (total_cost > 0.0).then_some(total_cost),
         conversation,
     });
