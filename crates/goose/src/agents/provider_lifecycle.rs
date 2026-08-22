@@ -19,6 +19,8 @@ static PROCESS_APPEND_LOCK: Mutex<()> = Mutex::new(());
 pub(crate) struct LifecycleSettings {
     path: Option<PathBuf>,
     strict_terminal: bool,
+    #[cfg(test)]
+    fail_on: Option<LifecycleState>,
 }
 
 impl LifecycleSettings {
@@ -28,6 +30,8 @@ impl LifecycleSettings {
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
             strict_terminal: env_flag(LIFECYCLE_STRICT_ENV),
+            #[cfg(test)]
+            fail_on: None,
         }
     }
 
@@ -36,6 +40,16 @@ impl LifecycleSettings {
         Self {
             path: Some(path),
             strict_terminal,
+            fail_on: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn for_test_failing_on(path: PathBuf, state: LifecycleState) -> Self {
+        Self {
+            path: Some(path),
+            strict_terminal: true,
+            fail_on: Some(state),
         }
     }
 }
@@ -49,7 +63,7 @@ fn env_flag(name: &str) -> bool {
     })
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LifecycleState {
     Queued,
@@ -119,6 +133,7 @@ pub(crate) struct ProviderRequestLifecycle {
     reservation: Option<BenchmarkBudgetReservation>,
     admitted: AtomicBool,
     finalized: AtomicBool,
+    finalize_lock: Mutex<()>,
 }
 
 impl ProviderRequestLifecycle {
@@ -142,6 +157,7 @@ impl ProviderRequestLifecycle {
             reservation,
             admitted: AtomicBool::new(false),
             finalized: AtomicBool::new(false),
+            finalize_lock: Mutex::new(()),
         };
         if let Err(record_error) = lifecycle.record(LifecycleState::Queued, None, None) {
             lifecycle.finalized.store(true, Ordering::Release);
@@ -187,10 +203,18 @@ impl ProviderRequestLifecycle {
         &mut self,
         usage: &goose_providers::conversation::token_usage::ProviderUsage,
     ) -> Result<(), ProviderError> {
+        self.finalize(LifecycleState::ProviderTerminal, None, Some(usage))?;
         if let Some(reservation) = self.reservation.take() {
-            reservation.settle(usage)?;
+            if let Err(error) = reservation.settle(usage) {
+                let _ = self.record(
+                    LifecycleState::StreamAmbiguous,
+                    Some("budget_settlement_failed"),
+                    None,
+                );
+                return Err(error);
+            }
         }
-        self.finalize(LifecycleState::ProviderTerminal, None, Some(usage))
+        Ok(())
     }
 
     pub(crate) fn wrap(mut self, mut stream: MessageStream) -> MessageStream {
@@ -266,8 +290,13 @@ impl ProviderRequestLifecycle {
         reason: Option<&'static str>,
         usage: Option<&goose_providers::conversation::token_usage::ProviderUsage>,
     ) -> Result<(), ProviderError> {
-        if !self.finalized.swap(true, Ordering::AcqRel) {
+        let _guard = self
+            .finalize_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !self.finalized.load(Ordering::Acquire) {
             self.record(state, reason, usage)?;
+            self.finalized.store(true, Ordering::Release);
         }
         Ok(())
     }
@@ -278,6 +307,12 @@ impl ProviderRequestLifecycle {
         reason: Option<&'static str>,
         usage: Option<&goose_providers::conversation::token_usage::ProviderUsage>,
     ) -> Result<(), ProviderError> {
+        #[cfg(test)]
+        if self.settings.fail_on == Some(state) {
+            return Err(ProviderError::ExecutionError(
+                "injected lifecycle append failure".to_string(),
+            ));
+        }
         let Some(path) = self.settings.path.as_ref() else {
             if self.settings.strict_terminal {
                 return Err(ProviderError::ExecutionError(format!(
@@ -311,13 +346,13 @@ impl ProviderRequestLifecycle {
 
 impl Drop for ProviderRequestLifecycle {
     fn drop(&mut self) {
-        if self.finalized.swap(true, Ordering::AcqRel) {
+        if self.finalized.load(Ordering::Acquire) {
             return;
         }
         if self.admitted.load(Ordering::Acquire) {
-            let _ = self.record(LifecycleState::StreamAmbiguous, Some("consumer_drop"), None);
+            let _ = self.finalize(LifecycleState::StreamAmbiguous, Some("consumer_drop"), None);
         } else {
-            let _ = self.record(
+            let _ = self.finalize(
                 LifecycleState::Error,
                 Some("cancelled_before_admission"),
                 None,
@@ -493,6 +528,103 @@ mod tests {
             .collect();
         assert!(events.iter().all(|event| event["request_id"] == request_id));
         assert_eq!(events.last().unwrap()["state"], "provider_terminal");
+    }
+
+    #[test]
+    fn terminal_evidence_failure_keeps_reservation_and_allows_ambiguity_fallback() {
+        let temp = tempfile::tempdir().unwrap();
+        let lifecycle_path = temp.path().join("lifecycle.jsonl");
+        let (config_path, ledger_path, model) = budget_fixture(temp.path());
+        let reservation = crate::benchmark_budget::reserve_from_paths_for_test(
+            &config_path,
+            &ledger_path,
+            "provider",
+            &model,
+        )
+        .unwrap();
+        let mut lifecycle = ProviderRequestLifecycle::begin(
+            LifecycleSettings::for_test_failing_on(
+                lifecycle_path,
+                LifecycleState::ProviderTerminal,
+            ),
+            "provider".into(),
+            "model".into(),
+            "session".into(),
+            Some(reservation),
+        )
+        .unwrap();
+        lifecycle.admitted().unwrap();
+
+        let error = lifecycle
+            .provider_terminal(&ProviderUsage::new(
+                "model".into(),
+                Usage::new(Some(100), Some(200), Some(300)),
+            ))
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("injected lifecycle append failure"));
+        assert!(!lifecycle.finalized.load(Ordering::Acquire));
+        lifecycle
+            .finalize(
+                LifecycleState::StreamAmbiguous,
+                Some("budget_or_terminal_evidence"),
+                None,
+            )
+            .unwrap();
+
+        let ledger: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(ledger_path).unwrap()).unwrap();
+        assert_eq!(ledger["outstanding"].as_object().unwrap().len(), 1);
+        assert_eq!(ledger["spent_upper_bound"], 0.0);
+    }
+
+    #[test]
+    fn settlement_failure_is_recorded_after_durable_terminal_proof() {
+        let temp = tempfile::tempdir().unwrap();
+        let lifecycle_path = temp.path().join("lifecycle.jsonl");
+        let (config_path, ledger_path, model) = budget_fixture(temp.path());
+        let reservation = crate::benchmark_budget::reserve_from_paths_for_test(
+            &config_path,
+            &ledger_path,
+            "provider",
+            &model,
+        )
+        .unwrap();
+        let mut lifecycle = ProviderRequestLifecycle::begin(
+            LifecycleSettings::for_test(lifecycle_path.clone(), true),
+            "provider".into(),
+            "model".into(),
+            "session".into(),
+            Some(reservation),
+        )
+        .unwrap();
+        lifecycle.admitted().unwrap();
+
+        lifecycle
+            .provider_terminal(&ProviderUsage::new(
+                "model".into(),
+                Usage {
+                    input_tokens: Some(100),
+                    output_tokens: None,
+                    total_tokens: None,
+                    cache_read_input_tokens: None,
+                    cache_write_input_tokens: None,
+                },
+            ))
+            .unwrap_err();
+
+        let events: Vec<serde_json::Value> = std::fs::read_to_string(lifecycle_path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(events[2]["state"], "provider_terminal");
+        assert_eq!(events[3]["state"], "stream_ambiguous");
+        assert_eq!(events[3]["reason"], "budget_settlement_failed");
+        let ledger: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(ledger_path).unwrap()).unwrap();
+        assert_eq!(ledger["outstanding"].as_object().unwrap().len(), 1);
     }
 
     #[test]
