@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Persistent, build-only SB7 cloud benchmark coordinator.
+"""Persistent SB7 cloud build, hermetic-score and publication coordinator.
 
 The build and score state machines are deliberately separate.  A build owns one
 immutable binary, fixture seed, vendor port, profile root, process group and raw
 tree.  Scoring always operates on a disposable clone and never mutates the raw
 tree.  Provider lanes sharing one credential serialize unless their manifest
-explicitly records independently proven concurrency.
+explicitly records independently proven concurrency.  A successful hermetic
+score is staged once, published under a stable document id, revalidated, and
+accepted only after both the Sanity receipt and rendered public pages match.
 """
 
 from __future__ import annotations
@@ -14,9 +16,12 @@ import argparse
 import contextlib
 import fcntl
 import hashlib
+import html.parser
 import json
+import math
 import os
 import re
+import selectors
 import secrets
 import shutil
 import signal
@@ -26,6 +31,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Mapping
@@ -107,6 +113,14 @@ def utc_now() -> str:
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def sha1_file(path: Path) -> str:
+    h = hashlib.sha1()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             h.update(chunk)
@@ -458,6 +472,9 @@ def publisher_snapshot(
 
     manifest = load_json(repo / PUBLISHER_MANIFEST)
     entries = publisher_entries(manifest, rows)
+    expected_checks = manifest.get("expectedChecks")
+    if not isinstance(expected_checks, int) or expected_checks <= 0:
+        raise SystemExit("publisher manifest expectedChecks must be a positive integer")
     all_hashes = {**tracked_hashes, **runtime_hashes}
     return {
         "repo": str(repo),
@@ -477,6 +494,7 @@ def publisher_snapshot(
         },
         "env_file": str(env_file),
         "required_env_present": list(PUBLISHER_REQUIRED_ENV),
+        "expected_checks": expected_checks,
         "entries": entries,
     }
 
@@ -501,6 +519,7 @@ def publisher_mismatch(campaign: Mapping[str, Any]) -> str | None:
         "runtime_hashes",
         "instrument_set_sha256",
         "node",
+        "expected_checks",
         "entries",
     )
     changed = [key for key in compared if current.get(key) != expected.get(key)]
@@ -520,6 +539,10 @@ def instrument_files() -> list[Path]:
         HERE / "schedule_sb7.py",
         HERE / "product_probe_v3.mjs",
         HERE / "score_build.py",
+        HERE / "vendor_service.py",
+        HERE / "fixtures.py",
+        HERE / "perf_probe.py",
+        HERE / "product_probe.mjs",
         HERE / "cloud_sb7.py",
         HERE / "cloud-sb7-entrants.json",
     ]
@@ -536,17 +559,73 @@ def instrument_hashes() -> Dict[str, str]:
     return result
 
 
+def freeze_instrument(
+    destination_root: Path,
+    source_repo: Path = REPO,
+    paths: Iterable[Path] | None = None,
+) -> Dict[str, str]:
+    destination_root.mkdir(parents=True, exist_ok=False)
+    frozen: Dict[str, str] = {}
+    selected = list(paths) if paths is not None else instrument_files()
+    for source in selected:
+        try:
+            relative = source.relative_to(source_repo)
+        except ValueError:
+            raise SystemExit(
+                f"instrument input is outside its source repo: {source}"
+            ) from None
+        if not source.is_file():
+            raise SystemExit(f"instrument input is missing: {source}")
+        destination = destination_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        source_hash = sha256_file(source)
+        if sha256_file(destination) != source_hash:
+            raise SystemExit(f"instrument copy hash mismatch: {relative}")
+        frozen[str(relative)] = source_hash
+    return frozen
+
+
+def campaign_instrument_path(campaign: Mapping[str, Any], relative: str) -> Path:
+    root = campaign.get("instrument_root")
+    if not root:
+        raise SystemExit("campaign has no frozen instrument root")
+    path = Path(str(root)) / relative
+    try:
+        path.resolve().relative_to(Path(str(root)).resolve())
+    except ValueError:
+        raise SystemExit(f"instrument path escapes its frozen root: {relative}") from None
+    return path
+
+
 def instrument_mismatch(campaign: Mapping[str, Any]) -> str | None:
+    manifest_path = Path(str(campaign.get("entrant_manifest", "")))
+    manifest_hash = campaign.get("entrant_manifest_sha256")
+    if (
+        not manifest_path.is_file()
+        or not isinstance(manifest_hash, str)
+        or sha256_file(manifest_path) != manifest_hash
+    ):
+        return "frozen entrant manifest changed after freeze"
     expected = campaign.get("instrument_hashes")
-    current = instrument_hashes()
+    if not isinstance(expected, dict) or not expected:
+        return "campaign has no frozen instrument hashes"
+    current: Dict[str, str] = {}
+    missing: list[str] = []
+    for relative in expected:
+        path = campaign_instrument_path(campaign, str(relative))
+        if not path.is_file():
+            missing.append(str(relative))
+            continue
+        current[str(relative)] = sha256_file(path)
     if current == expected:
         return None
-    expected = expected if isinstance(expected, dict) else {}
     changed = sorted(
         key
         for key in set(expected) | set(current)
         if expected.get(key) != current.get(key)
     )
+    changed = sorted(set(changed) | set(missing))
     return f"instrument changed after freeze: {', '.join(changed)}"
 
 
@@ -684,6 +763,8 @@ def init_campaign(
     policy = spend_policy(manifest, rows)
     root.mkdir(parents=True, exist_ok=False)
     (root / "instrument").mkdir()
+    instrument_root = root / "instrument/source"
+    hashes = freeze_instrument(instrument_root)
     (root / "entrants").mkdir()
     (root / "locks").mkdir()
     (root / "scores").mkdir()
@@ -729,8 +810,9 @@ def init_campaign(
             "updated_at": utc_now(),
         },
     )
-    hashes = instrument_hashes()
-    prompt_source = (REPO / "evals/swarm-bench/spec-build-sb7.md").read_bytes()
+    prompt_source = (
+        instrument_root / "evals/swarm-bench/spec-build-sb7.md"
+    ).read_bytes()
     publisher = dict(checked["publisher"])
     publisher.update(
         {
@@ -759,6 +841,11 @@ def init_campaign(
         "budget_config": str(budget_config_path),
         "budget_config_sha256": sha256_file(budget_config_path),
         "budget_ledger": str(budget_ledger_path),
+        "instrument_root": str(instrument_root),
+        "coordinator": str(
+            instrument_root / "evals/swarm-bench/bench/cloud_sb7.py"
+        ),
+        "scorer": str(instrument_root / "evals/swarm-bench/bench/score_sb7.py"),
         "instrument_hashes": hashes,
         "instrument_set_sha256": sha256_bytes(
             json.dumps(hashes, sort_keys=True).encode()
@@ -825,10 +912,12 @@ def manifest_row(root: Path, entrant_id: str) -> Dict[str, Any]:
     raise SystemExit(f"unknown entrant in campaign: {entrant_id}")
 
 
-def build_prompt(port: int) -> str:
+def build_prompt(port: int, campaign: Mapping[str, Any]) -> str:
     from vendor_service_v3 import API_KEY, DOCS_PATH  # noqa: PLC0415
 
-    spec = (REPO / "evals/swarm-bench/spec-build-sb7.md").read_text()
+    spec = campaign_instrument_path(
+        campaign, "evals/swarm-bench/spec-build-sb7.md"
+    ).read_text()
     return (
         spec.replace("{DOCS_URL}", f"http://127.0.0.1:{port}{DOCS_PATH}")
         .replace("{BASE_URL}", f"http://127.0.0.1:{port}")
@@ -1103,9 +1192,14 @@ def supervise(root: Path, entrant_id: str) -> int:
 
 
 def supervise_claimed(root: Path, entrant_id: str) -> int:
+    campaign = load_json(campaign_file(root))
+    instrument_bench = campaign_instrument_path(
+        campaign, "evals/swarm-bench/bench/cloud_sb7.py"
+    ).parent
+    if str(instrument_bench) not in sys.path:
+        sys.path.insert(0, str(instrument_bench))
     from vendor_service_v3 import serve  # noqa: PLC0415
 
-    campaign = load_json(campaign_file(root))
     row = manifest_row(root, entrant_id)
     state = read_state(root, entrant_id)
     if state["status"] not in RETRYABLE_BUILD_STATES:
@@ -1150,7 +1244,7 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         trace = Path(str(state["vendor_trace"]))
         trace.unlink(missing_ok=True)
         server = serve(port, trace, seed=str(state["fixture_seed"]))
-        prompt = build_prompt(port)
+        prompt = build_prompt(port, campaign)
         prompt_path = Path(str(state["tree"])).parent / "prompt.txt"
         prompt_path.write_text(prompt)
         prompt_sha = sha256_bytes(prompt.encode())
@@ -1334,8 +1428,17 @@ def launch_detached(cmd: list[str], log_path: Path) -> subprocess.Popen[Any]:
 
 def launch_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
     unit = root / "entrants" / entrant_id
+    campaign = load_json(campaign_file(root))
     proc = launch_detached(
-        [sys.executable, str(Path(__file__).resolve()), "_supervise", "--root", str(root), "--entrant", entrant_id],
+        [
+            sys.executable,
+            str(campaign["coordinator"]),
+            "_supervise",
+            "--root",
+            str(root),
+            "--entrant",
+            entrant_id,
+        ],
         unit / "logs/supervisor.log",
     )
     update_state(
@@ -1439,10 +1542,16 @@ def wait_for_builds(
             if proc.poll() is not None:
                 proc.wait()
                 handles.pop(entrant_id, None)
-        if all(state["status"] in TERMINAL_BUILD_STATES for state in states):
-            return all(state["status"] == "BUILD_COMPLETE" for state in states)
+        if all(
+            state["status"] in TERMINAL_BUILD_STATES | POST_BUILD_STATES
+            for state in states
+        ):
+            return all(state["status"] in BUILD_SUCCESS_STATES for state in states)
         for state in states:
-            if state["status"] not in TERMINAL_BUILD_STATES and state.get("supervisor_pid"):
+            if (
+                state["status"] not in TERMINAL_BUILD_STATES | POST_BUILD_STATES
+                and state.get("supervisor_pid")
+            ):
                 if not process_alive(
                     state["supervisor_pid"], state.get("supervisor_identity")
                 ):
@@ -1590,9 +1699,1010 @@ def recover_dead_manager(root: Path) -> bool:
     return True
 
 
+class PublicationError(RuntimeError):
+    pass
+
+
+def redact_text(value: str, redactions: Iterable[str]) -> str:
+    redacted = value
+    for secret_value in redactions:
+        if secret_value:
+            redacted = redacted.replace(secret_value, "[REDACTED]")
+    return redacted
+
+
+def publisher_environment(campaign: Mapping[str, Any]) -> tuple[Dict[str, str], list[str]]:
+    publisher = campaign.get("publisher")
+    if not isinstance(publisher, dict):
+        raise PublicationError("campaign has no pinned publisher")
+    values = parse_env_file(Path(str(publisher["env_file"])))
+    missing = [name for name in PUBLISHER_REQUIRED_ENV if not values.get(name)]
+    if missing:
+        raise PublicationError(
+            f"publisher environment is missing variables: {', '.join(missing)}"
+        )
+    env = {key: value for key, value in os.environ.items() if key in SAFE_ENV_NAMES}
+    redactions = sorted(
+        {value for value in values.values() if isinstance(value, str) and len(value) >= 8},
+        key=len,
+        reverse=True,
+    )
+    return env, redactions
+
+
+def run_logged_process(
+    cmd: list[str],
+    cwd: Path,
+    env: Mapping[str, str],
+    log_path: Path,
+    timeout_seconds: float,
+    redactions: Iterable[str],
+    on_started: Any = None,
+) -> Dict[str, Any]:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=dict(env),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        close_fds=True,
+    )
+    assert proc.stdout is not None
+    selector: selectors.BaseSelector | None = None
+    try:
+        if on_started is not None:
+            on_started(proc)
+        os.set_blocking(proc.stdout.fileno(), False)
+        selector = selectors.DefaultSelector()
+        selector.register(proc.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + timeout_seconds
+        pending = ""
+        output_hash = hashlib.sha256()
+        timed_out = False
+        redaction_values = list(redactions)
+
+        def persist(text_value: str, log: Any) -> None:
+            safe = redact_text(text_value, redaction_values)
+            log.write(safe)
+            log.flush()
+            output_hash.update(safe.encode())
+
+        with log_path.open("w", buffering=1) as log:
+            while selector.get_map() or proc.poll() is None:
+                if not timed_out and proc.poll() is None and time.monotonic() >= deadline:
+                    timed_out = True
+                    stop_group(proc.pid, grace_seconds=5.0)
+                for key, _ in selector.select(timeout=0.25):
+                    try:
+                        chunk = os.read(key.fd, 65536)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        with contextlib.suppress(Exception):
+                            selector.unregister(key.fileobj)
+                        continue
+                    pending += chunk.decode("utf-8", errors="replace")
+                    while "\n" in pending:
+                        line, pending = pending.split("\n", 1)
+                        persist(f"{line}\n", log)
+                if timed_out and proc.poll() is not None and not selector.get_map():
+                    break
+            if pending:
+                persist(pending, log)
+        exit_code = proc.wait()
+        return {
+            "exit_code": exit_code,
+            "timed_out": timed_out,
+            "log": str(log_path),
+            "log_sha256": output_hash.hexdigest(),
+            "pid": proc.pid,
+        }
+    except BaseException:
+        if proc.poll() is None:
+            stop_group(proc.pid, grace_seconds=5.0)
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=5)
+        raise
+    finally:
+        if selector is not None:
+            selector.close()
+        proc.stdout.close()
+
+
+def publish_entry(campaign: Mapping[str, Any], entrant_id: str) -> Dict[str, str]:
+    publisher = campaign.get("publisher")
+    if not isinstance(publisher, dict):
+        raise PublicationError("campaign has no pinned publisher")
+    entries = publisher.get("entries")
+    if not isinstance(entries, dict) or not isinstance(entries.get(entrant_id), dict):
+        raise PublicationError(f"campaign publisher has no entrant: {entrant_id}")
+    return dict(entries[entrant_id])
+
+
+def publication_stage(root: Path, entrant_id: str) -> Path:
+    campaign = load_json(campaign_file(root))
+    state = read_state(root, entrant_id)
+    attempt = int(state.get("score_attempts", 0))
+    if attempt <= 0:
+        raise PublicationError(f"{entrant_id} has no successful score attempt to stage")
+    target = root / "publish" / entrant_id / f"attempt-{attempt}"
+    runs = target / "runs"
+    artifact_manifest = target / "artifact-manifest.json"
+    source_verdict = Path(str(state.get("verdict", "")))
+    if not source_verdict.is_file():
+        raise PublicationError(f"scored verdict is missing: {source_verdict}")
+    verdict = load_json(source_verdict)
+    rep = verdict.get("rep", 0)
+    if not isinstance(rep, int) or rep < 0:
+        raise PublicationError("scored verdict has an invalid repetition index")
+    source_shots = source_verdict.parent / "tree" / "sb7-shots"
+    if not source_shots.is_dir():
+        raise PublicationError(f"scorer screenshots are missing: {source_shots}")
+    linked = [path for path in source_shots.rglob("*") if path.is_symlink()]
+    if linked:
+        raise PublicationError("scorer screenshot evidence contains a symbolic link")
+
+    if target.exists():
+        if not runs.is_dir() or not artifact_manifest.is_file():
+            raise PublicationError(f"partial publication stage is present: {target}")
+        artifact = load_json(artifact_manifest)
+        actual_hash = hash_tree(runs)
+        if (
+            artifact.get("entrant") != entrant_id
+            or artifact.get("score_attempt") != attempt
+            or artifact.get("source_verdict_sha256") != sha256_file(source_verdict)
+            or artifact.get("runs_sha256") != actual_hash
+            or artifact.get("instrument_set_sha256")
+            != campaign.get("instrument_set_sha256")
+            or artifact.get("publisher_instrument_set_sha256")
+            != campaign.get("publisher", {}).get("instrument_set_sha256")
+        ):
+            raise PublicationError(f"publication stage changed after sealing: {target}")
+        update_state(
+            root,
+            entrant_id,
+            publish_stage=str(runs),
+            publish_stage_sha256=actual_hash,
+            publish_artifact_manifest=str(artifact_manifest),
+            publish_rep=rep,
+        )
+        return runs
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=f".{target.name}.", dir=target.parent))
+    try:
+        temporary_runs = temporary / "runs"
+        temporary_runs.mkdir()
+        shutil.copy2(source_verdict, temporary_runs / f"{entrant_id}.json")
+        shutil.copytree(
+            source_shots,
+            temporary_runs / f"{entrant_id}-r{rep}" / "sb7-shots",
+        )
+        runs_hash = hash_tree(temporary_runs)
+        artifact = {
+            "schema_version": 1,
+            "entrant": entrant_id,
+            "score_attempt": attempt,
+            "rep": rep,
+            "created_at": utc_now(),
+            "source_verdict": str(source_verdict),
+            "source_verdict_sha256": sha256_file(source_verdict),
+            "runs_sha256": runs_hash,
+            "instrument_set_sha256": campaign.get("instrument_set_sha256"),
+            "binary_sha256": campaign.get("binary_sha256"),
+            "publisher_commit": campaign.get("publisher", {}).get("commit"),
+            "publisher_instrument_set_sha256": campaign.get("publisher", {}).get(
+                "instrument_set_sha256"
+            ),
+            "files": {
+                str(path.relative_to(temporary_runs)): sha256_file(path)
+                for path in sorted(temporary_runs.rglob("*"))
+                if path.is_file()
+            },
+        }
+        atomic_json(temporary / "artifact-manifest.json", artifact)
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+
+    update_state(
+        root,
+        entrant_id,
+        publish_stage=str(runs),
+        publish_stage_sha256=runs_hash,
+        publish_artifact_manifest=str(artifact_manifest),
+        publish_rep=rep,
+    )
+    return runs
+
+
+def run_publisher(
+    root: Path, entrant_id: str, runs: Path, live: bool
+) -> Dict[str, Any]:
+    campaign = load_json(campaign_file(root))
+    mismatch = publisher_mismatch(campaign)
+    if mismatch:
+        raise PublicationError(mismatch)
+    publisher = campaign["publisher"]
+    repo = Path(str(publisher["repo"]))
+    node = str(publisher["node"]["path"])
+    cmd = [
+        node,
+        str(repo / str(publisher["script"])),
+        "--runs",
+        str(runs),
+        "--manifest",
+        str(repo / str(publisher["manifest"])),
+        "--only",
+        entrant_id,
+    ]
+    phase = "live" if live else "dry-run"
+    if live:
+        cmd.append("--live")
+    env, redactions = publisher_environment(campaign)
+    state = read_state(root, entrant_id)
+    attempt = int(state["score_attempts"])
+    log_path = root / "publish" / entrant_id / f"attempt-{attempt}" / f"publisher-{phase}.log"
+
+    def started(proc: subprocess.Popen[Any]) -> None:
+        update_state(
+            root,
+            entrant_id,
+            publisher_pid=proc.pid,
+            publisher_pgid=proc.pid,
+            publisher_phase=phase,
+            publisher_started_at=utc_now(),
+        )
+
+    result = run_logged_process(
+        cmd,
+        cwd=repo,
+        env=env,
+        log_path=log_path,
+        timeout_seconds=float(publisher["process_timeout_seconds"]),
+        redactions=redactions,
+        on_started=started,
+    )
+    update_state(
+        root,
+        entrant_id,
+        publisher_pid=None,
+        publisher_pgid=None,
+        publisher_finished_at=utc_now(),
+    )
+    return result
+
+
+def publisher_plan_from_log(log_path: Path, runs: Path) -> list[Dict[str, Any]]:
+    if not log_path.is_file():
+        raise PublicationError(f"publisher dry-run log is missing: {log_path}")
+    pattern = re.compile(
+        r'^\s*shot\s+(?P<name>\S+)\s+·\s+"(?P<caption>[^"]*)"\s+·\s+'
+        r"(?P<file>.+)\s+\([0-9.]+KB\)$"
+    )
+    root = runs.resolve()
+    plan: list[Dict[str, Any]] = []
+    for raw in log_path.read_text(errors="replace").splitlines():
+        match = pattern.match(raw)
+        if not match:
+            continue
+        source = Path(match.group("file")).resolve()
+        try:
+            source.relative_to(root)
+        except ValueError:
+            raise PublicationError(
+                f"publisher planned a screenshot outside the sealed stage: {source}"
+            ) from None
+        if not source.is_file():
+            raise PublicationError(f"publisher planned screenshot is missing: {source}")
+        plan.append(
+            {
+                "name": match.group("name"),
+                "caption": match.group("caption"),
+                "source": str(source),
+                "sha1": sha1_file(source),
+                "sha256": sha256_file(source),
+            }
+        )
+    if not plan:
+        raise PublicationError("publisher dry-run emitted no screenshot plan")
+    if len({row["name"] for row in plan}) != len(plan):
+        raise PublicationError("publisher dry-run repeated a screenshot plan name")
+    return plan
+
+
+def sanity_document(
+    campaign: Mapping[str, Any], document_id: str
+) -> Dict[str, Any] | None:
+    publisher = campaign["publisher"]
+    values = parse_env_file(Path(str(publisher["env_file"])))
+    token = values.get("SANITY_WRITE_TOKEN", "")
+    project_id = values.get("NEXT_PUBLIC_SANITY_PROJECT_ID", "")
+    dataset = values.get("NEXT_PUBLIC_SANITY_DATASET", "production")
+    if not token or not re.fullmatch(r"[a-z0-9-]+", project_id):
+        raise PublicationError("Sanity receipt credentials are missing or malformed")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", dataset):
+        raise PublicationError("Sanity receipt dataset is malformed")
+    encoded_dataset = urllib.parse.quote(dataset, safe="")
+    encoded_id = urllib.parse.quote(document_id, safe="")
+    url = (
+        f"https://{project_id}.api.sanity.io/v2025-02-19/data/doc/"
+        f"{encoded_dataset}/{encoded_id}"
+    )
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "goose-sb7-cloud-publisher/1",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            status = int(getattr(response, "status", response.getcode()))
+            raw = response.read(10 * 1024 * 1024 + 1)
+    except urllib.error.HTTPError as error:
+        raise PublicationError(
+            f"Sanity receipt read returned HTTP {error.code}"
+        ) from None
+    except Exception as error:
+        raise PublicationError(
+            f"Sanity receipt read failed: {type(error).__name__}"
+        ) from None
+    if status != 200 or len(raw) > 10 * 1024 * 1024:
+        raise PublicationError(f"Sanity receipt read returned invalid HTTP {status}")
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        raise PublicationError("Sanity receipt read returned invalid JSON") from None
+    documents = result.get("documents") if isinstance(result, dict) else None
+    if not isinstance(documents, list):
+        raise PublicationError("Sanity receipt read omitted its documents array")
+    matches = [row for row in documents if isinstance(row, dict) and row.get("_id") == document_id]
+    if len(matches) > 1:
+        raise PublicationError(f"Sanity receipt read duplicated document {document_id}")
+    return dict(matches[0]) if matches else None
+
+
+def verdict_tier_mean(verdict: Mapping[str, Any], letter: str) -> float:
+    tiers = verdict.get("tiers")
+    if not isinstance(tiers, dict):
+        raise PublicationError("scored verdict has no tier evidence")
+    tier = tiers.get(letter)
+    if isinstance(tier, (int, float)) and not isinstance(tier, bool):
+        return float(tier)
+    if isinstance(tier, dict) and isinstance(tier.get("mean"), (int, float)):
+        return float(tier["mean"])
+    raise PublicationError(f"scored verdict has no {letter} tier mean")
+
+
+def same_number(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return False
+    try:
+        return abs(float(left) - float(right)) < 1e-12
+    except (TypeError, ValueError):
+        return False
+
+
+def remote_publication_receipt(
+    campaign: Mapping[str, Any],
+    entry: Mapping[str, str],
+    verdict: Mapping[str, Any],
+    screenshot_plan: list[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    document = sanity_document(campaign, entry["doc_id"])
+    if document is None:
+        return {
+            "checked_at": utc_now(),
+            "doc_id": entry["doc_id"],
+            "matched": False,
+            "reasons": ["stable document does not exist"],
+        }
+
+    reasons: list[str] = []
+    exact_fields = {
+        "_id": entry["doc_id"],
+        "_type": "benchmarkRun",
+        "label": entry["label"],
+        "model": entry["model"],
+        "baseline": True,
+        "scorerVersion": str(verdict.get("scorer_version", "")),
+        "calibration": str(verdict.get("calibration", "")),
+        "excellent": bool(verdict.get("excellent")),
+    }
+    for field, expected in exact_fields.items():
+        if document.get(field) != expected:
+            reasons.append(f"document field {field} differs")
+
+    numeric_fields = {
+        "score": verdict.get("score"),
+        "tierA": verdict_tier_mean(verdict, "A"),
+        "tierB": verdict_tier_mean(verdict, "B"),
+        "tierC": verdict_tier_mean(verdict, "C"),
+        "tierD": verdict_tier_mean(verdict, "D"),
+        "wallSecs": math.floor(float(verdict.get("agent", {}).get("secs", -1)) + 0.5),
+    }
+    if isinstance(verdict.get("inner"), (int, float)):
+        numeric_fields["scoreInner"] = verdict["inner"]
+    excellence = verdict.get("excellence")
+    if isinstance(excellence, dict):
+        numeric_fields["excellenceFraction"] = excellence.get("fraction")
+        numeric_fields["excellenceEMean"] = excellence.get("e_mean")
+    critical = verdict.get("critical")
+    if isinstance(critical, dict):
+        numeric_fields["criticalMultiplier"] = critical.get("multiplier")
+        numeric_fields["criticalFloor"] = critical.get("floor")
+        numeric_fields["preSeverityScore"] = critical.get("pre_severity_score")
+    for field, expected in numeric_fields.items():
+        if not same_number(document.get(field), expected):
+            reasons.append(f"document numeric field {field} differs")
+
+    expected_checks = []
+    raw_checks = verdict.get("checks")
+    if not isinstance(raw_checks, list):
+        raise PublicationError("scored verdict has no checks array")
+    for row in raw_checks:
+        if not isinstance(row, dict):
+            raise PublicationError("scored verdict contains a malformed check")
+        expected_checks.append(
+            {
+                "check": str(row.get("check", ""))[:60],
+                "tier": row.get("tier"),
+                "score": row.get("score"),
+                "detail": str(row.get("detail", ""))[:220],
+            }
+        )
+    actual_checks = document.get("checksSummary")
+    if not isinstance(actual_checks, list) or len(actual_checks) != len(expected_checks):
+        reasons.append("document checksSummary count differs")
+    else:
+        for index, (actual, expected) in enumerate(zip(actual_checks, expected_checks)):
+            if not isinstance(actual, dict):
+                reasons.append(f"document check {index} is malformed")
+                continue
+            if (
+                actual.get("check") != expected["check"]
+                or actual.get("tier") != expected["tier"]
+                or not same_number(actual.get("score"), expected["score"])
+                or actual.get("detail") != expected["detail"]
+            ):
+                reasons.append(f"document check {index} differs")
+
+    if isinstance(excellence, dict):
+        expected_gates = [
+            {
+                "name": str(row.get("name")),
+                "ok": bool(row.get("ok")),
+                **(
+                    {}
+                    if row.get("value") is None
+                    else {"value": float(row.get("value"))}
+                ),
+            }
+            for row in excellence.get("conditions", [])
+            if isinstance(row, dict)
+        ]
+        actual_gates = document.get("gateConditions")
+        if not isinstance(actual_gates, list) or len(actual_gates) != len(expected_gates):
+            reasons.append("document gateConditions count differs")
+        else:
+            for index, (actual, expected) in enumerate(zip(actual_gates, expected_gates)):
+                if not isinstance(actual, dict):
+                    reasons.append(f"document gate condition {index} is malformed")
+                    continue
+                if actual.get("name") != expected["name"] or actual.get("ok") != expected["ok"]:
+                    reasons.append(f"document gate condition {index} differs")
+                if "value" in expected and not same_number(actual.get("value"), expected["value"]):
+                    reasons.append(f"document gate condition {index} value differs")
+
+    if isinstance(critical, dict):
+        expected_critical = [
+            {
+                "check": str(row.get("check")),
+                "score": row.get("score"),
+                "factor": row.get("factor"),
+                "why": str(row.get("why")),
+            }
+            for row in critical.get("rows", [])
+            if isinstance(row, dict)
+        ]
+        actual_critical = document.get("criticalRows")
+        if not isinstance(actual_critical, list) or len(actual_critical) != len(expected_critical):
+            reasons.append("document criticalRows count differs")
+        else:
+            for index, (actual, expected) in enumerate(zip(actual_critical, expected_critical)):
+                if not isinstance(actual, dict):
+                    reasons.append(f"document critical row {index} is malformed")
+                    continue
+                if (
+                    actual.get("check") != expected["check"]
+                    or not same_number(actual.get("score"), expected["score"])
+                    or not same_number(actual.get("factor"), expected["factor"])
+                    or actual.get("why") != expected["why"]
+                ):
+                    reasons.append(f"document critical row {index} differs")
+
+    screenshots = document.get("screenshots")
+    if not isinstance(screenshots, list) or len(screenshots) != len(screenshot_plan):
+        reasons.append("document screenshot count differs")
+    else:
+        for index, (actual, planned) in enumerate(zip(screenshots, screenshot_plan)):
+            asset = actual.get("asset") if isinstance(actual, dict) else None
+            asset_ref = asset.get("_ref") if isinstance(asset, dict) else None
+            if not isinstance(asset_ref, str):
+                reasons.append(f"document screenshot {index} has no asset reference")
+                continue
+            asset_doc = sanity_document(campaign, asset_ref)
+            asset_sha1 = str((asset_doc or {}).get("sha1hash", "")).lower()
+            expected_sha1 = str(planned["sha1"]).lower()
+            asset_id_matches = asset_ref.startswith(f"image-{expected_sha1}-")
+            if asset_sha1 != expected_sha1 and not asset_id_matches:
+                reasons.append(f"document screenshot {index} bytes differ")
+            if actual.get("caption") != planned.get("caption"):
+                reasons.append(f"document screenshot {index} caption differs")
+
+    canonical = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+    return {
+        "checked_at": utc_now(),
+        "doc_id": entry["doc_id"],
+        "matched": not reasons,
+        "reasons": reasons[:100],
+        "document_sha256": sha256_bytes(canonical),
+        "revision": document.get("_rev"),
+        "updated_at": document.get("_updatedAt"),
+        "checks": len(actual_checks) if isinstance(actual_checks, list) else None,
+        "screenshots": len(screenshots) if isinstance(screenshots, list) else None,
+    }
+
+
+def revalidate_publication(
+    campaign: Mapping[str, Any], entry: Mapping[str, str]
+) -> Dict[str, Any]:
+    publisher = campaign["publisher"]
+    values = parse_env_file(Path(str(publisher["env_file"])))
+    token = values.get("SANITY_WRITE_TOKEN", "")
+    if not token:
+        raise PublicationError("SANITY_WRITE_TOKEN is missing for revalidation")
+    run_path = f"/agentic-benchmarks/run/{entry['doc_id']}"
+    payload = json.dumps({"runIds": [entry["doc_id"]]}).encode()
+    request = urllib.request.Request(
+        str(publisher["revalidate_endpoint"]),
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-reval-key": sha256_bytes(token.encode()),
+            "User-Agent": "goose-sb7-cloud-publisher/1",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            status = int(getattr(response, "status", response.getcode()))
+            raw = response.read(1024 * 1024 + 1)
+    except urllib.error.HTTPError as error:
+        raise PublicationError(
+            f"benchmark revalidation returned HTTP {error.code}"
+        ) from None
+    except Exception as error:
+        raise PublicationError(
+            f"benchmark revalidation failed: {type(error).__name__}"
+        ) from None
+    if status != 200 or len(raw) > 1024 * 1024:
+        raise PublicationError(f"benchmark revalidation returned invalid HTTP {status}")
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        raise PublicationError("benchmark revalidation returned invalid JSON") from None
+    expected_paths = {"/agentic-benchmarks", run_path}
+    returned = result.get("revalidated") if isinstance(result, dict) else None
+    if not isinstance(returned, list) or not expected_paths.issubset(set(returned)):
+        raise PublicationError("benchmark revalidation omitted the board or stable run path")
+    return {
+        "at": utc_now(),
+        "status": status,
+        "endpoint": str(publisher["revalidate_endpoint"]),
+        "paths": sorted(expected_paths),
+        "response_sha256": sha256_bytes(raw),
+    }
+
+
+class RenderedEvidenceParser(html.parser.HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.visible: list[str] = []
+        self.json_ld: list[str] = []
+        self._ignored_depth = 0
+        self._json_ld_depth = 0
+        self._json_ld_buffer: list[str] = []
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        lowered = tag.lower()
+        if lowered in {"script", "style"}:
+            self._ignored_depth += 1
+        if lowered == "script" and dict(attrs).get("type") == "application/ld+json":
+            self._json_ld_depth = self._ignored_depth
+            self._json_ld_buffer = []
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered = tag.lower()
+        if lowered == "script" and self._json_ld_depth:
+            self.json_ld.append("".join(self._json_ld_buffer))
+            self._json_ld_depth = 0
+            self._json_ld_buffer = []
+        if lowered in {"script", "style"} and self._ignored_depth:
+            self._ignored_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._json_ld_depth:
+            self._json_ld_buffer.append(data)
+        elif not self._ignored_depth:
+            self.visible.append(data)
+
+
+def json_ld_objects(parser: RenderedEvidenceParser) -> Iterator[Mapping[str, Any]]:
+    def walk(value: Any) -> Iterator[Mapping[str, Any]]:
+        if isinstance(value, dict):
+            yield value
+            for nested in value.values():
+                yield from walk(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from walk(nested)
+
+    for raw in parser.json_ld:
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        yield from walk(value)
+
+
+def rendered_publication_matches(
+    board_html: str,
+    run_html: str,
+    website_base_url: str,
+    entry: Mapping[str, str],
+    verdict: Mapping[str, Any],
+) -> tuple[bool, Dict[str, Any]]:
+    score = float(verdict["score"])
+    score_text = f"{score:.4f}"
+    scorer = str(verdict["scorer_version"])
+    calibration = str(verdict["calibration"])
+    run_url = (
+        f"{website_base_url.rstrip('/')}/agentic-benchmarks/run/{entry['doc_id']}"
+    )
+
+    board_parser = RenderedEvidenceParser()
+    board_parser.feed(board_html)
+    board_name = f"{entry['label']} — {score_text}"
+    board_item = any(
+        item.get("@type") == "ListItem"
+        and item.get("url") == run_url
+        and item.get("name") == board_name
+        for item in json_ld_objects(board_parser)
+    )
+
+    run_parser = RenderedEvidenceParser()
+    run_parser.feed(run_html)
+    run_text = " ".join(" ".join(run_parser.visible).split())
+    expected_visible = [
+        f"{entry['label']} — {score_text} on {scorer}",
+        entry["model"],
+        f"scorer {scorer}",
+        f"Scorer calibration · {calibration}",
+    ]
+    missing_visible = [value for value in expected_visible if value not in run_text]
+
+    dataset = False
+    for item in json_ld_objects(run_parser):
+        if item.get("@type") != "Dataset" or item.get("url") != run_url:
+            continue
+        measured = item.get("variableMeasured")
+        if not isinstance(measured, list):
+            continue
+        values = [row.get("value") for row in measured if isinstance(row, dict)]
+        try:
+            score_present = any(abs(float(value) - score) < 1e-12 for value in values)
+        except (TypeError, ValueError):
+            score_present = False
+        if scorer in str(item.get("name", "")) and score_present:
+            dataset = True
+            break
+
+    reasons = []
+    if not board_item:
+        reasons.append("board JSON-LD lacks the exact stable run URL, label and score")
+    if missing_visible:
+        reasons.append(f"run page lacks exact visible fields: {', '.join(missing_visible)}")
+    if not dataset:
+        reasons.append("run Dataset JSON-LD lacks the exact URL, scorer and score")
+    return not reasons, {
+        "board_item_exact": board_item,
+        "run_visible_exact": not missing_visible,
+        "run_dataset_exact": dataset,
+        "reasons": reasons,
+    }
+
+
+def fetch_rendered_page(url: str) -> tuple[int, str, Dict[str, str]]:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Cache-Control": "no-cache",
+            "User-Agent": "goose-sb7-cloud-publisher/1",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        status = int(getattr(response, "status", response.getcode()))
+        raw = response.read(10 * 1024 * 1024 + 1)
+        if len(raw) > 10 * 1024 * 1024:
+            raise PublicationError(f"rendered page is unexpectedly large: {url}")
+        content_type = response.headers.get_content_charset() or "utf-8"
+        headers = {
+            key: response.headers.get(key, "")
+            for key in ("x-cache", "x-nextjs-cache", "age")
+            if response.headers.get(key)
+        }
+    return status, raw.decode(content_type, errors="replace"), headers
+
+
+def verify_rendered_publication(
+    campaign: Mapping[str, Any],
+    entry: Mapping[str, str],
+    verdict: Mapping[str, Any],
+) -> Dict[str, Any]:
+    publisher = campaign["publisher"]
+    base_url = str(publisher["website_base_url"]).rstrip("/")
+    board_url = f"{base_url}/agentic-benchmarks"
+    run_url = f"{board_url}/run/{entry['doc_id']}"
+    timeout_seconds = float(publisher["verify_timeout_seconds"])
+    interval_seconds = float(publisher["verify_interval_seconds"])
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    last: Dict[str, Any] = {}
+    while True:
+        attempts += 1
+        try:
+            board_status, board_html, board_headers = fetch_rendered_page(board_url)
+            run_status, run_html, run_headers = fetch_rendered_page(run_url)
+            matched, checks = rendered_publication_matches(
+                board_html, run_html, base_url, entry, verdict
+            )
+            last = {
+                "attempt": attempts,
+                "board_status": board_status,
+                "run_status": run_status,
+                "board_html_sha256": sha256_bytes(board_html.encode()),
+                "run_html_sha256": sha256_bytes(run_html.encode()),
+                "board_headers": board_headers,
+                "run_headers": run_headers,
+                **checks,
+            }
+            if board_status == 200 and run_status == 200 and matched:
+                return {
+                    **last,
+                    "verified_at": utc_now(),
+                    "board_url": board_url,
+                    "run_url": run_url,
+                    "expected": {
+                        "doc_id": entry["doc_id"],
+                        "label": entry["label"],
+                        "model": entry["model"],
+                        "score": float(verdict["score"]),
+                        "scorer_version": str(verdict["scorer_version"]),
+                        "calibration": str(verdict["calibration"]),
+                    },
+                }
+        except Exception as error:
+            last = {
+                "attempt": attempts,
+                "error": f"{type(error).__name__}: {str(error)[:300]}",
+            }
+        now = time.monotonic()
+        if now >= deadline:
+            raise PublicationError(
+                f"rendered verification timed out after {attempts} attempt(s): "
+                f"{json.dumps(last, sort_keys=True)}"
+            )
+        time.sleep(min(interval_seconds, max(0.0, deadline - now)))
+
+
+def publication_failed(
+    root: Path, entrant_id: str, stage: str, error: BaseException
+) -> None:
+    campaign = load_json(campaign_file(root))
+    redactions: list[str] = []
+    try:
+        _, redactions = publisher_environment(campaign)
+    except (OSError, SystemExit, PublicationError):
+        pass
+    safe = redact_text(str(error), redactions)[:1000]
+    update_state(
+        root,
+        entrant_id,
+        status="PUBLISH_FAILED",
+        publication_failure_stage=stage,
+        publisher_pid=None,
+        publisher_pgid=None,
+        failure=f"publication {stage} failed: {safe}",
+    )
+
+
+def publish_one(root: Path, entrant_id: str) -> bool:
+    state = read_state(root, entrant_id)
+    if state["status"] == "PUBLISHED":
+        return True
+    if state["status"] not in POST_BUILD_STATES:
+        return False
+    campaign = load_json(campaign_file(root))
+    entry = publish_entry(campaign, entrant_id)
+    stage = "stage"
+    try:
+        runs = publication_stage(root, entrant_id)
+        state = read_state(root, entrant_id)
+        update_state(
+            root,
+            entrant_id,
+            publication_attempts=int(state.get("publication_attempts", 0)) + 1,
+        )
+        screenshot_plan = state.get("publisher_plan")
+        if not isinstance(screenshot_plan, list) or not screenshot_plan:
+            stage = "dry-run-validation"
+            update_state(
+                root,
+                entrant_id,
+                status="PUBLISH_VALIDATING",
+                failure=None,
+            )
+            dry_run = run_publisher(root, entrant_id, runs, live=False)
+            if dry_run["exit_code"] != 0 or dry_run["timed_out"]:
+                update_state(root, entrant_id, publisher_dry_run=dry_run)
+                raise PublicationError(
+                    "pinned publisher dry-run validation did not complete successfully"
+                )
+            screenshot_plan = publisher_plan_from_log(Path(dry_run["log"]), runs)
+            update_state(
+                root,
+                entrant_id,
+                status="PUBLISH_VALIDATED",
+                publisher_dry_run=dry_run,
+                publisher_plan=screenshot_plan,
+            )
+
+        stage = "pre-write-receipt"
+        pre_write_receipt = remote_publication_receipt(
+            campaign, entry, load_json(runs / f"{entrant_id}.json"), screenshot_plan
+        )
+        update_state(
+            root,
+            entrant_id,
+            publisher_pre_write_receipt=pre_write_receipt,
+        )
+        state = read_state(root, entrant_id)
+        if pre_write_receipt["matched"]:
+            update_state(
+                root,
+                entrant_id,
+                status="PUBLISHED_UNVERIFIED",
+                publisher_live_succeeded_at=(
+                    state.get("publisher_live_succeeded_at") or utc_now()
+                ),
+                publisher_remote_receipt=pre_write_receipt,
+                publisher_write_adopted=True,
+            )
+        elif state.get("publisher_live_succeeded_at"):
+            raise PublicationError(
+                "stable Sanity document diverged after a proven matching live receipt"
+            )
+        else:
+            stage = "live-write"
+            update_state(root, entrant_id, status="PUBLISHING")
+            live = run_publisher(root, entrant_id, runs, live=True)
+            update_state(root, entrant_id, publisher_live=live)
+            stage = "post-write-receipt"
+            post_write_receipt = remote_publication_receipt(
+                campaign,
+                entry,
+                load_json(runs / f"{entrant_id}.json"),
+                screenshot_plan,
+            )
+            update_state(
+                root,
+                entrant_id,
+                publisher_post_write_receipt=post_write_receipt,
+            )
+            if not post_write_receipt["matched"]:
+                if live["exit_code"] != 0 or live["timed_out"]:
+                    raise PublicationError(
+                        "publisher exited ambiguously and the stable document does not "
+                        "match the sealed scorer evidence"
+                    )
+                raise PublicationError(
+                    "publisher exited successfully but the stable document does not "
+                    "match the sealed scorer evidence"
+                )
+            update_state(
+                root,
+                entrant_id,
+                status="PUBLISHED_UNVERIFIED",
+                publisher_live_succeeded_at=utc_now(),
+                publisher_remote_receipt=post_write_receipt,
+                publisher_write_adopted=(
+                    live["exit_code"] != 0 or live["timed_out"]
+                ),
+            )
+
+        stage = "revalidation"
+        update_state(root, entrant_id, status="REVALIDATING")
+        revalidation = revalidate_publication(campaign, entry)
+        update_state(
+            root,
+            entrant_id,
+            status="REVALIDATED",
+            revalidation=revalidation,
+        )
+
+        stage = "rendered-verification"
+        update_state(root, entrant_id, status="VERIFYING_RENDERED")
+        verdict = load_json(runs / f"{entrant_id}.json")
+        rendered = verify_rendered_publication(campaign, entry, verdict)
+        update_state(
+            root,
+            entrant_id,
+            status="PUBLISHED",
+            published_at=utc_now(),
+            published_url=rendered["run_url"],
+            rendered_verification=rendered,
+            publication_failure_stage=None,
+            failure=None,
+        )
+        return True
+    except (Exception, SystemExit) as error:
+        publication_failed(root, entrant_id, stage, error)
+        return False
+
+
+def verdict_failure(
+    result: Mapping[str, Any], campaign: Mapping[str, Any]
+) -> str | None:
+    score = result.get("score")
+    if (
+        not isinstance(score, (int, float))
+        or isinstance(score, bool)
+        or not math.isfinite(float(score))
+        or not 0 <= float(score) <= 1
+    ):
+        return "hermetic verdict has no finite score from 0 to 1"
+    if result.get("scorer_version") != campaign.get("scorer_version"):
+        return "hermetic verdict scorer version differs from the frozen campaign"
+    calibration = result.get("calibration")
+    if not isinstance(calibration, str) or not calibration.strip():
+        return "hermetic verdict has no calibration truth"
+    if str(result["scorer_version"]).endswith("-rc") and not re.search(
+        r"uncalibrated|rc-grade", calibration, re.IGNORECASE
+    ):
+        return "hermetic rc verdict does not disclose uncalibrated/rc-grade status"
+    publisher = campaign.get("publisher")
+    expected_checks = publisher.get("expected_checks") if isinstance(publisher, dict) else None
+    checks = result.get("checks")
+    if not isinstance(checks, list) or len(checks) != expected_checks:
+        return (
+            f"hermetic verdict check count differs from frozen publisher contract: "
+            f"expected {expected_checks}, found "
+            f"{len(checks) if isinstance(checks, list) else '<missing>'}"
+        )
+    return None
+
+
 def score_one(root: Path, entrant_id: str) -> bool:
     state = read_state(root, entrant_id)
-    if state["status"] == "SCORED":
+    if state["status"] in POST_BUILD_STATES - {"SCORING", "SCORE_FAILED"}:
         return True
     if state["status"] not in {"BUILD_COMPLETE", "SCORE_FAILED"}:
         return False
@@ -1612,7 +2722,7 @@ def score_one(root: Path, entrant_id: str) -> bool:
     log_path = score_dir / "score.log"
     cmd = [
         sys.executable,
-        str(HERE / "score_sb7.py"),
+        str(campaign_instrument_path(campaign, "evals/swarm-bench/bench/score_sb7.py")),
         "--tree",
         str(score_tree),
         "--port",
@@ -1634,7 +2744,7 @@ def score_one(root: Path, entrant_id: str) -> bool:
         with log_path.open("w") as log:
             proc = subprocess.Popen(
                 cmd,
-                cwd=REPO,
+                cwd=Path(str(campaign["instrument_root"])),
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
@@ -1673,7 +2783,27 @@ def score_one(root: Path, entrant_id: str) -> bool:
             score_identity=None,
         )
         return False
-    result = load_json(verdict)
+    try:
+        result = load_json(verdict)
+    except (OSError, json.JSONDecodeError, SystemExit) as error:
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            score_exit_code=exit_code,
+            failure=f"hermetic scorer emitted an unreadable verdict: {error}",
+        )
+        return False
+    invalid = verdict_failure(result, campaign)
+    if invalid:
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            score_exit_code=exit_code,
+            failure=invalid,
+        )
+        return False
     update_state(
         root,
         entrant_id,
@@ -1682,6 +2812,7 @@ def score_one(root: Path, entrant_id: str) -> bool:
         score_finished_at=utc_now(),
         score=result.get("score"),
         scorer_version=result.get("scorer_version"),
+        calibration=result.get("calibration"),
         calibrated=result.get("calibrated"),
         verdict=str(verdict),
         score_pid=None,
@@ -1691,16 +2822,40 @@ def score_one(root: Path, entrant_id: str) -> bool:
     return True
 
 
-def score_all(root: Path, row_ids: list[str]) -> bool:
+def score_all(root: Path, row_ids: list[str], finalize_campaign: bool = True) -> bool:
     recover_interrupted_scoring(root)
     manager_state(root, status="SCORING")
     update_campaign(root, status="SCORING", score_started_at=utc_now())
     for entrant_id in row_ids:
         if not score_one(root, entrant_id):
             manager_state(root, status="ATTENTION", failure=f"scoring failed: {entrant_id}")
+            campaign = load_json(campaign_file(root))
+            campaign["status"] = "ATTENTION"
+            atomic_json(campaign_file(root), campaign)
             return False
-    manager_state(root, status="SCORED", finished_at=utc_now())
-    update_campaign(root, status="SCORED", finished_at=utc_now())
+        manager_state(root, status="PUBLISHING", active_entrant=entrant_id)
+        if not publish_one(root, entrant_id):
+            manager_state(
+                root,
+                status="ATTENTION",
+                failure=f"publication failed: {entrant_id}",
+                active_entrant=entrant_id,
+            )
+            campaign = load_json(campaign_file(root))
+            campaign["status"] = "ATTENTION"
+            atomic_json(campaign_file(root), campaign)
+            return False
+    if finalize_campaign:
+        manager_state(
+            root,
+            status="PUBLISHED",
+            active_entrant=None,
+            finished_at=utc_now(),
+        )
+        campaign = load_json(campaign_file(root))
+        campaign["status"] = "PUBLISHED"
+        campaign["finished_at"] = utc_now()
+        atomic_json(campaign_file(root), campaign)
     return True
 
 
@@ -1730,12 +2885,32 @@ def manage_claimed(root: Path) -> int:
         if state["status"] in RETRYABLE_BUILD_STATES:
             supervisors[entrant_id] = launch_supervisor(root, entrant_id)
     builds_ok = wait_for_builds(root, row_ids, supervisors)
+    if builds_ok:
+        update_campaign(root, status="BUILD_COMPLETE", build_finished_at=utc_now())
+    completed_ids = [
+        entrant_id
+        for entrant_id in row_ids
+        if read_state(root, entrant_id)["status"] in BUILD_SUCCESS_STATES
+    ]
+    if completed_ids and not score_all(
+        root, completed_ids, finalize_campaign=builds_ok
+    ):
+        return 1
     if not builds_ok:
-        manager_state(root, status="ATTENTION", failure="one or more builds did not complete")
+        failed = [
+            entrant_id
+            for entrant_id in row_ids
+            if read_state(root, entrant_id)["status"] not in BUILD_SUCCESS_STATES
+        ]
+        manager_state(
+            root,
+            status="ATTENTION",
+            failure=f"builds did not complete: {', '.join(failed)}",
+            active_entrant=None,
+        )
         update_campaign(root, status="ATTENTION")
         return 1
-    update_campaign(root, status="BUILD_COMPLETE", build_finished_at=utc_now())
-    return 0 if score_all(root, row_ids) else 1
+    return 0
 
 
 def start(root: Path) -> int:
@@ -1754,7 +2929,7 @@ def start(root: Path) -> int:
         proc = launch_detached(
             [
                 sys.executable,
-                str(Path(__file__).resolve()),
+                str(campaign["coordinator"]),
                 "_manage",
                 "--root",
                 str(root),
@@ -1802,14 +2977,32 @@ def stop(root: Path) -> int:
     for row in entrants(manifest):
         entrant_id = str(row["id"])
         state = read_state(root, entrant_id)
+        publisher_pgid = state.get("publisher_pgid")
+        if (
+            state["status"] in {"PUBLISH_VALIDATING", "PUBLISHING"}
+            and publisher_pgid
+            and process_alive(publisher_pgid)
+            and not stop_group(int(publisher_pgid))
+        ):
+            failures.append(f"{entrant_id}:publisher-pgid={publisher_pgid}")
         pgid = state.get("supervisor_pgid")
-        if pgid and process_group_members(int(pgid)) and not stop_group(int(pgid)):
+        if (
+            state["status"] not in TERMINAL_BUILD_STATES | POST_BUILD_STATES
+            and pgid
+            and process_group_members(int(pgid))
+            and not stop_group(int(pgid))
+        ):
             failures.append(f"{entrant_id}:pgid={pgid}")
-        if state["status"] not in TERMINAL_BUILD_STATES | {"SCORED", "SCORE_FAILED"}:
+        if state["status"] not in TERMINAL_BUILD_STATES | {"PUBLISHED"}:
             update_state(root, entrant_id, status="STOPPED", stopped_at=utc_now())
     manager = load_json(root / "manager.json")
     pgid = manager.get("pgid")
-    if pgid and process_group_members(int(pgid)) and not stop_group(int(pgid)):
+    if (
+        manager.get("status") not in {"PUBLISHED", "ATTENTION", "STOPPED"}
+        and pgid
+        and process_group_members(int(pgid))
+        and not stop_group(int(pgid))
+    ):
         failures.append(f"manager:pgid={pgid}")
     manager_state(root, status="STOPPED", stop_failures=failures)
     if failures:
@@ -1874,6 +3067,10 @@ def results(root: Path) -> Dict[str, Any]:
             "fixture_seed": state["fixture_seed"],
             "vendor_port": state["vendor_port"],
             "verdict": state.get("verdict"),
+            "publish_doc_id": state.get("publish_doc_id"),
+            "published_url": state.get("published_url"),
+            "published_at": state.get("published_at"),
+            "rendered_verification": state.get("rendered_verification"),
             "failure": state.get("failure"),
         }
         rows.append(row)
@@ -1976,9 +3173,10 @@ def main() -> int:
                 print_status(root)
                 manager = load_json(root / "manager.json")
                 campaign = load_json(campaign_file(root))
-                if manager.get("status") == "SCORED" or campaign.get("status") == "SCORED":
-                    return 0
-                if manager.get("status") in {"ATTENTION", "STOPPED"}:
+                if (
+                    manager.get("status") in {"PUBLISHED", "ATTENTION", "STOPPED"}
+                    or campaign.get("status") == "PUBLISHED"
+                ):
                     return 0
                 if not process_alive(manager.get("pid"), manager.get("identity")):
                     start(root)
@@ -2031,6 +3229,40 @@ def main() -> int:
                     f"{state['entrant']} is {state['status']}; admitted or operator-stopped "
                     "work cannot be resumed as a fresh paid attempt"
                 )
+            elif state["status"] == "SCORING":
+                update_state(
+                    root,
+                    state["entrant"],
+                    status="SCORE_FAILED",
+                    failure="scorer was interrupted; raw build remains sealed",
+                )
+            elif state["status"] in {
+                "PUBLISH_VALIDATING",
+                "PUBLISHING",
+                "REVALIDATING",
+                "VERIFYING_RENDERED",
+            }:
+                publisher_pgid = state.get("publisher_pgid")
+                if publisher_pgid and process_group_members(int(publisher_pgid)):
+                    if not stop_group(int(publisher_pgid)):
+                        raise SystemExit(
+                            f"stale publisher group survived recovery: pgid={publisher_pgid}"
+                        )
+                update_state(
+                    root,
+                    state["entrant"],
+                    status="PUBLISH_FAILED",
+                    publisher_pid=None,
+                    publisher_pgid=None,
+                    failure=(
+                        "publication process was interrupted; deterministic remote receipt "
+                        "must be checked before any retry"
+                    ),
+                )
+        campaign = load_json(campaign_file(root))
+        campaign["status"] = "ATTENTION"
+        atomic_json(campaign_file(root), campaign)
+        manager_state(root, status="ATTENTION", pid=None, pgid=None)
         return start(root)
     return 2
 
