@@ -97,6 +97,27 @@ Parallel capacity is admitted only when useful completion throughput and quality
 logical lane does not prove an idle decoder, and a busy decoder generating redundant reasoning is
 not credited as utilization.
 
+## LM Studio API boundary
+
+LM Studio 0.4's native [`/api/v1/chat`](https://lmstudio.ai/docs/developer/rest/chat) and its
+[stream event contract](https://lmstudio.ai/docs/developer/rest/streaming-events) expose useful
+facts that Chat Completions hides: `model_instance_id`, model-load and prompt-processing phases,
+separate reasoning/message boundaries, invalid tool calls, terminal aggregate output, input and
+reasoning/output tokens, TTFT, and decode rate. The native endpoint cannot carry arbitrary custom
+tools or assistant messages, however, so it cannot simply replace Goose's current agent transport.
+
+Use the native endpoint and `/api/v1/models` as a read-only control/observability plane first.
+Evaluate LM Studio's OpenAI-compatible Responses endpoint separately because it supports custom
+tools and stateful follow-up. A transport migration is promoted only after exact Goose tool-call,
+assistant-history, cancellation, terminal-event, and replay tests; richer telemetry alone is not
+enough.
+
+LM Link's preferred-device choice is per requesting machine. The same logical model key can
+therefore resolve to a different physical instance depending on where the request enters the link.
+Scheduler occupancy and cancellation must be keyed by observed physical `model_instance_id` (or an
+equivalent proven host/instance identity), not inferred from the alias or from configured parallel
+slots.
+
 ## Promotion rule
 
 A profile wins only if it preserves requirement coverage and acceptance quality while improving
