@@ -543,6 +543,24 @@ mod tests {
         }
 
         #[test]
+        fn cloud_benchmark_models_have_exact_canonical_limits() {
+            let expected = [
+                ("google", "gemini-3.7-flash", 1_048_576, 65_536),
+                ("google", "gemini-3.1-pro-preview", 1_048_576, 65_536),
+                ("deepseek", "deepseek-v4-flash", 1_000_000, 384_000),
+                ("deepseek", "deepseek-v4-pro", 1_000_000, 384_000),
+                ("zai_api", "glm-5.3", 1_000_000, 131_072),
+            ];
+
+            for (provider, model, context, output) in expected {
+                let config = ModelConfig::new(model).with_canonical_limits(provider);
+                assert_eq!(config.context_limit, Some(context), "{provider}/{model}");
+                assert_eq!(config.max_tokens, Some(output), "{provider}/{model}");
+                assert_eq!(config.reasoning, Some(true), "{provider}/{model}");
+            }
+        }
+
+        #[test]
         fn does_not_override_existing_context_limit() {
             let _guard = env_lock::lock_env([
                 ("GOOSE_MAX_TOKENS", None::<&str>),
