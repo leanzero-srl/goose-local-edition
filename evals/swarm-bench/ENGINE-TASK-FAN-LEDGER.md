@@ -155,12 +155,170 @@ The full gate above passed on 2026-08-23 in the isolated `codex/swarm-engine-ove
   capacity as physical idleness.
 - This does not implement F924 recurrence, a deterministic loop decision, or same-session judge nudging. The
   audit showed the current nudge can start a new request before the old provider request is proven terminal.
-- Full requirement-inventory slicing remains a later prerequisite. The typed compiler validates exact
-  citations and concrete acceptance, but it still receives the full goal and research body. A future slice
-  must create stable requirement/interface IDs and pass only the relevant slice; a filename/token threshold is
-  not a safe substitute.
+- Requirement-inventory/context slicing is implemented in the next increment documented below. Its live
+  quality and latency effect remains unmeasured until the frozen campaign gate allows a non-SB7 shadow run.
 - `split_fat_modules` remains an existing file/role heuristic. It is not evidence of semantic task balance and
   was not used as the tail fix.
 - No judge work is fabricated when contract demand drains. Useful late-fan supervision needs version-current
   evidence plus verified physical capacity; absent those, the honest action is no request.
 - Build, judge, repair, campaign, and live LM Studio behavior were not exercised by this isolated slice.
+
+## Increment 2 — normalized requirements and semantic context slices
+
+Implementation commit: `8f5c320c9` (`swarm: bind task details to normalized requirements`).
+
+### Authority boundary
+
+The live `opts.prompt` is not a safe requirement source. The engine appends model-authored “settled defaults”
+from targeted research to it, then may append human clarify answers. Treating that composite as the raw spec
+would let research prose silently acquire requirement authority.
+
+The final post-plan seam now has three separate channels:
+
+- the frozen operator specification captured before the first model call;
+- verbatim human Q&A under `USER DECISIONS — BINDING`;
+- research findings, normalized separately as `advisory-research` evidence.
+
+Only the first two form the binding inventory. Research may inform a semantic slice by evidence ID; it cannot
+create, remove, own, or override a requirement.
+
+### Normalized source of truth
+
+`normalized_markdown_units` follows authored Markdown boundaries—paragraphs, list items, Q/A pairs, and fenced
+examples. It does not read filenames, token counts, requested task counts, worker counts, model IDs, or fleet
+capacity. Section headings remain provenance on each contained clause. Each non-empty clause receives a stable
+content ID; duplicate verbatim clauses retain distinct ordered occurrences.
+
+The selected skeleton is sanitized before the binder sees it: only task id, brief, dependency ids, and owned
+files remain. Preferred model and difficulty are omitted, so the semantic slice count cannot key off roster or
+capability metadata.
+
+A response-only canonical binder returns:
+
+- exactly one primary owner for every raw requirement ID;
+- cross-cutting/applicable and verification consumers without weakening primary ownership;
+- dependency and owned-file corrections on the fixed selected task IDs;
+- stable engine-generated interface IDs, producer/consumer endpoints, requirement references, contract text,
+  and whether a completed artifact is required;
+- one or more per-task slices, each justified by a distinct semantic acceptance outcome with concrete evidence.
+
+The binder prompt explicitly forbids splitting by filename count, text length, token budget, fleet size, or idle
+nodes. One slice is valid when one acceptance outcome is genuinely indivisible; extra work is never manufactured
+to occupy capacity.
+
+### Structural admission checks
+
+Before any detail request is admitted, the engine rejects:
+
+- an uncovered raw requirement or more than one primary owner;
+- missing/repeated model-authored tasks;
+- unknown, repeated, or cross-role requirement IDs;
+- unknown evidence IDs;
+- slices that do not exactly cover the task's owner/applicable/verifier roles;
+- empty objectives or acceptance evidence;
+- unsafe/repeated slice IDs;
+- dropped files from the selected graph, any post-binding file overlap, invalid dependencies, or a cycle;
+- invalid interface endpoints/references; and
+- a consumer marked as requiring a completed artifact without a dependency on its producer.
+
+These are structural checks. They do not deterministically decide whether an architecture or requirement is
+semantically good; the response-only binder makes that semantic proposal, and a failure aborts honestly instead
+of falling back to a generic brief.
+
+### Context and fan behavior
+
+Each detail call receives only:
+
+- its semantic slice's requirement records;
+- evidence IDs selected for that slice;
+- interfaces relevant to its task/endpoints/requirements;
+- exact owned files; and
+- the slice objective and acceptance evidence.
+
+It no longer receives the full goal, full research body, or architect brief. The detail model cites requirement
+IDs only; the engine renders the authoritative raw text, preventing a weak model from paraphrasing an exact
+route/header/value and then validating its own paraphrase. Multiple slices for one execution task run as
+independent detail calls and are merged in declared semantic order into one implementation contract.
+
+The existing staged fan still admits detail before auxiliary work and uses one lane per distinct host. A
+single-slice task may prefetch its required contract once its detail finishes. A multi-slice task cannot compile
+an interface from a partial task contract, so its contract waits for the ordinary contract phase after all
+slices merge. No admitted request is killed/replaced, and no auxiliary work is invented.
+
+`requirement_binding_started`, `requirement_binding_resolved`, `plan_compile_resolved`, and per-slice
+`detail_completed`/`detail_compile_failed` events expose authority, inventory/evidence/task/slice/interface
+counts, stable IDs, coverage, roster blindness, context characters, exact requirement/evidence IDs, and
+`full_goal_context:false`. The final plan persists the requirement registry, advisory evidence registry,
+interface registry, task roles, and slice-to-evidence mapping. `Dag` ignores these additive metadata objects,
+while each execution `TaskSpec.description` carries the merged exact requirement contract.
+
+### Phase interaction audit
+
+- **Research:** findings are now usable without becoming requirements. The existing fixed-lens/retarget research
+  policy is unchanged; unresolved-question expansion and conflict state remain Engine 3 work.
+- **Planning:** the binder runs once on the final post-ask selected graph, so redraft/backbone rounds do not pay
+  repeated detail cost. It can repair file ownership and dependency edges and split detail-generation work by
+  acceptance closure, but it deliberately keeps selected task IDs fixed. It does not yet turn slices into new
+  execution DAG tasks or repair the earlier structural-confidence metric.
+- **Contracts/build:** exact requirement text and interface facts enter the worker through the merged task
+  description. Single-slice contract prefetch remains safe; multi-slice tasks wait for the complete contract.
+- **Judge:** current outer judge and pre-review already receive `TaskSpec.description`, so they see the exact
+  merged requirement contract. They do not yet consume the typed registries/snapshot versions directly. No
+  judge verdict, split, kill, acceptance, cadence, priority, or nudge behavior changed here.
+- **Repair:** current fix-round specifications are still generated from findings plus the composite run prompt;
+  they do not yet address stable requirement IDs or a causal requirement/defect ledger. This slice therefore
+  improves the initial build contract but makes no claim that repair is requirement-complete.
+- **Scheduler/occupancy:** semantic slice count is job-derived, and detail fan concurrency uses available
+  distinct hosts. Logical tail telemetry remains explicitly non-physical. No broker, same-host concurrency,
+  cancellation, or provider-terminal behavior changed.
+
+### F924/F925 re-verification and disposition
+
+Commit `388792522` was re-read separately against its captured fixture, current controls, and the corrected
+audit before this increment was accepted.
+
+- The 9,304-character fixture has 9,257 stride-one 48-character windows and 5,524 distinct windows. The correct
+  share of windows beyond first occurrence is `3,733 / 9,257 = 0.4033`. The committed `0.6758` is
+  `(total-distinct)/distinct`, a repeat-to-distinct load factor that can exceed 100%; it is not a percentage of
+  repeated windows.
+- The fixture proves a long-period recurrence can be invisible to the final 2,000-character view. It does not
+  prove the preceding ~57 minutes or 191k characters were the same loop, and it is not a negative-control
+  distribution for slow healthy Qwen3.8 calls.
+- The proposed trigger is gated by `omni_judge`, but once over threshold it is level-triggered on every stream
+  chunk under uncapped. Recurrence also becomes semantic corroboration, non-consecutive model verdicts persist,
+  and the replacement reply can overlap the still-owned prior stream without provider-terminal proof.
+- `fan_last_outstanding` measured logical items and then claimed physical idleness it could not observe.
+
+Disposition: retain revert `6b4de01b7`. Do not restore F924/F925 behavioral code, deterministic corroboration,
+replacement, or occupancy claims. Commit `388792522` and its raw fixture remain incident evidence in history;
+the corrected scheduler fixture remains live. Unbuffered console output and factual judge/request lifecycle
+events are useful only as separately reviewed observability changes. A future recurrence instrument must be a
+correctly named neutral statistic, use real slow-healthy/problem distributions, be edge-triggered/debounced with
+one outstanding review, and have no vote/kill/accept/replacement authority. No same-session intervention ships
+before correlated provider-terminal cancellation.
+
+### LM Studio and upstream queues discovered during this slice
+
+- LM Studio native `/api/v1/chat` is an observability/control probe, not a drop-in Goose transport: it exposes
+  chat start/end, `model_instance_id`, prompt-processing events, reasoning/message/tool boundaries, TTFT/TPS,
+  and reasoning usage, but does not support custom tools or assistant messages. OpenAI `/v1/responses` supports
+  custom tools/stateful history and needs a separately captured adapter evaluation; `/v1/chat/completions`
+  must not be replaced blindly.
+- `/api/v1/models` exposes loaded-instance parallelism, context, and engine configuration. LM Link routing is
+  preferred-device/per-machine, so the future broker must correlate physical instance identity rather than
+  infer it from a logical alias.
+- Upstream `bb539f7d6` remains a selective-port candidate: this fork marks length-terminated text as truncated,
+  but a `finish_reason=length` tool-call branch may still execute a syntactically valid token-guillotined call.
+  No port is authorized without a captured LM Studio length-terminated tool-call frame, a normal-tool negative,
+  invalid-params behavior, and persisted output-limit metadata.
+
+### Increment-2 verification and non-claims
+
+Focused tests cover stable exact-source normalization (including Q/A), full ownership, semantic context
+isolation, stable interfaces, fabricated/out-of-slice requirement rejection, unowned/duplicate requirements,
+file overlap, artifact dependency integrity, and the existing real 27-item logical-tail replay. `cargo fmt`,
+focused tests, `cargo check -p goose-cli`, and `cargo clippy -p goose-cli --all-targets -- -D warnings` passed
+before the implementation commit.
+
+No LM Studio request, benchmark, scorer, SB7 file, campaign state, running fleet, judge behavior, or repair
+behavior was changed or exercised. Offline tests establish mechanism truth, not a wall-time or quality win.
