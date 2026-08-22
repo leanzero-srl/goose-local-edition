@@ -1,7 +1,9 @@
 use anyhow::Result;
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
-use goose_providers::formats::openai::{is_valid_function_name, sanitize_function_name};
+use goose_providers::formats::openai::{
+    is_valid_function_name, sanitize_function_name, OUTPUT_TRUNCATION_MARKER,
+};
 use goose_providers::model::ModelConfig;
 use goose_providers::thinking::ThinkingEffort;
 use rmcp::model::{
@@ -28,6 +30,16 @@ fn metadata_for_function_call(name: &str, signature: Option<&str>) -> ProviderMe
         metadata.insert(THOUGHT_SIGNATURE_KEY.to_string(), json!(signature));
     }
     metadata
+}
+
+fn output_token_limit_tool_error(name: &str, id: &str) -> ErrorData {
+    ErrorData {
+        code: ErrorCode::INVALID_PARAMS,
+        message: Cow::from(format!(
+            "Tool arguments for {name} (id {id}) are not executable because the provider reached its output-token limit"
+        )),
+        data: None,
+    }
 }
 
 fn get_function_call_name(metadata: &Option<ProviderMetadata>) -> Option<&str> {
@@ -255,7 +267,10 @@ pub fn format_tools(tools: &[Tool]) -> Vec<Value> {
         .collect()
 }
 
-fn process_response_part_impl(part: &Value) -> Option<MessageContent> {
+fn process_response_part_impl(
+    part: &Value,
+    output_token_limit_reached: bool,
+) -> Option<MessageContent> {
     let signature = part.get(THOUGHT_SIGNATURE_KEY).and_then(|v| v.as_str());
     let is_thought = part
         .get("thought")
@@ -289,6 +304,15 @@ fn process_response_part_impl(part: &Value) -> Option<MessageContent> {
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let name = function_call["name"].as_str().unwrap_or_default();
 
+        if output_token_limit_reached {
+            let metadata = metadata_for_function_call(name, signature);
+            return Some(MessageContent::tool_request_with_metadata(
+                id.clone(),
+                Err(output_token_limit_tool_error(name, &id)),
+                Some(&metadata),
+            ));
+        }
+
         if !is_valid_function_name(name) {
             let error = ErrorData {
                 code: ErrorCode::INVALID_REQUEST,
@@ -300,10 +324,25 @@ fn process_response_part_impl(part: &Value) -> Option<MessageContent> {
             };
             Some(MessageContent::tool_request(id, Err(error)))
         } else {
-            let arguments = function_call
-                .get("args")
-                .map(|params| object(params.clone()));
             let metadata = metadata_for_function_call(name, signature);
+            let arguments = match function_call.get("args") {
+                Some(params) if params.is_object() => Some(object(params.clone())),
+                Some(params) => {
+                    let error = ErrorData {
+                        code: ErrorCode::INVALID_PARAMS,
+                        message: Cow::from(format!(
+                            "Tool arguments for {name} (id {id}) must be a JSON object, got {params}"
+                        )),
+                        data: None,
+                    };
+                    return Some(MessageContent::tool_request_with_metadata(
+                        id,
+                        Err(error),
+                        Some(&metadata),
+                    ));
+                }
+                None => None,
+            };
 
             Some(MessageContent::tool_request_with_metadata(
                 id,
@@ -326,6 +365,10 @@ pub fn response_to_message(response: Value) -> Result<Message> {
     let role = Role::Assistant;
     let created = chrono::Utc::now().timestamp();
 
+    let finish_reason = response
+        .pointer("/candidates/0/finishReason")
+        .and_then(Value::as_str);
+    let output_token_limit_reached = finish_reason == Some("MAX_TOKENS");
     let parts = response
         .get("candidates")
         .and_then(|v| v.as_array())
@@ -334,17 +377,21 @@ pub fn response_to_message(response: Value) -> Result<Message> {
         .and_then(|c| c.get("parts"))
         .and_then(|p| p.as_array());
 
-    let Some(parts) = parts else {
-        return Ok(Message::new(role, created, Vec::new()));
-    };
-
     let mut content = Vec::new();
-    for part in parts {
-        if let Some(msg_content) = process_response_part_impl(part) {
-            content.push(msg_content);
+    if let Some(parts) = parts {
+        for part in parts {
+            if let Some(msg_content) = process_response_part_impl(part, output_token_limit_reached)
+            {
+                content.push(msg_content);
+            }
         }
     }
-    Ok(Message::new(role, created, content))
+    if output_token_limit_reached {
+        content.push(MessageContent::text(OUTPUT_TRUNCATION_MARKER));
+    }
+    let mut message = Message::new(role, created, content);
+    message.metadata.output_token_limit_reached = output_token_limit_reached;
+    Ok(message)
 }
 
 /// Extract usage information from Google's API response
@@ -354,6 +401,16 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
             .get("promptTokenCount")
             .and_then(|v| v.as_u64())
             .and_then(|value| i64::try_from(value).ok());
+        let tool_input_tokens = usage_meta_data
+            .get("toolUsePromptTokenCount")
+            .and_then(|v| v.as_u64())
+            .and_then(|value| i64::try_from(value).ok());
+        let input_tokens = match (input_tokens, tool_input_tokens) {
+            (Some(prompt), Some(tool)) => Some(prompt.saturating_add(tool)),
+            (Some(prompt), None) => Some(prompt),
+            (None, Some(tool)) => Some(tool),
+            (None, None) => None,
+        };
         let candidate_tokens = usage_meta_data
             .get("candidatesTokenCount")
             .and_then(|v| v.as_u64())
@@ -405,6 +462,7 @@ where
         let mut terminal_proven = false;
         let mut malformed_data = false;
         let mut last_seen_model: Option<String> = None;
+        let mut pending_function_parts: Vec<Value> = Vec::new();
 
         while let Some(line_result) = stream.next().await {
             let line = line_result?;
@@ -481,17 +539,15 @@ where
                 last_seen_model = Some(model.to_string());
             }
 
-            let chunk_terminal = chunk
+            let finish_reason = chunk
                 .get("candidates")
                 .and_then(|value| value.as_array())
-                .is_some_and(|candidates| {
-                    candidates.iter().any(|candidate| {
-                        candidate
-                            .get("finishReason")
-                            .and_then(|reason| reason.as_str())
-                            .is_some_and(|reason| !reason.is_empty())
-                    })
-                });
+                .and_then(|candidates| candidates.first())
+                .and_then(|candidate| candidate.get("finishReason"))
+                .and_then(|reason| reason.as_str())
+                .filter(|reason| !reason.is_empty());
+            let chunk_terminal = finish_reason.is_some();
+            let output_token_limit_reached = finish_reason == Some("MAX_TOKENS");
             if (terminal_proven || chunk_terminal) && !malformed_data {
                 if let Ok(usage) = get_usage(&chunk) {
                     if usage.input_tokens.is_some() || usage.output_tokens.is_some() {
@@ -514,14 +570,45 @@ where
 
             if let Some(parts) = parts {
                 for part in parts {
-                    if let Some(content) = process_response_part_impl(part) {
+                    if part.get("functionCall").is_some() {
+                        pending_function_parts.push(part.clone());
+                    } else if let Some(content) =
+                        process_response_part_impl(part, output_token_limit_reached)
+                    {
                         let message = Message::new(
                             Role::Assistant,
                             chrono::Utc::now().timestamp(),
                             vec![content],
                         ).with_id(stream_id.clone());
+                        let mut message = message;
+                        message.metadata.output_token_limit_reached =
+                            output_token_limit_reached;
                         yield (Some(message), None);
                     }
+                }
+            }
+            if chunk_terminal {
+                for part in pending_function_parts.drain(..) {
+                    if let Some(content) =
+                        process_response_part_impl(&part, output_token_limit_reached)
+                    {
+                        let mut message = Message::new(
+                            Role::Assistant,
+                            chrono::Utc::now().timestamp(),
+                            vec![content],
+                        )
+                        .with_id(stream_id.clone());
+                        message.metadata.output_token_limit_reached =
+                            output_token_limit_reached;
+                        yield (Some(message), None);
+                    }
+                }
+                if output_token_limit_reached {
+                    let mut marker = Message::assistant()
+                        .with_text(OUTPUT_TRUNCATION_MARKER)
+                        .with_id(stream_id.clone());
+                    marker.metadata.output_token_limit_reached = true;
+                    yield (Some(marker), None);
                 }
             }
         }
@@ -811,6 +898,24 @@ mod tests {
         assert_eq!(usage.input_tokens, Some(100));
         assert_eq!(usage.output_tokens, Some(50));
         assert_eq!(usage.total_tokens, Some(150));
+    }
+
+    #[test]
+    fn test_get_usage_counts_tool_use_prompt_tokens_as_input() {
+        let data = json!({
+            "usageMetadata": {
+                "promptTokenCount": 27,
+                "toolUsePromptTokenCount": 10_309,
+                "candidatesTokenCount": 45,
+                "thoughtsTokenCount": 31,
+                "totalTokenCount": 10_412
+            }
+        });
+
+        let usage = get_usage(&data).unwrap();
+        assert_eq!(usage.input_tokens, Some(10_336));
+        assert_eq!(usage.output_tokens, Some(76));
+        assert_eq!(usage.total_tokens, Some(10_412));
     }
 
     #[test]
@@ -1350,6 +1455,85 @@ mod tests {
         }
 
         assert_eq!(tool_calls, vec!["test_tool"]);
+    }
+
+    #[test]
+    fn max_tokens_nonstreaming_function_calls_are_not_executable() {
+        let response = json!({
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [
+                        {"functionCall": {"id": "call-empty", "name": "empty_tool"}},
+                        {"functionCall": {"id": "call-valid", "name": "valid_tool", "args": {"value": true}}}
+                    ]
+                },
+                "finishReason": "MAX_TOKENS"
+            }]
+        });
+
+        let message = response_to_message(response).unwrap();
+
+        assert!(message.metadata.output_token_limit_reached);
+        let requests: Vec<_> = message
+            .content
+            .into_iter()
+            .filter_map(|content| match content {
+                MessageContent::ToolRequest(request) => Some(request),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(requests.len(), 2);
+        for request in requests {
+            let error = request
+                .tool_call
+                .expect_err("MAX_TOKENS function calls must not execute");
+            assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+            assert!(error.message.contains("output-token limit"));
+        }
+    }
+
+    #[tokio::test]
+    async fn max_tokens_streaming_invalidates_an_earlier_function_call() {
+        use futures::StreamExt;
+
+        let lines = vec![
+            Ok(r#"data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"id":"call-1","name":"test_tool","args":{"param":"value"}}}]}}],"modelVersion":"gemini-3.7-flash-08-2026"}"#.to_string()),
+            Ok(r#"data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":5,"toolUsePromptTokenCount":10,"candidatesTokenCount":2,"totalTokenCount":17}}"#.to_string()),
+        ];
+        let stream = Box::pin(futures::stream::iter(lines));
+        let mut parsed = std::pin::pin!(response_to_streaming_message(stream));
+        let mut requests = Vec::new();
+        let mut reported_usage = None;
+        let mut saw_limit_metadata = false;
+
+        while let Some(result) = parsed.next().await {
+            let (message, usage) = result.unwrap();
+            if let Some(message) = message {
+                saw_limit_metadata |= message.metadata.output_token_limit_reached;
+                requests.extend(message.content.into_iter().filter_map(|content| {
+                    if let MessageContent::ToolRequest(request) = content {
+                        Some(request)
+                    } else {
+                        None
+                    }
+                }));
+            }
+            reported_usage = usage.or(reported_usage);
+        }
+
+        assert!(saw_limit_metadata);
+        assert_eq!(requests.len(), 1);
+        let error = requests
+            .pop()
+            .unwrap()
+            .tool_call
+            .expect_err("MAX_TOKENS function call must not execute");
+        assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+        let usage = reported_usage.expect("terminal usage");
+        assert_eq!(usage.usage.input_tokens, Some(15));
+        assert_eq!(usage.usage.output_tokens, Some(2));
+        assert_eq!(usage.usage.total_tokens, Some(17));
     }
 
     #[tokio::test]
