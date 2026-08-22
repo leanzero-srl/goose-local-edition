@@ -100,7 +100,7 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
         .find(|(_, m)| is_user_loop_boundary(m))
         .map(|(i, _)| i);
 
-    let function_names_by_id: HashMap<&str, &str> = filtered
+    let function_names_by_id: HashMap<&str, String> = filtered
         .iter()
         .flat_map(|message| message.content.iter())
         .filter_map(|content| match content {
@@ -108,7 +108,7 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
                 .tool_call
                 .as_ref()
                 .ok()
-                .map(|tool_call| (request.id.as_str(), tool_call.name.as_ref())),
+                .map(|tool_call| (request.id.as_str(), sanitize_function_name(&tool_call.name))),
             _ => None,
         })
         .collect();
@@ -205,15 +205,19 @@ pub fn format_messages(messages: &[Message]) -> Vec<Value> {
                             if text.is_empty() {
                                 text = "Tool call is done.".to_string();
                             }
-                            let name = get_function_call_name(&response.metadata)
-                                .or_else(|| function_names_by_id.get(response.id.as_str()).copied())
+                            let name = function_names_by_id
+                                .get(response.id.as_str())
+                                .map(String::as_str)
+                                .or_else(|| get_function_call_name(&response.metadata))
                                 .unwrap_or(response.id.as_str());
                             let part = build_function_response_part(&response.id, name, text);
                             parts.push(json!(part));
                         }
                         Err(e) => {
-                            let name = get_function_call_name(&response.metadata)
-                                .or_else(|| function_names_by_id.get(response.id.as_str()).copied())
+                            let name = function_names_by_id
+                                .get(response.id.as_str())
+                                .map(String::as_str)
+                                .or_else(|| get_function_call_name(&response.metadata))
                                 .unwrap_or(response.id.as_str());
                             let part = build_function_response_part(
                                 &response.id,
@@ -1237,6 +1241,43 @@ mod tests {
 
     fn tool_result(text: &str) -> CallToolResult {
         CallToolResult::success(vec![Content::text(text)])
+    }
+
+    #[test]
+    fn placeholder_tool_history_keeps_google_request_response_names_paired() {
+        const ID: &str = "call-truncated";
+        const SIGNATURE: &str = "thought_sig_truncated";
+        let metadata = metadata_for_function_call("original_native_name", Some(SIGNATURE));
+        let request = Message::assistant().with_tool_request_with_metadata(
+            ID,
+            Ok(CallToolRequestParams::new("unparseable_tool_call").with_arguments(object!({}))),
+            Some(&metadata),
+            None,
+        );
+        let mut response = Message::user();
+        response.add_tool_response_with_metadata(
+            ID,
+            Err(ErrorData::new(
+                ErrorCode::INVALID_PARAMS,
+                "provider reached its output-token limit".to_string(),
+                None,
+            )),
+            Some(&metadata),
+        );
+
+        let wire = format_messages(&[request, response]);
+
+        assert_eq!(wire[0]["parts"][0]["functionCall"]["id"], ID);
+        assert_eq!(
+            wire[0]["parts"][0]["functionCall"]["name"],
+            "unparseable_tool_call"
+        );
+        assert_eq!(wire[0]["parts"][0][THOUGHT_SIGNATURE_KEY], SIGNATURE);
+        assert_eq!(wire[1]["parts"][0]["functionResponse"]["id"], ID);
+        assert_eq!(
+            wire[1]["parts"][0]["functionResponse"]["name"],
+            "unparseable_tool_call"
+        );
     }
 
     #[test]

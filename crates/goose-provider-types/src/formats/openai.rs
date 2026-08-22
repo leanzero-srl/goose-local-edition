@@ -1068,6 +1068,27 @@ fn terminal_error_from_finish_reason(chunk: &StreamingChunk) -> Option<ProviderE
     })
 }
 
+fn finish_reason_proves_terminal(reason: Option<&str>) -> bool {
+    let Some(reason) = reason.filter(|reason| !reason.is_empty()) else {
+        return false;
+    };
+    if !crate::retry::terminal_safe_retries_enabled() {
+        return true;
+    }
+    matches!(
+        reason,
+        "stop"
+            | "length"
+            | "tool_calls"
+            | "function_call"
+            | "content_filter"
+            | "sensitive"
+            | "model_context_window_exceeded"
+            | "network_error"
+            | "insufficient_system_resource"
+    )
+}
+
 fn parse_streaming_chunk(line: &str) -> Result<StreamingChunk, ProviderError> {
     let value: Value = serde_json::from_str(line).map_err(|e| {
         ProviderError::stream_decode_error(format!(
@@ -1154,7 +1175,7 @@ where
             if chunk
                 .choices
                 .iter()
-                .any(|choice| choice.finish_reason.is_some())
+                .any(|choice| finish_reason_proves_terminal(choice.finish_reason.as_deref()))
             {
                 terminal_proven = true;
             }
@@ -1229,7 +1250,11 @@ where
                                 if tool_chunk
                                     .choices
                                     .iter()
-                                    .any(|choice| choice.finish_reason.is_some())
+                                    .any(|choice| {
+                                        finish_reason_proves_terminal(
+                                            choice.finish_reason.as_deref(),
+                                        )
+                                    })
                                 {
                                     terminal_proven = true;
                                 }
@@ -3324,6 +3349,33 @@ data: [DONE]
         );
         assert_usage_yielded_once(&result, 100, 20, 120);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn empty_finish_reason_with_usage_at_eof_is_not_terminal() -> anyhow::Result<()> {
+        let result = run_streaming_test(
+            r#"data: {"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":""}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}"#,
+        )
+        .await?;
+
+        assert!(result.has_text_content);
+        assert_eq!(result.usage_count, 0);
+        assert!(result.usage.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn terminal_safe_mode_rejects_unknown_finish_reason_as_proof() -> anyhow::Result<()> {
+        let _guard = env_lock::lock_env([(crate::retry::TERMINAL_SAFE_RETRIES_ENV, Some("true"))]);
+        let result = run_streaming_test(
+            r#"data: {"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":"future_reason"}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}"#,
+        )
+        .await?;
+
+        assert!(result.has_text_content);
+        assert_eq!(result.usage_count, 0);
+        assert!(result.usage.is_none());
         Ok(())
     }
 

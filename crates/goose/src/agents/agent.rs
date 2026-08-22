@@ -2402,6 +2402,8 @@ impl Agent {
                                 for request in frontend_requests.iter().chain(remaining_requests.iter()) {
                                     let mut request_msg = Message::assistant()
                                         .with_id(format!("msg_{}", Uuid::new_v4()));
+                                    request_msg.metadata.output_token_limit_reached =
+                                        response.metadata.output_token_limit_reached;
 
                                     for thinking in &response_thinking {
                                         request_msg = request_msg.with_content(thinking.clone());
