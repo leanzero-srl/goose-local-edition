@@ -702,7 +702,7 @@ mod tests {
                 _tools: &[Tool],
             ) -> Result<MessageStream, ProviderError> {
                 let n = self.call_count.fetch_add(1, Ordering::SeqCst);
-                let message = if n == 0 {
+                let mut message = if n == 0 {
                     let error = ErrorData::new(
                         ErrorCode::INVALID_PARAMS,
                         "Tool arguments must be a JSON object".to_string(),
@@ -712,6 +712,7 @@ mod tests {
                 } else {
                     Message::assistant().with_text("Recovered after the bad tool call.")
                 };
+                message.metadata.output_token_limit_reached = true;
 
                 let usage = ProviderUsage::new(
                     "mock-model".to_string(),
@@ -760,7 +761,7 @@ mod tests {
                 .await?;
 
             let session_config = SessionConfig {
-                id: session.id,
+                id: session.id.clone(),
                 schedule_id: None,
                 max_turns: Some(5),
                 retry_config: None,
@@ -804,6 +805,28 @@ mod tests {
             assert!(
                 provider.call_count.load(Ordering::SeqCst) >= 2,
                 "provider should have been called again after the bad tool call"
+            );
+            let reloaded = session_manager.get_session(&session.id, true).await?;
+            let persisted = reloaded.conversation.expect("persisted conversation");
+            let truncated_tool_message = persisted.messages().iter().find(|message| {
+                message.content.iter().any(
+                    |content| matches!(content, MessageContent::ToolRequest(request) if request.id == "call_bad"),
+                )
+            });
+            assert!(
+                truncated_tool_message
+                    .is_some_and(|message| message.metadata.output_token_limit_reached),
+                "split tool history must retain output-limit evidence"
+            );
+            let truncated_text_message = persisted.messages().iter().find(|message| {
+                message.content.iter().any(
+                    |content| matches!(content, MessageContent::Text(text) if text.text.contains("Recovered after the bad tool call")),
+                )
+            });
+            assert!(
+                truncated_text_message
+                    .is_some_and(|message| message.metadata.output_token_limit_reached),
+                "ordinary assistant history must retain output-limit evidence"
             );
             Ok(())
         }
