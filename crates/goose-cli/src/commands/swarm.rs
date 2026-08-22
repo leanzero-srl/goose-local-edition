@@ -7746,8 +7746,7 @@ mod tests {
     }
 
     #[test]
-    fn score_skeleton_prefers_wider_flatter_plan() {
-        let wc = 3;
+    fn score_skeleton_does_not_rewrite_real_dependencies_for_width() {
         let wide = goose_swarm::specs_from_plan_json(
             r#"{"subtasks":[
                 {"id":"a","depends_on":[],"files":["a.py"]},
@@ -7766,15 +7765,18 @@ mod tests {
             ]}"#,
         )
         .unwrap();
-        let sw = score_skeleton(&wide, wc).unwrap();
-        let sd = score_skeleton(&deep, wc).unwrap();
-        assert!(sw > sd, "wider/flatter should win: wide={sw} deep={sd}");
+        let sw = score_skeleton(&wide).unwrap();
+        let sd = score_skeleton(&deep).unwrap();
+        assert_eq!(
+            sw, sd,
+            "dependency depth is job truth, not a structural quality verdict"
+        );
         // a dep on an unknown task is not a valid DAG -> None (so it can never be picked).
         let bad = goose_swarm::specs_from_plan_json(
             r#"{"subtasks":[{"id":"x","depends_on":["nope"],"files":["x.py"]}]}"#,
         )
         .unwrap();
-        assert!(score_skeleton(&bad, wc).is_none());
+        assert!(score_skeleton(&bad).is_none());
     }
 
     #[test]
@@ -9870,10 +9872,18 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             clause.contains("HOW MANY MACHINES THE FLEET HAS IS IRRELEVANT"),
             "the clause must SEVER the fleet from the count, not merely omit it: {clause}"
         );
-        // The OFF path is untouched: both scaled branches still say exactly what they said.
-        assert!(skeleton_count_clause(2, true).contains("usually 2 to 2x 2"));
-        assert!(skeleton_count_clause(6, true).contains("usually 6 to 2x 6"));
-        assert!(skeleton_count_clause(2, false).contains("about 4-6"));
+        for clause in [skeleton_count_clause(true), skeleton_count_clause(false)] {
+            for banned in ["machine", "fleet", "worker", "slot", "2x", "3x"] {
+                assert!(
+                    !clause.to_lowercase().contains(banned),
+                    "every decomposition mode must be roster-blind; found {banned:?} in {clause}"
+                );
+            }
+            assert!(
+                clause.contains("acceptance"),
+                "task grain needs an acceptance boundary"
+            );
+        }
         // F853: config None now resolves ON (unwrap_or(true) at both gate sites) — the fleet-scaled
         // ask only ever binds inflationary, so job-sized is the standing default and the env/config
         // carries the opt-OUT. The serde default stays None so an explicit config choice is visible.
@@ -10303,38 +10313,21 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(cfg.persona);
     }
 
-    /// The architect's subtask-count ask must AGREE WITH ITSELF at every fleet size. It did not: the worked
-    /// example stayed at a 3-device fleet's numbers after the argument became slots.
+    /// Both architect modes are job-defined. The function has no roster argument, which makes it impossible
+    /// for a one-, two-, or hundred-node simulation to alter the requested task count.
     #[test]
-    fn the_skeleton_count_ask_never_contradicts_its_own_worked_example() {
-        // A 3-device weight-2 fleet — the bed this was measured on — is SIX slots.
-        let six = skeleton_count_clause(6, false);
-        assert!(
-            six.contains("2x to 3x 6"),
-            "formula must quote the fleet: {six}"
-        );
-        assert!(
-            six.contains("about 12-18"),
-            "example must equal the formula: {six}"
-        );
-        // ⚠ THE REGRESSION ITSELF. This literal was correct for devices and wrong for slots, and it survived
-        // the change that made it wrong because nothing checked the sentence against itself.
-        assert!(
-            !six.contains("6-9"),
-            "the stale device-era example is back: {six}"
-        );
-        assert!(!six.contains("3-device"), "no hardcoded fleet size: {six}");
-
-        // Fleet-relative at both extremes — a swarm is 2 units or 100.
-        assert!(skeleton_count_clause(2, false).contains("about 4-6"));
-        assert!(skeleton_count_clause(100, false).contains("about 200-300"));
-
-        // The convergent clause states a single target and carries no worked example to drift.
-        let conv = skeleton_count_clause(6, true);
-        assert!(conv.contains("usually 6 to 2x 6"));
-        assert!(
-            !conv.contains("about"),
-            "converge must stay a single anchor: {conv}"
+    fn every_skeleton_count_ask_is_roster_blind() {
+        let ordinary = skeleton_count_clause(false);
+        let convergent = skeleton_count_clause(true);
+        for clause in [&ordinary, &convergent] {
+            assert!(clause.contains("acceptance"));
+            assert!(!clause.contains("about"));
+            assert!(!clause.contains("usually"));
+            assert!(!clause.contains("fleet"));
+        }
+        assert_ne!(
+            ordinary, convergent,
+            "the converge control still has a real role"
         );
     }
 
@@ -14758,7 +14751,6 @@ fn plan_covers_backbone(plan_json: &str, backbone: &[String]) -> bool {
 /// same per-candidate diagnostics prefixed by `label`. Returns (best `(score, json)`, valid_specs).
 fn select_best_skeleton(
     candidates: Vec<String>,
-    worker_count: usize,
     label: &str,
 ) -> (Option<(i64, String)>, Vec<Vec<goose_swarm::TaskSpec>>) {
     let mut best: Option<(i64, String)> = None;
@@ -14771,7 +14763,7 @@ fn select_best_skeleton(
                 continue;
             }
         };
-        match score_skeleton(&specs, worker_count) {
+        match score_skeleton(&specs) {
             Some(score) => {
                 eprintln!(
                     "  · {label}candidate {i}: score {score} ({} subtasks)",
@@ -14908,37 +14900,22 @@ fn plan_json_from_specs(specs: &[goose_swarm::TaskSpec]) -> String {
     serde_json::to_string(&serde_json::json!({ "subtasks": subtasks })).unwrap_or_default()
 }
 
-/// Score a candidate plan SKELETON for best-of-N selection. Pure-Rust, no LLM. Returns `None` if the
-/// skeleton is not a valid DAG (validity borrowed from the same `Dag::from_specs` the live path uses,
-/// so a scored candidate is guaranteed loadable). Higher = a wider, flatter, less-conflicting plan:
-/// rewards independent (zero-dep) parallel subtasks + adequate count, penalizes deep dependency chains,
-/// overlapping files, and chokepoints (one task most others depend on).
-/// How many subtasks the architect is asked for, as a function of the fleet.
-///
-/// ⚠ EVERY COUNT IN HERE IS DERIVED FROM `worker_count`. NONE IS A LITERAL. The non-convergent clause used
-/// to read "(e.g. ~6-9 for a 3-device fleet)", which was exactly 2x-3x while `worker_count` was
-/// `devices.len()`. `00563c6ea` changed that argument to SLOTS — a 3-device weight-2 fleet is 6 — and left
-/// the worked example behind, so the one sentence then asked for 12-18 and offered ~6-9 as the example of
-/// it. A weak model anchors on the concrete number, and this fork's standing rule is that a directive scales
-/// to the fleet because a swarm is 2 units or 100.
-///
-/// `converge` (retarget) uses a SINGLE target rather than a range so independent drafts cluster on the same
-/// module count; scaffolding (per-module tests + the sink) is added on top and excluded from agreement.
-fn skeleton_count_clause(worker_count: usize, converge: bool) -> String {
+/// The architect's decomposition rule. Task existence is a property of the requested system, never of the
+/// machines currently attached to it. `converge` may ask independent drafts to prefer conventional seams,
+/// but cannot give them a fleet-derived target count.
+fn skeleton_count_clause(converge: bool) -> String {
     if converge {
-        format!(
-            "decompose into the FEWEST cohesive module subtasks that FULLY cover the spec — ONE per \
-             distinct concern/responsibility the spec names (e.g. parsing, persistence, the commands/\
-             business logic, reporting, the cli entry), NOT one catch-all module and NOT a separate \
-             subtask per command. Pick the CONVENTIONAL module boundaries a senior engineer would, so \
-             independent drafts converge on the SAME set (target is usually {worker_count} to 2x {worker_count})"
-        )
+        "decompose into cohesive tasks with independent acceptance closure: each task must own one \
+         requirement outcome, the artifacts that implement it, and the evidence that proves it. Prefer \
+         conventional module boundaries so independent drafts converge on the same semantic seams. Do not \
+         merge distinct outcomes and do not split one outcome merely to create more runnable work"
+            .to_string()
     } else {
-        format!(
-            "aim for about 2x to 3x {worker_count} total (about {lo}-{hi} for this fleet), NOT one per command/function",
-            lo = 2 * worker_count,
-            hi = 3 * worker_count
-        )
+        "decompose into cohesive tasks with independent acceptance closure: each task must own one \
+         requirement outcome, the artifacts that implement it, and the evidence that proves it. Split only \
+         where the children have non-overlapping ownership and can each be accepted without assuming the \
+         other child is complete"
+            .to_string()
     }
 }
 
@@ -14969,70 +14946,23 @@ fn spec_sized_count_clause() -> String {
         .to_string()
 }
 
-fn score_skeleton(specs: &[goose_swarm::TaskSpec], worker_count: usize) -> Option<i64> {
+/// Validate and rank a skeleton using only facts the engine can establish structurally. This deliberately
+/// does not reward task count, root count, depth, or fan-in: those are properties of the job's real dependency
+/// graph, and preferring one shape to fill the current fleet rewrites the job. Higher means fewer ownership
+/// conflicts; semantic coverage remains a model/judge responsibility rather than a deterministic verdict.
+fn score_skeleton(specs: &[goose_swarm::TaskSpec]) -> Option<i64> {
     goose_swarm::Dag::from_specs(specs.to_vec()).ok()?;
-    let wc = worker_count.max(1) as i64;
-    let n = specs.len() as i64;
-    if n == 0 {
+    if specs.is_empty() {
         return None;
     }
-    // Parallel width: independent (zero-dep) subtasks, excluding the integrate-verify sink.
-    let independent = specs
-        .iter()
-        .filter(|s| s.deps.is_empty() && s.id != "integrate-verify")
-        .count() as i64;
-    let indep_score = independent.min(wc) * 10;
-    // Longest dependency chain (DAG validated above, so acyclic) — penalize depth beyond 2.
-    let deps_of: std::collections::HashMap<&str, &[String]> = specs
-        .iter()
-        .map(|s| (s.id.as_str(), s.deps.as_slice()))
-        .collect();
-    let mut depth: std::collections::HashMap<&str, i64> =
-        deps_of.keys().map(|k| (*k, 0i64)).collect();
-    for _ in 0..specs.len() {
-        let mut changed = false;
-        for (id, ds) in &deps_of {
-            let d = ds
-                .iter()
-                .filter_map(|x| depth.get(x.as_str()).copied())
-                .max()
-                .map(|m| m + 1)
-                .unwrap_or(0);
-            if d > depth[id] {
-                depth.insert(id, d);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    let max_depth = depth.values().copied().max().unwrap_or(0);
-    let depth_pen = (max_depth - 2).max(0) * 5;
-    // File overlap: files claimed by >1 subtask (scheduler serializes them — a quality, not validity, hit).
     let mut files: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
     for s in specs {
         for f in &s.owned_files {
             *files.entry(f.as_str()).or_insert(0) += 1;
         }
     }
-    let overlap_pen = files.values().filter(|&&c| c > 1).count() as i64 * 3;
-    // Chokepoint: the most-depended-on task. Penalize when it exceeds ~half the fleet width.
-    let mut fan_in: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
-    for s in specs {
-        for d in &s.deps {
-            *fan_in.entry(d.as_str()).or_insert(0) += 1;
-        }
-    }
-    let max_fan_in = fan_in.values().copied().max().unwrap_or(0);
-    let choke_pen = if max_fan_in > (wc / 2).max(1) {
-        max_fan_in * 2
-    } else {
-        0
-    };
-    // Size sanity: want at least worker_count subtasks to fill the fleet.
-    let size_score = if n >= wc { 5 } else { -(wc - n) * 2 };
-    Some(indep_score + size_score - depth_pen - overlap_pen - choke_pen)
+    let overlap_penalty: i64 = files.values().map(|count| (count - 1).max(0)).sum();
+    Some(-overlap_penalty)
 }
 
 /// True if the working dir already contains source (a marker file or a source-extension file within
@@ -17448,8 +17378,9 @@ impl GooseAgentDispatcher {
              drafted plans CONVERGE on the same structure. Do NOT over-split; do NOT invent extra modules. "
         } else if homogeneous {
             "ALL worker nodes run the SAME model (identical weights + tokenizer), so files produced \
-             independently on different nodes mesh consistently (same naming priors, same conventions). \
-             Split AGGRESSIVELY into many fine independent subtasks — do NOT fear interface divergence. "
+             independently on different nodes share naming priors and conventions. Preserve the system's real \
+             semantic boundaries; identical models are not permission to flatten dependencies or manufacture \
+             extra tasks. "
         } else {
             ""
         };
@@ -17463,7 +17394,7 @@ impl GooseAgentDispatcher {
         ) {
             spec_sized_count_clause()
         } else {
-            skeleton_count_clause(worker_count, converge)
+            skeleton_count_clause(converge)
         };
         let research_block = if research_findings.is_empty() {
             String::new()
@@ -17480,43 +17411,41 @@ impl GooseAgentDispatcher {
         } else {
             ""
         };
-        // GOOSE_SWARM_PARALLEL_TESTS: emit one test subtask PER leaf module (each depends_on only its own
-        // module) so tests become ready early and run in parallel with the cli build, instead of one
-        // monolithic test task serialized behind cli. Default OFF reproduces the original clause verbatim.
+        let mut roster_models = std::iter::once(planner_model.to_string())
+            .chain(worker_models.iter().cloned())
+            .collect::<Vec<_>>();
+        roster_models.dedup();
+        let roster_json =
+            serde_json::to_string(&roster_models).unwrap_or_else(|_| "[]".to_string());
+        let model_directive = format!(
+            "model (choose ONE exact runtime identifier from {roster_json}; never invent or rename a model)"
+        );
+        let sink_model = planner_model.to_string();
+        // Parallel tests are split by independent acceptance scope, never by available capacity. This still
+        // lets the broker overlap a module's tests with unrelated implementation without changing how many
+        // tests the same requested system has on a different roster.
         let tests_directive = if swarm_gate_cfg_bundle(
             "GOOSE_SWARM_PARALLEL_TESTS",
             load_config().parallel_tests,
             true,
         ) {
-            // Utilization principle, FLEET-RELATIVE (never a fixed count): keep however many identical,
-            // interchangeable units there are busy through the whole run; the planner scales the layout to
-            // the fleet size and decides per app. worker_count is dynamic (a swarm can be 2 units or 100).
-            format!(
-                "and organize the TESTS to keep all {worker_count} identical, interchangeable worker units \
-                 busy. The parallelism comes ENTIRELY from the dependencies, so this is the rule that \
-                 matters: make ONE unit-test subtask PER MODULE, named `test-<module>`, that imports and \
+            "and organize TESTS by acceptance ownership: make one unit-test subtask per module when that \
+                 module has an independently runnable contract, named `test-<module>`, that imports and \
                  tests ONLY that single module and therefore depends_on ONLY that one module — e.g. a \
                  `parser` module gets a `test-parser` subtask (files `test_parser`, depends_on [`parser`]). \
                  Such a test starts the instant its module is built and runs WHILE the other modules and the \
-                 entry-point are still being built; that overlap is the whole point. Do NOT organize tests \
+                 entry-point are still being built. Do NOT organize unit tests \
                  by app-level behavior (no `tests-validation`/`tests-output`/`tests-integration` subtasks) \
-                 and NEVER let a test subtask depend on the entry-point/cli or on the whole app — those can \
-                 only run at the very end while units sit idle, defeating the purpose; end-to-end behavior \
+                 and do not make a unit-test task depend on the whole app; end-to-end behavior \
                  is ALREADY checked by integrate-verify, so you never need a separate integration-test \
-                 subtask. Scale the number of per-module test subtasks to the fleet ({worker_count} units): \
-                 more independent module-tests keep a larger fleet busy; a tiny 1-module app just keeps \
-                 tests in ONE subtask (nothing to parallelize). KEEP EACH TEST SUBTASK SMALL ENOUGH TO \
-                 DESCRIBE IN A FEW LINES: if one module's coverage would need a long brief, SPLIT it into \
-                 focused sibling subtasks (`test-<module>-happy`, `test-<module>-edges`, \
-                 `test-<module>-errors`), each owning its OWN test file and depending on the same single \
-                 module. That is strictly better for the fleet — the siblings are independent, so they run \
-                 CONCURRENTLY instead of one worker grinding through every case serially. \
-                 Make each per-module test THOROUGH: because \
-                 these tests run for FREE in parallel with the rest of the build, spend that capacity on \
-                 QUALITY — cover the module's happy path AND its edge cases, invalid/error inputs and \
+                 subtask. Split one module's tests into focused siblings (`test-<module>-happy`, \
+                 `test-<module>-edges`, `test-<module>-errors`) ONLY when each sibling owns a distinct, \
+                 independently accepted behavior and its own test file; do not split to occupy machines. \
+                 KEEP EACH TEST SUBTASK SMALL ENOUGH TO DESCRIBE IN A FEW LINES. Make each per-module test \
+                 THOROUGH: cover the module's happy path AND its edge cases, invalid/error inputs and \
                  boundary conditions, each asserting the concrete expected value (never shape-only), so the \
                  module is genuinely proven correct, not just imported."
-            )
+                .to_string()
         } else {
             "and related tests into ONE test subtask.".to_string()
         };
@@ -17524,27 +17453,21 @@ impl GooseAgentDispatcher {
             format!("You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
             You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
             explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}{backbone_clause}\n\
-            There are {worker_count} PARALLEL WORKER SLOTS. Decompose into a SMALL number of COHESIVE subtasks — \
-            {count_clause}. GROUP \
-            several related commands or functions into ONE module subtask, {tests_directive} These models \
-            are SLOW (minutes per subtask), so too many tiny subtasks serialize and dominate wall-clock while adding no real \
-            parallelism past the fleet width — a handful of well-scoped subtasks finishes far sooner than 18 micro-ones. Still keep \
-            subtasks INDEPENDENT with NON-OVERLAPPING files and minimal ordering; only add a dependency when a subtask genuinely \
-            needs another's output. AVOID deep chains and chokepoints: keep dependency depth <= 2; if shared types/data-models are \
-            needed, put them in ONE TINY early subtask so dependents unblock fast — never make most subtasks depend on a single big one.\n\
-            A frozen signature-only interface for EVERY module is injected into every worker BEFORE it writes code, so a module that \
-            merely IMPORTS another's types or functions ALREADY HAS them and does NOT need to wait — do NOT add a `depends_on` for a \
-            type/interface/import need. Declare `depends_on` ONLY for a genuine build-ORDER need the frozen interface cannot satisfy \
-            (rare). Default to a FLAT FAN: make every module a root with no deps, and let the final integrate/verify subtask be the \
-            single join that depends on them — a chain (A->B->C->D) leaves the fleet idle one node at a time; a fan keeps every node busy.\n\
+            Decompose into COHESIVE subtasks — {count_clause}. GROUP several related commands or functions \
+            only when they share one acceptance outcome, {tests_directive} Every task must have NON-OVERLAPPING \
+            file ownership. Record the REAL dependency graph: add `depends_on` when a task consumes another \
+            task's generated artifact, behavior, data migration, or acceptance result. Do not add or remove an \
+            edge to make the graph wider, flatter, shallower, or better matched to current capacity. A frozen \
+            signature-only interface is supplied before implementation, so a consumer of an already-specified \
+            interface may work in parallel; a consumer of behavior or an artifact that does not exist yet must \
+            still depend on its producer.\n\
             MODULAR ARCHITECTURE (hard rule) — keep FILES small and single-responsibility. A subtask may (and for any non-trivial \
             module SHOULD) own SEVERAL small files, ONE concern each (e.g. a parser subtask owns `lexer.py`+`parser.py`+`ast.py`; a \
             models subtask owns `user.py`+`account.py`), NOT one big catch-all file. NEVER assign a single monolithic file that does \
             many unrelated things — split by responsibility. Those files must be the SAME KIND: all executable module code, or all \
             static assets, or all docs — NEVER mixed. Do NOT put a server module and an HTML/CSS/JS asset in one subtask, and do NOT \
             attach README/docs to a code subtask; they are different concerns however related they feel, they need different skills, \
-            and one worker doing both is the chokepoint another node could have taken. This keeps subtask COUNT low (good for the slow fleet) while the \
-            architecture stays modular and readable. Put any logic used by more than one subtask in the ONE early shared subtask and \
+            and one worker doing both creates an incoherent acceptance boundary. Put any logic used by more than one subtask in the ONE early shared subtask and \
             have the others IMPORT it — NEVER let two subtasks each implement the same thing; duplicate implementations of one \
             algorithm are a real defect (two copies drift apart and one silently goes wrong).\n\
             DELIVER ONLY THE APP: decompose the program's actual FUNCTIONALITY — its logic modules, the runnable entry point, and its \
@@ -17568,7 +17491,7 @@ impl GooseAgentDispatcher {
             For each subtask provide: id (kebab-case), description (2-4 lines that STAND ALONE: what to build, in which \
             file(s), and the ONE check that proves it works — a richer spec is written separately and will REPLACE this, but \
             write it as if nothing else will arrive, because sometimes nothing does; do NOT write an essay and do NOT restate \
-            the whole goal), difficulty (\"easy\"|\"hard\"), model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), \
+            the whole goal), difficulty (\"easy\"|\"hard\"), {model_directive}, \
             depends_on (list of ids; empty if independent), files (paths it owns; non-overlapping).\n\
             UNLESS the task is purely text, ALWAYS add a FINAL subtask id \"integrate-verify\" depending_on EVERY other subtask, \
             difficulty \"hard\": be EFFICIENT (do not re-read every file; rely on the test run). It RUNS `{test_cmd}` \
@@ -17888,7 +17811,7 @@ impl GooseAgentDispatcher {
             // M6: plan confidence from cross-draft AGREEMENT (self-consistency is calibrated where verbalized
             // confidence is overconfident). Low agreement = the model doesn't really know how to decompose
             // this — a signal to research more before committing (M6 step 3).
-            let (best1, valid1) = select_best_skeleton(candidates, worker_count, "");
+            let (best1, valid1) = select_best_skeleton(candidates, "");
             let (score1, json1) = match best1 {
                 Some(b) => b,
                 None => return Err(anyhow!("no valid skeleton among {n} candidates")),
@@ -18122,8 +18045,7 @@ impl GooseAgentDispatcher {
                         "dead": _dead2,
                         "secs": r2_started.elapsed().as_secs(),
                     }));
-                    let (best2, _valid2) =
-                        select_best_skeleton(candidates2, worker_count, "incremental ");
+                    let (best2, _valid2) = select_best_skeleton(candidates2, "incremental ");
                     match best2 {
                         Some((_score2_raw, json2)) => {
                             let round2_specs =
@@ -18147,7 +18069,7 @@ impl GooseAgentDispatcher {
                             merged.extend(dirty_specs.iter().cloned());
                             let ok =
                                 validate_frozen_interfaces(&frozen_carry, &dirty_specs).is_ok();
-                            match score_skeleton(&merged, worker_count) {
+                            match score_skeleton(&merged) {
                                 Some(score2) if ok && score2 > score1 => {
                                     eprintln!(
                                         "  {} incremental splice adopted (score {score1}→{score2}); confidence unchanged (round-1 free drafts)",
@@ -18207,8 +18129,7 @@ impl GooseAgentDispatcher {
                         "dead": _dead2,
                         "secs": r2_started.elapsed().as_secs(),
                     }));
-                    let (best2, _valid2) =
-                        select_best_skeleton(candidates2, worker_count, "round2 ");
+                    let (best2, _valid2) = select_best_skeleton(candidates2, "round2 ");
                     match best2 {
                         Some((score2, json2))
                             if score2 > score1 && plan_covers_backbone(&json2, &backbone) =>
@@ -18437,7 +18358,7 @@ impl GooseAgentDispatcher {
                     "depends_on": ids,
                     "files": [],
                     "difficulty": "hard",
-                    "model": "qwen/qwen3.6-27b"
+                    "model": sink_model
                 }));
                 eprintln!("  · injected missing integrate-verify sink (architect omitted it)");
             }
@@ -19007,23 +18928,23 @@ impl GooseAgentDispatcher {
         planner_model: &str,
         user_prompt: &str,
         plan_schema: serde_json::Value,
-        worker_count: usize,
+        _worker_count: usize,
         research_findings: &str,
     ) -> Result<(String, PlanConf, String)> {
         let existing_files = existing_files_manifest(&self.working_dir);
         let lang = detect_language(user_prompt, &existing_files);
         let test_cmd = lang.test_cmd();
         let system = format!("You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
-            There are {worker_count} PARALLEL WORKER SLOTS. Decompose into small INDEPENDENT subtasks \
-            (split by file / module / feature) with NON-OVERLAPPING files and NO ordering dependency, so subtasks can run in parallel. \
-            Size the decomposition to the JOB, never to the fleet: one subtask per distinct concern the spec names — do NOT add \
-            subtasks to fill idle slots, and do NOT merge distinct concerns because the fleet is small. Only add a dependency when a \
-            subtask genuinely needs another's output; an independent set is the goal.\n\
+            Decompose into cohesive tasks with independent acceptance closure: each owns one requirement \
+            outcome, its NON-OVERLAPPING files, and the concrete evidence that proves it. Task existence and \
+            dependency edges come only from the requested system, never from current fleet capacity. Add a \
+            dependency whenever a task consumes another task's generated artifact, behavior, migration, or \
+            acceptance result; do not flatten or deepen the graph for scheduling.\n\
             For each subtask provide: id (kebab-case), description (a precise self-contained spec), difficulty (\"easy\"|\"hard\"), \
-            model (\"qwen/qwen3.6-27b\" if hard else \"qwen/qwen3.6-35b-a3b\"), depends_on (list of ids; empty if independent), \
+            model (the exact runtime identifier \"{planner_model}\"), depends_on (list of ids; empty if independent), \
             files (paths it owns; non-overlapping across parallel subtasks).\n\
             UNLESS the task is purely text with nothing to integrate, ALWAYS add a FINAL subtask id \"integrate-verify\" \
-            that depends_on EVERY other subtask, difficulty \"hard\", model \"qwen/qwen3.6-27b\": it integrates the produced \
+            that depends_on EVERY other subtask, difficulty \"hard\", model \"{planner_model}\": it integrates the produced \
             files, RUNS `{test_cmd}`, and fixes EVERY failure until GREEN — including a pre-existing test that now \
             fails because the change intentionally altered behavior (EDIT that existing test to assert the new output; do not \
             stall). Then BUILD + RUN the program's ADVERTISED entry point (build first if it compiles — e.g. `npm run \
