@@ -284,9 +284,52 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     ]
                 }
             },
+            "evidence": {
+                "google": {
+                    "gemini-3.7-flash": {
+                        "inputTokenLimit": 1_048_576,
+                        "outputTokenLimit": 65_536,
+                    }
+                }
+            },
         }
+        row["context_limit"] = 1_048_576
+        row["max_output_tokens"] = 65_536
         cloud_sb7.validate_rosters([row], roster)
         row["accepted_reported_models"].append("gemini-3.7-flash-anything")
+        with self.assertRaises(SystemExit):
+            cloud_sb7.validate_rosters([row], roster)
+
+    def test_google_manifest_limits_must_match_authenticated_roster(self) -> None:
+        row = {
+            "provider": "google",
+            "model": "gemini-3.1-pro-preview",
+            "accepted_reported_models": [
+                "gemini-3.1-pro-preview",
+                "gemini-3.1-pro-preview-01-2026",
+            ],
+            "context_limit": 1_048_576,
+            "max_output_tokens": 65_536,
+        }
+        roster = {
+            "models": {"google": {"gemini-3.1-pro-preview"}},
+            "accepted_reported_models": {
+                "google": {
+                    "gemini-3.1-pro-preview": list(row["accepted_reported_models"])
+                }
+            },
+            "evidence": {
+                "google": {
+                    "gemini-3.1-pro-preview": {
+                        "inputTokenLimit": 1_048_576,
+                        "outputTokenLimit": 65_536,
+                    }
+                }
+            },
+        }
+
+        cloud_sb7.validate_rosters([row], roster)
+        row["max_output_tokens"] = 65_535
         with self.assertRaises(SystemExit):
             cloud_sb7.validate_rosters([row], roster)
 
