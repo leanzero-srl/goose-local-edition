@@ -216,6 +216,7 @@ pub fn create_custom_provider(
         setup_steps: vec![],
         fast_model: None,
         preserves_thinking,
+        openai_request_profile: Default::default(),
     };
 
     let custom_providers_dir = custom_providers_dir();
@@ -296,6 +297,7 @@ pub fn update_custom_provider(params: UpdateCustomProviderParams) -> Result<()> 
             setup_steps: existing_config.setup_steps,
             fast_model: existing_config.fast_model.clone(),
             preserves_thinking,
+            openai_request_profile: existing_config.openai_request_profile,
         };
 
         let file_path = custom_provider_file_path(&updated_config.name)?;
@@ -548,6 +550,7 @@ mod tests {
             setup_steps: Vec::new(),
             fast_model: None,
             preserves_thinking: true,
+            openai_request_profile: Default::default(),
         }
     }
 

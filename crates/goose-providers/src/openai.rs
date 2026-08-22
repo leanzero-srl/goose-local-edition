@@ -4,7 +4,7 @@ use super::retry::ProviderRetry;
 use crate::api_client::{AuthMethod, TlsConfig};
 use crate::conversation::message::Message;
 use crate::conversation::token_usage::ProviderUsage;
-use crate::declarative::{DeclarativeProviderConfig, KeyResolver};
+use crate::declarative::{DeclarativeProviderConfig, KeyResolver, OpenAiRequestProfile};
 use crate::errors::ProviderError;
 use crate::formats::openai::is_openai_responses_model;
 use crate::formats::openai::{
@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::base::{MessageStream, ProviderDescriptor};
 use crate::model::ModelConfig;
+use crate::thinking::ThinkingEffort;
 use rmcp::model::Tool;
 
 pub const OPEN_AI_PROVIDER_NAME: &str = "openai";
@@ -136,6 +137,7 @@ pub struct OpenAiProvider {
     dynamic_models: Option<bool>,
     skip_canonical_filtering: bool,
     preserve_thinking_context: bool,
+    request_profile: OpenAiRequestProfile,
     #[serde(skip)]
     n_ctx_cache: Arc<Mutex<HashMap<String, Option<usize>>>>,
 }
@@ -157,6 +159,7 @@ pub struct OpenAiProviderBuilder {
     dynamic_models: Option<bool>,
     skip_canonical_filtering: bool,
     preserve_thinking_context: bool,
+    request_profile: OpenAiRequestProfile,
 }
 
 impl OpenAiProviderBuilder {
@@ -173,6 +176,7 @@ impl OpenAiProviderBuilder {
             dynamic_models: None,
             skip_canonical_filtering: false,
             preserve_thinking_context: false,
+            request_profile: OpenAiRequestProfile::Standard,
         }
     }
 
@@ -244,6 +248,11 @@ impl OpenAiProviderBuilder {
         self
     }
 
+    pub fn request_profile(mut self, request_profile: OpenAiRequestProfile) -> Self {
+        self.request_profile = request_profile;
+        self
+    }
+
     pub fn build(self) -> OpenAiProvider {
         OpenAiProvider {
             api_client: self.api_client,
@@ -257,6 +266,7 @@ impl OpenAiProviderBuilder {
             dynamic_models: self.dynamic_models,
             skip_canonical_filtering: self.skip_canonical_filtering,
             preserve_thinking_context: self.preserve_thinking_context,
+            request_profile: self.request_profile,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -292,6 +302,7 @@ impl OpenAiProvider {
             dynamic_models: None,
             skip_canonical_filtering: false,
             preserve_thinking_context: false,
+            request_profile: OpenAiRequestProfile::Standard,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -356,7 +367,11 @@ impl OpenAiProvider {
 
     const PROVIDERS_NEEDING_STANDARD_CHAT_PARAMS: &[&str] = &["nearai"];
 
-    fn sanitize_request_for_compat(&self, mut payload: serde_json::Value) -> serde_json::Value {
+    fn sanitize_request_for_compat(
+        &self,
+        mut payload: serde_json::Value,
+        model_config: &ModelConfig,
+    ) -> serde_json::Value {
         if let Some(obj) = payload.as_object_mut() {
             if Self::PROVIDERS_NEEDING_MAX_TOKENS_REMAP.contains(&self.name.as_str()) {
                 if let Some(value) = obj.remove("max_completion_tokens") {
@@ -382,9 +397,93 @@ impl OpenAiProvider {
                     }
                 }
             }
+
+            self.apply_request_profile(obj, model_config);
         }
 
         payload
+    }
+
+    fn apply_request_profile(
+        &self,
+        payload: &mut serde_json::Map<String, serde_json::Value>,
+        model_config: &ModelConfig,
+    ) {
+        let model_name = payload
+            .get("model")
+            .and_then(|model| model.as_str())
+            .unwrap_or(&model_config.model_name)
+            .to_ascii_lowercase();
+
+        match self.request_profile {
+            OpenAiRequestProfile::DeepseekV4
+                if matches!(model_name.as_str(), "deepseek-v4-flash" | "deepseek-v4-pro") =>
+            {
+                let disabled = model_config.reasoning == Some(false)
+                    || model_config.thinking_effort() == Some(ThinkingEffort::Off);
+                payload.insert(
+                    "thinking".to_string(),
+                    serde_json::json!({"type": if disabled { "disabled" } else { "enabled" }}),
+                );
+
+                if disabled {
+                    payload.remove("reasoning_effort");
+                    return;
+                }
+
+                for unsupported in [
+                    "temperature",
+                    "top_p",
+                    "presence_penalty",
+                    "frequency_penalty",
+                    "tool_choice",
+                ] {
+                    payload.remove(unsupported);
+                }
+
+                let effort = match model_config.thinking_effort() {
+                    Some(ThinkingEffort::Max) => "max",
+                    Some(ThinkingEffort::Off) => unreachable!(),
+                    Some(_) => "high",
+                    None => payload
+                        .get("reasoning_effort")
+                        .and_then(|value| value.as_str())
+                        .map(|value| {
+                            if matches!(value, "max" | "xhigh") {
+                                "max"
+                            } else {
+                                "high"
+                            }
+                        })
+                        .unwrap_or("high"),
+                };
+                payload.insert("reasoning_effort".to_string(), serde_json::json!(effort));
+            }
+            OpenAiRequestProfile::ZaiGlm if model_name == "glm-5.3" => {
+                payload.insert(
+                    "thinking".to_string(),
+                    serde_json::json!({"type": "enabled"}),
+                );
+
+                let effort = match model_config.thinking_effort() {
+                    Some(ThinkingEffort::Off | ThinkingEffort::Low) => "low",
+                    Some(ThinkingEffort::Medium | ThinkingEffort::High) => "high",
+                    Some(ThinkingEffort::Max) => "max",
+                    None if model_config.reasoning == Some(false) => "low",
+                    None => payload
+                        .get("reasoning_effort")
+                        .and_then(|value| value.as_str())
+                        .map(|value| match value {
+                            "low" => "low",
+                            "max" | "xhigh" => "max",
+                            _ => "high",
+                        })
+                        .unwrap_or("max"),
+                };
+                payload.insert("reasoning_effort".to_string(), serde_json::json!(effort));
+            }
+            _ => {}
+        }
     }
 
     fn should_use_responses_api_for_provider(&self, model_name: &str) -> bool {
@@ -678,7 +777,7 @@ impl Provider for OpenAiProvider {
                     preserve_thinking_context: self.preserve_thinking_context,
                 },
             )?;
-            let payload = self.sanitize_request_for_compat(payload);
+            let payload = self.sanitize_request_for_compat(payload, model_config);
             let mut log = start_log(model_config, &payload)?;
 
             // This provider is the one the swarm engine actually calls (lmstudio's declarative
@@ -824,7 +923,8 @@ pub fn from_declarative_config(
         .custom_models(custom_models)
         .dynamic_models(config.dynamic_models)
         .skip_canonical_filtering(config.skip_canonical_filtering)
-        .preserve_thinking_context(config.preserves_thinking))
+        .preserve_thinking_context(config.preserves_thinking)
+        .request_profile(config.openai_request_profile))
 }
 
 pub fn parse_custom_headers(s: String) -> HashMap<String, String> {
@@ -882,8 +982,20 @@ mod tests {
             dynamic_models: None,
             skip_canonical_filtering: false,
             preserve_thinking_context: false,
+            request_profile: OpenAiRequestProfile::Standard,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn sanitize(provider: &OpenAiProvider, payload: serde_json::Value) -> serde_json::Value {
+        let model_name = payload["model"].as_str().unwrap();
+        provider.sanitize_request_for_compat(payload.clone(), &ModelConfig::new(model_name))
+    }
+
+    fn make_profile_provider(profile: OpenAiRequestProfile) -> OpenAiProvider {
+        let mut provider = make_provider("contract-test");
+        provider.request_profile = profile;
+        provider
     }
 
     #[test]
@@ -895,7 +1007,7 @@ mod tests {
             "max_completion_tokens": 16384
         });
 
-        let result = provider.sanitize_request_for_compat(payload);
+        let result = sanitize(&provider, payload);
         let obj = result.as_object().unwrap();
 
         assert!(!obj.contains_key("max_completion_tokens"));
@@ -912,7 +1024,7 @@ mod tests {
             "max_completion_tokens": 16384
         });
 
-        let result = provider.sanitize_request_for_compat(payload);
+        let result = sanitize(&provider, payload);
         let obj = result.as_object().unwrap();
 
         assert!(!obj.contains_key("max_completion_tokens"));
@@ -928,7 +1040,7 @@ mod tests {
             "max_completion_tokens": 16384
         });
 
-        let result = provider.sanitize_request_for_compat(payload);
+        let result = sanitize(&provider, payload);
         let obj = result.as_object().unwrap();
 
         assert!(obj.contains_key("max_completion_tokens"));
@@ -944,7 +1056,7 @@ mod tests {
             "max_completion_tokens": 16384
         });
 
-        let result = provider.sanitize_request_for_compat(payload);
+        let result = sanitize(&provider, payload);
         let obj = result.as_object().unwrap();
 
         assert!(obj.contains_key("max_completion_tokens"));
@@ -959,7 +1071,7 @@ mod tests {
             "messages": []
         });
 
-        let result = provider.sanitize_request_for_compat(payload.clone());
+        let result = sanitize(&provider, payload.clone());
         assert_eq!(result, payload);
     }
 
@@ -982,7 +1094,7 @@ mod tests {
             "max_completion_tokens": 16384
         });
 
-        let result = provider.sanitize_request_for_compat(payload);
+        let result = sanitize(&provider, payload);
         let obj = result.as_object().unwrap();
 
         assert!(!obj.contains_key("reasoning_effort"));
@@ -1002,12 +1114,101 @@ mod tests {
             "max_completion_tokens": 16384
         });
 
-        let result = provider.sanitize_request_for_compat(payload);
+        let result = sanitize(&provider, payload);
         let obj = result.as_object().unwrap();
 
         assert_eq!(obj.get("reasoning_effort"), Some(&json!("medium")));
         assert!(!obj.contains_key("max_completion_tokens"));
         assert_eq!(obj.get("max_tokens").unwrap(), &json!(16384));
+    }
+
+    #[test]
+    fn deepseek_v4_thinking_request_uses_native_parameters() {
+        let provider = make_profile_provider(OpenAiRequestProfile::DeepseekV4);
+        let payload = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [],
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "presence_penalty": 0.1,
+            "frequency_penalty": 0.2,
+            "tool_choice": "auto"
+        });
+
+        let result = provider.sanitize_request_for_compat(
+            payload,
+            &ModelConfig::new("deepseek-v4-pro").with_thinking_effort(ThinkingEffort::Max),
+        );
+
+        assert_eq!(result["thinking"], json!({"type": "enabled"}));
+        assert_eq!(result["reasoning_effort"], "max");
+        for omitted in [
+            "temperature",
+            "top_p",
+            "presence_penalty",
+            "frequency_penalty",
+            "tool_choice",
+        ] {
+            assert!(result.get(omitted).is_none(), "{omitted} must be omitted");
+        }
+    }
+
+    #[test]
+    fn deepseek_v4_defaults_to_high_effort_and_can_disable_thinking() {
+        let provider = make_profile_provider(OpenAiRequestProfile::DeepseekV4);
+        let payload = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [],
+            "temperature": 0.7
+        });
+
+        let enabled = provider
+            .sanitize_request_for_compat(payload.clone(), &ModelConfig::new("deepseek-v4-flash"));
+        assert_eq!(enabled["thinking"], json!({"type": "enabled"}));
+        assert_eq!(enabled["reasoning_effort"], "high");
+        assert!(enabled.get("temperature").is_none());
+
+        let disabled = provider.sanitize_request_for_compat(
+            payload,
+            &ModelConfig::new("deepseek-v4-flash").with_thinking_effort(ThinkingEffort::Off),
+        );
+        assert_eq!(disabled["thinking"], json!({"type": "disabled"}));
+        assert!(disabled.get("reasoning_effort").is_none());
+        assert_eq!(disabled["temperature"], 0.7);
+    }
+
+    #[test]
+    fn zai_glm_53_keeps_thinking_enabled_and_normalizes_effort() {
+        let provider = make_profile_provider(OpenAiRequestProfile::ZaiGlm);
+        let payload = json!({"model": "glm-5.3", "messages": []});
+
+        for (effort, expected) in [
+            (ThinkingEffort::Off, "low"),
+            (ThinkingEffort::Medium, "high"),
+            (ThinkingEffort::Max, "max"),
+        ] {
+            let result = provider.sanitize_request_for_compat(
+                payload.clone(),
+                &ModelConfig::new("glm-5.3").with_thinking_effort(effort),
+            );
+            assert_eq!(result["thinking"], json!({"type": "enabled"}));
+            assert_eq!(result["reasoning_effort"], expected);
+        }
+
+        let default = provider.sanitize_request_for_compat(payload, &ModelConfig::new("glm-5.3"));
+        assert_eq!(default["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn request_profiles_are_scoped_to_exact_model_families() {
+        let provider = make_profile_provider(OpenAiRequestProfile::DeepseekV4);
+        let payload = json!({
+            "model": "deepseek-reasoner",
+            "messages": [],
+            "temperature": 0.7
+        });
+
+        assert_eq!(sanitize(&provider, payload.clone()), payload);
     }
 
     #[test]
@@ -1132,6 +1333,7 @@ mod tests {
             setup_steps: vec![],
             fast_model: None,
             preserves_thinking: false,
+            openai_request_profile: Default::default(),
         }
     }
 
