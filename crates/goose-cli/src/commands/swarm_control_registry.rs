@@ -364,7 +364,7 @@ pub(crate) const ENVIRONMENT_ONLY_CONTROLS: &[EnvironmentOnlyControlSpec] = &[
         "GOOSE_SWARM_WEB_VOCAB",
         ControlDisposition::RemoveMerge,
     ),
-    // Runtime/profile inputs (16).
+    // Runtime/profile inputs (15).
     environment_only(
         "ai_name",
         "GOOSE_SWARM_AI_NAME",
@@ -378,11 +378,6 @@ pub(crate) const ENVIRONMENT_ONLY_CONTROLS: &[EnvironmentOnlyControlSpec] = &[
     environment_only(
         "ask_wait_secs",
         "GOOSE_SWARM_ASK_WAIT_SECS",
-        ControlDisposition::RuntimeProfile,
-    ),
-    environment_only(
-        "detail_budget_secs",
-        "GOOSE_SWARM_DETAIL_BUDGET_SECS",
         ControlDisposition::RuntimeProfile,
     ),
     environment_only(
@@ -451,7 +446,6 @@ pub(crate) const ENVIRONMENT_ONLY_CONTROLS: &[EnvironmentOnlyControlSpec] = &[
 /// rows are still real, registered controls, but consumers must use their phase-specific events until their
 /// execution resolver is shared with the run-level echo.
 pub(crate) const EFFECTIVE_ENVIRONMENT_ONLY_ECHOES: &[&str] = &[
-    "detail_budget_secs",
     "judge",
     "prereview",
     "qa",
@@ -545,7 +539,6 @@ pub(crate) const SWARM_ENV_READERS: &[&str] = &[
     "GOOSE_SWARM_DELEGATED_OK",
     "GOOSE_SWARM_DELIVERY",
     "GOOSE_SWARM_DEP_SIGNATURES",
-    "GOOSE_SWARM_DETAIL_BUDGET_SECS",
     "GOOSE_SWARM_DETAIL_MEMO",
     "GOOSE_SWARM_DIVERSE_PLAN",
     "GOOSE_SWARM_DOC_EXAMPLES",
@@ -944,7 +937,7 @@ mod tests {
         assert_eq!(env_count(ControlDisposition::RetainDisabled), 3);
         assert_eq!(env_count(ControlDisposition::Modify), 9);
         assert_eq!(env_count(ControlDisposition::RemoveMerge), 8);
-        assert_eq!(env_count(ControlDisposition::RuntimeProfile), 16);
+        assert_eq!(env_count(ControlDisposition::RuntimeProfile), 15);
     }
 
     #[test]
