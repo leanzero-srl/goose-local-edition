@@ -42,6 +42,19 @@ fn output_token_limit_tool_error(name: &str, id: &str) -> ErrorData {
     }
 }
 
+fn unsuccessful_finish_tool_error(name: &str, id: &str, finish_reason: Option<&str>) -> ErrorData {
+    let finish_reason = finish_reason
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or("missing");
+    ErrorData {
+        code: ErrorCode::INVALID_PARAMS,
+        message: Cow::from(format!(
+            "Tool arguments for {name} (id {id}) are not executable because Google ended the candidate with finishReason={finish_reason}"
+        )),
+        data: None,
+    }
+}
+
 fn get_function_call_name(metadata: &Option<ProviderMetadata>) -> Option<&str> {
     metadata
         .as_ref()
@@ -271,10 +284,7 @@ pub fn format_tools(tools: &[Tool]) -> Vec<Value> {
         .collect()
 }
 
-fn process_response_part_impl(
-    part: &Value,
-    output_token_limit_reached: bool,
-) -> Option<MessageContent> {
+fn process_response_part_impl(part: &Value, finish_reason: Option<&str>) -> Option<MessageContent> {
     let signature = part.get(THOUGHT_SIGNATURE_KEY).and_then(|v| v.as_str());
     let is_thought = part
         .get("thought")
@@ -308,11 +318,16 @@ fn process_response_part_impl(
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let name = function_call["name"].as_str().unwrap_or_default();
 
-        if output_token_limit_reached {
+        if finish_reason != Some("STOP") {
             let metadata = metadata_for_function_call(name, signature);
+            let error = if finish_reason == Some("MAX_TOKENS") {
+                output_token_limit_tool_error(name, &id)
+            } else {
+                unsuccessful_finish_tool_error(name, &id, finish_reason)
+            };
             return Some(MessageContent::tool_request_with_metadata(
                 id.clone(),
-                Err(output_token_limit_tool_error(name, &id)),
+                Err(error),
                 Some(&metadata),
             ));
         }
@@ -384,8 +399,7 @@ pub fn response_to_message(response: Value) -> Result<Message> {
     let mut content = Vec::new();
     if let Some(parts) = parts {
         for part in parts {
-            if let Some(msg_content) = process_response_part_impl(part, output_token_limit_reached)
-            {
+            if let Some(msg_content) = process_response_part_impl(part, finish_reason) {
                 content.push(msg_content);
             }
         }
@@ -577,7 +591,7 @@ where
                     if part.get("functionCall").is_some() {
                         pending_function_parts.push(part.clone());
                     } else if let Some(content) =
-                        process_response_part_impl(part, output_token_limit_reached)
+                        process_response_part_impl(part, finish_reason)
                     {
                         let message = Message::new(
                             Role::Assistant,
@@ -593,8 +607,7 @@ where
             }
             if chunk_terminal {
                 for part in pending_function_parts.drain(..) {
-                    if let Some(content) =
-                        process_response_part_impl(&part, output_token_limit_reached)
+                    if let Some(content) = process_response_part_impl(&part, finish_reason)
                     {
                         let mut message = Message::new(
                             Role::Assistant,
@@ -1135,7 +1148,8 @@ mod tests {
                             "args": {}
                         }
                     }]
-                }
+                },
+                "finishReason": "STOP"
             }]
         });
         let message = response_to_message(response).unwrap();
@@ -1168,7 +1182,8 @@ mod tests {
                             }
                         }
                     }]
-                }
+                },
+                "finishReason": "STOP"
             }]
         });
         let message = response_to_message(response).unwrap();
@@ -1186,6 +1201,37 @@ mod tests {
             );
         } else {
             panic!("Expected valid tool request");
+        }
+    }
+
+    #[test]
+    fn nonstreaming_function_calls_require_stop_finish_reason() {
+        for finish_reason in [None, Some("")] {
+            let mut candidate = json!({
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "id": "call-1",
+                            "name": "test_tool",
+                            "args": {"param": "value"}
+                        }
+                    }]
+                }
+            });
+            if let Some(finish_reason) = finish_reason {
+                candidate["finishReason"] = json!(finish_reason);
+            }
+
+            let message = response_to_message(json!({"candidates": [candidate]})).unwrap();
+            let request = message.content[0]
+                .as_tool_request()
+                .expect("function call must remain as non-executable evidence");
+            let error = request
+                .tool_call
+                .as_ref()
+                .expect_err("missing or empty finishReason must not execute");
+            assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+            assert!(error.message.contains("finishReason=missing"));
         }
     }
 
@@ -1236,7 +1282,7 @@ mod tests {
     }
 
     fn google_response(parts: Vec<Value>) -> Value {
-        json!({"candidates": [{"content": {"role": "model", "parts": parts}}]})
+        json!({"candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": "STOP"}]})
     }
 
     fn tool_result(text: &str) -> CallToolResult {
@@ -1575,6 +1621,52 @@ mod tests {
         assert_eq!(usage.usage.input_tokens, Some(15));
         assert_eq!(usage.usage.output_tokens, Some(2));
         assert_eq!(usage.usage.total_tokens, Some(17));
+    }
+
+    #[tokio::test]
+    async fn non_success_finish_reasons_never_execute_buffered_function_calls() {
+        use futures::StreamExt;
+
+        for finish_reason in ["MALFORMED_FUNCTION_CALL", "TOO_MANY_TOOL_CALLS"] {
+            let lines = vec![
+                Ok(r#"data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"id":"call-1","name":"test_tool","args":{"param":"value"}}}]}}],"modelVersion":"gemini-3.7-flash-08-2026"}"#.to_string()),
+                Ok(format!(
+                    r#"data: {{"candidates":[{{"content":{{"role":"model","parts":[]}},"finishReason":"{finish_reason}"}}],"usageMetadata":{{"promptTokenCount":5,"candidatesTokenCount":2,"totalTokenCount":7}}}}"#
+                )),
+            ];
+            let stream = Box::pin(futures::stream::iter(lines));
+            let mut parsed = std::pin::pin!(response_to_streaming_message(stream));
+            let mut requests = Vec::new();
+            let mut reported_usage = None;
+
+            while let Some(result) = parsed.next().await {
+                let (message, usage) = result.unwrap();
+                if let Some(message) = message {
+                    requests.extend(message.content.into_iter().filter_map(|content| {
+                        if let MessageContent::ToolRequest(request) = content {
+                            Some(request)
+                        } else {
+                            None
+                        }
+                    }));
+                }
+                reported_usage = usage.or(reported_usage);
+            }
+
+            assert_eq!(requests.len(), 1);
+            let error = requests
+                .pop()
+                .unwrap()
+                .tool_call
+                .expect_err("non-success Gemini function calls must not execute");
+            assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+            assert!(error.message.contains(finish_reason));
+            let usage = reported_usage.expect("terminal usage must still settle");
+            assert_eq!(usage.model, "gemini-3.7-flash-08-2026");
+            assert_eq!(usage.usage.input_tokens, Some(5));
+            assert_eq!(usage.usage.output_tokens, Some(2));
+            assert_eq!(usage.usage.total_tokens, Some(7));
+        }
     }
 
     #[tokio::test]

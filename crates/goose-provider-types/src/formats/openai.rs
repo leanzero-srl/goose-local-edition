@@ -62,6 +62,23 @@ fn output_token_limit_tool_error(function_name: &str, id: &str) -> ErrorData {
     }
 }
 
+fn unproven_tool_terminal_error(
+    function_name: &str,
+    id: &str,
+    finish_reason: Option<&str>,
+) -> ErrorData {
+    let finish_reason = finish_reason
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or("missing");
+    ErrorData {
+        code: ErrorCode::INVALID_PARAMS,
+        message: Cow::from(format!(
+            "Tool arguments for {function_name} (id {id}) are not executable because the provider did not report a successful tool-call terminal reason (finish_reason={finish_reason})"
+        )),
+        data: None,
+    }
+}
+
 fn is_reserved_request_param_key(key: &str) -> bool {
     matches!(key, "messages" | "model" | "stream" | "stream_options")
 }
@@ -712,10 +729,15 @@ pub fn format_tools(tools: &[Tool]) -> anyhow::Result<Vec<Value>> {
 
 /// Convert OpenAI's API response to internal Message format
 pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
-    let output_token_limit_reached = response
+    response_to_message_impl(response, crate::retry::terminal_safe_retries_enabled())
+}
+
+fn response_to_message_impl(response: &Value, terminal_safe: bool) -> anyhow::Result<Message> {
+    let finish_reason = response
         .pointer("/choices/0/finish_reason")
-        .and_then(Value::as_str)
-        == Some("length");
+        .and_then(Value::as_str);
+    let output_token_limit_reached = finish_reason == Some("length");
+    let tool_terminal_proven = matches!(finish_reason, Some("tool_calls" | "function_call"));
     let Some(original) = response
         .get("choices")
         .and_then(|c| c.get(0))
@@ -800,6 +822,19 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
                     content.push(MessageContent::tool_request_with_metadata(
                         id.clone(),
                         Err(output_token_limit_tool_error(&function_name, &id)),
+                        metadata.as_ref(),
+                    ));
+                    continue;
+                }
+
+                if terminal_safe && !tool_terminal_proven {
+                    content.push(MessageContent::tool_request_with_metadata(
+                        id.clone(),
+                        Err(unproven_tool_terminal_error(
+                            &function_name,
+                            &id,
+                            finish_reason,
+                        )),
                         metadata.as_ref(),
                     ));
                     continue;
@@ -3201,6 +3236,67 @@ mod tests {
             assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
             assert!(error.message.contains("output-token limit"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn terminal_safe_nonstreaming_tools_require_successful_tool_finish_reason() -> anyhow::Result<()>
+    {
+        for finish_reason in [
+            None,
+            Some(""),
+            Some("stop"),
+            Some("content_filter"),
+            Some("future_reason"),
+        ] {
+            let mut choice = json!({
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "test_tool", "arguments": "{}"}
+                    }]
+                }
+            });
+            if let Some(finish_reason) = finish_reason {
+                choice["finish_reason"] = json!(finish_reason);
+            }
+
+            let message = response_to_message_impl(&json!({"choices": [choice]}), true)?;
+            let request = message.content[0]
+                .as_tool_request()
+                .expect("tool payload must remain as non-executable evidence");
+            let error = request
+                .tool_call
+                .as_ref()
+                .expect_err("unproven terminal tool call must not execute");
+            assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+            assert!(error.message.contains("terminal reason"));
+        }
+
+        for finish_reason in ["tool_calls", "function_call"] {
+            let response = json!({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "test_tool", "arguments": "{}"}
+                        }]
+                    },
+                    "finish_reason": finish_reason
+                }]
+            });
+            let message = response_to_message_impl(&response, true)?;
+            assert!(message.content[0]
+                .as_tool_request()
+                .unwrap()
+                .tool_call
+                .is_ok());
+        }
+
         Ok(())
     }
 
