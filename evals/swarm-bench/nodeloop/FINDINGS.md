@@ -21039,3 +21039,29 @@ ONE REMAINING TRAP, unfixed by design choice: the harness bridges the prior log 
 `<prev>/run.jsonl` while this bench's --log-file lands NESTED, so copy the nested log to the
 partial tree's top level before resuming. And resume RE-RUNS previously completed tasks on
 purpose (a worker overwrites its own files).
+
+## F923
+
+**Detail workers prototype real code in the SHARED tree, then `rm` it — the tree's file count
+is not a build-progress signal during the detail fan.** r2 (qwen3.8, sb-7) went from 9 .py files
+(22 KB incl. `app/ledgerd/events.py` 7.5 KB, `outbox.py` 5.6 KB, two `__main__.py`) at T+3.0h to
+3 files at T+3.5h. Nothing failed and nothing was lost: five detail activity digests carry
+explicit scratch-and-clean shell calls — `Created app/vendor_client.py (2 lines)` then
+`rm -f app/vendor_client.py; rmdir app 2>/dev/null`, and `rm -f tests/test_webhooks.py &&
+rmdir tests`. The models write a throwaway implementation to check the contract is buildable,
+then tidy up. `rmdir` cannot touch a non-empty dir and each `rm -f` names only the worker's own
+scratch path, so no cross-worker deletion happened here.
+
+Two consequences that DO matter:
+
+1. **`require_advertised_entry_files` writes nothing to disk** (single call site, swarm.rs:34520)
+   — it only injects the path into the plan's `owned_files`. So the `app/__main__.py` sitting in
+   the tree at the end of the detail fan is *scratch*, not an engine guarantee. If the owning
+   build task later fails, that scratch is what scoring sees.
+2. **Byte-identical survival is the detector.** Snapshotted the three survivors'
+   sha1 to `<tree>/.detail_scratch_snapshot.txt` at detail-end; any file still matching its
+   detail-phase hash at gate time is a file NO build worker ever wrote — the F911 package-entry
+   class wearing a disguise. Free to check, needs no rebuild.
+
+Monitor note: the "N py files" line in the r2 health check counts scratch during the detail fan.
+Treat it as progress only from the build wave onward.
