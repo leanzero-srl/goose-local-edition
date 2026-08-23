@@ -495,11 +495,64 @@ fn dispatch_prefers_fastest_node(is_hard: bool, attempts: u32) -> bool {
     is_hard || attempts >= 2
 }
 
+type SalvageArtifactSnapshot = BTreeMap<String, Option<(Vec<u8>, u64, u32)>>;
+
+#[cfg(unix)]
+fn salvage_artifact_mode(metadata: &std::fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode()
+}
+
+#[cfg(not(unix))]
+fn salvage_artifact_mode(metadata: &std::fs::Metadata) -> u32 {
+    u32::from(metadata.permissions().readonly())
+}
+
+/// Exact artifact bytes present when a task first receives a worker. A provisional receipt proves
+/// only that complete bytes exist now; this snapshot separately proves that the task produced a
+/// change during this run instead of inheriting a non-empty file that was already on disk.
+fn salvage_artifact_snapshot(owned_files: &[String]) -> SalvageArtifactSnapshot {
+    owned_files
+        .iter()
+        .map(|path| {
+            let evidence = std::fs::symlink_metadata(path).ok().and_then(|metadata| {
+                if !metadata.is_file() || metadata.file_type().is_symlink() {
+                    return None;
+                }
+                let bytes = std::fs::read(path).ok()?;
+                Some((
+                    Sha256::digest(&bytes).to_vec(),
+                    metadata.len(),
+                    salvage_artifact_mode(&metadata),
+                ))
+            });
+            (path.clone(), evidence)
+        })
+        .collect()
+}
+
 fn provisional_task_receipt(
     spec: &TaskSpec,
     attempt: u32,
     reason: SalvageReason,
+    baseline: &SalvageArtifactSnapshot,
 ) -> Option<ProvisionalTaskReceipt> {
+    if salvage_artifact_snapshot(&spec.owned_files) == *baseline {
+        return None;
+    }
+
+    // ProgressWatchdog carries the canonical test/manifest eligibility policy. Probe it even for a
+    // deterministic Accept so changing the reason cannot turn an ineligible test or manifest task
+    // into salvageable work.
+    mint_provisional_task_receipt(
+        Path::new("."),
+        &spec.id,
+        attempt,
+        &task_contract_version(spec),
+        SalvageReason::ProgressWatchdog,
+        &spec.owned_files,
+    )?;
+
     mint_provisional_task_receipt(
         Path::new("."),
         &spec.id,
@@ -515,11 +568,12 @@ fn stall_salvage_receipt(
     is_content: bool,
     spec: &TaskSpec,
     attempt: u32,
+    baseline: &SalvageArtifactSnapshot,
 ) -> Option<ProvisionalTaskReceipt> {
     if !enabled || is_content {
         return None;
     }
-    provisional_task_receipt(spec, attempt, SalvageReason::StallExhausted)
+    provisional_task_receipt(spec, attempt, SalvageReason::StallExhausted, baseline)
 }
 
 /// A pool device = one LM Link model id with a capacity weight.
@@ -547,8 +601,12 @@ pub struct RunReport {
     pub done: Vec<TaskId>,
     /// Tasks whose complete artifact bytes survived but still require the full repair ruler.
     pub salvaged: Vec<TaskId>,
+    /// Green-blocking tasks: terminal failures plus every salvage whose FullRepairRuler authority
+    /// remains unresolved. A salvaged id therefore appears in both `salvaged` and `failed` until a
+    /// typed full-ruler consumer exists; existing CLI consumers fail closed by reading this field.
     pub failed: Vec<TaskId>,
     /// Ids of opportunistic/replanner-added (bonus) tasks — their failure must NOT fail the run.
+    /// Unverified salvage is never bonus-exempt and is omitted from this projection.
     pub bonus: Vec<TaskId>,
     /// Owned files carried by every DONE or SALVAGED task in the FINAL dag — including files added by
     /// replan/split after the caller's pre-run snapshot. Salvaged files remain in verification scope;
@@ -562,6 +620,26 @@ pub struct RunReport {
     pub tasks: Vec<TaskOutcome>,
     /// Aggregates per device for cluster verification.
     pub per_device: HashMap<String, DeviceSummary>,
+}
+
+fn fail_closed_report_classification(
+    mut failed: Vec<TaskId>,
+    salvaged: &[TaskId],
+    bonus_ids: &HashSet<TaskId>,
+) -> (Vec<TaskId>, Vec<TaskId>) {
+    // No FullRepairRuler consumer exists yet. Preserve the provisional classification, but put
+    // every unresolved salvage in the field existing delivery/CLI consumers already treat as
+    // authoritative for a non-green run.
+    failed.extend(salvaged.iter().cloned());
+    failed.sort();
+    failed.dedup();
+    let mut bonus: Vec<TaskId> = bonus_ids
+        .iter()
+        .filter(|id| !salvaged.contains(id))
+        .cloned()
+        .collect();
+    bonus.sort();
+    (failed, bonus)
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1072,6 +1150,9 @@ struct State {
     /// interleave. If that invariant is ever relaxed this must become a per-task map.
     judge_node: Option<String>,
     task_completion: HashMap<String, TaskCompletionDisposition>,
+    /// Artifact state at the task's first claim. Salvage must prove the current artifact set differs;
+    /// a non-empty file that predates the worker is evidence of existence, not evidence of work.
+    salvage_artifact_baselines: HashMap<TaskId, SalvageArtifactSnapshot>,
     idle_jobs: u32,
     /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): rotating review-dimension index for idle nodes during the
     /// sink, so successive idle reviews cover different angles.
@@ -1756,6 +1837,9 @@ impl State {
                 n.spec.replan_authority.clone(),
             )
         };
+        self.salvage_artifact_baselines
+            .entry(tid.clone())
+            .or_insert_with(|| salvage_artifact_snapshot(&files));
         for f in &files {
             self.held_files.insert(f.clone());
         }
@@ -1930,10 +2014,12 @@ impl State {
                 let provisional = salvaged
                     .then(|| {
                         let node = self.dag.tasks.get(tid)?;
+                        let baseline = self.salvage_artifact_baselines.get(tid)?;
                         provisional_task_receipt(
                             &node.spec,
                             attempt,
                             SalvageReason::ProgressWatchdog,
+                            baseline,
                         )
                     })
                     .flatten();
@@ -2085,11 +2171,13 @@ impl State {
                 };
                 if exhausted {
                     let provisional = self.dag.tasks.get(tid).and_then(|node| {
+                        let baseline = self.salvage_artifact_baselines.get(tid)?;
                         stall_salvage_receipt(
                             self.degrade_on_stall,
                             is_content,
                             &node.spec,
                             attempt,
+                            baseline,
                         )
                     });
                     let attempts = self.attempt_log[tid].len() as u32;
@@ -2737,10 +2825,12 @@ impl State {
             (still_live && outcome.verdict == Verdict::Accept && outcome.deterministic)
                 .then(|| {
                     self.dag.tasks.get(tid).and_then(|node| {
+                        let baseline = self.salvage_artifact_baselines.get(tid)?;
                         provisional_task_receipt(
                             &node.spec,
                             attempt,
                             SalvageReason::DeterministicAccept,
+                            baseline,
                         )
                     })
                 })
@@ -2936,7 +3026,13 @@ impl State {
                 && matches!(outcome.verdict, Verdict::Looping))
             .then(|| {
                 self.dag.tasks.get(tid).and_then(|node| {
-                    provisional_task_receipt(&node.spec, attempt, SalvageReason::FinalizeSpin)
+                    let baseline = self.salvage_artifact_baselines.get(tid)?;
+                    provisional_task_receipt(
+                        &node.spec,
+                        attempt,
+                        SalvageReason::FinalizeSpin,
+                        baseline,
+                    )
                 })
             })
             .flatten();
@@ -3415,10 +3511,8 @@ impl State {
         }
         done.sort();
         salvaged.sort();
-        failed.sort();
+        let (failed, bonus) = fail_closed_report_classification(failed, &salvaged, &self.bonus_ids);
         tasks.sort_by(|a, b| a.task_id.cmp(&b.task_id));
-        let mut bonus: Vec<TaskId> = self.bonus_ids.iter().cloned().collect();
-        bonus.sort();
         let mut planned_files: Vec<String> = {
             let mut set = std::collections::BTreeSet::new();
             for n in self.dag.tasks.values() {
@@ -3853,6 +3947,7 @@ impl Scheduler {
             judge_running: false,
             judge_node: None,
             task_completion: HashMap::new(),
+            salvage_artifact_baselines: HashMap::new(),
             idle_jobs: 0,
             sink_review_dim: 0,
             last_judged: HashMap::new(),
@@ -4630,6 +4725,20 @@ mod salvage_tests {
         assert!(!off("1") && !off("true") && !off("anything"));
     }
 
+    #[test]
+    fn bonus_salvage_still_blocks_green_without_full_ruler_authority() {
+        let salvaged = vec!["opportunistic-review".to_string()];
+        let bonus_ids = HashSet::from(["opportunistic-review".to_string()]);
+
+        let (failed, bonus) = fail_closed_report_classification(Vec::new(), &salvaged, &bonus_ids);
+
+        assert_eq!(failed, salvaged);
+        assert!(
+            bonus.is_empty(),
+            "bonus exemption cannot launder salvage green"
+        );
+    }
+
     fn provisional_fixture(name: &str, bytes: &str) -> (tempfile::TempDir, String) {
         let dir = tempfile::Builder::new()
             .prefix("provisional-")
@@ -4719,18 +4828,22 @@ mod salvage_tests {
             subsplit: Vec::new(),
             replan_authority: None,
         };
+        let baseline = salvage_artifact_snapshot(&spec.owned_files);
 
-        assert!(stall_salvage_receipt(true, false, &spec, 2).is_some());
-        assert!(stall_salvage_receipt(false, false, &spec, 2).is_none());
-        assert!(stall_salvage_receipt(true, true, &spec, 2).is_none());
+        assert!(stall_salvage_receipt(true, false, &spec, 2, &baseline).is_none());
+        std::fs::write(&main, "package main\nfunc main(){ println(\"ready\") }\n").unwrap();
+        assert!(stall_salvage_receipt(false, false, &spec, 2, &baseline).is_none());
+        assert!(stall_salvage_receipt(true, true, &spec, 2, &baseline).is_none());
 
         let mut missing = spec.clone();
         missing.owned_files.push("missing.go".into());
-        assert!(stall_salvage_receipt(true, false, &missing, 2).is_none());
+        let missing_baseline = salvage_artifact_snapshot(&missing.owned_files);
+        assert!(stall_salvage_receipt(true, false, &missing, 2, &missing_baseline).is_none());
 
         let mut owns_nothing = spec.clone();
         owns_nothing.owned_files.clear();
-        assert!(stall_salvage_receipt(true, false, &owns_nothing, 2).is_none());
+        let empty_baseline = salvage_artifact_snapshot(&owns_nothing.owned_files);
+        assert!(stall_salvage_receipt(true, false, &owns_nothing, 2, &empty_baseline).is_none());
 
         let (_tests, test_file) =
             provisional_fixture("tests/test_cli.py", "def test_cli(): pass\n");
@@ -4744,13 +4857,52 @@ mod salvage_tests {
             subsplit: Vec::new(),
             replan_authority: None,
         };
-        assert!(stall_salvage_receipt(true, false, &test_spec, 2).is_none());
+        let test_baseline = salvage_artifact_snapshot(&test_spec.owned_files);
+        assert!(stall_salvage_receipt(true, false, &test_spec, 2, &test_baseline).is_none());
 
-        let receipt = stall_salvage_receipt(true, false, &spec, 2).unwrap();
+        let receipt = stall_salvage_receipt(true, false, &spec, 2, &baseline).unwrap();
         assert_eq!(receipt.task_id(), "cli-entry");
         assert_eq!(receipt.reason(), SalvageReason::StallExhausted);
         assert_eq!(receipt.artifacts().len(), 1);
         assert!(receipt.artifacts().contains_key(&main));
+    }
+
+    #[test]
+    fn deterministic_accept_cannot_bypass_test_or_manifest_salvage_eligibility() {
+        for (id, path, initial, changed) in [
+            (
+                "feature-tests",
+                "tests/test_feature.py",
+                "def test_feature(): pass\n",
+                "def test_feature(): assert True\n",
+            ),
+            (
+                "dependencies",
+                "Cargo.toml",
+                "[package]\nname='before'\n",
+                "[package]\nname='after'\n",
+            ),
+        ] {
+            let (_dir, owned) = provisional_fixture(path, initial);
+            let spec = TaskSpec {
+                id: id.into(),
+                description: format!("implement {id}"),
+                difficulty: Difficulty::Easy,
+                preferred_model: None,
+                owned_files: vec![owned.clone()],
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+                replan_authority: None,
+            };
+            let baseline = salvage_artifact_snapshot(&spec.owned_files);
+            std::fs::write(&owned, changed).unwrap();
+
+            assert!(
+                provisional_task_receipt(&spec, 0, SalvageReason::DeterministicAccept, &baseline,)
+                    .is_none(),
+                "deterministic Accept must not make `{id}` salvage-eligible"
+            );
+        }
     }
 
     /// THE SINK IS THE TASK THIS EXISTS FOR, AND IT WAS THE ONE TASK EXCLUDED.

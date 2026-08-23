@@ -1,3 +1,15 @@
+use crate::broker::{
+    AdmissionReceipt, AuthorityScope, LocalCompletionKind, ProviderTerminalKind, WorkRole,
+};
+use crate::semantic_control::{
+    semantic_observation_task_version, AdmittedSemanticObservationHandle,
+    AdmittedSemanticObservationReceipt,
+};
+use crate::semantic_observation::{
+    AcceptanceCriterionSnapshot, ArtifactExcerptSnapshot, ParsedSemanticObservation,
+    SealedSemanticObservationSnapshot, SemanticObservationBody, SemanticObservationSnapshotDraft,
+    SemanticTraceSnapshot, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+};
 use anyhow::{anyhow, bail, Result};
 use fs2::FileExt;
 use regex::Regex;
@@ -9,10 +21,10 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex as StdMutex, OnceLock};
 
 const REPAIR_COMPOSITION_PROTOCOL: &str = "goose-repair-composition-v3";
-const SEMANTIC_REVIEW_PROTOCOL: &str = "goose-repair-semantic-review-v1";
+const SEMANTIC_REVIEW_PROTOCOL: &str = "goose-repair-semantic-review-v2";
 const PROVISIONAL_RECEIPT_PROTOCOL: &str = "goose-provisional-task-v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -294,6 +306,7 @@ pub enum GateId {
     Ruler,
 }
 
+#[allow(dead_code)]
 impl GateId {
     fn invariant_name(self) -> &'static str {
         match self {
@@ -321,6 +334,7 @@ pub enum SubjectRef {
     Runtime(String),
 }
 
+#[allow(dead_code)]
 impl SubjectRef {
     fn stable_name(&self) -> String {
         match self {
@@ -349,26 +363,6 @@ pub enum DefectKind {
     RequirementViolation,
     GateUnestablished,
     InvariantViolation,
-}
-
-impl DefectKind {
-    fn invariant_name(self) -> &'static str {
-        match self {
-            Self::RuntimeBoot => "runtime_boot",
-            Self::TestCollection => "test_collection",
-            Self::TestFailure => "test_failure",
-            Self::PlannedTaskFailure => "planned_task_failure",
-            Self::ProvisionalCompletion => "provisional_completion",
-            Self::MissingArtifact => "missing_artifact",
-            Self::CrossModuleContract => "cross_module_contract",
-            Self::UnsafeNetworkCall => "unsafe_network_call",
-            Self::MissingDomTarget => "missing_dom_target",
-            Self::StyleMarkupMismatch => "style_markup_mismatch",
-            Self::RequirementViolation => "requirement_violation",
-            Self::GateUnestablished => "gate_unestablished",
-            Self::InvariantViolation => "invariant_violation",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -447,6 +441,7 @@ impl EvidenceRef {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FindingProvenance {
     ruler_id: String,
+    ruler_authority: String,
     ruler_leg: RulerLegId,
     gate: GateId,
     first_seen_tree: String,
@@ -457,6 +452,7 @@ pub struct FindingProvenance {
 pub struct DefectObservation {
     id: DefectId,
     provenance: FindingProvenance,
+    causal_key: String,
     requirement_ids: BTreeSet<RequirementId>,
     subjects: BTreeSet<SubjectRef>,
     kind: DefectKind,
@@ -497,6 +493,7 @@ impl DefectObservation {
 
 pub struct FindingInput<'a> {
     pub gate: GateId,
+    pub causal_key: &'a str,
     pub rendered: &'a str,
     pub known_files: &'a [String],
     pub explicit_subjects: BTreeSet<SubjectRef>,
@@ -507,15 +504,40 @@ pub struct FindingInput<'a> {
 pub struct RulerIdentity {
     id: String,
     required_legs: BTreeSet<RulerLegId>,
+    authority_nonce: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) struct EngineRulerAuthority {
+    nonce: String,
+}
+
+#[allow(dead_code)]
+impl EngineRulerAuthority {
+    pub(crate) fn mint() -> Self {
+        Self {
+            nonce: random_authority_nonce("repair-ruler"),
+        }
+    }
 }
 
 impl RulerIdentity {
-    pub fn new(id: impl Into<String>, required_legs: BTreeSet<RulerLegId>) -> Result<Self> {
+    #[allow(dead_code)]
+    pub(crate) fn new(
+        authority: &EngineRulerAuthority,
+        id: impl Into<String>,
+        required_legs: BTreeSet<RulerLegId>,
+    ) -> Result<Self> {
         let id = id.into();
         if id.trim().is_empty() || required_legs.is_empty() {
             bail!("repair ruler identity and required legs must be non-empty");
         }
-        Ok(Self { id, required_legs })
+        Ok(Self {
+            id,
+            required_legs,
+            authority_nonce: authority.nonce.clone(),
+        })
     }
 
     pub fn id(&self) -> &str {
@@ -538,7 +560,9 @@ pub struct DefectLedger {
 }
 
 impl DefectLedger {
-    pub fn new(
+    #[allow(dead_code)]
+    pub(crate) fn new(
+        authority: &EngineRulerAuthority,
         tree_hash: impl Into<String>,
         ruler: RulerIdentity,
         established_legs: BTreeSet<RulerLegId>,
@@ -546,6 +570,9 @@ impl DefectLedger {
         observations: impl IntoIterator<Item = DefectObservation>,
     ) -> Result<Self> {
         let tree_hash = tree_hash.into();
+        if ruler.authority_nonce != authority.nonce {
+            bail!("repair ledger ruler was not minted by this engine authority");
+        }
         if tree_hash.trim().is_empty() || requirements.is_empty() {
             bail!("repair ledger requires a tree identity and authoritative requirements");
         }
@@ -565,8 +592,10 @@ impl DefectLedger {
                 Some(existing) => {
                     let mut same = existing.clone();
                     same.evidence.clear();
+                    same.invariant.clear();
                     let mut incoming = observation.clone();
                     incoming.evidence.clear();
+                    incoming.invariant.clear();
                     if same != incoming {
                         bail!("one causal defect identity carried contradictory provenance");
                     }
@@ -577,6 +606,9 @@ impl DefectLedger {
                     existing
                         .evidence
                         .dedup_by(|left, right| left.sha256 == right.sha256);
+                    if observation.invariant < existing.invariant {
+                        existing.invariant = observation.invariant;
+                    }
                 }
                 None => {
                     merged.insert(observation.id.clone(), observation);
@@ -668,6 +700,7 @@ impl DefectLedger {
     }
 }
 
+#[allow(dead_code)]
 fn validate_observation(
     observation: &DefectObservation,
     tree_hash: &str,
@@ -675,12 +708,14 @@ fn validate_observation(
     requirements: &BTreeSet<RequirementId>,
 ) -> Result<()> {
     if observation.provenance.ruler_id != ruler.id
+        || observation.provenance.ruler_authority != ruler.authority_nonce
         || !ruler
             .required_legs
             .contains(&observation.provenance.ruler_leg)
         || observation.provenance.last_seen_tree != tree_hash
         || !observation.requirement_ids.is_subset(requirements)
         || observation.requirement_ids.is_empty()
+        || observation.causal_key.trim().is_empty()
         || observation.evidence.is_empty()
         || observation
             .evidence
@@ -695,8 +730,7 @@ fn validate_observation(
     }
     let expected_id = defect_id(
         observation.provenance.gate,
-        observation.kind,
-        &observation.invariant,
+        &observation.causal_key,
         &observation.subjects,
         &observation.requirement_ids,
     );
@@ -706,14 +740,20 @@ fn validate_observation(
     Ok(())
 }
 
-pub fn observe_finding(
+#[allow(dead_code)]
+pub(crate) fn observe_finding(
+    authority: &EngineRulerAuthority,
     root: &Path,
     tree_hash: &str,
     ruler: &RulerIdentity,
     ruler_leg: RulerLegId,
     mut input: FindingInput<'_>,
 ) -> Result<DefectObservation> {
-    if !ruler.required_legs.contains(&ruler_leg) || input.requirement_ids.is_empty() {
+    if ruler.authority_nonce != authority.nonce
+        || !ruler.required_legs.contains(&ruler_leg)
+        || input.requirement_ids.is_empty()
+        || input.causal_key.trim().is_empty()
+    {
         bail!("repair finding is not bound to a required ruler leg and requirement");
     }
     input
@@ -745,8 +785,7 @@ pub fn observe_finding(
     let invariant = normalized_invariant(input.rendered, &input.explicit_subjects);
     let id = defect_id(
         input.gate,
-        kind,
-        &invariant,
+        input.causal_key,
         &input.explicit_subjects,
         &input.requirement_ids,
     );
@@ -754,11 +793,13 @@ pub fn observe_finding(
         id,
         provenance: FindingProvenance {
             ruler_id: ruler.id.clone(),
+            ruler_authority: authority.nonce.clone(),
             ruler_leg,
             gate: input.gate,
             first_seen_tree: tree_hash.to_string(),
             last_seen_tree: tree_hash.to_string(),
         },
+        causal_key: input.causal_key.to_string(),
         requirement_ids: input.requirement_ids,
         subjects: input.explicit_subjects,
         kind,
@@ -768,7 +809,9 @@ pub fn observe_finding(
     })
 }
 
+#[allow(dead_code)]
 fn observe_unestablished_leg(
+    authority: &EngineRulerAuthority,
     root: &Path,
     tree_hash: &str,
     ruler: &RulerIdentity,
@@ -780,15 +823,18 @@ fn observe_unestablished_leg(
     let subjects = BTreeSet::new();
     let invariant = normalized_invariant(rendered, &subjects);
     let gate = GateId::Ruler;
+    let causal_key = format!("unestablished:{}", ruler_leg.as_str());
     Ok(DefectObservation {
-        id: defect_id(gate, kind, &invariant, &subjects, &requirement_ids),
+        id: defect_id(gate, &causal_key, &subjects, &requirement_ids),
         provenance: FindingProvenance {
             ruler_id: ruler.id.clone(),
+            ruler_authority: authority.nonce.clone(),
             ruler_leg,
             gate,
             first_seen_tree: tree_hash.to_string(),
             last_seen_tree: tree_hash.to_string(),
         },
+        causal_key,
         requirement_ids,
         subjects,
         kind,
@@ -802,13 +848,16 @@ pub struct FindingBatch<'a> {
     pub ruler_leg: RulerLegId,
     pub gate: GateId,
     pub findings: &'a [String],
+    pub causal_keys: &'a [String],
     pub established: bool,
     pub known_files: &'a [String],
     pub explicit_subjects: BTreeSet<SubjectRef>,
     pub requirement_ids: BTreeSet<RequirementId>,
 }
 
-pub fn build_defect_ledger(
+#[allow(dead_code)]
+pub(crate) fn build_defect_ledger(
+    authority: &EngineRulerAuthority,
     root: &Path,
     tree_hash: &str,
     ruler: RulerIdentity,
@@ -823,17 +872,20 @@ pub fn build_defect_ledger(
             || !seen_legs.insert(batch.ruler_leg.clone())
             || batch.requirement_ids.is_empty()
             || !batch.requirement_ids.is_subset(&requirements)
+            || batch.findings.len() != batch.causal_keys.len()
         {
             bail!("repair ruler batch has duplicate, foreign, or unbound authority");
         }
-        for rendered in batch.findings {
+        for (rendered, causal_key) in batch.findings.iter().zip(batch.causal_keys) {
             observations.push(observe_finding(
+                authority,
                 root,
                 tree_hash,
                 &ruler,
                 batch.ruler_leg.clone(),
                 FindingInput {
                     gate: batch.gate,
+                    causal_key,
                     rendered,
                     known_files: batch.known_files,
                     explicit_subjects: batch.explicit_subjects.clone(),
@@ -849,6 +901,7 @@ pub fn build_defect_ledger(
                 batch.ruler_leg.as_str()
             );
             observations.push(observe_unestablished_leg(
+                authority,
                 root,
                 tree_hash,
                 &ruler,
@@ -861,6 +914,7 @@ pub fn build_defect_ledger(
     for missing in ruler.required_legs.difference(&seen_legs) {
         let rendered = format!("required ruler leg `{}` did not run", missing.as_str());
         observations.push(observe_unestablished_leg(
+            authority,
             root,
             tree_hash,
             &ruler,
@@ -870,6 +924,7 @@ pub fn build_defect_ledger(
         )?);
     }
     DefectLedger::new(
+        authority,
         tree_hash,
         ruler,
         established_legs,
@@ -878,6 +933,7 @@ pub fn build_defect_ledger(
     )
 }
 
+#[allow(dead_code)]
 fn defect_kind(gate: GateId, rendered: &str) -> DefectKind {
     match gate {
         GateId::FailedTask => DefectKind::PlannedTaskFailure,
@@ -907,6 +963,7 @@ fn defect_kind(gate: GateId, rendered: &str) -> DefectKind {
     }
 }
 
+#[allow(dead_code)]
 fn impact_evidence(gate: GateId, kind: DefectKind) -> ImpactEvidence {
     let (severity, fact) = match kind {
         DefectKind::RuntimeBoot => (
@@ -964,6 +1021,7 @@ fn impact_evidence(gate: GateId, kind: DefectKind) -> ImpactEvidence {
     }
 }
 
+#[allow(dead_code)]
 fn subjects_from_known_files(rendered: &str, known_files: &[String]) -> BTreeSet<SubjectRef> {
     known_files
         .iter()
@@ -972,6 +1030,7 @@ fn subjects_from_known_files(rendered: &str, known_files: &[String]) -> BTreeSet
         .collect()
 }
 
+#[allow(dead_code)]
 fn normalized_invariant(rendered: &str, subjects: &BTreeSet<SubjectRef>) -> String {
     static NORMALIZERS: OnceLock<Vec<Regex>> = OnceLock::new();
     let mut normalized = rendered.replace('\\', "/");
@@ -1015,19 +1074,17 @@ fn normalized_invariant(rendered: &str, subjects: &BTreeSet<SubjectRef>) -> Stri
     lines.join("\n")
 }
 
+#[allow(dead_code)]
 fn defect_id(
     gate: GateId,
-    kind: DefectKind,
-    invariant: &str,
+    causal_key: &str,
     subjects: &BTreeSet<SubjectRef>,
     requirements: &BTreeSet<RequirementId>,
 ) -> DefectId {
     let mut identity = String::new();
     identity.push_str(gate.invariant_name());
     identity.push('\0');
-    identity.push_str(kind.invariant_name());
-    identity.push('\0');
-    identity.push_str(invariant);
+    identity.push_str(causal_key);
     for subject in subjects {
         identity.push('\0');
         identity.push_str(&subject.stable_name());
@@ -1039,6 +1096,7 @@ fn defect_id(
     DefectId(format!("defect:{}", sha256_hex(identity.as_bytes())))
 }
 
+#[allow(dead_code)]
 fn persist_evidence(root: &Path, gate: GateId, rendered: &str) -> Result<EvidenceRef> {
     static EVIDENCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sha256 = sha256_hex(rendered.as_bytes());
@@ -1182,6 +1240,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
     result
 }
 
+fn random_authority_nonce(namespace: &str) -> String {
+    let random: [u8; 32] = rand::random();
+    format!("{namespace}:{}", sha256_hex(&random))
+}
+
 fn create_contained_directory(canonical_root: &Path, directory: &Path) -> Result<()> {
     let mut existing = directory;
     while !existing.exists() {
@@ -1315,6 +1378,7 @@ pub fn repair_tree_snapshot(root: &Path) -> Result<RepairTreeSnapshot> {
 pub struct RepairEpoch {
     tree_hash: String,
     ledger_hash: String,
+    transaction_nonce: String,
 }
 
 impl RepairEpoch {
@@ -1379,14 +1443,6 @@ impl RepairCandidatePatch {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SemanticReviewVerdict {
-    Accept,
-    Revise,
-    Abstain,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SemanticReviewRequest {
     identity: String,
@@ -1425,35 +1481,10 @@ impl SemanticReviewRequest {
     pub fn delta(&self) -> &CandidateDelta {
         &self.delta
     }
-}
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct SemanticRepairReview {
-    review_identity: String,
-    semantic_receipt_id: String,
-    verdict: SemanticReviewVerdict,
-    cited_requirements: BTreeSet<RequirementId>,
-    cited_evidence: BTreeSet<String>,
-    rationale: String,
-}
-
-impl SemanticRepairReview {
-    pub fn new(
-        review_identity: impl Into<String>,
-        semantic_receipt_id: impl Into<String>,
-        verdict: SemanticReviewVerdict,
-        cited_requirements: BTreeSet<RequirementId>,
-        cited_evidence: BTreeSet<String>,
-        rationale: impl Into<String>,
-    ) -> Self {
-        Self {
-            review_identity: review_identity.into(),
-            semantic_receipt_id: semantic_receipt_id.into(),
-            verdict,
-            cited_requirements,
-            cited_evidence,
-            rationale: rationale.into(),
-        }
+    /// The immutable observation the broker must admit for this exact repair preview.
+    pub fn observation_snapshot(&self) -> Result<SealedSemanticObservationSnapshot> {
+        semantic_review_snapshot(self)
     }
 }
 
@@ -1461,8 +1492,10 @@ impl SemanticRepairReview {
 pub struct SemanticAcceptanceReceipt {
     receipt_id: String,
     review_identity: String,
-    semantic_receipt_id: String,
     composition_id: String,
+    admission: AdmissionReceipt,
+    provider_terminal: ProviderTerminalKind,
+    reviewer_reply_hash: String,
     cited_requirements: BTreeSet<RequirementId>,
     cited_evidence: BTreeSet<String>,
 }
@@ -1472,8 +1505,16 @@ impl SemanticAcceptanceReceipt {
         &self.receipt_id
     }
 
-    pub fn semantic_receipt_id(&self) -> &str {
-        &self.semantic_receipt_id
+    pub fn admission(&self) -> &AdmissionReceipt {
+        &self.admission
+    }
+
+    pub fn provider_terminal(&self) -> ProviderTerminalKind {
+        self.provider_terminal
+    }
+
+    pub fn reviewer_reply_hash(&self) -> &str {
+        &self.reviewer_reply_hash
     }
 }
 
@@ -1500,6 +1541,92 @@ pub enum PromotionDecision {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LockIdentity {
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(not(unix))]
+    platform_lock_held: bool,
+}
+
+struct ProcessRepairAuthorityGuard {
+    root: PathBuf,
+}
+
+fn active_repair_roots() -> &'static StdMutex<BTreeSet<PathBuf>> {
+    static ACTIVE_ROOTS: OnceLock<StdMutex<BTreeSet<PathBuf>>> = OnceLock::new();
+    ACTIVE_ROOTS.get_or_init(|| StdMutex::new(BTreeSet::new()))
+}
+
+impl ProcessRepairAuthorityGuard {
+    fn acquire(root: &Path) -> Result<Self> {
+        let mut active = active_repair_roots()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !active.insert(root.to_path_buf()) {
+            bail!("repair mutation authority is already held in this engine");
+        }
+        Ok(Self {
+            root: root.to_path_buf(),
+        })
+    }
+}
+
+impl Drop for ProcessRepairAuthorityGuard {
+    fn drop(&mut self) {
+        let mut active = active_repair_roots()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        active.remove(&self.root);
+    }
+}
+
+impl LockIdentity {
+    fn from_file(file: &File) -> Result<Self> {
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            bail!("repair promotion lock is not a regular file");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            Ok(Self {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(Self {
+                platform_lock_held: true,
+            })
+        }
+    }
+
+    fn from_path(path: &Path) -> Result<Self> {
+        let metadata = std::fs::symlink_metadata(path)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            bail!("repair promotion lock path is not a regular file");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            Ok(Self {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(Self {
+                platform_lock_held: true,
+            })
+        }
+    }
+}
+
 impl PromotionDecision {
     pub fn reason(&self) -> Option<&str> {
         match self {
@@ -1513,14 +1640,19 @@ pub struct RepairTransaction {
     root: PathBuf,
     base_snapshot: RepairTreeSnapshot,
     base_ledger: DefectLedger,
+    epoch: RepairEpoch,
     candidates: Vec<RepairCandidatePatch>,
     lock_file: File,
+    lock_path: PathBuf,
+    lock_identity: LockIdentity,
+    _process_authority: ProcessRepairAuthorityGuard,
     consumed: bool,
 }
 
 impl RepairTransaction {
     pub fn open(root: &Path, base_ledger: DefectLedger) -> Result<Self> {
         let root = root.canonicalize()?;
+        let process_authority = ProcessRepairAuthorityGuard::acquire(&root)?;
         let repair_dir = root.join(".swarm/repair");
         create_contained_directory(&root, &repair_dir)?;
         let lock_path = repair_dir.join("promotion.lock");
@@ -1529,9 +1661,13 @@ impl RepairTransaction {
             .write(true)
             .create(true)
             .truncate(false)
-            .open(lock_path)?;
+            .open(&lock_path)?;
         FileExt::try_lock_exclusive(&lock_file)
             .map_err(|error| anyhow!("repair mutation authority is already held: {error}"))?;
+        let lock_identity = LockIdentity::from_file(&lock_file)?;
+        if LockIdentity::from_path(&lock_path)? != lock_identity {
+            bail!("repair lock path was replaced while authority was acquired");
+        }
         let base_snapshot = repair_tree_snapshot(&root)?;
         if base_ledger.tree_hash != base_snapshot.hash {
             bail!("repair ledger does not describe the tree opening this transaction");
@@ -1539,21 +1675,27 @@ impl RepairTransaction {
         if !base_ledger.is_fully_established() {
             bail!("repair transaction cannot open on a partial ruler");
         }
+        let epoch = RepairEpoch {
+            tree_hash: base_snapshot.hash.clone(),
+            ledger_hash: base_ledger.hash.clone(),
+            transaction_nonce: random_authority_nonce("repair-transaction"),
+        };
         Ok(Self {
             root,
             base_snapshot,
             base_ledger,
+            epoch,
             candidates: Vec::new(),
             lock_file,
+            lock_path,
+            lock_identity,
+            _process_authority: process_authority,
             consumed: false,
         })
     }
 
     pub fn epoch(&self) -> RepairEpoch {
-        RepairEpoch {
-            tree_hash: self.base_snapshot.hash.clone(),
-            ledger_hash: self.base_ledger.hash.clone(),
-        }
+        self.epoch.clone()
     }
 
     pub fn add_candidate(&mut self, candidate: RepairCandidatePatch) -> Result<()> {
@@ -1607,7 +1749,7 @@ impl RepairTransaction {
         R: FnMut(PathBuf) -> RFut,
         RFut: std::future::Future<Output = Result<DefectLedger>>,
         S: FnOnce(SemanticReviewRequest) -> SFut,
-        SFut: std::future::Future<Output = Result<SemanticRepairReview>>,
+        SFut: std::future::Future<Output = Result<AdmittedSemanticObservationHandle>>,
     {
         self.preview_and_promote_with_apply(ruler, semantic_review, apply_mutations)
             .await
@@ -1623,13 +1765,16 @@ impl RepairTransaction {
         R: FnMut(PathBuf) -> RFut,
         RFut: std::future::Future<Output = Result<DefectLedger>>,
         S: FnOnce(SemanticReviewRequest) -> SFut,
-        SFut: std::future::Future<Output = Result<SemanticRepairReview>>,
+        SFut: std::future::Future<Output = Result<AdmittedSemanticObservationHandle>>,
         A: FnMut(&Path, &BTreeMap<String, FileMutation>) -> Result<()>,
     {
         if self.consumed {
             bail!("repair transaction is one-shot and has already been ruled");
         }
         self.consumed = true;
+        if !self.lock_authority_is_current()? {
+            bail!("repair promotion lock authority was replaced");
+        }
         if self.candidates.is_empty() {
             return Ok(rejected("transaction contains no candidates", None, None));
         }
@@ -1703,6 +1848,7 @@ impl RepairTransaction {
         let preview_epoch = RepairEpoch {
             tree_hash: preview_after_ruler.hash.clone(),
             ledger_hash: preview_ledger.hash.clone(),
+            transaction_nonce: self.epoch.transaction_nonce.clone(),
         };
         let evidence_ids = self
             .base_ledger
@@ -1727,8 +1873,38 @@ impl RepairTransaction {
             evidence_ids,
         };
         request.identity = semantic_review_identity(&request);
-        let review = semantic_review(request.clone()).await?;
-        let semantic_acceptance = match self.validate_semantic_review(&request, review) {
+        let expected_snapshot = request.observation_snapshot()?;
+        let review = match semantic_review(request.clone()).await {
+            Ok(review) => review,
+            Err(error) => {
+                return Ok(rejected_with_delta(
+                    &format!("semantic review unavailable: {error}"),
+                    &preview_after_ruler,
+                    &preview_ledger,
+                    delta,
+                ));
+            }
+        };
+        let handle_snapshot_hash = review.snapshot_hash().to_string();
+        let handle_admission = review.admission().clone();
+        let admitted_review = match review.wait().await {
+            Ok(review) => review,
+            Err(error) => {
+                return Ok(rejected_with_delta(
+                    &format!("semantic review provider lifecycle unavailable: {error}"),
+                    &preview_after_ruler,
+                    &preview_ledger,
+                    delta,
+                ));
+            }
+        };
+        let semantic_acceptance = match self.validate_semantic_review(
+            &request,
+            &expected_snapshot,
+            &handle_snapshot_hash,
+            &handle_admission,
+            admitted_review,
+        ) {
             Ok(receipt) => receipt,
             Err(reason) => {
                 return Ok(rejected_with_delta(
@@ -1741,6 +1917,14 @@ impl RepairTransaction {
         };
 
         let before_land = repair_tree_snapshot(&self.root)?;
+        if !self.lock_authority_is_current()? {
+            return Ok(rejected_with_delta(
+                "repair promotion lock authority was replaced during review",
+                &preview_after_ruler,
+                &preview_ledger,
+                delta,
+            ));
+        }
         if before_land.hash != self.base_snapshot.hash {
             return Ok(rejected_with_delta(
                 "real tree changed while the composed preview was being ruled",
@@ -1812,6 +1996,7 @@ impl RepairTransaction {
             epoch_after: RepairEpoch {
                 tree_hash: landed_after_ruler.hash,
                 ledger_hash: real_ledger.hash,
+                transaction_nonce: self.epoch.transaction_nonce.clone(),
             },
             candidates: self
                 .candidates
@@ -1822,6 +2007,10 @@ impl RepairTransaction {
             delta,
             semantic_acceptance: Box::new(semantic_acceptance),
         })
+    }
+
+    fn lock_authority_is_current(&self) -> Result<bool> {
+        Ok(LockIdentity::from_path(&self.lock_path)? == self.lock_identity)
     }
 
     fn validate_candidate_ledger(
@@ -1847,14 +2036,50 @@ impl RepairTransaction {
     fn validate_semantic_review(
         &self,
         request: &SemanticReviewRequest,
-        review: SemanticRepairReview,
+        expected_snapshot: &SealedSemanticObservationSnapshot,
+        handle_snapshot_hash: &str,
+        handle_admission: &AdmissionReceipt,
+        review: AdmittedSemanticObservationReceipt,
     ) -> Result<SemanticAcceptanceReceipt> {
-        if review.review_identity != request.identity
-            || review.semantic_receipt_id.trim().is_empty()
-            || review.rationale.trim().is_empty()
-            || !matches!(review.verdict, SemanticReviewVerdict::Accept)
-            || !review.cited_requirements.is_subset(&request.requirements)
-            || !review.cited_evidence.is_subset(&request.evidence_ids)
+        let expected_source = semantic_observation_task_version(expected_snapshot);
+        if handle_snapshot_hash != expected_snapshot.snapshot_hash()
+            || handle_admission != &review.admission
+            || review.admission.role != WorkRole::SemanticJudgeObservation
+            || review.admission.source != expected_source
+            || review.local_completion != LocalCompletionKind::Success
+            || review.observation.stale
+            || review.observation.snapshot_hash != expected_snapshot.snapshot_hash()
+        {
+            bail!("semantic review was not a finished broker admission for this exact preview");
+        }
+        let reviewer_reply_hash = review
+            .observation
+            .reviewer_reply_hash
+            .ok_or_else(|| anyhow!("semantic review has no provider reply identity"))?;
+        let (rationale, citations, covered_requirements) = match review.observation.decision {
+            ParsedSemanticObservation::Parsed { reply } => match reply.observation {
+                SemanticObservationBody::AcceptCandidate {
+                    summary,
+                    evidence,
+                    covered_requirements,
+                } => (summary, evidence, covered_requirements),
+                _ => bail!("semantic review did not accept this exact preview"),
+            },
+            ParsedSemanticObservation::Abstained { .. } => {
+                bail!("semantic review did not accept this exact preview")
+            }
+        };
+        let cited_requirements = covered_requirements
+            .into_iter()
+            .map(RequirementId::new)
+            .collect::<Result<BTreeSet<_>>>()?;
+        let cited_evidence = citations
+            .into_iter()
+            .map(|citation| citation.source_id)
+            .collect::<BTreeSet<_>>();
+        if rationale.trim().is_empty()
+            || !cited_requirements.is_subset(&request.requirements)
+            || !cited_evidence.is_subset(&request.evidence_ids)
         {
             bail!(
                 "semantic review did not accept this exact preview with valid authority citations"
@@ -1866,13 +2091,11 @@ impl RepairTransaction {
                 .observations
                 .get(target)
                 .ok_or_else(|| anyhow!("semantic review target left the base ledger"))?;
-            if !observation
-                .requirement_ids
-                .is_subset(&review.cited_requirements)
+            if !observation.requirement_ids.is_subset(&cited_requirements)
                 || observation
                     .evidence
                     .iter()
-                    .all(|evidence| !review.cited_evidence.contains(&evidence.sha256))
+                    .all(|evidence| !cited_evidence.contains(&evidence.sha256))
             {
                 bail!("semantic review omitted requirement or evidence for an assigned target");
             }
@@ -1880,19 +2103,23 @@ impl RepairTransaction {
         let bytes = serde_json::to_vec(&(
             SEMANTIC_REVIEW_PROTOCOL,
             &request.identity,
-            &review.semantic_receipt_id,
             &request.composition_id,
-            &review.cited_requirements,
-            &review.cited_evidence,
-            &review.rationale,
+            &review.admission,
+            ProviderTerminalKind::Finished,
+            &reviewer_reply_hash,
+            &cited_requirements,
+            &cited_evidence,
+            &rationale,
         ))?;
         Ok(SemanticAcceptanceReceipt {
             receipt_id: format!("repair-acceptance:{}", sha256_hex(&bytes)),
             review_identity: request.identity.clone(),
-            semantic_receipt_id: review.semantic_receipt_id,
             composition_id: request.composition_id.clone(),
-            cited_requirements: review.cited_requirements,
-            cited_evidence: review.cited_evidence,
+            admission: review.admission,
+            provider_terminal: ProviderTerminalKind::Finished,
+            reviewer_reply_hash,
+            cited_requirements,
+            cited_evidence,
         })
     }
 
@@ -1938,6 +2165,61 @@ fn semantic_review_identity(request: &SemanticReviewRequest) -> String {
     ))
     .expect("semantic repair request contains only serializable engine values");
     format!("repair-review:{}", sha256_hex(&bytes))
+}
+
+fn semantic_review_snapshot(
+    request: &SemanticReviewRequest,
+) -> Result<SealedSemanticObservationSnapshot> {
+    let canonical_request = serde_json::to_string(request)?;
+    SemanticObservationSnapshotDraft {
+        schema_version: SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+        authority_scope: AuthorityScope::new(
+            format!("repair:{}", request.base_epoch.ledger_hash),
+            format!("repair:{}", request.composition_id),
+        ),
+        phase_epoch: 0,
+        task_id: request.identity.clone(),
+        attempt: 0,
+        source_revision: 1,
+        contract_version: request.base_epoch.ledger_hash.clone(),
+        artifact_version: request.preview_epoch.tree_hash.clone(),
+        goal: "Review the exact composed repair preview for semantic acceptance".to_string(),
+        task_contract: canonical_request,
+        acceptance_oracle: request
+            .requirements
+            .iter()
+            .map(|requirement| AcceptanceCriterionSnapshot {
+                id: requirement.as_str().to_string(),
+                text: format!("The repair preserves requirement `{requirement}`"),
+            })
+            .collect(),
+        dependency_contract_versions: BTreeMap::new(),
+        sibling_contract_versions: BTreeMap::new(),
+        allowed_finding_routes: Vec::new(),
+        artifacts: request
+            .evidence_ids
+            .iter()
+            .enumerate()
+            .map(|(index, evidence_id)| ArtifactExcerptSnapshot {
+                source_id: evidence_id.clone(),
+                path: format!(".swarm/repair/evidence/{index}"),
+                excerpt: format!("Bound repair-ledger evidence `{evidence_id}`"),
+                complete: true,
+            })
+            .collect(),
+        trace: SemanticTraceSnapshot {
+            sequence: 1,
+            recent_reasoning: format!(
+                "Review exact repair request {} without substituting another preview",
+                request.identity
+            ),
+            recent_actions: request.candidate_ids.clone(),
+            prior_intervention: None,
+            response_to_prior_intervention: None,
+        },
+        neutral_signals: Vec::new(),
+    }
+    .seal()
 }
 
 fn composition_id(candidates: &[RepairCandidatePatch]) -> String {
@@ -2081,8 +2363,27 @@ fn restore_ruled_tree(
     if repair_tree_snapshot(rollback_tree)? != *base {
         bail!("repair rollback source no longer matches the parent epoch");
     }
+    let staged = tempfile::TempDir::new()?;
+    copy_ruled_tree(rollback_tree, staged.path())?;
+    if repair_tree_snapshot(staged.path())? != *base {
+        bail!("staged repair rollback does not match the parent epoch");
+    }
     clear_ruled_tree(root, root)?;
-    copy_ruled_tree(rollback_tree, root)?;
+    if let Err(copy_error) = copy_ruled_tree(staged.path(), root) {
+        let recovery = clear_ruled_tree(root, root)
+            .and_then(|_| copy_ruled_tree(rollback_tree, root))
+            .and_then(|_| {
+                (repair_tree_snapshot(root)? == *base)
+                    .then_some(())
+                    .ok_or_else(|| anyhow!("rollback recovery did not restore the parent epoch"))
+            });
+        return match recovery {
+            Ok(()) => Err(copy_error),
+            Err(recovery_error) => Err(anyhow!(
+                "staged rollback failed ({copy_error}); recovery also failed ({recovery_error})"
+            )),
+        };
+    }
     let restored = repair_tree_snapshot(root)?;
     if restored != *base {
         bail!("repair rollback did not restore the exact parent epoch");
@@ -2102,7 +2403,11 @@ fn clear_ruled_tree(root: &Path, directory: &Path) -> Result<()> {
         let metadata = std::fs::symlink_metadata(&path)?;
         if metadata.is_dir() && !metadata.file_type().is_symlink() {
             clear_ruled_tree(root, &path)?;
-            std::fs::remove_dir(path)?;
+            match std::fs::remove_dir(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {}
+                Err(error) => return Err(error.into()),
+            }
         } else {
             std::fs::remove_file(path)?;
         }
@@ -2164,6 +2469,16 @@ fn copy_symlink(source: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::broker::{HostCapacityEvidence, PhysicalFleetSnapshot, VerifiedPhysicalLane};
+    use crate::control_plane::PhysicalAdmissionControl;
+    use crate::event::{EventSink, NullSink};
+    use crate::semantic_control::{
+        AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
+        AdmittedSemanticReviewError, BrokeredSemanticObservationPlane,
+        SemanticObservationAdmissionPolicy, SemanticObservationAdmissionSubmission,
+    };
+    use crate::semantic_observation::SEMANTIC_OBSERVATION_PROTOCOL;
+    use async_trait::async_trait;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
     use std::sync::{Arc, Mutex};
 
@@ -2171,8 +2486,14 @@ mod tests {
         BTreeSet::from([RequirementId::new("requirement:app-runs").unwrap()])
     }
 
+    fn ruler_authority() -> &'static EngineRulerAuthority {
+        static AUTHORITY: OnceLock<EngineRulerAuthority> = OnceLock::new();
+        AUTHORITY.get_or_init(EngineRulerAuthority::mint)
+    }
+
     fn ruler(id: &str, legs: &[&str]) -> RulerIdentity {
         RulerIdentity::new(
+            ruler_authority(),
             id,
             legs.iter()
                 .map(|leg| RulerLegId::new(*leg).unwrap())
@@ -2198,13 +2519,38 @@ mod tests {
         gate: GateId,
         rendered: &str,
     ) -> DefectObservation {
+        observation_with_key(
+            root,
+            snapshot,
+            ruler,
+            leg,
+            requirements,
+            gate,
+            rendered,
+            rendered,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn observation_with_key(
+        root: &Path,
+        snapshot: &RepairTreeSnapshot,
+        ruler: &RulerIdentity,
+        leg: &str,
+        requirements: &BTreeSet<RequirementId>,
+        gate: GateId,
+        causal_key: &str,
+        rendered: &str,
+    ) -> DefectObservation {
         observe_finding(
+            ruler_authority(),
             root,
             snapshot.hash(),
             ruler,
             RulerLegId::new(leg).unwrap(),
             FindingInput {
                 gate,
+                causal_key,
                 rendered,
                 known_files: &["app.txt".to_string()],
                 explicit_subjects: BTreeSet::new(),
@@ -2226,12 +2572,14 @@ mod tests {
             .iter()
             .map(|(leg, gate, rendered)| {
                 observe_finding(
+                    ruler_authority(),
                     root,
                     snapshot.hash(),
                     &ruler,
                     leg.clone(),
                     FindingInput {
                         gate: *gate,
+                        causal_key: rendered,
                         rendered,
                         known_files: &["app.txt".to_string()],
                         explicit_subjects: BTreeSet::new(),
@@ -2242,6 +2590,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         DefectLedger::new(
+            ruler_authority(),
             snapshot.hash().to_string(),
             ruler,
             established_legs,
@@ -2258,6 +2607,7 @@ mod tests {
     ) -> DefectLedger {
         let snapshot = repair_tree_snapshot(root).unwrap();
         DefectLedger::new(
+            ruler_authority(),
             snapshot.hash().to_string(),
             ruler.clone(),
             ruler.required_legs().clone(),
@@ -2278,15 +2628,114 @@ mod tests {
         )])
     }
 
-    fn accept(request: &SemanticReviewRequest) -> SemanticRepairReview {
-        SemanticRepairReview::new(
-            request.identity(),
-            "semantic-receipt:verified",
-            SemanticReviewVerdict::Accept,
-            request.requirements().clone(),
-            request.evidence_ids().clone(),
-            "the exact candidate closes the cited requirement without semantic drift",
+    #[derive(Clone, Copy)]
+    enum SemanticTestVerdict {
+        Accept,
+        Abstain,
+        TerminalFailure,
+    }
+
+    struct RepairSemanticReviewer {
+        verdict: SemanticTestVerdict,
+    }
+
+    #[async_trait]
+    impl AdmittedSemanticObservationReviewer for RepairSemanticReviewer {
+        async fn review(
+            &self,
+            request: AdmittedSemanticObservationRequest,
+        ) -> std::result::Result<String, AdmittedSemanticReviewError> {
+            if matches!(self.verdict, SemanticTestVerdict::TerminalFailure) {
+                return Err(AdmittedSemanticReviewError::terminal_failure(
+                    "semantic provider rejected the repair preview",
+                ));
+            }
+            let snapshot = &request.observation.snapshot;
+            let observation = match self.verdict {
+                SemanticTestVerdict::Accept => serde_json::json!({
+                    "action": "ACCEPT_CANDIDATE",
+                    "summary": "the exact candidate closes the cited requirement without semantic drift",
+                    "evidence": snapshot
+                        .payload()
+                        .artifacts
+                        .iter()
+                        .map(|artifact| serde_json::json!({
+                            "source_id": artifact.source_id,
+                            "observation": "the bound repair evidence supports this acceptance"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "covered_requirements": snapshot
+                        .payload()
+                        .acceptance_oracle
+                        .iter()
+                        .map(|criterion| criterion.id.clone())
+                        .collect::<Vec<_>>()
+                }),
+                SemanticTestVerdict::Abstain => serde_json::json!({
+                    "action": "ABSTAIN",
+                    "reason": "the provider cannot accept this preview"
+                }),
+                SemanticTestVerdict::TerminalFailure => unreachable!(),
+            };
+            Ok(serde_json::json!({
+                "protocol": SEMANTIC_OBSERVATION_PROTOCOL,
+                "snapshot_hash": snapshot.snapshot_hash(),
+                "observation": observation
+            })
+            .to_string())
+        }
+    }
+
+    fn semantic_control(scope: &str, sink: Arc<dyn EventSink>) -> PhysicalAdmissionControl {
+        let snapshot = PhysicalFleetSnapshot::new(
+            format!("snapshot:{scope}"),
+            vec![VerifiedPhysicalLane {
+                logical_device_id: "repair-review-lane".to_string(),
+                model_id: "repair-review-model".to_string(),
+                host_id: "repair-review-host".to_string(),
+                model_instance_id: "repair-review-instance".to_string(),
+                provider_transport_id:
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .to_string(),
+                advertised_instance_capacity: 1,
+                routing_weight: 1,
+                capacity_evidence: HostCapacityEvidence::MeasuredProfile {
+                    profile_hash: format!("profile:{scope}"),
+                    profile_key: "repair-review:model:context".to_string(),
+                    max_concurrent: 1,
+                },
+                route_evidence_id: format!("route:{scope}"),
+            }],
         )
+        .unwrap();
+        PhysicalAdmissionControl::new(scope, snapshot, sink).unwrap()
+    }
+
+    async fn brokered_review(
+        request: &SemanticReviewRequest,
+        verdict: SemanticTestVerdict,
+    ) -> Result<AdmittedSemanticObservationHandle> {
+        let sink: Arc<dyn EventSink> = Arc::new(NullSink);
+        let scope = format!("repair-review-test:{}", request.identity());
+        let control = semantic_control(&scope, sink.clone());
+        let plane = BrokeredSemanticObservationPlane::new(control, sink)?;
+        let submission = plane
+            .submit(
+                request.observation_snapshot()?,
+                SemanticObservationAdmissionPolicy::default(),
+                Arc::new(RepairSemanticReviewer { verdict }),
+            )
+            .await?;
+        match submission {
+            SemanticObservationAdmissionSubmission::Started(handle) => Ok(handle),
+            SemanticObservationAdmissionSubmission::Rejected(rejection) => {
+                bail!("semantic review was rejected before provider admission: {rejection:?}")
+            }
+        }
+    }
+
+    async fn accept(request: &SemanticReviewRequest) -> Result<AdmittedSemanticObservationHandle> {
+        brokered_review(request, SemanticTestVerdict::Accept).await
     }
 
     #[test]
@@ -2371,22 +2820,24 @@ mod tests {
         let ruler = ruler("ruler:v1", &["smoke"]);
         let requirements = requirement_set();
         let first_rendered = "localhost:4123 line 17: 2 failed tests in 440ms\nsecondary detail";
-        let first = observation(
+        let first = observation_with_key(
             root.path(),
             &snapshot,
             &ruler,
             "smoke",
             &requirements,
             GateId::Smoke,
+            "smoke:test-failure",
             first_rendered,
         );
-        let reordered = observation(
+        let reordered = observation_with_key(
             root.path(),
             &snapshot,
             &ruler,
             "smoke",
             &requirements,
             GateId::Smoke,
+            "smoke:test-failure",
             "secondary detail\nlocalhost:9999 line 801: 19 failed tests in 9 seconds",
         );
         assert_eq!(first.id(), reordered.id());
@@ -2401,6 +2852,7 @@ mod tests {
             .is_file());
 
         let base = DefectLedger::new(
+            ruler_authority(),
             snapshot.hash().to_string(),
             ruler.clone(),
             ruler.required_legs().clone(),
@@ -2410,16 +2862,18 @@ mod tests {
         .unwrap();
         write_file(root.path(), "app.txt", b"different tree bytes\n");
         let next_snapshot = repair_tree_snapshot(root.path()).unwrap();
-        let same_evidence = observation(
+        let same_evidence = observation_with_key(
             root.path(),
             &next_snapshot,
             &ruler,
             "smoke",
             &requirements,
             GateId::Smoke,
+            "smoke:test-failure",
             first_rendered,
         );
         let candidate = DefectLedger::new(
+            ruler_authority(),
             next_snapshot.hash().to_string(),
             ruler.clone(),
             ruler.required_legs().clone(),
@@ -2430,6 +2884,57 @@ mod tests {
         let delta = CandidateDelta::between(&base, &candidate);
         assert_eq!(delta.persisted().len(), 1);
         assert!(delta.changed_evidence().is_empty());
+    }
+
+    #[test]
+    fn causal_identity_survives_wording_churn_and_kind_reclassification() {
+        let root = tempfile::TempDir::new().unwrap();
+        write_file(root.path(), "app.txt", b"broken\n");
+        let snapshot = repair_tree_snapshot(root.path()).unwrap();
+        let ruler = ruler("ruler:v1", &["smoke"]);
+        let requirements = requirement_set();
+        let first = observation_with_key(
+            root.path(),
+            &snapshot,
+            &ruler,
+            "smoke",
+            &requirements,
+            GateId::Smoke,
+            "smoke:app-contract",
+            "app.txt: one named test failed",
+        );
+        let reworded = observation_with_key(
+            root.path(),
+            &snapshot,
+            &ruler,
+            "smoke",
+            &requirements,
+            GateId::Smoke,
+            "smoke:app-contract",
+            "app.txt: generic invariant remains unsatisfied",
+        );
+
+        assert_ne!(first.kind(), reworded.kind());
+        assert_eq!(first.id(), reworded.id());
+    }
+
+    #[test]
+    fn foreign_engine_authority_cannot_mint_a_matching_ruler_ledger() {
+        let root = tempfile::TempDir::new().unwrap();
+        write_file(root.path(), "app.txt", b"broken\n");
+        let snapshot = repair_tree_snapshot(root.path()).unwrap();
+        let ruler = ruler("ruler:v1", &["smoke"]);
+        let foreign = EngineRulerAuthority::mint();
+
+        assert!(DefectLedger::new(
+            &foreign,
+            snapshot.hash().to_string(),
+            ruler.clone(),
+            ruler.required_legs().clone(),
+            requirement_set(),
+            Vec::new(),
+        )
+        .is_err());
     }
 
     #[test]
@@ -2458,6 +2963,7 @@ mod tests {
         let stale_epoch = RepairEpoch {
             tree_hash: transaction.epoch().tree_hash,
             ledger_hash: "stale-ledger".to_string(),
+            transaction_nonce: transaction.epoch().transaction_nonce,
         };
         let target = base.observations().keys().next().unwrap().clone();
         let stale = RepairCandidatePatch::new(
@@ -2468,6 +2974,65 @@ mod tests {
         )
         .unwrap();
         assert!(transaction.add_candidate(stale).is_err());
+    }
+
+    #[test]
+    fn identical_tree_and_ledger_bytes_cannot_replay_an_old_transaction_epoch() {
+        let root = tempfile::TempDir::new().unwrap();
+        write_file(root.path(), "app.txt", b"broken\n");
+        let ruler = ruler("ruler:v1", &["smoke"]);
+        let requirements = requirement_set();
+        let base = ledger_with_findings(
+            root.path(),
+            ruler.clone(),
+            requirements,
+            ruler.required_legs().clone(),
+            &[(
+                RulerLegId::new("smoke").unwrap(),
+                GateId::Smoke,
+                "advertised entry cannot boot",
+            )],
+        );
+        let target = base.observations().keys().next().unwrap().clone();
+        let first = RepairTransaction::open(root.path(), base.clone()).unwrap();
+        let stale_epoch = first.epoch();
+        drop(first);
+        let mut second = RepairTransaction::open(root.path(), base).unwrap();
+
+        assert_ne!(stale_epoch, second.epoch());
+        let replay = RepairCandidatePatch::new(
+            "replayed",
+            stale_epoch,
+            BTreeSet::from([target]),
+            write_change(root.path(), b"fixed\n"),
+        )
+        .unwrap();
+        assert!(second.add_candidate(replay).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacing_the_lock_path_revokes_the_held_promotion_authority() {
+        let root = tempfile::TempDir::new().unwrap();
+        write_file(root.path(), "app.txt", b"broken\n");
+        let ruler = ruler("ruler:v1", &["smoke"]);
+        let requirements = requirement_set();
+        let base = ledger_with_findings(
+            root.path(),
+            ruler.clone(),
+            requirements,
+            ruler.required_legs().clone(),
+            &[(
+                RulerLegId::new("smoke").unwrap(),
+                GateId::Smoke,
+                "advertised entry cannot boot",
+            )],
+        );
+        let transaction = RepairTransaction::open(root.path(), base).unwrap();
+        std::fs::remove_file(&transaction.lock_path).unwrap();
+        File::create(&transaction.lock_path).unwrap();
+
+        assert!(!transaction.lock_authority_is_current().unwrap());
     }
 
     #[tokio::test]
@@ -2531,6 +3096,7 @@ mod tests {
                             "advertised entry cannot boot",
                         );
                         DefectLedger::new(
+                            ruler_authority(),
                             snapshot.hash().to_string(),
                             ruler.clone(),
                             ruler.required_legs().clone(),
@@ -2541,8 +3107,7 @@ mod tests {
                 },
                 move |request| {
                     semantic_called_in_review.store(true, AtomicOrdering::SeqCst);
-                    let review = accept(&request);
-                    async move { Ok(review) }
+                    async move { accept(&request).await }
                 },
             )
             .await
@@ -2563,6 +3128,7 @@ mod tests {
         );
         forged.impact.severity = MechanicalSeverity::Advisory;
         assert!(DefectLedger::new(
+            ruler_authority(),
             snapshot.hash().to_string(),
             ruler.clone(),
             ruler.required_legs().clone(),
@@ -2664,7 +3230,7 @@ mod tests {
             )],
         );
         let target = base.observations().keys().next().unwrap().clone();
-        let captured = Arc::new(Mutex::new(None::<String>));
+        let captured = Arc::new(Mutex::new(None::<SemanticReviewRequest>));
 
         let mut first = RepairTransaction::open(root.path(), base.clone()).unwrap();
         first
@@ -2689,16 +3255,8 @@ mod tests {
                     async move { Ok(clean_ledger(&path, ruler, requirements)) }
                 },
                 move |request| {
-                    *captured_first.lock().unwrap() = Some(request.identity().to_string());
-                    let review = SemanticRepairReview::new(
-                        request.identity(),
-                        "semantic-receipt:first",
-                        SemanticReviewVerdict::Revise,
-                        request.requirements().clone(),
-                        request.evidence_ids().clone(),
-                        "capture this exact preview without accepting it",
-                    );
-                    async move { Ok(review) }
+                    *captured_first.lock().unwrap() = Some(request.clone());
+                    async move { brokered_review(&request, SemanticTestVerdict::Abstain).await }
                 },
             )
             .await
@@ -2706,7 +3264,7 @@ mod tests {
         assert!(matches!(first_decision, PromotionDecision::Rejected { .. }));
         drop(first);
 
-        let stale_identity = captured.lock().unwrap().clone().unwrap();
+        let stale_request = captured.lock().unwrap().clone().unwrap();
         let mut second = RepairTransaction::open(root.path(), base).unwrap();
         second
             .add_candidate(
@@ -2728,16 +3286,8 @@ mod tests {
                     let requirements = requirements_second.clone();
                     async move { Ok(clean_ledger(&path, ruler, requirements)) }
                 },
-                move |request| {
-                    let review = SemanticRepairReview::new(
-                        stale_identity,
-                        "semantic-receipt:replayed",
-                        SemanticReviewVerdict::Accept,
-                        request.requirements().clone(),
-                        request.evidence_ids().clone(),
-                        "attempt to replay acceptance on changed candidate bytes",
-                    );
-                    async move { Ok(review) }
+                move |_request| async move {
+                    brokered_review(&stale_request, SemanticTestVerdict::Accept).await
                 },
             )
             .await
@@ -2747,6 +3297,62 @@ mod tests {
             PromotionDecision::Rejected { .. }
         ));
         assert!(second_decision.reason().unwrap().contains("exact preview"));
+        assert_eq!(
+            std::fs::read(root.path().join("app.txt")).unwrap(),
+            b"broken\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_terminal_failure_cannot_authorize_promotion() {
+        let root = tempfile::TempDir::new().unwrap();
+        write_file(root.path(), "app.txt", b"broken\n");
+        let ruler = ruler("ruler:v1", &["smoke"]);
+        let requirements = requirement_set();
+        let base = ledger_with_findings(
+            root.path(),
+            ruler.clone(),
+            requirements.clone(),
+            ruler.required_legs().clone(),
+            &[(
+                RulerLegId::new("smoke").unwrap(),
+                GateId::Smoke,
+                "advertised entry cannot boot",
+            )],
+        );
+        let target = base.observations().keys().next().unwrap().clone();
+        let mut transaction = RepairTransaction::open(root.path(), base).unwrap();
+        transaction
+            .add_candidate(
+                RepairCandidatePatch::new(
+                    "provider-failed-review",
+                    transaction.epoch(),
+                    BTreeSet::from([target]),
+                    write_change(root.path(), b"fixed\n"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let decision = transaction
+            .preview_and_promote(
+                move |path| {
+                    let ruler = ruler.clone();
+                    let requirements = requirements.clone();
+                    async move { Ok(clean_ledger(&path, ruler, requirements)) }
+                },
+                |request| async move {
+                    brokered_review(&request, SemanticTestVerdict::TerminalFailure).await
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(decision, PromotionDecision::Rejected { .. }));
+        assert!(decision
+            .reason()
+            .unwrap()
+            .contains("finished broker admission"));
         assert_eq!(
             std::fs::read(root.path().join("app.txt")).unwrap(),
             b"broken\n"
@@ -2793,6 +3399,7 @@ mod tests {
                     async move {
                         let snapshot = repair_tree_snapshot(&path)?;
                         DefectLedger::new(
+                            ruler_authority(),
                             snapshot.hash().to_string(),
                             ruler,
                             BTreeSet::from([RulerLegId::new("smoke").unwrap()]),
@@ -2801,7 +3408,7 @@ mod tests {
                         )
                     }
                 },
-                |request| async move { Ok(accept(&request)) },
+                |request| async move { accept(&request).await },
             )
             .await
             .unwrap();
@@ -2825,6 +3432,7 @@ mod tests {
             )
             .unwrap();
         let foreign_ruler = RulerIdentity::new(
+            ruler_authority(),
             "ruler:foreign",
             ["smoke", "contract"]
                 .into_iter()
@@ -2840,7 +3448,7 @@ mod tests {
                     let requirements = requirements_foreign.clone();
                     async move { Ok(clean_ledger(&path, ruler, requirements)) }
                 },
-                |request| async move { Ok(accept(&request)) },
+                |request| async move { accept(&request).await },
             )
             .await
             .unwrap();
@@ -2855,6 +3463,12 @@ mod tests {
     async fn rollback_removes_out_of_set_writes_and_restores_exact_parent() {
         let root = tempfile::TempDir::new().unwrap();
         write_file(root.path(), "app.txt", b"broken\n");
+        write_file(root.path(), "src/normal.rs", b"pub fn base() {}\n");
+        write_file(
+            root.path(),
+            "src/heartbeat/engine-state",
+            b"must survive rollback\n",
+        );
         let ruler = ruler("ruler:v1", &["smoke"]);
         let requirements = requirement_set();
         let base = ledger_with_findings(
@@ -2891,7 +3505,7 @@ mod tests {
                     let requirements = requirements_for_run.clone();
                     async move { Ok(clean_ledger(&path, ruler, requirements)) }
                 },
-                |request| async move { Ok(accept(&request)) },
+                |request| async move { accept(&request).await },
                 |root, changes| {
                     apply_mutations(root, changes)?;
                     std::fs::write(root.join("outside-candidate.txt"), b"unruled write\n")?;
@@ -2903,6 +3517,14 @@ mod tests {
         assert!(matches!(decision, PromotionDecision::RolledBack { .. }));
         assert_eq!(repair_tree_snapshot(root.path()).unwrap(), base_snapshot);
         assert!(!root.path().join("outside-candidate.txt").exists());
+        assert_eq!(
+            std::fs::read(root.path().join("src/normal.rs")).unwrap(),
+            b"pub fn base() {}\n"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("src/heartbeat/engine-state")).unwrap(),
+            b"must survive rollback\n"
+        );
     }
 
     #[tokio::test]
@@ -2954,7 +3576,7 @@ mod tests {
                         Ok(ledger)
                     }
                 },
-                |request| async move { Ok(accept(&request)) },
+                |request| async move { accept(&request).await },
             )
             .await
             .unwrap();
@@ -3006,11 +3628,26 @@ mod tests {
                     let requirements = requirements_for_run.clone();
                     async move { Ok(clean_ledger(&path, ruler, requirements)) }
                 },
-                |request| async move { Ok(accept(&request)) },
+                |request| async move { accept(&request).await },
             )
             .await
             .unwrap();
-        assert!(matches!(decision, PromotionDecision::Promoted { .. }));
+        let PromotionDecision::Promoted {
+            semantic_acceptance,
+            ..
+        } = decision
+        else {
+            panic!("exact brokered semantic review did not promote");
+        };
+        assert_eq!(
+            semantic_acceptance.provider_terminal(),
+            ProviderTerminalKind::Finished
+        );
+        assert_eq!(
+            semantic_acceptance.admission().role,
+            WorkRole::SemanticJudgeObservation
+        );
+        assert!(!semantic_acceptance.reviewer_reply_hash().is_empty());
         assert_eq!(ruler_calls.load(AtomicOrdering::SeqCst), 2);
         assert_eq!(
             std::fs::read(root.path().join("app.txt")).unwrap(),
