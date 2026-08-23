@@ -14,8 +14,8 @@ use goose_provider_types::model::ModelConfig;
 use goose_provider_types::permission::PermissionConfirmation;
 use goose_provider_types::retry::RetryConfig;
 use goose_swarm::{
-    AdmittedWork, ProviderLifecycle, ProviderNudgeDelivery, ProviderTerminalKind,
-    StartedProviderRequest, WorkRole,
+    AdmittedWork, CompletedProviderRequest, ProviderLifecycle, ProviderNudgeDelivery,
+    ProviderNudgeSafetyGate, ProviderTerminalKind, StartedProviderRequest, WorkRole,
 };
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
@@ -339,6 +339,47 @@ impl ProviderStreamProgressMeter {
     fn elapsed_ms(&self) -> u64 {
         self.started.elapsed().as_millis().min(u64::MAX as u128) as u64
     }
+
+    fn reserve_unstructured_nudge(
+        &self,
+        capture: ProviderStreamProgressSnapshot,
+        reserve: &mut dyn FnMut() -> std::result::Result<(), String>,
+    ) -> std::result::Result<(), String> {
+        let snapshot = self.state();
+        if snapshot.structured_output_active
+            || snapshot.structured_output_bytes > capture.structured_output_bytes
+        {
+            return Err(
+                "provider is decoding structured output; supervision remains observational"
+                    .to_string(),
+            );
+        }
+        reserve()
+    }
+}
+
+pub(crate) struct StructuredOutputNudgeSafetyGate {
+    progress: Arc<ProviderStreamProgressMeter>,
+    capture: ProviderStreamProgressSnapshot,
+}
+
+impl StructuredOutputNudgeSafetyGate {
+    pub(crate) fn new(
+        progress: Arc<ProviderStreamProgressMeter>,
+        capture: ProviderStreamProgressSnapshot,
+    ) -> Self {
+        Self { progress, capture }
+    }
+}
+
+impl ProviderNudgeSafetyGate for StructuredOutputNudgeSafetyGate {
+    fn reserve(
+        &self,
+        reserve: &mut dyn FnMut() -> std::result::Result<(), String>,
+    ) -> std::result::Result<(), String> {
+        self.progress
+            .reserve_unstructured_nudge(self.capture, reserve)
+    }
 }
 
 impl ProviderStreamProgressSink for ProviderStreamProgressMeter {
@@ -383,18 +424,77 @@ impl ProviderTerminalGuard {
         }
     }
 
-    async fn finish(&mut self, kind: ProviderTerminalKind) -> Result<(), ProviderError> {
+    async fn scope_http<F>(&self, future: F) -> F::Output
+    where
+        F: Future,
+    {
+        self.request
+            .as_ref()
+            .expect("live provider terminal guard retains its request")
+            .scope_http(future)
+            .await
+    }
+
+    fn http_protocol(&self) -> Option<ProviderHttpProtocol> {
+        self.request
+            .as_ref()
+            .expect("live provider terminal guard retains its request")
+            .http_protocol()
+    }
+
+    fn publish_for_scheduler(
+        &self,
+        delivery: Option<Arc<dyn ProviderNudgeDelivery>>,
+    ) -> std::result::Result<(), goose_swarm::ProviderStartLookupError> {
+        let request = self
+            .request
+            .as_ref()
+            .expect("live provider terminal guard retains its request");
+        match delivery {
+            Some(delivery) => request.publish_for_scheduler_with_nudge_delivery(delivery),
+            None => request.publish_for_scheduler(),
+        }
+    }
+
+    async fn abandon_before_exposure(&mut self, reason: &str) -> std::result::Result<(), String> {
         let Some(request) = self.request.take() else {
             return Ok(());
         };
-        if let Err(error) = request.provider_terminal(kind).await {
-            let detail = error.to_string();
-            if let Some(request) = error.into_retryable_request() {
-                self.request = Some(request);
+        match request.abandon_before_exposure(reason).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let detail = error.to_string();
+                if let Some(request) = error.into_retryable_request() {
+                    self.request = Some(request);
+                }
+                Err(detail)
             }
-            return Err(lifecycle_error("terminal receipt", detail));
         }
-        Ok(())
+    }
+
+    fn leave_unproven(&mut self) {
+        if let Some(request) = self.request.take() {
+            drop(request);
+        }
+    }
+
+    async fn finish(
+        &mut self,
+        kind: ProviderTerminalKind,
+    ) -> Result<Option<CompletedProviderRequest>, ProviderError> {
+        let Some(request) = self.request.take() else {
+            return Ok(None);
+        };
+        match request.provider_terminal_with_completion(kind).await {
+            Ok(completed) => Ok(Some(completed)),
+            Err(error) => {
+                let detail = error.to_string();
+                if let Some(request) = error.into_retryable_request() {
+                    self.request = Some(request);
+                }
+                Err(lifecycle_error("terminal receipt", detail))
+            }
+        }
     }
 
     async fn finish_cooperatively(
@@ -409,7 +509,46 @@ impl ProviderTerminalGuard {
             }
             _ => requested,
         };
-        self.finish(kind).await
+        if let Some(completed) = self.finish(kind).await? {
+            if kind == ProviderTerminalKind::Cancelled {
+                if let Some(delivery) = delivery
+                    .filter(|delivery| delivery.cancellation_terminal_confirmation_required())
+                {
+                    delivery
+                        .confirm_cancelled_terminal(completed)
+                        .map_err(|error| lifecycle_error("cancel terminal confirmation", error))?;
+                    return Ok(());
+                }
+            }
+            drop(completed);
+        }
+        Ok(())
+    }
+
+    async fn finish_cancelled(
+        &mut self,
+        delivery: Option<&Arc<dyn ProviderNudgeDelivery>>,
+    ) -> Result<(), ProviderError> {
+        if let Some(completed) = self.finish(ProviderTerminalKind::Cancelled).await? {
+            if let Some(delivery) =
+                delivery.filter(|delivery| delivery.cancellation_terminal_confirmation_required())
+            {
+                delivery
+                    .confirm_cancelled_terminal(completed)
+                    .map_err(|error| lifecycle_error("cancel terminal confirmation", error))?;
+            } else {
+                drop(completed);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ProviderTerminalGuard {
+    fn drop(&mut self) {
+        if let Some(request) = self.request.as_mut() {
+            request.arm_cancelled_reconciliation_on_drop();
+        }
     }
 }
 
@@ -920,7 +1059,8 @@ impl Provider for LifecycleProvider {
             .start_provider_request()
             .await
             .map_err(|error| lifecycle_error("start receipt", error))?;
-        if let Some(expected_protocol) = started.http_protocol() {
+        let mut terminal = ProviderTerminalGuard::new(started);
+        if let Some(expected_protocol) = terminal.http_protocol() {
             if self.inner.provider_http_protocol(&model_config.model_name)
                 != Some(expected_protocol)
             {
@@ -928,7 +1068,7 @@ impl Provider for LifecycleProvider {
                     "provider `{}` HTTP protocol does not match its sealed physical route",
                     self.inner.get_name()
                 );
-                return match started.abandon_before_exposure(&detail).await {
+                return match terminal.abandon_before_exposure(&detail).await {
                     Ok(()) => Err(ProviderError::ExecutionError(detail)),
                     Err(error) => Err(ProviderError::ExecutionError(format!(
                         "{detail}; physical provider lifecycle abandon failed: {error}"
@@ -937,13 +1077,10 @@ impl Provider for LifecycleProvider {
             }
         }
         let nudge_delivery = self.nudge_factory.as_ref().map(|factory| factory.open());
-        let publication = match &nudge_delivery {
-            Some(delivery) => started.publish_for_scheduler_with_nudge_delivery(delivery.clone()),
-            None => started.publish_for_scheduler(),
-        };
+        let publication = terminal.publish_for_scheduler(nudge_delivery.clone());
         if let Err(error) = publication {
             let detail = format!("provider start publication failed: {error}");
-            return match started.abandon_before_exposure(&detail).await {
+            return match terminal.abandon_before_exposure(&detail).await {
                 Ok(()) => Err(lifecycle_error("provider start publication", error)),
                 Err(abandon_error) => Err(ProviderError::ExecutionError(format!(
                     "{detail}; physical provider lifecycle abandon failed: {abandon_error}"
@@ -954,7 +1091,7 @@ impl Provider for LifecycleProvider {
             tokio::select! {
                 biased;
                 _ = delivery.cancelled() => None,
-                result = started.scope_http(self.inner.stream_once_with_terminal_proof(
+                result = terminal.scope_http(self.inner.stream_once_with_terminal_proof(
                     model_config,
                     system,
                     messages,
@@ -963,7 +1100,7 @@ impl Provider for LifecycleProvider {
             }
         } else {
             Some(
-                started
+                terminal
                     .scope_http(self.inner.stream_once_with_terminal_proof(
                         model_config,
                         system,
@@ -973,9 +1110,8 @@ impl Provider for LifecycleProvider {
                     .await,
             )
         };
-        let mut terminal = ProviderTerminalGuard::new(started);
         let Some(single_attempt_result) = single_attempt_result else {
-            terminal.finish(ProviderTerminalKind::Cancelled).await?;
+            terminal.finish_cancelled(nudge_delivery.as_ref()).await?;
             return Ok(Box::pin(futures::stream::empty()));
         };
         let single_attempt = match single_attempt_result {
@@ -994,6 +1130,8 @@ impl Provider for LifecycleProvider {
                                 "provider failed ({provider_error}); physical provider lifecycle terminal receipt failed: {receipt_error}"
                             ))
                         })?;
+                } else {
+                    terminal.leave_unproven();
                 }
                 return Err(provider_error);
             }
@@ -1007,7 +1145,10 @@ impl Provider for LifecycleProvider {
                     Some(delivery) => tokio::select! {
                         biased;
                         _ = delivery.cancelled() => {
-                            if let Err(receipt_error) = terminal.finish(ProviderTerminalKind::Cancelled).await {
+                            if let Err(receipt_error) = terminal
+                                .finish_cancelled(nudge_delivery.as_ref())
+                                .await
+                            {
                                 yield Err(receipt_error);
                             }
                             return;
@@ -1051,6 +1192,8 @@ impl Provider for LifecycleProvider {
                                 )));
                                 return;
                             }
+                        } else {
+                            terminal.leave_unproven();
                         }
                         yield Err(provider_error);
                         return;
@@ -1072,6 +1215,7 @@ impl Provider for LifecycleProvider {
                     }
                 }
                 None => {
+                    terminal.leave_unproven();
                     yield Err(ProviderError::ExecutionError(
                         "single-attempt stream ended without explicit provider terminal proof"
                             .to_string(),
@@ -1166,15 +1310,18 @@ impl Provider for LifecycleProvider {
 
 #[cfg(test)]
 mod tests {
+    use super::super::swarm::{
+        pre_scheduler_judge_no_progress_secs, pre_scheduler_source_no_progress_secs,
+    };
     use super::*;
-    use futures::stream;
+    use futures::{stream, FutureExt};
     use goose::conversation::message::Message;
     use goose::providers::base::{ProviderUsage, Usage};
     use goose_swarm::{
         AuthorityScope, HostCapacityEvidence, LocalCompletionKind, NullSink,
-        PhysicalAdmissionControl, PhysicalFleetSnapshot, ProviderStartKey,
-        ProviderStartLookupError, SourceRevisionKind, TaskVersion, VerifiedPhysicalIdentity,
-        WorkOpportunity, WorkRole,
+        PhysicalAdmissionControl, PhysicalFleetSnapshot, ProviderRequestReceipt, ProviderStartKey,
+        ProviderStartLookupError, ProviderTerminalReceipt, SourceRevisionKind, TaskVersion,
+        VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -1192,6 +1339,8 @@ mod tests {
         NetworkFailed,
         StreamFailed,
         Pending,
+        StartPanics,
+        PollPanics,
         StartPending(Arc<tokio::sync::Notify>),
     }
 
@@ -1207,13 +1356,33 @@ mod tests {
 
     #[derive(Default)]
     struct TestNudgeDelivery {
+        bound: Mutex<Option<ProviderRequestReceipt>>,
         guidance: Mutex<Vec<String>>,
         cancelled: tokio::sync::Notify,
         is_cancelled: std::sync::atomic::AtomicBool,
+        confirmation: Mutex<Option<std::result::Result<ProviderTerminalReceipt, String>>>,
+        confirmed: tokio::sync::Notify,
     }
 
     #[async_trait]
     impl ProviderNudgeDelivery for TestNudgeDelivery {
+        fn bind_request(
+            &self,
+            request: &ProviderRequestReceipt,
+        ) -> std::result::Result<(), String> {
+            let mut bound = self.bound.lock().unwrap();
+            match bound.as_ref() {
+                Some(existing) if existing != request => {
+                    Err("delivery already bound to another request".to_string())
+                }
+                Some(_) => Ok(()),
+                None => {
+                    *bound = Some(request.clone());
+                    Ok(())
+                }
+            }
+        }
+
         fn try_enqueue(&self, guidance: String) -> std::result::Result<(), String> {
             self.guidance.lock().unwrap().push(guidance);
             self.is_cancelled.store(true, Ordering::Release);
@@ -1225,9 +1394,45 @@ mod tests {
             !self.is_cancelled.load(Ordering::Acquire)
         }
 
+        fn cancellation_terminal_confirmation_required(&self) -> bool {
+            self.is_cancelled.load(Ordering::Acquire)
+        }
+
         async fn cancelled(&self) {
             while !self.is_cancelled.load(Ordering::Acquire) {
                 self.cancelled.notified().await;
+            }
+        }
+
+        fn confirm_cancelled_terminal(
+            &self,
+            completed: CompletedProviderRequest,
+        ) -> std::result::Result<(), String> {
+            let bound = self.bound.lock().unwrap();
+            let result = match bound.as_ref() {
+                Some(request)
+                    if completed.request() == request
+                        && completed.terminal().kind == ProviderTerminalKind::Cancelled =>
+                {
+                    Ok(completed.terminal().clone())
+                }
+                _ => Err("cancel terminal does not match bound request".to_string()),
+            };
+            drop(bound);
+            *self.confirmation.lock().unwrap() = Some(result.clone());
+            self.confirmed.notify_waiters();
+            result.map(drop)
+        }
+
+        async fn confirmed_cancelled_terminal(
+            &self,
+        ) -> std::result::Result<ProviderTerminalReceipt, String> {
+            loop {
+                let notified = self.confirmed.notified();
+                if let Some(result) = self.confirmation.lock().unwrap().clone() {
+                    return result;
+                }
+                notified.await;
             }
         }
     }
@@ -1253,6 +1458,70 @@ mod tests {
             let delivery = Arc::new(TestNudgeDelivery::default());
             self.deliveries.lock().unwrap().push(delivery.clone());
             delivery
+        }
+    }
+
+    #[derive(Default)]
+    struct ExternalCancelDelivery {
+        requested: std::sync::atomic::AtomicBool,
+        changed: tokio::sync::Notify,
+    }
+
+    impl ExternalCancelDelivery {
+        fn request(&self) {
+            self.requested.store(true, Ordering::Release);
+            self.changed.notify_waiters();
+        }
+    }
+
+    #[async_trait]
+    impl ProviderNudgeDelivery for ExternalCancelDelivery {
+        fn bind_request(
+            &self,
+            _request: &ProviderRequestReceipt,
+        ) -> std::result::Result<(), String> {
+            Ok(())
+        }
+
+        fn try_enqueue(&self, _guidance: String) -> std::result::Result<(), String> {
+            Err("external cancellation delivery does not accept semantic nudges".to_string())
+        }
+
+        fn natural_terminal_allowed(&self) -> bool {
+            !self.requested.load(Ordering::Acquire)
+        }
+
+        fn cancellation_terminal_confirmation_required(&self) -> bool {
+            false
+        }
+
+        async fn cancelled(&self) {
+            while !self.requested.load(Ordering::Acquire) {
+                self.changed.notified().await;
+            }
+        }
+
+        fn confirm_cancelled_terminal(
+            &self,
+            _completed: CompletedProviderRequest,
+        ) -> std::result::Result<(), String> {
+            Err("external cancellation requires no semantic delivery receipt".to_string())
+        }
+
+        async fn confirmed_cancelled_terminal(
+            &self,
+        ) -> std::result::Result<ProviderTerminalReceipt, String> {
+            Err("external cancellation requires no semantic delivery receipt".to_string())
+        }
+    }
+
+    struct ExternalCancelFactory {
+        delivery: Arc<ExternalCancelDelivery>,
+    }
+
+    impl ProviderNudgeDeliveryFactory for ExternalCancelFactory {
+        fn open(&self) -> Arc<dyn ProviderNudgeDelivery> {
+            self.delivery.clone()
         }
     }
 
@@ -1422,6 +1691,13 @@ mod tests {
                 )),
                 Behavior::Pending => Ok(goose::providers::base::SingleAttemptStream::new(
                     Box::pin(stream::pending()),
+                    goose::providers::base::SingleAttemptTerminalProof::default(),
+                )),
+                Behavior::StartPanics => panic!("mock provider panicked before stream creation"),
+                Behavior::PollPanics => Ok(goose::providers::base::SingleAttemptStream::new(
+                    Box::pin(stream::once(async {
+                        panic!("mock provider stream poll panicked")
+                    })),
                     goose::providers::base::SingleAttemptTerminalProof::default(),
                 )),
                 Behavior::StartPending(entered) => {
@@ -1643,6 +1919,21 @@ mod tests {
         .await
     }
 
+    async fn wrapped_with_nudge(
+        behavior: Behavior,
+        lifecycle: ProviderLifecycle,
+        factory: Arc<TestNudgeFactory>,
+    ) -> Arc<dyn Provider> {
+        scope_provider_lifecycle(lifecycle, async move {
+            bind_current_provider_lifecycle(
+                Arc::new(MockProvider { behavior }),
+                Some(factory),
+                None,
+            )
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn progress_observer_wraps_planning_calls_without_provider_lifecycle() {
         assert!(!provider_lifecycle_active());
@@ -1665,6 +1956,34 @@ mod tests {
         assert_eq!(snapshot.structured_output_chunks, 1);
         assert_eq!(snapshot.structured_output_bytes, 4096);
         assert!(snapshot.structured_output_active);
+    }
+
+    #[test]
+    fn structured_output_start_linearizes_before_nudge_reservation() {
+        let progress = Arc::new(ProviderStreamProgressMeter::new());
+        let capture = progress.snapshot();
+        let mut locked = progress.state();
+        let gate = StructuredOutputNudgeSafetyGate::new(progress.clone(), capture);
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let entered = barrier.clone();
+        let reserved = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed_reservation = reserved.clone();
+        let thread = std::thread::spawn(move || {
+            entered.wait();
+            gate.reserve(&mut || {
+                observed_reservation.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        });
+        barrier.wait();
+        locked.revision = 1;
+        locked.structured_output_bytes = 4096;
+        locked.structured_output_active = true;
+        drop(locked);
+
+        let error = thread.join().unwrap().unwrap_err();
+        assert!(error.contains("structured output"));
+        assert!(!reserved.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -2006,12 +2325,371 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropped_stream_reconciles_cancelled_terminal_before_admission_release() {
+        let (control, work) = admitted().await;
+        let lifecycle = work.lifecycle();
+        let provider = wrapped_for(Behavior::Pending, lifecycle.clone()).await;
+        let output = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .unwrap();
+        drop(output);
+
+        let completed = lifecycle
+            .reconcile_cancelled_after_drop()
+            .await
+            .unwrap()
+            .expect("dropped provider stream retained exact cancellation authority");
+        assert_eq!(completed.terminal().kind, ProviderTerminalKind::Cancelled);
+        work.complete_local(LocalCompletionKind::CancellationRequested)
+            .await
+            .unwrap();
+        assert_eq!(control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn source_and_judge_no_progress_watchdogs_cancel_reconcile_and_release() {
+        for (label, idle_secs) in [
+            ("source", pre_scheduler_source_no_progress_secs(1)),
+            ("judge", pre_scheduler_judge_no_progress_secs(1)),
+        ] {
+            assert_ne!(idle_secs, 0, "{label} watchdog was disabled");
+            let (control, work) = admitted().await;
+            let lifecycle = work.lifecycle();
+            let provider = wrapped_for(Behavior::Pending, lifecycle.clone()).await;
+            let mut output = provider
+                .stream(&ModelConfig::new("model-a"), "", &[], &[])
+                .await
+                .unwrap();
+
+            assert!(
+                tokio::time::timeout(Duration::from_secs(idle_secs), output.next(),)
+                    .await
+                    .is_err()
+            );
+            drop(output);
+            let terminal = lifecycle
+                .reconcile_cancelled_after_drop()
+                .await
+                .unwrap()
+                .expect("watchdog-owned stream retained exact cancellation authority");
+            assert_eq!(terminal.terminal().kind, ProviderTerminalKind::Cancelled);
+            work.complete_local(LocalCompletionKind::Error)
+                .await
+                .unwrap();
+            assert_eq!(control.occupancy().await, (0, 0));
+
+            let source = TaskVersion {
+                authority_scope: AuthorityScope::new("watchdog-release", label),
+                phase_epoch: 0,
+                task_id: format!("after-{label}-watchdog"),
+                attempt: 0,
+                revision: 1,
+                kind: SourceRevisionKind::TaskAttempt,
+            };
+            control.set_source_revision(source.clone()).await.unwrap();
+            let next = tokio::time::timeout(
+                Duration::from_millis(100),
+                control.admit(WorkOpportunity {
+                    work_id: format!("after-{label}-watchdog"),
+                    role: WorkRole::Build,
+                    priority: WorkRole::Build.priority(),
+                    task_rank: 1,
+                    source,
+                    eligible_logical_device_ids: vec!["device-a".to_string()],
+                    preferred_model_id: None,
+                    excluded_logical_device_id: None,
+                }),
+            )
+            .await
+            .expect("watchdog cancellation did not release the physical host")
+            .unwrap();
+            next.complete_local(LocalCompletionKind::Error)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_panics_reconcile_exact_cancelled_terminal() {
+        for behavior in [Behavior::StartPanics, Behavior::PollPanics] {
+            let (control, work) = admitted().await;
+            let lifecycle = work.lifecycle();
+            let provider = wrapped_for(behavior.clone(), lifecycle.clone()).await;
+            let panicked = match behavior {
+                Behavior::StartPanics => std::panic::AssertUnwindSafe(provider.stream(
+                    &ModelConfig::new("model-a"),
+                    "",
+                    &[],
+                    &[],
+                ))
+                .catch_unwind()
+                .await
+                .is_err(),
+                Behavior::PollPanics => {
+                    let mut output = provider
+                        .stream(&ModelConfig::new("model-a"), "", &[], &[])
+                        .await
+                        .unwrap();
+                    let panicked = std::panic::AssertUnwindSafe(output.next())
+                        .catch_unwind()
+                        .await
+                        .is_err();
+                    drop(output);
+                    panicked
+                }
+                _ => unreachable!(),
+            };
+            assert!(panicked);
+            let completed = lifecycle
+                .reconcile_cancelled_after_drop()
+                .await
+                .unwrap()
+                .expect("panic retained exact cancellation authority");
+            assert_eq!(completed.terminal().kind, ProviderTerminalKind::Cancelled);
+            work.complete_local(LocalCompletionKind::Error)
+                .await
+                .unwrap();
+            assert_eq!(control.occupancy().await, (0, 0));
+        }
+    }
+
+    #[tokio::test]
+    async fn unproven_provider_error_is_not_relabelled_as_cancellation() {
+        let (control, work, spare) = admitted_pre_scheduler_pair().await;
+        spare
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        let lifecycle = work.lifecycle();
+        let provider = wrapped_for(Behavior::NetworkFailed, lifecycle.clone()).await;
+        assert!(provider
+            .stream(&ModelConfig::new("worker-model"), "", &[], &[])
+            .await
+            .is_err());
+        let error = lifecycle
+            .reconcile_cancelled_after_drop()
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("no proven cancelled terminal"));
+        let quarantine = work.quarantine_unproven(error.to_string()).await.unwrap();
+        assert_eq!(quarantine.unresolved.provider_requests_started, 1);
+        assert_eq!(quarantine.unresolved.provider_requests_terminal, 0);
+        assert_eq!(
+            quarantine.unresolved.local_completion,
+            Some(LocalCompletionKind::Error)
+        );
+        assert_eq!(control.occupancy().await, (0, 1));
+        tokio::time::timeout(Duration::from_millis(100), control.wait_until_drained())
+            .await
+            .expect("quarantined admission blocked phase drain")
+            .unwrap();
+
+        let next_source = TaskVersion {
+            authority_scope: AuthorityScope::new("pre-scheduler", "next"),
+            phase_epoch: 0,
+            task_id: "next-on-spare".to_string(),
+            attempt: 0,
+            revision: 1,
+            kind: SourceRevisionKind::TaskAttempt,
+        };
+        control
+            .set_source_revision(next_source.clone())
+            .await
+            .unwrap();
+        let next = tokio::time::timeout(
+            Duration::from_millis(100),
+            control.admit(WorkOpportunity {
+                work_id: "next-on-spare".to_string(),
+                role: WorkRole::Build,
+                priority: WorkRole::Build.priority(),
+                task_rank: 1,
+                source: next_source,
+                eligible_logical_device_ids: vec!["judge-device".to_string()],
+                preferred_model_id: None,
+                excluded_logical_device_id: None,
+            }),
+        )
+        .await
+        .expect("quarantined host blocked an unrelated physical node")
+        .unwrap();
+        next.complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+
+        let quarantined_source = TaskVersion {
+            authority_scope: AuthorityScope::new("pre-scheduler", "quarantined"),
+            phase_epoch: 0,
+            task_id: "next-on-quarantined".to_string(),
+            attempt: 0,
+            revision: 1,
+            kind: SourceRevisionKind::TaskAttempt,
+        };
+        control
+            .set_source_revision(quarantined_source.clone())
+            .await
+            .unwrap();
+        let rejected = match control
+            .admit(WorkOpportunity {
+                work_id: "next-on-quarantined".to_string(),
+                role: WorkRole::Build,
+                priority: WorkRole::Build.priority(),
+                task_rank: 2,
+                source: quarantined_source,
+                eligible_logical_device_ids: vec!["worker-device".to_string()],
+                preferred_model_id: None,
+                excluded_logical_device_id: None,
+            })
+            .await
+        {
+            Ok(_) => panic!("quarantined physical host admitted new work"),
+            Err(error) => error,
+        };
+        assert!(rejected.to_string().contains("quarantined"));
+    }
+
+    #[tokio::test]
+    async fn nudge_cancellation_confirms_terminal_during_stream_creation_and_polling() {
+        for during_creation in [true, false] {
+            let (control, work) = admitted().await;
+            let factory = Arc::new(TestNudgeFactory::default());
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let waiting = entered.notified();
+            let behavior = if during_creation {
+                Behavior::StartPending(entered.clone())
+            } else {
+                Behavior::Pending
+            };
+            let provider = wrapped_with_nudge(behavior, work.lifecycle(), factory.clone()).await;
+            if during_creation {
+                let task = tokio::spawn(async move {
+                    provider
+                        .stream(&ModelConfig::new("model-a"), "", &[], &[])
+                        .await
+                });
+                tokio::time::timeout(Duration::from_secs(2), waiting)
+                    .await
+                    .unwrap();
+                let delivery = factory.latest();
+                delivery.try_enqueue("redirect".to_string()).unwrap();
+                let mut output = task.await.unwrap().unwrap();
+                assert!(output.next().await.is_none());
+                let terminal = delivery.confirmed_cancelled_terminal().await.unwrap();
+                assert_eq!(terminal.kind, ProviderTerminalKind::Cancelled);
+            } else {
+                let mut output = provider
+                    .stream(&ModelConfig::new("model-a"), "", &[], &[])
+                    .await
+                    .unwrap();
+                let delivery = factory.latest();
+                delivery.try_enqueue("redirect".to_string()).unwrap();
+                assert!(output.next().await.is_none());
+                let terminal = delivery.confirmed_cancelled_terminal().await.unwrap();
+                assert_eq!(terminal.kind, ProviderTerminalKind::Cancelled);
+            }
+            work.complete_local(LocalCompletionKind::Error)
+                .await
+                .unwrap();
+            assert_eq!(control.occupancy().await, (0, 0));
+        }
+    }
+
+    #[tokio::test]
+    async fn captured_turn_completion_cancels_moot_judge_before_a_later_source_turn() {
+        let (control, source, judge) = admitted_pre_scheduler_pair().await;
+        let source_lifecycle = source.lifecycle();
+        let first_source_request = source_lifecycle.start_provider_request().await.unwrap();
+        first_source_request.publish_for_scheduler().unwrap();
+        let captured = source_lifecycle
+            .capture_live_provider_request("judge-snapshot".to_string())
+            .unwrap();
+        let delivery = Arc::new(ExternalCancelDelivery::default());
+        let provider = scope_provider_lifecycle(judge.lifecycle(), async {
+            bind_current_provider_lifecycle(
+                Arc::new(MockProvider {
+                    behavior: Behavior::Pending,
+                }),
+                Some(Arc::new(ExternalCancelFactory {
+                    delivery: delivery.clone(),
+                })),
+                None,
+            )
+        })
+        .await;
+        let mut output = provider
+            .stream(&ModelConfig::new("judge-model"), "", &[], &[])
+            .await
+            .unwrap();
+        let cancel_delivery = delivery.clone();
+        let close_watcher = tokio::spawn(async move {
+            captured.closed().await;
+            cancel_delivery.request();
+        });
+        first_source_request
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        let second_source_request = source_lifecycle.start_provider_request().await.unwrap();
+        second_source_request.publish_for_scheduler().unwrap();
+        assert!(output.next().await.is_none());
+        close_watcher.await.unwrap();
+        judge
+            .complete_local(LocalCompletionKind::CancellationRequested)
+            .await
+            .unwrap();
+        assert_eq!(control.occupancy().await, (0, 1));
+
+        let next_source = TaskVersion {
+            authority_scope: AuthorityScope::new("provider-lifecycle-replay", "build"),
+            phase_epoch: 0,
+            task_id: "task-after-moot-judge".to_string(),
+            attempt: 0,
+            revision: 1,
+            kind: SourceRevisionKind::TaskAttempt,
+        };
+        control
+            .set_source_revision(next_source.clone())
+            .await
+            .unwrap();
+        let next = tokio::time::timeout(
+            Duration::from_millis(100),
+            control.admit(WorkOpportunity {
+                work_id: "work-after-moot-judge".to_string(),
+                role: WorkRole::Build,
+                priority: WorkRole::Build.priority(),
+                task_rank: 1,
+                source: next_source,
+                eligible_logical_device_ids: vec!["judge-device".to_string()],
+                preferred_model_id: None,
+                excluded_logical_device_id: None,
+            }),
+        )
+        .await
+        .expect("moot judge host remained unavailable to later work")
+        .unwrap();
+        next.complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        second_source_request
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        source
+            .complete_local(LocalCompletionKind::Success)
+            .await
+            .unwrap();
+        assert_eq!(control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
     async fn cancelled_stream_creation_closes_published_provider_start() {
         let (control, work) = admitted().await;
+        let lifecycle = work.lifecycle();
         let provider_start = ProviderStartKey::from_admission(work.receipt());
         let entered = Arc::new(tokio::sync::Notify::new());
         let waiting = entered.notified();
-        let provider = wrapped_for(Behavior::StartPending(entered.clone()), work.lifecycle()).await;
+        let provider =
+            wrapped_for(Behavior::StartPending(entered.clone()), lifecycle.clone()).await;
         let task = tokio::spawn(async move {
             provider
                 .stream(&ModelConfig::new("model-a"), "", &[], &[])
@@ -2030,12 +2708,15 @@ mod tests {
             control.provider_start_registry().query(&provider_start),
             Err(ProviderStartLookupError::NotLive { .. })
         ));
-        assert!(tokio::time::timeout(
-            Duration::from_millis(50),
-            work.complete_local(LocalCompletionKind::CancellationRequested),
-        )
-        .await
-        .is_err());
-        assert_eq!(control.occupancy().await, (0, 1));
+        let completed = lifecycle
+            .reconcile_cancelled_after_drop()
+            .await
+            .unwrap()
+            .expect("aborted stream creation retained exact cancellation authority");
+        assert_eq!(completed.terminal().kind, ProviderTerminalKind::Cancelled);
+        work.complete_local(LocalCompletionKind::CancellationRequested)
+            .await
+            .unwrap();
+        assert_eq!(control.occupancy().await, (0, 0));
     }
 }

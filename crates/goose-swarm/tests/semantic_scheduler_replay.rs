@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use goose_provider_types::base::{expose_current_provider_http_request, ProviderHttpProtocol};
 use goose_swarm::{
     AdmissionReceipt, AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
-    AdmittedSemanticReviewError, AuthorityScope, Dag, DeviceCfg, Difficulty, DispatchError,
-    DispatchRequest, EventSink, GlobalProviderLeaseAuthority, HostCapacityEvidence,
-    PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
-    ProviderLeaseWaitPolicy, ProviderLifecycle, ProviderLifecycleDispatcher,
+    AdmittedSemanticReviewError, AuthorityScope, CompletedProviderRequest, Dag, DeviceCfg,
+    Difficulty, DispatchError, DispatchRequest, EventSink, GlobalProviderLeaseAuthority,
+    HostCapacityEvidence, PhysicalAdmissionControl, PhysicalExecutionAuthority,
+    PhysicalFleetSnapshot, ProviderLeaseWaitPolicy, ProviderLifecycle, ProviderLifecycleDispatcher,
     ProviderLifecycleJournal, ProviderNudgeDelivery, ProviderRequestReceipt, ProviderTerminalKind,
     ProviderTerminalReceipt, RunScopedProviderLeaseAuthority, Scheduler,
     SealedProviderLeaseAuthority, SemanticObservationCapture, SemanticObservationCaptureRequest,
@@ -335,6 +335,7 @@ impl AdmittedSemanticObservationReviewer for NudgeObserver {
 
 #[derive(Default)]
 struct ReplayNudgeState {
+    bound: Option<ProviderRequestReceipt>,
     reserved: bool,
     closed: bool,
     guidance: Vec<String>,
@@ -344,14 +345,17 @@ struct ReplayNudgeState {
 struct ReplayNudgeDelivery {
     state: Mutex<ReplayNudgeState>,
     cancelled: tokio::sync::watch::Sender<bool>,
+    confirmed: tokio::sync::watch::Sender<Option<Result<ProviderTerminalReceipt, String>>>,
 }
 
 impl ReplayNudgeDelivery {
     fn new() -> Self {
         let (cancelled, _) = tokio::sync::watch::channel(false);
+        let (confirmed, _) = tokio::sync::watch::channel(None);
         Self {
             state: Mutex::new(ReplayNudgeState::default()),
             cancelled,
+            confirmed,
         }
     }
 
@@ -384,6 +388,20 @@ impl ReplayNudgeDelivery {
 
 #[async_trait]
 impl ProviderNudgeDelivery for ReplayNudgeDelivery {
+    fn bind_request(&self, request: &ProviderRequestReceipt) -> Result<(), String> {
+        let mut state = self.state.lock().unwrap();
+        match state.bound.as_ref() {
+            Some(existing) if existing != request => {
+                Err("delivery already bound to another request".to_string())
+            }
+            Some(_) => Ok(()),
+            None => {
+                state.bound = Some(request.clone());
+                Ok(())
+            }
+        }
+    }
+
     fn try_enqueue(&self, guidance: String) -> Result<(), String> {
         let mut state = self.state.lock().unwrap();
         if state.closed || state.reserved {
@@ -404,12 +422,48 @@ impl ProviderNudgeDelivery for ReplayNudgeDelivery {
         true
     }
 
+    fn cancellation_terminal_confirmation_required(&self) -> bool {
+        self.state.lock().unwrap().reserved
+    }
+
     async fn cancelled(&self) {
         let mut receiver = self.cancelled.subscribe();
         while !*receiver.borrow_and_update() {
             if receiver.changed().await.is_err() {
                 return;
             }
+        }
+    }
+
+    fn confirm_cancelled_terminal(
+        &self,
+        completed: CompletedProviderRequest,
+    ) -> Result<(), String> {
+        let state = self.state.lock().unwrap();
+        let result = match state.bound.as_ref() {
+            Some(request)
+                if completed.request() == request
+                    && completed.terminal().kind == ProviderTerminalKind::Cancelled =>
+            {
+                Ok(completed.terminal().clone())
+            }
+            _ => Err("cancel terminal does not match bound request".to_string()),
+        };
+        drop(state);
+        self.confirmed.send_replace(Some(result.clone()));
+        result.map(drop)
+    }
+
+    async fn confirmed_cancelled_terminal(&self) -> Result<ProviderTerminalReceipt, String> {
+        let mut receiver = self.confirmed.subscribe();
+        loop {
+            if let Some(result) = receiver.borrow_and_update().clone() {
+                return result;
+            }
+            receiver
+                .changed()
+                .await
+                .map_err(|_| "cancel confirmation channel closed".to_string())?;
         }
     }
 }
@@ -472,10 +526,13 @@ impl ProviderLifecycleDispatcher for GapDispatcher {
         };
         if terminal_kind == ProviderTerminalKind::Cancelled {
             self.nudge_delivery.record_cancel();
-            started
-                .provider_terminal(ProviderTerminalKind::Cancelled)
+            let completed = started
+                .provider_terminal_with_completion(ProviderTerminalKind::Cancelled)
                 .await
                 .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            self.nudge_delivery
+                .confirm_cancelled_terminal(completed)
+                .map_err(DispatchError::Terminal)?;
             let resumed = lifecycle
                 .start_provider_request()
                 .await
