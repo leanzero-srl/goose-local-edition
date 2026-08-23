@@ -799,6 +799,7 @@ pub enum ProviderLeaseBoundaryStatus {
     Failed,
 }
 
+#[derive(Clone)]
 pub struct ProviderLeaseHttpBoundary {
     authority: RunScopedProviderLeaseAuthority,
     request_identity: RequestIdentity,

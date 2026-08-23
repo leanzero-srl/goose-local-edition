@@ -976,12 +976,12 @@ impl SchedulerSemanticObservationRuntime {
         let submission = self
             .plane
             .submit_if_idle(
-                capture.into_snapshot(),
+                capture.snapshot().clone(),
                 SemanticObservationAdmissionPolicy {
                     task_rank: request.task_rank,
                     eligible_logical_device_ids,
                     preferred_model_id: None,
-                    excluded_logical_device_id: Some(request.running_logical_device_id),
+                    excluded_logical_device_id: Some(request.running_logical_device_id.clone()),
                 },
                 self.reviewer.clone(),
             )
@@ -1000,8 +1000,25 @@ impl SchedulerSemanticObservationRuntime {
                 }
             }
             Ok(Some(SemanticObservationAdmissionSubmission::Started(handle))) => {
-                if let Err(error) = handle.wait().await {
-                    self.capture_failed(&request.task_id, request.attempt, error.to_string());
+                match handle.wait().await {
+                    Ok(receipt) => {
+                        if let Err(error) = self.plane.redeem_scheduler_nudge(
+                            capture,
+                            &request,
+                            &task_evidence,
+                            provider_session,
+                            receipt,
+                        ) {
+                            self.capture_failed(
+                                &request.task_id,
+                                request.attempt,
+                                format!("semantic nudge authority was rejected: {error}"),
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        self.capture_failed(&request.task_id, request.attempt, error.to_string());
+                    }
                 }
                 SemanticObservationAttemptResult {
                     task_id,

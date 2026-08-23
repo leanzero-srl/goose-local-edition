@@ -3,11 +3,11 @@
 //! A summons is evidence that a trace changed, not a verdict about that change. This module has no
 //! action-delivery API and cannot mutate scheduler state.
 
-use crate::control_plane::{LiveProviderRequestSession, StartedProviderRequest};
+use crate::control_plane::LiveProviderRequestSession;
 use crate::semantic_observation::{
     AcceptanceCriterionSnapshot, NeutralJudgeSignal, SealedSemanticObservationSnapshot,
 };
-use crate::{AdmissionReceipt, ProviderRequestReceipt, SourceRevisionKind, TaskVersion};
+use crate::{AdmissionReceipt, ProviderRequestReceipt, TaskVersion};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -206,56 +206,6 @@ pub struct SemanticSourceProviderSessionBoundary {
 }
 
 impl SemanticSourceProviderSessionBoundary {
-    pub(crate) fn validate_started_provider_request(
-        publisher: &SemanticActivityPublisher,
-        started_provider_request: &StartedProviderRequest,
-    ) -> Result<(), String> {
-        let provider_request = started_provider_request.receipt();
-        publisher.validate()?;
-        if !matches!(publisher.work_role.as_str(), "build" | "repair")
-            || !matches!(publisher.source.kind, SourceRevisionKind::TaskAttempt)
-        {
-            return Err(
-                "semantic source provider session must belong to admitted build or repair work"
-                    .to_string(),
-            );
-        }
-        for (name, actual, expected) in [
-            (
-                "admission id",
-                provider_request.admission_id.as_str(),
-                publisher.admission_id.as_str(),
-            ),
-            (
-                "physical host id",
-                provider_request.physical_host_id.as_str(),
-                publisher.physical_host_id.as_str(),
-            ),
-            (
-                "model instance id",
-                provider_request.model_instance_id.as_str(),
-                publisher.model_instance_id.as_str(),
-            ),
-        ] {
-            if actual != expected {
-                return Err(format!(
-                    "semantic source provider {name} does not match its activity publisher"
-                ));
-            }
-        }
-        let provider_request_id = provider_request.key.provider_request_id.as_str();
-        if provider_request_id.trim().is_empty()
-            || provider_request_id.trim() != provider_request_id
-        {
-            return Err(
-                "semantic source provider request id is empty or has surrounding whitespace"
-                    .to_string(),
-            );
-        }
-
-        Ok(())
-    }
-
     pub(crate) fn from_provider_session(
         publisher: &SemanticActivityPublisher,
         provider_session: LiveProviderRequestSession,
