@@ -2092,14 +2092,18 @@ mod tests {
             producer.capture(request.clone()),
             producer.capture(request.clone())
         );
-        let left = left.unwrap().unwrap();
-        let right = right.unwrap().unwrap();
-        assert_eq!(left.revision(), right.revision());
+        let (left, right) = (left.unwrap(), right.unwrap());
+        assert_ne!(
+            left.is_some(),
+            right.is_some(),
+            "identical concurrent polls must mint exactly one capture"
+        );
+        let captured = left.or(right).unwrap();
         assert_eq!(
-            left.snapshot().payload().artifacts[0].excerpt,
+            captured.snapshot().payload().artifacts[0].excerpt,
             "pub fn api() {}\n"
         );
-        assert!(left.snapshot().payload().artifacts[0].complete);
+        assert!(captured.snapshot().payload().artifacts[0].complete);
 
         std::fs::write(
             root.path().join("src/api.rs"),
@@ -2110,7 +2114,7 @@ mod tests {
         assert_eq!(advanced.snapshot().source_revision(), 2);
         assert_ne!(
             advanced.snapshot().snapshot_hash(),
-            left.snapshot().snapshot_hash()
+            captured.snapshot().snapshot_hash()
         );
     }
 
