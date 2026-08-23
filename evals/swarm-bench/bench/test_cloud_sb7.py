@@ -1073,6 +1073,339 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 True,
             )
 
+    def make_orchestrator_recovery_fixture(
+        self, root: Path
+    ) -> dict[str, object]:
+        publisher_repo, _ = self.make_publisher_repo(root)
+        manifest_value = cloud_sb7.load_json(cloud_sb7.DEFAULT_ENTRANTS)
+        rows = json.loads(json.dumps(cloud_sb7.entrants(manifest_value)))
+        for row in rows:
+            row["vendor_port"] = self.free_port()
+        publisher_manifest = {
+            "expectedChecks": 91,
+            "entrants": [
+                {
+                    "key": row["id"],
+                    "label": str(row["id"]).replace("-", " ").title(),
+                    "model": row["model"],
+                    "docId": (
+                        "brun-baseline-"
+                        + str(row["id"]).replace(".", "-")
+                        + "-sb70"
+                    ),
+                }
+                for row in rows
+            ],
+        }
+        (publisher_repo / cloud_sb7.PUBLISHER_MANIFEST).write_text(
+            json.dumps(publisher_manifest)
+        )
+        subprocess.run(["git", "add", "."], cwd=publisher_repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "add recovery roster"],
+            cwd=publisher_repo,
+            check=True,
+        )
+
+        manifest_path = root / "recovery-entrants.json"
+        manifest_path.write_text(
+            json.dumps({**manifest_value, "entrants": rows})
+        )
+        secret_path = root / "recovery-providers.env"
+        secret_path.write_text(
+            "\n".join(
+                f"{row['secret_env']}=fixture-{index}-secret"
+                for index, row in enumerate(rows)
+            )
+            + "\n"
+        )
+        secret_path.chmod(0o600)
+        binary = root / "goose-recovery-fixture"
+        binary.write_text("fixture recovery binary\n")
+        binary.chmod(0o700)
+        publisher = cloud_sb7.publisher_snapshot(publisher_repo, rows)
+        models: dict[str, list[str]] = {}
+        roster: dict[str, dict[str, object]] = {}
+        for row in rows:
+            provider = str(row["provider"])
+            model = str(row["model"])
+            models.setdefault(provider, []).append(model)
+            roster.setdefault(provider, {})[model] = {}
+        checked = {
+            "checked_at": "now",
+            "binary_sha256": cloud_sb7.sha256_file(binary),
+            "models": models,
+            "roster_evidence": roster,
+            "requested_models": [row["model"] for row in rows],
+            "ports_free": True,
+            "credential_file_mode": "0600",
+            "publisher": publisher,
+        }
+
+        generation_zero = root / "generation-zero"
+        with mock.patch.object(cloud_sb7, "preflight", return_value=checked):
+            cloud_sb7.init_campaign(
+                generation_zero,
+                binary,
+                manifest_path,
+                secret_path,
+                publisher_repo,
+                True,
+            )
+        for row in rows:
+            entrant_id = str(row["id"])
+            cloud_sb7.update_state(
+                generation_zero,
+                entrant_id,
+                status="STOPPED",
+                provider_episode_attempts=0,
+                admitted_requests=0,
+                provider_terminal_requests=0,
+                score=None,
+                verdict=None,
+                failure=None,
+            )
+            cloud_sb7.update_smoke_state(
+                generation_zero, entrant_id, status="STOPPED"
+            )
+        affected_id = str(rows[0]["id"])
+        cloud_sb7.update_smoke_state(
+            generation_zero,
+            affected_id,
+            status="PRE_ADMISSION_FAILURE",
+            launch_attempts=0,
+            admitted_episodes=0,
+            active_attempt=False,
+            queued_at="2026-08-23T03:00:00Z",
+            failure="coordinator pre-admission fixture",
+        )
+        cloud_sb7.manager_state(
+            generation_zero,
+            status="STOPPED",
+            pid=None,
+            pgid=None,
+            identity=None,
+        )
+        cloud_sb7.update_campaign(generation_zero, status="STOPPED")
+
+        root_cause = root / "orchestrator-root-cause.txt"
+        root_cause.write_text("monitor rejected a valid first full episode\n")
+        regression = root / "orchestrator-regression.txt"
+        regression.write_text("first-episode lineage and monitor ordering pass\n")
+        predecessor = cloud_sb7.load_json(
+            cloud_sb7.campaign_file(generation_zero)
+        )
+        supersession_evidence = root / "supersession-evidence.json"
+        cloud_sb7.atomic_json(
+            supersession_evidence,
+            {
+                "schema_version": cloud_sb7.SUPERSESSION_SCHEMA,
+                "classification": "infrastructure_defect",
+                "defect_id": "fixture-smoke-only-coordinator",
+                "summary": "Fixture generation-one coordinator transition.",
+                "affected_entrants": [affected_id],
+                "predecessor_campaign_id": predecessor["campaign_id"],
+                "predecessor_binary_sha256": predecessor["binary_sha256"],
+                "replacement_binary_sha256": predecessor["binary_sha256"],
+                "fix_source_commit": cloud_sb7.git_value("rev-parse", "HEAD"),
+                "artifacts": [
+                    {
+                        "role": "root_cause",
+                        "path": str(root_cause),
+                        "sha256": cloud_sb7.sha256_file(root_cause),
+                    },
+                    {
+                        "role": "regression_test",
+                        "path": str(regression),
+                        "sha256": cloud_sb7.sha256_file(regression),
+                    },
+                ],
+            },
+        )
+
+        original_freeze = cloud_sb7.freeze_instrument
+        coordinator_key = "evals/swarm-bench/bench/cloud_sb7.py"
+
+        def freeze_generation_one(destination: Path) -> dict[str, str]:
+            hashes = original_freeze(destination)
+            coordinator = destination / coordinator_key
+            coordinator.write_text(
+                coordinator.read_text() + "\n# generation-one fixture defect\n"
+            )
+            hashes[coordinator_key] = cloud_sb7.sha256_file(coordinator)
+            return hashes
+
+        replacement_hashes = cloud_sb7.instrument_hashes()
+        coordinator_suffix = "\n# generation-one fixture defect\n"
+        replacement_hashes[coordinator_key] = cloud_sb7.sha256_bytes(
+            (
+                cloud_sb7.REPO / coordinator_key
+            ).read_bytes()
+            + coordinator_suffix.encode()
+        )
+        source_root = root / "generation-one-stopped"
+        with (
+            mock.patch.object(
+                cloud_sb7, "instrument_hashes", return_value=replacement_hashes
+            ),
+            mock.patch.object(
+                cloud_sb7, "freeze_instrument", side_effect=freeze_generation_one
+            ),
+            mock.patch.object(cloud_sb7, "preflight", return_value=checked),
+        ):
+            cloud_sb7.supersede_campaign(
+                generation_zero,
+                source_root,
+                binary,
+                manifest_path,
+                secret_path,
+                publisher_repo,
+                supersession_evidence,
+                True,
+            )
+
+        source = cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))
+        ledger_path = Path(str(source["budget_ledger"]))
+        ledger = cloud_sb7.load_json(ledger_path)
+        ledger["outstanding"] = {}
+        for index, row in enumerate(rows):
+            entrant_id = str(row["id"])
+            state = cloud_sb7.read_state(source_root, entrant_id)
+            request_id = f"ambiguous-{entrant_id}"
+            event = {
+                "schema_version": 1,
+                "timestamp": f"t-{index}",
+                "request_id": request_id,
+                "provider": row["provider"],
+                "model": row["model"],
+                "session": f"session-{index}",
+                "state": "queued",
+            }
+            lifecycle_path = Path(str(state["provider_lifecycle"]))
+            lifecycle_path.write_text(json.dumps(event) + "\n")
+            (Path(str(state["tree"])) / "partial.txt").write_text(
+                f"partial {entrant_id}\n"
+            )
+            cloud_sb7.update_state(
+                source_root,
+                entrant_id,
+                status="STOPPED",
+                provider_episode_attempts=1,
+                admitted_requests=0,
+                provider_terminal_requests=0,
+                score=None,
+                verdict=None,
+                failure=None,
+                exit_code=None,
+                finished_at=None,
+                raw_tree_sha256=None,
+                started_at="2026-08-23T03:06:04Z",
+                prompt_sha256=f"{index + 1:064x}",
+                command=["goose", "run"],
+            )
+            profile = cloud_sb7.budget_model_profile(
+                cloud_sb7.load_json(Path(str(source["budget_config"]))),
+                str(row["provider"]),
+                str(row["model"]),
+            )
+            assert profile is not None
+            reserve = cloud_sb7.budget_price(
+                profile, int(row["context_limit"]), int(row["max_output_tokens"])
+            )
+            ledger["outstanding"][request_id] = {
+                "request_id": request_id,
+                "provider": row["provider"],
+                "model": row["model"],
+                "reserved_usd": reserve,
+                "input_reserve_tokens": row["context_limit"],
+                "output_reserve_tokens": row["max_output_tokens"],
+                "created_at_unix_ms": index + 1,
+            }
+        cloud_sb7.atomic_json(ledger_path, ledger)
+        cloud_sb7.manager_state(
+            source_root,
+            status="STOPPED",
+            pid=None,
+            pgid=None,
+            identity=None,
+        )
+        cloud_sb7.monitor_state(
+            source_root,
+            status="STOPPED",
+            pid=None,
+            pgid=None,
+            identity=None,
+        )
+        (source_root / "manager.log").write_bytes(b"")
+        (source_root / "monitor.log").write_text(
+            cloud_sb7.ORCHESTRATOR_MONITOR_FAILURE
+        )
+        cloud_sb7.update_campaign(
+            source_root, status="STOPPED", failure=None
+        )
+
+        target_root = root / "generation-two-recovery"
+        stopped_source = cloud_sb7.load_json(
+            cloud_sb7.campaign_file(source_root)
+        )
+        source_evidence = cloud_sb7.orchestrator_source_evidence_snapshot(
+            source_root, stopped_source, rows
+        )
+        incident = cloud_sb7.orchestrator_recovery_incident_identity(
+            source_root, stopped_source, source_evidence
+        )
+        with (
+            mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+            mock.patch.object(
+                cloud_sb7, "ORCHESTRATOR_RECOVERY_INCIDENT", incident
+            ),
+        ):
+            _, _, source_evidence = cloud_sb7.stopped_orchestrator_recovery_source(
+                source_root,
+                stopped_source,
+                rows,
+            )
+        recovery_evidence = root / "orchestrator-recovery-evidence.json"
+        with (
+            mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+            mock.patch.object(
+                cloud_sb7, "ORCHESTRATOR_RECOVERY_INCIDENT", incident
+            ),
+        ):
+            evidence = cloud_sb7.orchestrator_recovery_evidence_template(
+                source_root,
+                target_root,
+                root_cause,
+                regression,
+            )
+        self.assertEqual(evidence["entrants"], source_evidence["entrants"])
+        cloud_sb7.atomic_json(recovery_evidence, evidence)
+        return {
+            "source": source_root,
+            "target": target_root,
+            "evidence": recovery_evidence,
+            "rows": rows,
+            "incident": incident,
+        }
+
+    def orchestrator_recovery_fixture(
+        self, fixture: dict[str, object]
+    ) -> dict[str, object]:
+        with (
+            mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+            mock.patch.object(
+                cloud_sb7,
+                "ORCHESTRATOR_RECOVERY_INCIDENT",
+                fixture["incident"],
+            ),
+        ):
+            return cloud_sb7.orchestrator_recovery_campaign(
+                Path(str(fixture["source"])),
+                Path(str(fixture["target"])),
+                Path(str(fixture["evidence"])),
+                True,
+            )
+
     def test_supersession_carries_spend_attempts_and_success_without_rerun(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_supersession_fixture(Path(raw))
@@ -3820,6 +4153,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 with (
                     mock.patch.object(cloud_sb7, "require_smoke_proofs"),
                     mock.patch.object(
+                        cloud_sb7, "manager_monitor_gate_failure", return_value=None
+                    ),
+                    mock.patch.object(
                         cloud_sb7, "launch_detached", return_value=Launched()
                     ) as launch,
                 ):
@@ -4630,6 +4966,252 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.load_json(cloud_sb7.campaign_file(root))["status"],
                 "ATTENTION",
             )
+
+    def test_orchestrator_recovery_preserves_attempts_ambiguity_and_budget(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+            source_root = Path(str(fixture["source"]))
+            target_root = Path(str(fixture["target"]))
+            source = cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))
+            source_ledger = cloud_sb7.load_json(Path(str(source["budget_ledger"])))
+            self.assertIsNone(cloud_sb7.lineage_failure(source_root))
+            unstarted_id = next(
+                str(row["id"])
+                for row in fixture["rows"]
+                if cloud_sb7.read_state(source_root, str(row["id"]))[
+                    "lineage_role"
+                ]
+                == "unstarted_after_infrastructure_defect"
+            )
+            unstarted_path = cloud_sb7.state_file(source_root, unstarted_id)
+            original_unstarted = unstarted_path.read_bytes()
+            cloud_sb7.update_state(
+                source_root, unstarted_id, provider_episode_attempts=0
+            )
+            self.assertIn(
+                "attempt counter was reset",
+                cloud_sb7.lineage_failure(source_root) or "",
+            )
+            unstarted_path.write_bytes(original_unstarted)
+
+            target = self.orchestrator_recovery_fixture(fixture)
+
+            self.assertEqual(target["lineage"]["generation"], 2)
+            self.assertEqual(target["smoke_status"], "PLANNED")
+            self.assertEqual(
+                cloud_sb7.load_json(Path(str(target["budget_ledger"]))),
+                source_ledger,
+            )
+            receipt = cloud_sb7.load_json(
+                source_root / cloud_sb7.ORCHESTRATOR_RECOVERY_RECEIPT
+            )
+            self.assertFalse(receipt["provider_terminal_usage_fabricated"])
+            self.assertEqual(
+                set(receipt["source_ambiguous_request_ids"]),
+                {str(row["id"]) for row in fixture["rows"]},
+            )
+            for row in fixture["rows"]:
+                entrant_id = str(row["id"])
+                state = cloud_sb7.read_state(target_root, entrant_id)
+                self.assertEqual(state["status"], "PLANNED")
+                self.assertEqual(state["provider_episode_attempts"], 1)
+                self.assertEqual(state["lineage_role"], "orchestrator_recovery_restart")
+                self.assertEqual(list(Path(str(state["tree"])).iterdir()), [])
+            again = self.orchestrator_recovery_fixture(fixture)
+            self.assertEqual(again["campaign_id"], target["campaign_id"])
+            fork = {**fixture, "target": Path(raw) / "recovery-fork"}
+            with self.assertRaisesRegex(SystemExit, "receipt for another target"):
+                self.orchestrator_recovery_fixture(fork)
+            self.assertIn(
+                "immutable orchestrator recovery receipt",
+                cloud_sb7.lineage_failure(source_root) or "",
+            )
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "port_is_free", return_value=False),
+            ):
+                self.assertIsNone(cloud_sb7.lineage_failure(target_root))
+
+    def test_orchestrator_recovery_refuses_a_structurally_valid_lookalike(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                self.assertRaisesRegex(
+                    SystemExit, "not the exact sealed 2026-08-23 incident"
+                ),
+            ):
+                cloud_sb7.orchestrator_recovery_campaign(
+                    Path(str(fixture["source"])),
+                    Path(str(fixture["target"])),
+                    Path(str(fixture["evidence"])),
+                    True,
+                )
+
+    def test_orchestrator_recovery_refuses_outcomes_accounting_drift_and_evidence_tamper(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+            source_root = Path(str(fixture["source"]))
+            entrant_id = str(fixture["rows"][0]["id"])
+            state_path = cloud_sb7.state_file(source_root, entrant_id)
+            original_state = state_path.read_bytes()
+            cloud_sb7.update_state(source_root, entrant_id, status="BUILD_COMPLETE")
+            with self.assertRaisesRegex(SystemExit, "forbidden after a build outcome"):
+                self.orchestrator_recovery_fixture(fixture)
+            state_path.write_bytes(original_state)
+
+            source = cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))
+            ledger_path = Path(str(source["budget_ledger"]))
+            original_ledger = ledger_path.read_bytes()
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["outstanding"].pop(f"ambiguous-{entrant_id}")
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            with self.assertRaisesRegex(SystemExit, "lifecycle and ledger reserve differ"):
+                self.orchestrator_recovery_fixture(fixture)
+            ledger_path.write_bytes(original_ledger)
+
+            evidence_path = Path(str(fixture["evidence"]))
+            original_evidence = evidence_path.read_bytes()
+            evidence = cloud_sb7.load_json(evidence_path)
+            evidence["monitor_log_sha256"] = "0" * 64
+            cloud_sb7.atomic_json(evidence_path, evidence)
+            with self.assertRaisesRegex(SystemExit, "does not bind exact monitor_log"):
+                self.orchestrator_recovery_fixture(fixture)
+            evidence_path.write_bytes(original_evidence)
+            self.assertFalse(
+                (source_root / cloud_sb7.ORCHESTRATOR_RECOVERY_RECEIPT).exists()
+            )
+
+    def test_orchestrator_recovery_crash_boundaries_are_idempotent(self) -> None:
+        for boundary in ("source_receipt_committed", "root_committed"):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+
+                def fault(stage: str) -> None:
+                    if stage == boundary:
+                        raise RuntimeError(f"fixture crash at {stage}")
+
+                with (
+                    mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                    mock.patch.object(
+                        cloud_sb7,
+                        "ORCHESTRATOR_RECOVERY_INCIDENT",
+                        fixture["incident"],
+                    ),
+                    mock.patch.object(
+                        cloud_sb7, "orchestrator_recovery_fault", side_effect=fault
+                    ),
+                    self.assertRaisesRegex(RuntimeError, boundary),
+                ):
+                    cloud_sb7.orchestrator_recovery_campaign(
+                        Path(str(fixture["source"])),
+                        Path(str(fixture["target"])),
+                        Path(str(fixture["evidence"])),
+                        True,
+                    )
+                recovered = self.orchestrator_recovery_fixture(fixture)
+                self.assertEqual(recovered["lineage"]["generation"], 2)
+
+    def test_orchestrator_recovery_recovers_after_mid_evidence_copy_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+            source_root = Path(str(fixture["source"]))
+            original_copy = cloud_sb7.atomic_copy
+            failed = False
+
+            def fail_mid_copy(
+                source: Path, destination: Path, mode: int | None = None
+            ) -> None:
+                nonlocal failed
+                if not failed and destination.name.startswith("artifact-00-"):
+                    failed = True
+                    raise OSError("fixture mid-copy failure")
+                original_copy(source, destination, mode)
+
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(
+                    cloud_sb7,
+                    "ORCHESTRATOR_RECOVERY_INCIDENT",
+                    fixture["incident"],
+                ),
+                mock.patch.object(cloud_sb7, "atomic_copy", side_effect=fail_mid_copy),
+                self.assertRaisesRegex(OSError, "mid-copy"),
+            ):
+                cloud_sb7.orchestrator_recovery_campaign(
+                    source_root,
+                    Path(str(fixture["target"])),
+                    Path(str(fixture["evidence"])),
+                    True,
+                )
+            self.assertFalse(
+                (source_root / cloud_sb7.ORCHESTRATOR_RECOVERY_RECEIPT).exists()
+            )
+            recovered = self.orchestrator_recovery_fixture(fixture)
+            self.assertEqual(recovered["lineage"]["generation"], 2)
+
+    def test_manager_launch_requires_live_detached_monitor_identity(self) -> None:
+        class Launched:
+            pid = 97531
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "launch_detached") as launch,
+                self.assertRaisesRegex(SystemExit, "ready detached monitor"),
+            ):
+                cloud_sb7.start(root)
+            launch.assert_not_called()
+
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            cloud_sb7.monitor_state(
+                root,
+                status="RUNNING",
+                pid=24680,
+                pgid=24680,
+                identity="monitor-identity",
+                parent_pid=1,
+                session_id=24680,
+                detached_session=True,
+                smoke_contract_sha256=campaign["smoke_contract_sha256"],
+            )
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=True),
+                mock.patch.object(
+                    cloud_sb7, "launch_detached", return_value=Launched()
+                ) as launch,
+            ):
+                self.assertEqual(cloud_sb7.start(root), 0)
+            launch.assert_called_once()
+
+    def test_monitor_launch_checks_lineage_before_detaching(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            with (
+                mock.patch.object(
+                    cloud_sb7,
+                    "require_lineage",
+                    side_effect=SystemExit("fixture lineage rejection"),
+                ),
+                mock.patch.object(cloud_sb7, "require_smoke_proofs") as smoke,
+                mock.patch.object(cloud_sb7, "launch_detached") as launch,
+                self.assertRaisesRegex(SystemExit, "fixture lineage rejection"),
+            ):
+                cloud_sb7.monitor_start(root)
+            smoke.assert_not_called()
+            launch.assert_not_called()
 
 
 if __name__ == "__main__":
