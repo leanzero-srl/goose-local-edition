@@ -262,6 +262,12 @@ impl OpenAiProviderBuilder {
     }
 }
 
+#[derive(Clone, Copy)]
+enum StreamRetryPolicy {
+    Standard,
+    SingleAttempt,
+}
+
 impl OpenAiProvider {
     /// local-edition: optional HARD cap on the effective context window via the
     /// `GOOSE_LOCAL_CONTEXT_CAP` env var. Quality-first context for hybrid local models
@@ -491,6 +497,142 @@ fn parse_n_ctx_from_models(json: &serde_json::Value, model_name: &str) -> Option
     }
 }
 
+impl OpenAiProvider {
+    async fn stream_with_retry_policy(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+        retry_policy: StreamRetryPolicy,
+    ) -> Result<MessageStream, ProviderError> {
+        if self.should_use_responses_api_for_provider(&model_config.model_name) {
+            let mut payload = create_responses_request(model_config, system, messages, tools)?;
+            payload["stream"] = serde_json::Value::Bool(self.supports_streaming);
+
+            let mut log = start_log(model_config, &payload)?;
+            let responses_path =
+                Self::map_base_path(&self.base_path, "responses", OPEN_AI_DEFAULT_RESPONSES_PATH);
+            let response = if matches!(retry_policy, StreamRetryPolicy::Standard) {
+                self.with_retry(|| async {
+                    let payload_clone = payload.clone();
+                    let response = self
+                        .api_client
+                        .response_post(&responses_path, &payload_clone)
+                        .await?;
+                    handle_status(response).await
+                })
+                .await
+            } else {
+                let response = self
+                    .api_client
+                    .response_post(&responses_path, &payload)
+                    .await?;
+                handle_status(response).await
+            }
+            .inspect_err(|error| {
+                let _ = log.error(error);
+            })?;
+
+            if self.supports_streaming {
+                stream_responses_compat(response, log)
+            } else {
+                let json: serde_json::Value = response.json().await.map_err(|error| {
+                    ProviderError::RequestFailed(format!("Failed to parse JSON: {error}"))
+                })?;
+
+                let responses_api_response: ResponsesApiResponse = serde_json::from_value(json)
+                    .map_err(|error| {
+                        ProviderError::ExecutionError(format!(
+                            "Failed to parse responses API response: {error}"
+                        ))
+                    })?;
+
+                let message = responses_api_to_message(&responses_api_response)?;
+                let usage_data = get_responses_usage(&responses_api_response);
+                let usage = ProviderUsage::new(model_config.model_name.clone(), usage_data);
+
+                log.write(
+                    &serde_json::to_value(&message).unwrap_or_default(),
+                    Some(&usage_data),
+                )?;
+
+                Ok(super::base::stream_from_single_message(message, usage))
+            }
+        } else {
+            let payload = create_request_with_options(
+                model_config,
+                system,
+                messages,
+                tools,
+                &ImageFormat::OpenAi,
+                self.supports_streaming,
+                OpenAiFormatOptions {
+                    preserve_thinking_context: self.preserve_thinking_context,
+                },
+            )?;
+            let payload = self.sanitize_request_for_compat(payload);
+            let mut log = start_log(model_config, &payload)?;
+
+            let telemetry_t0 = std::time::Instant::now();
+            let response = if matches!(retry_policy, StreamRetryPolicy::Standard) {
+                self.with_retry(|| async {
+                    let response = self
+                        .api_client
+                        .response_post(&self.base_path, &payload)
+                        .await?;
+                    handle_status(response).await
+                })
+                .await
+            } else {
+                let response = self
+                    .api_client
+                    .response_post(&self.base_path, &payload)
+                    .await?;
+                handle_status(response).await
+            }
+            .inspect_err(|error| {
+                let _ = log.error(error);
+            })?;
+
+            if self.supports_streaming {
+                super::openai_compatible::stream_openai_compat_timed(
+                    response,
+                    log,
+                    telemetry_t0,
+                    model_config.model_name.clone(),
+                )
+            } else {
+                let json: serde_json::Value = response.json().await.map_err(|error| {
+                    ProviderError::RequestFailed(format!("Failed to parse JSON: {error}"))
+                })?;
+
+                let message = response_to_message(&json).map_err(|error| {
+                    ProviderError::RequestFailed(format!("Failed to parse message: {error}"))
+                })?;
+
+                let usage_data = get_usage(json.get("usage").unwrap_or(&serde_json::Value::Null));
+                let usage = ProviderUsage::new(model_config.model_name.clone(), usage_data);
+
+                log.write(
+                    &serde_json::to_value(&message).unwrap_or_default(),
+                    Some(&usage_data),
+                )?;
+
+                let elapsed = telemetry_t0.elapsed();
+                super::openai_compatible::telemetry_record(
+                    &model_config.model_name,
+                    elapsed,
+                    elapsed,
+                    Some(usage.usage),
+                    0,
+                );
+                Ok(super::base::stream_from_single_message(message, usage))
+            }
+        }
+    }
+}
+
 impl ProviderDescriptor for OpenAiProvider {
     fn metadata() -> ProviderMetadata {
         let models = OPEN_AI_KNOWN_MODELS
@@ -613,126 +755,35 @@ impl Provider for OpenAiProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        if self.should_use_responses_api_for_provider(&model_config.model_name) {
-            let mut payload = create_responses_request(model_config, system, messages, tools)?;
-            payload["stream"] = serde_json::Value::Bool(self.supports_streaming);
+        self.stream_with_retry_policy(
+            model_config,
+            system,
+            messages,
+            tools,
+            StreamRetryPolicy::Standard,
+        )
+        .await
+    }
 
-            let mut log = start_log(model_config, &payload)?;
+    fn supports_single_attempt_streaming(&self) -> bool {
+        true
+    }
 
-            let response = self
-                .with_retry(|| async {
-                    let payload_clone = payload.clone();
-                    let resp = self
-                        .api_client
-                        .response_post(
-                            &Self::map_base_path(
-                                &self.base_path,
-                                "responses",
-                                OPEN_AI_DEFAULT_RESPONSES_PATH,
-                            ),
-                            &payload_clone,
-                        )
-                        .await?;
-                    handle_status(resp).await
-                })
-                .await
-                .inspect_err(|e| {
-                    let _ = log.error(e);
-                })?;
-
-            if self.supports_streaming {
-                stream_responses_compat(response, log)
-            } else {
-                let json: serde_json::Value = response.json().await.map_err(|e| {
-                    ProviderError::RequestFailed(format!("Failed to parse JSON: {}", e))
-                })?;
-
-                let responses_api_response: ResponsesApiResponse =
-                    serde_json::from_value(json.clone()).map_err(|e| {
-                        ProviderError::ExecutionError(format!(
-                            "Failed to parse responses API response: {}",
-                            e
-                        ))
-                    })?;
-
-                let message = responses_api_to_message(&responses_api_response)?;
-                let usage_data = get_responses_usage(&responses_api_response);
-                let usage = ProviderUsage::new(model_config.model_name.clone(), usage_data);
-
-                log.write(
-                    &serde_json::to_value(&message).unwrap_or_default(),
-                    Some(&usage_data),
-                )?;
-
-                Ok(super::base::stream_from_single_message(message, usage))
-            }
-        } else {
-            let payload = create_request_with_options(
-                model_config,
-                system,
-                messages,
-                tools,
-                &ImageFormat::OpenAi,
-                self.supports_streaming,
-                OpenAiFormatOptions {
-                    preserve_thinking_context: self.preserve_thinking_context,
-                },
-            )?;
-            let payload = self.sanitize_request_for_compat(payload);
-            let mut log = start_log(model_config, &payload)?;
-
-            // This provider is the one the swarm engine actually calls (lmstudio's declarative
-            // engine resolves here) — the adversarial review caught the first telemetry pass
-            // instrumenting only OpenAiCompatibleProvider, which the fleet never routes through.
-            let telemetry_t0 = std::time::Instant::now();
-            let response = self
-                .with_retry(|| async {
-                    let resp = self
-                        .api_client
-                        .response_post(&self.base_path, &payload)
-                        .await?;
-                    handle_status(resp).await
-                })
-                .await
-                .inspect_err(|e| {
-                    let _ = log.error(e);
-                })?;
-
-            if self.supports_streaming {
-                super::openai_compatible::stream_openai_compat_timed(
-                    response,
-                    log,
-                    telemetry_t0,
-                    model_config.model_name.clone(),
-                )
-            } else {
-                let json: serde_json::Value = response.json().await.map_err(|e| {
-                    ProviderError::RequestFailed(format!("Failed to parse JSON: {}", e))
-                })?;
-
-                let message = response_to_message(&json).map_err(|e| {
-                    ProviderError::RequestFailed(format!("Failed to parse message: {}", e))
-                })?;
-
-                let usage_data = get_usage(json.get("usage").unwrap_or(&serde_json::Value::Null));
-                let usage = ProviderUsage::new(model_config.model_name.clone(), usage_data);
-
-                log.write(
-                    &serde_json::to_value(&message).unwrap_or_default(),
-                    Some(&usage_data),
-                )?;
-
-                let elapsed = telemetry_t0.elapsed();
-                super::openai_compatible::telemetry_record(
-                    &model_config.model_name,
-                    elapsed,
-                    elapsed,
-                    Some(usage.usage),
-                    0,
-                );
-                Ok(super::base::stream_from_single_message(message, usage))
-            }
-        }
+    async fn stream_once(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        self.stream_with_retry_policy(
+            model_config,
+            system,
+            messages,
+            tools,
+            StreamRetryPolicy::SingleAttempt,
+        )
+        .await
     }
 }
 
@@ -1162,6 +1213,36 @@ mod tests {
             provider.api_client.host(),
             "https://user:pass@gateway.example"
         );
+    }
+
+    #[tokio::test]
+    async fn single_attempt_stream_never_enters_the_provider_retry_loop() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut config = custom_config(&format!("{}/v1", server.uri()));
+        config.supports_streaming = Some(false);
+        let provider = from_declarative_config(config, None, crate::declarative::EnvKeyResolver)
+            .unwrap()
+            .build();
+
+        assert!(provider.supports_single_attempt_streaming());
+        let result = provider
+            .stream_once(
+                &ModelConfig::new("test-model"),
+                "single-attempt system",
+                &[Message::user().with_text("single-attempt request")],
+                &[],
+            )
+            .await;
+        assert!(matches!(result, Err(ProviderError::ServerError(_))));
     }
 
     #[test]
