@@ -74,6 +74,7 @@ POST_BUILD_STATES = {
     "PUBLISHED",
 }
 BUILD_SUCCESS_STATES = {"BUILD_COMPLETE"} | POST_BUILD_STATES
+CARRIED_SCORED_STATES = POST_BUILD_STATES - {"SCORING", "SCORE_FAILED"}
 CAMPAIGN_SCHEMA = 2
 MAX_SCORER_VERDICT_BYTES = 32 * 1024 * 1024
 PUBLISHER_SCREENSHOT_PATTERN = re.compile(
@@ -5699,6 +5700,13 @@ def copy_carried_entrant(
             "updated_at": utc_now(),
         }
     )
+    score_seal = state.get("score_evidence_seal")
+    if isinstance(score_seal, dict):
+        state["score_evidence_seal_sha256"] = sha256_bytes(
+            json.dumps(
+                score_seal, sort_keys=True, separators=(",", ":")
+            ).encode()
+        )
     atomic_json(destination / "state.json", state)
     if artifact_tree_sha256(
         destination,
@@ -14483,6 +14491,80 @@ def smoke_attempt_proves_local_budget_exhaustion(
     return notification and complete and local_budget_error
 
 
+def carried_scored_outcome_evidence(
+    root: Path,
+    entrant_id: str,
+    campaign: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> Dict[str, str]:
+    score = state.get("score")
+    if (
+        state.get("status") not in CARRIED_SCORED_STATES
+        or isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not math.isfinite(float(score))
+        or float(score) < 0
+        or float(score) > 1
+    ):
+        raise SystemExit(
+            f"carried entrant has no successful hermetic score: {entrant_id}"
+        )
+    seal_problem = score_evidence_seal_failure(
+        root, entrant_id, campaign, state
+    )
+    if seal_problem:
+        raise SystemExit(
+            f"carried entrant score evidence is invalid: {entrant_id}: "
+            f"{seal_problem}"
+        )
+    score_attempt_value = state.get("score_attempts")
+    if (
+        isinstance(score_attempt_value, bool)
+        or not isinstance(score_attempt_value, int)
+    ):
+        raise SystemExit(
+            f"carried entrant score attempt is malformed: {entrant_id}"
+        )
+    score_attempt = score_attempt_value
+    verdict_path = (
+        root
+        / "scores"
+        / entrant_id
+        / f"attempt-{score_attempt}/verdict.json"
+    )
+    if (
+        score_attempt <= 0
+        or Path(str(state.get("verdict", ""))) != verdict_path
+        or verdict_path.is_symlink()
+        or not verdict_path.is_file()
+        or not same_number(load_json(verdict_path).get("score"), score)
+    ):
+        raise SystemExit(
+            f"carried entrant score differs from its sealed verdict: {entrant_id}"
+        )
+    unit = root / "entrants" / entrant_id
+    tree = Path(str(state.get("tree", "")))
+    if tree != unit / "tree" or tree.is_symlink() or not tree.is_dir():
+        raise SystemExit(f"carried entrant raw tree is misplaced: {entrant_id}")
+    if hash_tree(tree) != state.get("raw_tree_sha256"):
+        raise SystemExit(f"carried entrant raw tree changed: {entrant_id}")
+    score_seal_sha256 = state.get("score_evidence_seal_sha256")
+    if (
+        not isinstance(score_seal_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", score_seal_sha256) is None
+    ):
+        raise SystemExit(
+            f"carried entrant score seal identity is malformed: {entrant_id}"
+        )
+    return {
+        "current_immutable_unit_sha256": artifact_tree_sha256(
+            unit,
+            excluded_relative_paths={"state.json", "state.lock"},
+        ),
+        "current_score_evidence_seal_sha256": score_seal_sha256,
+    }
+
+
 def collect_budget_blocked_carried_smoke_evidence(
     root: Path,
     campaign: Mapping[str, Any],
@@ -14553,14 +14635,15 @@ def collect_budget_blocked_carried_smoke_evidence(
         if (
             entrant_id not in carried_lineage
             or build_state.get("lineage_role") != "carried_success"
-            or build_state.get("status") not in BUILD_SUCCESS_STATES
-            or build_state.get("score") is None
             or smoke_state.get("status") != "PRE_ADMISSION_FAILURE"
             or smoke_state.get("active_attempt") is not False
         ):
             raise SystemExit(
                 f"failed smoke has no successful carried outcome: {entrant_id}"
             )
+        outcome_evidence = carried_scored_outcome_evidence(
+            root, entrant_id, campaign, build_state
+        )
         history = smoke_admission_history(
             root,
             entrant_id,
@@ -14643,6 +14726,7 @@ def collect_budget_blocked_carried_smoke_evidence(
             "predecessor_proof_sha256": predecessor_state["proof_sha256"],
             "current_attempts_sha256": attempts_sha,
             "reserve_evidence": reserve_evidence,
+            **outcome_evidence,
         }
     if not carried_candidates:
         raise SystemExit(
@@ -14774,6 +14858,8 @@ def budget_blocked_carried_smoke_bundle_failure(
     receipt: Mapping[str, Any],
     coordinator_source: Path,
 ) -> str | None:
+    if bundle.is_symlink() or not bundle.is_dir():
+        return "mixed smoke recovery bundle is missing or linked"
     expected_fields = {
         "schema_version",
         "kind",
@@ -14904,6 +14990,8 @@ def budget_blocked_carried_smoke_failure(
         ):
             return "mixed smoke qualification path is not frozen"
         bundle = root / BUDGET_BLOCKED_CARRIED_SMOKE_PATH
+        if bundle.is_symlink() or not bundle.is_dir():
+            return "mixed smoke qualification bundle is missing or linked"
         receipt_path = bundle / "receipt.json"
         if (
             receipt_path.is_symlink()
@@ -15156,14 +15244,14 @@ def budget_blocked_carried_smoke_failure(
                 "predecessor_proof_sha256",
                 "current_attempts_sha256",
                 "reserve_evidence",
+                "current_immutable_unit_sha256",
+                "current_score_evidence_seal_sha256",
             }:
                 return f"carried smoke record is malformed: {entrant_id}"
             state = read_state(root, entrant_id)
             smoke_state = read_smoke_state(root, entrant_id)
             if (
                 state.get("lineage_role") != "carried_success"
-                or state.get("status") not in BUILD_SUCCESS_STATES
-                or state.get("score") is None
                 or smoke_state.get("status") != "PRE_ADMISSION_FAILURE"
                 or smoke_state.get("active_attempt") is not False
             ):
@@ -15171,6 +15259,14 @@ def budget_blocked_carried_smoke_failure(
                     "carried smoke entrant has no successful carried outcome: "
                     f"{entrant_id}"
                 )
+            outcome_evidence = carried_scored_outcome_evidence(
+                root, entrant_id, source_campaign, state
+            )
+            if any(
+                outcome_evidence[key] != record.get(key)
+                for key in outcome_evidence
+            ):
+                return f"carried scored outcome changed: {entrant_id}"
             history = smoke_admission_history(
                 root,
                 entrant_id,
@@ -15289,6 +15385,8 @@ def apply_budget_blocked_carried_smoke(
     bundle: Path,
     coordinator_source: Path,
 ) -> Dict[str, Any]:
+    if bundle.is_symlink() or not bundle.is_dir():
+        raise SystemExit("mixed smoke recovery bundle is missing or linked")
     receipt = load_json(bundle / "receipt.json")
     bundle_problem = budget_blocked_carried_smoke_bundle_failure(
         root, bundle, receipt, coordinator_source
@@ -17644,6 +17742,86 @@ def publish_entry(campaign: Mapping[str, Any], entrant_id: str) -> Dict[str, str
     return dict(entries[entrant_id])
 
 
+def publication_stage_instrument_set_matches(
+    root: Path,
+    entrant_id: str,
+    campaign: Mapping[str, Any],
+    state: Mapping[str, Any],
+    observed: Any,
+) -> bool:
+    if observed == campaign.get("instrument_set_sha256"):
+        return True
+    if state.get("lineage_role") != "carried_success":
+        return False
+    try:
+        pointer = campaign.get("lineage")
+        if (
+            not isinstance(pointer, dict)
+            or pointer.get("generation") != 1
+            or pointer.get("path") != "lineage/lineage.json"
+        ):
+            return False
+        lineage_path = root / "lineage/lineage.json"
+        if (
+            lineage_path.is_symlink()
+            or not lineage_path.is_file()
+            or sha256_file(lineage_path) != pointer.get("sha256")
+        ):
+            return False
+        lineage = load_json(lineage_path)
+        if (
+            entrant_id not in lineage.get("carried_entrants", [])
+            or state.get("supersession_transition_id")
+            != lineage.get("transition_id")
+        ):
+            return False
+        accepted = set()
+        predecessor_root = Path(str(lineage.get("predecessor_root", "")))
+        predecessor_campaign_path = campaign_file(predecessor_root)
+        if (
+            predecessor_campaign_path.is_symlink()
+            or not predecessor_campaign_path.is_file()
+        ):
+            return False
+        predecessor_campaign = load_json(predecessor_campaign_path)
+        predecessor_instrument = predecessor_campaign.get(
+            "instrument_set_sha256"
+        )
+        if isinstance(predecessor_instrument, str):
+            accepted.add(predecessor_instrument)
+
+        mixed_pointer = campaign.get("budget_blocked_carried_smoke")
+        if isinstance(mixed_pointer, dict):
+            mixed_receipt_path = (
+                root / BUDGET_BLOCKED_CARRIED_SMOKE_PATH / "receipt.json"
+            )
+            if (
+                mixed_receipt_path.is_symlink()
+                or not mixed_receipt_path.is_file()
+                or sha256_file(mixed_receipt_path)
+                != mixed_pointer.get("sha256")
+            ):
+                return False
+            mixed_receipt = load_json(mixed_receipt_path)
+            if entrant_id not in mixed_receipt.get("carried_entrants", []):
+                return False
+            source_instrument = mixed_receipt.get(
+                "source_instrument_set_sha256"
+            )
+            if isinstance(source_instrument, str):
+                accepted.add(source_instrument)
+        return isinstance(observed, str) and observed in accepted
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ):
+        return False
+
+
 def publication_stage(root: Path, entrant_id: str) -> Path:
     campaign = load_json(campaign_file(root))
     state = read_state(root, entrant_id)
@@ -17734,8 +17912,13 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
             != state.get("score_evidence_seal_sha256")
             or artifact.get("runs_sha256") != actual_hash
             or artifact.get("files") != actual_files
-            or artifact.get("instrument_set_sha256")
-            != campaign.get("instrument_set_sha256")
+            or not publication_stage_instrument_set_matches(
+                root,
+                entrant_id,
+                campaign,
+                state,
+                artifact.get("instrument_set_sha256"),
+            )
             or artifact.get("publisher_instrument_set_sha256")
             != campaign.get("publisher", {}).get("instrument_set_sha256")
             or current_state.get("score_attempts") != attempt
@@ -18020,6 +18203,7 @@ def sanity_document(
             "User-Agent": "goose-sb7-cloud-publisher/1",
         },
     )
+    publication_lease_checkpoint(lease_probe, "Sanity receipt request boundary")
     try:
         with urllib.request.urlopen(
             request, timeout=MONITOR_NETWORK_TIMEOUT_SECONDS
@@ -18132,6 +18316,9 @@ def ensure_carried_smoke_public_provenance(
             "Content-Type": "application/json",
             "User-Agent": "goose-sb7-cloud-publisher/1",
         },
+    )
+    publication_lease_checkpoint(
+        lease_probe, "carried-smoke provenance mutation boundary"
     )
     try:
         with urllib.request.urlopen(
@@ -19625,6 +19812,77 @@ def score_evidence_seal(
     }
 
 
+def legacy_carried_score_seal_digest_matches(
+    root: Path,
+    entrant_id: str,
+    state: Mapping[str, Any],
+    sealed: Mapping[str, Any],
+) -> bool:
+    try:
+        campaign = load_json(campaign_file(root))
+        pointer = campaign.get("lineage")
+        if (
+            not isinstance(pointer, dict)
+            or pointer.get("generation") != 1
+            or pointer.get("path") != "lineage/lineage.json"
+            or state.get("lineage_role") != "carried_success"
+        ):
+            return False
+        lineage_path = root / "lineage/lineage.json"
+        if (
+            lineage_path.is_symlink()
+            or not lineage_path.is_file()
+            or sha256_file(lineage_path) != pointer.get("sha256")
+        ):
+            return False
+        lineage = load_json(lineage_path)
+        if (
+            entrant_id not in lineage.get("carried_entrants", [])
+            or state.get("supersession_transition_id")
+            != lineage.get("transition_id")
+        ):
+            return False
+        predecessor_root = Path(str(lineage.get("predecessor_root", "")))
+        predecessor_state_path = state_file(predecessor_root, entrant_id)
+        if (
+            predecessor_state_path.is_symlink()
+            or not predecessor_state_path.is_file()
+            or sha256_file(predecessor_state_path)
+            != state.get("predecessor_state_sha256")
+        ):
+            return False
+        predecessor_state = load_json(predecessor_state_path)
+        predecessor_seal = predecessor_state.get("score_evidence_seal")
+        predecessor_digest = predecessor_state.get(
+            "score_evidence_seal_sha256"
+        )
+        if not isinstance(predecessor_seal, dict) or not isinstance(
+            predecessor_digest, str
+        ):
+            return False
+        canonical_predecessor_digest = sha256_bytes(
+            json.dumps(
+                predecessor_seal, sort_keys=True, separators=(",", ":")
+            ).encode()
+        )
+        return bool(
+            predecessor_digest == canonical_predecessor_digest
+            and state.get("score_evidence_seal_sha256")
+            == predecessor_digest
+            and sealed
+            == remap_paths(predecessor_seal, predecessor_root, root)
+        )
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ):
+        return False
+
+
 def score_evidence_seal_failure(
     root: Path,
     entrant_id: str,
@@ -19639,7 +19897,12 @@ def score_evidence_seal_failure(
         digest = sha256_bytes(
             json.dumps(sealed, sort_keys=True, separators=(",", ":")).encode()
         )
-        if state.get("score_evidence_seal_sha256") != digest:
+        if (
+            state.get("score_evidence_seal_sha256") != digest
+            and not legacy_carried_score_seal_digest_matches(
+                root, entrant_id, state, sealed
+            )
+        ):
             return "score evidence seal digest differs"
     except (OSError, KeyError, TypeError, ValueError, SystemExit) as error:
         return f"score evidence seal cannot be verified: {error}"
