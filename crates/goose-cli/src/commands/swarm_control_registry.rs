@@ -265,10 +265,15 @@ pub(crate) const ENVIRONMENT_ONLY_CONTROLS: &[EnvironmentOnlyControlSpec] = &[
         "GOOSE_SWARM_SPLIT_INHERIT_SPEC",
         ControlDisposition::RetainEnabled,
     ),
-    // Retain disabled pending evidence (3).
+    // Retain disabled pending evidence (4).
     environment_only(
         "doc_examples",
         "GOOSE_SWARM_DOC_EXAMPLES",
+        ControlDisposition::RetainDisabled,
+    ),
+    environment_only(
+        "physical_broker",
+        "GOOSE_SWARM_PHYSICAL_BROKER",
         ControlDisposition::RetainDisabled,
     ),
     environment_only(
@@ -573,6 +578,7 @@ pub(crate) const SWARM_ENV_READERS: &[&str] = &[
     "GOOSE_SWARM_OWNED_FILE_FENCE",
     "GOOSE_SWARM_PARALLEL_TESTS",
     "GOOSE_SWARM_PERSONA",
+    "GOOSE_SWARM_PHYSICAL_BROKER",
     "GOOSE_SWARM_PIN_DEVICE",
     "GOOSE_SWARM_PLANNER_ALSO_WORKS",
     "GOOSE_SWARM_PREREVIEW",
@@ -934,7 +940,7 @@ mod tests {
                 .count()
         };
         assert_eq!(env_count(ControlDisposition::RetainEnabled), 14);
-        assert_eq!(env_count(ControlDisposition::RetainDisabled), 3);
+        assert_eq!(env_count(ControlDisposition::RetainDisabled), 4);
         assert_eq!(env_count(ControlDisposition::Modify), 9);
         assert_eq!(env_count(ControlDisposition::RemoveMerge), 8);
         assert_eq!(env_count(ControlDisposition::RuntimeProfile), 15);
