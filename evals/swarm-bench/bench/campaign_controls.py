@@ -409,6 +409,14 @@ def _parse_value(raw: str, value_type_name: str) -> Any:
             raise ControlManifestError(f"numeric value must be finite: {raw}")
         return value
     if value_type_name == "string":
+        if text.startswith('"'):
+            try:
+                value = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ControlManifestError(f"invalid JSON string value: {raw}") from exc
+            if not isinstance(value, str):
+                raise ControlManifestError(f"value is not a JSON string: {raw}")
+            return value
         return text
     if value_type_name in {"array", "object"}:
         try:
@@ -445,8 +453,19 @@ def parse_behavior_profile(
 
 
 def read_profile(path: Path) -> List[str]:
+    text = path.read_text()
+    stripped = text.lstrip()
+    if stripped.startswith("{"):
+        try:
+            profile = _require_dict(json.loads(text), "behavior profile")
+        except json.JSONDecodeError as exc:
+            raise ControlManifestError(f"cannot parse behavior profile: {path}") from exc
+        return [
+            f"{key}={json.dumps(value, ensure_ascii=False, separators=(',', ':'))}"
+            for key, value in profile.items()
+        ]
     tokens: List[str] = []
-    for raw_line in path.read_text().splitlines():
+    for raw_line in text.splitlines():
         line = raw_line.split("#", 1)[0].strip()
         if line:
             tokens.extend(line.split())
