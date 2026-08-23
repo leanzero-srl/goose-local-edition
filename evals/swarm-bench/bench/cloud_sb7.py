@@ -3865,6 +3865,53 @@ def supersession_instrument_failure(
     return None
 
 
+def same_binary_supersession_failure(
+    predecessor: Mapping[str, Any],
+    rows: Iterable[Mapping[str, Any]],
+    states: Mapping[str, Mapping[str, Any]],
+    replacement_instrument_hashes: Mapping[str, str],
+) -> str | None:
+    old_hashes = predecessor.get("instrument_hashes")
+    if not isinstance(old_hashes, dict):
+        return "same-binary supersession has no predecessor instrument hashes"
+    changed = {
+        key
+        for key in set(old_hashes) | set(replacement_instrument_hashes)
+        if old_hashes.get(key) != replacement_instrument_hashes.get(key)
+    }
+    if changed != SUPERSESSION_ALLOWED_INSTRUMENT_CHANGES:
+        return (
+            "same-binary supersession requires exactly one coordinator-instrument "
+            "change"
+        )
+    for row in rows:
+        entrant_id = str(row["id"])
+        state = states.get(entrant_id)
+        if not isinstance(state, Mapping):
+            return f"same-binary supersession has no state for {entrant_id}"
+        lifecycle = lifecycle_summary(
+            Path(str(state["provider_lifecycle"])),
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        if not full_entrant_was_never_started(state, lifecycle):
+            return (
+                "same-binary supersession is limited to smoke-only defects before "
+                f"every full episode: {entrant_id}"
+            )
+        tree = Path(str(state["tree"]))
+        if (
+            not tree.is_dir()
+            or tree.is_symlink()
+            or next(tree.iterdir(), None) is not None
+        ):
+            return (
+                "same-binary supersession requires every raw benchmark tree to be "
+                f"empty: {entrant_id}"
+            )
+    return None
+
+
 def copy_evidence_bundle(
     destination: Path,
     evidence_path: Path,
@@ -5084,8 +5131,7 @@ def supersede_campaign(
     ):
         raise SystemExit("supersession cannot change the publisher repository")
     replacement_sha = sha256_file(binary)
-    if replacement_sha == predecessor.get("binary_sha256"):
-        raise SystemExit("supersession requires a different frozen binary")
+    replacement_instrument_hashes = instrument_hashes()
 
     target_lock = root.parent / f".{root.name}.supersession.claim"
     with exclusive_claim(target_lock, blocking=True) as target_claimed:
@@ -5131,6 +5177,15 @@ def supersede_campaign(
                     predecessor_root, predecessor, rows, affected
                     )
                 )
+                if replacement_sha == predecessor.get("binary_sha256"):
+                    same_binary_problem = same_binary_supersession_failure(
+                        predecessor,
+                        rows,
+                        states,
+                        replacement_instrument_hashes,
+                    )
+                    if same_binary_problem:
+                        raise SystemExit(same_binary_problem)
                 seal = predecessor_seal(
                     predecessor_root, predecessor, rows, transition_id
                 )
@@ -5196,6 +5251,13 @@ def supersede_campaign(
                 )
                 supersession_fault("staged_initialized")
                 successor = load_json(campaign_file(staged_root))
+                if (
+                    successor.get("instrument_hashes")
+                    != replacement_instrument_hashes
+                ):
+                    raise SystemExit(
+                        "supersession instrument changed after local validation"
+                    )
                 qualification_history = validated_qualification_history(predecessor)
                 if qualification_history is not None:
                     successor["qualification_history"] = qualification_history

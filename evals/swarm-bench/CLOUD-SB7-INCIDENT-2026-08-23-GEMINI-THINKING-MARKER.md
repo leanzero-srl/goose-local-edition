@@ -74,3 +74,13 @@ must fail because private reasoning can never substitute for the required
 final answer. Existing prompt-echo, pre-response text, wrong tool identity,
 wrong structured output, non-zero exit, missing completion, and truncation
 controls remain failing.
+
+Because this is a coordinator-verifier defect and the frozen Goose binary is
+not defective, the ordinary supersession transition now admits an unchanged
+binary only under a narrower gate: the coordinator must be the sole changed
+instrument, every full entrant must still have zero episodes and zero lifecycle
+events, and every raw benchmark tree must remain empty. A thinking-marker fix
+therefore cannot be used to rerun a full model outcome or smuggle in any scorer,
+task, manifest, provider, publisher, or binary change. The successor is still
+the campaign's single allowed supersession hop and still requires a fresh
+strict all-entrant smoke proof.
