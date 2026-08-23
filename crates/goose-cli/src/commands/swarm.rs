@@ -3642,6 +3642,24 @@ const UNCAPPED_SECS: u64 = 604_800;
 /// for other callers that deliberately rely on `None`.
 const UNBOUNDED_AGENT_TURNS: u32 = u32::MAX;
 
+fn is_semantic_research_activity(key: &str) -> bool {
+    key.starts_with("research-pod-")
+        || key.starts_with("research-queue-")
+        || key.starts_with("research-saturation-")
+}
+
+fn research_saturation_activity_key(
+    cycle: u64,
+    partition_id: &str,
+    correction: Option<u64>,
+) -> String {
+    let key = format!("research-saturation-{cycle}-{partition_id}");
+    match correction {
+        Some(correction) => format!("{key}-correction-{correction}"),
+        None => key,
+    }
+}
+
 fn planner_wall(planner_timeout_secs: u64) -> u64 {
     if uncapped() {
         UNCAPPED_SECS
@@ -5398,6 +5416,29 @@ mod tests {
         for key in [Some("scout-x"), Some("plandraft-0"), Some("worker"), None] {
             assert_eq!(spiral_budget_for(key, 0), 0);
         }
+    }
+
+    #[test]
+    fn every_research_saturation_activity_is_semantically_classified() {
+        let initial = research_saturation_activity_key(7, "requirements-2", None);
+        let correction = research_saturation_activity_key(7, "requirements-2", Some(3));
+        assert_eq!(initial, "research-saturation-7-requirements-2");
+        assert_eq!(
+            correction,
+            "research-saturation-7-requirements-2-correction-3"
+        );
+        for key in [
+            "research-pod-requirements-2",
+            "research-queue-7-evidence-4",
+            initial.as_str(),
+            correction.as_str(),
+        ] {
+            assert!(
+                is_semantic_research_activity(key),
+                "research activity `{key}` lost semantic saturation safeguards"
+            );
+        }
+        assert!(!is_semantic_research_activity("planner-canonical"));
     }
 
     #[test]
@@ -21003,7 +21044,7 @@ impl PreSchedulerSemanticRuntime {
             phase_epoch: 0,
             task_id: task_id.clone(),
             attempt: 0,
-            revision: sequence,
+            revision: 1,
             kind: SourceRevisionKind::TaskAttempt,
         };
         self.control.set_source_revision(source.clone()).await?;
@@ -22650,9 +22691,7 @@ impl GooseAgentDispatcher {
         // Research saturation is bounded by a typed semantic ledger, not by elapsed time or generated
         // volume. A slow local decode is not evidence of failure. Exact repeated tool-call/result cycles
         // remain armed below because recurrence is a true stall, independent of speed.
-        let semantic_saturation_call = activity_key.is_some_and(|key| {
-            key.starts_with("research-pod-") || key.starts_with("research-queue-")
-        });
+        let semantic_saturation_call = activity_key.is_some_and(is_semantic_research_activity);
         let pre_scheduler_semantic_source = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(|_| ()).is_ok();
         let pre_scheduler_semantic_call = pre_scheduler_semantic_source
             || activity_key.is_some_and(|key| key.starts_with("pre-scheduler-judge:"));
@@ -23732,6 +23771,7 @@ impl GooseAgentDispatcher {
         let me = self.clone();
         let attempt_events = self.events.clone();
         let events = self.events.clone();
+        let semantic_supervision_enabled = self.pre_scheduler_semantic.lock().unwrap().is_some();
         let results = fanout_retrying_over_fleet(
             worker_models,
             partitions,
@@ -23794,7 +23834,7 @@ impl GooseAgentDispatcher {
                         Some(UNBOUNDED_AGENT_TURNS),
                         &[],
                         AgentToolSurface::ResponseOnly,
-                        0,
+                        me.planner_timeout_secs,
                         Some(&activity_key),
                         None,
                         None,
@@ -23860,7 +23900,7 @@ impl GooseAgentDispatcher {
                                     Some(Response {
                                         json_schema: Some(research_seed_schema()),
                                     }),
-                                    0,
+                                    me.planner_timeout_secs,
                                     Some(&correction_key),
                                 )
                                 .await?;
@@ -23943,8 +23983,10 @@ impl GooseAgentDispatcher {
                         "in_flight_partitions": observation.in_flight_details,
                         "logically_free_nodes": observation.logically_free_lanes,
                         "observation": "idle_capacity_observed",
-                        "supervision_available": false,
-                        "supervision_unavailable_reason": "research-seed-precedes-physical-scheduler-lifecycle",
+                        "supervision_available": semantic_supervision_enabled,
+                        "supervision_trigger": semantic_supervision_enabled.then_some("measured-recurrence"),
+                        "supervision_admission_basis": semantic_supervision_enabled.then_some("verified-idle-distinct-host-only"),
+                        "supervision_unavailable_reason": (!semantic_supervision_enabled).then_some("physical-pre-scheduler-lifecycle-disabled"),
                     }));
                 }
             },
@@ -23975,6 +24017,7 @@ impl GooseAgentDispatcher {
         let me = self.clone();
         let events = self.events.clone();
         let tail_events = self.events.clone();
+        let semantic_supervision_enabled = self.pre_scheduler_semantic.lock().unwrap().is_some();
         fanout_retrying_over_fleet(
             models,
             questions,
@@ -24029,7 +24072,7 @@ impl GooseAgentDispatcher {
                             Some(UNBOUNDED_AGENT_TURNS),
                             &extensions,
                             AgentToolSurface::Developer,
-                            0,
+                            me.planner_timeout_secs,
                             Some(&activity_key),
                             None,
                             None,
@@ -24163,8 +24206,10 @@ impl GooseAgentDispatcher {
                         "in_flight_questions": observation.in_flight_details,
                         "logically_free_nodes": observation.logically_free_lanes,
                         "observation": "idle_capacity_observed",
-                        "supervision_available": false,
-                        "supervision_unavailable_reason": "research-evidence-precedes-physical-scheduler-lifecycle",
+                        "supervision_available": semantic_supervision_enabled,
+                        "supervision_trigger": semantic_supervision_enabled.then_some("measured-recurrence"),
+                        "supervision_admission_basis": semantic_supervision_enabled.then_some("verified-idle-distinct-host-only"),
+                        "supervision_unavailable_reason": (!semantic_supervision_enabled).then_some("physical-pre-scheduler-lifecycle-disabled"),
                     }));
                 }
             },
@@ -24184,6 +24229,7 @@ impl GooseAgentDispatcher {
         let me = self.clone();
         let attempt_events = self.events.clone();
         let tail_events = self.events.clone();
+        let semantic_supervision_enabled = self.pre_scheduler_semantic.lock().unwrap().is_some();
         fanout_retrying_over_fleet(
             worker_models,
             partitions,
@@ -24197,7 +24243,7 @@ impl GooseAgentDispatcher {
                     let failed_model = model.clone();
                     let result: Result<CompiledResearchSaturationPartition> = async {
                         let activity_key =
-                            format!("research-saturation-{cycle}-{partition_id}");
+                            research_saturation_activity_key(cycle, &partition_id, None);
                         me.events.write_value(serde_json::json!({
                             "event": "research_pod_role_started",
                             "cycle": cycle,
@@ -24228,7 +24274,7 @@ impl GooseAgentDispatcher {
                                 Some(Response {
                                     json_schema: Some(research_saturation_schema()),
                                 }),
-                                0,
+                                me.planner_timeout_secs,
                                 Some(&activity_key),
                             )
                             .await?;
@@ -24289,8 +24335,10 @@ impl GooseAgentDispatcher {
                                             "previously_investigated_evidence_slots": seen_slots.len(),
                                         }),
                                     )?;
-                                    let correction_key = format!(
-                                        "research-saturation-{cycle}-{partition_id}-correction-{correction}"
+                                    let correction_key = research_saturation_activity_key(
+                                        cycle,
+                                        &partition_id,
+                                        Some(correction),
                                     );
                                     let corrected = me
                                         .run_response_only_agent(
@@ -24300,7 +24348,7 @@ impl GooseAgentDispatcher {
                                             Some(Response {
                                                 json_schema: Some(research_saturation_schema()),
                                             }),
-                                            0,
+                                            me.planner_timeout_secs,
                                             Some(&correction_key),
                                         )
                                         .await?;
@@ -24389,8 +24437,10 @@ impl GooseAgentDispatcher {
                         "in_flight_partitions": observation.in_flight_details,
                         "logically_free_nodes": observation.logically_free_lanes,
                         "observation": "idle_capacity_observed",
-                        "supervision_available": false,
-                        "supervision_unavailable_reason": "research-saturation-precedes-physical-scheduler-lifecycle",
+                        "supervision_available": semantic_supervision_enabled,
+                        "supervision_trigger": semantic_supervision_enabled.then_some("measured-recurrence"),
+                        "supervision_admission_basis": semantic_supervision_enabled.then_some("verified-idle-distinct-host-only"),
+                        "supervision_unavailable_reason": (!semantic_supervision_enabled).then_some("physical-pre-scheduler-lifecycle-disabled"),
                     }));
                 }
             },
@@ -52046,6 +52096,69 @@ mod pre_scheduler_semantic_runtime_tests {
                     .as_str()
                     .is_some_and(|id| id.starts_with("research-api-contract:pre-scheduler:"))
         }));
+        assert!(!events.iter().any(|event| {
+            event["event"] == "broker_admission_granted"
+                && event["receipt"]["work_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("planner-call:pre-scheduler:"))
+        }));
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_research_saturation_and_correction_mint_research_publishers() {
+        let harness = runtime_harness(RuntimeProviderMode::FinishedText).await;
+        let keys = [
+            research_saturation_activity_key(5, "requirements-1", None),
+            research_saturation_activity_key(5, "requirements-1", Some(2)),
+        ];
+        for key in &keys {
+            let output = harness
+                .dispatcher
+                .run_response_only_agent(
+                    SOURCE_MODEL,
+                    "research saturation runtime system".to_string(),
+                    "audit the assigned requirement packet".to_string(),
+                    None,
+                    harness.dispatcher.planner_timeout_secs,
+                    Some(key),
+                )
+                .await
+                .unwrap();
+            assert!(output.text.contains("research complete"));
+        }
+
+        let events = harness.sink.values();
+        for key in &keys {
+            assert!(events.iter().any(|event| {
+                event["event"] == "broker_admission_granted"
+                    && event["receipt"]["role"] == "research_evidence"
+                    && event["receipt"]["work_id"]
+                        .as_str()
+                        .is_some_and(|id| id.starts_with(key))
+            }));
+            assert!(events.iter().any(|event| {
+                event["event"] == "broker_provider_request_permitted"
+                    && event["admission"]["role"] == "research_evidence"
+                    && event["admission"]["work_id"]
+                        .as_str()
+                        .is_some_and(|id| id.starts_with(key))
+            }));
+            assert!(events.iter().any(|event| {
+                event["event"] == "broker_provider_terminal_observed"
+                    && event["receipt"]["kind"] == "finished"
+                    && event["admission"]["work_id"]
+                        .as_str()
+                        .is_some_and(|id| id.starts_with(key))
+            }));
+            assert!(events.iter().any(|event| {
+                event["event"] == "broker_admission_released"
+                    && event["receipt"]["local_completion"] == "success"
+                    && event["receipt"]["admission"]["work_id"]
+                        .as_str()
+                        .is_some_and(|id| id.starts_with(key))
+            }));
+        }
         assert!(!events.iter().any(|event| {
             event["event"] == "broker_admission_granted"
                 && event["receipt"]["work_id"]
