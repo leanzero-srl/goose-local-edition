@@ -6,6 +6,13 @@ use crate::dag::ReplanAuthorityReceipt;
 use async_trait::async_trait;
 use serde::Serialize;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderDispatchClass {
+    ProviderRequired,
+    DeterministicProviderFree,
+}
+
 /// One tool call a task's agent made, captured by the dispatcher for observability.
 #[derive(Clone, Debug, Serialize)]
 pub struct ToolCallRecord {
