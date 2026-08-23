@@ -5845,6 +5845,23 @@ mod tests {
                 .iter()
                 .map(|requirement| requirement.id.as_str())
                 .collect::<HashSet<_>>();
+            let sections = partition
+                .requirements
+                .iter()
+                .map(|requirement| requirement.section.as_str())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                partition
+                    .section_context_requirements
+                    .iter()
+                    .map(|requirement| requirement.id.as_str())
+                    .collect::<Vec<_>>(),
+                requirements
+                    .iter()
+                    .filter(|requirement| sections.contains(requirement.section.as_str()))
+                    .map(|requirement| requirement.id.as_str())
+                    .collect::<Vec<_>>()
+            );
             assert!(partition.evidence.iter().all(|record| record
                 .requirement_ids
                 .iter()
@@ -17137,6 +17154,7 @@ struct ResearchSaturationDraft {
 struct ResearchSaturationPartition {
     partition_id: String,
     requirements: Vec<RequirementRecord>,
+    section_context_requirements: Vec<RequirementRecord>,
     evidence: Vec<ResearchEvidenceRecord>,
 }
 
@@ -17513,6 +17531,16 @@ fn plan_research_saturation_partitions(
                     .iter()
                     .map(|requirement| requirement.id.as_str())
                     .collect::<HashSet<_>>();
+                let sections = partition
+                    .requirements
+                    .iter()
+                    .map(|requirement| requirement.section.as_str())
+                    .collect::<HashSet<_>>();
+                let section_context_requirements = requirements
+                    .iter()
+                    .filter(|requirement| sections.contains(requirement.section.as_str()))
+                    .cloned()
+                    .collect();
                 let evidence = evidence
                     .iter()
                     .filter(|record| {
@@ -17526,6 +17554,7 @@ fn plan_research_saturation_partitions(
                 ResearchSaturationPartition {
                     partition_id: format!("saturation-{}", index + 1),
                     requirements: partition.requirements,
+                    section_context_requirements,
                     evidence,
                 }
             })
@@ -17538,6 +17567,12 @@ fn research_saturation_partition_cost(partition: &ResearchSaturationPartition) -
         .requirements
         .iter()
         .map(research_seed_unit_cost)
+        .chain(
+            partition
+                .section_context_requirements
+                .iter()
+                .map(research_seed_authored_cost),
+        )
         .chain(partition.evidence.iter().map(|record| {
             record
                 .id
@@ -23163,14 +23198,16 @@ impl GooseAgentDispatcher {
                             "model": model,
                             "requirement_ids": partition.requirements.iter().map(|requirement| requirement.id.as_str()).collect::<Vec<_>>(),
                             "requirement_count": partition.requirements.len(),
+                            "section_context_requirement_count": partition.section_context_requirements.len(),
                             "evidence_records": partition.evidence.len(),
                             "scope": "disjoint-authority-packet",
                         }));
-                        let system = "You are one evidence-saturation auditor in a collaborative research pod. Other active nodes own disjoint requirement packets, and a deterministic compiler will merge every packet after the barrier. Audit ONLY the supplied immutable requirement ids and return exactly one coverage row for each. Mark a requirement `spec-sufficient` only when its authored text itself contains every fact planning needs; mark it `grounded` only when the supplied evidence ledger has real tool provenance and cite those evidence ids; otherwise keep it `unresolved`. For unresolved coverage, emit independent, non-overlapping evidence questions bound only to supplied requirement ids and state the exact evidence that would settle each one. Status applies to this packet alone: use `saturated` only when every supplied requirement is grounded or spec-sufficient, `continue` only with a runnable next queue, and `blocked` only when required evidence has no runnable route. Do not create work to fill hardware and do not draft a plan. There is no round, question, token, or elapsed-time quota; semantic completeness of this packet is the only successful stop. Then call final_output.";
+                        let system = "You are one evidence-saturation auditor in a collaborative research pod. Other active nodes own disjoint requirement packets, and a deterministic compiler will merge every packet after the barrier. Audit ONLY the supplied immutable authoritative requirement ids and return exactly one coverage row for each. The section_context_requirements include authored siblings needed to interpret local cross-references; use them as context but never emit coverage or questions for a context-only id. Mark a requirement `spec-sufficient` only when its authored text itself contains every fact planning needs; mark it `grounded` only when the supplied evidence ledger has real tool provenance and cite those evidence ids; otherwise keep it `unresolved`. For unresolved coverage, emit independent, non-overlapping evidence questions bound only to supplied authoritative requirement ids and state the exact evidence that would settle each one. Status applies to this packet alone: use `saturated` only when every supplied authoritative requirement is grounded or spec-sufficient, `continue` only with a runnable next queue, and `blocked` only when required evidence has no runnable route. Do not create work to fill hardware and do not draft a plan. There is no round, question, token, or elapsed-time quota; semantic completeness of this packet is the only successful stop. Then call final_output.";
                         let user = serde_json::to_string_pretty(&serde_json::json!({
                             "partition_id": partition.partition_id,
                             "is_amendment": is_amendment,
                             "authoritative_requirements": partition.requirements,
+                            "section_context_requirements": partition.section_context_requirements,
                             "available_lookup_routes": routes,
                             "evidence_ledger": partition.evidence,
                             "previously_investigated_evidence_slots": seen_slots.len(),
@@ -23231,13 +23268,14 @@ impl GooseAgentDispatcher {
                                         "attempt_cap": null,
                                         "completion_basis": "typed-authority-semantic-saturation-packet",
                                     }));
-                                    let correction_system = "The deterministic evidence-saturation compiler rejected your previous packet ledger. Re-emit the ENTIRE ledger for this one packet with exactly one coverage row for every supplied immutable requirement id. Cite only supplied evidence ids bound to that requirement; lookup provenance without a found fact cannot make coverage grounded. Emit only runnable, non-repeated questions for unresolved requirements in this packet. The compiler error is factual authority feedback. There is no attempt, question, token, or elapsed-time cap; finish only by calling final_output with a compiler-complete packet ledger.";
+                                    let correction_system = "The deterministic evidence-saturation compiler rejected your previous packet ledger. Re-emit the ENTIRE ledger for this one packet with exactly one coverage row for every supplied immutable authoritative requirement id. Section-context siblings are read-only context: never emit rows or questions for context-only ids. Cite only supplied evidence ids bound to that requirement; lookup provenance without a found fact cannot make coverage grounded. Emit only runnable, non-repeated questions for unresolved authoritative requirements in this packet. The compiler error is factual authority feedback. There is no attempt, question, token, or elapsed-time cap; finish only by calling final_output with a compiler-complete packet ledger.";
                                     let correction_user = serde_json::to_string_pretty(
                                         &serde_json::json!({
                                             "partition_id": partition.partition_id,
                                             "compiler_error": error.to_string(),
                                             "is_amendment": is_amendment,
                                             "authoritative_requirements": partition.requirements,
+                                            "section_context_requirements": partition.section_context_requirements,
                                             "available_lookup_routes": routes,
                                             "evidence_ledger": partition.evidence,
                                             "previously_investigated_evidence_slots": seen_slots.len(),
@@ -23527,6 +23565,7 @@ impl GooseAgentDispatcher {
                     "partition_id": partitions[*source_ordinal].partition_id.as_str(),
                     "model": model,
                     "requirement_count": partitions[*source_ordinal].requirements.len(),
+                    "section_context_requirement_count": partitions[*source_ordinal].section_context_requirements.len(),
                     "evidence_records": partitions[*source_ordinal].evidence.len(),
                     "estimated_output_cost": research_saturation_partition_cost(&partitions[*source_ordinal]),
                 })).collect::<Vec<_>>(),
