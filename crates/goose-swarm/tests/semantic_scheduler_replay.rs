@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use goose_provider_types::base::{ProviderHttpProtocol, expose_current_provider_http_request};
+use goose_provider_types::base::{expose_current_provider_http_request, ProviderHttpProtocol};
 use goose_swarm::{
     AdmissionReceipt, AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
     AdmittedSemanticReviewError, AuthorityScope, Dag, DeviceCfg, Difficulty, DispatchError,
@@ -7,12 +7,12 @@ use goose_swarm::{
     PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
     ProviderLeaseWaitPolicy, ProviderLifecycle, ProviderLifecycleDispatcher,
     ProviderLifecycleJournal, ProviderRequestReceipt, ProviderTerminalKind,
-    ProviderTerminalReceipt, RunScopedProviderLeaseAuthority, SEMANTIC_OBSERVATION_PROTOCOL,
-    SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA, Scheduler, SealedProviderLeaseAuthority,
-    SemanticObservationCapture, SemanticObservationCaptureRequest,
+    ProviderTerminalReceipt, RunScopedProviderLeaseAuthority, Scheduler,
+    SealedProviderLeaseAuthority, SemanticObservationCapture, SemanticObservationCaptureRequest,
     SemanticObservationSnapshotDraft, SemanticObservationSnapshotProducer,
     SemanticObservationSummonsSignal, SemanticTraceSnapshot, SwarmEvent, TaskRunOutput, TaskSpec,
     TraceStateMeasurement, VerifiedPhysicalLane, VerifiedProviderProtocolRoute, WorkRole,
+    SEMANTIC_OBSERVATION_PROTOCOL, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
