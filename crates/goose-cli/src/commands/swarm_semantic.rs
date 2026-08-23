@@ -4,12 +4,14 @@
 //! action-delivery API: a parsed `NUDGE`, split, acceptance candidate, or other semantic action remains
 //! an observation receipt owned by `goose-swarm`.
 
+use super::swarm_provider_lifecycle::provider_error_proves_terminal_response;
 use async_trait::async_trait;
 use base64::Engine;
 use goose::conversation::message::{Message, MessageContent};
 use goose::providers::base::{collect_stream, Provider};
 use goose_swarm::{
     AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
+    AdmittedSemanticReviewError,
     ArtifactExcerptSnapshot, PhysicalFleetSnapshot, SemanticObservationCapture,
     SemanticObservationCaptureRequest, SemanticObservationSnapshotDraft,
     SemanticObservationSnapshotProducer, SemanticObservationSummonsSignal, SemanticTraceSnapshot,
@@ -22,6 +24,8 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::Mutex as AsyncMutex;
+
+use goose_provider_types::errors::ProviderError;
 
 const RECURRENCE_WINDOW_CHARS: usize = 48;
 const RECURRENCE_REACH_WINDOWS: usize = 65_536;
@@ -692,6 +696,18 @@ impl GooseSemanticProviderRoute {
                 provider_name
             ));
         }
+        let provider_transport_id = provider.transport_identity(&lane.model_id).ok_or_else(|| {
+            format!(
+                "semantic provider {:?} exposes no transport identity",
+                provider_name
+            )
+        })?;
+        if provider_transport_id != lane.provider_transport_id {
+            return Err(format!(
+                "semantic provider {:?} transport does not match verified lane {:?}",
+                provider_name, lane.logical_device_id
+            ));
+        }
         Ok(Self {
             provider_name,
             provider,
@@ -705,6 +721,11 @@ pub struct GooseAdmittedSemanticObservationReviewer {
     routes: BTreeMap<String, GooseSemanticProviderRoute>,
     temperature: Option<f32>,
     request_params: HashMap<String, serde_json::Value>,
+}
+
+enum SemanticProviderCallError {
+    BeforeStream(ProviderError),
+    DuringStream(ProviderError),
 }
 
 impl GooseAdmittedSemanticObservationReviewer {
@@ -800,22 +821,25 @@ impl GooseAdmittedSemanticObservationReviewer {
                 route.provider.get_name()
             ));
         }
+        if route
+            .provider
+            .transport_identity(&request.admission.model_id)
+            .as_deref()
+            != Some(route.lane.provider_transport_id.as_str())
+        {
+            return Err(format!(
+                "provider transport for {:?} drifted from its sealed physical lane",
+                admission.logical_device_id
+            ));
+        }
         Ok(route)
     }
-}
 
-#[async_trait]
-impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationReviewer {
-    fn verify_admission(&self, request: &AdmittedSemanticObservationRequest) -> Result<(), String> {
-        self.route_for(request).map(|_| ())
-    }
-
-    fn eligible_logical_device_ids(&self) -> Option<Vec<String>> {
-        Some(self.routes.keys().cloned().collect())
-    }
-
-    async fn review(&self, request: AdmittedSemanticObservationRequest) -> Result<String, String> {
-        let route = self.route_for(&request)?;
+    fn model_config_for(
+        &self,
+        request: &AdmittedSemanticObservationRequest,
+        route: &GooseSemanticProviderRoute,
+    ) -> Result<goose_provider_types::model::ModelConfig, String> {
         let mut response_params = self.request_params.clone();
         response_params.insert(
             "response_format".to_string(),
@@ -828,7 +852,7 @@ impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationRev
                 }
             }),
         );
-        let model_config = goose::model_config::model_config_from_user_config(
+        Ok(goose::model_config::model_config_from_user_config(
             &route.provider_name,
             &request.admission.model_id,
         )
@@ -836,25 +860,66 @@ impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationRev
         .with_temperature(self.temperature)
         .with_toolshim(false)
         .with_toolshim_model(None)
-        .with_merged_request_params(response_params);
+        .with_merged_request_params(response_params))
+    }
+}
+
+#[async_trait]
+impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationReviewer {
+    fn verify_admission(&self, request: &AdmittedSemanticObservationRequest) -> Result<(), String> {
+        let route = self.route_for(request)?;
+        self.model_config_for(request, route).map(|_| ())
+    }
+
+    fn eligible_logical_device_ids(&self) -> Option<Vec<String>> {
+        Some(self.routes.keys().cloned().collect())
+    }
+
+    async fn review(
+        &self,
+        request: AdmittedSemanticObservationRequest,
+    ) -> Result<String, AdmittedSemanticReviewError> {
+        let route = self
+            .route_for(&request)
+            .map_err(AdmittedSemanticReviewError::unresolved)?;
+        let model_config = self
+            .model_config_for(&request, route)
+            .map_err(AdmittedSemanticReviewError::unresolved)?;
         let messages = [Message::user().with_text(request.observation.user_prompt.clone())];
         let provider_request_id = request.provider_request_id.clone();
-        let (message, _) =
-            goose::session_context::with_session_id(Some(provider_request_id), async {
-                let stream = route
-                    .provider
-                    .stream_once(
-                        &model_config,
-                        &request.observation.system_prompt,
-                        &messages,
-                        &[],
-                    )
-                    .await?;
-                collect_stream(stream).await
-            })
-            .await
-            .map_err(|error| format!("semantic reviewer provider request failed: {error}"))?;
-        strict_text_response(&message.content)
+        let result = goose::session_context::with_session_id(Some(provider_request_id), async {
+            let stream = route
+                .provider
+                .stream_once(
+                    &model_config,
+                    &request.observation.system_prompt,
+                    &messages,
+                    &[],
+                )
+                .await
+                .map_err(SemanticProviderCallError::BeforeStream)?;
+            collect_stream(stream)
+                .await
+                .map_err(SemanticProviderCallError::DuringStream)
+        })
+        .await;
+        let (message, _) = match result {
+            Ok(message) => message,
+            Err(SemanticProviderCallError::BeforeStream(error))
+                if provider_error_proves_terminal_response(&error) =>
+            {
+                return Err(AdmittedSemanticReviewError::terminal_failure(format!(
+                    "semantic reviewer provider returned a terminal failure: {error}"
+                )));
+            }
+            Err(SemanticProviderCallError::BeforeStream(error))
+            | Err(SemanticProviderCallError::DuringStream(error)) => {
+                return Err(AdmittedSemanticReviewError::unresolved(format!(
+                    "semantic reviewer provider lifecycle is unresolved: {error}"
+                )));
+            }
+        };
+        Ok(strict_text_response(&message.content).unwrap_or_else(|_| "{}".to_string()))
     }
 }
 
@@ -867,6 +932,7 @@ fn require_exact_route(
         lane.model_id.as_str(),
         lane.host_id.as_str(),
         lane.model_instance_id.as_str(),
+        lane.provider_transport_id.as_str(),
         lane.route_evidence_id.as_str(),
         &lane.capacity_evidence,
     );
@@ -875,6 +941,7 @@ fn require_exact_route(
         admission.model_id.as_str(),
         admission.physical_host_id.as_str(),
         admission.model_instance_id.as_str(),
+        admission.provider_transport_id.as_str(),
         admission.route_evidence_id.as_str(),
         &admission.capacity_evidence,
     );
@@ -930,6 +997,11 @@ mod tests {
     use rmcp::model::Tool;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    const VERIFIED_TRANSPORT: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const OTHER_TRANSPORT: &str =
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
     #[derive(Default)]
     struct RecordingSink {
         events: Mutex<Vec<serde_json::Value>>,
@@ -964,6 +1036,7 @@ mod tests {
 
     struct MockProvider {
         reply: String,
+        transport_identity: Option<String>,
         stream_calls: AtomicUsize,
         stream_once_calls: AtomicUsize,
         complete_calls: AtomicUsize,
@@ -993,11 +1066,17 @@ mod tests {
         fn new(reply: String) -> Self {
             Self {
                 reply,
+                transport_identity: Some(VERIFIED_TRANSPORT.to_string()),
                 stream_calls: AtomicUsize::new(0),
                 stream_once_calls: AtomicUsize::new(0),
                 complete_calls: AtomicUsize::new(0),
                 calls: Mutex::new(Vec::new()),
             }
+        }
+
+        fn with_transport(mut self, transport_identity: Option<&str>) -> Self {
+            self.transport_identity = transport_identity.map(str::to_string);
+            self
         }
     }
 
@@ -1005,6 +1084,10 @@ mod tests {
     impl Provider for MockProvider {
         fn get_name(&self) -> &str {
             "lmstudio"
+        }
+
+        fn transport_identity(&self, _model_name: &str) -> Option<String> {
+            self.transport_identity.clone()
         }
 
         async fn stream(
@@ -1128,6 +1211,7 @@ mod tests {
             model_id: "judge-model".to_string(),
             host_id: format!("host-{logical_device_id}"),
             model_instance_id: format!("instance-{logical_device_id}"),
+            provider_transport_id: VERIFIED_TRANSPORT.to_string(),
             advertised_instance_capacity: 1,
             routing_weight: 1,
             capacity_evidence: HostCapacityEvidence::MeasuredProfile {
@@ -1149,6 +1233,24 @@ mod tests {
         .err()
         .expect("retry-only provider must be rejected");
         assert!(error.contains("single-attempt stream boundary"));
+    }
+
+    #[test]
+    fn provider_route_requires_the_sealed_transport_endpoint() {
+        for provider in [
+            MockProvider::new("unused".to_string()).with_transport(None),
+            MockProvider::new("unused".to_string())
+                .with_transport(Some(OTHER_TRANSPORT)),
+        ] {
+            let error = GooseSemanticProviderRoute::bind(
+                "lmstudio",
+                Arc::new(provider),
+                lane("judge-lane"),
+            )
+            .err()
+            .expect("unproved transport must be rejected");
+            assert!(error.contains("transport"));
+        }
     }
 
     #[tokio::test]

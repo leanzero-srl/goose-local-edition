@@ -57,6 +57,7 @@ pub use scheduler::{
 pub use semantic_control::{
     semantic_observation_task_version, AdmittedSemanticObservationHandle,
     AdmittedSemanticObservationReceipt, AdmittedSemanticObservationRequest,
+    AdmittedSemanticReviewError,
     AdmittedSemanticObservationReviewer, BrokeredSemanticObservationPlane,
     RejectedSemanticObservationAdmission, SemanticObservationAdmissionError,
     SemanticObservationAdmissionPolicy, SemanticObservationAdmissionStage,

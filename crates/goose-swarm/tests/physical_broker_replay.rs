@@ -5,12 +5,18 @@ use goose_swarm::{
     VerifiedPhysicalLane, WorkOpportunity, WorkPriority, WorkRole,
 };
 
+const TRANSPORT_A: &str =
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const TRANSPORT_B: &str =
+    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
 fn lane(device: &str, model: &str, host: &str, instance: &str) -> VerifiedPhysicalLane {
     VerifiedPhysicalLane {
         logical_device_id: device.to_string(),
         model_id: model.to_string(),
         host_id: host.to_string(),
         model_instance_id: instance.to_string(),
+        provider_transport_id: TRANSPORT_A.to_string(),
         advertised_instance_capacity: 4,
         routing_weight: 1,
         capacity_evidence: HostCapacityEvidence::MeasuredProfile {
@@ -606,6 +612,40 @@ fn aliases_of_one_physical_instance_must_share_exact_route_evidence() {
     contradictory.logical_device_id = "lane-b".to_string();
     contradictory.route_evidence_id = "different-route-observation".to_string();
     assert!(PhysicalFleetSnapshot::new("contradictory-route", vec![first, contradictory]).is_err());
+}
+
+#[test]
+fn aliases_of_one_physical_instance_must_share_provider_transport() {
+    let first = lane("lane-a", "model-a", "same-host", "same-instance");
+    let mut contradictory = first.clone();
+    contradictory.logical_device_id = "lane-b".to_string();
+    contradictory.provider_transport_id = TRANSPORT_B.to_string();
+    assert!(PhysicalFleetSnapshot::new(
+        "contradictory-provider-transport",
+        vec![first, contradictory]
+    )
+    .is_err());
+}
+
+#[test]
+fn raw_provider_endpoint_is_rejected_without_serializing_it() {
+    let mut unsealed = lane("lane-a", "model-a", "host-a", "instance-a");
+    unsealed.provider_transport_id =
+        "http://operator:secret@lm-link.test/v1/chat/completions".to_string();
+    let error = PhysicalFleetSnapshot::new("raw-provider-endpoint", vec![unsealed])
+        .expect_err("raw provider endpoint must never enter a sealed snapshot");
+    let rendered = error.to_string();
+    assert!(rendered.contains("canonical sha256 digest"));
+    assert!(!rendered.contains("lm-link"));
+    assert!(!rendered.contains("secret"));
+
+    let sealed = snapshot(
+        "hashed-provider-endpoint",
+        vec![lane("lane-a", "model-a", "host-a", "instance-a")],
+    );
+    let serialized = serde_json::to_string(&sealed).unwrap();
+    assert!(serialized.contains(TRANSPORT_A));
+    assert!(!serialized.contains("http://"));
 }
 
 #[test]

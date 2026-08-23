@@ -401,6 +401,14 @@ impl OpenAiProvider {
         Self::should_use_responses_api(model_name, &self.base_path)
     }
 
+    fn request_path_for_model(&self, model_name: &str) -> String {
+        if self.should_use_responses_api_for_provider(model_name) {
+            Self::map_base_path(&self.base_path, "responses", OPEN_AI_DEFAULT_RESPONSES_PATH)
+        } else {
+            self.base_path.clone()
+        }
+    }
+
     fn map_base_path(base_path: &str, target: &str, fallback: &str) -> String {
         let normalized = Self::normalize_base_path(base_path);
         if normalized.ends_with(target) || normalized.contains(&format!("/{target}")) {
@@ -511,8 +519,7 @@ impl OpenAiProvider {
             payload["stream"] = serde_json::Value::Bool(self.supports_streaming);
 
             let mut log = start_log(model_config, &payload)?;
-            let responses_path =
-                Self::map_base_path(&self.base_path, "responses", OPEN_AI_DEFAULT_RESPONSES_PATH);
+            let responses_path = self.request_path_for_model(&model_config.model_name);
             let response = if matches!(retry_policy, StreamRetryPolicy::Standard) {
                 self.with_retry(|| async {
                     let payload_clone = payload.clone();
@@ -684,6 +691,11 @@ impl Provider for OpenAiProvider {
         &self.name
     }
 
+    fn transport_identity(&self, model_name: &str) -> Option<String> {
+        self.api_client
+            .transport_identity(&self.request_path_for_model(model_name))
+    }
+
     fn skip_canonical_filtering(&self) -> bool {
         self.skip_canonical_filtering
     }
@@ -767,6 +779,25 @@ impl Provider for OpenAiProvider {
 
     fn supports_single_attempt_streaming(&self) -> bool {
         true
+    }
+
+    fn single_attempt_failure_provenance(
+        &self,
+        error: &ProviderError,
+    ) -> SingleAttemptFailureProvenance {
+        if matches!(
+            error,
+            ProviderError::Authentication(_)
+                | ProviderError::ContextLengthExceeded(_)
+                | ProviderError::RateLimitExceeded { .. }
+                | ProviderError::ServerError(_)
+                | ProviderError::CreditsExhausted { .. }
+                | ProviderError::Refusal { .. }
+        ) {
+            SingleAttemptFailureProvenance::TerminalResponse
+        } else {
+            SingleAttemptFailureProvenance::Unresolved
+        }
     }
 
     async fn stream_once(
@@ -1084,6 +1115,38 @@ mod tests {
                 "unexpected routing for {model_name} via {base_path}"
             );
         }
+    }
+
+    #[test]
+    fn transport_identity_tracks_the_model_selected_request_endpoint() {
+        let provider = make_provider("openai");
+        let chat = provider.transport_identity("gpt-4o").unwrap();
+        let responses = provider.transport_identity("gpt-5.4").unwrap();
+
+        assert_eq!(
+            chat,
+            provider
+                .api_client
+                .transport_identity("v1/chat/completions")
+                .unwrap()
+        );
+        assert_eq!(
+            responses,
+            provider
+                .api_client
+                .transport_identity("v1/responses")
+                .unwrap()
+        );
+        assert_ne!(chat, responses);
+
+        let mut explicit_chat = make_provider("openai");
+        explicit_chat.base_path = "openai/v1/chat/completions".to_string();
+        assert_eq!(
+            explicit_chat.transport_identity("gpt-5.4"),
+            explicit_chat
+                .api_client
+                .transport_identity("openai/v1/chat/completions")
+        );
     }
 
     #[test]

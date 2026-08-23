@@ -22,11 +22,19 @@ keyword parser authoritative. The new path has no conversion into `JudgeOutcome`
 nudge, stop, kill, accept, split, route, or schedule from a semantic response. Every response, including
 `NUDGE`, `SPLIT_PROPOSAL`, and `ACCEPT_CANDIDATE`, ends as an observation-only receipt.
 
-The normal `goose swarm` CLI path remains deliberately unwired. It still reports
-`provider_lifecycle_available: false` and rejects `GOOSE_SWARM_PHYSICAL_BROKER`, because
-`GooseAgentDispatcher::run` spans multiple agent turns without exposing an exact provider-request id
-and terminal reason for each turn. Therefore this branch contains production-capable components but
-does not silently activate them through an unreceipted live boundary.
+The normal path remains unchanged while `GOOSE_SWARM_PHYSICAL_BROKER` is unset. When the operator
+explicitly requests the physical broker, the main execute scheduler now binds every worker provider
+turn to an exact request/terminal lifecycle receipt and attaches this observation-only semantic path.
+The default legacy judge, pre-reviewer, and idle replanner are substituted rather than attached beside
+it; the nested omni-judge is disabled because it would start a second provider request while the worker
+owns the host permit. Explicit speculative twins fail before execute because first-wins cancellation is
+not yet a safe physical action.
+
+The physical snapshot includes same-run verified nodes excluded from build by `MAX_NODES`. They remain
+outside the build DAG and worker count, but can accept trace-versioned observation work through the same
+broker when physically idle. This uses available machines without making hardware count author tasks.
+The fix-round scheduler is still a separate legacy boundary, retains the operator's requested legacy
+judge/pre-review behavior, and does not claim physical admission.
 
 ## Implemented semantic protocol
 
@@ -50,7 +58,8 @@ minted.
 Per-task monotonic authority rejects an older attempt/revision and rejects two hashes that claim one
 revision. One asynchronous review flight is allowed per task. Identical in-flight and completed snapshots
 are deduplicated; a result superseded while in flight becomes stale `ABSTAIN`. Reviewer failure or panic
-also becomes `ABSTAIN` and cannot strand the lane.
+becomes `ABSTAIN` only when provider terminal is established. A panic, local stream drop, or ambiguous
+transport failure leaves the physical claim unresolved rather than inventing a terminal receipt.
 
 ## Production trace snapshot producer
 
@@ -124,12 +133,18 @@ rejection records `provider_not_started` and never invokes the provider.
 
 `GooseAdmittedSemanticObservationReviewer` binds concrete Goose providers to exact
 `VerifiedPhysicalLane` values. Preflight matches fleet snapshot, logical lane, model, host, model
-instance, route evidence, capacity evidence, task/attempt/revision, trace sequence, and snapshot hash.
-A provider absent from that exact binding is not eligible for scheduling and cannot start a call.
+instance, credential-free hash of the canonical provider transport endpoint, route evidence, capacity evidence,
+task/attempt/revision, trace sequence, and snapshot hash. The provider exposes the actual endpoint
+identity constructed by `ApiClient`; the lane carries the same SHA-256 identity observed for this run,
+without serializing or logging the endpoint. Missing, mismatched, or later-drifted transport identity fails before provider start. A provider absent from that
+exact binding is not eligible for scheduling and cannot start a call.
 
 The adapter sends one user message, no tools, and a strict OpenAI `json_schema` response format. It
 accepts text plus non-actionable thinking blocks, rejects tool/action/image/system content, and leaves the
-existing strict semantic parser authoritative.
+existing strict semantic parser authoritative. Invalid response content observed after natural stream EOF
+is passed to that parser as an abstaining protocol failure; it is not mislabeled as a provider failure.
+Definitive HTTP failures may close as failed, while network loss, mid-stream error, or reviewer panic stays
+unresolved and blocks replacement admission.
 
 Adversarial review found that `Provider::stream` was not single-attempt: LM Studio resolves to
 `OpenAiProvider::stream`, which internally used `ProviderRetry::with_retry`. Commit `ccc271276`
@@ -194,45 +209,48 @@ control, 3 semantic corpus, and 3 semantic scheduler). Full `goose-providers` pa
 full `goose-provider-types` passed 373. Strict relevant all-target clippy passes with warnings
 denied. No command in this verification starts a model.
 
+## Current opt-in production boundary
+
+The main execute scheduler is production-wired only behind `GOOSE_SWARM_PHYSICAL_BROKER=1`. The same-run
+snapshot must be complete, the configured endpoint's `/v1/models` response must positively list every
+physical model route, every OpenAI-compatible provider route must expose the exact hashed canonical
+transport, and all observation responses remain non-authoritative. No local or cloud model, scorer,
+publisher, or benchmark was launched while wiring or testing this path. Offline compilation and replay
+tests are not live calibration and do not justify enabling the flag in a benchmark yet.
+
 ## Exact remaining Engine 5 gap
 
 The next integration must close these boundaries in order of correctness dependency, not implementation
 effort:
 
-1. **Real build lifecycle receipts.** `GooseAgentDispatcher::run` must expose every provider turn
-   through `ProviderLifecycleDispatcher`, including exact request id, permit, terminal reason, tool-only
-   interval, cancellation, and local completion. Until that exists, the CLI must continue rejecting the
-   physical scheduler and cannot safely enable semantic review.
-2. **Probe-to-provider route provenance.** The live fleet probe must construct each
-   `GooseSemanticProviderRoute` from the same verified endpoint/model instance that minted the lane.
-   `VerifiedPhysicalLane` currently carries host/instance/route evidence but not a provider endpoint,
-   and this branch intentionally does not edit CLI provider creation. Passing an arbitrary provider next
-   to a matching lane would be attestation, not proof.
-3. **Live observation calibration.** Run observation-only first and measure summons cadence, idle capacity
+1. **Live observation calibration.** Run observation-only first and measure summons cadence, idle capacity
    consumed, prompt/context size, valid/abstain rate, F924 recall, slow-healthy/F163 false positives,
    advancing-but-wrong findings, and artifact-grounding quality. The offline corpus is not a performance
    claim.
-4. **Atomic evidence hardening.** Two identical reads and symlink rejection are fail-closed but not an OS
+2. **Atomic evidence hardening.** Two identical reads and symlink rejection are fail-closed but not an OS
    snapshot. Activity writers are not atomic-renames, and a hostile local process can race path components
    between validation and open. A stable malformed digest currently becomes a capture failure. Resolve
    these at the real provider boundary before treating artifact evidence as security-sensitive.
-5. **Context policy from evidence.** Complete artifacts deliberately have no byte cap, so a large owned
+3. **Context policy from evidence.** Complete artifacts deliberately have no byte cap, so a large owned
    file set can exceed the review model context and abstain. Any later excerpt/selection policy must carry
    explicit `complete: false` provenance and be evaluated; it cannot silently truncate or introduce a
    generic hard cap.
-6. **`NUDGE` authority.** Ordinary guidance may be delivered only at a natural tool/turn boundary. An
+4. **`NUDGE` authority.** Ordinary guidance may be delivered only at a natural tool/turn boundary. An
    interrupt requires cooperative cancellation, the old provider terminal receipt, valid partial-session
    commit, and same-session continuation before a replacement request. Requests cannot overlap.
-7. **Other action authorities.** `SPLIT_PROPOSAL` must pass the ordinary binder;
+5. **Other action authorities.** `SPLIT_PROPOSAL` must pass the ordinary binder;
    `ROUTE_FINDING` must revalidate current ownership; `ACCEPT_CANDIDATE` must run the objective oracle
    against the same artifact hash; and `REQUEST_EVIDENCE`/`INCOMPLETE` must create separately admitted,
    contract-derived evidence work.
-8. **Causal evaluation.** Compare observation-only with each intervention on matched cases, recording
+6. **Causal evaluation.** Compare observation-only with each intervention on matched cases, recording
    delivered guidance, next worker action, artifact/evidence delta, requirement closure, objective oracle,
    provider overlap, and decoder-minutes. Repeated `CONTINUE` and raw finding counts earn no value by
    themselves.
-9. **Concrete provider-free classification.** Wire deterministic `skeleton::`/`join::` only after the
+7. **Physical repair-round coverage.** The scheduler-backed repair round must either receive a fresh
+   physical control plane with the same route/lifecycle proof or remain explicitly legacy. It cannot
+   inherit a physical label from the main execute phase.
+8. **Concrete provider-free classification.** Wire deterministic `skeleton::`/`join::` only after the
    selected production path is proven provider-free end to end.
 
-No Engine 5 action authority, live activation, or performance claim is implemented or implied by this
-branch.
+No Engine 5 action authority, benchmark enablement, or performance claim is implemented or implied by
+this branch.

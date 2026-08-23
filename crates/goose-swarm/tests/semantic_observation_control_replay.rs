@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use goose_swarm::{
     AcceptanceCriterionSnapshot, AdmittedSemanticObservationRequest,
-    AdmittedSemanticObservationReviewer, BrokerError, BrokeredSemanticObservationPlane, EventSink,
+    AdmittedSemanticObservationReviewer, AdmittedSemanticReviewError, BrokerError,
+    BrokeredSemanticObservationPlane, EventSink,
     HostCapacityEvidence, LocalCompletionKind, NeutralJudgeSignal, PhysicalAdmissionControl,
     PhysicalFleetSnapshot, ProviderTerminalKind, SemanticJudgeAction,
     SemanticObservationAdmissionError, SemanticObservationAdmissionPolicy,
@@ -118,6 +119,9 @@ fn control(scope: &str, sink: Arc<dyn EventSink>) -> PhysicalAdmissionControl {
             model_id: "model-a".into(),
             host_id: "host-a".into(),
             model_instance_id: "instance-a".into(),
+            provider_transport_id:
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .into(),
             advertised_instance_capacity: 1,
             routing_weight: 1,
             capacity_evidence: HostCapacityEvidence::MeasuredProfile {
@@ -195,7 +199,10 @@ struct ContinueReviewer {
 
 #[async_trait]
 impl AdmittedSemanticObservationReviewer for ContinueReviewer {
-    async fn review(&self, request: AdmittedSemanticObservationRequest) -> Result<String, String> {
+    async fn review(
+        &self,
+        request: AdmittedSemanticObservationRequest,
+    ) -> Result<String, AdmittedSemanticReviewError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         assert_eq!(request.admission.role, WorkRole::SemanticJudgeObservation);
         assert!(matches!(
@@ -215,7 +222,10 @@ struct BlockingFirstReviewer {
 
 #[async_trait]
 impl AdmittedSemanticObservationReviewer for BlockingFirstReviewer {
-    async fn review(&self, request: AdmittedSemanticObservationRequest) -> Result<String, String> {
+    async fn review(
+        &self,
+        request: AdmittedSemanticObservationRequest,
+    ) -> Result<String, AdmittedSemanticReviewError> {
         let ordinal = self.calls.fetch_add(1, Ordering::SeqCst);
         if ordinal == 0 {
             self.first_started.notify_one();
@@ -228,16 +238,28 @@ impl AdmittedSemanticObservationReviewer for BlockingFirstReviewer {
 struct FailingReviewer {
     calls: AtomicUsize,
     panic: bool,
+    unresolved: bool,
 }
 
 #[async_trait]
 impl AdmittedSemanticObservationReviewer for FailingReviewer {
-    async fn review(&self, _request: AdmittedSemanticObservationRequest) -> Result<String, String> {
+    async fn review(
+        &self,
+        _request: AdmittedSemanticObservationRequest,
+    ) -> Result<String, AdmittedSemanticReviewError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.panic {
             panic!("adversarial semantic provider panic");
         }
-        Err("adversarial semantic provider failure".into())
+        if self.unresolved {
+            Err(AdmittedSemanticReviewError::unresolved(
+                "adversarial semantic provider lifecycle loss",
+            ))
+        } else {
+            Err(AdmittedSemanticReviewError::terminal_failure(
+                "adversarial semantic provider terminal failure",
+            ))
+        }
     }
 }
 
@@ -257,7 +279,10 @@ impl AdmittedSemanticObservationReviewer for PreflightRejectingReviewer {
         Err("verified route no longer matches the provider adapter".into())
     }
 
-    async fn review(&self, _request: AdmittedSemanticObservationRequest) -> Result<String, String> {
+    async fn review(
+        &self,
+        _request: AdmittedSemanticObservationRequest,
+    ) -> Result<String, AdmittedSemanticReviewError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         panic!("review must not run after a failed provider preflight")
     }
@@ -792,44 +817,40 @@ async fn provider_preflight_rejection_records_not_started_without_calling_the_ad
 }
 
 #[tokio::test]
-async fn provider_failures_and_panics_produce_failed_terminals_and_release_admission() {
+async fn definitive_provider_failure_records_failed_terminal_and_releases_admission() {
     let sink = Arc::new(RecordingSink::default());
     let event_sink: Arc<dyn EventSink> = sink.clone();
     let control = control("semantic-provider-failure", event_sink.clone());
     let plane = BrokeredSemanticObservationPlane::new(control.clone(), event_sink).unwrap();
-
-    for (revision, panic) in [(30, false), (31, true)] {
-        let reviewer = Arc::new(FailingReviewer {
-            calls: AtomicUsize::new(0),
-            panic,
-        });
-        let handle = match plane
-            .submit(
-                snapshot("detail-failure", revision, "provider failure trace"),
-                SemanticObservationAdmissionPolicy::default(),
-                reviewer.clone(),
-            )
-            .await
-            .unwrap()
-        {
-            SemanticObservationAdmissionSubmission::Started(handle) => handle,
-            SemanticObservationAdmissionSubmission::Rejected(_) => {
-                panic!("failure review rejected")
-            }
-        };
-        let receipt = handle.wait().await.unwrap();
-        assert_eq!(receipt.local_completion, LocalCompletionKind::Error);
-        assert_eq!(receipt.observation.action(), SemanticJudgeAction::Abstain);
-        assert_eq!(
-            receipt
-                .observation
-                .decision
-                .failure()
-                .map(|failure| &failure.kind),
-            Some(&SemanticProtocolFailureKind::ReviewerFailed)
-        );
-        assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
-    }
+    let reviewer = Arc::new(FailingReviewer {
+        calls: AtomicUsize::new(0),
+        panic: false,
+        unresolved: false,
+    });
+    let handle = match plane
+        .submit(
+            snapshot("detail-failure", 30, "provider failure trace"),
+            SemanticObservationAdmissionPolicy::default(),
+            reviewer.clone(),
+        )
+        .await
+        .unwrap()
+    {
+        SemanticObservationAdmissionSubmission::Started(handle) => handle,
+        SemanticObservationAdmissionSubmission::Rejected(_) => panic!("failure review rejected"),
+    };
+    let receipt = handle.wait().await.unwrap();
+    assert_eq!(receipt.local_completion, LocalCompletionKind::Error);
+    assert_eq!(receipt.observation.action(), SemanticJudgeAction::Abstain);
+    assert_eq!(
+        receipt
+            .observation
+            .decision
+            .failure()
+            .map(|failure| &failure.kind),
+        Some(&SemanticProtocolFailureKind::ReviewerFailed)
+    );
+    assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
 
     {
         let events = sink.events.lock().unwrap();
@@ -838,16 +859,55 @@ async fn provider_failures_and_panics_produce_failed_terminals_and_release_admis
             .filter(|event| event["event"] == "broker_provider_terminal_observed")
             .map(|event| event["receipt"]["kind"].as_str().unwrap().to_string())
             .collect();
-        assert_eq!(terminal_kinds, vec!["failed", "failed"]);
+        assert_eq!(terminal_kinds, vec!["failed"]);
         assert_eq!(
             events
                 .iter()
                 .filter(|event| event["event"] == "broker_admission_released")
                 .count(),
-            2
+            1
         );
     }
     assert_eq!(control.occupancy().await, (0, 0));
+}
+
+#[tokio::test]
+async fn unresolved_provider_failure_and_panic_keep_the_physical_claim() {
+    for (scope, panic, unresolved) in [
+        ("semantic-provider-unresolved", false, true),
+        ("semantic-provider-panic", true, false),
+    ] {
+        let sink = Arc::new(RecordingSink::default());
+        let event_sink: Arc<dyn EventSink> = sink.clone();
+        let control = control(scope, event_sink.clone());
+        let plane = BrokeredSemanticObservationPlane::new(control.clone(), event_sink).unwrap();
+        let reviewer = Arc::new(FailingReviewer {
+            calls: AtomicUsize::new(0),
+            panic,
+            unresolved,
+        });
+        let handle = match plane
+            .submit(
+                snapshot("detail-unresolved", 31, "provider lifecycle lost"),
+                SemanticObservationAdmissionPolicy::default(),
+                reviewer,
+            )
+            .await
+            .unwrap()
+        {
+            SemanticObservationAdmissionSubmission::Started(handle) => handle,
+            SemanticObservationAdmissionSubmission::Rejected(_) => {
+                panic!("unresolved review rejected")
+            }
+        };
+        assert!(matches!(
+            handle.wait().await,
+            Err(SemanticObservationAdmissionError::ProviderLifecycleUnresolved { .. })
+        ));
+        assert_eq!(event_count(&sink, "broker_provider_terminal_observed"), 0);
+        assert_eq!(event_count(&sink, "broker_admission_released"), 0);
+        assert_eq!(control.occupancy().await, (0, 1));
+    }
 }
 
 #[tokio::test]

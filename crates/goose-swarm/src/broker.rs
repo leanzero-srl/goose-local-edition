@@ -60,6 +60,7 @@ impl HostCapacityEvidence {
 pub struct VerifiedPhysicalIdentity {
     pub host_id: String,
     pub model_instance_id: String,
+    pub provider_transport_id: String,
     /// LM Studio's instance `PARALLEL` ceiling. It never becomes host capacity and is never summed
     /// across model rows on one host.
     pub advertised_instance_capacity: u32,
@@ -79,6 +80,7 @@ impl VerifiedPhysicalIdentity {
             model_id,
             host_id: self.host_id,
             model_instance_id: self.model_instance_id,
+            provider_transport_id: self.provider_transport_id,
             advertised_instance_capacity: self.advertised_instance_capacity,
             routing_weight,
             capacity_evidence: self.capacity_evidence,
@@ -93,6 +95,7 @@ pub struct VerifiedPhysicalLane {
     pub model_id: String,
     pub host_id: String,
     pub model_instance_id: String,
+    pub provider_transport_id: String,
     pub advertised_instance_capacity: u32,
     pub routing_weight: u32,
     pub capacity_evidence: HostCapacityEvidence,
@@ -132,6 +135,7 @@ impl PhysicalFleetSnapshot {
         let mut host_capacities: HashMap<&str, &HostCapacityEvidence> = HashMap::new();
         let mut instance_capacities = HashMap::new();
         let mut route_evidence: HashMap<(&str, &str), &str> = HashMap::new();
+        let mut provider_transports: HashMap<(&str, &str), &str> = HashMap::new();
         for lane in &self.lanes {
             validate_lane(lane)?;
             if logical_devices
@@ -184,6 +188,18 @@ impl PhysicalFleetSnapshot {
                     });
                 }
             }
+            if let Some(first) =
+                provider_transports.insert(route_key, lane.provider_transport_id.as_str())
+            {
+                if first != lane.provider_transport_id {
+                    return Err(BrokerError::ConflictingProviderTransport {
+                        host_id: lane.host_id.clone(),
+                        model_instance_id: lane.model_instance_id.clone(),
+                        first: first.to_string(),
+                        second: lane.provider_transport_id.clone(),
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -195,11 +211,16 @@ fn validate_lane(lane: &VerifiedPhysicalLane) -> Result<(), BrokerError> {
         ("model id", lane.model_id.trim()),
         ("physical host id", lane.host_id.trim()),
         ("model instance id", lane.model_instance_id.trim()),
+        ("provider transport id", lane.provider_transport_id.trim()),
         ("route evidence id", lane.route_evidence_id.trim()),
     ]
     .into_iter()
     .find(|(_, value)| value.is_empty())
     .map(|(name, _)| format!("{name} is empty"))
+    .or_else(|| {
+        (!is_canonical_transport_identity(&lane.provider_transport_id))
+            .then(|| "provider transport identity is not a canonical sha256 digest".to_string())
+    })
     .or_else(|| {
         (lane.advertised_instance_capacity == 0)
             .then(|| "advertised instance capacity is zero".to_string())
@@ -212,6 +233,16 @@ fn validate_lane(lane: &VerifiedPhysicalLane) -> Result<(), BrokerError> {
         });
     }
     Ok(())
+}
+
+fn is_canonical_transport_identity(identity: &str) -> bool {
+    let Some(digest) = identity.strip_prefix("sha256:") else {
+        return false;
+    };
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize)]
@@ -380,6 +411,7 @@ pub struct AdmissionReceipt {
     pub model_id: String,
     pub physical_host_id: String,
     pub model_instance_id: String,
+    pub provider_transport_id: String,
     pub route_evidence_id: String,
     pub capacity_evidence: HostCapacityEvidence,
     pub queue_sequence: u64,
@@ -554,6 +586,12 @@ pub enum BrokerError {
         first: String,
         second: String,
     },
+    ConflictingProviderTransport {
+        host_id: String,
+        model_instance_id: String,
+        first: String,
+        second: String,
+    },
     InvalidOpportunity {
         work_id: String,
         reason: String,
@@ -663,6 +701,14 @@ impl std::fmt::Display for BrokerError {
             } => write!(
                 f,
                 "model instance `{model_instance_id}` on `{host_id}` has conflicting route evidence `{first}` and `{second}`"
+            ),
+            Self::ConflictingProviderTransport {
+                host_id,
+                model_instance_id,
+                ..
+            } => write!(
+                f,
+                "model instance `{model_instance_id}` on `{host_id}` has conflicting provider transport identities"
             ),
             Self::InvalidOpportunity { work_id, reason } => {
                 write!(f, "invalid broker opportunity `{work_id}`: {reason}")
@@ -1125,6 +1171,7 @@ impl PhysicalBroker {
             model_id: lane.model_id.clone(),
             physical_host_id: lane.host_id.clone(),
             model_instance_id: lane.model_instance_id.clone(),
+            provider_transport_id: lane.provider_transport_id.clone(),
             route_evidence_id: lane.route_evidence_id.clone(),
             capacity_evidence: lane.capacity_evidence.clone(),
             queue_sequence: queued.sequence,

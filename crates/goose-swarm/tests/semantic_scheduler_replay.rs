@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use goose_swarm::{
-    AdmissionReceipt, AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer, Dag,
-    DeviceCfg, Difficulty, DispatchError, DispatchRequest, EventSink, HostCapacityEvidence,
+    AdmissionReceipt, AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
+    AdmittedSemanticReviewError, Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest,
+    EventSink, HostCapacityEvidence,
     PhysicalAdmissionControl, PhysicalFleetSnapshot, ProviderLifecycle,
     ProviderLifecycleDispatcher, ProviderTerminalKind, Scheduler, SemanticObservationCapture,
     SemanticObservationCaptureRequest, SemanticObservationSnapshotDraft,
@@ -13,6 +14,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
+
+const VERIFIED_TRANSPORT: &str =
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 #[derive(Default)]
 struct RecordingSink {
@@ -61,6 +65,7 @@ fn lane(device: &str, model: &str, host: &str, capacity: u32) -> VerifiedPhysica
         model_id: model.to_string(),
         host_id: host.to_string(),
         model_instance_id: format!("instance:{device}"),
+        provider_transport_id: VERIFIED_TRANSPORT.to_string(),
         advertised_instance_capacity: capacity,
         routing_weight: 1,
         capacity_evidence: HostCapacityEvidence::MeasuredProfile {
@@ -221,7 +226,10 @@ impl AdmittedSemanticObservationReviewer for NudgeObserver {
         self.eligible_routes.clone()
     }
 
-    async fn review(&self, request: AdmittedSemanticObservationRequest) -> Result<String, String> {
+    async fn review(
+        &self,
+        request: AdmittedSemanticObservationRequest,
+    ) -> Result<String, AdmittedSemanticReviewError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.called.notify_waiters();
         let source_id = request.observation.snapshot.payload().neutral_signals[0]
