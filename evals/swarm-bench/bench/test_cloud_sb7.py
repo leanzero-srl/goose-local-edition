@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -100,6 +101,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
     def make_scored_campaign(self, root: Path) -> tuple[Path, dict[str, object]]:
         entrant_id = "fixture-model"
+        secret_file = root / "cloud-providers.env"
+        secret_file.write_text("FIXTURE_API_KEY=fixture-provider-secret\n")
+        secret_file.chmod(0o600)
         score_dir = root / "scores" / entrant_id / "attempt-1"
         shots = score_dir / "tree" / "sb7-shots"
         shots.mkdir(parents=True)
@@ -149,6 +153,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "status": "SCORED",
             "binary_sha256": "binary",
             "instrument_set_sha256": "instrument",
+            "secret_file": str(secret_file),
             "publisher": publisher,
         }
         cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
@@ -243,6 +248,515 @@ class CloudSb7HarnessTest(unittest.TestCase):
             ["git", "commit", "-qm", "fixture publisher"], cwd=repo, check=True
         )
         return repo, row
+
+    def free_port(self) -> int:
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            return int(listener.getsockname()[1])
+
+    def make_supersession_fixture(self, root: Path) -> dict[str, object]:
+        publisher_repo, failed_row = self.make_publisher_repo(root)
+        failed_row = dict(failed_row)
+        failed_row["vendor_port"] = self.free_port()
+        carried_row = dict(failed_row)
+        carried_row.update(
+            {
+                "id": "fixture-carried",
+                "model": "fixture-carried",
+                "accepted_reported_models": ["fixture-carried"],
+                "provider_lane": "fixture-carried",
+                "vendor_port": self.free_port(),
+            }
+        )
+        publisher_manifest = {
+            "expectedChecks": 91,
+            "entrants": [
+                {
+                    "key": row["id"],
+                    "label": str(row["id"]).replace("-", " ").title(),
+                    "model": row["model"],
+                    "docId": f"brun-baseline-{row['id']}-sb70",
+                }
+                for row in (failed_row, carried_row)
+            ],
+        }
+        (publisher_repo / cloud_sb7.PUBLISHER_MANIFEST).write_text(
+            json.dumps(publisher_manifest)
+        )
+        subprocess.run(["git", "add", "."], cwd=publisher_repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "add supersession fixture"],
+            cwd=publisher_repo,
+            check=True,
+        )
+
+        manifest_path = root / "entrants.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "suite": "sb-7.0-rc",
+                    "calibration": "uncalibrated fixture",
+                    "spend_policy": {
+                        "currency": "USD",
+                        "total_cap": 20,
+                        "provider_caps": {"fixture": 20},
+                        "launch_all_entrants_concurrently": True,
+                        "max_full_episodes_per_model": 2,
+                        "terminal_safe_retry_limit": 0,
+                    },
+                    "entrants": [failed_row, carried_row],
+                }
+            )
+        )
+        secret_path = root / "providers.env"
+        secret_path.write_text("FIXTURE_API_KEY=fixture-provider-secret\n")
+        secret_path.chmod(0o600)
+        old_binary = root / "goose-old"
+        old_binary.write_text("old-safe-binary\n")
+        old_binary.chmod(0o700)
+        replacement = root / "goose-new"
+        replacement.write_text("new-safe-binary\n")
+        replacement.chmod(0o700)
+        publisher = cloud_sb7.publisher_snapshot(
+            publisher_repo, [failed_row, carried_row]
+        )
+
+        def checked(binary: Path) -> dict[str, object]:
+            return {
+                "checked_at": "now",
+                "binary_sha256": cloud_sb7.sha256_file(binary),
+                "models": {},
+                "roster_evidence": {},
+                "requested_models": [failed_row["model"], carried_row["model"]],
+                "ports_free": True,
+                "credential_file_mode": "0600",
+                "publisher": publisher,
+            }
+
+        predecessor_root = root / "predecessor"
+        with mock.patch.object(
+            cloud_sb7, "preflight", return_value=checked(old_binary)
+        ):
+            cloud_sb7.init_campaign(
+                predecessor_root,
+                old_binary,
+                manifest_path,
+                secret_path,
+                publisher_repo,
+                True,
+            )
+        failed_state = cloud_sb7.read_state(predecessor_root, str(failed_row["id"]))
+        lifecycle_path = Path(str(failed_state["provider_lifecycle"]))
+        lifecycle_path.write_text(
+            "\n".join(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "timestamp": f"t-{index}",
+                        "request_id": "failed-request",
+                        "provider": failed_row["provider"],
+                        "model": failed_row["model"],
+                        "session": "session-1",
+                        "state": state,
+                        **(
+                            {
+                                "usage": {
+                                    "reported_model": failed_row["model"],
+                                    "input_tokens": 10,
+                                    "output_tokens": 10,
+                                    "total_tokens": 20,
+                                }
+                            }
+                            if state in {"usage_reported", "provider_terminal"}
+                            else {}
+                        ),
+                    }
+                )
+                for index, state in enumerate(
+                    (
+                        "queued",
+                        "admitted",
+                        "first_item",
+                        "usage_reported",
+                        "provider_terminal",
+                    )
+                )
+            )
+            + "\n"
+        )
+        (Path(str(failed_state["tree"])) / "failed-raw.txt").write_text("sealed failure\n")
+        cloud_sb7.update_state(
+            predecessor_root,
+            str(failed_row["id"]),
+            status="STOPPED",
+            provider_episode_attempts=1,
+            admitted_requests=1,
+            provider_terminal_requests=1,
+            failure="audited engine infrastructure defect",
+        )
+
+        carried_state = cloud_sb7.read_state(predecessor_root, str(carried_row["id"]))
+        carried_tree = Path(str(carried_state["tree"]))
+        (carried_tree / "successful-raw.txt").write_text("preserve me\n")
+        cloud_sb7.update_state(
+            predecessor_root,
+            str(carried_row["id"]),
+            status="BUILD_COMPLETE",
+            provider_episode_attempts=1,
+            admitted_requests=1,
+            provider_terminal_requests=1,
+            raw_tree_sha256=cloud_sb7.hash_tree(carried_tree),
+        )
+        ledger_path = Path(
+            str(cloud_sb7.load_json(cloud_sb7.campaign_file(predecessor_root))["budget_ledger"])
+        )
+        ledger = cloud_sb7.load_json(ledger_path)
+        ledger.update(
+            {
+                "spent_upper_bound": 0.00002,
+                "provider_spent_upper_bound": {"fixture": 0.00002},
+                "outstanding": {
+                    "carried-reservation": {
+                        "request_id": "carried-reservation",
+                        "provider": carried_row["provider"],
+                        "model": carried_row["model"],
+                        "reserved_usd": 0.00012,
+                        "input_reserve_tokens": 100,
+                        "output_reserve_tokens": 20,
+                        "created_at_unix_ms": 1,
+                    }
+                },
+                "settled": [
+                    {
+                        "request_id": "failed-request",
+                        "provider": failed_row["provider"],
+                        "model": failed_row["model"],
+                        "reported_model": failed_row["model"],
+                        "input_tokens": 10,
+                        "output_tokens": 10,
+                        "total_tokens": 20,
+                        "charged_upper_bound_usd": 0.00002,
+                        "reserved_usd": 0.00012,
+                        "settled_at_unix_ms": 1,
+                    }
+                ],
+            }
+        )
+        cloud_sb7.atomic_json(ledger_path, ledger)
+        cloud_sb7.manager_state(
+            predecessor_root,
+            status="STOPPED",
+            pid=None,
+            pgid=None,
+            identity=None,
+        )
+        cloud_sb7.update_campaign(predecessor_root, status="STOPPED")
+
+        root_cause = root / "root-cause.txt"
+        root_cause.write_text("provider parser accepted an unproven terminal\n")
+        regression = root / "regression.txt"
+        regression.write_text("terminal-proof regression passed\n")
+        predecessor = cloud_sb7.load_json(cloud_sb7.campaign_file(predecessor_root))
+        evidence_path = root / "defect-evidence.json"
+        cloud_sb7.atomic_json(
+            evidence_path,
+            {
+                "schema_version": cloud_sb7.SUPERSESSION_SCHEMA,
+                "classification": "infrastructure_defect",
+                "defect_id": "provider-terminal-proof-001",
+                "summary": "Audited parser defect invalidated the failed full episode.",
+                "affected_entrants": [failed_row["id"]],
+                "predecessor_campaign_id": predecessor["campaign_id"],
+                "predecessor_binary_sha256": predecessor["binary_sha256"],
+                "replacement_binary_sha256": cloud_sb7.sha256_file(replacement),
+                "fix_source_commit": cloud_sb7.git_value("rev-parse", "HEAD"),
+                "artifacts": [
+                    {
+                        "role": "root_cause",
+                        "path": str(root_cause),
+                        "sha256": cloud_sb7.sha256_file(root_cause),
+                    },
+                    {
+                        "role": "regression_test",
+                        "path": str(regression),
+                        "sha256": cloud_sb7.sha256_file(regression),
+                    },
+                ],
+            },
+        )
+        return {
+            "predecessor": predecessor_root,
+            "successor": root / "successor",
+            "binary": replacement,
+            "manifest": manifest_path,
+            "secrets": secret_path,
+            "publisher": publisher_repo,
+            "evidence": evidence_path,
+            "checked": checked(replacement),
+            "failed_id": str(failed_row["id"]),
+            "carried_id": str(carried_row["id"]),
+        }
+
+    def supersede_fixture(self, fixture: dict[str, object]) -> dict[str, object]:
+        with mock.patch.object(
+            cloud_sb7, "preflight", return_value=fixture["checked"]
+        ):
+            return cloud_sb7.supersede_campaign(
+                Path(str(fixture["predecessor"])),
+                Path(str(fixture["successor"])),
+                Path(str(fixture["binary"])),
+                Path(str(fixture["manifest"])),
+                Path(str(fixture["secrets"])),
+                Path(str(fixture["publisher"])),
+                Path(str(fixture["evidence"])),
+                True,
+            )
+
+    def test_supersession_carries_spend_attempts_and_success_without_rerun(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+            predecessor_campaign_before = (
+                Path(str(fixture["predecessor"])) / "campaign.json"
+            ).read_bytes()
+            predecessor_ledger = cloud_sb7.load_json(
+                Path(
+                    str(
+                        cloud_sb7.load_json(
+                            cloud_sb7.campaign_file(Path(str(fixture["predecessor"])))
+                        )["budget_ledger"]
+                    )
+                )
+            )
+
+            successor = self.supersede_fixture(fixture)
+
+            self.assertEqual(successor["lineage"]["generation"], 1)
+            self.assertEqual(
+                predecessor_campaign_before,
+                (Path(str(fixture["predecessor"])) / "campaign.json").read_bytes(),
+                "supersession must not mutate predecessor campaign.json",
+            )
+            self.assertEqual(
+                cloud_sb7.stop(Path(str(fixture["predecessor"]))),
+                0,
+            )
+            self.assertEqual(
+                predecessor_campaign_before,
+                (Path(str(fixture["predecessor"])) / "campaign.json").read_bytes(),
+                "a repeated stop must not mutate a sealed predecessor",
+            )
+            self.assertIsNone(
+                cloud_sb7.lineage_failure(Path(str(fixture["successor"])))
+            )
+            successor_ledger = cloud_sb7.load_json(Path(str(successor["budget_ledger"])))
+            self.assertEqual(successor_ledger, predecessor_ledger)
+            failed = cloud_sb7.read_state(
+                Path(str(fixture["successor"])), str(fixture["failed_id"])
+            )
+            carried = cloud_sb7.read_state(
+                Path(str(fixture["successor"])), str(fixture["carried_id"])
+            )
+            self.assertEqual(failed["status"], "PLANNED")
+            self.assertEqual(failed["provider_episode_attempts"], 1)
+            self.assertEqual(failed["lineage_role"], "infrastructure_defect_restart")
+            self.assertEqual(carried["status"], "BUILD_COMPLETE")
+            self.assertEqual(carried["provider_episode_attempts"], 1)
+            self.assertEqual(carried["lineage_role"], "carried_success")
+            self.assertEqual(
+                (Path(str(carried["tree"])) / "successful-raw.txt").read_text(),
+                "preserve me\n",
+            )
+            self.assertIn(
+                "strict all-entrant cloud-smoke proof",
+                cloud_sb7.supersession_smoke_gate_failure(
+                    Path(str(fixture["successor"]))
+                )
+                or "",
+            )
+
+    def test_supersession_is_idempotent_and_rejects_forks_and_second_hops(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+            first = self.supersede_fixture(fixture)
+            second = self.supersede_fixture(fixture)
+            self.assertEqual(first["lineage"], second["lineage"])
+
+            fork = dict(fixture)
+            fork["successor"] = Path(raw) / "fork"
+            with self.assertRaisesRegex(SystemExit, "immutable receipt"):
+                self.supersede_fixture(fork)
+
+            second_hop = dict(fixture)
+            second_hop["predecessor"] = fixture["successor"]
+            second_hop["successor"] = Path(raw) / "second-hop"
+            with self.assertRaisesRegex(SystemExit, "one hop"):
+                self.supersede_fixture(second_hop)
+
+    def test_supersession_rejects_outcome_and_ambiguous_lifecycle_reruns(self) -> None:
+        for defect in ("outcome", "ambiguous"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_supersession_fixture(Path(raw))
+                predecessor = Path(str(fixture["predecessor"]))
+                failed_id = str(fixture["failed_id"])
+                state = cloud_sb7.read_state(predecessor, failed_id)
+                if defect == "outcome":
+                    cloud_sb7.update_state(
+                        predecessor,
+                        failed_id,
+                        status="BUILD_COMPLETE",
+                        raw_tree_sha256=cloud_sb7.hash_tree(Path(str(state["tree"]))),
+                    )
+                    expected = "successful build cannot be rerun"
+                else:
+                    lifecycle = Path(str(state["provider_lifecycle"]))
+                    lines = lifecycle.read_text().splitlines()
+                    lifecycle.write_text("\n".join(lines[:-1]) + "\n")
+                    expected = "lifecycle is ambiguous"
+                with self.assertRaisesRegex(SystemExit, expected):
+                    self.supersede_fixture(fixture)
+
+    def test_supersession_crash_boundaries_resume_without_duplicate_root(self) -> None:
+        for boundary in (
+            "receipt_committed",
+            "staged_initialized",
+            "lineage_staged",
+            "root_committed",
+        ):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_supersession_fixture(Path(raw))
+
+                def crash(stage: str) -> None:
+                    if stage == boundary:
+                        raise RuntimeError(f"crash at {stage}")
+
+                with mock.patch.object(
+                    cloud_sb7, "supersession_fault", side_effect=crash
+                ), self.assertRaisesRegex(RuntimeError, boundary):
+                    self.supersede_fixture(fixture)
+                successor = self.supersede_fixture(fixture)
+                self.assertEqual(successor["lineage"]["generation"], 1)
+                self.assertIsNone(
+                    cloud_sb7.lineage_failure(Path(str(fixture["successor"])))
+                )
+
+    def test_committed_supersession_recovers_from_its_bundle_without_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+
+            def crash(stage: str) -> None:
+                if stage == "root_committed":
+                    raise RuntimeError("crash at root_committed")
+
+            with mock.patch.object(
+                cloud_sb7, "supersession_fault", side_effect=crash
+            ), self.assertRaisesRegex(RuntimeError, "root_committed"):
+                self.supersede_fixture(fixture)
+            evidence = cloud_sb7.load_json(Path(str(fixture["evidence"])))
+            for artifact in evidence["artifacts"]:
+                Path(str(artifact["path"])).unlink()
+            Path(str(fixture["evidence"])).unlink()
+            Path(str(fixture["manifest"])).unlink()
+
+            recovered = self.supersede_fixture(fixture)
+
+            self.assertEqual(recovered["lineage"]["generation"], 1)
+            self.assertIsNone(
+                cloud_sb7.lineage_failure(Path(str(fixture["successor"])))
+            )
+
+    def test_supersession_preserves_terminal_unsettled_reserve(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+            predecessor = Path(str(fixture["predecessor"]))
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(predecessor))
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            settlement = ledger["settled"].pop()
+            ledger["spent_upper_bound"] = 0
+            ledger["provider_spent_upper_bound"] = {"fixture": 0}
+            ledger["outstanding"]["failed-request"] = {
+                "request_id": "failed-request",
+                "provider": settlement["provider"],
+                "model": settlement["model"],
+                "reserved_usd": settlement["reserved_usd"],
+                "input_reserve_tokens": 100,
+                "output_reserve_tokens": 20,
+                "created_at_unix_ms": 2,
+            }
+            cloud_sb7.atomic_json(ledger_path, ledger)
+
+            successor = self.supersede_fixture(fixture)
+
+            successor_root = Path(str(fixture["successor"]))
+            successor_ledger = cloud_sb7.load_json(Path(str(successor["budget_ledger"])))
+            self.assertEqual(
+                successor_ledger["outstanding"]["failed-request"],
+                ledger["outstanding"]["failed-request"],
+            )
+            lineage = cloud_sb7.load_json(successor_root / "lineage/lineage.json")
+            self.assertEqual(
+                lineage["predecessor_terminal_outstanding"][str(fixture["failed_id"])],
+                ["failed-request"],
+            )
+            del successor_ledger["outstanding"]["failed-request"]
+            cloud_sb7.atomic_json(Path(str(successor["budget_ledger"])), successor_ledger)
+            self.assertIn(
+                "reservation changed or disappeared",
+                cloud_sb7.lineage_failure(successor_root) or "",
+            )
+
+    def test_supersession_rejects_uncorrelated_outstanding_reserve(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+            predecessor = Path(str(fixture["predecessor"]))
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(predecessor))
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            settlement = ledger["settled"].pop()
+            ledger["spent_upper_bound"] = 0
+            ledger["provider_spent_upper_bound"] = {"fixture": 0}
+            ledger["outstanding"]["uncorrelated"] = {
+                "request_id": "uncorrelated",
+                "provider": settlement["provider"],
+                "model": settlement["model"],
+                "reserved_usd": settlement["reserved_usd"],
+                "input_reserve_tokens": 100,
+                "output_reserve_tokens": 20,
+                "created_at_unix_ms": 2,
+            }
+            cloud_sb7.atomic_json(ledger_path, ledger)
+
+            with self.assertRaisesRegex(SystemExit, "no preserved accounting evidence"):
+                self.supersede_fixture(fixture)
+
+    def test_supersession_lineage_detects_ledger_artifact_and_attempt_tampering(self) -> None:
+        for tamper in ("ledger", "artifact", "attempt"):
+            with self.subTest(tamper=tamper), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_supersession_fixture(Path(raw))
+                successor = self.supersede_fixture(fixture)
+                root = Path(str(fixture["successor"]))
+                if tamper == "ledger":
+                    ledger_path = Path(str(successor["budget_ledger"]))
+                    ledger = cloud_sb7.load_json(ledger_path)
+                    ledger["spent_upper_bound"] = 0
+                    ledger["provider_spent_upper_bound"] = {"fixture": 0}
+                    ledger["settled"] = []
+                    cloud_sb7.atomic_json(ledger_path, ledger)
+                    expected = "spend decreased"
+                elif tamper == "artifact":
+                    predecessor = Path(str(fixture["predecessor"]))
+                    state = cloud_sb7.read_state(predecessor, str(fixture["failed_id"]))
+                    (Path(str(state["tree"])) / "failed-raw.txt").write_text("changed\n")
+                    expected = "artifact changed"
+                else:
+                    cloud_sb7.update_state(
+                        root,
+                        str(fixture["failed_id"]),
+                        provider_episode_attempts=0,
+                    )
+                    expected = "attempt count reset"
+                self.assertIn(expected, cloud_sb7.lineage_failure(root) or "")
 
     def test_manifest_has_exact_unique_models_and_ports(self) -> None:
         manifest = cloud_sb7.load_json(cloud_sb7.DEFAULT_ENTRANTS)
@@ -345,6 +859,55 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.parse_secret_file(path), {"GOOGLE_API_KEY": "secret"}
             )
 
+    def test_control_json_rejects_duplicate_object_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "ledger.json"
+            path.write_text('{"outstanding": {}, "outstanding": {"forged": {}}}\n')
+            with self.assertRaisesRegex(SystemExit, "duplicate object key"):
+                cloud_sb7.load_json(path)
+
+    def test_complete_entrant_secret_scan_crosses_chunks_and_blocks_consumers(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_scored_campaign(root)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            entrant_id = "fixture-model"
+            unit = root / "entrants" / entrant_id
+            secret = b"fixture-provider-secret"
+            targets = (
+                unit / "provider-lifecycle.jsonl",
+                unit / "vendor-trace-build.jsonl",
+                cloud_sb7.state_file(root, entrant_id),
+                root / "scores" / entrant_id / "attempt-1/score.log",
+                root / "publish" / entrant_id / "publisher.log",
+                root / "manager.log",
+            )
+            for path in targets:
+                original = path.read_bytes() if path.is_file() else None
+                path.parent.mkdir(parents=True, exist_ok=True)
+                boundary_prefix = 1024 * 1024 - len(secret) // 2
+                path.write_bytes(b"x" * boundary_prefix + secret + b"\n")
+                self.assertIn(
+                    str(path),
+                    cloud_sb7.persisted_entrant_secret_hits(root, campaign, entrant_id),
+                )
+                if original is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(original)
+
+            leak = unit / "build-manifest.json"
+            leak.write_bytes(secret)
+            self.assertFalse(cloud_sb7.publish_one(root, entrant_id))
+            self.assertEqual(
+                cloud_sb7.read_state(root, entrant_id)["status"], "INCOMPLETE"
+            )
+            cloud_sb7.update_state(root, entrant_id, status="BUILD_COMPLETE")
+            self.assertFalse(cloud_sb7.score_one(root, entrant_id))
+            self.assertEqual(
+                cloud_sb7.read_state(root, entrant_id)["status"], "INCOMPLETE"
+            )
+
     def test_child_environment_contains_only_active_credential(self) -> None:
         row = {
             "id": "gemini-3.7-flash",
@@ -427,6 +990,13 @@ class CloudSb7HarnessTest(unittest.TestCase):
             value.update(extra)
             return value
 
+        usage = {
+            "reported_model": "gemini-3.7-flash",
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "total_tokens": 3,
+        }
+
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "lifecycle.jsonl"
             path.write_text(
@@ -435,8 +1005,8 @@ class CloudSb7HarnessTest(unittest.TestCase):
                         json.dumps(event("queued")),
                         json.dumps(event("admitted")),
                         json.dumps(event("first_item")),
-                        json.dumps(event("usage_reported", usage={"total_tokens": 3})),
-                        json.dumps(event("provider_terminal", usage={"total_tokens": 3})),
+                        json.dumps(event("usage_reported", usage=usage)),
+                        json.dumps(event("provider_terminal", usage=usage)),
                     ]
                 )
                 + "\n"
@@ -469,7 +1039,12 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 **base,
                 "request_id": "request-b",
                 "state": "provider_terminal",
-                "usage": {"total_tokens": 3},
+                "usage": {
+                    "reported_model": "gemini-3.7-flash",
+                    "input_tokens": 1,
+                    "output_tokens": 2,
+                    "total_tokens": 3,
+                },
             },
         ]
         with tempfile.TemporaryDirectory() as raw:
@@ -501,12 +1076,19 @@ class CloudSb7HarnessTest(unittest.TestCase):
             value.update(extra)
             return value
 
+        usage = {
+            "reported_model": "gemini-3.7-flash",
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "total_tokens": 3,
+        }
+
         events = [
             event("queued"),
             event("admitted"),
-            event("usage_reported", usage={"total_tokens": 3}),
-            event("provider_terminal", usage={"total_tokens": 3}),
-            event("provider_terminal", usage={"total_tokens": 3}),
+            event("usage_reported", usage=usage),
+            event("provider_terminal", usage=usage),
+            event("provider_terminal", usage=usage),
             event("first_item", model="gemini-3.1-pro-preview"),
         ]
         with tempfile.TemporaryDirectory() as raw:
@@ -548,6 +1130,48 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(len(summary["transition_errors"]), 2)
         self.assertEqual(summary["request_states"], {})
         self.assertIs(summary["valid"], False)
+
+    def test_lifecycle_rejects_missing_or_changed_terminal_usage(self) -> None:
+        base = {
+            "schema_version": 1,
+            "timestamp": "now",
+            "request_id": "request-1",
+            "provider": "google",
+            "model": "gemini-3.7-flash",
+            "session": "session-1",
+        }
+        usage = {
+            "reported_model": "gemini-3.7-flash",
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "total_tokens": 3,
+        }
+        for terminal_usage in (
+            {"reported_model": "gemini-3.7-flash", "total_tokens": 3},
+            {**usage, "output_tokens": 3, "total_tokens": 4},
+        ):
+            with self.subTest(
+                terminal_usage=terminal_usage
+            ), tempfile.TemporaryDirectory() as raw:
+                path = Path(raw) / "lifecycle.jsonl"
+                events = [
+                    {**base, "state": "queued"},
+                    {**base, "state": "admitted"},
+                    {**base, "state": "usage_reported", "usage": usage},
+                    {
+                        **base,
+                        "state": "provider_terminal",
+                        "usage": terminal_usage,
+                    },
+                ]
+                path.write_text("\n".join(map(json.dumps, events)) + "\n")
+                summary = cloud_sb7.lifecycle_summary(
+                    path,
+                    expected_provider="google",
+                    expected_model="gemini-3.7-flash",
+                )
+                self.assertIs(summary["valid"], False)
+                self.assertEqual(summary["terminal"], 0)
 
     def test_outstanding_budget_reservation_makes_ambiguous_work_visible(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
