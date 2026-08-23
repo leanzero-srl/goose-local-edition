@@ -14,6 +14,7 @@ pub mod dispatch;
 pub mod event;
 pub mod judge;
 pub mod memory_classify;
+pub mod provider_lease;
 pub mod replan;
 pub mod scheduler;
 pub mod semantic_control;
@@ -49,6 +50,14 @@ pub use event::{EventSink, NullSink, SwarmEvent};
 pub use judge::{
     deterministic_verdict, is_split_candidate, ChildSpec, Judge, JudgeConfig, JudgeInput,
     JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, Verdict,
+};
+pub use provider_lease::{
+    ActiveProviderLeaseSnapshot, ExposedProviderLease, GlobalProviderLeaseAuthority,
+    LeaseHostCapacityEvidence, LeaseWorkPriority, LeaseWorkRole, PhysicalProviderLeaseAuthority,
+    ProviderLeaseAuthoritySnapshot, ProviderLeaseBusy, ProviderLeaseBusyKind, ProviderLeaseClaim,
+    ProviderLeaseError, ProviderLeaseReleaseReceipt, ProviderLeaseStatus,
+    ProviderLeaseTransitionError, ProviderLeaseTry, ReservedProviderLease,
+    SealedProviderLeaseAuthority,
 };
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{
