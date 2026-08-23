@@ -14,7 +14,8 @@ use goose_provider_types::model::ModelConfig;
 use goose_provider_types::permission::PermissionConfirmation;
 use goose_provider_types::retry::RetryConfig;
 use goose_swarm::{
-    ProviderLifecycle, ProviderNudgeDelivery, ProviderTerminalKind, StartedProviderRequest,
+    AdmittedWork, ProviderLifecycle, ProviderNudgeDelivery, ProviderTerminalKind,
+    StartedProviderRequest, WorkRole,
 };
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,37 @@ pub(crate) fn provider_lifecycle_active() -> bool {
 
 pub(crate) trait ProviderNudgeDeliveryFactory: Send + Sync {
     fn open(&self) -> Arc<dyn ProviderNudgeDelivery>;
+}
+
+pub(crate) struct PreSchedulerJudgeLaunchAdmission<'a> {
+    _worker: &'a ProviderLifecycle,
+    _judge: &'a AdmittedWork,
+}
+
+impl<'a> PreSchedulerJudgeLaunchAdmission<'a> {
+    pub(crate) fn try_new(
+        worker: Option<&'a ProviderLifecycle>,
+        judge: Option<&'a AdmittedWork>,
+    ) -> std::result::Result<Self, &'static str> {
+        let worker = worker.ok_or("pre-scheduler worker has no physical broker admission")?;
+        let judge = judge.ok_or("no idle judge capacity was admitted by the physical broker")?;
+        let worker_receipt = worker.admission();
+        let judge_receipt = judge.receipt();
+        let judge_lifecycle = judge.lifecycle();
+        if !worker.shares_admission_control(&judge_lifecycle) {
+            return Err("worker and judge admissions do not belong to the same physical broker");
+        }
+        if judge_receipt.role != WorkRole::SemanticJudgeObservation {
+            return Err("admitted auxiliary work is not a semantic judge observation");
+        }
+        if judge_receipt.physical_host_id == worker_receipt.physical_host_id {
+            return Err("semantic judge is not admitted on a distinct physical node");
+        }
+        Ok(Self {
+            _worker: worker,
+            _judge: judge,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -193,6 +225,7 @@ pub(crate) fn bind_pre_scheduler_provider_lifecycle(
     provider: Arc<dyn Provider>,
     nudge_factory: Arc<dyn ProviderNudgeDeliveryFactory>,
     control: Arc<PreSchedulerProviderControl>,
+    _judge_admission: &PreSchedulerJudgeLaunchAdmission<'_>,
 ) -> Arc<dyn Provider> {
     Arc::new(PreSchedulerLifecycleProvider {
         inner: provider,
@@ -1492,6 +1525,102 @@ mod tests {
         (control, work)
     }
 
+    async fn admitted_pre_scheduler_pair() -> (
+        PhysicalAdmissionControl,
+        goose_swarm::AdmittedWork,
+        goose_swarm::AdmittedWork,
+    ) {
+        let worker_identity = VerifiedPhysicalIdentity {
+            host_id: "worker-host".to_string(),
+            model_instance_id: "worker-instance".to_string(),
+            provider_transport_id: TRANSPORT_A.to_string(),
+            advertised_instance_capacity: 1,
+            capacity_evidence: HostCapacityEvidence::ProbeSingleStream {
+                probe_epoch: "worker-probe".to_string(),
+            },
+            route_evidence_id: "worker-route".to_string(),
+        };
+        let judge_identity = VerifiedPhysicalIdentity {
+            host_id: "judge-host".to_string(),
+            model_instance_id: "judge-instance".to_string(),
+            provider_transport_id: TRANSPORT_A.to_string(),
+            advertised_instance_capacity: 1,
+            capacity_evidence: HostCapacityEvidence::ProbeSingleStream {
+                probe_epoch: "judge-probe".to_string(),
+            },
+            route_evidence_id: "judge-route".to_string(),
+        };
+        let snapshot = PhysicalFleetSnapshot::new(
+            "pre-scheduler-snapshot",
+            vec![
+                worker_identity.into_lane(
+                    "worker-device".to_string(),
+                    "worker-model".to_string(),
+                    1,
+                ),
+                judge_identity.into_lane("judge-device".to_string(), "judge-model".to_string(), 1),
+            ],
+        )
+        .unwrap();
+        let control =
+            PhysicalAdmissionControl::new("pre-scheduler-test", snapshot, Arc::new(NullSink))
+                .unwrap();
+        let worker_source = TaskVersion {
+            authority_scope: AuthorityScope::new("pre-scheduler", "worker"),
+            phase_epoch: 0,
+            task_id: "worker-task".to_string(),
+            attempt: 0,
+            revision: 1,
+            kind: SourceRevisionKind::TaskAttempt,
+        };
+        let judge_source = TaskVersion {
+            authority_scope: AuthorityScope::new("pre-scheduler", "judge"),
+            phase_epoch: 0,
+            task_id: "judge-task".to_string(),
+            attempt: 0,
+            revision: 1,
+            kind: SourceRevisionKind::Trace {
+                trace_sequence: 1,
+                snapshot_hash: "judge-snapshot".to_string(),
+            },
+        };
+        control
+            .set_source_revision(worker_source.clone())
+            .await
+            .unwrap();
+        control
+            .set_source_revision(judge_source.clone())
+            .await
+            .unwrap();
+        let worker = control
+            .admit(WorkOpportunity {
+                work_id: "pre-scheduler-worker".to_string(),
+                role: WorkRole::Build,
+                priority: WorkRole::Build.priority(),
+                task_rank: 0,
+                source: worker_source,
+                eligible_logical_device_ids: vec!["worker-device".to_string()],
+                preferred_model_id: None,
+                excluded_logical_device_id: None,
+            })
+            .await
+            .unwrap();
+        let judge = control
+            .admit(WorkOpportunity {
+                work_id: "pre-scheduler-judge".to_string(),
+                role: WorkRole::SemanticJudgeObservation,
+                priority: WorkRole::SemanticJudgeObservation.priority(),
+                task_rank: 0,
+                source: judge_source,
+                eligible_logical_device_ids: vec!["judge-device".to_string()],
+                preferred_model_id: None,
+                excluded_logical_device_id: None,
+            })
+            .await
+            .unwrap();
+        (control, worker, judge)
+    }
+
     async fn wrapped_for(behavior: Behavior, lifecycle: ProviderLifecycle) -> Arc<dyn Provider> {
         scope_provider_lifecycle(lifecycle, async move {
             bind_current_provider_lifecycle(Arc::new(MockProvider { behavior }), None, None)
@@ -1523,8 +1652,22 @@ mod tests {
         assert!(snapshot.structured_output_active);
     }
 
+    #[test]
+    fn pre_scheduler_judge_cannot_launch_without_physical_idle_admission() {
+        let mut judge_launches = 0;
+        if PreSchedulerJudgeLaunchAdmission::try_new(None, None).is_ok() {
+            judge_launches += 1;
+        }
+        assert_eq!(judge_launches, 0);
+    }
+
     #[tokio::test]
     async fn zero_byte_dead_call_is_nudged_then_restarted_after_cancel_terminal_proof() {
+        let (_admission_control, worker, judge) = admitted_pre_scheduler_pair().await;
+        let worker_lifecycle = worker.lifecycle();
+        let judge_admission =
+            PreSchedulerJudgeLaunchAdmission::try_new(Some(&worker_lifecycle), Some(&judge))
+                .unwrap();
         let events = Arc::new(Mutex::new(Vec::new()));
         let recorded = events.clone();
         let control = Arc::new(PreSchedulerProviderControl::new(Arc::new(move |event| {
@@ -1537,6 +1680,7 @@ mod tests {
             }),
             factory.clone(),
             control.clone(),
+            &judge_admission,
         );
         let progress = ProviderStreamProgressSnapshot::default();
         let mut first = provider
@@ -1579,6 +1723,11 @@ mod tests {
 
     #[tokio::test]
     async fn growing_structured_output_cannot_be_interrupted_by_a_stale_judge_capture() {
+        let (_admission_control, worker, judge) = admitted_pre_scheduler_pair().await;
+        let worker_lifecycle = worker.lifecycle();
+        let judge_admission =
+            PreSchedulerJudgeLaunchAdmission::try_new(Some(&worker_lifecycle), Some(&judge))
+                .unwrap();
         let control = Arc::new(PreSchedulerProviderControl::new(Arc::new(|_| {})));
         let factory = Arc::new(TestNudgeFactory::default());
         let provider = bind_pre_scheduler_provider_lifecycle(
@@ -1587,6 +1736,7 @@ mod tests {
             }),
             factory.clone(),
             control.clone(),
+            &judge_admission,
         );
         let _stream = provider
             .stream(&ModelConfig::new("model-a"), "", &[], &[])
@@ -1612,6 +1762,11 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_pre_scheduler_request_never_emits_false_success() {
+        let (_admission_control, worker, judge) = admitted_pre_scheduler_pair().await;
+        let worker_lifecycle = worker.lifecycle();
+        let judge_admission =
+            PreSchedulerJudgeLaunchAdmission::try_new(Some(&worker_lifecycle), Some(&judge))
+                .unwrap();
         let events = Arc::new(Mutex::new(Vec::new()));
         let recorded = events.clone();
         let control = Arc::new(PreSchedulerProviderControl::new(Arc::new(move |event| {
@@ -1624,6 +1779,7 @@ mod tests {
             }),
             factory,
             control.clone(),
+            &judge_admission,
         );
         let progress = ProviderStreamProgressSnapshot::default();
         let mut stream = provider

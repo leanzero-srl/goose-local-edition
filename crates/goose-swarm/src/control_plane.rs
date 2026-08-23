@@ -2086,6 +2086,10 @@ impl ProviderLifecycle {
         &self.admission
     }
 
+    pub fn shares_admission_control(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.control.inner, &other.control.inner)
+    }
+
     pub async fn start_provider_request(
         &self,
     ) -> Result<StartedProviderRequest, ProviderLifecycleStartError> {
