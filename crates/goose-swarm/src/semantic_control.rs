@@ -37,6 +37,15 @@ pub struct AdmittedSemanticObservationRequest {
 
 #[async_trait]
 pub trait AdmittedSemanticObservationReviewer: Send + Sync {
+    /// Validate that this exact admission can be served by a verified provider without starting a
+    /// request. Production adapters use this to fail closed on route/model drift.
+    fn verify_admission(
+        &self,
+        _request: &AdmittedSemanticObservationRequest,
+    ) -> std::result::Result<(), String> {
+        Ok(())
+    }
+
     async fn review(
         &self,
         request: AdmittedSemanticObservationRequest,
@@ -189,6 +198,43 @@ impl BrokeredSemanticObservationPlane {
         SemanticObservationAdmissionSubmission,
         SemanticObservationAdmissionError,
     > {
+        self.submit_with_mode(snapshot, policy, reviewer, AdmissionMode::Queue)
+            .await?
+            .ok_or_else(
+                || SemanticObservationAdmissionError::ProviderLifecycleUnresolved {
+                    admission_id: "not-admitted".to_string(),
+                    reason: "queued semantic observation unexpectedly produced no admission"
+                        .to_string(),
+                },
+            )
+    }
+
+    /// Submit only when verified physical capacity is idle now. `None` means the opportunity was
+    /// atomically withdrawn before admission; no provider-not-started receipt is fabricated because
+    /// no provider lifecycle ever existed.
+    pub async fn submit_if_idle(
+        &self,
+        snapshot: SealedSemanticObservationSnapshot,
+        policy: SemanticObservationAdmissionPolicy,
+        reviewer: Arc<dyn AdmittedSemanticObservationReviewer>,
+    ) -> std::result::Result<
+        Option<SemanticObservationAdmissionSubmission>,
+        SemanticObservationAdmissionError,
+    > {
+        self.submit_with_mode(snapshot, policy, reviewer, AdmissionMode::ImmediateIdle)
+            .await
+    }
+
+    async fn submit_with_mode(
+        &self,
+        snapshot: SealedSemanticObservationSnapshot,
+        policy: SemanticObservationAdmissionPolicy,
+        reviewer: Arc<dyn AdmittedSemanticObservationReviewer>,
+        mode: AdmissionMode,
+    ) -> std::result::Result<
+        Option<SemanticObservationAdmissionSubmission>,
+        SemanticObservationAdmissionError,
+    > {
         let source = semantic_observation_task_version(&snapshot);
         self.control
             .set_source_revision(source.clone())
@@ -198,12 +244,12 @@ impl BrokeredSemanticObservationPlane {
                 error,
             })?;
         if let Err(rejection) = self.observations.register_current(&snapshot) {
-            return Ok(SemanticObservationAdmissionSubmission::Rejected(
+            return Ok(Some(SemanticObservationAdmissionSubmission::Rejected(
                 RejectedSemanticObservationAdmission {
                     admission: None,
                     rejection,
                 },
-            ));
+            )));
         }
         self.events.emit(
             &crate::event::SwarmEvent::SemanticObservationSourcePublished {
@@ -220,12 +266,12 @@ impl BrokeredSemanticObservationPlane {
                 error,
             })?;
         if let Err(rejection) = self.observations.register_current(&snapshot) {
-            return Ok(SemanticObservationAdmissionSubmission::Rejected(
+            return Ok(Some(SemanticObservationAdmissionSubmission::Rejected(
                 RejectedSemanticObservationAdmission {
                     admission: None,
                     rejection,
                 },
-            ));
+            )));
         }
 
         let work_id = semantic_observation_work_id(&snapshot);
@@ -239,12 +285,35 @@ impl BrokeredSemanticObservationPlane {
             preferred_model_id: policy.preferred_model_id,
             excluded_logical_device_id: policy.excluded_logical_device_id,
         };
-        let admitted = self.control.admit(opportunity).await.map_err(|error| {
-            SemanticObservationAdmissionError::Broker {
-                stage: SemanticObservationAdmissionStage::PhysicalAdmission,
-                error,
+        let admitted = match mode {
+            AdmissionMode::Queue => {
+                Some(self.control.admit(opportunity).await.map_err(|error| {
+                    SemanticObservationAdmissionError::Broker {
+                        stage: SemanticObservationAdmissionStage::PhysicalAdmission,
+                        error,
+                    }
+                })?)
             }
-        })?;
+            AdmissionMode::ImmediateIdle => self
+                .control
+                .try_admit_idle(opportunity)
+                .await
+                .map_err(|error| SemanticObservationAdmissionError::Broker {
+                    stage: SemanticObservationAdmissionStage::PhysicalAdmission,
+                    error,
+                })?,
+        };
+        let Some(admitted) = admitted else {
+            self.events
+                .emit(&crate::event::SwarmEvent::SemanticObservationDeferred {
+                    task_id: snapshot.task_id().to_string(),
+                    attempt: snapshot.attempt(),
+                    source_revision: snapshot.source_revision(),
+                    snapshot_hash: snapshot.snapshot_hash().to_string(),
+                    reason: "no_verified_idle_provider_route".to_string(),
+                });
+            return Ok(None);
+        };
         let admission = admitted.receipt().clone();
         let proof = Arc::new(Mutex::new(ProviderLifecycleProof::Pending));
         let lifecycle_reviewer = Arc::new(LifecycleBoundSemanticReviewer {
@@ -269,12 +338,12 @@ impl BrokeredSemanticObservationPlane {
                         reason: format!("pre-call rejection cleanup task failed: {error}"),
                     }
                 })??;
-                return Ok(SemanticObservationAdmissionSubmission::Rejected(
+                return Ok(Some(SemanticObservationAdmissionSubmission::Rejected(
                     RejectedSemanticObservationAdmission {
                         admission: Some(admission),
                         rejection,
                     },
-                ));
+                )));
             }
         };
 
@@ -287,13 +356,13 @@ impl BrokeredSemanticObservationPlane {
             drop(task_lane);
         });
 
-        Ok(SemanticObservationAdmissionSubmission::Started(
+        Ok(Some(SemanticObservationAdmissionSubmission::Started(
             AdmittedSemanticObservationHandle {
                 snapshot_hash,
                 admission: admission_for_handle,
                 completion,
             },
-        ))
+        )))
     }
 
     async fn task_lane(&self, task_id: &str) -> OwnedMutexGuard<()> {
@@ -306,6 +375,12 @@ impl BrokeredSemanticObservationPlane {
         };
         lane.lock_owned().await
     }
+}
+
+#[derive(Clone, Copy)]
+enum AdmissionMode {
+    Queue,
+    ImmediateIdle,
 }
 
 async fn close_rejected_admission(
@@ -374,6 +449,16 @@ impl SemanticObservationReviewer for LifecycleBoundSemanticReviewer {
             admission: self.admission.clone(),
             provider_request_id: self.provider_request_id.clone(),
         };
+        if let Err(detail) = self.inner.verify_admission(&admitted_request) {
+            let detail = format!("semantic provider preflight rejected admission: {detail}");
+            match self.lifecycle.provider_not_started(detail.clone()).await {
+                Ok(()) => self.set_proof(ProviderLifecycleProof::ProviderNotStarted),
+                Err(close_error) => self.set_proof(ProviderLifecycleProof::Unresolved(format!(
+                    "{detail}; provider-not-started was rejected: {close_error}"
+                ))),
+            }
+            return Err(detail);
+        }
         let key = match self
             .lifecycle
             .provider_request_started(self.provider_request_id.clone())
