@@ -1599,6 +1599,32 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 True,
             )
 
+    def supersede_with_carried_full_attempt(
+        self, root: Path
+    ) -> tuple[dict[str, object], Path, str]:
+        fixture = self.make_supersession_fixture(root)
+        predecessor = Path(str(fixture["predecessor"]))
+        entrant_id = str(fixture["carried_id"])
+        lifecycle = self.make_full_attempt_fixture(predecessor, entrant_id, 1)
+        state = cloud_sb7.read_state(predecessor, entrant_id)
+        cloud_sb7.update_state(
+            predecessor,
+            entrant_id,
+            provider_launch_attempts=1,
+            provider_attempt=1,
+            provider_attempt_root=str(lifecycle.parent),
+            provider_lifecycle=str(lifecycle),
+        )
+        self.supersede_fixture(fixture)
+        successor = Path(str(fixture["successor"]))
+        receipt = (
+            successor
+            / "entrants"
+            / entrant_id
+            / "attempts/attempt-1/prelaunch-receipt.json"
+        )
+        return fixture, receipt, entrant_id
+
     def make_qualification_fixture(self, root: Path) -> dict[str, object]:
         fixture = self.make_supersession_fixture(root)
         source_root = Path(str(fixture["predecessor"]))
@@ -2178,6 +2204,95 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 )
                 or "",
             )
+
+    def test_carried_full_attempt_accepts_exact_predecessor_prelaunch_ancestry(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture, _, entrant_id = self.supersede_with_carried_full_attempt(
+                Path(raw)
+            )
+            successor = Path(str(fixture["successor"]))
+
+            paths = cloud_sb7.full_episode_lifecycle_paths(
+                successor,
+                entrant_id,
+                cloud_sb7.read_state(successor, entrant_id),
+            )
+
+            self.assertEqual(len(paths), 1)
+            self.assertEqual(paths[0].name, "provider-lifecycle.jsonl")
+
+    def test_carried_full_attempt_rejects_cross_entrant_prelaunch_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture, receipt, entrant_id = self.supersede_with_carried_full_attempt(
+                Path(raw)
+            )
+            successor = Path(str(fixture["successor"]))
+            value = cloud_sb7.load_json(receipt)
+            value["entrant"] = str(fixture["failed_id"])
+            cloud_sb7.atomic_json(receipt, value)
+
+            with self.assertRaisesRegex(SystemExit, "prelaunch receipt is malformed"):
+                cloud_sb7.full_episode_lifecycle_paths(
+                    successor,
+                    entrant_id,
+                    cloud_sb7.read_state(successor, entrant_id),
+                )
+
+    def test_carried_full_attempt_rejects_wrong_prelaunch_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture, receipt, entrant_id = self.supersede_with_carried_full_attempt(
+                Path(raw)
+            )
+            successor = Path(str(fixture["successor"]))
+            value = cloud_sb7.load_json(receipt)
+            value["campaign_id"] = "unrelated-predecessor"
+            cloud_sb7.atomic_json(receipt, value)
+
+            with self.assertRaisesRegex(SystemExit, "prelaunch ancestry is invalid"):
+                cloud_sb7.full_episode_lifecycle_paths(
+                    successor,
+                    entrant_id,
+                    cloud_sb7.read_state(successor, entrant_id),
+                )
+
+    def test_carried_full_attempt_rejects_symbolic_prelaunch_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture, receipt, entrant_id = self.supersede_with_carried_full_attempt(
+                Path(raw)
+            )
+            successor = Path(str(fixture["successor"]))
+            backup = receipt.with_name("receipt-copy.json")
+            backup.write_bytes(receipt.read_bytes())
+            receipt.unlink()
+            receipt.symlink_to(backup.name)
+
+            with self.assertRaisesRegex(SystemExit, "receipt is missing or linked"):
+                cloud_sb7.full_episode_lifecycle_paths(
+                    successor,
+                    entrant_id,
+                    cloud_sb7.read_state(successor, entrant_id),
+                )
+
+    def test_carried_full_attempt_rejects_tampered_prelaunch_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture, receipt, entrant_id = self.supersede_with_carried_full_attempt(
+                Path(raw)
+            )
+            successor = Path(str(fixture["successor"]))
+            value = cloud_sb7.load_json(receipt)
+            value["prepared_at"] = "tampered"
+            cloud_sb7.atomic_json(receipt, value)
+
+            with self.assertRaisesRegex(
+                SystemExit, "carried predecessor immutable payload changed"
+            ):
+                cloud_sb7.full_episode_lifecycle_paths(
+                    successor,
+                    entrant_id,
+                    cloud_sb7.read_state(successor, entrant_id),
+                )
 
     def test_supersession_smoke_accepts_fresh_replacement_baselines(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
