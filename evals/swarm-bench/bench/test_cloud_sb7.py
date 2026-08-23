@@ -1796,6 +1796,20 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "ledger_path": ledger_path,
         }
 
+    def make_dead_empty_reconciliation_fixture(
+        self, root: Path
+    ) -> dict[str, object]:
+        fixture = self.make_dead_queued_reconciliation_fixture(root)
+        state = cloud_sb7.read_state(
+            Path(str(fixture["root"])), str(fixture["entrant_id"])
+        )
+        Path(str(state["provider_lifecycle"])).write_text("")
+        ledger_path = Path(str(fixture["ledger_path"]))
+        ledger = cloud_sb7.load_json(ledger_path)
+        del ledger["outstanding"][str(fixture["request_id"])]
+        cloud_sb7.atomic_json(ledger_path, ledger)
+        return fixture
+
     def make_qualification_fixture(self, root: Path) -> dict[str, object]:
         fixture = self.make_supersession_fixture(root)
         source_root = Path(str(fixture["predecessor"]))
@@ -2502,20 +2516,14 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     cloud_sb7.read_state(successor, entrant_id),
                 )
 
-    def test_dead_queued_reconciliation_releases_only_exact_reservation(self) -> None:
+    def test_dead_queued_reconciliation_refuses_unproven_transport(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
             entrant_id = str(fixture["entrant_id"])
             ledger_path = Path(str(fixture["ledger_path"]))
-            before = cloud_sb7.load_json(ledger_path)
+            ledger_before = ledger_path.read_bytes()
             state_before = cloud_sb7.read_state(root, entrant_id)
-            immutable_build = {
-                "tree": cloud_sb7.hash_tree(Path(str(state_before["tree"]))),
-                "lifecycle": cloud_sb7.sha256_file(
-                    Path(str(state_before["provider_lifecycle"]))
-                ),
-            }
 
             pointer = cloud_sb7.reconcile_dead_pre_admission_reservations(
                 root,
@@ -2524,33 +2532,20 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 state_before,
             )
 
-            self.assertIsNotNone(pointer)
-            after = cloud_sb7.load_json(ledger_path)
-            self.assertNotIn(fixture["request_id"], after["outstanding"])
-            self.assertEqual(after["spent_upper_bound"], before["spent_upper_bound"])
-            self.assertEqual(
-                after["provider_spent_upper_bound"],
-                before["provider_spent_upper_bound"],
+            self.assertIsNone(pointer)
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            self.assertIn(
+                fixture["request_id"],
+                cloud_sb7.load_json(ledger_path)["outstanding"],
             )
-            self.assertEqual(after["settled"], before["settled"])
-            self.assertEqual(
-                cloud_sb7.hash_tree(Path(str(state_before["tree"]))),
-                immutable_build["tree"],
-            )
-            self.assertEqual(
-                cloud_sb7.sha256_file(Path(str(state_before["provider_lifecycle"]))),
-                immutable_build["lifecycle"],
-            )
-            self.assertEqual(
-                cloud_sb7.full_episode_lifecycle_paths(
-                    root, entrant_id, cloud_sb7.read_state(root, entrant_id)
-                ),
-                [Path(str(state_before["provider_lifecycle"])).resolve()],
+            self.assertNotIn(
+                "pre_admission_reconciliations",
+                cloud_sb7.read_state(root, entrant_id),
             )
 
-    def test_dead_queued_reconciliation_is_idempotent_after_commit(self) -> None:
+    def test_dead_empty_reconciliation_is_idempotent_after_commit(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
             entrant_id = str(fixture["entrant_id"])
             first = cloud_sb7.reconcile_dead_pre_admission_reservations(
@@ -2573,11 +2568,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 Path(str(fixture["ledger_path"])).read_bytes(), ledger_after
             )
 
-    def test_dead_queued_reconciliation_holds_global_ledger_lock_before_intent(
+    def test_dead_empty_reconciliation_holds_global_ledger_lock_before_intent(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
             entrant_id = str(fixture["entrant_id"])
             lock_path = Path(str(fixture["ledger_path"])).with_suffix(".lock")
@@ -2616,11 +2611,13 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
             self.assertEqual(observed, [0])
 
-    def test_dead_queued_reconciliation_resumes_after_intent_crash(self) -> None:
+    def test_dead_empty_reconciliation_resumes_after_intent_crash(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
             entrant_id = str(fixture["entrant_id"])
+            ledger_path = Path(str(fixture["ledger_path"]))
+            ledger_before = ledger_path.read_bytes()
 
             with mock.patch.object(
                 cloud_sb7,
@@ -2638,11 +2635,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                         fixture["row"],
                         cloud_sb7.read_state(root, entrant_id),
                     )
-            self.assertIn(
-                fixture["request_id"],
-                cloud_sb7.load_json(Path(str(fixture["ledger_path"])))
-                ["outstanding"],
-            )
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
 
             pointer = cloud_sb7.reconcile_dead_pre_admission_reservations(
                 root,
@@ -2652,17 +2645,15 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
 
             self.assertIsNotNone(pointer)
-            self.assertNotIn(
-                fixture["request_id"],
-                cloud_sb7.load_json(Path(str(fixture["ledger_path"])))
-                ["outstanding"],
-            )
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
 
-    def test_dead_queued_reconciliation_resumes_after_ledger_crash(self) -> None:
+    def test_dead_empty_reconciliation_resumes_after_ledger_crash(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
             entrant_id = str(fixture["entrant_id"])
+            ledger_path = Path(str(fixture["ledger_path"]))
+            ledger_before = ledger_path.read_bytes()
 
             with mock.patch.object(
                 cloud_sb7,
@@ -2680,11 +2671,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                         fixture["row"],
                         cloud_sb7.read_state(root, entrant_id),
                     )
-            self.assertNotIn(
-                fixture["request_id"],
-                cloud_sb7.load_json(Path(str(fixture["ledger_path"])))
-                ["outstanding"],
-            )
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
 
             pointer = cloud_sb7.reconcile_dead_pre_admission_reservations(
                 root,
@@ -2694,10 +2681,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
 
             self.assertIsNotNone(pointer)
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
 
-    def test_dead_queued_reconciliation_resumes_after_commit_crash(self) -> None:
+    def test_dead_empty_reconciliation_resumes_after_commit_crash(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
             entrant_id = str(fixture["entrant_id"])
 
@@ -2731,9 +2719,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 )
             )
 
-    def test_dead_queued_reconciliation_replays_after_state_pointer_crash(self) -> None:
+    def test_dead_empty_reconciliation_replays_after_state_pointer_crash(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
             entrant_id = str(fixture["entrant_id"])
 
@@ -2766,9 +2754,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
             self.assertEqual(pointer_after, pointer_before)
 
-    def test_dead_queued_reconciliation_rejects_cross_request_replay(self) -> None:
+    def test_dead_empty_reconciliation_rejects_cross_request_replay(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
             entrant_id = str(fixture["entrant_id"])
             cloud_sb7.reconcile_dead_pre_admission_reservations(
@@ -2796,7 +2784,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     cloud_sb7.read_state(root, entrant_id),
                 )
 
-    def test_normalize_retries_dead_queued_attempt_without_consuming_episode(self) -> None:
+    def test_normalize_refuses_dead_queued_attempt_without_transport_proof(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
@@ -2806,29 +2796,276 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 root, fixture["campaign"]
             )
 
-            self.assertEqual(refused, [])
+            self.assertEqual(len(refused), 1)
+            self.assertIn(
+                "pre-admission termination is not explicitly proven", refused[0]
+            )
+            self.assertIn(
+                "no independent proof that transport never left", refused[0]
+            )
             state = cloud_sb7.read_state(root, entrant_id)
-            self.assertEqual(state["status"], "PLANNED")
-            self.assertEqual(state["provider_episode_attempts"], 1)
-            self.assertNotIn(
+            self.assertEqual(state["status"], "BUILD_RUNNING")
+            self.assertEqual(state["provider_episode_attempts"], 2)
+            self.assertIn(
                 fixture["request_id"],
                 cloud_sb7.load_json(Path(str(fixture["ledger_path"])))
                 ["outstanding"],
             )
+            self.assertNotIn("pre_admission_reconciliations", state)
 
-    def test_normalize_retries_dead_empty_prelaunch_without_touching_ledger(
+    def test_transport_unknown_isolation_preserves_exposure_and_blocks_entrant(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
             entrant_id = str(fixture["entrant_id"])
-            state = cloud_sb7.read_state(root, entrant_id)
-            Path(str(state["provider_lifecycle"])).write_text("")
             ledger_path = Path(str(fixture["ledger_path"]))
-            ledger = cloud_sb7.load_json(ledger_path)
-            del ledger["outstanding"][str(fixture["request_id"])]
-            cloud_sb7.atomic_json(ledger_path, ledger)
+            ledger_before = ledger_path.read_bytes()
+            attempts_before = cloud_sb7.read_state(root, entrant_id)[
+                "provider_episode_attempts"
+            ]
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="queued transport is unresolved"
+            )
+
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], cloud_sb7.TRANSPORT_UNKNOWN_STATUS)
+            self.assertEqual(state["provider_episode_attempts"], attempts_before)
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            self.assertIn(
+                fixture["request_id"],
+                cloud_sb7.load_json(ledger_path)["outstanding"],
+            )
+            self.assertIsNone(cloud_sb7.lineage_failure(root))
+            state_before = cloud_sb7.state_file(root, entrant_id).read_bytes()
+            with self.assertRaisesRegex(SystemExit, "cannot launch"):
+                cloud_sb7.launch_supervisor(root, entrant_id)
+            self.assertFalse(cloud_sb7.score_one(root, entrant_id))
+            self.assertFalse(cloud_sb7.publish_one(root, entrant_id))
+            self.assertEqual(
+                cloud_sb7.state_file(root, entrant_id).read_bytes(), state_before
+            )
+            row_ids = [state["entrant"] for state in cloud_sb7.status_rows(root)]
+            self.assertFalse(cloud_sb7.wait_for_builds(root, row_ids, poll_seconds=0))
+            self.assertEqual(
+                cloud_sb7.normalize_interrupted_builds(
+                    root, cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+                ),
+                [],
+            )
+            cloud_sb7.update_campaign(root, status="INITIALIZED", failure=None)
+            with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
+                self.assertIsNone(cloud_sb7.manager_restart_mismatch(root))
+
+    def test_transport_unknown_isolation_recovers_every_commit_boundary(self) -> None:
+        for fault_stage in (
+            "isolation_receipt_committed",
+            "isolation_state_committed",
+            "isolation_campaign_committed",
+        ):
+            with self.subTest(fault_stage=fault_stage), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+                root = Path(str(fixture["root"]))
+                entrant_id = str(fixture["entrant_id"])
+                ledger_path = Path(str(fixture["ledger_path"]))
+                ledger_before = ledger_path.read_bytes()
+                attempts_before = cloud_sb7.read_state(root, entrant_id)[
+                    "provider_episode_attempts"
+                ]
+                cloud_sb7.update_campaign(
+                    root, status="ATTENTION", failure="queued transport is unresolved"
+                )
+
+                def fail(stage: str) -> None:
+                    if stage == fault_stage:
+                        raise RuntimeError(stage)
+
+                with mock.patch.object(
+                    cloud_sb7, "transport_unknown_fault", side_effect=fail
+                ):
+                    with self.assertRaisesRegex(RuntimeError, fault_stage):
+                        cloud_sb7.isolate_transport_unknown(root, entrant_id)
+                self.assertEqual(ledger_path.read_bytes(), ledger_before)
+                if fault_stage != "isolation_campaign_committed":
+                    self.assertIsNotNone(cloud_sb7.lineage_failure(root))
+
+                cloud_sb7.isolate_transport_unknown(root, entrant_id)
+
+                state = cloud_sb7.read_state(root, entrant_id)
+                self.assertEqual(
+                    state["status"], cloud_sb7.TRANSPORT_UNKNOWN_STATUS
+                )
+                self.assertEqual(
+                    state["provider_episode_attempts"], attempts_before
+                )
+                self.assertEqual(ledger_path.read_bytes(), ledger_before)
+                self.assertIsNone(cloud_sb7.lineage_failure(root))
+
+    def test_transport_unknown_successor_carries_reserve_and_attempt_ordinal(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            ledger_path = Path(str(fixture["ledger_path"]))
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="queued transport is unresolved"
+            )
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+            ledger_before = ledger_path.read_bytes()
+            state_before = cloud_sb7.read_state(root, entrant_id)
+
+            campaign = cloud_sb7.adjudicate_transport_unknown_successor(
+                root, entrant_id
+            )
+
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "PLANNED")
+            self.assertEqual(
+                state["provider_episode_attempts"],
+                state_before["provider_episode_attempts"],
+            )
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            self.assertIn(
+                fixture["request_id"],
+                cloud_sb7.load_json(ledger_path)["outstanding"],
+            )
+            self.assertEqual(
+                cloud_sb7.current_full_episode_outstanding_reservations(
+                    root, campaign, fixture["row"]
+                ),
+                ([], None),
+            )
+            limit = cloud_sb7.transport_unknown_episode_limit(
+                root, campaign, entrant_id, 2
+            )
+            self.assertEqual(limit, state_before["provider_episode_attempts"] + 1)
+            self.assertIsNone(cloud_sb7.lineage_failure(root))
+            cloud_sb7.update_campaign(root, status="INITIALIZED", failure=None)
+            with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
+                self.assertIsNone(cloud_sb7.manager_restart_mismatch(root))
+
+    def test_transport_unknown_successor_recovers_every_commit_boundary(self) -> None:
+        for fault_stage in (
+            "successor_receipt_committed",
+            "successor_state_committed",
+            "successor_campaign_committed",
+        ):
+            with self.subTest(fault_stage=fault_stage), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+                root = Path(str(fixture["root"]))
+                entrant_id = str(fixture["entrant_id"])
+                ledger_path = Path(str(fixture["ledger_path"]))
+                cloud_sb7.update_campaign(
+                    root, status="ATTENTION", failure="queued transport is unresolved"
+                )
+                cloud_sb7.isolate_transport_unknown(root, entrant_id)
+                ledger_before = ledger_path.read_bytes()
+                attempts_before = cloud_sb7.read_state(root, entrant_id)[
+                    "provider_episode_attempts"
+                ]
+
+                def fail(stage: str) -> None:
+                    if stage == fault_stage:
+                        raise RuntimeError(stage)
+
+                with mock.patch.object(
+                    cloud_sb7, "transport_unknown_fault", side_effect=fail
+                ):
+                    with self.assertRaisesRegex(RuntimeError, fault_stage):
+                        cloud_sb7.adjudicate_transport_unknown_successor(
+                            root, entrant_id
+                        )
+                self.assertEqual(ledger_path.read_bytes(), ledger_before)
+                if fault_stage != "successor_campaign_committed":
+                    self.assertIsNotNone(cloud_sb7.lineage_failure(root))
+
+                cloud_sb7.adjudicate_transport_unknown_successor(root, entrant_id)
+
+                state = cloud_sb7.read_state(root, entrant_id)
+                self.assertEqual(state["status"], "PLANNED")
+                self.assertEqual(
+                    state["provider_episode_attempts"], attempts_before
+                )
+                self.assertEqual(ledger_path.read_bytes(), ledger_before)
+                self.assertIsNone(cloud_sb7.lineage_failure(root))
+
+    def test_transport_unknown_successor_rejects_duplicate_request_id(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            row = fixture["row"]
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="queued transport is unresolved"
+            )
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+            campaign = cloud_sb7.adjudicate_transport_unknown_successor(
+                root, entrant_id
+            )
+            state = cloud_sb7.read_state(root, entrant_id)
+            attempt, attempt_root, lifecycle = cloud_sb7.prepare_full_provider_attempt(
+                root, entrant_id, state, campaign
+            )
+            lifecycle.write_text(
+                json.dumps(
+                    self.provider_lifecycle_events(
+                        row,
+                        ["queued"],
+                        request_id=str(fixture["request_id"]),
+                    )[0]
+                )
+                + "\n"
+            )
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_RUNNING",
+                provider_launch_attempts=attempt,
+                provider_attempt=attempt,
+                provider_attempt_root=str(attempt_root),
+                provider_lifecycle=str(lifecycle),
+                provider_episode_attempts=int(state["provider_episode_attempts"]) + 1,
+            )
+
+            self.assertIn(
+                "request id was reused",
+                cloud_sb7.lineage_failure(root) or "",
+            )
+
+    def test_transport_unknown_successor_waits_for_unrelated_entrants(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="queued transport is unresolved"
+            )
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+            unrelated = next(
+                state
+                for state in cloud_sb7.status_rows(root)
+                if state["entrant"] != entrant_id
+            )
+            cloud_sb7.update_state(root, unrelated["entrant"], status="PLANNED")
+
+            with self.assertRaisesRegex(
+                SystemExit, "waits for every unrelated entrant"
+            ):
+                cloud_sb7.adjudicate_transport_unknown_successor(root, entrant_id)
+
+    def test_normalize_retries_dead_empty_prelaunch_without_touching_ledger(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            ledger_path = Path(str(fixture["ledger_path"]))
             ledger_before = ledger_path.read_bytes()
 
             refused = cloud_sb7.normalize_interrupted_builds(
@@ -2849,7 +3086,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
             root = Path(str(fixture["root"]))
             entrant_id = str(fixture["entrant_id"])
             campaign = fixture["campaign"]
@@ -3107,6 +3344,105 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     )
                 )
 
+    def test_post_smoke_coordinator_repair_refuses_live_score_and_publish_runtime(
+        self,
+    ) -> None:
+        for role, changes, expected in (
+            (
+                "score",
+                {
+                    "score_pid": 424242,
+                    "score_pgid": 424242,
+                    "score_identity": "live-score",
+                    "score_ownership_marker": "e" * 64,
+                },
+                "scorer process is alive",
+            ),
+            (
+                "publisher",
+                {
+                    "publisher_pid": 434343,
+                    "publisher_pgid": 434343,
+                    "publisher_identity": "live-publish",
+                    "publisher_ownership_marker": "f" * 64,
+                },
+                "publisher process is alive",
+            ),
+        ):
+            with self.subTest(role=role), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_post_smoke_coordinator_repair_fixture(
+                    Path(raw)
+                )
+                root = Path(str(fixture["root"]))
+                entrant_id = str(fixture["carried_id"])
+                cloud_sb7.update_state(root, entrant_id, **changes)
+                live_pid = int(changes[f"{role}_pid"])
+
+                with self.post_smoke_repair_patches():
+                    with (
+                        mock.patch.object(
+                            cloud_sb7,
+                            "process_alive",
+                            side_effect=lambda pid, _identity: pid == live_pid,
+                        ),
+                        self.assertRaisesRegex(SystemExit, expected),
+                    ):
+                        cloud_sb7.repair_post_smoke_coordinator(
+                            root,
+                            Path(cloud_sb7.__file__).resolve(),
+                        )
+                self.assertFalse(
+                    (root / cloud_sb7.POST_SMOKE_COORDINATOR_REPAIR_PATH).exists()
+                )
+
+    def test_post_smoke_coordinator_repair_refuses_live_runtime_claims(
+        self,
+    ) -> None:
+        for relative in (
+            "locks/manager-run.claim",
+            "locks/monitor-run.claim",
+        ):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_post_smoke_coordinator_repair_fixture(
+                    Path(raw)
+                )
+                root = Path(str(fixture["root"]))
+                claim_path = root / relative
+                holder = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            "import fcntl,sys,time; "
+                            "f=open(sys.argv[1],'a+'); "
+                            "fcntl.flock(f.fileno(),fcntl.LOCK_EX); "
+                            "print('held',flush=True); time.sleep(30)"
+                        ),
+                        str(claim_path),
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    start_new_session=True,
+                )
+                try:
+                    self.assertEqual(holder.stdout.readline().strip(), "held")
+                    with (
+                        self.post_smoke_repair_patches(),
+                        self.assertRaisesRegex(SystemExit, "runtime claim is held"),
+                    ):
+                        cloud_sb7.repair_post_smoke_coordinator(
+                            root,
+                            Path(cloud_sb7.__file__).resolve(),
+                        )
+                finally:
+                    os.killpg(holder.pid, signal.SIGKILL)
+                    holder.wait(timeout=5)
+                    holder.stdout.close()
+                self.assertFalse(
+                    (root / cloud_sb7.POST_SMOKE_COORDINATOR_REPAIR_PATH).exists()
+                )
+
     def test_post_smoke_coordinator_repair_preserves_qualified_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_post_smoke_coordinator_repair_fixture(Path(raw))
@@ -3216,6 +3552,19 @@ class CloudSb7HarnessTest(unittest.TestCase):
                             root,
                             Path(cloud_sb7.__file__).resolve(),
                         )
+                if stage == "receipt_committed":
+                    pending_campaign = cloud_sb7.load_json(
+                        cloud_sb7.campaign_file(root)
+                    )
+                    pending_lineage = cloud_sb7.load_json(
+                        root / "lineage/lineage.json"
+                    )
+                    self.assertEqual(
+                        cloud_sb7.post_smoke_coordinator_repair_failure(
+                            root, pending_campaign, pending_lineage
+                        ),
+                        "post-smoke coordinator repair is pending application",
+                    )
                 with self.post_smoke_repair_patches():
                     recovered = cloud_sb7.repair_post_smoke_coordinator(
                         root,
