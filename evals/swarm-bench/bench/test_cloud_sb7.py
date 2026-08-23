@@ -1172,6 +1172,96 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 self.assertEqual(smoke_state["launch_attempts"], 0)
             self.assertIsNone(cloud_sb7.lineage_failure(successor_root))
 
+    def test_supersession_accepts_proven_zero_request_smoke_coordinator_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+            predecessor = Path(str(fixture["predecessor"]))
+            failed_id = str(fixture["failed_id"])
+            failed = cloud_sb7.read_state(predecessor, failed_id)
+            Path(str(failed["provider_lifecycle"])).unlink(missing_ok=True)
+            cloud_sb7.update_state(
+                predecessor,
+                failed_id,
+                status="STOPPED",
+                provider_episode_attempts=0,
+                admitted_requests=0,
+                provider_terminal_requests=0,
+                failure="smoke coordinator failed before attempt preparation",
+            )
+            cloud_sb7.update_smoke_state(
+                predecessor,
+                failed_id,
+                status="FAILED",
+                launch_attempts=0,
+                admitted_episodes=0,
+                active_attempt=False,
+                queued_at="2026-08-23T01:05:35Z",
+                failure="smoke cannot launch from WAITING_PROVIDER_LANE",
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(predecessor))
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["settled"] = []
+            ledger["spent_upper_bound"] = 0
+            ledger["provider_spent_upper_bound"] = {"fixture": 0}
+            cloud_sb7.atomic_json(ledger_path, ledger)
+
+            successor = self.supersede_fixture(fixture)
+
+            successor_root = Path(str(fixture["successor"]))
+            lineage = cloud_sb7.load_json(successor_root / "lineage/lineage.json")
+            self.assertEqual(lineage["affected_entrants"], [failed_id])
+            self.assertEqual(lineage["predecessor_episode_attempts"][failed_id], 0)
+            self.assertEqual(
+                cloud_sb7.read_state(successor_root, failed_id)[
+                    "provider_episode_attempts"
+                ],
+                0,
+            )
+            self.assertEqual(successor["smoke_status"], "PLANNED")
+            self.assertIsNone(cloud_sb7.lineage_failure(successor_root))
+
+    def test_supersession_rejects_pristine_zero_request_entrant_as_affected(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+            predecessor = Path(str(fixture["predecessor"]))
+            failed_id = str(fixture["failed_id"])
+            failed = cloud_sb7.read_state(predecessor, failed_id)
+            Path(str(failed["provider_lifecycle"])).unlink(missing_ok=True)
+            cloud_sb7.update_state(
+                predecessor,
+                failed_id,
+                status="STOPPED",
+                provider_episode_attempts=0,
+                admitted_requests=0,
+                provider_terminal_requests=0,
+                failure=None,
+            )
+            cloud_sb7.update_smoke_state(
+                predecessor,
+                failed_id,
+                status="STOPPED",
+                launch_attempts=0,
+                admitted_episodes=0,
+                active_attempt=False,
+                queued_at=None,
+                failure=None,
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(predecessor))
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["settled"] = []
+            ledger["spent_upper_bound"] = 0
+            ledger["provider_spent_upper_bound"] = {"fixture": 0}
+            cloud_sb7.atomic_json(ledger_path, ledger)
+
+            with self.assertRaisesRegex(SystemExit, "no smoke or full activity"):
+                self.supersede_fixture(fixture)
+
     def test_supersession_rejects_uncorrelated_outstanding_reserve(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_supersession_fixture(Path(raw))
