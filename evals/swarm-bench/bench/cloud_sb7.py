@@ -351,6 +351,32 @@ def normalized_website_base_url(value: str) -> str:
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
+def normalized_provider_endpoint(value: Any) -> str:
+    if not isinstance(value, str):
+        raise SystemExit("provider endpoint must be a string")
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        parsed.port
+    except ValueError:
+        raise SystemExit("provider endpoint is malformed") from None
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or (parsed.path and not parsed.path.startswith("/"))
+    ):
+        raise SystemExit(
+            "provider endpoint must be an https base URL without credentials, "
+            "query, or fragment"
+        )
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", "")
+    )
+
+
 def entrants(manifest: Mapping[str, Any]) -> list[Dict[str, Any]]:
     rows = manifest.get("entrants")
     if not isinstance(rows, list) or not rows:
@@ -388,9 +414,23 @@ def entrants(manifest: Mapping[str, Any]) -> list[Dict[str, Any]]:
             raise SystemExit(
                 f"SB7 vendor ports must be >= 8899: {entrant_id} -> {port}"
             )
+        base_url_env = raw.get("base_url_env")
+        if base_url_env is not None and (
+            not isinstance(base_url_env, str)
+            or not re.fullmatch(r"[A-Z][A-Z0-9_]*", base_url_env)
+            or base_url_env == raw["secret_env"]
+        ):
+            raise SystemExit(f"invalid non-secret base URL environment: {entrant_id}")
+        endpoint_family = (
+            normalized_provider_endpoint(raw["endpoint_family"])
+            if base_url_env is not None
+            else str(raw["endpoint_family"])
+        )
         seen_ids.add(entrant_id)
         seen_ports.add(port)
-        out.append(dict(raw))
+        row = dict(raw)
+        row["endpoint_family"] = endpoint_family
+        out.append(row)
     return out
 
 
@@ -1162,14 +1202,25 @@ def fetch_json(url: str, headers: Mapping[str, str]) -> Dict[str, Any]:
     return value
 
 
-def authenticated_rosters(secret_values: Mapping[str, str]) -> Dict[str, Any]:
+def authenticated_rosters(
+    secret_values: Mapping[str, str], rows: Iterable[Mapping[str, Any]]
+) -> Dict[str, Any]:
     required = ("ZHIPU_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY")
     missing = [name for name in required if not secret_values.get(name)]
     if missing:
         raise SystemExit(f"secret file is missing variables: {', '.join(missing)}")
 
+    rows = list(rows)
+    zai_endpoints = {
+        str(row["endpoint_family"]).rstrip("/")
+        for row in rows
+        if row["provider"] == "zai_api"
+    }
+    if len(zai_endpoints) != 1:
+        raise SystemExit("Z.AI entrants must share one explicit endpoint family")
+    zai_endpoint = next(iter(zai_endpoints))
     zai = fetch_json(
-        "https://api.z.ai/api/paas/v4/models",
+        f"{zai_endpoint}/models",
         {"Authorization": f"Bearer {secret_values['ZHIPU_API_KEY']}"},
     )
     google = fetch_json(
@@ -1305,7 +1356,7 @@ def preflight(
             "cloud benchmark source worktree must be clean before it is frozen"
         )
     secret_values = parse_secret_file(secret_path)
-    rosters = authenticated_rosters(secret_values)
+    rosters = authenticated_rosters(secret_values, rows)
     validate_rosters(rows, rosters)
     busy = [
         str(row["vendor_port"])
@@ -1591,6 +1642,7 @@ def build_goose_command(binary: Path, row: Mapping[str, Any], prompt: str) -> li
     return [
         str(binary),
         "run",
+        "--quiet",
         "--provider",
         str(row["provider"]),
         "--model",
@@ -1640,6 +1692,7 @@ def smoke_goose_command(
     return [
         str(binary),
         "run",
+        "--quiet",
         "--provider",
         str(row["provider"]),
         "--model",
@@ -1745,17 +1798,32 @@ def _has_output_limit_metadata(value: Any) -> bool:
     return False
 
 
-def _tool_result_texts(value: Mapping[str, Any]) -> list[str]:
-    content = value.get("content")
-    if not isinstance(content, list):
-        return []
-    return [
-        str(item["text"])
-        for item in content
-        if isinstance(item, dict)
-        and item.get("type") == "text"
-        and isinstance(item.get("text"), str)
-    ]
+def _is_developer_shell_request(
+    item: Mapping[str, Any], value: Mapping[str, Any]
+) -> bool:
+    name = value.get("name")
+    if name == "developer__shell":
+        return True
+    metadata = item.get("_meta")
+    return (
+        name == "shell"
+        and isinstance(metadata, dict)
+        and metadata.get("goose_extension") == "developer"
+    )
+
+
+def _structured_shell_stdout_is_exact(
+    value: Mapping[str, Any], expected_output: str
+) -> bool:
+    structured = value.get("structuredContent")
+    if not isinstance(structured, dict):
+        return False
+    exit_code = structured.get("exit_code")
+    return (
+        type(exit_code) is int
+        and exit_code == 0
+        and structured.get("stdout") == expected_output
+    )
 
 
 def parse_smoke_stream(
@@ -1867,7 +1935,7 @@ def parse_smoke_stream(
             or not isinstance(tool_call, dict)
             or tool_call.get("status") != "success"
             or not isinstance(value, dict)
-            or value.get("name") != "developer__shell"
+            or not _is_developer_shell_request(item, value)
             or not isinstance(arguments, dict)
             or arguments.get("command") != expected_command
         ):
@@ -1896,7 +1964,7 @@ def parse_smoke_stream(
             or result.get("status") != "success"
             or not isinstance(value, dict)
             or value.get("isError") is True
-            or expected_tool_output not in _tool_result_texts(value)
+            or not _structured_shell_stdout_is_exact(value, expected_tool_output)
         ):
             errors.append(
                 "developer__shell response was failed, erroneous, or unproven"
@@ -2192,6 +2260,12 @@ def child_env(
             "GOOSE_BENCH_ENTRANT": str(row["id"]),
         }
     )
+    base_url_env = row.get("base_url_env")
+    if base_url_env is not None:
+        name = str(base_url_env)
+        if name in env:
+            raise SystemExit(f"provider base URL cannot overwrite protected env: {name}")
+        env[name] = str(row["endpoint_family"])
     return env
 
 
@@ -5734,6 +5808,7 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
             command=[
                 str(binary),
                 "run",
+                "--quiet",
                 "--provider",
                 row["provider"],
                 "--model",
@@ -5970,6 +6045,7 @@ def process_group_members(pgid: int) -> list[tuple[int, str]]:
         text=True,
         capture_output=True,
         check=False,
+        start_new_session=True,
     )
     members: list[tuple[int, str]] = []
     for raw in proc.stdout.splitlines():
