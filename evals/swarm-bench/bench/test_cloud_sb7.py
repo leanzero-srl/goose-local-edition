@@ -1616,7 +1616,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             provider_lifecycle=str(lifecycle),
         )
         self.supersede_fixture(fixture)
-        successor = Path(str(fixture["successor"]))
+        successor = Path(str(fixture["successor"])).resolve()
         receipt = (
             successor
             / "entrants"
@@ -1624,6 +1624,81 @@ class CloudSb7HarnessTest(unittest.TestCase):
             / "attempts/attempt-1/prelaunch-receipt.json"
         )
         return fixture, receipt, entrant_id
+
+    def make_dead_queued_reconciliation_fixture(
+        self, root: Path
+    ) -> dict[str, object]:
+        fixture = self.make_supersession_fixture(root)
+        self.supersede_fixture(fixture)
+        successor = Path(str(fixture["successor"])).resolve()
+        entrant_id = str(fixture["failed_id"])
+        campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(successor))
+        row = cloud_sb7.manifest_row(successor, entrant_id)
+        state = cloud_sb7.read_state(successor, entrant_id)
+        attempt, attempt_root, lifecycle = cloud_sb7.prepare_full_provider_attempt(
+            successor, entrant_id, state, campaign
+        )
+        request_id = "queued-recovery-request"
+        lifecycle.write_text(
+            json.dumps(
+                self.provider_lifecycle_events(
+                    row, ["queued"], request_id=request_id
+                )[0]
+            )
+            + "\n"
+        )
+        cloud_sb7.update_state(
+            successor,
+            entrant_id,
+            status="BUILD_RUNNING",
+            provider_launch_attempts=attempt,
+            provider_attempt=attempt,
+            provider_attempt_root=str(attempt_root),
+            provider_lifecycle=str(lifecycle),
+            provider_episode_attempts=int(state["provider_episode_attempts"]) + 1,
+            admitted_requests=0,
+            provider_terminal_requests=0,
+            supervisor_pid=None,
+            supervisor_pgid=None,
+            supervisor_identity=None,
+            goose_pid=None,
+            process_group=None,
+            goose_identity=None,
+            goose_process_inventory=[],
+        )
+        config = cloud_sb7.load_json(Path(str(campaign["budget_config"])))
+        profile = cloud_sb7.budget_model_profile(
+            config, str(row["provider"]), str(row["model"])
+        )
+        assert profile is not None
+        reserve = cloud_sb7.budget_price(
+            profile,
+            int(profile["context_limit"]),
+            int(profile["max_output_tokens"]),
+        )
+        assert reserve is not None
+        ledger_path = Path(str(campaign["budget_ledger"]))
+        ledger = cloud_sb7.load_json(ledger_path)
+        ledger["outstanding"][request_id] = {
+            "request_id": request_id,
+            "provider": row["provider"],
+            "model": row["model"],
+            "reserved_usd": reserve,
+            "input_reserve_tokens": profile["context_limit"],
+            "output_reserve_tokens": profile["max_output_tokens"],
+            "created_at_unix_ms": 2,
+        }
+        cloud_sb7.atomic_json(ledger_path, ledger)
+        return {
+            **fixture,
+            "root": successor,
+            "campaign": campaign,
+            "row": row,
+            "entrant_id": entrant_id,
+            "request_id": request_id,
+            "attempt_root": attempt_root,
+            "ledger_path": ledger_path,
+        }
 
     def make_qualification_fixture(self, root: Path) -> dict[str, object]:
         fixture = self.make_supersession_fixture(root)
@@ -2293,6 +2368,488 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     entrant_id,
                     cloud_sb7.read_state(successor, entrant_id),
                 )
+
+    def test_carried_full_attempt_rejects_forged_caller_state_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture, _, entrant_id = self.supersede_with_carried_full_attempt(
+                Path(raw)
+            )
+            successor = Path(str(fixture["successor"]))
+            forged = dict(cloud_sb7.read_state(successor, entrant_id))
+            forged["predecessor_unit_sha256"] = "0" * 64
+
+            with self.assertRaisesRegex(
+                SystemExit, "caller state snapshot differs from disk-bound"
+            ):
+                cloud_sb7.full_episode_lifecycle_paths(
+                    successor, entrant_id, forged
+                )
+
+    def test_carried_success_cannot_append_a_successor_provider_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture, _, entrant_id = self.supersede_with_carried_full_attempt(
+                Path(raw)
+            )
+            successor = Path(str(fixture["successor"]))
+            self.make_full_attempt_fixture(successor, entrant_id, 2)
+
+            self.assertIn(
+                "carried predecessor immutable payload changed",
+                cloud_sb7.lineage_failure(successor) or "",
+            )
+            with self.assertRaisesRegex(
+                SystemExit, "carried predecessor immutable payload changed"
+            ):
+                cloud_sb7.full_episode_lifecycle_paths(
+                    successor,
+                    entrant_id,
+                    cloud_sb7.read_state(successor, entrant_id),
+                )
+
+    def test_dead_queued_reconciliation_releases_only_exact_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            ledger_path = Path(str(fixture["ledger_path"]))
+            before = cloud_sb7.load_json(ledger_path)
+            state_before = cloud_sb7.read_state(root, entrant_id)
+            immutable_build = {
+                "tree": cloud_sb7.hash_tree(Path(str(state_before["tree"]))),
+                "lifecycle": cloud_sb7.sha256_file(
+                    Path(str(state_before["provider_lifecycle"]))
+                ),
+            }
+
+            pointer = cloud_sb7.reconcile_dead_pre_admission_reservations(
+                root,
+                fixture["campaign"],
+                fixture["row"],
+                state_before,
+            )
+
+            self.assertIsNotNone(pointer)
+            after = cloud_sb7.load_json(ledger_path)
+            self.assertNotIn(fixture["request_id"], after["outstanding"])
+            self.assertEqual(after["spent_upper_bound"], before["spent_upper_bound"])
+            self.assertEqual(
+                after["provider_spent_upper_bound"],
+                before["provider_spent_upper_bound"],
+            )
+            self.assertEqual(after["settled"], before["settled"])
+            self.assertEqual(
+                cloud_sb7.hash_tree(Path(str(state_before["tree"]))),
+                immutable_build["tree"],
+            )
+            self.assertEqual(
+                cloud_sb7.sha256_file(Path(str(state_before["provider_lifecycle"]))),
+                immutable_build["lifecycle"],
+            )
+            self.assertEqual(
+                cloud_sb7.full_episode_lifecycle_paths(
+                    root, entrant_id, cloud_sb7.read_state(root, entrant_id)
+                ),
+                [Path(str(state_before["provider_lifecycle"])).resolve()],
+            )
+
+    def test_dead_queued_reconciliation_is_idempotent_after_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            first = cloud_sb7.reconcile_dead_pre_admission_reservations(
+                root,
+                fixture["campaign"],
+                fixture["row"],
+                cloud_sb7.read_state(root, entrant_id),
+            )
+            ledger_after = Path(str(fixture["ledger_path"])).read_bytes()
+
+            second = cloud_sb7.reconcile_dead_pre_admission_reservations(
+                root,
+                fixture["campaign"],
+                fixture["row"],
+                cloud_sb7.read_state(root, entrant_id),
+            )
+
+            self.assertEqual(second, first)
+            self.assertEqual(
+                Path(str(fixture["ledger_path"])).read_bytes(), ledger_after
+            )
+
+    def test_dead_queued_reconciliation_holds_global_ledger_lock_before_intent(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            lock_path = Path(str(fixture["ledger_path"])).with_suffix(".lock")
+            observed = []
+
+            def assert_locked(stage: str) -> None:
+                if stage != "intent_committed":
+                    return
+                contender = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            "import fcntl,sys; f=open(sys.argv[1],'a+'); "
+                            "\ntry: fcntl.flock(f.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)"
+                            "\nexcept BlockingIOError: raise SystemExit(0)"
+                            "\nraise SystemExit(9)"
+                        ),
+                        str(lock_path),
+                    ],
+                    check=False,
+                )
+                observed.append(contender.returncode)
+
+            with mock.patch.object(
+                cloud_sb7,
+                "pre_admission_reconciliation_fault",
+                side_effect=assert_locked,
+            ):
+                cloud_sb7.reconcile_dead_pre_admission_reservations(
+                    root,
+                    fixture["campaign"],
+                    fixture["row"],
+                    cloud_sb7.read_state(root, entrant_id),
+                )
+
+            self.assertEqual(observed, [0])
+
+    def test_dead_queued_reconciliation_resumes_after_intent_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+
+            with mock.patch.object(
+                cloud_sb7,
+                "pre_admission_reconciliation_fault",
+                side_effect=lambda stage: (
+                    (_ for _ in ()).throw(RuntimeError("intent crash"))
+                    if stage == "intent_committed"
+                    else None
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "intent crash"):
+                    cloud_sb7.reconcile_dead_pre_admission_reservations(
+                        root,
+                        fixture["campaign"],
+                        fixture["row"],
+                        cloud_sb7.read_state(root, entrant_id),
+                    )
+            self.assertIn(
+                fixture["request_id"],
+                cloud_sb7.load_json(Path(str(fixture["ledger_path"])))
+                ["outstanding"],
+            )
+
+            pointer = cloud_sb7.reconcile_dead_pre_admission_reservations(
+                root,
+                fixture["campaign"],
+                fixture["row"],
+                cloud_sb7.read_state(root, entrant_id),
+            )
+
+            self.assertIsNotNone(pointer)
+            self.assertNotIn(
+                fixture["request_id"],
+                cloud_sb7.load_json(Path(str(fixture["ledger_path"])))
+                ["outstanding"],
+            )
+
+    def test_dead_queued_reconciliation_resumes_after_ledger_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+
+            with mock.patch.object(
+                cloud_sb7,
+                "pre_admission_reconciliation_fault",
+                side_effect=lambda stage: (
+                    (_ for _ in ()).throw(RuntimeError("ledger crash"))
+                    if stage == "ledger_committed"
+                    else None
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "ledger crash"):
+                    cloud_sb7.reconcile_dead_pre_admission_reservations(
+                        root,
+                        fixture["campaign"],
+                        fixture["row"],
+                        cloud_sb7.read_state(root, entrant_id),
+                    )
+            self.assertNotIn(
+                fixture["request_id"],
+                cloud_sb7.load_json(Path(str(fixture["ledger_path"])))
+                ["outstanding"],
+            )
+
+            pointer = cloud_sb7.reconcile_dead_pre_admission_reservations(
+                root,
+                fixture["campaign"],
+                fixture["row"],
+                cloud_sb7.read_state(root, entrant_id),
+            )
+
+            self.assertIsNotNone(pointer)
+
+    def test_dead_queued_reconciliation_resumes_after_commit_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+
+            with mock.patch.object(
+                cloud_sb7,
+                "pre_admission_reconciliation_fault",
+                side_effect=lambda stage: (
+                    (_ for _ in ()).throw(RuntimeError("commit crash"))
+                    if stage == "commit_committed"
+                    else None
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "commit crash"):
+                    cloud_sb7.reconcile_dead_pre_admission_reservations(
+                        root,
+                        fixture["campaign"],
+                        fixture["row"],
+                        cloud_sb7.read_state(root, entrant_id),
+                    )
+            self.assertNotIn(
+                "pre_admission_reconciliations",
+                cloud_sb7.read_state(root, entrant_id),
+            )
+
+            self.assertIsNotNone(
+                cloud_sb7.reconcile_dead_pre_admission_reservations(
+                    root,
+                    fixture["campaign"],
+                    fixture["row"],
+                    cloud_sb7.read_state(root, entrant_id),
+                )
+            )
+
+    def test_dead_queued_reconciliation_replays_after_state_pointer_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+
+            with mock.patch.object(
+                cloud_sb7,
+                "pre_admission_reconciliation_fault",
+                side_effect=lambda stage: (
+                    (_ for _ in ()).throw(RuntimeError("state pointer crash"))
+                    if stage == "state_pointer_committed"
+                    else None
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "state pointer crash"):
+                    cloud_sb7.reconcile_dead_pre_admission_reservations(
+                        root,
+                        fixture["campaign"],
+                        fixture["row"],
+                        cloud_sb7.read_state(root, entrant_id),
+                    )
+            pointer_before = cloud_sb7.read_state(root, entrant_id)[
+                "pre_admission_reconciliations"
+            ]["attempt-1"]
+
+            pointer_after = cloud_sb7.reconcile_dead_pre_admission_reservations(
+                root,
+                fixture["campaign"],
+                fixture["row"],
+                cloud_sb7.read_state(root, entrant_id),
+            )
+
+            self.assertEqual(pointer_after, pointer_before)
+
+    def test_dead_queued_reconciliation_rejects_cross_request_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            cloud_sb7.reconcile_dead_pre_admission_reservations(
+                root,
+                fixture["campaign"],
+                fixture["row"],
+                cloud_sb7.read_state(root, entrant_id),
+            )
+            intent_path = (
+                Path(str(fixture["attempt_root"]))
+                / cloud_sb7.PRE_ADMISSION_RECONCILIATION_ROOT
+                / "intent.json"
+            )
+            intent = cloud_sb7.load_json(intent_path)
+            intent["request_ids"] = ["another-request"]
+            cloud_sb7.atomic_json(intent_path, intent)
+
+            with self.assertRaisesRegex(
+                SystemExit, "intent changed or was replayed"
+            ):
+                cloud_sb7.reconcile_dead_pre_admission_reservations(
+                    root,
+                    fixture["campaign"],
+                    fixture["row"],
+                    cloud_sb7.read_state(root, entrant_id),
+                )
+
+    def test_normalize_retries_dead_queued_attempt_without_consuming_episode(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+
+            refused = cloud_sb7.normalize_interrupted_builds(
+                root, fixture["campaign"]
+            )
+
+            self.assertEqual(refused, [])
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "PLANNED")
+            self.assertEqual(state["provider_episode_attempts"], 1)
+            self.assertNotIn(
+                fixture["request_id"],
+                cloud_sb7.load_json(Path(str(fixture["ledger_path"])))
+                ["outstanding"],
+            )
+
+    def test_normalize_retries_dead_empty_prelaunch_without_touching_ledger(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            state = cloud_sb7.read_state(root, entrant_id)
+            Path(str(state["provider_lifecycle"])).write_text("")
+            ledger_path = Path(str(fixture["ledger_path"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            del ledger["outstanding"][str(fixture["request_id"])]
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            ledger_before = ledger_path.read_bytes()
+
+            refused = cloud_sb7.normalize_interrupted_builds(
+                root, fixture["campaign"]
+            )
+
+            self.assertEqual(refused, [])
+            recovered = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(recovered["status"], "PLANNED")
+            self.assertEqual(recovered["provider_episode_attempts"], 1)
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            pointer = recovered["pre_admission_reconciliations"]["attempt-1"]
+            self.assertEqual(pointer["request_ids"], [])
+            with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
+                self.assertIsNone(cloud_sb7.manager_restart_mismatch(root))
+
+    def test_reconciled_attempt_remains_valid_after_terminal_successor_attempt(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            campaign = fixture["campaign"]
+            row = fixture["row"]
+            self.assertEqual(
+                cloud_sb7.normalize_interrupted_builds(root, campaign), []
+            )
+            state = cloud_sb7.read_state(root, entrant_id)
+            attempt, attempt_root, lifecycle = cloud_sb7.prepare_full_provider_attempt(
+                root, entrant_id, state, campaign
+            )
+            request_id = "terminal-successor-request"
+            lifecycle.write_text(
+                "\n".join(
+                    map(
+                        json.dumps,
+                        self.provider_lifecycle_events(
+                            row,
+                            [
+                                "queued",
+                                "admitted",
+                                "first_item",
+                                "usage_reported",
+                                "provider_terminal",
+                            ],
+                            request_id=request_id,
+                        ),
+                    )
+                )
+                + "\n"
+            )
+            config = cloud_sb7.load_json(Path(str(campaign["budget_config"])))
+            profile = cloud_sb7.budget_model_profile(
+                config, str(row["provider"]), str(row["model"])
+            )
+            assert profile is not None
+            reserve = cloud_sb7.budget_price(
+                profile,
+                int(profile["context_limit"]),
+                int(profile["max_output_tokens"]),
+            )
+            charged = cloud_sb7.budget_price(profile, 2, 3)
+            assert reserve is not None and charged is not None
+            ledger_path = Path(str(fixture["ledger_path"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["settled"].append(
+                {
+                    "request_id": request_id,
+                    "provider": row["provider"],
+                    "model": row["model"],
+                    "reported_model": row["model"],
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                    "charged_upper_bound_usd": charged,
+                    "reserved_usd": reserve,
+                    "settled_at_unix_ms": 3,
+                }
+            )
+            ledger["spent_upper_bound"] += charged
+            ledger["provider_spent_upper_bound"][str(row["provider"])] += charged
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_COMPLETE",
+                provider_launch_attempts=attempt,
+                provider_attempt=attempt,
+                provider_attempt_root=str(attempt_root),
+                provider_lifecycle=str(lifecycle),
+                provider_episode_attempts=2,
+                admitted_requests=1,
+                provider_terminal_requests=1,
+            )
+
+            self.assertIsNone(cloud_sb7.lineage_failure(root))
+            self.assertEqual(
+                len(
+                    cloud_sb7.full_episode_lifecycle_paths(
+                        root, entrant_id, cloud_sb7.read_state(root, entrant_id)
+                    )
+                ),
+                2,
+            )
+            outstanding, error = (
+                cloud_sb7.current_full_episode_outstanding_reservations(
+                    root, campaign, row
+                )
+            )
+            self.assertEqual(outstanding, [])
+            self.assertIsNone(error)
+            observation = cloud_sb7.monitor_progress_observation(
+                root.resolve(), entrant_id
+            )
+            self.assertEqual(observation["evidence"]["lifecycle"]["admitted"], 1)
+            self.assertEqual(observation["evidence"]["lifecycle"]["terminal"], 1)
 
     def test_supersession_smoke_accepts_fresh_replacement_baselines(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

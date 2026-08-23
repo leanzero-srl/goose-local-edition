@@ -297,6 +297,8 @@ MONITOR_PROGRESS_SENTENCE_REPEAT_NUMERATOR = 1
 MONITOR_PROGRESS_SENTENCE_REPEAT_DENOMINATOR = 4
 BUDGET_HISTORY_SCHEMA = 2
 BUDGET_HISTORY_ROOT = "budget-history"
+PRE_ADMISSION_RECONCILIATION_SCHEMA = 1
+PRE_ADMISSION_RECONCILIATION_ROOT = "pre-admission-reconciliation"
 
 
 class BudgetReleasePending(RuntimeError):
@@ -3464,13 +3466,26 @@ def carried_prelaunch_ancestor_failure(
     receipt_campaign_id: Any,
 ) -> str | None:
     try:
+        disk_state = read_state(root, entrant_id)
+        state_identity_keys = {
+            "entrant",
+            "lineage_role",
+            "supersession_transition_id",
+            "predecessor_state_sha256",
+            "predecessor_unit_sha256",
+            "provider_episode_attempts",
+        }
+        if any(
+            state.get(key) != disk_state.get(key) for key in state_identity_keys
+        ):
+            return "caller state snapshot differs from disk-bound carried identity"
         campaign = load_json(campaign_file(root))
         pointer = campaign.get("lineage")
         if (
             not isinstance(pointer, dict)
             or pointer.get("generation") != 1
             or pointer.get("path") != "lineage/lineage.json"
-            or state.get("lineage_role") != "carried_success"
+            or disk_state.get("lineage_role") != "carried_success"
         ):
             return "predecessor receipt is not attached to a carried successor"
         lineage_path = root / "lineage/lineage.json"
@@ -3486,14 +3501,15 @@ def carried_prelaunch_ancestor_failure(
         if (
             lineage.get("generation") != 1
             or transition_id != pointer.get("transition_id")
-            or transition_id != state.get("supersession_transition_id")
+            or transition_id != disk_state.get("supersession_transition_id")
             or lineage.get("successor_root") != str(root.resolve())
             or predecessor_campaign_id != pointer.get("predecessor_campaign_id")
             or receipt_campaign_id != predecessor_campaign_id
             or not isinstance(carried, list)
             or entrant_id not in carried
             or not isinstance(attempts, dict)
-            or attempts.get(entrant_id) != state.get("provider_episode_attempts")
+            or attempts.get(entrant_id)
+            != disk_state.get("provider_episode_attempts")
         ):
             return "predecessor receipt differs from carried successor lineage"
 
@@ -3511,9 +3527,9 @@ def carried_prelaunch_ancestor_failure(
         if (
             seal.get("transition_id") != transition_id
             or not isinstance(sealed_entrant, dict)
-            or state.get("predecessor_state_sha256")
+            or disk_state.get("predecessor_state_sha256")
             != sealed_entrant.get("state_sha256")
-            or state.get("predecessor_unit_sha256")
+            or disk_state.get("predecessor_unit_sha256")
             != sealed_entrant.get("unit_sha256")
         ):
             return "carried entrant state differs from predecessor seal"
@@ -3528,10 +3544,172 @@ def carried_prelaunch_ancestor_failure(
     return None
 
 
+def pre_admission_reconciliation_bundle_failure(
+    root: Path,
+    entrant_id: str,
+    state: Mapping[str, Any],
+    attempt_root: Path,
+    attempt: int,
+) -> str | None:
+    try:
+        index = state.get("pre_admission_reconciliations")
+        if index is None:
+            index = {}
+        if not isinstance(index, dict):
+            return "pre-admission reconciliation state index is malformed"
+        attempt_name = f"attempt-{attempt}"
+        pointer = index.get(attempt_name)
+        bundle = attempt_root / PRE_ADMISSION_RECONCILIATION_ROOT
+        if not bundle.exists():
+            return (
+                "pre-admission reconciliation bundle disappeared"
+                if pointer is not None
+                else None
+            )
+        if pointer is None:
+            return "pre-admission reconciliation bundle is not sealed in state"
+        if bundle.is_symlink() or not bundle.is_dir():
+            return "pre-admission reconciliation bundle is linked"
+        expected_names = {
+            "ledger-before.json",
+            "ledger-after.json",
+            "intent.json",
+            "commit.json",
+        }
+        if {path.name for path in bundle.iterdir()} != expected_names:
+            return "pre-admission reconciliation bundle is malformed"
+        before_path = bundle / "ledger-before.json"
+        after_path = bundle / "ledger-after.json"
+        intent_path = bundle / "intent.json"
+        commit_path = bundle / "commit.json"
+        if any(
+            path.is_symlink() or not path.is_file()
+            for path in (before_path, after_path, intent_path, commit_path)
+        ):
+            return "pre-admission reconciliation evidence is missing or linked"
+        expected_pointer = {
+            "schema_version": PRE_ADMISSION_RECONCILIATION_SCHEMA,
+            "attempt": attempt,
+            "path": str(commit_path.resolve().relative_to(root.resolve())),
+            "sha256": sha256_file(commit_path),
+            "intent_sha256": sha256_file(intent_path),
+        }
+        if (
+            not isinstance(pointer, dict)
+            or set(pointer)
+            != {
+                *expected_pointer,
+                "request_ids",
+                "episode_attempt_before",
+                "episode_attempt_after",
+            }
+            or any(pointer.get(key) != value for key, value in expected_pointer.items())
+        ):
+            return "pre-admission reconciliation state pointer changed"
+        intent = load_json(intent_path)
+        commit = load_json(commit_path)
+        request_ids = intent.get("request_ids")
+        if (
+            intent.get("schema_version") != PRE_ADMISSION_RECONCILIATION_SCHEMA
+            or intent.get("kind") != "dead_pre_admission_budget_release"
+            or intent.get("campaign_id")
+            != load_json(campaign_file(root)).get("campaign_id")
+            or intent.get("entrant") != entrant_id
+            or intent.get("attempt") != attempt
+            or intent.get("attempt_root") != str(attempt_root.resolve())
+            or not isinstance(request_ids, list)
+            or request_ids != sorted(set(request_ids))
+            or pointer.get("request_ids") != request_ids
+            or pointer.get("episode_attempt_before")
+            != intent.get("episode_attempt_before")
+            or pointer.get("episode_attempt_after")
+            != intent.get("episode_attempt_after")
+            or intent.get("ledger_before_sha256") != sha256_file(before_path)
+            or intent.get("ledger_after_sha256") != sha256_file(after_path)
+            or intent.get("prelaunch_receipt_sha256")
+            != sha256_file(attempt_root / "prelaunch-receipt.json")
+            or intent.get("lifecycle_sha256")
+            != sha256_file(attempt_root / "provider-lifecycle.jsonl")
+        ):
+            return "pre-admission reconciliation intent identity changed"
+        if (
+            commit.get("schema_version")
+            != PRE_ADMISSION_RECONCILIATION_SCHEMA
+            or commit.get("kind")
+            != "dead_pre_admission_budget_release_committed"
+            or commit.get("campaign_id") != intent.get("campaign_id")
+            or commit.get("entrant") != entrant_id
+            or commit.get("attempt") != attempt
+            or commit.get("request_ids") != request_ids
+            or commit.get("lease_id") != intent.get("lease_id")
+            or commit.get("intent_sha256") != sha256_file(intent_path)
+            or commit.get("ledger_before_sha256")
+            != intent.get("ledger_before_sha256")
+            or commit.get("ledger_after_sha256")
+            != intent.get("ledger_after_sha256")
+        ):
+            return "pre-admission reconciliation commit identity changed"
+        row = manifest_row(root, entrant_id)
+        lifecycle = lifecycle_summary(
+            attempt_root / "provider-lifecycle.jsonl",
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        if (
+            lifecycle.get("admitted") != 0
+            or lifecycle.get("terminal") != 0
+            or lifecycle.get("request_states")
+            != {request_id: ["queued"] for request_id in request_ids}
+            or lifecycle.get("request_event_sha256")
+            != intent.get("lifecycle_request_event_sha256")
+        ):
+            return "pre-admission reconciliation lifecycle changed"
+        before = load_json(before_path)
+        after = load_json(after_path)
+        config = load_json(Path(str(load_json(campaign_file(root))["budget_config"])))
+        for ledger in (before, after):
+            problem = budget_ledger_failure(ledger, config)
+            if problem:
+                return problem
+        expected_after = json.loads(json.dumps(before))
+        for request_id in request_ids:
+            reservation = expected_after["outstanding"].pop(request_id, None)
+            if reservation != intent.get("reservations", {}).get(request_id):
+                return "pre-admission reconciliation reservation identity changed"
+        if request_ids:
+            expected_after["updated_at"] = intent.get("created_at")
+        if after != expected_after:
+            return "pre-admission reconciliation ledger transition changed"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"pre-admission reconciliation cannot be verified: {error}"
+    return None
+
+
+def current_pre_admission_reconciliation(
+    root: Path, entrant_id: str, state: Mapping[str, Any]
+) -> Dict[str, Any] | None:
+    attempt = state.get("provider_attempt")
+    index = state.get("pre_admission_reconciliations")
+    if (
+        isinstance(attempt, bool)
+        or not isinstance(attempt, int)
+        or attempt <= 0
+        or not isinstance(index, dict)
+    ):
+        return None
+    pointer = index.get(f"attempt-{attempt}")
+    if not isinstance(pointer, dict) or pointer.get("attempt") != attempt:
+        return None
+    full_episode_lifecycle_paths(root, entrant_id, state)
+    return dict(pointer)
+
+
 def full_episode_lifecycle_paths(
     root: Path,
     entrant_id: str,
     state: Mapping[str, Any] | None = None,
+    *,
+    allow_unsealed_reconciliation_attempt: int | None = None,
 ) -> list[Path]:
     unit = root.resolve() / "entrants" / entrant_id
     attempts_root = unit / "attempts"
@@ -3602,7 +3780,38 @@ def full_episode_lifecycle_paths(
                 raise SystemExit(
                     f"{entrant_id} full-episode lifecycle is not a regular file"
                 )
+            if attempt != allow_unsealed_reconciliation_attempt:
+                reconciliation_failure = (
+                    pre_admission_reconciliation_bundle_failure(
+                        root, entrant_id, current, attempt_root, attempt
+                    )
+                )
+                if reconciliation_failure:
+                    raise SystemExit(
+                        f"{entrant_id} full-episode reconciliation is invalid: "
+                        f"{reconciliation_failure}"
+                    )
             paths.append(lifecycle)
+
+    reconciliation_index = current.get("pre_admission_reconciliations")
+    if reconciliation_index is not None:
+        if not isinstance(reconciliation_index, dict):
+            raise SystemExit(
+                f"{entrant_id} full-episode reconciliation index is malformed"
+            )
+        disk_attempt_names = {
+            path.name
+            for path in attempts_root.iterdir()
+            if path.is_dir()
+            and not path.is_symlink()
+            and re.fullmatch(r"attempt-[1-9][0-9]*", path.name)
+        }
+        missing_attempts = sorted(set(reconciliation_index) - disk_attempt_names)
+        if missing_attempts:
+            raise SystemExit(
+                f"{entrant_id} full-episode reconciliation names missing attempts: "
+                + ", ".join(missing_attempts)
+            )
 
     legacy = unit / "provider-lifecycle.jsonl"
     if legacy.exists():
@@ -3745,6 +3954,605 @@ def current_full_episode_outstanding_reservations(
             + ", ".join(missing)
         )
     return sorted(set(outstanding) - set(baseline)), None
+
+
+def json_payload_sha256(value: Mapping[str, Any]) -> str:
+    return sha256_bytes((json.dumps(value, indent=2, sort_keys=True) + "\n").encode())
+
+
+def dead_pre_admission_reconciliation_plan(
+    root: Path,
+    campaign: Mapping[str, Any],
+    row: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    ledger_before_override: Mapping[str, Any] | None = None,
+    ledger_before_sha256_override: str | None = None,
+    recovered_at_override: str | None = None,
+) -> Dict[str, Any] | None:
+    entrant_id = str(row["id"])
+    if state.get("status") != "BUILD_RUNNING":
+        return None
+    generation = validated_campaign_lineage(campaign)["generation"]
+    if generation not in {0, 1}:
+        return None
+    if any(build_runtime_ownership(state)):
+        raise SystemExit(
+            f"{entrant_id} pre-admission reconciliation requires a clean runtime topology"
+        )
+    attempt = state.get("provider_attempt")
+    launch_attempts = state.get("provider_launch_attempts")
+    episode_attempts = state.get("provider_episode_attempts")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        for value in (attempt, launch_attempts, episode_attempts)
+    ) or attempt != launch_attempts:
+        raise SystemExit(
+            f"{entrant_id} pre-admission reconciliation attempt identity is malformed"
+        )
+    attempt_root = root / "entrants" / entrant_id / "attempts" / f"attempt-{attempt}"
+    lifecycle_path = attempt_root / "provider-lifecycle.jsonl"
+    if (
+        attempt_root.is_symlink()
+        or not attempt_root.is_dir()
+        or str(state.get("provider_attempt_root")) != str(attempt_root)
+        or str(state.get("provider_lifecycle")) != str(lifecycle_path)
+    ):
+        raise SystemExit(
+            f"{entrant_id} pre-admission reconciliation escaped its exact attempt"
+        )
+    paths = full_episode_lifecycle_paths(
+        root,
+        entrant_id,
+        state,
+        allow_unsealed_reconciliation_attempt=int(attempt),
+    )
+    if lifecycle_path.resolve(strict=False) not in paths:
+        raise SystemExit(
+            f"{entrant_id} pre-admission reconciliation lifecycle is not immutable"
+        )
+    lifecycle = lifecycle_summary(
+        lifecycle_path,
+        expected_provider=str(row["provider"]),
+        expected_model=str(row["model"]),
+    )
+    request_states = lifecycle.get("request_states")
+    request_digests = lifecycle.get("request_event_sha256")
+    if (
+        lifecycle.get("malformed_lines")
+        or lifecycle.get("transition_errors")
+        or int(lifecycle.get("admitted", 0)) != 0
+        or int(lifecycle.get("terminal", 0)) != 0
+        or not isinstance(request_states, dict)
+        or any(states != ["queued"] for states in request_states.values())
+        or not isinstance(request_digests, dict)
+        or set(request_digests) != set(request_states)
+        or sorted(lifecycle.get("ambiguous_request_ids") or [])
+        != sorted(request_states)
+    ):
+        return None
+    request_ids = sorted(request_states)
+    if int(lifecycle.get("events", 0)) != len(request_ids):
+        raise SystemExit(
+            f"{entrant_id} queued-only lifecycle event count is not exact"
+        )
+
+    config_path = Path(str(campaign.get("budget_config", "")))
+    ledger_path = Path(str(campaign.get("budget_ledger", "")))
+    if (
+        config_path.is_symlink()
+        or not config_path.is_file()
+        or sha256_file(config_path) != campaign.get("budget_config_sha256")
+        or ledger_path.is_symlink()
+        or not ledger_path.is_file()
+    ):
+        raise SystemExit(
+            f"{entrant_id} pre-admission reconciliation budget identity changed"
+        )
+    config = load_json(config_path)
+    ledger_before = (
+        json.loads(json.dumps(ledger_before_override))
+        if ledger_before_override is not None
+        else load_json(ledger_path)
+    )
+    ledger_problem = budget_ledger_failure(ledger_before, config)
+    if ledger_problem:
+        raise SystemExit(
+            f"{entrant_id} pre-admission reconciliation {ledger_problem}"
+        )
+    settled_ids = {
+        str(value.get("request_id"))
+        for value in ledger_before["settled"]
+        if isinstance(value, dict)
+    }
+    if settled_ids & set(request_ids):
+        raise SystemExit(
+            f"{entrant_id} queued-only request already appears in settlements"
+        )
+    outstanding = ledger_before["outstanding"]
+    matching_provider_model = {
+        str(request_id)
+        for request_id, reservation in outstanding.items()
+        if isinstance(reservation, dict)
+        and reservation.get("provider") == row.get("provider")
+        and reservation.get("model") == row.get("model")
+    }
+    if matching_provider_model != set(request_ids):
+        raise SystemExit(
+            f"{entrant_id} queued-only lifecycle and outstanding requests differ exactly"
+        )
+    reservations = {request_id: outstanding[request_id] for request_id in request_ids}
+
+    transition_id = None
+    predecessor_attempts = 0
+    if generation == 1:
+        pointer = campaign["lineage"]
+        lineage_path = root / str(pointer.get("path", ""))
+        lineage = load_json(lineage_path)
+        transition_id = lineage.get("transition_id")
+        attempts = lineage.get("predecessor_episode_attempts")
+        if not isinstance(attempts, dict) or not isinstance(
+            attempts.get(entrant_id), int
+        ):
+            raise SystemExit(
+                f"{entrant_id} predecessor episode baseline is malformed"
+            )
+        predecessor_attempts = int(attempts[entrant_id])
+        baseline_path = root / "lineage/predecessor-budget-ledger.json"
+        if (
+            baseline_path.is_symlink()
+            or not baseline_path.is_file()
+            or sha256_file(baseline_path)
+            != lineage.get("predecessor_budget_ledger_sha256")
+        ):
+            raise SystemExit(
+                f"{entrant_id} predecessor budget baseline changed"
+            )
+        baseline = load_json(baseline_path)
+        baseline_ids = {
+            str(value.get("request_id"))
+            for value in baseline.get("settled", [])
+            if isinstance(value, dict)
+        } | {str(value) for value in baseline.get("outstanding", {})}
+        overlap = baseline_ids & set(request_ids)
+        if overlap:
+            raise SystemExit(
+                f"{entrant_id} queued-only request belongs to predecessor budget history: "
+                + ", ".join(sorted(overlap))
+            )
+    episode_attempt_after = int(episode_attempts) - 1
+    if episode_attempt_after < predecessor_attempts:
+        raise SystemExit(
+            f"{entrant_id} pre-admission reconciliation would reset predecessor attempts"
+        )
+
+    recovered_at = recovered_at_override or utc_now()
+    ledger_after = json.loads(json.dumps(ledger_before))
+    for request_id in request_ids:
+        del ledger_after["outstanding"][request_id]
+    if request_ids:
+        ledger_after["updated_at"] = recovered_at
+    after_problem = budget_ledger_failure(ledger_after, config)
+    if after_problem:
+        raise SystemExit(
+            f"{entrant_id} reconciled ledger would be invalid: {after_problem}"
+        )
+    if (
+        ledger_after["settled"] != ledger_before["settled"]
+        or ledger_after["spent_upper_bound"] != ledger_before["spent_upper_bound"]
+        or ledger_after["provider_spent_upper_bound"]
+        != ledger_before["provider_spent_upper_bound"]
+    ):
+        raise SystemExit(
+            f"{entrant_id} reconciliation attempted to alter spend or settlements"
+        )
+    ledger_before_sha256 = (
+        ledger_before_sha256_override
+        if ledger_before_sha256_override is not None
+        else sha256_file(ledger_path)
+    )
+    prelaunch_path = attempt_root / "prelaunch-receipt.json"
+    return {
+        "attempt": int(attempt),
+        "attempt_root": attempt_root,
+        "lifecycle_path": lifecycle_path,
+        "prelaunch_receipt_sha256": sha256_file(prelaunch_path),
+        "lifecycle_sha256": sha256_file(lifecycle_path),
+        "lifecycle_events": int(lifecycle["events"]),
+        "lifecycle_request_event_sha256": {
+            request_id: request_digests[request_id] for request_id in request_ids
+        },
+        "request_ids": request_ids,
+        "reservations": reservations,
+        "ledger_path": ledger_path,
+        "ledger_before": ledger_before,
+        "ledger_after": ledger_after,
+        "ledger_before_sha256": ledger_before_sha256,
+        "ledger_after_sha256": (
+            json_payload_sha256(ledger_after)
+            if request_ids
+            else ledger_before_sha256
+        ),
+        "settled_request_ids_sha256": sha256_bytes(
+            json.dumps(sorted(settled_ids), separators=(",", ":")).encode()
+        ),
+        "lineage_generation": generation,
+        "lineage_transition_id": transition_id,
+        "episode_attempt_before": int(episode_attempts),
+        "episode_attempt_after": episode_attempt_after,
+        "recovered_at": recovered_at,
+    }
+
+
+def pre_admission_reconciliation_fault(_stage: str) -> None:
+    return None
+
+
+def reconcile_dead_pre_admission_reservations(
+    root: Path,
+    campaign: Mapping[str, Any],
+    row: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> Dict[str, Any] | None:
+    entrant_id = str(row["id"])
+    raw_attempt = state.get("provider_attempt")
+    raw_attempt_root = (
+        root / "entrants" / entrant_id / "attempts" / f"attempt-{raw_attempt}"
+        if isinstance(raw_attempt, int) and not isinstance(raw_attempt, bool)
+        else None
+    )
+    raw_bundle = (
+        raw_attempt_root / PRE_ADMISSION_RECONCILIATION_ROOT
+        if raw_attempt_root is not None
+        else None
+    )
+    existing_before = None
+    existing_before_sha = None
+    existing_recovered_at = None
+    if raw_bundle is not None and raw_bundle.exists():
+        before_candidate = raw_bundle / "ledger-before.json"
+        intent_candidate = raw_bundle / "intent.json"
+        if (
+            raw_bundle.is_symlink()
+            or not raw_bundle.is_dir()
+            or before_candidate.is_symlink()
+            or intent_candidate.is_symlink()
+        ):
+            raise SystemExit(
+                f"{entrant_id} pre-admission reconciliation evidence is linked"
+            )
+        existing_before = load_json(before_candidate)
+        existing_before_sha = sha256_file(before_candidate)
+        existing_recovered_at = load_json(intent_candidate).get("created_at")
+    initial = dead_pre_admission_reconciliation_plan(
+        root,
+        campaign,
+        row,
+        state,
+        ledger_before_override=existing_before,
+        ledger_before_sha256_override=existing_before_sha,
+        recovered_at_override=existing_recovered_at,
+    )
+    if initial is None:
+        return None
+    lane = str(row["provider_lane"])
+    ledger_path = Path(str(campaign.get("budget_ledger", "")))
+    with contextlib.ExitStack() as recovery_locks:
+        recovery_locks.enter_context(provider_lane(root, lane))
+        ledger_locked = recovery_locks.enter_context(
+            exclusive_claim(ledger_path.with_suffix(".lock"), blocking=True)
+        )
+        if not ledger_locked:
+            raise SystemExit(
+                f"{entrant_id} cannot claim budget ledger reconciliation"
+            )
+        current_state = read_state(root, entrant_id)
+        attempt_root_hint = Path(str(initial["attempt_root"]))
+        bundle_hint = attempt_root_hint / PRE_ADMISSION_RECONCILIATION_ROOT
+        before_override = None
+        before_sha_override = None
+        recovered_at_override = None
+        if bundle_hint.exists():
+            before_hint = bundle_hint / "ledger-before.json"
+            intent_hint = bundle_hint / "intent.json"
+            if (
+                bundle_hint.is_symlink()
+                or not bundle_hint.is_dir()
+                or before_hint.is_symlink()
+                or intent_hint.is_symlink()
+            ):
+                raise SystemExit(
+                    f"{entrant_id} pre-admission reconciliation evidence is linked"
+                )
+            before_override = load_json(before_hint)
+            before_sha_override = sha256_file(before_hint)
+            recovered_at_override = load_json(intent_hint).get("created_at")
+        plan = dead_pre_admission_reconciliation_plan(
+            root,
+            campaign,
+            row,
+            current_state,
+            ledger_before_override=before_override,
+            ledger_before_sha256_override=before_sha_override,
+            recovered_at_override=recovered_at_override,
+        )
+        if plan is None:
+            return None
+        attempt_root = Path(plan["attempt_root"])
+        bundle = attempt_root / PRE_ADMISSION_RECONCILIATION_ROOT
+        before_path = bundle / "ledger-before.json"
+        after_path = bundle / "ledger-after.json"
+        intent_path = bundle / "intent.json"
+        commit_path = bundle / "commit.json"
+        lock_relative = str(Path("locks") / f"{lane}.lock")
+        existing_intent: Dict[str, Any] | None = None
+        if bundle.exists():
+            if bundle.is_symlink() or not bundle.is_dir():
+                raise SystemExit(
+                    f"{entrant_id} pre-admission reconciliation bundle is linked"
+                )
+            allowed_entries = {
+                "ledger-before.json",
+                "ledger-after.json",
+                "intent.json",
+            } | ({"commit.json"} if commit_path.exists() else set())
+            if {path.name for path in bundle.iterdir()} != allowed_entries:
+                raise SystemExit(
+                    f"{entrant_id} pre-admission reconciliation bundle is malformed"
+                )
+            if any(path.is_symlink() for path in (before_path, after_path, intent_path)):
+                raise SystemExit(
+                    f"{entrant_id} pre-admission reconciliation evidence is linked"
+                )
+            existing_intent = load_json(intent_path)
+            ledger_before = load_json(before_path)
+            ledger_after = load_json(after_path)
+            expected_request_ids = existing_intent.get("request_ids")
+            expected_intent_keys = {
+                "schema_version",
+                "kind",
+                "campaign_id",
+                "campaign_binary_sha256",
+                "entrant_manifest_sha256",
+                "budget_config_sha256",
+                "lineage_generation",
+                "lineage_transition_id",
+                "entrant",
+                "provider",
+                "model",
+                "provider_lane",
+                "lineage_role",
+                "supersession_transition_id",
+                "attempt",
+                "attempt_root",
+                "provider_launch_attempts",
+                "episode_attempt_before",
+                "episode_attempt_after",
+                "prelaunch_receipt_sha256",
+                "lifecycle_sha256",
+                "lifecycle_events",
+                "lifecycle_request_event_sha256",
+                "request_ids",
+                "reservations",
+                "settled_request_ids_sha256",
+                "provider_lane_lock",
+                "lease_id",
+                "ledger_before_sha256",
+                "ledger_after_sha256",
+                "created_at",
+            }
+            identity_matches = bool(
+                set(existing_intent) == expected_intent_keys
+                and existing_intent.get("schema_version")
+                == PRE_ADMISSION_RECONCILIATION_SCHEMA
+                and existing_intent.get("kind")
+                == "dead_pre_admission_budget_release"
+                and existing_intent.get("campaign_id") == campaign.get("campaign_id")
+                and existing_intent.get("campaign_binary_sha256")
+                == campaign.get("binary_sha256")
+                and existing_intent.get("entrant_manifest_sha256")
+                == campaign.get("entrant_manifest_sha256")
+                and existing_intent.get("budget_config_sha256")
+                == campaign.get("budget_config_sha256")
+                and existing_intent.get("lineage_generation")
+                == plan["lineage_generation"]
+                and existing_intent.get("lineage_transition_id")
+                == plan["lineage_transition_id"]
+                and existing_intent.get("entrant") == entrant_id
+                and existing_intent.get("provider") == row.get("provider")
+                and existing_intent.get("model") == row.get("model")
+                and existing_intent.get("provider_lane") == lane
+                and existing_intent.get("lineage_role")
+                == current_state.get("lineage_role")
+                and existing_intent.get("supersession_transition_id")
+                == current_state.get("supersession_transition_id")
+                and existing_intent.get("attempt") == plan["attempt"]
+                and existing_intent.get("attempt_root") == str(attempt_root.resolve())
+                and existing_intent.get("provider_launch_attempts")
+                == current_state.get("provider_launch_attempts")
+                and existing_intent.get("episode_attempt_before")
+                == plan["episode_attempt_before"]
+                and existing_intent.get("episode_attempt_after")
+                == plan["episode_attempt_after"]
+                and existing_intent.get("prelaunch_receipt_sha256")
+                == plan["prelaunch_receipt_sha256"]
+                and existing_intent.get("lifecycle_sha256")
+                == plan["lifecycle_sha256"]
+                and existing_intent.get("lifecycle_events")
+                == plan["lifecycle_events"]
+                and existing_intent.get("lifecycle_request_event_sha256")
+                == plan["lifecycle_request_event_sha256"]
+                and expected_request_ids == plan["request_ids"]
+                and existing_intent.get("reservations") == plan["reservations"]
+                and existing_intent.get("settled_request_ids_sha256")
+                == plan["settled_request_ids_sha256"]
+                and existing_intent.get("provider_lane_lock") == lock_relative
+                and isinstance(existing_intent.get("lease_id"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", existing_intent["lease_id"])
+                is not None
+                and existing_intent.get("ledger_before_sha256")
+                == sha256_file(before_path)
+                and existing_intent.get("ledger_after_sha256")
+                == sha256_file(after_path)
+                and ledger_before == plan["ledger_before"]
+                and ledger_after == plan["ledger_after"]
+            )
+            if not identity_matches:
+                raise SystemExit(
+                    f"{entrant_id} pre-admission reconciliation intent changed or was replayed"
+                )
+        else:
+            staging = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{PRE_ADMISSION_RECONCILIATION_ROOT}.",
+                    dir=attempt_root,
+                )
+            )
+            try:
+                atomic_copy(
+                    Path(plan["ledger_path"]), staging / "ledger-before.json", 0o600
+                )
+                if plan["request_ids"]:
+                    atomic_json(staging / "ledger-after.json", plan["ledger_after"])
+                else:
+                    atomic_copy(
+                        Path(plan["ledger_path"]),
+                        staging / "ledger-after.json",
+                        0o600,
+                    )
+                intent = {
+                    "schema_version": PRE_ADMISSION_RECONCILIATION_SCHEMA,
+                    "kind": "dead_pre_admission_budget_release",
+                    "campaign_id": campaign.get("campaign_id"),
+                    "campaign_binary_sha256": campaign.get("binary_sha256"),
+                    "entrant_manifest_sha256": campaign.get("entrant_manifest_sha256"),
+                    "budget_config_sha256": campaign.get("budget_config_sha256"),
+                    "lineage_generation": plan["lineage_generation"],
+                    "lineage_transition_id": plan["lineage_transition_id"],
+                    "entrant": entrant_id,
+                    "provider": row.get("provider"),
+                    "model": row.get("model"),
+                    "provider_lane": lane,
+                    "lineage_role": current_state.get("lineage_role"),
+                    "supersession_transition_id": current_state.get(
+                        "supersession_transition_id"
+                    ),
+                    "attempt": plan["attempt"],
+                    "attempt_root": str(attempt_root.resolve()),
+                    "provider_launch_attempts": current_state.get(
+                        "provider_launch_attempts"
+                    ),
+                    "episode_attempt_before": plan["episode_attempt_before"],
+                    "episode_attempt_after": plan["episode_attempt_after"],
+                    "prelaunch_receipt_sha256": plan["prelaunch_receipt_sha256"],
+                    "lifecycle_sha256": plan["lifecycle_sha256"],
+                    "lifecycle_events": plan["lifecycle_events"],
+                    "lifecycle_request_event_sha256": plan[
+                        "lifecycle_request_event_sha256"
+                    ],
+                    "request_ids": plan["request_ids"],
+                    "reservations": plan["reservations"],
+                    "settled_request_ids_sha256": plan[
+                        "settled_request_ids_sha256"
+                    ],
+                    "provider_lane_lock": lock_relative,
+                    "lease_id": secrets.token_hex(32),
+                    "ledger_before_sha256": sha256_file(
+                        staging / "ledger-before.json"
+                    ),
+                    "ledger_after_sha256": sha256_file(staging / "ledger-after.json"),
+                    "created_at": plan["recovered_at"],
+                }
+                atomic_json(staging / "intent.json", intent)
+                fsync_directory(staging)
+                os.replace(staging, bundle)
+                fsync_directory(attempt_root)
+                existing_intent = intent
+            finally:
+                if staging.exists():
+                    shutil.rmtree(staging)
+            before_path = bundle / "ledger-before.json"
+            after_path = bundle / "ledger-after.json"
+            intent_path = bundle / "intent.json"
+            commit_path = bundle / "commit.json"
+        assert existing_intent is not None
+        pre_admission_reconciliation_fault("intent_committed")
+
+        if Path(plan["ledger_path"]) != ledger_path:
+            raise SystemExit(
+                f"{entrant_id} budget ledger path changed under reconciliation locks"
+            )
+        current_sha = sha256_file(ledger_path)
+        before_sha = str(existing_intent["ledger_before_sha256"])
+        after_sha = str(existing_intent["ledger_after_sha256"])
+        if current_sha == before_sha and before_sha != after_sha:
+            atomic_json(ledger_path, load_json(after_path))
+            current_sha = sha256_file(ledger_path)
+        if current_sha != after_sha:
+            raise SystemExit(
+                f"{entrant_id} budget ledger changed across pre-admission reconciliation"
+            )
+        pre_admission_reconciliation_fault("ledger_committed")
+
+        expected_commit = {
+            "schema_version": PRE_ADMISSION_RECONCILIATION_SCHEMA,
+            "kind": "dead_pre_admission_budget_release_committed",
+            "campaign_id": campaign.get("campaign_id"),
+            "entrant": entrant_id,
+            "attempt": plan["attempt"],
+            "request_ids": plan["request_ids"],
+            "lease_id": existing_intent["lease_id"],
+            "intent_sha256": sha256_file(intent_path),
+            "ledger_before_sha256": existing_intent["ledger_before_sha256"],
+            "ledger_after_sha256": existing_intent["ledger_after_sha256"],
+        }
+        if commit_path.exists():
+            if commit_path.is_symlink() or not commit_path.is_file():
+                raise SystemExit(
+                    f"{entrant_id} pre-admission reconciliation commit is linked"
+                )
+            commit = load_json(commit_path)
+            if (
+                set(commit) != {*expected_commit, "committed_at"}
+                or any(commit.get(key) != value for key, value in expected_commit.items())
+                or not isinstance(commit.get("committed_at"), str)
+                or not commit.get("committed_at")
+            ):
+                raise SystemExit(
+                    f"{entrant_id} pre-admission reconciliation commit changed or was replayed"
+                )
+        else:
+            commit = {**expected_commit, "committed_at": utc_now()}
+            write_exclusive_json(commit_path, commit)
+        pre_admission_reconciliation_fault("commit_committed")
+        pointer = {
+            "schema_version": PRE_ADMISSION_RECONCILIATION_SCHEMA,
+            "attempt": plan["attempt"],
+            "path": str(commit_path.resolve().relative_to(root.resolve())),
+            "sha256": sha256_file(commit_path),
+            "intent_sha256": sha256_file(intent_path),
+            "request_ids": plan["request_ids"],
+            "episode_attempt_before": plan["episode_attempt_before"],
+            "episode_attempt_after": plan["episode_attempt_after"],
+        }
+        pointer_index = current_state.get("pre_admission_reconciliations")
+        if pointer_index is None:
+            pointer_index = {}
+        if not isinstance(pointer_index, dict):
+            raise SystemExit(
+                f"{entrant_id} pre-admission reconciliation state index is malformed"
+            )
+        pointer_index = dict(pointer_index)
+        attempt_name = f"attempt-{plan['attempt']}"
+        existing_pointer = pointer_index.get(attempt_name)
+        if existing_pointer is not None and existing_pointer != pointer:
+            raise SystemExit(
+                f"{entrant_id} pre-admission reconciliation state pointer changed"
+            )
+        pointer_index[attempt_name] = pointer
+        update_state(root, entrant_id, pre_admission_reconciliations=pointer_index)
+        pre_admission_reconciliation_fault("state_pointer_committed")
+        return pointer
 
 
 def remap_paths(value: Any, source: Path, destination: Path) -> Any:
@@ -16651,10 +17459,19 @@ def manager_restart_mismatch(root: Path) -> str | None:
         accounting_error = anchored_generation_two_entrant_accounting_failure(
             root, campaign, row
         )
+        reconciliation = current_pre_admission_reconciliation(
+            root, entrant_id, state
+        )
+        reconciliation_is_current = bool(
+            reconciliation is not None
+            and status in RETRYABLE_BUILD_STATES
+            and state.get("provider_episode_attempts")
+            == reconciliation.get("episode_attempt_after")
+        )
         reasons = []
         if lifecycle.get("admitted"):
             reasons.append(f"{lifecycle['admitted']} provider request(s) admitted")
-        if lifecycle_failure(lifecycle):
+        if lifecycle_failure(lifecycle) and not reconciliation_is_current:
             reasons.append(f"lifecycle is ambiguous: {lifecycle_failure(lifecycle)}")
         if outstanding:
             reasons.append(
@@ -16861,6 +17678,14 @@ def normalize_interrupted_builds(
             and topology_clean
         ):
             continue
+        reconciliation = (
+            reconcile_dead_pre_admission_reservations(
+                root, campaign, row, state
+            )
+            if topology_clean
+            else None
+        )
+        state = read_state(root, entrant_id)
         lifecycle = lifecycle_summary(
             Path(str(state.get("provider_lifecycle", ""))),
             expected_provider=str(row["provider"]),
@@ -16874,15 +17699,21 @@ def normalize_interrupted_builds(
         )
         pre_admission_proven = interrupted_build_pre_admission_proven(
             interrupted_status, lifecycle
-        )
+        ) or reconciliation is not None
+        lifecycle_problem = lifecycle_failure(lifecycle)
         safe_pre_admission = bool(
             topology_clean
             and not outstanding
             and budget_error is None
             and accounting_error is None
             and pre_admission_proven
+            and (lifecycle_problem is None or reconciliation is not None)
         )
-        attempts = int(state.get("provider_episode_attempts", 0))
+        attempts = (
+            int(reconciliation["episode_attempt_after"])
+            if reconciliation is not None
+            else int(state.get("provider_episode_attempts", 0))
+        )
         if safe_pre_admission and attempts < max_episodes:
             update_state(
                 root,
@@ -16903,6 +17734,8 @@ def normalize_interrupted_builds(
                 goose_pid=None,
                 process_group=None,
                 goose_identity=None,
+                goose_process_inventory=[],
+                provider_episode_attempts=attempts,
                 **{
                     f"{normalized_field_prefix}_normalized_from": interrupted_status,
                     f"{normalized_field_prefix}_normalized_at": utc_now(),
@@ -16917,8 +17750,7 @@ def normalize_interrupted_builds(
             reasons.append(
                 f"{int(lifecycle['admitted'])} provider request(s) were admitted"
             )
-        lifecycle_problem = lifecycle_failure(lifecycle)
-        if lifecycle_problem:
+        if lifecycle_problem and reconciliation is None:
             reasons.append(f"lifecycle is ambiguous: {lifecycle_problem}")
         if not pre_admission_proven:
             reasons.append("pre-admission termination is not explicitly proven")
