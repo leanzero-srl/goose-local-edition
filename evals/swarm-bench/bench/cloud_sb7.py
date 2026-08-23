@@ -234,6 +234,10 @@ SMOKE_RETRYABLE_STATES = {"PLANNED", "PRE_ADMISSION_FAILURE"}
 SMOKE_PREPARABLE_STATES = SMOKE_RETRYABLE_STATES | {"WAITING_PROVIDER_LANE"}
 MONITOR_TERMINAL_STATES = {"PUBLISHED", "ATTENTION", "STOPPED"}
 MONITOR_DETACH_TIMEOUT_SECONDS = 5.0
+MONITOR_HEARTBEAT_INTERVAL_SECONDS = 10.0
+MONITOR_LEASE_TIMEOUT_SECONDS = 35.0
+MANAGER_WATCH_POLL_SECONDS = 1.0
+GATED_EXEC_RECEIPT_TIMEOUT_SECONDS = 10.0
 
 
 def utc_now() -> str:
@@ -847,6 +851,27 @@ def monitor_state(root: Path, **changes: Any) -> Dict[str, Any]:
             state = read_monitor_state(root)
             state.update(changes)
             state["heartbeat_at"] = utc_now()
+            state["heartbeat_monotonic"] = time.monotonic()
+            atomic_json(path, state)
+            return state
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def read_smoke_manager_state(root: Path) -> Dict[str, Any]:
+    path = root / "smoke-manager.json"
+    return load_json(path) if path.is_file() else {"schema_version": CAMPAIGN_SCHEMA}
+
+
+def smoke_manager_state(root: Path, **changes: Any) -> Dict[str, Any]:
+    path = root / "smoke-manager.json"
+    lock_path = root / "smoke-manager.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            state = read_smoke_manager_state(root)
+            state.update(changes)
+            state["updated_at"] = utc_now()
             atomic_json(path, state)
             return state
         finally:
@@ -1540,6 +1565,14 @@ def preflight(
     }
 
 
+def require_clean_source_worktree() -> None:
+    dirty = git_value("status", "--porcelain", "--untracked-files=all")
+    if dirty:
+        raise SystemExit(
+            "orchestrator recovery source worktree must be clean before it is bound"
+        )
+
+
 def validated_preflight_snapshot(
     value: Mapping[str, Any],
     binary: Path,
@@ -1845,6 +1878,7 @@ def init_campaign(
         )
     manager_state(root, status="IDLE", pid=None, pgid=None)
     monitor_state(root, status="IDLE", pid=None, pgid=None, restarts=0)
+    smoke_manager_state(root, status="IDLE", pid=None, pgid=None)
     return campaign
 
 
@@ -2895,6 +2929,48 @@ def entrant_outstanding_reservations(
         ) == row.get("model"):
             request_ids.append(str(request_id))
     return sorted(request_ids), None
+
+
+def current_full_episode_outstanding_reservations(
+    root: Path,
+    campaign: Mapping[str, Any],
+    row: Mapping[str, Any],
+) -> tuple[list[str], str | None]:
+    outstanding, error = entrant_outstanding_reservations(campaign, row)
+    if error:
+        return [], error
+    try:
+        generation = validated_campaign_lineage(campaign)["generation"]
+    except SystemExit as lineage_error:
+        return [], f"campaign lineage is invalid: {lineage_error}"
+    if generation != 2:
+        return outstanding, None
+
+    lineage_problem = orchestrator_recovery_lineage_failure(root, campaign)
+    if lineage_problem:
+        return [], (
+            "orchestrator recovery reservation baseline cannot be verified: "
+            f"{lineage_problem}"
+        )
+    pointer = campaign["lineage"]
+    lineage = load_json(root / str(pointer["path"]))
+    baselines = lineage.get("source_ambiguous_request_ids")
+    entrant_id = str(row.get("id", ""))
+    baseline = baselines.get(entrant_id) if isinstance(baselines, dict) else None
+    if (
+        not isinstance(baseline, list)
+        or not baseline
+        or any(not isinstance(request_id, str) or not request_id for request_id in baseline)
+        or baseline != sorted(set(baseline))
+    ):
+        return [], f"{entrant_id} carried full-episode reservation baseline is malformed"
+    missing = sorted(set(baseline) - set(outstanding))
+    if missing:
+        return [], (
+            f"{entrant_id} carried full-episode reservations disappeared: "
+            + ", ".join(missing)
+        )
+    return sorted(set(outstanding) - set(baseline)), None
 
 
 def remap_paths(value: Any, source: Path, destination: Path) -> Any:
@@ -6531,17 +6607,27 @@ def validate_orchestrator_recovery_evidence(
         raise SystemExit("orchestrator recovery evidence entrant roster differs")
 
     raw_artifacts = evidence.get("artifacts")
-    if not isinstance(raw_artifacts, list) or not raw_artifacts:
-        raise SystemExit("orchestrator recovery evidence has no supporting artifacts")
+    if not isinstance(raw_artifacts, list) or len(raw_artifacts) != 2:
+        raise SystemExit(
+            "orchestrator recovery evidence requires exactly two supporting artifacts"
+        )
     artifacts: list[Dict[str, Any]] = []
     roles: set[str] = set()
+    source_paths: set[Path] = set()
     for raw in raw_artifacts:
         if not isinstance(raw, dict) or set(raw) != {"role", "path", "sha256"}:
             raise SystemExit("orchestrator recovery artifact schema is malformed")
         role = raw.get("role")
         if role not in {"root_cause", "regression_test"}:
             raise SystemExit("orchestrator recovery artifact role is not approved")
-        source_path = Path(str(raw.get("path", ""))).expanduser().resolve()
+        raw_source_path = Path(str(raw.get("path", ""))).expanduser()
+        if raw_source_path.is_symlink():
+            raise SystemExit("orchestrator recovery artifact cannot be a symbolic link")
+        source_path = raw_source_path.resolve()
+        if role in roles:
+            raise SystemExit("orchestrator recovery artifact role is duplicated")
+        if source_path in source_paths:
+            raise SystemExit("orchestrator recovery artifacts must be distinct files")
         if (
             not source_path.is_file()
             or source_path.is_symlink()
@@ -6557,6 +6643,7 @@ def validate_orchestrator_recovery_evidence(
         if secret_occurrences([source_path], secret_values):
             raise SystemExit("orchestrator recovery artifact contains a provider credential")
         roles.add(str(role))
+        source_paths.add(source_path)
         artifacts.append(
             {"role": role, "source": source_path, "sha256": digest}
         )
@@ -6573,6 +6660,7 @@ def orchestrator_recovery_evidence_template(
     root_cause_path: Path,
     regression_test_path: Path,
 ) -> Dict[str, Any]:
+    require_clean_source_worktree()
     source_root = source_root.resolve()
     target_root = target_root.resolve()
     source = load_json(campaign_file(source_root))
@@ -6599,6 +6687,8 @@ def orchestrator_recovery_evidence_template(
         ("root_cause", root_cause_path),
         ("regression_test", regression_test_path),
     ):
+        if raw_path.is_symlink():
+            raise SystemExit(f"orchestrator recovery artifact is linked: {raw_path}")
         path = raw_path.resolve()
         if (
             not path.is_file()
@@ -7165,6 +7255,7 @@ def orchestrator_recovery_campaign(
     evidence_path: Path,
     publish_live: bool,
 ) -> Dict[str, Any]:
+    require_clean_source_worktree()
     source_root = source_root.resolve()
     root = root.resolve()
     evidence_path = evidence_path.resolve()
@@ -8916,10 +9007,33 @@ def supervise(root: Path, entrant_id: str) -> int:
         return supervise_claimed(root, entrant_id)
 
 
+def rollback_provider_episode_before_process(
+    root: Path,
+    entrant_id: str,
+    previous_attempt: int,
+    telemetry: Path,
+    failure: str,
+) -> Dict[str, Any]:
+    telemetry.unlink(missing_ok=True)
+    with contextlib.suppress(OSError):
+        telemetry.parent.rmdir()
+    return update_state(
+        root,
+        entrant_id,
+        status="PRE_ADMISSION_FAILURE",
+        provider_episode_attempts=previous_attempt,
+        goose_pid=None,
+        started_at=None,
+        prompt_sha256=None,
+        command=None,
+        failure=failure,
+    )
+
+
 def supervise_claimed(root: Path, entrant_id: str) -> int:
     require_smoke_proofs(root, pristine_entrant=entrant_id)
     campaign = load_json(campaign_file(root))
-    if campaign.get("status") == "STOPPED" or (root / SUPERSESSION_RECEIPT).exists():
+    if campaign.get("status") != "RUNNING" or (root / SUPERSESSION_RECEIPT).exists():
         return 2
     lineage_problem = lineage_failure(root)
     if lineage_problem:
@@ -8982,6 +9096,15 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
             or int(state.get("supervisor_pid", -1)) != os.getpid()
         ):
             return 0
+        admission_problem = provider_admission_gate_failure(root, campaign)
+        if admission_problem:
+            update_state(
+                root,
+                entrant_id,
+                status="PRE_ADMISSION_FAILURE",
+                failure=f"provider admission refused: {admission_problem}",
+            )
+            return 2
         port = int(state["vendor_port"])
         if not port_is_free(port):
             update_state(
@@ -9036,7 +9159,8 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         started = time.time()
         manifest = load_json(Path(str(campaign["entrant_manifest"])))
         max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
-        episode_attempt = int(state.get("provider_episode_attempts", 0)) + 1
+        previous_attempt = int(state.get("provider_episode_attempts", 0))
+        episode_attempt = previous_attempt + 1
         if episode_attempt > max_episodes:
             server.shutdown()
             update_state(
@@ -9067,17 +9191,41 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
                 "[PROMPT]",
             ],
         )
+        admission_problem = provider_admission_gate_failure(root, campaign)
+        if admission_problem:
+            server.shutdown()
+            rollback_provider_episode_before_process(
+                root,
+                entrant_id,
+                previous_attempt,
+                telemetry,
+                f"provider admission refused: {admission_problem}",
+            )
+            return 2
         try:
             with log_path.open("a", buffering=1) as log:
-                proc = subprocess.Popen(
-                    cmd,
-                    cwd=Path(str(state["tree"])),
-                    env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                )
+                try:
+                    proc = subprocess.Popen(
+                        cmd,
+                        cwd=Path(str(state["tree"])),
+                        env=env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                    )
+                except OSError as error:
+                    rollback_provider_episode_before_process(
+                        root,
+                        entrant_id,
+                        previous_attempt,
+                        telemetry,
+                        (
+                            "provider process was not created: "
+                            f"{type(error).__name__}: {error}"
+                        ),
+                    )
+                    return 2
                 update_state(
                     root, entrant_id, goose_pid=proc.pid, process_group=os.getpgrp()
                 )
@@ -9103,7 +9251,9 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         isolation_problem = listener_isolation_failure(
             campaign, row, read_state(root, entrant_id), smoke=False
         )
-        outstanding_ids, budget_error = entrant_outstanding_reservations(campaign, row)
+        outstanding_ids, budget_error = current_full_episode_outstanding_reservations(
+            root, campaign, row
+        )
         if budget_error:
             status = "INCOMPLETE"
             failure = budget_error
@@ -9187,18 +9337,21 @@ def hash_tree(root: Path) -> str:
     return h.hexdigest()
 
 
-def launch_detached(cmd: list[str], log_path: Path) -> subprocess.Popen[Any]:
+def launch_detached(
+    cmd: list[str], log_path: Path, on_started: Any = None
+) -> subprocess.Popen[Any]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log = log_path.open("a")
     try:
-        return subprocess.Popen(
+        return launch_after_receipt(
             cmd,
             cwd=REPO,
+            env=None,
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
+            gate_dir=log_path.parent,
+            on_started=on_started or (lambda _proc: None),
         )
     finally:
         log.close()
@@ -9207,7 +9360,17 @@ def launch_detached(cmd: list[str], log_path: Path) -> subprocess.Popen[Any]:
 def launch_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
     unit = root / "entrants" / entrant_id
     campaign = load_json(campaign_file(root))
-    proc = launch_detached(
+    def started(proc: subprocess.Popen[Any]) -> None:
+        update_state(
+            root,
+            entrant_id,
+            supervisor_pid=proc.pid,
+            supervisor_pgid=proc.pid,
+            supervisor_identity=process_identity(proc.pid),
+            launched_at=utc_now(),
+        )
+
+    return launch_detached(
         [
             sys.executable,
             str(campaign["coordinator"]),
@@ -9218,16 +9381,8 @@ def launch_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
             entrant_id,
         ],
         unit / "logs/supervisor.log",
+        on_started=started,
     )
-    update_state(
-        root,
-        entrant_id,
-        supervisor_pid=proc.pid,
-        supervisor_pgid=proc.pid,
-        supervisor_identity=process_identity(proc.pid),
-        launched_at=utc_now(),
-    )
-    return proc
 
 
 def launch_smoke_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
@@ -9235,7 +9390,19 @@ def launch_smoke_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any
     campaign = load_json(campaign_file(root))
     state = read_smoke_state(root, entrant_id)
     launch = int(state.get("supervisor_launches", 0)) + 1
-    proc = launch_detached(
+    def started(proc: subprocess.Popen[Any]) -> None:
+        update_smoke_state(
+            root,
+            entrant_id,
+            supervisor_launches=launch,
+            supervisor_pid=proc.pid,
+            supervisor_pgid=proc.pid,
+            supervisor_identity=process_identity(proc.pid),
+            supervisor_log=str(unit / f"supervisor-{launch}.log"),
+            supervisor_launched_at=utc_now(),
+        )
+
+    return launch_detached(
         [
             sys.executable,
             str(campaign["coordinator"]),
@@ -9246,18 +9413,8 @@ def launch_smoke_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any
             entrant_id,
         ],
         unit / f"supervisor-{launch}.log",
+        on_started=started,
     )
-    update_smoke_state(
-        root,
-        entrant_id,
-        supervisor_launches=launch,
-        supervisor_pid=proc.pid,
-        supervisor_pgid=proc.pid,
-        supervisor_identity=process_identity(proc.pid),
-        supervisor_log=str(unit / f"supervisor-{launch}.log"),
-        supervisor_launched_at=utc_now(),
-    )
-    return proc
 
 
 def process_identity(pid: Any) -> str | None:
@@ -9338,14 +9495,88 @@ def stop_group_members(
     return not [pid for pid, _ in process_group_members(pgid) if pid not in excluded]
 
 
+def manager_monitor_attention(root: Path, lease_failure: str) -> None:
+    campaign = load_json(campaign_file(root))
+    cleanup_failures: list[str] = []
+    for state in status_rows(root):
+        if state["status"] in TERMINAL_BUILD_STATES | POST_BUILD_STATES:
+            continue
+        entrant_id = str(state["entrant"])
+        pgid = int(state.get("supervisor_pgid") or 0)
+        group_clean = True
+        if pgid and (
+            process_alive(
+                state.get("supervisor_pid"), state.get("supervisor_identity")
+            )
+            or process_group_members(pgid)
+        ):
+            group_clean = stop_recorded_group(
+                state.get("supervisor_pid"),
+                pgid,
+                state.get("supervisor_identity"),
+            )
+        if not group_clean:
+            cleanup_failures.append(f"{entrant_id}:supervisor-pgid={pgid}")
+        row = manifest_row(root, entrant_id)
+        lifecycle = lifecycle_summary(
+            Path(str(state["provider_lifecycle"])),
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        outstanding, budget_error = current_full_episode_outstanding_reservations(
+            root, campaign, row
+        )
+        ambiguous = bool(
+            lifecycle["admitted"]
+            or lifecycle_failure(lifecycle)
+            or outstanding
+            or budget_error
+            or not group_clean
+        )
+        reasons = [f"monitor lease lost: {lease_failure}"]
+        if lifecycle["admitted"]:
+            reasons.append(f"{lifecycle['admitted']} provider request(s) admitted")
+        if outstanding:
+            reasons.append(
+                f"{len(outstanding)} current provider request(s) retain reserves"
+            )
+        if budget_error:
+            reasons.append(budget_error)
+        if not group_clean:
+            reasons.append("owned supervisor group survived cleanup")
+        update_state(
+            root,
+            entrant_id,
+            status="INCOMPLETE" if ambiguous else "PRE_ADMISSION_FAILURE",
+            failure="; ".join(reasons),
+            admitted_requests=lifecycle["admitted"],
+            provider_terminal_requests=lifecycle["terminal"],
+            lifecycle_events=lifecycle["events"],
+            lifecycle_malformed_lines=lifecycle["malformed_lines"],
+            lifecycle_transition_errors=lifecycle["transition_errors"],
+            lifecycle_ambiguous_request_ids=lifecycle["ambiguous_request_ids"],
+            budget_outstanding_request_ids=outstanding,
+        )
+    failure = f"monitor lease lost; provider work stopped: {lease_failure}"
+    if cleanup_failures:
+        failure += "; owned groups survived: " + ", ".join(cleanup_failures)
+    manager_state(root, status="ATTENTION", failure=failure)
+    update_campaign(root, status="ATTENTION", failure=failure)
+
+
 def wait_for_builds(
     root: Path,
     row_ids: list[str],
     supervisors: Mapping[str, subprocess.Popen[Any]] | None = None,
+    poll_seconds: float = MANAGER_WATCH_POLL_SECONDS,
 ) -> bool:
     handles = dict(supervisors or {})
     campaign = load_json(campaign_file(root))
     while True:
+        lease_problem = active_manager_monitor_lease_failure(root, campaign)
+        if lease_problem:
+            manager_monitor_attention(root, lease_problem)
+            return False
         states = [read_state(root, entrant_id) for entrant_id in row_ids]
         for entrant_id, proc in list(handles.items()):
             if proc.poll() is not None:
@@ -9373,8 +9604,10 @@ def wait_for_builds(
                         expected_provider=str(row["provider"]),
                         expected_model=str(row["model"]),
                     )
-                    outstanding_ids, budget_error = entrant_outstanding_reservations(
-                        campaign, row
+                    outstanding_ids, budget_error = (
+                        current_full_episode_outstanding_reservations(
+                            root, campaign, row
+                        )
                     )
                     ambiguous = bool(
                         lifecycle["admitted"]
@@ -9411,7 +9644,7 @@ def wait_for_builds(
                         ],
                         budget_outstanding_request_ids=outstanding_ids,
                     )
-        time.sleep(10)
+        time.sleep(poll_seconds)
 
 
 def wait_for_smokes(
@@ -9525,6 +9758,118 @@ def smoke(root: Path) -> int:
         if passed:
             require_smoke_proofs(root)
         return 0 if passed else 1
+
+
+def smoke_manage(root: Path) -> int:
+    smoke_manager_state(
+        root,
+        status="RUNNING",
+        pid=os.getpid(),
+        pgid=os.getpgrp(),
+        identity=process_identity(os.getpid()),
+        started_at=utc_now(),
+        failure=None,
+    )
+    try:
+        result = smoke(root)
+        if result != 0:
+            smoke_manager_state(
+                root,
+                status="ATTENTION",
+                exit_code=result,
+                finished_at=utc_now(),
+                failure="one or more contract smokes failed",
+            )
+            return result
+        monitor_start(root)
+        smoke_manager_state(
+            root,
+            status="HANDED_OFF",
+            exit_code=0,
+            finished_at=utc_now(),
+            failure=None,
+        )
+        return 0
+    except (Exception, SystemExit) as error:
+        safe = f"{type(error).__name__}: {error}"[:1000]
+        smoke_manager_state(
+            root,
+            status="ATTENTION",
+            exit_code=1,
+            finished_at=utc_now(),
+            failure=safe,
+        )
+        update_campaign(root, smoke_status="ATTENTION", smoke_failure=safe)
+        return 1
+
+
+def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
+    while True:
+        with exclusive_claim(
+            root / "locks/smoke-launch.claim", blocking=True
+        ) as claimed:
+            if not claimed:
+                raise SystemExit("cannot claim durable cloud smoke launch")
+            require_lineage(root)
+            campaign = load_json(campaign_file(root))
+            if campaign.get("smoke_status") == "PASS":
+                require_smoke_proofs(root)
+                monitor = read_monitor_state(root)
+                if not process_alive(monitor.get("pid"), monitor.get("identity")):
+                    monitor_start(root)
+                return 0
+            current = read_smoke_manager_state(root)
+            if not process_alive(current.get("pid"), current.get("identity")):
+                if current.get("pid") and not stop_recorded_group(
+                    current.get("pid"), current.get("pgid"), current.get("identity")
+                ):
+                    raise SystemExit(
+                        "dead smoke manager process group survived recovery"
+                    )
+
+                def started(proc: subprocess.Popen[Any]) -> None:
+                    smoke_manager_state(
+                        root,
+                        status="STARTING",
+                        pid=proc.pid,
+                        pgid=proc.pid,
+                        identity=process_identity(proc.pid),
+                        launched_at=utc_now(),
+                        failure=None,
+                    )
+
+                with (root / "smoke-manager.log").open("a") as log:
+                    launch_after_receipt(
+                        [
+                            sys.executable,
+                            str(campaign["coordinator"]),
+                            "_smoke_manage",
+                            "--root",
+                            str(root),
+                        ],
+                        cwd=REPO,
+                        env=None,
+                        stdin=subprocess.DEVNULL,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        gate_dir=root / "smoke",
+                        on_started=started,
+                    )
+        campaign = load_json(campaign_file(root))
+        state = read_smoke_manager_state(root)
+        if campaign.get("smoke_status") == "PASS" and state.get("status") in {
+            "HANDED_OFF",
+            "RUNNING",
+        }:
+            require_smoke_proofs(root)
+            return 0
+        if state.get("status") == "ATTENTION" or campaign.get(
+            "smoke_status"
+        ) == "ATTENTION":
+            return 1
+        if not process_alive(state.get("pid"), state.get("identity")):
+            continue
+        time.sleep(poll_seconds)
 
 
 def clone_for_score(root: Path, entrant_id: str, attempt: int) -> Path:
@@ -9667,7 +10012,9 @@ def manager_restart_mismatch(root: Path) -> str | None:
             expected_provider=str(row["provider"]),
             expected_model=str(row["model"]),
         )
-        outstanding, budget_error = entrant_outstanding_reservations(campaign, row)
+        outstanding, budget_error = current_full_episode_outstanding_reservations(
+            root, campaign, row
+        )
         reasons = []
         if lifecycle.get("admitted"):
             reasons.append(f"{lifecycle['admitted']} provider request(s) admitted")
@@ -9687,6 +10034,104 @@ def manager_restart_mismatch(root: Path) -> str | None:
                 reasons
             )
     return None
+
+
+def resume_campaign(root: Path) -> int:
+    with exclusive_claim(root / "locks/resume.claim", blocking=True) as claimed:
+        if not claimed:
+            raise SystemExit("cannot claim cloud campaign resume transition")
+        require_lineage(root)
+        recover_dead_manager(root)
+        recover_interrupted_publication(root)
+        campaign = load_json(campaign_file(root))
+        for state in status_rows(root):
+            if state["status"] == "PRE_ADMISSION_FAILURE":
+                row = manifest_row(root, str(state["entrant"]))
+                lifecycle = lifecycle_summary(
+                    Path(str(state["provider_lifecycle"])),
+                    expected_provider=str(row["provider"]),
+                    expected_model=str(row["model"]),
+                )
+                outstanding_ids, budget_error = (
+                    current_full_episode_outstanding_reservations(
+                        root, campaign, row
+                    )
+                )
+                pgid = int(state.get("supervisor_pgid") or 0)
+                members = process_group_members(pgid) if pgid else []
+                if (
+                    lifecycle["admitted"]
+                    or lifecycle_failure(lifecycle)
+                    or outstanding_ids
+                    or budget_error
+                    or members
+                ):
+                    update_state(
+                        root,
+                        state["entrant"],
+                        status="INCOMPLETE",
+                        failure=(
+                            "resume denied: reconstructed provider/process evidence "
+                            "is ambiguous"
+                        ),
+                        admitted_requests=lifecycle["admitted"],
+                        provider_terminal_requests=lifecycle["terminal"],
+                        lifecycle_transition_errors=lifecycle["transition_errors"],
+                        lifecycle_ambiguous_request_ids=lifecycle[
+                            "ambiguous_request_ids"
+                        ],
+                        budget_outstanding_request_ids=outstanding_ids,
+                    )
+                    raise SystemExit(
+                        f"{state['entrant']} has ambiguous evidence and cannot be retried"
+                    )
+                update_state(root, state["entrant"], status="PLANNED", failure=None)
+            elif state["status"] in {"INCOMPLETE", "STOPPED"}:
+                raise SystemExit(
+                    f"{state['entrant']} is {state['status']}; admitted or "
+                    "operator-stopped work cannot be resumed as a fresh paid attempt"
+                )
+            elif state["status"] == "SCORING":
+                update_state(
+                    root,
+                    state["entrant"],
+                    status="SCORE_FAILED",
+                    failure="scorer was interrupted; raw build remains sealed",
+                )
+
+        monitor = read_monitor_state(root)
+        if (
+            monitor.get("pid")
+            and (
+                process_alive(monitor.get("pid"), monitor.get("identity"))
+                or process_group_members(int(monitor.get("pgid") or 0))
+            )
+            and not stop_recorded_group(
+                monitor.get("pid"), monitor.get("pgid"), monitor.get("identity")
+            )
+        ):
+            raise SystemExit("attention monitor process group survived resume")
+        update_campaign(root, status="INITIALIZED", failure=None)
+        manager_state(
+            root,
+            status="IDLE",
+            pid=None,
+            pgid=None,
+            identity=None,
+            monitor_lease_id=None,
+            failure=None,
+        )
+        monitor_state(
+            root,
+            status="IDLE",
+            pid=None,
+            pgid=None,
+            identity=None,
+            lease_id=None,
+            failure=None,
+        )
+        require_smoke_proofs(root)
+        return monitor_start(root)
 
 
 def recover_interrupted_publication(root: Path) -> None:
@@ -9784,6 +10229,100 @@ def publisher_environment(
     return env, redactions
 
 
+def gated_exec(gate_path: Path, token: str, command: list[str]) -> int:
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        return 126
+    deadline = time.monotonic() + GATED_EXEC_RECEIPT_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        parent_pid = os.getppid()
+        if parent_pid == 1:
+            return 125
+        if gate_path.is_file() and not gate_path.is_symlink():
+            try:
+                receipt = load_json(gate_path)
+            except (OSError, json.JSONDecodeError, SystemExit):
+                return 126
+            if set(receipt) != {
+                "schema_version",
+                "token",
+                "pid",
+                "parent_pid",
+                "identity",
+                "committed_at",
+            }:
+                return 126
+            if (
+                receipt.get("schema_version") != 1
+                or receipt.get("token") != token
+                or receipt.get("pid") != os.getpid()
+                or receipt.get("parent_pid") != parent_pid
+                or receipt.get("identity") != process_identity(os.getpid())
+            ):
+                return 126
+            os.execvpe(command[0], command, os.environ)
+        time.sleep(0.01)
+    return 124
+
+
+def launch_after_receipt(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str] | None,
+    stdin: Any,
+    stdout: Any,
+    stderr: Any,
+    gate_dir: Path,
+    on_started: Any,
+) -> subprocess.Popen[Any]:
+    gate_dir.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(16)
+    gate_path = gate_dir / f"launch-{token}.json"
+    parent_pid = os.getpid()
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "_gated_exec",
+            "--gate",
+            str(gate_path),
+            "--token",
+            token,
+            "--",
+            *cmd,
+        ],
+        cwd=cwd,
+        env=dict(env) if env is not None else None,
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        start_new_session=True,
+        close_fds=True,
+    )
+    try:
+        identity = process_identity(proc.pid)
+        if identity is None:
+            raise RuntimeError("gated child has no process identity")
+        on_started(proc)
+        atomic_json(
+            gate_path,
+            {
+                "schema_version": 1,
+                "token": token,
+                "pid": proc.pid,
+                "parent_pid": parent_pid,
+                "identity": identity,
+                "committed_at": utc_now(),
+            },
+        )
+    except BaseException:
+        stop_recorded_group(proc.pid, proc.pid, process_identity(proc.pid))
+        raise
+    return proc
+
+
 def run_logged_process(
     cmd: list[str],
     cwd: Path,
@@ -9794,21 +10333,19 @@ def run_logged_process(
     on_started: Any = None,
 ) -> Dict[str, Any]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.Popen(
+    proc = launch_after_receipt(
         cmd,
         cwd=cwd,
         env=dict(env),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        start_new_session=True,
-        close_fds=True,
+        gate_dir=log_path.parent,
+        on_started=on_started or (lambda _proc: None),
     )
     assert proc.stdout is not None
     selector: selectors.BaseSelector | None = None
     try:
-        if on_started is not None:
-            on_started(proc)
         os.set_blocking(proc.stdout.fileno(), False)
         selector = selectors.DefaultSelector()
         selector.register(proc.stdout, selectors.EVENT_READ)
@@ -10714,6 +11251,15 @@ def publish_one(root: Path, entrant_id: str) -> bool:
     campaign = load_json(campaign_file(root))
     if campaign.get("status") == "STOPPED" or (root / SUPERSESSION_RECEIPT).exists():
         return False
+    monitor_problem = active_manager_monitor_lease_failure(root, campaign)
+    if monitor_problem:
+        update_state(
+            root,
+            entrant_id,
+            status="PUBLISH_FAILED",
+            failure=f"monitor lease refused publication: {monitor_problem}",
+        )
+        return False
     lineage_problem = lineage_failure(root)
     if lineage_problem:
         update_state(
@@ -10807,6 +11353,11 @@ def publish_one(root: Path, entrant_id: str) -> bool:
         else:
             stage = "live-write"
             require_lineage(root)
+            monitor_problem = active_manager_monitor_lease_failure(root, campaign)
+            if monitor_problem:
+                raise PublicationError(
+                    f"monitor lease refused live publication: {monitor_problem}"
+                )
             secret_hits = persisted_entrant_secret_hits(root, campaign, entrant_id)
             if secret_hits:
                 raise PublicationError(
@@ -10931,6 +11482,15 @@ def score_one(root: Path, entrant_id: str) -> bool:
     campaign = load_json(campaign_file(root))
     if campaign.get("status") == "STOPPED" or (root / SUPERSESSION_RECEIPT).exists():
         return False
+    monitor_problem = active_manager_monitor_lease_failure(root, campaign)
+    if monitor_problem:
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            failure=f"monitor lease refused scoring: {monitor_problem}",
+        )
+        return False
     lineage_problem = lineage_failure(root)
     if lineage_problem:
         update_state(
@@ -11000,22 +11560,36 @@ def score_one(root: Path, entrant_id: str) -> bool:
         score_attempts=score_attempt,
     )
     proc: subprocess.Popen[Any] | None = None
+    monitor_problem = active_manager_monitor_lease_failure(root, campaign)
+    if monitor_problem:
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            failure=f"monitor lease expired before scorer launch: {monitor_problem}",
+        )
+        return False
+
+    def scorer_started(started: subprocess.Popen[Any]) -> None:
+        update_state(
+            root,
+            entrant_id,
+            score_pid=started.pid,
+            score_pgid=started.pid,
+            score_identity=process_identity(started.pid),
+        )
+
     try:
         with log_path.open("w") as log:
-            proc = subprocess.Popen(
+            proc = launch_after_receipt(
                 cmd,
                 cwd=Path(str(campaign["instrument_root"])),
+                env=None,
+                stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                start_new_session=True,
-                close_fds=True,
-            )
-            update_state(
-                root,
-                entrant_id,
-                score_pid=proc.pid,
-                score_pgid=proc.pid,
-                score_identity=process_identity(proc.pid),
+                gate_dir=score_dir,
+                on_started=scorer_started,
             )
             exit_code = proc.wait()
     except BaseException:
@@ -11145,6 +11719,14 @@ def manage_claimed(root: Path) -> int:
         return 2
     require_smoke_proofs(root)
     recover_interrupted_scoring(root)
+    monitor = read_monitor_state(root)
+    monitor_problem = monitor_lease_snapshot_failure(monitor, campaign)
+    if monitor_problem:
+        failure = f"manager monitor lease refused execution: {monitor_problem}"
+        manager_state(root, status="ATTENTION", failure=failure)
+        update_campaign(root, status="ATTENTION", failure=failure)
+        return 2
+    monitor_lease_id = str(monitor["lease_id"])
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
     row_ids = [str(row["id"]) for row in entrants(manifest)]
     manager_state(
@@ -11152,6 +11734,8 @@ def manage_claimed(root: Path) -> int:
         status="RUNNING",
         pid=os.getpid(),
         pgid=os.getpgrp(),
+        identity=process_identity(os.getpid()),
+        monitor_lease_id=monitor_lease_id,
         started_at=utc_now(),
     )
     update_campaign(root, status="RUNNING", started_at=utc_now())
@@ -11159,8 +11743,16 @@ def manage_claimed(root: Path) -> int:
     for entrant_id in row_ids:
         state = read_state(root, entrant_id)
         if state["status"] in RETRYABLE_BUILD_STATES:
+            monitor_problem = manager_monitor_gate_failure(
+                root, campaign, monitor_lease_id
+            )
+            if monitor_problem:
+                manager_monitor_attention(root, monitor_problem)
+                return 2
             supervisors[entrant_id] = launch_supervisor(root, entrant_id)
     builds_ok = wait_for_builds(root, row_ids, supervisors)
+    if load_json(campaign_file(root)).get("status") == "ATTENTION":
+        return 1
     if builds_ok:
         update_campaign(root, status="BUILD_COMPLETE", build_finished_at=utc_now())
     completed_ids = [
@@ -11198,15 +11790,28 @@ def start(root: Path) -> int:
         if campaign["status"] not in RESTARTABLE_CAMPAIGN_STATES:
             raise SystemExit(f"campaign cannot start from {campaign['status']}")
         require_smoke_proofs(root)
-        monitor_problem = manager_monitor_gate_failure(root, campaign)
+        monitor = read_monitor_state(root)
+        monitor_problem = monitor_lease_snapshot_failure(monitor, campaign)
         if monitor_problem:
             raise SystemExit(f"manager requires a ready detached monitor: {monitor_problem}")
+        monitor_lease_id = str(monitor["lease_id"])
         current = load_json(root / "manager.json")
         if current.get("pid") and process_alive(
             current["pid"], current.get("identity")
         ):
             raise SystemExit(f"manager is already running as pid {current['pid']}")
         recover_dead_manager(root)
+        def manager_started(proc: subprocess.Popen[Any]) -> None:
+            manager_state(
+                root,
+                status="STARTING",
+                pid=proc.pid,
+                pgid=proc.pid,
+                identity=process_identity(proc.pid),
+                monitor_lease_id=monitor_lease_id,
+                launched_at=utc_now(),
+            )
+
         proc = launch_detached(
             [
                 sys.executable,
@@ -11216,23 +11821,17 @@ def start(root: Path) -> int:
                 str(root),
             ],
             root / "manager.log",
-        )
-        manager_state(
-            root,
-            status="STARTING",
-            pid=proc.pid,
-            pgid=proc.pid,
-            identity=process_identity(proc.pid),
-            launched_at=utc_now(),
+            on_started=manager_started,
         )
     print(f"started cloud SB7 manager pid={proc.pid} root={root}")
     return 0
 
 
-def manager_monitor_gate_failure(
-    root: Path, campaign: Mapping[str, Any]
+def monitor_lease_snapshot_failure(
+    monitor: Mapping[str, Any],
+    campaign: Mapping[str, Any],
+    expected_lease_id: str | None = None,
 ) -> str | None:
-    monitor = read_monitor_state(root)
     pid = monitor.get("pid")
     if monitor.get("status") != "RUNNING":
         return f"monitor status is {monitor.get('status')}, not RUNNING"
@@ -11250,7 +11849,53 @@ def manager_monitor_gate_failure(
         "smoke_contract_sha256"
     ):
         return "monitor is bound to another smoke contract"
+    lease_id = monitor.get("lease_id")
+    if not isinstance(lease_id, str) or not lease_id:
+        return "monitor has no renewable lease identity"
+    if expected_lease_id is not None and lease_id != expected_lease_id:
+        return "monitor lease identity changed during manager execution"
+    heartbeat = monitor.get("heartbeat_monotonic")
+    if (
+        isinstance(heartbeat, bool)
+        or not isinstance(heartbeat, (int, float))
+        or not math.isfinite(float(heartbeat))
+    ):
+        return "monitor renewable lease has no valid heartbeat"
+    age = time.monotonic() - float(heartbeat)
+    if age < 0 or age > MONITOR_LEASE_TIMEOUT_SECONDS:
+        return f"monitor renewable lease is stale by {age:.3f}s"
     return None
+
+
+def manager_monitor_gate_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    expected_lease_id: str | None = None,
+) -> str | None:
+    return monitor_lease_snapshot_failure(
+        read_monitor_state(root), campaign, expected_lease_id
+    )
+
+
+def active_manager_monitor_lease_failure(
+    root: Path, campaign: Mapping[str, Any]
+) -> str | None:
+    manager = load_json(root / "manager.json")
+    lease_id = manager.get("monitor_lease_id")
+    if not isinstance(lease_id, str) or not lease_id:
+        return "manager has no bound monitor lease identity"
+    return manager_monitor_gate_failure(root, campaign, lease_id)
+
+
+def provider_admission_gate_failure(
+    root: Path, campaign: Mapping[str, Any]
+) -> str | None:
+    current = load_json(campaign_file(root))
+    if current.get("campaign_id") != campaign.get("campaign_id"):
+        return "campaign identity changed before provider admission"
+    if current.get("status") != "RUNNING":
+        return f"campaign status is {current.get('status')}, not RUNNING"
+    return active_manager_monitor_lease_failure(root, current)
 
 
 def stop_runtime_groups_for_attention(root: Path) -> list[str]:
@@ -11496,7 +12141,9 @@ def wait_for_monitor_detachment(
         time.sleep(poll_seconds)
 
 
-def monitor_campaign(root: Path, poll_seconds: float = 10.0) -> int:
+def monitor_campaign(
+    root: Path, poll_seconds: float = MONITOR_HEARTBEAT_INTERVAL_SECONDS
+) -> int:
     with exclusive_claim(root / "locks/monitor-run.claim") as claimed:
         if not claimed:
             return 0
@@ -11522,6 +12169,7 @@ def monitor_campaign(root: Path, poll_seconds: float = 10.0) -> int:
             session_id=os.getsid(0),
             detached_session=os.getsid(0) == os.getpid(),
             smoke_contract_sha256=contract,
+            lease_id=secrets.token_hex(16),
             started_at=utc_now(),
             failure=None,
         )
@@ -11562,8 +12210,21 @@ def monitor_start(root: Path) -> int:
             pid=None,
             pgid=None,
             identity=None,
+            lease_id=None,
             recovered_at=utc_now() if current.get("pid") else None,
         )
+        def monitor_started(proc: subprocess.Popen[Any]) -> None:
+            monitor_state(
+                root,
+                status="STARTING",
+                pid=proc.pid,
+                pgid=proc.pid,
+                identity=process_identity(proc.pid),
+                smoke_contract_sha256=campaign["smoke_contract_sha256"],
+                launched_at=utc_now(),
+                failure=None,
+            )
+
         proc = launch_detached(
             [
                 sys.executable,
@@ -11573,16 +12234,7 @@ def monitor_start(root: Path) -> int:
                 str(root),
             ],
             root / "monitor.log",
-        )
-        monitor_state(
-            root,
-            status="STARTING",
-            pid=proc.pid,
-            pgid=proc.pid,
-            identity=process_identity(proc.pid),
-            smoke_contract_sha256=campaign["smoke_contract_sha256"],
-            launched_at=utc_now(),
-            failure=None,
+            on_started=monitor_started,
         )
     print(f"started cloud SB7 monitor pid={proc.pid} root={root}")
     return 0
@@ -11625,6 +12277,24 @@ def stop_claimed(root: Path) -> int:
     campaign = load_json(campaign_file(root))
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
     failures = []
+    smoke_manager = read_smoke_manager_state(root)
+    if (
+        smoke_manager.get("status") not in {"HANDED_OFF", "ATTENTION", "STOPPED"}
+        and smoke_manager.get("pgid")
+        and (
+            process_alive(
+                smoke_manager.get("pid"), smoke_manager.get("identity")
+            )
+            or process_group_members(int(smoke_manager["pgid"]))
+        )
+        and not stop_recorded_group(
+            smoke_manager.get("pid"),
+            smoke_manager.get("pgid"),
+            smoke_manager.get("identity"),
+        )
+    ):
+        failures.append(f"smoke-manager:pgid={smoke_manager.get('pgid')}")
+    smoke_manager_state(root, status="STOPPED", stop_failures=failures)
     for row in entrants(manifest):
         entrant_id = str(row["id"])
         smoke_path = smoke_state_file(root, entrant_id)
@@ -11898,6 +12568,11 @@ def main() -> int:
         "--regression-test", type=Path, required=True
     )
 
+    p_gated_exec = sub.add_parser("_gated_exec")
+    p_gated_exec.add_argument("--gate", type=Path, required=True)
+    p_gated_exec.add_argument("--token", required=True)
+    p_gated_exec.add_argument("exec_command", nargs=argparse.REMAINDER)
+
     for name in (
         "smoke",
         "monitor-start",
@@ -11914,6 +12589,7 @@ def main() -> int:
     p_smoke_supervise = sub.add_parser("_smoke_supervise")
     root_arg(p_smoke_supervise)
     p_smoke_supervise.add_argument("--entrant", required=True)
+    root_arg(sub.add_parser("_smoke_manage"))
     root_arg(sub.add_parser("_monitor"))
     p_supervise = sub.add_parser("_supervise")
     root_arg(p_supervise)
@@ -12003,11 +12679,15 @@ def main() -> int:
         )
         print(json.dumps(value, indent=2, sort_keys=True))
         return 0
+    if args.command == "_gated_exec":
+        return gated_exec(args.gate.resolve(), args.token, args.exec_command)
     root = args.root.resolve()
     if args.command == "smoke":
-        return smoke(root)
+        return durable_smoke(root)
     if args.command == "_smoke_supervise":
         return smoke_supervise(root, args.entrant)
+    if args.command == "_smoke_manage":
+        return smoke_manage(root)
     if args.command == "monitor-start":
         return monitor_start(root)
     if args.command == "_monitor":
@@ -12047,68 +12727,7 @@ def main() -> int:
         ids = [state["entrant"] for state in status_rows(root)]
         return 0 if score_all(root, ids) else 1
     if args.command == "resume":
-        require_lineage(root)
-        recover_dead_manager(root)
-        recover_interrupted_publication(root)
-        campaign = load_json(campaign_file(root))
-        for state in status_rows(root):
-            if state["status"] == "PRE_ADMISSION_FAILURE":
-                row = manifest_row(root, str(state["entrant"]))
-                lifecycle = lifecycle_summary(
-                    Path(str(state["provider_lifecycle"])),
-                    expected_provider=str(row["provider"]),
-                    expected_model=str(row["model"]),
-                )
-                outstanding_ids, budget_error = entrant_outstanding_reservations(
-                    campaign, row
-                )
-                pgid = int(state.get("supervisor_pgid") or 0)
-                members = process_group_members(pgid) if pgid else []
-                if (
-                    lifecycle["admitted"]
-                    or lifecycle_failure(lifecycle)
-                    or outstanding_ids
-                    or budget_error
-                    or members
-                ):
-                    update_state(
-                        root,
-                        state["entrant"],
-                        status="INCOMPLETE",
-                        failure="resume denied: reconstructed provider/process evidence is ambiguous",
-                        admitted_requests=lifecycle["admitted"],
-                        provider_terminal_requests=lifecycle["terminal"],
-                        lifecycle_transition_errors=lifecycle["transition_errors"],
-                        lifecycle_ambiguous_request_ids=lifecycle[
-                            "ambiguous_request_ids"
-                        ],
-                        budget_outstanding_request_ids=outstanding_ids,
-                    )
-                    raise SystemExit(
-                        f"{state['entrant']} has ambiguous evidence and cannot be retried"
-                    )
-                update_state(root, state["entrant"], status="PLANNED", failure=None)
-            elif state["status"] in {"INCOMPLETE", "STOPPED"}:
-                raise SystemExit(
-                    f"{state['entrant']} is {state['status']}; admitted or operator-stopped "
-                    "work cannot be resumed as a fresh paid attempt"
-                )
-            elif state["status"] == "SCORING":
-                update_state(
-                    root,
-                    state["entrant"],
-                    status="SCORE_FAILED",
-                    failure="scorer was interrupted; raw build remains sealed",
-                )
-        update_campaign(root, status="ATTENTION")
-        manager_state(
-            root,
-            status="ATTENTION",
-            pid=None,
-            pgid=None,
-            identity=None,
-        )
-        return start(root)
+        return resume_campaign(root)
     return 2
 
 

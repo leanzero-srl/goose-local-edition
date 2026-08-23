@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -20,6 +21,29 @@ PNG_1X1 = b64decode(
 
 
 class CloudSb7HarnessTest(unittest.TestCase):
+    def install_live_monitor_lease(self, root: Path) -> str:
+        campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+        lease_id = "fixture-monitor-lease"
+        pid = os.getpid()
+        cloud_sb7.monitor_state(
+            root,
+            status="RUNNING",
+            pid=pid,
+            pgid=pid,
+            identity=cloud_sb7.process_identity(pid),
+            parent_pid=1,
+            session_id=pid,
+            detached_session=True,
+            smoke_contract_sha256=campaign.get("smoke_contract_sha256"),
+            lease_id=lease_id,
+        )
+        cloud_sb7.manager_state(
+            root,
+            status="RUNNING",
+            monitor_lease_id=lease_id,
+        )
+        return lease_id
+
     def make_smoke_campaign(
         self, root: Path, *, entrant_count: int = 5
     ) -> list[dict[str, object]]:
@@ -518,6 +542,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         }
         cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
         cloud_sb7.atomic_json(root / "manager.json", {"status": "IDLE"})
+        self.install_live_monitor_lease(root)
         with mock.patch.object(
             cloud_sb7, "snapshot_listening_tcp_ports", return_value=[]
         ):
@@ -1356,6 +1381,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         )
         with (
             mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+            mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
             mock.patch.object(
                 cloud_sb7, "ORCHESTRATOR_RECOVERY_INCIDENT", incident
             ),
@@ -1368,6 +1394,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         recovery_evidence = root / "orchestrator-recovery-evidence.json"
         with (
             mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+            mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
             mock.patch.object(
                 cloud_sb7, "ORCHESTRATOR_RECOVERY_INCIDENT", incident
             ),
@@ -1393,6 +1420,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
     ) -> dict[str, object]:
         with (
             mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+            mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
             mock.patch.object(
                 cloud_sb7,
                 "ORCHESTRATOR_RECOVERY_INCIDENT",
@@ -3299,6 +3327,15 @@ class CloudSb7HarnessTest(unittest.TestCase):
         class Launched:
             pid = 24680
 
+        def launch(
+            _command: list[str],
+            _log_path: Path,
+            *,
+            on_started: object,
+        ) -> Launched:
+            on_started(Launched())
+            return Launched()
+
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             self.make_smoke_campaign(root, entrant_count=1)
@@ -3317,7 +3354,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 ),
                 mock.patch.object(cloud_sb7, "stop_group") as stop_group,
                 mock.patch.object(
-                    cloud_sb7, "launch_detached", return_value=Launched()
+                    cloud_sb7, "launch_detached", side_effect=launch
                 ),
             ):
                 self.assertEqual(cloud_sb7.monitor_start(root), 0)
@@ -4150,13 +4187,16 @@ class CloudSb7HarnessTest(unittest.TestCase):
             with self.subTest(status=status), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 self.make_recovery_campaign(root, status)
+                self.install_live_monitor_lease(root)
+
+                def launch(*_args: object, **kwargs: object) -> Launched:
+                    kwargs["on_started"](Launched())  # type: ignore[index,operator]
+                    return Launched()
+
                 with (
                     mock.patch.object(cloud_sb7, "require_smoke_proofs"),
                     mock.patch.object(
-                        cloud_sb7, "manager_monitor_gate_failure", return_value=None
-                    ),
-                    mock.patch.object(
-                        cloud_sb7, "launch_detached", return_value=Launched()
+                        cloud_sb7, "launch_detached", side_effect=launch
                     ) as launch,
                 ):
                     self.assertEqual(cloud_sb7.start(root), 0)
@@ -4942,6 +4982,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 },
             )
             cloud_sb7.atomic_json(root / "manager.json", {"status": "RUNNING"})
+            self.install_live_monitor_lease(root)
             for entrant_id, status in (
                 ("complete", "BUILD_COMPLETE"),
                 ("failed", "INCOMPLETE"),
@@ -5041,6 +5082,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             fixture = self.make_orchestrator_recovery_fixture(Path(raw))
             with (
                 mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
                 self.assertRaisesRegex(
                     SystemExit, "not the exact sealed 2026-08-23 incident"
                 ),
@@ -5099,6 +5141,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
                 with (
                     mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                    mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
                     mock.patch.object(
                         cloud_sb7,
                         "ORCHESTRATOR_RECOVERY_INCIDENT",
@@ -5138,6 +5181,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
             with (
                 mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
                 mock.patch.object(
                     cloud_sb7,
                     "ORCHESTRATOR_RECOVERY_INCIDENT",
@@ -5184,6 +5228,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 session_id=24680,
                 detached_session=True,
                 smoke_contract_sha256=campaign["smoke_contract_sha256"],
+                lease_id="fixture-monitor-lease",
             )
             with (
                 mock.patch.object(cloud_sb7, "require_smoke_proofs"),
@@ -5212,6 +5257,380 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.monitor_start(root)
             smoke.assert_not_called()
             launch.assert_not_called()
+
+    def test_generation_two_excludes_only_exact_carried_reservations(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+            target_root = Path(str(fixture["target"]))
+            self.orchestrator_recovery_fixture(fixture)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(target_root))
+            row = fixture["rows"][0]
+            entrant_id = str(row["id"])
+
+            outstanding, error = (
+                cloud_sb7.current_full_episode_outstanding_reservations(
+                    target_root, campaign, row
+                )
+            )
+            self.assertEqual((outstanding, error), ([], None))
+
+            lineage = cloud_sb7.load_json(
+                target_root / cloud_sb7.ORCHESTRATOR_RECOVERY_PATH
+            )
+            carried_id = lineage["source_ambiguous_request_ids"][entrant_id][0]
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            current_id = f"episode-2-{entrant_id}"
+            reservation = dict(ledger["outstanding"][carried_id])
+            reservation["request_id"] = current_id
+            reservation["created_at_unix_ms"] = 999999
+            ledger["outstanding"][current_id] = reservation
+            cloud_sb7.atomic_json(ledger_path, ledger)
+
+            outstanding, error = (
+                cloud_sb7.current_full_episode_outstanding_reservations(
+                    target_root, campaign, row
+                )
+            )
+            self.assertEqual((outstanding, error), ([current_id], None))
+
+            ledger["outstanding"].pop(carried_id)
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            outstanding, error = (
+                cloud_sb7.current_full_episode_outstanding_reservations(
+                    target_root, campaign, row
+                )
+            )
+            self.assertEqual(outstanding, [])
+            self.assertIn("reservation", error or "")
+
+    def test_provider_spawn_failure_reclaims_only_unstarted_episode(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "entrants/model/tree/.swarm").mkdir(parents=True)
+            telemetry = root / "entrants/model/tree/.swarm/telemetry.jsonl"
+            telemetry.write_text("")
+            cloud_sb7.atomic_json(
+                cloud_sb7.state_file(root, "model"),
+                {
+                    "entrant": "model",
+                    "status": "BUILD_RUNNING",
+                    "provider_episode_attempts": 2,
+                    "goose_pid": None,
+                    "started_at": "now",
+                    "prompt_sha256": "f" * 64,
+                    "command": ["goose", "run"],
+                },
+            )
+
+            state = cloud_sb7.rollback_provider_episode_before_process(
+                root,
+                "model",
+                1,
+                telemetry,
+                "provider process was not created",
+            )
+
+            self.assertEqual(state["status"], "PRE_ADMISSION_FAILURE")
+            self.assertEqual(state["provider_episode_attempts"], 1)
+            self.assertIsNone(state["started_at"])
+            self.assertIsNone(state["prompt_sha256"])
+            self.assertIsNone(state["command"])
+            self.assertFalse(telemetry.exists())
+
+    def test_monitor_death_stops_real_supervisor_group(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            lifecycle = root / "entrants" / entrant_id / "provider-lifecycle.jsonl"
+            lifecycle.write_text("")
+            monitor = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            worker = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            try:
+                campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+                cloud_sb7.update_campaign(root, status="RUNNING")
+                lease_id = "real-monitor-lease"
+                cloud_sb7.monitor_state(
+                    root,
+                    status="RUNNING",
+                    pid=monitor.pid,
+                    pgid=monitor.pid,
+                    identity=cloud_sb7.process_identity(monitor.pid),
+                    parent_pid=1,
+                    session_id=monitor.pid,
+                    detached_session=True,
+                    smoke_contract_sha256=campaign["smoke_contract_sha256"],
+                    lease_id=lease_id,
+                )
+                cloud_sb7.manager_state(
+                    root, status="RUNNING", monitor_lease_id=lease_id
+                )
+                cloud_sb7.update_state(
+                    root,
+                    entrant_id,
+                    status="WAITING_PROVIDER_LANE",
+                    provider=row["provider"],
+                    model=row["model"],
+                    provider_lifecycle=str(lifecycle),
+                    supervisor_pid=worker.pid,
+                    supervisor_pgid=worker.pid,
+                    supervisor_identity=cloud_sb7.process_identity(worker.pid),
+                )
+                os.kill(monitor.pid, signal.SIGKILL)
+                monitor.wait(timeout=5)
+
+                self.assertFalse(
+                    cloud_sb7.wait_for_builds(
+                        root, [entrant_id], poll_seconds=0.01
+                    )
+                )
+                worker.wait(timeout=5)
+                self.assertEqual(
+                    cloud_sb7.load_json(cloud_sb7.campaign_file(root))["status"],
+                    "ATTENTION",
+                )
+                self.assertIn(
+                    cloud_sb7.read_state(root, entrant_id)["status"],
+                    {"PRE_ADMISSION_FAILURE", "INCOMPLETE"},
+                )
+            finally:
+                if monitor.poll() is None:
+                    cloud_sb7.stop_group(monitor.pid, grace_seconds=0.1)
+                if worker.poll() is None:
+                    cloud_sb7.stop_group(worker.pid, grace_seconds=0.1)
+
+    def test_stale_monitor_lease_blocks_live_publication_before_process(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_scored_campaign(root)
+            monitor = cloud_sb7.read_monitor_state(root)
+            monitor["heartbeat_monotonic"] = (
+                time.monotonic() - cloud_sb7.MONITOR_LEASE_TIMEOUT_SECONDS - 1
+            )
+            cloud_sb7.atomic_json(root / "monitor.json", monitor)
+            with mock.patch.object(cloud_sb7, "run_publisher") as publisher:
+                self.assertFalse(cloud_sb7.publish_one(root, "fixture-model"))
+            publisher.assert_not_called()
+
+    def test_stale_monitor_lease_blocks_scorer_before_process(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_scored_campaign(root)
+            cloud_sb7.update_state(root, "fixture-model", status="BUILD_COMPLETE")
+            monitor = cloud_sb7.read_monitor_state(root)
+            monitor["heartbeat_monotonic"] = (
+                time.monotonic() - cloud_sb7.MONITOR_LEASE_TIMEOUT_SECONDS - 1
+            )
+            cloud_sb7.atomic_json(root / "monitor.json", monitor)
+            with mock.patch.object(cloud_sb7, "launch_after_receipt") as launch:
+                self.assertFalse(cloud_sb7.score_one(root, "fixture-model"))
+            launch.assert_not_called()
+
+    def test_attention_campaign_refuses_direct_supervisor_before_process(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            cloud_sb7.update_campaign(root, status="ATTENTION")
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7.subprocess, "Popen") as launch,
+            ):
+                self.assertEqual(
+                    cloud_sb7.supervise_claimed(root, str(row["id"])), 2
+                )
+            launch.assert_not_called()
+
+    def test_smoke_manager_hands_success_to_detached_monitor(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            observed = []
+
+            def start_monitor(start_root: Path) -> int:
+                observed.append(
+                    cloud_sb7.read_smoke_manager_state(start_root)["status"]
+                )
+                return 0
+
+            with (
+                mock.patch.object(cloud_sb7, "smoke", return_value=0),
+                mock.patch.object(
+                    cloud_sb7, "monitor_start", side_effect=start_monitor
+                ) as monitor,
+                mock.patch.object(
+                    cloud_sb7, "process_identity", return_value="smoke-manager"
+                ),
+            ):
+                self.assertEqual(cloud_sb7.smoke_manage(root), 0)
+            monitor.assert_called_once_with(root)
+            self.assertEqual(observed, ["RUNNING"])
+            self.assertEqual(
+                cloud_sb7.read_smoke_manager_state(root)["status"], "HANDED_OFF"
+            )
+
+    def test_durable_smoke_relaunches_a_dead_manager_and_adopts_handoff(
+        self,
+    ) -> None:
+        class Launched:
+            def __init__(self, pid: int) -> None:
+                self.pid = pid
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            launches: list[int] = []
+
+            def launch(*_args: object, **kwargs: object) -> Launched:
+                proc = Launched(24680 + len(launches))
+                launches.append(proc.pid)
+                kwargs["on_started"](proc)
+                if len(launches) == 2:
+                    cloud_sb7.update_campaign(root, smoke_status="PASS")
+                    cloud_sb7.smoke_manager_state(root, status="HANDED_OFF")
+                return proc
+
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(
+                    cloud_sb7, "stop_recorded_group", return_value=True
+                ),
+                mock.patch.object(
+                    cloud_sb7, "process_identity", return_value="smoke-manager"
+                ),
+                mock.patch.object(
+                    cloud_sb7, "launch_after_receipt", side_effect=launch
+                ),
+            ):
+                self.assertEqual(cloud_sb7.durable_smoke(root, poll_seconds=0), 0)
+            self.assertEqual(launches, [24680, 24681])
+
+    def test_attention_resume_restarts_monitor_before_manager(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            lifecycle = root / "entrants" / entrant_id / "provider-lifecycle.jsonl"
+            lifecycle.write_text("")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="PRE_ADMISSION_FAILURE",
+                provider=row["provider"],
+                model=row["model"],
+                provider_lifecycle=str(lifecycle),
+                supervisor_pgid=None,
+            )
+            cloud_sb7.update_campaign(root, status="ATTENTION", failure="fixture")
+            cloud_sb7.manager_state(
+                root,
+                status="ATTENTION",
+                pid=None,
+                pgid=None,
+                identity=None,
+            )
+            cloud_sb7.monitor_state(
+                root,
+                status="ATTENTION",
+                pid=None,
+                pgid=None,
+                identity=None,
+            )
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "recover_dead_manager"),
+                mock.patch.object(cloud_sb7, "recover_interrupted_publication"),
+                mock.patch.object(cloud_sb7, "monitor_start", return_value=0) as start,
+            ):
+                self.assertEqual(cloud_sb7.resume_campaign(root), 0)
+            start.assert_called_once_with(root)
+            self.assertEqual(
+                cloud_sb7.read_state(root, entrant_id)["status"], "PLANNED"
+            )
+            self.assertEqual(
+                cloud_sb7.load_json(cloud_sb7.campaign_file(root))["status"],
+                "INITIALIZED",
+            )
+            self.assertEqual(
+                cloud_sb7.load_json(root / "manager.json")["status"], "IDLE"
+            )
+
+    def test_gated_child_never_execs_before_parent_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            marker = root / "executed.txt"
+            child_pid = root / "child.pid"
+            bench = Path(cloud_sb7.__file__).resolve().parent
+            command = (
+                "import subprocess,sys,time; from pathlib import Path; "
+                f"sys.path.insert(0, {str(bench)!r}); import cloud_sb7; "
+                "def_started=lambda proc: "
+                f"(Path({str(child_pid)!r}).write_text(str(proc.pid)), time.sleep(120)); "
+                "cloud_sb7.launch_after_receipt([sys.executable, '-c', "
+                f"\"from pathlib import Path; Path({str(marker)!r}).write_text('ran')\"], "
+                f"cwd=Path({str(root)!r}), env=None, stdin=subprocess.DEVNULL, "
+                "stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, "
+                f"gate_dir=Path({str(root / 'gates')!r}), on_started=def_started)"
+            )
+            parent = subprocess.Popen(
+                [sys.executable, "-c", command], start_new_session=True
+            )
+            child = 0
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and not child_pid.is_file():
+                    time.sleep(0.02)
+                self.assertTrue(child_pid.is_file())
+                child = int(child_pid.read_text())
+                os.kill(parent.pid, signal.SIGKILL)
+                parent.wait(timeout=5)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and cloud_sb7.process_alive(child):
+                    time.sleep(0.02)
+                self.assertFalse(cloud_sb7.process_alive(child))
+                self.assertFalse(marker.exists())
+            finally:
+                if parent.poll() is None:
+                    cloud_sb7.stop_group(parent.pid, grace_seconds=0.1)
+                if child and cloud_sb7.process_alive(child):
+                    cloud_sb7.stop_group(child, grace_seconds=0.1)
+
+    def test_orchestrator_evidence_requires_clean_tree_and_distinct_artifacts(
+        self,
+    ) -> None:
+        with mock.patch.object(
+            cloud_sb7,
+            "git_value",
+            return_value=" M evals/swarm-bench/bench/cloud_sb7.py",
+        ), self.assertRaisesRegex(SystemExit, "must be clean"):
+            cloud_sb7.require_clean_source_worktree()
+
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+            evidence_path = Path(str(fixture["evidence"]))
+            original = cloud_sb7.load_json(evidence_path)
+            same_file = json.loads(json.dumps(original))
+            same_file["artifacts"][1]["path"] = same_file["artifacts"][0]["path"]
+            same_file["artifacts"][1]["sha256"] = same_file["artifacts"][0][
+                "sha256"
+            ]
+            cloud_sb7.atomic_json(evidence_path, same_file)
+            with self.assertRaisesRegex(SystemExit, "distinct files"):
+                self.orchestrator_recovery_fixture(fixture)
+
+            duplicate_role = json.loads(json.dumps(original))
+            duplicate_role["artifacts"][1]["role"] = "root_cause"
+            cloud_sb7.atomic_json(evidence_path, duplicate_role)
+            with self.assertRaisesRegex(SystemExit, "role is duplicated"):
+                self.orchestrator_recovery_fixture(fixture)
 
 
 if __name__ == "__main__":
