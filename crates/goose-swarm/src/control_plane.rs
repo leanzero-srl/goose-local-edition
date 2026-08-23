@@ -1056,7 +1056,7 @@ impl PhysicalAdmissionControl {
         self.inner
             .sink
             .emit(&SwarmEvent::BrokerAdmissionQuarantined {
-                receipt: outcome.receipt.clone(),
+                receipt: Box::new(outcome.receipt.clone()),
             });
         for receipt in outcome.withdrawn_work {
             if let Some(waiter) = state.admission_waiters.remove(&receipt.work_id) {

@@ -162,7 +162,7 @@ pub enum SwarmEvent {
         receipt: ReleasedAdmissionReceipt,
     },
     BrokerAdmissionQuarantined {
-        receipt: QuarantinedAdmissionReceipt,
+        receipt: Box<QuarantinedAdmissionReceipt>,
     },
     BrokerReceiptRejected {
         admission: Option<AdmissionReceipt>,
