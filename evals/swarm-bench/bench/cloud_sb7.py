@@ -80,6 +80,37 @@ QUALIFICATION_RESTART_RECEIPT = "qualification-restart-receipt.json"
 QUALIFICATION_RESTART_SEAL = "qualification-restart-seal.json"
 QUALIFICATION_RESTART_EVIDENCE = "qualification-restart-evidence"
 QUALIFICATION_HISTORY_PATH = "qualification/qualification-restart.json"
+ORCHESTRATOR_RECOVERY_SCHEMA = 1
+ORCHESTRATOR_RECOVERY_RECEIPT = "orchestrator-recovery-receipt.json"
+ORCHESTRATOR_RECOVERY_SEAL = "orchestrator-recovery-seal.json"
+ORCHESTRATOR_RECOVERY_EVIDENCE = "orchestrator-recovery-evidence"
+ORCHESTRATOR_RECOVERY_PATH = "recovery/orchestrator-recovery.json"
+ORCHESTRATOR_MONITOR_FAILURE = (
+    "cloud campaign lineage refused execution: unstarted entrant acquired or "
+    "reset attempts: deepseek-v4-flash\n"
+)
+ORCHESTRATOR_RECOVERY_INCIDENT = {
+    "source_root": (
+        "/Users/mihaiperdum/goose-builds/"
+        "cloud-sb7-20260823-gemini-fixed-s1"
+    ),
+    "source_campaign_id": "cloud-sb7-20260823-gemini-fixed-s1",
+    "source_smoke_contract_sha256": (
+        "f08a1ac96d5ce601ad9995405ea67869d222cada4023bbae8ed5f802cc814873"
+    ),
+    "source_binary_sha256": (
+        "1dbe4ee40831123bb799b397572a35927019cbe55b633615c95b14dfcc618030"
+    ),
+    "source_manifest_sha256": (
+        "c8c2ad06f630e81d9b659dfd14bf1ba81e476928db134a30572b8b5d53fcb849"
+    ),
+    "source_instrument_set_sha256": (
+        "0471ece992edd1d248ae9beb8d22d2d7cf24a11b692da491e7ebbfe078cfd074"
+    ),
+    "source_evidence_sha256": (
+        "a0b9a7d847deb4481217f317b6d23d2208a06116661cd9402de80d5552ab64d8"
+    ),
+}
 SUPERSESSION_ALLOWED_INSTRUMENT_CHANGES = {
     "evals/swarm-bench/bench/cloud_sb7.py",
 }
@@ -4558,11 +4589,33 @@ def qualification_history_failure(
         subject_root = Path(str(history["subject_root"])).resolve()
         if root.resolve() != subject_root:
             lineage_pointer = campaign.get("lineage")
-            if (
-                not isinstance(lineage_pointer, dict)
-                or lineage_pointer.get("generation") != 1
-            ):
-                return "qualification history was copied outside its one-hop successor"
+            if not isinstance(lineage_pointer, dict):
+                return "qualification history was copied without successor lineage"
+            if lineage_pointer.get("generation") == 2:
+                recovery_path = root / str(lineage_pointer.get("path", ""))
+                if (
+                    lineage_pointer.get("path") != ORCHESTRATOR_RECOVERY_PATH
+                    or not recovery_path.is_file()
+                    or recovery_path.is_symlink()
+                ):
+                    return "qualification recovery successor has no sealed lineage"
+                recovery = load_json(recovery_path)
+                recovery_source = Path(str(recovery.get("source_root", ""))).resolve()
+                source_problem = lineage_failure(
+                    recovery_source,
+                    allow_terminal_orchestrator_recovery_receipt=True,
+                )
+                if source_problem:
+                    return (
+                        "qualification recovery source is invalid: "
+                        f"{source_problem}"
+                    )
+                source_campaign = load_json(campaign_file(recovery_source))
+                if source_campaign.get("qualification_history") != history:
+                    return "qualification history differs from its recovery source"
+                return None
+            if lineage_pointer.get("generation") != 1:
+                return "qualification history was copied outside an approved successor"
             supersession_path = root / str(lineage_pointer.get("path", ""))
             if not supersession_path.is_file():
                 return "qualification successor has no supersession lineage"
@@ -4742,6 +4795,7 @@ def lineage_failure(
     *,
     allow_terminal_qualification_receipt: bool = False,
     allow_terminal_supersession_receipt: bool = False,
+    allow_terminal_orchestrator_recovery_receipt: bool = False,
 ) -> str | None:
     try:
         campaign = load_json(campaign_file(root))
@@ -4749,6 +4803,15 @@ def lineage_failure(
         if qualification_receipt.exists() and not allow_terminal_qualification_receipt:
             return (
                 "campaign has an immutable qualification restart receipt and cannot "
+                "run again"
+            )
+        recovery_receipt = root / ORCHESTRATOR_RECOVERY_RECEIPT
+        if (
+            recovery_receipt.exists()
+            and not allow_terminal_orchestrator_recovery_receipt
+        ):
+            return (
+                "campaign has an immutable orchestrator recovery receipt and cannot "
                 "run again"
             )
         qualification_problem = qualification_history_failure(root, campaign)
@@ -4763,6 +4826,10 @@ def lineage_failure(
             if receipt_at_root.exists() and not allow_terminal_supersession_receipt:
                 return "campaign has an immutable supersession receipt and cannot run again"
             return None
+        if lineage_pointer.get("generation") == 2:
+            if receipt_at_root.exists():
+                return "orchestrator recovery target has an unexpected successor receipt"
+            return orchestrator_recovery_lineage_failure(root, campaign)
         if receipt_at_root.exists():
             return "one-hop supersession successor has an unexpected successor receipt"
         if lineage_pointer.get("generation") != 1:
@@ -5002,8 +5069,29 @@ def lineage_failure(
             elif entrant_id in unstarted:
                 if state.get("lineage_role") != "unstarted_after_infrastructure_defect":
                     return f"unstarted entrant lineage role drifted: {entrant_id}"
-                if expected_attempts != 0 or current_attempts != 0:
+                if (
+                    expected_attempts != 0
+                    or current_attempts < 0
+                    or current_attempts > max_episodes
+                ):
                     return f"unstarted entrant acquired or reset attempts: {entrant_id}"
+                if current_attempts == 0:
+                    row = rows_by_id[entrant_id]
+                    lifecycle = lifecycle_summary(
+                        Path(str(state.get("provider_lifecycle", ""))),
+                        expected_provider=str(row["provider"]),
+                        expected_model=str(row["model"]),
+                    )
+                    if (
+                        int(lifecycle.get("events", 0)) != 0
+                        or state.get("started_at") is not None
+                        or state.get("prompt_sha256") is not None
+                        or state.get("command") is not None
+                    ):
+                        return (
+                            "unstarted entrant attempt counter was reset after full "
+                            f"activity: {entrant_id}"
+                        )
             else:
                 if state.get("lineage_role") != "carried_success":
                     return f"carried entrant lineage role drifted: {entrant_id}"
@@ -6046,6 +6134,1534 @@ def qualification_restart_campaign(
                         staging_parent.rmdir()
 
 
+def exact_tree_evidence(root: Path) -> Dict[str, Any]:
+    if not root.is_dir() or root.is_symlink():
+        raise SystemExit(f"recovery artifact tree is missing or linked: {root}")
+    files = 0
+    byte_count = 0
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise SystemExit(f"recovery artifact tree contains a link: {path}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise SystemExit(f"recovery artifact tree contains a special file: {path}")
+        files += 1
+        byte_count += path.stat().st_size
+    return {
+        "sha256": sha256_tree_exact(root),
+        "file_count": files,
+        "bytes": byte_count,
+    }
+
+
+def orchestrator_source_evidence_snapshot(
+    root: Path,
+    campaign: Mapping[str, Any],
+    rows: list[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    entrant_evidence: Dict[str, Any] = {}
+    for row in rows:
+        entrant_id = str(row["id"])
+        state = read_state(root, entrant_id)
+        lifecycle_path = Path(str(state["provider_lifecycle"]))
+        lifecycle = lifecycle_summary(
+            lifecycle_path,
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        entrant_evidence[entrant_id] = {
+            "state_sha256": sha256_file(state_file(root, entrant_id)),
+            "unit_sha256": artifact_tree_sha256(root / "entrants" / entrant_id),
+            "tree": exact_tree_evidence(Path(str(state["tree"]))),
+            "lifecycle_sha256": sha256_file(lifecycle_path),
+            "lifecycle_events": int(lifecycle["events"]),
+            "lifecycle_admitted": int(lifecycle["admitted"]),
+            "lifecycle_terminal": int(lifecycle["terminal"]),
+            "ambiguous_request_ids": lifecycle["ambiguous_request_ids"],
+        }
+    return {
+        "campaign_sha256": sha256_file(campaign_file(root)),
+        "budget_ledger_sha256": sha256_file(Path(str(campaign["budget_ledger"]))),
+        "manager_sha256": sha256_file(root / "manager.json"),
+        "monitor_sha256": sha256_file(root / "monitor.json"),
+        "manager_log_sha256": sha256_file(root / "manager.log"),
+        "monitor_log_sha256": sha256_file(root / "monitor.log"),
+        "lineage_sha256": sha256_file(root / str(campaign["lineage"]["path"])),
+        "entrants": entrant_evidence,
+    }
+
+
+def orchestrator_recovery_incident_identity(
+    root: Path,
+    campaign: Mapping[str, Any],
+    source_evidence: Mapping[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "source_root": str(root.resolve()),
+        "source_campaign_id": campaign.get("campaign_id"),
+        "source_smoke_contract_sha256": campaign.get("smoke_contract_sha256"),
+        "source_binary_sha256": campaign.get("binary_sha256"),
+        "source_manifest_sha256": campaign.get("entrant_manifest_sha256"),
+        "source_instrument_set_sha256": campaign.get("instrument_set_sha256"),
+        "source_evidence_sha256": sha256_bytes(
+            json.dumps(source_evidence, sort_keys=True).encode()
+        ),
+    }
+
+
+def stopped_orchestrator_recovery_source(
+    root: Path,
+    campaign: Mapping[str, Any],
+    rows: list[Mapping[str, Any]],
+) -> tuple[Dict[str, Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    if (
+        campaign.get("status") != "STOPPED"
+        or campaign.get("failure") is not None
+        or campaign.get("build_finished_at") is not None
+        or campaign.get("score_started_at") is not None
+    ):
+        raise SystemExit("orchestrator recovery source is not a clean operator stop")
+    if validated_campaign_lineage(campaign)["generation"] != 1:
+        raise SystemExit("orchestrator recovery requires one exact generation-1 source")
+    if len(rows) != 5:
+        raise SystemExit("orchestrator recovery requires the complete five-model roster")
+    if (root / SUPERSESSION_RECEIPT).exists() or (
+        root / QUALIFICATION_RESTART_RECEIPT
+    ).exists():
+        raise SystemExit("orchestrator recovery source has another terminal receipt")
+    lineage_problem = lineage_failure(
+        root, allow_terminal_orchestrator_recovery_receipt=True
+    )
+    if lineage_problem:
+        raise SystemExit(f"orchestrator recovery source lineage is invalid: {lineage_problem}")
+    try:
+        require_smoke_proofs(root, check_live_instrument=False)
+    except SystemExit as error:
+        raise SystemExit(
+            f"orchestrator recovery source lacks its frozen five-model smoke proof: {error}"
+        ) from None
+
+    manager = load_json(root / "manager.json")
+    monitor = read_monitor_state(root)
+    for name, runtime in (("manager", manager), ("monitor", monitor)):
+        if runtime.get("status") != "STOPPED":
+            raise SystemExit(f"orchestrator recovery source {name} is not stopped")
+        if process_alive(runtime.get("pid"), runtime.get("identity")):
+            raise SystemExit(f"orchestrator recovery source {name} is still alive")
+        pgid = int(runtime.get("pgid") or 0)
+        if pgid and process_group_members(pgid):
+            raise SystemExit(
+                f"orchestrator recovery source {name} process group is not clean"
+            )
+    manager_log = root / "manager.log"
+    monitor_log = root / "monitor.log"
+    for name, path in (("manager", manager_log), ("monitor", monitor_log)):
+        if not path.is_file() or path.is_symlink():
+            raise SystemExit(f"orchestrator recovery {name} log is missing or linked")
+    if manager_log.read_bytes() != b"":
+        raise SystemExit("orchestrator recovery manager log is not the sealed empty log")
+    if monitor_log.read_text(errors="strict") != ORCHESTRATOR_MONITOR_FAILURE:
+        raise SystemExit("orchestrator recovery monitor log is not the known lineage defect")
+
+    ledger_path = Path(str(campaign["budget_ledger"]))
+    ledger = load_json(ledger_path)
+    budget_config = load_json(Path(str(campaign["budget_config"])))
+    ledger_problem = budget_ledger_failure(ledger, budget_config)
+    if ledger_problem:
+        raise SystemExit(f"orchestrator recovery source {ledger_problem}")
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
+    if max_episodes < 2:
+        raise SystemExit("orchestrator recovery has no preserved episode ordinal left")
+
+    states: Dict[str, Dict[str, Any]] = {}
+    all_ambiguous: set[str] = set()
+    all_lifecycle_ids: set[str] = set()
+    outstanding = ledger.get("outstanding")
+    if not isinstance(outstanding, dict):
+        raise SystemExit("orchestrator recovery ledger outstanding map is malformed")
+    settlements = {
+        str(value["request_id"]): value
+        for value in ledger["settled"]
+        if isinstance(value, dict) and isinstance(value.get("request_id"), str)
+    }
+    for collection in ("scores", "publish"):
+        collection_root = root / collection
+        if (
+            not collection_root.is_dir()
+            or collection_root.is_symlink()
+            or next(collection_root.iterdir(), None) is not None
+        ):
+            raise SystemExit(
+                f"orchestrator recovery source has hidden {collection} output"
+            )
+    for row in rows:
+        entrant_id = str(row["id"])
+        state = read_state(root, entrant_id)
+        states[entrant_id] = state
+        if (
+            state.get("status") != "STOPPED"
+            or int(state.get("provider_episode_attempts", -1)) != 1
+            or state.get("failure") is not None
+            or state.get("score") is not None
+            or state.get("verdict") not in {None, ""}
+            or state.get("exit_code") is not None
+            or state.get("finished_at") is not None
+            or state.get("raw_tree_sha256") is not None
+        ):
+            raise SystemExit(
+                "orchestrator recovery is forbidden after a build outcome or model "
+                f"failure: {entrant_id}"
+            )
+        for pid_key, pgid_key, identity_key in (
+            ("supervisor_pid", "supervisor_pgid", "supervisor_identity"),
+            ("goose_pid", "process_group", "goose_identity"),
+            ("publisher_pid", "publisher_pgid", "publisher_identity"),
+            ("score_pid", "score_pgid", "score_identity"),
+        ):
+            if process_alive(state.get(pid_key), state.get(identity_key)):
+                raise SystemExit(
+                    f"orchestrator recovery source {entrant_id} still owns {pid_key}"
+                )
+            pgid = int(state.get(pgid_key) or 0)
+            if pgid and process_group_members(pgid):
+                raise SystemExit(
+                    f"orchestrator recovery source {entrant_id} still owns group {pgid}"
+                )
+        smoke_state = read_smoke_state(root, entrant_id)
+        if process_alive(
+            smoke_state.get("supervisor_pid"), smoke_state.get("supervisor_identity")
+        ):
+            raise SystemExit(
+                f"orchestrator recovery source {entrant_id} smoke is still alive"
+            )
+        smoke_pgid = int(smoke_state.get("supervisor_pgid") or 0)
+        if smoke_pgid and process_group_members(smoke_pgid):
+            raise SystemExit(
+                f"orchestrator recovery source {entrant_id} smoke group is not clean"
+            )
+
+        lifecycle_path = Path(str(state["provider_lifecycle"]))
+        if not lifecycle_path.is_file() or lifecycle_path.is_symlink():
+            raise SystemExit(
+                f"orchestrator recovery source lifecycle is missing: {entrant_id}"
+            )
+        lifecycle = lifecycle_summary(
+            lifecycle_path,
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        if (
+            int(lifecycle.get("events", 0)) == 0
+            or int(lifecycle.get("malformed_lines", 0)) != 0
+            or lifecycle.get("transition_errors")
+        ):
+            raise SystemExit(
+                f"orchestrator recovery source lifecycle is invalid: {entrant_id}"
+            )
+        request_states = lifecycle.get("request_states")
+        ambiguous = lifecycle.get("ambiguous_request_ids")
+        terminal_usage = lifecycle.get("terminal_usage")
+        if (
+            not isinstance(request_states, dict)
+            or not isinstance(ambiguous, list)
+            or len(ambiguous) != 1
+            or ambiguous != sorted(set(ambiguous))
+            or not isinstance(terminal_usage, dict)
+        ):
+            raise SystemExit(
+                f"orchestrator recovery requires one preserved ambiguous request: {entrant_id}"
+            )
+        duplicate_ids = all_lifecycle_ids & set(request_states)
+        if duplicate_ids:
+            raise SystemExit("orchestrator recovery lifecycle reused a request id")
+        all_lifecycle_ids.update(request_states)
+        all_ambiguous.update(ambiguous)
+        for request_id, states_for_request in request_states.items():
+            if request_id in ambiguous:
+                continue
+            if (
+                not isinstance(states_for_request, list)
+                or not states_for_request
+                or states_for_request[-1] != "provider_terminal"
+            ):
+                raise SystemExit(
+                    "orchestrator recovery source contains a non-provider terminal "
+                    f"request: {entrant_id}/{request_id}"
+                )
+        for request_id, usage in terminal_usage.items():
+            settlement = settlements.get(request_id)
+            if settlement is None or any(
+                settlement.get(key) != usage.get(key)
+                for key in (
+                    "reported_model",
+                    "input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                )
+            ):
+                raise SystemExit(
+                    "orchestrator recovery terminal usage is not exactly settled: "
+                    f"{entrant_id}/{request_id}"
+                )
+        entrant_outstanding = sorted(
+            request_id
+            for request_id, reservation in outstanding.items()
+            if isinstance(reservation, dict)
+            and reservation.get("provider") == row["provider"]
+            and reservation.get("model") == row["model"]
+        )
+        if entrant_outstanding != ambiguous:
+            raise SystemExit(
+                "orchestrator recovery ambiguous lifecycle and ledger reserve differ: "
+                f"{entrant_id}"
+            )
+        if optional_artifact_tree_sha256(root / "scores" / entrant_id) is not None:
+            raise SystemExit(f"orchestrator recovery source has score output: {entrant_id}")
+        if optional_artifact_tree_sha256(root / "publish" / entrant_id) is not None:
+            raise SystemExit(
+                f"orchestrator recovery source has publication output: {entrant_id}"
+            )
+    if set(outstanding) != all_ambiguous or len(all_ambiguous) != len(rows):
+        raise SystemExit(
+            "orchestrator recovery must preserve exactly one ambiguous reserve per entrant"
+        )
+    busy = [
+        str(row["vendor_port"])
+        for row in rows
+        if not port_is_free(int(row["vendor_port"]))
+    ]
+    if busy:
+        raise SystemExit(
+            "orchestrator recovery source vendor ports are occupied: " + ", ".join(busy)
+        )
+    reserve_problem = replacement_reserve_failure(ledger, budget_config, rows)
+    if reserve_problem:
+        raise SystemExit(reserve_problem)
+    source_evidence = orchestrator_source_evidence_snapshot(root, campaign, rows)
+    if (
+        orchestrator_recovery_incident_identity(root, campaign, source_evidence)
+        != ORCHESTRATOR_RECOVERY_INCIDENT
+    ):
+        raise SystemExit(
+            "orchestrator recovery source is not the exact sealed 2026-08-23 incident"
+        )
+    return states, ledger, source_evidence
+
+
+def validate_orchestrator_recovery_evidence(
+    path: Path,
+    source_root: Path,
+    target_root: Path,
+    source: Mapping[str, Any],
+    target_instrument_sha256: str,
+    source_evidence: Mapping[str, Any],
+    row_ids: list[str],
+    secret_values: Iterable[str],
+) -> tuple[Dict[str, Any], list[Dict[str, Any]], str]:
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > 1024 * 1024:
+        raise SystemExit(
+            "orchestrator recovery evidence must be one regular JSON file no larger "
+            "than 1 MiB"
+        )
+    evidence = load_json(path)
+    expected_keys = {
+        "schema_version",
+        "classification",
+        "defect_id",
+        "summary",
+        "source_root",
+        "target_root",
+        "source_campaign_id",
+        "source_smoke_contract_sha256",
+        "source_binary_sha256",
+        "source_instrument_set_sha256",
+        "target_instrument_set_sha256",
+        "source_campaign_sha256",
+        "source_budget_ledger_sha256",
+        "source_manager_sha256",
+        "source_monitor_sha256",
+        "manager_log_sha256",
+        "monitor_log_sha256",
+        "entrants",
+        "fix_source_commit",
+        "artifacts",
+    }
+    if set(evidence) != expected_keys:
+        raise SystemExit(
+            "orchestrator recovery evidence schema contains missing or unapproved fields"
+        )
+    if (
+        evidence.get("schema_version") != ORCHESTRATOR_RECOVERY_SCHEMA
+        or evidence.get("classification") != "orchestrator_monitor_defect"
+    ):
+        raise SystemExit("orchestrator recovery evidence classification is invalid")
+    defect_id = evidence.get("defect_id")
+    if not isinstance(defect_id, str) or re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]{2,127}", defect_id
+    ) is None:
+        raise SystemExit("orchestrator recovery evidence has an invalid defect_id")
+    summary = evidence.get("summary")
+    if not isinstance(summary, str) or not summary.strip() or len(summary) > 2000:
+        raise SystemExit("orchestrator recovery evidence needs a bounded summary")
+    exact = {
+        "source_root": str(source_root),
+        "target_root": str(target_root),
+        "source_campaign_id": source.get("campaign_id"),
+        "source_smoke_contract_sha256": source.get("smoke_contract_sha256"),
+        "source_binary_sha256": source.get("binary_sha256"),
+        "source_instrument_set_sha256": source.get("instrument_set_sha256"),
+        "target_instrument_set_sha256": target_instrument_sha256,
+        "source_campaign_sha256": source_evidence.get("campaign_sha256"),
+        "source_budget_ledger_sha256": source_evidence.get(
+            "budget_ledger_sha256"
+        ),
+        "source_manager_sha256": source_evidence.get("manager_sha256"),
+        "source_monitor_sha256": source_evidence.get("monitor_sha256"),
+        "manager_log_sha256": source_evidence.get("manager_log_sha256"),
+        "monitor_log_sha256": source_evidence.get("monitor_log_sha256"),
+        "entrants": source_evidence.get("entrants"),
+        "fix_source_commit": git_value("rev-parse", "HEAD"),
+    }
+    for key, expected in exact.items():
+        if evidence.get(key) != expected:
+            raise SystemExit(f"orchestrator recovery evidence does not bind exact {key}")
+    if set(evidence["entrants"]) != set(row_ids):
+        raise SystemExit("orchestrator recovery evidence entrant roster differs")
+
+    raw_artifacts = evidence.get("artifacts")
+    if not isinstance(raw_artifacts, list) or not raw_artifacts:
+        raise SystemExit("orchestrator recovery evidence has no supporting artifacts")
+    artifacts: list[Dict[str, Any]] = []
+    roles: set[str] = set()
+    for raw in raw_artifacts:
+        if not isinstance(raw, dict) or set(raw) != {"role", "path", "sha256"}:
+            raise SystemExit("orchestrator recovery artifact schema is malformed")
+        role = raw.get("role")
+        if role not in {"root_cause", "regression_test"}:
+            raise SystemExit("orchestrator recovery artifact role is not approved")
+        source_path = Path(str(raw.get("path", ""))).expanduser().resolve()
+        if (
+            not source_path.is_file()
+            or source_path.is_symlink()
+            or source_path.stat().st_size == 0
+            or source_path.stat().st_size > 10 * 1024 * 1024
+        ):
+            raise SystemExit(
+                f"orchestrator recovery artifact is not a bounded file: {source_path}"
+            )
+        digest = sha256_file(source_path)
+        if raw.get("sha256") != digest:
+            raise SystemExit("orchestrator recovery artifact hash differs")
+        if secret_occurrences([source_path], secret_values):
+            raise SystemExit("orchestrator recovery artifact contains a provider credential")
+        roles.add(str(role))
+        artifacts.append(
+            {"role": role, "source": source_path, "sha256": digest}
+        )
+    if roles != {"root_cause", "regression_test"}:
+        raise SystemExit(
+            "orchestrator recovery requires root-cause and regression-test artifacts"
+        )
+    return evidence, artifacts, sha256_file(path)
+
+
+def orchestrator_recovery_evidence_template(
+    source_root: Path,
+    target_root: Path,
+    root_cause_path: Path,
+    regression_test_path: Path,
+) -> Dict[str, Any]:
+    source_root = source_root.resolve()
+    target_root = target_root.resolve()
+    source = load_json(campaign_file(source_root))
+    manifest = load_json(Path(str(source["entrant_manifest"])))
+    rows = entrants(manifest)
+    _, _, source_evidence = stopped_orchestrator_recovery_source(
+        source_root, source, rows
+    )
+    current_hashes = instrument_hashes()
+    old_hashes = source.get("instrument_hashes")
+    if not isinstance(old_hashes, dict):
+        raise SystemExit("orchestrator recovery source instrument hashes are missing")
+    changed = {
+        key
+        for key in set(old_hashes) | set(current_hashes)
+        if old_hashes.get(key) != current_hashes.get(key)
+    }
+    if changed != SUPERSESSION_ALLOWED_INSTRUMENT_CHANGES:
+        raise SystemExit(
+            "orchestrator recovery evidence requires exactly the coordinator fix"
+        )
+    artifacts = []
+    for role, raw_path in (
+        ("root_cause", root_cause_path),
+        ("regression_test", regression_test_path),
+    ):
+        path = raw_path.resolve()
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or path.stat().st_size == 0
+            or path.stat().st_size > 10 * 1024 * 1024
+        ):
+            raise SystemExit(f"orchestrator recovery artifact is invalid: {path}")
+        artifacts.append(
+            {"role": role, "path": str(path), "sha256": sha256_file(path)}
+        )
+    target_instrument_sha = sha256_bytes(
+        json.dumps(current_hashes, sort_keys=True).encode()
+    )
+    return {
+        "schema_version": ORCHESTRATOR_RECOVERY_SCHEMA,
+        "classification": "orchestrator_monitor_defect",
+        "defect_id": "cloud-sb7-generation1-monitor-lineage-20260823",
+        "summary": (
+            "The detached monitor rejected valid first-episode progression and forced "
+            "an operator stop before any build outcome."
+        ),
+        "source_root": str(source_root),
+        "target_root": str(target_root),
+        "source_campaign_id": source["campaign_id"],
+        "source_smoke_contract_sha256": source["smoke_contract_sha256"],
+        "source_binary_sha256": source["binary_sha256"],
+        "source_instrument_set_sha256": source["instrument_set_sha256"],
+        "target_instrument_set_sha256": target_instrument_sha,
+        "source_campaign_sha256": source_evidence["campaign_sha256"],
+        "source_budget_ledger_sha256": source_evidence["budget_ledger_sha256"],
+        "source_manager_sha256": source_evidence["manager_sha256"],
+        "source_monitor_sha256": source_evidence["monitor_sha256"],
+        "manager_log_sha256": source_evidence["manager_log_sha256"],
+        "monitor_log_sha256": source_evidence["monitor_log_sha256"],
+        "entrants": source_evidence["entrants"],
+        "fix_source_commit": git_value("rev-parse", "HEAD"),
+        "artifacts": artifacts,
+    }
+
+
+def orchestrator_recovery_transition_id(
+    source_root: Path,
+    target_root: Path,
+    source: Mapping[str, Any],
+    evidence_sha256: str,
+    target_instrument_sha256: str,
+) -> str:
+    material = {
+        "source_root": str(source_root.resolve()),
+        "target_root": str(target_root.resolve()),
+        "source_campaign_id": source.get("campaign_id"),
+        "source_smoke_contract_sha256": source.get("smoke_contract_sha256"),
+        "source_binary_sha256": source.get("binary_sha256"),
+        "source_instrument_set_sha256": source.get("instrument_set_sha256"),
+        "target_instrument_set_sha256": target_instrument_sha256,
+        "evidence_sha256": evidence_sha256,
+    }
+    return sha256_bytes(json.dumps(material, sort_keys=True).encode())
+
+
+def orchestrator_recovery_source_seal(
+    source_root: Path,
+    source: Mapping[str, Any],
+    rows: list[Mapping[str, Any]],
+    transition_id: str,
+    source_evidence: Mapping[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "schema_version": ORCHESTRATOR_RECOVERY_SCHEMA,
+        "kind": "orchestrator_monitor_recovery",
+        "transition_id": transition_id,
+        "source_root": str(source_root.resolve()),
+        "source_evidence": source_evidence,
+        "source_lineage_tree_sha256": artifact_tree_sha256(source_root / "lineage"),
+        "qualification_tree_sha256": optional_artifact_tree_sha256(
+            source_root / "qualification"
+        ),
+        "predecessor_seal": predecessor_seal(
+            source_root, source, rows, transition_id
+        ),
+    }
+
+
+def orchestrator_recovery_source_seal_failure(
+    source_root: Path, seal: Mapping[str, Any]
+) -> str | None:
+    try:
+        expected_keys = {
+            "schema_version",
+            "kind",
+            "transition_id",
+            "source_root",
+            "source_evidence",
+            "source_lineage_tree_sha256",
+            "qualification_tree_sha256",
+            "predecessor_seal",
+        }
+        if (
+            set(seal) != expected_keys
+            or seal.get("schema_version") != ORCHESTRATOR_RECOVERY_SCHEMA
+            or seal.get("kind") != "orchestrator_monitor_recovery"
+            or seal.get("source_root") != str(source_root.resolve())
+        ):
+            return "orchestrator recovery source seal schema is invalid"
+        base = seal.get("predecessor_seal")
+        if not isinstance(base, dict):
+            return "orchestrator recovery source seal has no predecessor payload"
+        base_problem = predecessor_seal_failure(source_root, base)
+        if base_problem:
+            return base_problem
+        campaign = load_json(campaign_file(source_root))
+        rows = entrants(load_json(Path(str(campaign["entrant_manifest"]))))
+        current_evidence = orchestrator_source_evidence_snapshot(
+            source_root, campaign, rows
+        )
+        if current_evidence != seal.get("source_evidence"):
+            return "orchestrator recovery source evidence changed after stop"
+        if artifact_tree_sha256(source_root / "lineage") != seal.get(
+            "source_lineage_tree_sha256"
+        ):
+            return "orchestrator recovery source lineage tree changed"
+        if optional_artifact_tree_sha256(source_root / "qualification") != seal.get(
+            "qualification_tree_sha256"
+        ):
+            return "orchestrator recovery qualification history changed"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"orchestrator recovery source seal cannot be verified: {error}"
+    return None
+
+
+def commit_orchestrator_recovery_evidence_bundle(
+    source_root: Path,
+    evidence_path: Path,
+    evidence_sha256: str,
+    artifacts: list[Mapping[str, Any]],
+) -> list[Dict[str, str]]:
+    destination = source_root / ORCHESTRATOR_RECOVERY_EVIDENCE
+    expected = [
+        {
+            "role": artifact["role"],
+            "path": str(
+                Path(ORCHESTRATOR_RECOVERY_EVIDENCE)
+                / f"artifact-{index:02d}-{artifact['role']}"
+            ),
+            "sha256": artifact["sha256"],
+        }
+        for index, artifact in enumerate(artifacts)
+    ]
+    if destination.exists():
+        if (
+            not destination.is_dir()
+            or destination.is_symlink()
+            or not (destination / "defect-evidence.json").is_file()
+            or sha256_file(destination / "defect-evidence.json")
+            != evidence_sha256
+        ):
+            raise SystemExit("orchestrator recovery evidence bundle differs")
+        for artifact in expected:
+            path = source_root / artifact["path"]
+            if (
+                not path.is_file()
+                or path.is_symlink()
+                or sha256_file(path) != artifact["sha256"]
+            ):
+                raise SystemExit("orchestrator recovery artifact differs")
+        expected_names = {
+            "defect-evidence.json",
+            *(Path(artifact["path"]).name for artifact in expected),
+        }
+        if {path.name for path in destination.iterdir()} != expected_names:
+            raise SystemExit("orchestrator recovery evidence has unexpected files")
+        return expected
+
+    staging_parent = Path(
+        tempfile.mkdtemp(prefix=".orchestrator-recovery-evidence-", dir=source_root)
+    )
+    staged = staging_parent / ORCHESTRATOR_RECOVERY_EVIDENCE
+    try:
+        copied = copy_evidence_bundle(
+            staged, evidence_path, evidence_sha256, artifacts
+        )
+        if copied != expected:
+            raise SystemExit("staged orchestrator recovery evidence identity drifted")
+        orchestrator_recovery_fault("evidence_bundle_staged")
+        fsync_directory(staged)
+        os.replace(staged, destination)
+        fsync_directory(source_root)
+        orchestrator_recovery_fault("evidence_bundle_committed")
+        return copied
+    finally:
+        if staged.exists():
+            shutil.rmtree(staged)
+        with contextlib.suppress(OSError):
+            staging_parent.rmdir()
+
+
+def orchestrator_recovery_evidence_failure(
+    source_root: Path, receipt: Mapping[str, Any]
+) -> str | None:
+    evidence_root = source_root / ORCHESTRATOR_RECOVERY_EVIDENCE
+    evidence_path = evidence_root / "defect-evidence.json"
+    if (
+        not evidence_path.is_file()
+        or evidence_path.is_symlink()
+        or sha256_file(evidence_path) != receipt.get("defect_evidence_sha256")
+    ):
+        return "orchestrator recovery source evidence changed"
+    artifacts = receipt.get("defect_artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        return "orchestrator recovery receipt has no defect artifacts"
+    expected_names = {"defect-evidence.json"}
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or set(artifact) != {
+            "role",
+            "path",
+            "sha256",
+        }:
+            return "orchestrator recovery artifact record is malformed"
+        path = source_root / str(artifact["path"])
+        expected_names.add(path.name)
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or sha256_file(path) != artifact.get("sha256")
+        ):
+            return "orchestrator recovery source artifact changed"
+    if {path.name for path in evidence_root.iterdir()} != expected_names:
+        return "orchestrator recovery source evidence contains unexpected files"
+    return None
+
+
+def orchestrator_recovery_fault(_stage: str) -> None:
+    return None
+
+
+def orchestrator_recovery_receipt_failure(
+    source_root: Path,
+    receipt: Mapping[str, Any],
+    source: Mapping[str, Any],
+) -> str | None:
+    expected_keys = {
+        "schema_version",
+        "kind",
+        "recovery_count",
+        "transition_id",
+        "source_root",
+        "target_root",
+        "source_campaign_id",
+        "source_smoke_contract_sha256",
+        "source_binary_sha256",
+        "source_manifest_sha256",
+        "source_instrument_set_sha256",
+        "target_instrument_set_sha256",
+        "source_budget_ledger_sha256",
+        "source_seal_sha256",
+        "defect_evidence_sha256",
+        "defect_artifacts",
+        "fix_source_commit",
+        "entrant_ids",
+        "fixture_seeds",
+        "source_state_sha256",
+        "source_episode_attempts",
+        "source_ambiguous_request_ids",
+        "fresh_all_entrant_smoke_required",
+        "provider_terminal_usage_fabricated",
+    }
+    if (
+        set(receipt) != expected_keys
+        or receipt.get("schema_version") != ORCHESTRATOR_RECOVERY_SCHEMA
+        or receipt.get("kind") != "orchestrator_monitor_recovery"
+        or receipt.get("recovery_count") != 1
+        or receipt.get("source_root") != str(source_root.resolve())
+        or receipt.get("source_campaign_id") != source.get("campaign_id")
+        or receipt.get("source_smoke_contract_sha256")
+        != source.get("smoke_contract_sha256")
+        or receipt.get("source_binary_sha256") != source.get("binary_sha256")
+        or receipt.get("source_manifest_sha256")
+        != source.get("entrant_manifest_sha256")
+        or receipt.get("source_instrument_set_sha256")
+        != source.get("instrument_set_sha256")
+        or not isinstance(receipt.get("fix_source_commit"), str)
+        or not receipt.get("fix_source_commit")
+        or receipt.get("fresh_all_entrant_smoke_required") is not True
+        or receipt.get("provider_terminal_usage_fabricated") is not False
+    ):
+        return "orchestrator recovery receipt is bound to another source"
+    evidence_problem = orchestrator_recovery_evidence_failure(source_root, receipt)
+    if evidence_problem:
+        return evidence_problem
+    evidence = load_json(
+        source_root / ORCHESTRATOR_RECOVERY_EVIDENCE / "defect-evidence.json"
+    )
+    if evidence.get("fix_source_commit") != receipt.get("fix_source_commit"):
+        return "orchestrator recovery evidence fix commit differs from receipt"
+    return None
+
+
+def recovery_preflight_snapshot(
+    source: Mapping[str, Any],
+    binary: Path,
+    manifest_path: Path,
+    secret_path: Path,
+    publisher_repo: Path,
+    rows: list[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    preflight_value = source.get("preflight")
+    if not isinstance(preflight_value, dict):
+        raise SystemExit("orchestrator recovery source preflight is missing")
+    roster = preflight_value.get("roster_evidence")
+    if not isinstance(roster, dict):
+        raise SystemExit("orchestrator recovery source roster evidence is missing")
+    models: Dict[str, list[str]] = {}
+    for row in rows:
+        provider = str(row["provider"])
+        provider_evidence = roster.get(provider)
+        if not isinstance(provider_evidence, dict):
+            raise SystemExit(
+                f"orchestrator recovery roster evidence is missing for {provider}"
+            )
+        models.setdefault(provider, sorted(str(model) for model in provider_evidence))
+    checked = {
+        **preflight_value,
+        "models": models,
+        "publisher": publisher_snapshot(publisher_repo, rows),
+    }
+    return validated_preflight_snapshot(
+        checked,
+        binary,
+        manifest_path,
+        secret_path,
+        publisher_repo,
+    )
+
+
+def orchestrator_recovery_lineage_failure(
+    root: Path, campaign: Mapping[str, Any]
+) -> str | None:
+    try:
+        pointer = campaign.get("lineage")
+        if (
+            not isinstance(pointer, dict)
+            or pointer.get("generation") != 2
+            or pointer.get("path") != ORCHESTRATOR_RECOVERY_PATH
+        ):
+            return "orchestrator recovery lineage pointer is malformed"
+        lineage_path = root / ORCHESTRATOR_RECOVERY_PATH
+        if not lineage_path.is_file() or lineage_path.is_symlink():
+            return "orchestrator recovery lineage is missing or linked"
+        if sha256_file(lineage_path) != pointer.get("sha256"):
+            return "orchestrator recovery lineage hash changed"
+        lineage = load_json(lineage_path)
+        expected_keys = {
+            "schema_version",
+            "kind",
+            "generation",
+            "recovery_count",
+            "transition_id",
+            "source_root",
+            "source_campaign_id",
+            "source_smoke_contract_sha256",
+            "source_receipt_sha256",
+            "source_seal_sha256",
+            "source_budget_ledger_sha256",
+            "defect_evidence_sha256",
+            "defect_artifacts",
+            "fix_source_commit",
+            "target_root",
+            "target_campaign_id",
+            "target_source_commit",
+            "target_smoke_contract_sha256",
+            "target_binary_sha256",
+            "target_manifest_sha256",
+            "target_instrument_set_sha256",
+            "entrant_ids",
+            "fixture_seeds",
+            "source_state_sha256",
+            "source_episode_attempts",
+            "source_ambiguous_request_ids",
+            "fresh_all_entrant_smoke_required",
+            "provider_terminal_usage_fabricated",
+        }
+        if (
+            set(lineage) != expected_keys
+            or lineage.get("schema_version") != ORCHESTRATOR_RECOVERY_SCHEMA
+            or lineage.get("kind") != "orchestrator_monitor_recovery"
+            or lineage.get("generation") != 2
+            or lineage.get("recovery_count") != 1
+            or lineage.get("transition_id") != pointer.get("transition_id")
+            or lineage.get("target_root") != str(root.resolve())
+            or lineage.get("target_campaign_id") != campaign.get("campaign_id")
+            or lineage.get("target_source_commit") != campaign.get("source_commit")
+            or lineage.get("target_source_commit") != lineage.get("fix_source_commit")
+            or lineage.get("target_binary_sha256") != campaign.get("binary_sha256")
+            or lineage.get("target_manifest_sha256")
+            != campaign.get("entrant_manifest_sha256")
+            or lineage.get("target_instrument_set_sha256")
+            != campaign.get("instrument_set_sha256")
+            or lineage.get("fresh_all_entrant_smoke_required") is not True
+            or lineage.get("provider_terminal_usage_fabricated") is not False
+        ):
+            return "orchestrator recovery lineage is bound to another transition"
+        smoke_lineage = validated_campaign_lineage(campaign)
+        if (
+            smoke_lineage["generation"] != 2
+            or smoke_lineage["predecessor_campaign_id"]
+            != lineage.get("source_campaign_id")
+            or smoke_lineage["predecessor_contract_sha256"]
+            != lineage.get("source_smoke_contract_sha256")
+            or smoke_contract_identity(campaign)
+            != lineage.get("target_smoke_contract_sha256")
+            or campaign.get("smoke_contract_sha256")
+            != lineage.get("target_smoke_contract_sha256")
+        ):
+            return "orchestrator recovery smoke contract differs from lineage"
+
+        source_root = Path(str(lineage.get("source_root", ""))).resolve()
+        receipt_path = source_root / ORCHESTRATOR_RECOVERY_RECEIPT
+        if not receipt_path.is_file() or receipt_path.is_symlink():
+            return "orchestrator recovery source receipt is missing or linked"
+        if sha256_file(receipt_path) != lineage.get("source_receipt_sha256"):
+            return "orchestrator recovery source receipt changed"
+        source = load_json(campaign_file(source_root))
+        receipt = load_json(receipt_path)
+        receipt_problem = orchestrator_recovery_receipt_failure(
+            source_root, receipt, source
+        )
+        if receipt_problem:
+            return receipt_problem
+        for key in (
+            "transition_id",
+            "target_root",
+            "source_campaign_id",
+            "source_smoke_contract_sha256",
+            "source_seal_sha256",
+            "source_budget_ledger_sha256",
+            "defect_evidence_sha256",
+            "defect_artifacts",
+            "fix_source_commit",
+            "entrant_ids",
+            "fixture_seeds",
+            "source_state_sha256",
+            "source_episode_attempts",
+            "source_ambiguous_request_ids",
+            "fresh_all_entrant_smoke_required",
+            "provider_terminal_usage_fabricated",
+        ):
+            if receipt.get(key) != lineage.get(key):
+                return f"orchestrator recovery receipt differs on {key}"
+
+        source_seal_path = source_root / ORCHESTRATOR_RECOVERY_SEAL
+        copied_seal_path = root / "recovery/source-seal.json"
+        for candidate in (source_seal_path, copied_seal_path):
+            if (
+                not candidate.is_file()
+                or candidate.is_symlink()
+                or sha256_file(candidate) != lineage.get("source_seal_sha256")
+            ):
+                return "orchestrator recovery source seal is missing or changed"
+        seal = load_json(source_seal_path)
+        seal_problem = orchestrator_recovery_source_seal_failure(source_root, seal)
+        if seal_problem:
+            return seal_problem
+        source_problem = lineage_failure(
+            source_root, allow_terminal_orchestrator_recovery_receipt=True
+        )
+        if source_problem:
+            return f"orchestrator recovery source lineage changed: {source_problem}"
+        instrument_problem = qualification_instrument_failure(source, campaign)
+        if instrument_problem:
+            return instrument_problem
+        old_hashes = source.get("instrument_hashes")
+        new_hashes = campaign.get("instrument_hashes")
+        if not isinstance(old_hashes, dict) or not isinstance(new_hashes, dict):
+            return "orchestrator recovery instrument hashes are missing"
+        changed = {
+            key
+            for key in set(old_hashes) | set(new_hashes)
+            if old_hashes.get(key) != new_hashes.get(key)
+        }
+        if changed != SUPERSESSION_ALLOWED_INSTRUMENT_CHANGES:
+            return "orchestrator recovery did not change exactly the coordinator"
+
+        source_budget_path = root / "recovery/source-budget-ledger.json"
+        if (
+            not source_budget_path.is_file()
+            or source_budget_path.is_symlink()
+            or sha256_file(source_budget_path)
+            != lineage.get("source_budget_ledger_sha256")
+        ):
+            return "orchestrator recovery source budget snapshot changed"
+        initial_ledger = load_json(source_budget_path)
+        current_ledger = load_json(Path(str(campaign["budget_ledger"])))
+        budget_config = load_json(Path(str(campaign["budget_config"])))
+        ledger_problem = budget_ledger_descendant_failure(
+            initial_ledger, current_ledger, budget_config
+        )
+        if ledger_problem:
+            return ledger_problem
+
+        source_evidence = source_root / ORCHESTRATOR_RECOVERY_EVIDENCE
+        target_evidence = root / "recovery/evidence"
+        if artifact_tree_sha256(source_evidence) != artifact_tree_sha256(
+            target_evidence
+        ):
+            return "orchestrator recovery evidence copy changed"
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        rows = entrants(manifest)
+        row_ids = [str(row["id"]) for row in rows]
+        if row_ids != lineage.get("entrant_ids"):
+            return "orchestrator recovery entrant roster changed"
+        seeds = lineage.get("fixture_seeds")
+        source_hashes = lineage.get("source_state_sha256")
+        source_attempts = lineage.get("source_episode_attempts")
+        ambiguous = lineage.get("source_ambiguous_request_ids")
+        if not all(
+            isinstance(value, dict)
+            for value in (seeds, source_hashes, source_attempts, ambiguous)
+        ):
+            return "orchestrator recovery entrant provenance is malformed"
+        max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
+        for entrant_id in row_ids:
+            state = read_state(root, entrant_id)
+            current_attempts = int(state.get("provider_episode_attempts", -1))
+            baseline = source_attempts.get(entrant_id)
+            if (
+                baseline != 1
+                or current_attempts < baseline
+                or current_attempts > max_episodes
+                or state.get("fixture_seed") != seeds.get(entrant_id)
+                or state.get("lineage_role") != "orchestrator_recovery_restart"
+                or state.get("orchestrator_recovery_transition_id")
+                != lineage.get("transition_id")
+                or state.get("orchestrator_source_state_sha256")
+                != source_hashes.get(entrant_id)
+                or state.get("orchestrator_source_ambiguous_request_ids")
+                != ambiguous.get(entrant_id)
+            ):
+                return f"orchestrator recovery entrant provenance drifted: {entrant_id}"
+            if current_attempts == baseline:
+                lifecycle = lifecycle_summary(
+                    Path(str(state["provider_lifecycle"])),
+                    expected_provider=str(state["provider"]),
+                    expected_model=str(state["model"]),
+                )
+                if (
+                    int(lifecycle.get("events", 0)) != 0
+                    or state.get("started_at") is not None
+                    or state.get("prompt_sha256") is not None
+                    or state.get("command") is not None
+                ):
+                    return (
+                        "orchestrator recovery entrant attempt counter reset after "
+                        f"activity: {entrant_id}"
+                    )
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"orchestrator recovery lineage cannot be verified: {error}"
+    return None
+
+
+def orchestrator_recovery_campaign(
+    source_root: Path,
+    root: Path,
+    evidence_path: Path,
+    publish_live: bool,
+) -> Dict[str, Any]:
+    source_root = source_root.resolve()
+    root = root.resolve()
+    evidence_path = evidence_path.resolve()
+    if source_root == root or source_root.parent != root.parent:
+        raise SystemExit(
+            "orchestrator recovery roots must be distinct siblings on one filesystem"
+        )
+    source = load_json(campaign_file(source_root))
+    binary = Path(str(source.get("binary", ""))).resolve()
+    manifest_path = Path(str(source.get("entrant_manifest", ""))).resolve()
+    secret_path = Path(str(source.get("secret_file", ""))).resolve()
+    source_publisher = source.get("publisher")
+    if not isinstance(source_publisher, dict):
+        raise SystemExit("orchestrator recovery source publisher is missing")
+    publisher_repo = Path(str(source_publisher.get("repo", ""))).resolve()
+    if (
+        not binary.is_file()
+        or binary.is_symlink()
+        or sha256_file(binary) != source.get("binary_sha256")
+    ):
+        raise SystemExit("orchestrator recovery source binary changed")
+    if (
+        not manifest_path.is_file()
+        or manifest_path.is_symlink()
+        or sha256_file(manifest_path) != source.get("entrant_manifest_sha256")
+    ):
+        raise SystemExit("orchestrator recovery source manifest changed")
+    if not publisher_repo.is_dir() or publisher_repo.is_symlink():
+        raise SystemExit("orchestrator recovery publisher repository is unavailable")
+    manifest = load_json(manifest_path)
+    rows = entrants(manifest)
+    row_ids = [str(row["id"]) for row in rows]
+
+    current_hashes = instrument_hashes()
+    target_instrument_sha = sha256_bytes(
+        json.dumps(current_hashes, sort_keys=True).encode()
+    )
+    old_hashes = source.get("instrument_hashes")
+    if not isinstance(old_hashes, dict):
+        raise SystemExit("orchestrator recovery source instrument hashes are missing")
+    changed = {
+        key
+        for key in set(old_hashes) | set(current_hashes)
+        if old_hashes.get(key) != current_hashes.get(key)
+    }
+    if changed != SUPERSESSION_ALLOWED_INSTRUMENT_CHANGES:
+        raise SystemExit(
+            "orchestrator recovery requires exactly the reviewed coordinator fix"
+        )
+    local_publisher = publisher_snapshot(publisher_repo, rows)
+    candidate_publisher = dict(local_publisher)
+    for field in QUALIFICATION_PUBLISHER_RUNTIME_FIELDS:
+        candidate_publisher[field] = source_publisher.get(field)
+    candidate = dict(source)
+    candidate.update(
+        {
+            "instrument_hashes": current_hashes,
+            "instrument_set_sha256": target_instrument_sha,
+            "publisher": candidate_publisher,
+        }
+    )
+    candidate_problem = qualification_instrument_failure(source, candidate)
+    if candidate_problem:
+        raise SystemExit(candidate_problem)
+    runtime_problem = qualification_publisher_runtime_failure(
+        source,
+        publish_live,
+        str(source_publisher.get("website_base_url", "")),
+        float(source_publisher.get("verify_timeout_seconds", 0)),
+        float(source_publisher.get("verify_interval_seconds", 0)),
+        float(source_publisher.get("process_timeout_seconds", 0)),
+    )
+    if runtime_problem:
+        raise SystemExit(runtime_problem)
+    checked = recovery_preflight_snapshot(
+        source,
+        binary,
+        manifest_path,
+        secret_path,
+        publisher_repo,
+        rows,
+    )
+
+    target_lock = root.parent / f".{root.name}.orchestrator-recovery.claim"
+    with exclusive_claim(target_lock, blocking=True) as target_claimed:
+        if not target_claimed:
+            raise SystemExit("cannot claim orchestrator recovery target")
+        with exclusive_claim(
+            source_root / "locks/manager-launch.claim", blocking=True
+        ) as launch_claimed:
+            if not launch_claimed:
+                raise SystemExit("cannot freeze orchestrator recovery source manager")
+            with exclusive_claim(
+                source_root / "locks/supersession.claim", blocking=True
+            ) as stopped_claimed:
+                if not stopped_claimed:
+                    raise SystemExit("cannot freeze orchestrator recovery source stop")
+                with exclusive_claim(
+                    source_root / "locks/orchestrator-recovery.claim", blocking=True
+                ) as source_claimed:
+                    if not source_claimed:
+                        raise SystemExit("cannot claim orchestrator recovery source")
+                    receipt_path = source_root / ORCHESTRATOR_RECOVERY_RECEIPT
+                    if receipt_path.exists():
+                        if receipt_path.is_symlink() or not receipt_path.is_file():
+                            raise SystemExit(
+                                "orchestrator recovery source receipt is not regular"
+                            )
+                        receipt = load_json(receipt_path)
+                        receipt_problem = orchestrator_recovery_receipt_failure(
+                            source_root, receipt, source
+                        )
+                        if receipt_problem:
+                            raise SystemExit(receipt_problem)
+                        if (
+                            receipt.get("target_root") != str(root)
+                            or receipt.get("target_instrument_set_sha256")
+                            != target_instrument_sha
+                            or receipt.get("defect_evidence_sha256")
+                            != sha256_file(evidence_path)
+                        ):
+                            raise SystemExit(
+                                "orchestrator recovery source has a receipt for another target"
+                            )
+                        if (
+                            not root.exists()
+                            and receipt.get("fix_source_commit")
+                            != git_value("rev-parse", "HEAD")
+                        ):
+                            raise SystemExit(
+                                "orchestrator recovery fix commit changed before target commit"
+                            )
+                        seal_path = source_root / ORCHESTRATOR_RECOVERY_SEAL
+                        if (
+                            not seal_path.is_file()
+                            or seal_path.is_symlink()
+                            or sha256_file(seal_path)
+                            != receipt.get("source_seal_sha256")
+                        ):
+                            raise SystemExit("orchestrator recovery source seal changed")
+                        seal_problem = orchestrator_recovery_source_seal_failure(
+                            source_root, load_json(seal_path)
+                        )
+                        if seal_problem:
+                            raise SystemExit(seal_problem)
+                        source_problem = lineage_failure(
+                            source_root,
+                            allow_terminal_orchestrator_recovery_receipt=True,
+                        )
+                        if source_problem:
+                            raise SystemExit(
+                                "orchestrator recovery source changed after receipt: "
+                                f"{source_problem}"
+                            )
+                        if root.exists():
+                            if not campaign_file(root).is_file():
+                                raise SystemExit(
+                                    "orchestrator recovery target exists without campaign"
+                                )
+                            target_problem = lineage_failure(root)
+                            if target_problem:
+                                raise SystemExit(
+                                    "existing orchestrator recovery target is invalid: "
+                                    f"{target_problem}"
+                                )
+                            return load_json(campaign_file(root))
+                        states = {
+                            entrant_id: read_state(source_root, entrant_id)
+                            for entrant_id in receipt["entrant_ids"]
+                        }
+                        source_ledger = load_json(Path(str(source["budget_ledger"])))
+                    else:
+                        if root.exists():
+                            raise SystemExit(
+                                "orchestrator recovery target exists before source receipt"
+                            )
+                        states, source_ledger, source_evidence = (
+                            stopped_orchestrator_recovery_source(
+                                source_root, source, rows
+                            )
+                        )
+                        secret_values = parse_secret_file(secret_path)
+                        evidence, artifacts, evidence_sha = (
+                            validate_orchestrator_recovery_evidence(
+                                evidence_path,
+                                source_root,
+                                root,
+                                source,
+                                target_instrument_sha,
+                                source_evidence,
+                                row_ids,
+                                secret_values.values(),
+                            )
+                        )
+                        transition_id = orchestrator_recovery_transition_id(
+                            source_root,
+                            root,
+                            source,
+                            evidence_sha,
+                            target_instrument_sha,
+                        )
+                        copied_artifacts = commit_orchestrator_recovery_evidence_bundle(
+                            source_root, evidence_path, evidence_sha, artifacts
+                        )
+                        seal = orchestrator_recovery_source_seal(
+                            source_root,
+                            source,
+                            rows,
+                            transition_id,
+                            source_evidence,
+                        )
+                        seal_path = source_root / ORCHESTRATOR_RECOVERY_SEAL
+                        write_exclusive_json(seal_path, seal)
+                        orchestrator_recovery_fault("source_seal_committed")
+                        receipt = {
+                            "schema_version": ORCHESTRATOR_RECOVERY_SCHEMA,
+                            "kind": "orchestrator_monitor_recovery",
+                            "recovery_count": 1,
+                            "transition_id": transition_id,
+                            "source_root": str(source_root),
+                            "target_root": str(root),
+                            "source_campaign_id": source["campaign_id"],
+                            "source_smoke_contract_sha256": source[
+                                "smoke_contract_sha256"
+                            ],
+                            "source_binary_sha256": source["binary_sha256"],
+                            "source_manifest_sha256": source[
+                                "entrant_manifest_sha256"
+                            ],
+                            "source_instrument_set_sha256": source[
+                                "instrument_set_sha256"
+                            ],
+                            "target_instrument_set_sha256": target_instrument_sha,
+                            "source_budget_ledger_sha256": source_evidence[
+                                "budget_ledger_sha256"
+                            ],
+                            "source_seal_sha256": sha256_file(seal_path),
+                            "defect_evidence_sha256": evidence_sha,
+                            "defect_artifacts": copied_artifacts,
+                            "fix_source_commit": evidence["fix_source_commit"],
+                            "entrant_ids": row_ids,
+                            "fixture_seeds": {
+                                entrant_id: states[entrant_id]["fixture_seed"]
+                                for entrant_id in row_ids
+                            },
+                            "source_state_sha256": {
+                                entrant_id: source_evidence["entrants"][entrant_id][
+                                    "state_sha256"
+                                ]
+                                for entrant_id in row_ids
+                            },
+                            "source_episode_attempts": {
+                                entrant_id: int(
+                                    states[entrant_id]["provider_episode_attempts"]
+                                )
+                                for entrant_id in row_ids
+                            },
+                            "source_ambiguous_request_ids": {
+                                entrant_id: source_evidence["entrants"][entrant_id][
+                                    "ambiguous_request_ids"
+                                ]
+                                for entrant_id in row_ids
+                            },
+                            "fresh_all_entrant_smoke_required": True,
+                            "provider_terminal_usage_fabricated": False,
+                        }
+                        write_exclusive_json(receipt_path, receipt)
+                        orchestrator_recovery_fault("source_receipt_committed")
+
+                    staging_parent = Path(
+                        tempfile.mkdtemp(
+                            prefix=f".{root.name}.orchestrator-recovery-",
+                            dir=root.parent,
+                        )
+                    )
+                    staged_root = staging_parent / root.name
+                    try:
+                        init_campaign(
+                            staged_root,
+                            binary,
+                            manifest_path,
+                            secret_path,
+                            publisher_repo,
+                            publish_live,
+                            str(source_publisher["website_base_url"]),
+                            float(source_publisher["verify_timeout_seconds"]),
+                            float(source_publisher["verify_interval_seconds"]),
+                            float(source_publisher["process_timeout_seconds"]),
+                            verified_preflight=checked,
+                        )
+                        orchestrator_recovery_fault("staged_initialized")
+                        target = load_json(campaign_file(staged_root))
+                        instrument_problem = qualification_instrument_failure(
+                            source, target
+                        )
+                        if instrument_problem:
+                            raise SystemExit(instrument_problem)
+                        if target.get("instrument_set_sha256") != target_instrument_sha:
+                            raise SystemExit(
+                                "orchestrator recovery instrument changed during staging"
+                            )
+                        atomic_copy(
+                            Path(str(source["budget_ledger"])),
+                            Path(str(target["budget_ledger"])),
+                            0o600,
+                        )
+                        if load_json(Path(str(target["budget_ledger"]))) != source_ledger:
+                            raise SystemExit(
+                                "orchestrator recovery cumulative budget did not copy exactly"
+                            )
+                        qualification_history = validated_qualification_history(source)
+                        if qualification_history is not None:
+                            source_qualification = source_root / "qualification"
+                            target_qualification = staged_root / "qualification"
+                            qualification_sha = artifact_tree_sha256(
+                                source_qualification
+                            )
+                            shutil.copytree(source_qualification, target_qualification)
+                            if (
+                                artifact_tree_sha256(target_qualification)
+                                != qualification_sha
+                            ):
+                                raise SystemExit(
+                                    "orchestrator recovery qualification history changed"
+                                )
+                        recovery_root = staged_root / "recovery"
+                        recovery_root.mkdir()
+                        atomic_copy(
+                            source_root / ORCHESTRATOR_RECOVERY_SEAL,
+                            recovery_root / "source-seal.json",
+                            0o600,
+                        )
+                        atomic_copy(
+                            Path(str(source["budget_ledger"])),
+                            recovery_root / "source-budget-ledger.json",
+                            0o600,
+                        )
+                        shutil.copytree(
+                            source_root / ORCHESTRATOR_RECOVERY_EVIDENCE,
+                            recovery_root / "evidence",
+                        )
+
+                        target.update(
+                            {
+                                "status": "INITIALIZED",
+                                "smoke_status": "PLANNED",
+                                "lineage": {
+                                    "generation": 2,
+                                    "predecessor_campaign_id": source[
+                                        "campaign_id"
+                                    ],
+                                    "predecessor_contract_sha256": source[
+                                        "smoke_contract_sha256"
+                                    ],
+                                },
+                            }
+                        )
+                        if qualification_history is not None:
+                            target["qualification_history"] = qualification_history
+                        target = bind_smoke_contract(target, rows)
+                        target_contract = target["smoke_contract_sha256"]
+                        for entrant_id in row_ids:
+                            state = remap_paths(
+                                read_state(staged_root, entrant_id), staged_root, root
+                            )
+                            state.update(
+                                {
+                                    "status": "PLANNED",
+                                    "provider_episode_attempts": receipt[
+                                        "source_episode_attempts"
+                                    ][entrant_id],
+                                    "fixture_seed": receipt["fixture_seeds"][entrant_id],
+                                    "admitted_requests": 0,
+                                    "provider_terminal_requests": 0,
+                                    "score": None,
+                                    "verdict": None,
+                                    "failure": None,
+                                    "lineage_role": "orchestrator_recovery_restart",
+                                    "orchestrator_recovery_transition_id": receipt[
+                                        "transition_id"
+                                    ],
+                                    "orchestrator_source_state_sha256": receipt[
+                                        "source_state_sha256"
+                                    ][entrant_id],
+                                    "orchestrator_source_ambiguous_request_ids": receipt[
+                                        "source_ambiguous_request_ids"
+                                    ][entrant_id],
+                                    "updated_at": utc_now(),
+                                }
+                            )
+                            atomic_json(state_file(staged_root, entrant_id), state)
+                            smoke_state = remap_paths(
+                                read_smoke_state(staged_root, entrant_id),
+                                staged_root,
+                                root,
+                            )
+                            smoke_state.update(
+                                {
+                                    "status": "PLANNED",
+                                    "launch_attempts": 0,
+                                    "admitted_episodes": 0,
+                                    "active_attempt": False,
+                                    "attempt_evidence_sha256": {},
+                                    "smoke_contract_sha256": target_contract,
+                                    "budget_settled_baseline_request_ids": target[
+                                        "smoke_budget_settled_baselines"
+                                    ][entrant_id],
+                                    "budget_outstanding_baseline_request_ids": target[
+                                        "smoke_budget_outstanding_baselines"
+                                    ][entrant_id],
+                                    "failure": None,
+                                    "updated_at": utc_now(),
+                                }
+                            )
+                            atomic_json(
+                                smoke_state_file(staged_root, entrant_id), smoke_state
+                            )
+                        target = remap_paths(target, staged_root, root)
+                        lineage = {
+                            "schema_version": ORCHESTRATOR_RECOVERY_SCHEMA,
+                            "kind": "orchestrator_monitor_recovery",
+                            "generation": 2,
+                            "recovery_count": 1,
+                            "transition_id": receipt["transition_id"],
+                            "source_root": str(source_root),
+                            "source_campaign_id": source["campaign_id"],
+                            "source_smoke_contract_sha256": source[
+                                "smoke_contract_sha256"
+                            ],
+                            "source_receipt_sha256": sha256_file(receipt_path),
+                            "source_seal_sha256": receipt["source_seal_sha256"],
+                            "source_budget_ledger_sha256": receipt[
+                                "source_budget_ledger_sha256"
+                            ],
+                            "defect_evidence_sha256": receipt[
+                                "defect_evidence_sha256"
+                            ],
+                            "defect_artifacts": receipt["defect_artifacts"],
+                            "fix_source_commit": receipt["fix_source_commit"],
+                            "target_root": str(root),
+                            "target_campaign_id": target["campaign_id"],
+                            "target_source_commit": target["source_commit"],
+                            "target_smoke_contract_sha256": target_contract,
+                            "target_binary_sha256": target["binary_sha256"],
+                            "target_manifest_sha256": target[
+                                "entrant_manifest_sha256"
+                            ],
+                            "target_instrument_set_sha256": target[
+                                "instrument_set_sha256"
+                            ],
+                            "entrant_ids": receipt["entrant_ids"],
+                            "fixture_seeds": receipt["fixture_seeds"],
+                            "source_state_sha256": receipt["source_state_sha256"],
+                            "source_episode_attempts": receipt[
+                                "source_episode_attempts"
+                            ],
+                            "source_ambiguous_request_ids": receipt[
+                                "source_ambiguous_request_ids"
+                            ],
+                            "fresh_all_entrant_smoke_required": True,
+                            "provider_terminal_usage_fabricated": False,
+                        }
+                        atomic_json(
+                            staged_root / ORCHESTRATOR_RECOVERY_PATH, lineage
+                        )
+                        target["lineage"] = {
+                            "generation": 2,
+                            "predecessor_campaign_id": source["campaign_id"],
+                            "predecessor_contract_sha256": source[
+                                "smoke_contract_sha256"
+                            ],
+                            "transition_id": receipt["transition_id"],
+                            "path": ORCHESTRATOR_RECOVERY_PATH,
+                            "sha256": sha256_file(
+                                staged_root / ORCHESTRATOR_RECOVERY_PATH
+                            ),
+                        }
+                        atomic_json(campaign_file(staged_root), target)
+                        orchestrator_recovery_fault("lineage_staged")
+                        fsync_directory(staged_root)
+                        os.replace(staged_root, root)
+                        fsync_directory(root.parent)
+                        orchestrator_recovery_fault("root_committed")
+                        target_problem = lineage_failure(root)
+                        if target_problem:
+                            raise SystemExit(
+                                "committed orchestrator recovery failed validation: "
+                                f"{target_problem}"
+                            )
+                        return load_json(campaign_file(root))
+                    finally:
+                        if staged_root.exists():
+                            shutil.rmtree(staged_root)
+                        with contextlib.suppress(OSError):
+                            staging_parent.rmdir()
+
+
 def entrant_budget_requests(
     campaign: Mapping[str, Any], row: Mapping[str, Any]
 ) -> tuple[list[str], list[str], str | None]:
@@ -6788,7 +8404,11 @@ def finalize_smoke_attempt(
 
 
 def smoke_proof_mismatch(
-    root: Path, entrant_id: str, row: Mapping[str, Any]
+    root: Path,
+    entrant_id: str,
+    row: Mapping[str, Any],
+    *,
+    check_live_instrument: bool = True,
 ) -> str | None:
     campaign = load_json(campaign_file(root))
     try:
@@ -6943,9 +8563,10 @@ def smoke_proof_mismatch(
         or campaign.get("binary_sha256") != evidence.get("binary_sha256")
     ):
         return "frozen binary differs from the smoke proof"
-    mismatch = instrument_mismatch(campaign)
-    if mismatch:
-        return mismatch
+    if check_live_instrument:
+        mismatch = instrument_mismatch(campaign)
+        if mismatch:
+            return mismatch
     if campaign.get("instrument_set_sha256") != evidence.get("instrument_set_sha256"):
         return "frozen instrument identity differs from the smoke proof"
     budget_config = Path(str(campaign.get("budget_config", "")))
@@ -6985,7 +8606,12 @@ def smoke_proof_mismatch(
     return None
 
 
-def require_smoke_proofs(root: Path, pristine_entrant: str | None = None) -> None:
+def require_smoke_proofs(
+    root: Path,
+    pristine_entrant: str | None = None,
+    *,
+    check_live_instrument: bool = True,
+) -> None:
     campaign = load_json(campaign_file(root))
     manifest_path = Path(str(campaign.get("entrant_manifest", "")))
     if (
@@ -7026,7 +8652,12 @@ def require_smoke_proofs(root: Path, pristine_entrant: str | None = None) -> Non
     failures = []
     for row in rows:
         entrant_id = str(row["id"])
-        mismatch = smoke_proof_mismatch(root, entrant_id, row)
+        mismatch = smoke_proof_mismatch(
+            root,
+            entrant_id,
+            row,
+            check_live_instrument=check_live_instrument,
+        )
         state = read_smoke_state(root, entrant_id)
         if proof_hashes.get(entrant_id) != state.get("proof_sha256"):
             mismatch = (
@@ -7820,11 +9451,20 @@ def smoke(root: Path) -> int:
         if len(rows) != 5:
             raise SystemExit("cloud SB7 smoke requires exactly five frozen entrants")
         build_states = [read_state(root, str(row["id"])) for row in rows]
+        lineage = validated_campaign_lineage(campaign)
+        recovery_attempts: Mapping[str, Any] = {}
+        if lineage["generation"] == 2:
+            recovery = load_json(root / ORCHESTRATOR_RECOVERY_PATH)
+            candidate_attempts = recovery.get("source_episode_attempts")
+            if not isinstance(candidate_attempts, dict):
+                raise SystemExit("orchestrator recovery smoke has no episode baseline")
+            recovery_attempts = candidate_attempts
         dirty_builds = [
             str(state["entrant"])
             for state in build_states
             if state.get("status") != "PLANNED"
-            or int(state.get("provider_episode_attempts", 0)) != 0
+            or int(state.get("provider_episode_attempts", 0))
+            != int(recovery_attempts.get(str(state["entrant"]), 0))
             or int(state.get("admitted_requests", 0)) != 0
         ]
         if dirty_builds:
@@ -9558,6 +11198,9 @@ def start(root: Path) -> int:
         if campaign["status"] not in RESTARTABLE_CAMPAIGN_STATES:
             raise SystemExit(f"campaign cannot start from {campaign['status']}")
         require_smoke_proofs(root)
+        monitor_problem = manager_monitor_gate_failure(root, campaign)
+        if monitor_problem:
+            raise SystemExit(f"manager requires a ready detached monitor: {monitor_problem}")
         current = load_json(root / "manager.json")
         if current.get("pid") and process_alive(
             current["pid"], current.get("identity")
@@ -9584,6 +11227,30 @@ def start(root: Path) -> int:
         )
     print(f"started cloud SB7 manager pid={proc.pid} root={root}")
     return 0
+
+
+def manager_monitor_gate_failure(
+    root: Path, campaign: Mapping[str, Any]
+) -> str | None:
+    monitor = read_monitor_state(root)
+    pid = monitor.get("pid")
+    if monitor.get("status") != "RUNNING":
+        return f"monitor status is {monitor.get('status')}, not RUNNING"
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 1:
+        return "monitor has no valid process id"
+    if not process_alive(pid, monitor.get("identity")):
+        return "monitor process identity is not alive"
+    if monitor.get("parent_pid") != 1:
+        return "monitor has not proven parent pid 1"
+    if monitor.get("detached_session") is not True:
+        return "monitor has not proven a detached session"
+    if monitor.get("pgid") != pid or monitor.get("session_id") != pid:
+        return "monitor process, group, and session identities differ"
+    if monitor.get("smoke_contract_sha256") != campaign.get(
+        "smoke_contract_sha256"
+    ):
+        return "monitor is bound to another smoke contract"
+    return None
 
 
 def stop_runtime_groups_for_attention(root: Path) -> list[str]:
@@ -9880,6 +11547,7 @@ def monitor_start(root: Path) -> int:
             raise SystemExit(
                 f"campaign monitor cannot start from {campaign.get('status')}"
             )
+        require_lineage(root)
         require_smoke_proofs(root)
         current = read_monitor_state(root)
         if process_alive(current.get("pid"), current.get("identity")):
@@ -9952,7 +11620,7 @@ def stop(root: Path) -> int:
 def stop_claimed(root: Path) -> int:
     if (root / SUPERSESSION_RECEIPT).exists() or (
         root / QUALIFICATION_RESTART_RECEIPT
-    ).exists():
+    ).exists() or (root / ORCHESTRATOR_RECOVERY_RECEIPT).exists():
         return 0
     campaign = load_json(campaign_file(root))
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
@@ -10214,6 +11882,22 @@ def main() -> int:
         default=DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
     )
 
+    p_orchestrator_recovery = sub.add_parser("orchestrator-recovery")
+    root_arg(p_orchestrator_recovery)
+    p_orchestrator_recovery.add_argument("--from-root", type=Path, required=True)
+    p_orchestrator_recovery.add_argument(
+        "--defect-evidence", type=Path, required=True
+    )
+    p_orchestrator_recovery.add_argument("--publish-live", action="store_true")
+
+    p_orchestrator_evidence = sub.add_parser("orchestrator-recovery-evidence")
+    p_orchestrator_evidence.add_argument("--from-root", type=Path, required=True)
+    p_orchestrator_evidence.add_argument("--root", type=Path, required=True)
+    p_orchestrator_evidence.add_argument("--root-cause", type=Path, required=True)
+    p_orchestrator_evidence.add_argument(
+        "--regression-test", type=Path, required=True
+    )
+
     for name in (
         "smoke",
         "monitor-start",
@@ -10297,6 +11981,27 @@ def main() -> int:
             f"qualification restarted into {value['campaign_id']} "
             f"at {args.root.resolve()}"
         )
+        return 0
+    if args.command == "orchestrator-recovery":
+        value = orchestrator_recovery_campaign(
+            args.from_root,
+            args.root,
+            args.defect_evidence,
+            args.publish_live,
+        )
+        print(
+            f"orchestrator recovered into {value['campaign_id']} "
+            f"at {args.root.resolve()}"
+        )
+        return 0
+    if args.command == "orchestrator-recovery-evidence":
+        value = orchestrator_recovery_evidence_template(
+            args.from_root,
+            args.root,
+            args.root_cause,
+            args.regression_test,
+        )
+        print(json.dumps(value, indent=2, sort_keys=True))
         return 0
     root = args.root.resolve()
     if args.command == "smoke":

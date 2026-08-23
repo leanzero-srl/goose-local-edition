@@ -109,7 +109,7 @@ runtime drift, internal source-mutator rejection, source/target artifact
 tampering, ledger rollback, and a subsequent one-hop full infrastructure
 supersession that retains qualification history.
 
-The warning-as-error harness suite passes all 103 tests. A read-only check
+The warning-as-error harness suite passes all 111 tests. A read-only check
 against the real frozen source campaign and current clean LeanZero checkout
 accepts exactly the publisher transition and the complete qualification
 candidate without reading provider credentials, making provider calls, or
