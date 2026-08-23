@@ -914,6 +914,13 @@ impl SchedulerSemanticObservationRuntime {
             .collect();
         eligible_logical_device_ids.sort();
         eligible_logical_device_ids.dedup();
+        if let Some(mut reviewer_routes) = self.reviewer.eligible_logical_device_ids() {
+            reviewer_routes.sort();
+            reviewer_routes.dedup();
+            eligible_logical_device_ids.retain(|logical_device_id| {
+                reviewer_routes.binary_search(logical_device_id).is_ok()
+            });
+        }
         if eligible_logical_device_ids.is_empty() {
             self.sink.emit(&SwarmEvent::SemanticObservationDeferred {
                 task_id: revision.task_id.clone(),
