@@ -23,11 +23,217 @@ use crate::provider_lease::{
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard, Weak};
 use tokio::sync::{oneshot, Mutex, Notify};
 
 type AdmissionResult = Result<AdmissionReceipt, BrokerError>;
 type ProviderRequestResult = Result<ProviderRequestReceipt, BrokerError>;
+
+/// Lookup identity for the provider request currently owned by one admitted task attempt.
+///
+/// This key is routing data, not authority. The registry returns authority only when the key
+/// selects an engine-published live request.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ProviderStartKey {
+    admission_id: String,
+    task_id: String,
+    attempt: u32,
+}
+
+impl ProviderStartKey {
+    pub fn from_admission(admission: &AdmissionReceipt) -> Self {
+        Self {
+            admission_id: admission.admission_id.clone(),
+            task_id: admission.source.task_id.clone(),
+            attempt: admission.source.attempt,
+        }
+    }
+
+    pub fn admission_id(&self) -> &str {
+        &self.admission_id
+    }
+
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
+    pub fn attempt(&self) -> u32 {
+        self.attempt
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderStartLookupError {
+    Missing {
+        admission_id: String,
+    },
+    TaskMismatch {
+        admission_id: String,
+        expected_task_id: String,
+        actual_task_id: String,
+    },
+    StaleAttempt {
+        admission_id: String,
+        task_id: String,
+        expected_attempt: u32,
+        actual_attempt: u32,
+    },
+    NotLive {
+        admission_id: String,
+    },
+    Concurrent {
+        admission_id: String,
+    },
+}
+
+impl std::fmt::Display for ProviderStartLookupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing { admission_id } => {
+                write!(formatter, "provider start `{admission_id}` is not published")
+            }
+            Self::TaskMismatch {
+                admission_id,
+                expected_task_id,
+                actual_task_id,
+            } => write!(
+                formatter,
+                "provider start `{admission_id}` belongs to task `{actual_task_id}`, not `{expected_task_id}`"
+            ),
+            Self::StaleAttempt {
+                admission_id,
+                task_id,
+                expected_attempt,
+                actual_attempt,
+            } => write!(
+                formatter,
+                "provider start `{admission_id}` belongs to task `{task_id}` attempt {actual_attempt}, not attempt {expected_attempt}"
+            ),
+            Self::NotLive { admission_id } => {
+                write!(formatter, "provider start `{admission_id}` is no longer live")
+            }
+            Self::Concurrent { admission_id } => write!(
+                formatter,
+                "provider start `{admission_id}` already has a different live request"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ProviderStartLookupError {}
+
+struct ProviderStartRegistryEntry {
+    key: ProviderStartKey,
+    request: Weak<ProviderRequestAuthority>,
+}
+
+/// Engine-owned channel from a lifecycle-wrapped provider call to its physical scheduler.
+///
+/// Entries retain only a weak reference to opaque request authority. They cannot keep a dropped or
+/// terminal request alive, and no receipt is serialized or copied into the registry.
+#[derive(Clone, Default)]
+pub struct ProviderStartRegistry {
+    entries: Arc<StdMutex<HashMap<String, ProviderStartRegistryEntry>>>,
+}
+
+impl ProviderStartRegistry {
+    fn publish(
+        &self,
+        key: ProviderStartKey,
+        request: &Arc<ProviderRequestAuthority>,
+    ) -> Result<(), ProviderStartLookupError> {
+        request.ensure_started_live()?;
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(existing) = entries.get(&key.admission_id) {
+            if let Some(existing_request) = existing.request.upgrade() {
+                if existing_request.is_started_live() && !Arc::ptr_eq(&existing_request, request) {
+                    return Err(ProviderStartLookupError::Concurrent {
+                        admission_id: key.admission_id,
+                    });
+                }
+            }
+        }
+        entries.insert(
+            key.admission_id.clone(),
+            ProviderStartRegistryEntry {
+                key,
+                request: Arc::downgrade(request),
+            },
+        );
+        Ok(())
+    }
+
+    pub fn query(
+        &self,
+        key: &ProviderStartKey,
+    ) -> Result<ProviderStartSession, ProviderStartLookupError> {
+        let (published_key, request) = {
+            let entries = self
+                .entries
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let entry = entries.get(&key.admission_id).ok_or_else(|| {
+                ProviderStartLookupError::Missing {
+                    admission_id: key.admission_id.clone(),
+                }
+            })?;
+            if entry.key.task_id != key.task_id {
+                return Err(ProviderStartLookupError::TaskMismatch {
+                    admission_id: key.admission_id.clone(),
+                    expected_task_id: key.task_id.clone(),
+                    actual_task_id: entry.key.task_id.clone(),
+                });
+            }
+            if entry.key.attempt != key.attempt {
+                return Err(ProviderStartLookupError::StaleAttempt {
+                    admission_id: key.admission_id.clone(),
+                    task_id: key.task_id.clone(),
+                    expected_attempt: key.attempt,
+                    actual_attempt: entry.key.attempt,
+                });
+            }
+            (entry.key.clone(), entry.request.clone())
+        };
+        let request = request
+            .upgrade()
+            .ok_or_else(|| ProviderStartLookupError::NotLive {
+                admission_id: key.admission_id.clone(),
+            })?;
+        request.ensure_started_live()?;
+        Ok(ProviderStartSession {
+            key: published_key,
+            request,
+        })
+    }
+}
+
+/// Opaque, non-cloneable access to the exact request published by [`StartedProviderRequest`].
+pub struct ProviderStartSession {
+    key: ProviderStartKey,
+    request: Arc<ProviderRequestAuthority>,
+}
+
+impl std::fmt::Debug for ProviderStartSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderStartSession")
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProviderStartSession {
+    pub fn key(&self) -> &ProviderStartKey {
+        &self.key
+    }
+
+    pub fn ensure_live(&self) -> Result<(), ProviderStartLookupError> {
+        self.request.ensure_started_live()
+    }
+}
 
 struct ControlState {
     broker: PhysicalBroker,
@@ -198,6 +404,7 @@ struct ControlInner {
     changed: Notify,
     semantic_observation_plane_claimed: AtomicBool,
     provider_leases: Option<RunScopedProviderLeaseAuthority>,
+    provider_starts: ProviderStartRegistry,
 }
 
 #[derive(Clone)]
@@ -250,8 +457,13 @@ impl PhysicalAdmissionControl {
                 changed: Notify::new(),
                 semantic_observation_plane_claimed: AtomicBool::new(false),
                 provider_leases,
+                provider_starts: ProviderStartRegistry::default(),
             }),
         })
+    }
+
+    pub fn provider_start_registry(&self) -> ProviderStartRegistry {
+        self.inner.provider_starts.clone()
     }
 
     fn journal_failure(&self) -> Option<String> {
@@ -1130,26 +1342,76 @@ struct ProviderRequestExposureState {
     live_use_closed: bool,
 }
 
+struct ProviderRequestAuthority {
+    receipt: Arc<ProviderRequestReceipt>,
+    exposure: StdMutex<ProviderRequestExposureState>,
+}
+
+impl ProviderRequestAuthority {
+    fn new(receipt: ProviderRequestReceipt) -> Arc<Self> {
+        Arc::new(Self {
+            receipt: Arc::new(receipt),
+            exposure: StdMutex::new(ProviderRequestExposureState::default()),
+        })
+    }
+
+    fn resume(previous: &Self) -> Arc<Self> {
+        Arc::new(Self {
+            receipt: previous.receipt.clone(),
+            exposure: StdMutex::new(ProviderRequestExposureState::default()),
+        })
+    }
+
+    fn is_started_live(&self) -> bool {
+        !self
+            .exposure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .live_use_closed
+    }
+
+    fn ensure_started_live(&self) -> Result<(), ProviderStartLookupError> {
+        if self.is_started_live() {
+            Ok(())
+        } else {
+            Err(ProviderStartLookupError::NotLive {
+                admission_id: self.receipt.admission_id.clone(),
+            })
+        }
+    }
+
+    fn close_live_use(&self) {
+        self.exposure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .live_use_closed = true;
+    }
+}
+
 /// One-shot proof that the exact engine-owned request crossed its verified provider boundary.
 ///
 /// Receipt bytes alone are not authority. This witness is non-cloneable, is minted only while
 /// borrowing the live [`StartedProviderRequest`], and shares terminal/drop state with that request.
 pub(crate) struct ExposedProviderRequestWitness {
-    receipt: ProviderRequestReceipt,
-    state: Arc<StdMutex<ProviderRequestExposureState>>,
+    request: Arc<ProviderRequestAuthority>,
 }
 
-#[derive(Debug)]
 pub(crate) struct LiveProviderRequestSession {
-    receipt: ProviderRequestReceipt,
-    state: Arc<StdMutex<ProviderRequestExposureState>>,
+    request: Arc<ProviderRequestAuthority>,
+}
+
+impl std::fmt::Debug for LiveProviderRequestSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LiveProviderRequestSession")
+            .finish_non_exhaustive()
+    }
 }
 
 impl std::fmt::Debug for ExposedProviderRequestWitness {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ExposedProviderRequestWitness")
-            .field("receipt", &self.receipt)
             .finish_non_exhaustive()
     }
 }
@@ -1207,15 +1469,14 @@ impl ExposedProviderRequestWitness {
     pub(crate) fn try_pin(
         &self,
     ) -> Result<LiveProviderRequestPin<'_>, ProviderLifecycleOperationError> {
-        pin_live_provider_request(&self.state)
+        pin_live_provider_request(&self.request.exposure)
     }
 
     pub(crate) fn bind_started_request(
         &self,
         started: &StartedProviderRequest,
     ) -> Result<LiveProviderRequestSession, ProviderLifecycleOperationError> {
-        if &self.receipt != started.receipt() || !Arc::ptr_eq(&self.state, &started.exposure_state)
-        {
+        if !Arc::ptr_eq(&self.request, started.request_authority()) {
             return Err(ProviderLifecycleOperationError::Unresolved(
                 "provider exposure witness does not belong to the borrowed started request"
                     .to_string(),
@@ -1234,21 +1495,20 @@ impl ExposedProviderRequestWitness {
         let pin = self.try_pin()?;
         drop(pin);
         Ok(LiveProviderRequestSession {
-            receipt: self.receipt.clone(),
-            state: self.state.clone(),
+            request: self.request.clone(),
         })
     }
 }
 
 impl LiveProviderRequestSession {
     pub(crate) fn receipt(&self) -> &ProviderRequestReceipt {
-        &self.receipt
+        &self.request.receipt
     }
 
     pub(crate) fn try_pin(
         &self,
     ) -> Result<LiveProviderRequestPin<'_>, ProviderLifecycleOperationError> {
-        pin_live_provider_request(&self.state)
+        pin_live_provider_request(&self.request.exposure)
     }
 }
 
@@ -1267,9 +1527,8 @@ fn pin_live_provider_request(
 }
 
 struct RecoverableProviderRequest {
-    receipt: ProviderRequestReceipt,
+    request: Arc<ProviderRequestAuthority>,
     boundary: Option<ProviderLeaseHttpBoundary>,
-    exposure_state: Arc<StdMutex<ProviderRequestExposureState>>,
     issued_to_provider: bool,
     pending_terminal: Option<ProviderTerminalKind>,
 }
@@ -1380,9 +1639,8 @@ impl From<ProviderLeaseError> for ProviderLifecycleStartError {
 
 pub struct StartedProviderRequest {
     lifecycle: ProviderLifecycle,
-    receipt: Option<ProviderRequestReceipt>,
+    request: Option<Arc<ProviderRequestAuthority>>,
     boundary: Option<ProviderLeaseHttpBoundary>,
-    exposure_state: Arc<StdMutex<ProviderRequestExposureState>>,
     pending_terminal: Option<ProviderTerminalKind>,
     armed: bool,
 }
@@ -1391,7 +1649,6 @@ impl std::fmt::Debug for StartedProviderRequest {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("StartedProviderRequest")
-            .field("receipt", &self.receipt)
             .field("boundary", &self.boundary)
             .field("pending_terminal", &self.pending_terminal)
             .field("armed", &self.armed)
@@ -1401,9 +1658,32 @@ impl std::fmt::Debug for StartedProviderRequest {
 
 impl StartedProviderRequest {
     pub fn receipt(&self) -> &ProviderRequestReceipt {
-        self.receipt
+        &self
+            .request
             .as_ref()
-            .expect("live started provider request retains its engine receipt")
+            .expect("live started provider request retains its engine authority")
+            .receipt
+    }
+
+    fn request_authority(&self) -> &Arc<ProviderRequestAuthority> {
+        self.request
+            .as_ref()
+            .expect("live started provider request retains its engine authority")
+    }
+
+    /// Publish this exact engine-owned request to the scheduler before entering provider HTTP.
+    pub fn publish_for_scheduler(&self) -> Result<(), ProviderStartLookupError> {
+        let key = ProviderStartKey::from_admission(&self.lifecycle.admission);
+        if self.receipt().admission_id != key.admission_id {
+            return Err(ProviderStartLookupError::Missing {
+                admission_id: key.admission_id,
+            });
+        }
+        self.lifecycle
+            .control
+            .inner
+            .provider_starts
+            .publish(key, self.request_authority())
     }
 
     pub fn http_protocol(&self) -> Option<goose_provider_types::base::ProviderHttpProtocol> {
@@ -1435,7 +1715,8 @@ impl StartedProviderRequest {
             }
         }
         let mut state = self
-            .exposure_state
+            .request_authority()
+            .exposure
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if state.live_use_closed {
@@ -1450,8 +1731,7 @@ impl StartedProviderRequest {
         }
         state.witness_issued = true;
         Ok(ExposedProviderRequestWitness {
-            receipt: self.receipt().clone(),
-            state: self.exposure_state.clone(),
+            request: self.request_authority().clone(),
         })
     }
 
@@ -1592,7 +1872,7 @@ impl StartedProviderRequest {
             *outstanding = None;
         }
         self.armed = false;
-        self.receipt.take();
+        self.request.take();
         self.boundary.take();
     }
 
@@ -1605,16 +1885,14 @@ impl StartedProviderRequest {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *outstanding = Some(OutstandingProviderRequest::Failed(reason));
         self.armed = false;
-        self.receipt.take();
+        self.request.take();
         self.boundary.take();
     }
 
     fn close_live_use(&self) {
-        let mut state = self
-            .exposure_state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.live_use_closed = true;
+        if let Some(request) = &self.request {
+            request.close_live_use();
+        }
     }
 }
 
@@ -1624,7 +1902,7 @@ impl Drop for StartedProviderRequest {
             return;
         }
         self.close_live_use();
-        let Some(receipt) = self.receipt.take() else {
+        let Some(request) = self.request.take() else {
             return;
         };
         let mut outstanding = self
@@ -1638,9 +1916,8 @@ impl Drop for StartedProviderRequest {
         ) {
             *outstanding = Some(OutstandingProviderRequest::Recoverable(
                 RecoverableProviderRequest {
-                    receipt,
+                    request: ProviderRequestAuthority::resume(&request),
                     boundary: self.boundary.take(),
-                    exposure_state: self.exposure_state.clone(),
                     issued_to_provider: true,
                     pending_terminal: self.pending_terminal,
                 },
@@ -1687,9 +1964,8 @@ impl ClaimedProviderRequestGuard {
         self.armed = false;
         StartedProviderRequest {
             lifecycle: self.lifecycle.clone(),
-            receipt: Some(request.receipt),
+            request: Some(request.request),
             boundary: request.boundary,
-            exposure_state: request.exposure_state,
             pending_terminal: request.pending_terminal,
             armed: true,
         }
@@ -1814,11 +2090,8 @@ impl ProviderLifecycle {
                     }
                     *outstanding = Some(OutstandingProviderRequest::Recoverable(
                         RecoverableProviderRequest {
-                            receipt,
+                            request: ProviderRequestAuthority::new(receipt),
                             boundary: None,
-                            exposure_state: Arc::new(StdMutex::new(
-                                ProviderRequestExposureState::default(),
-                            )),
                             issued_to_provider: false,
                             pending_terminal: None,
                         },
@@ -1862,7 +2135,10 @@ impl ProviderLifecycle {
                         if let Some(authority) = &self.control.inner.provider_leases {
                             recoverable.boundary = Some(
                                 authority
-                                    .reserve_provider_request(&self.admission, &recoverable.receipt)
+                                    .reserve_provider_request(
+                                        &self.admission,
+                                        &recoverable.request.receipt,
+                                    )
                                     .await?,
                             );
                         }
@@ -2130,5 +2406,79 @@ impl TaskDispatcher for BrokeredTaskDispatcher {
                 ))
             })?;
         result
+    }
+}
+
+#[cfg(test)]
+mod provider_start_registry_tests {
+    use super::*;
+
+    fn request_authority(admission_id: &str) -> Arc<ProviderRequestAuthority> {
+        ProviderRequestAuthority::new(ProviderRequestReceipt {
+            admission_id: admission_id.to_string(),
+            key: ProviderRequestKey {
+                ordinal: 0,
+                provider_request_id: "engine-provider-request:test-only".to_string(),
+            },
+            physical_host_id: "host-a".to_string(),
+            model_instance_id: "instance-a".to_string(),
+        })
+    }
+
+    fn key(task_id: &str, attempt: u32) -> ProviderStartKey {
+        ProviderStartKey {
+            admission_id: "admission-a".to_string(),
+            task_id: task_id.to_string(),
+            attempt,
+        }
+    }
+
+    #[test]
+    fn provider_start_registry_rejects_cross_task_and_stale_attempt_queries() {
+        let registry = ProviderStartRegistry::default();
+        let authority = request_authority("admission-a");
+        registry.publish(key("task-a", 2), &authority).unwrap();
+
+        assert!(matches!(
+            registry.query(&key("task-b", 2)),
+            Err(ProviderStartLookupError::TaskMismatch { .. })
+        ));
+        assert!(matches!(
+            registry.query(&key("task-a", 1)),
+            Err(ProviderStartLookupError::StaleAttempt { .. })
+        ));
+        registry.query(&key("task-a", 2)).unwrap();
+    }
+
+    #[test]
+    fn provider_start_registry_rejects_terminal_and_dropped_requests() {
+        let registry = ProviderStartRegistry::default();
+        let authority = request_authority("admission-a");
+        let provider_start = key("task-a", 0);
+        registry
+            .publish(provider_start.clone(), &authority)
+            .unwrap();
+        let session = registry.query(&provider_start).unwrap();
+
+        authority.close_live_use();
+        assert!(matches!(
+            session.ensure_live(),
+            Err(ProviderStartLookupError::NotLive { .. })
+        ));
+        assert!(matches!(
+            registry.query(&provider_start),
+            Err(ProviderStartLookupError::NotLive { .. })
+        ));
+
+        let dropped_registry = ProviderStartRegistry::default();
+        let dropped_authority = request_authority("admission-a");
+        dropped_registry
+            .publish(provider_start.clone(), &dropped_authority)
+            .unwrap();
+        drop(dropped_authority);
+        assert!(matches!(
+            dropped_registry.query(&provider_start),
+            Err(ProviderStartLookupError::NotLive { .. })
+        ));
     }
 }
