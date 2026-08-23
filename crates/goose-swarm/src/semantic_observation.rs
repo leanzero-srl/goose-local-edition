@@ -102,6 +102,9 @@ impl SemanticObservationSnapshotDraft {
         self.neutral_signals
             .sort_by(|left, right| left.source_id.cmp(&right.source_id));
         self.allowed_finding_routes.sort();
+        for signal in &mut self.neutral_signals {
+            canonicalize_json_value(&mut signal.value);
+        }
 
         require_unique_values(
             "acceptance criterion id",
@@ -851,8 +854,17 @@ impl SemanticObservationPlane {
             }
         };
         if let Some(rejection) = rejection {
+            let event = if matches!(
+                rejection,
+                SemanticObservationRejection::DuplicateInFlight
+                    | SemanticObservationRejection::DuplicateCompleted
+            ) {
+                "semantic_observation_deduplicated"
+            } else {
+                "semantic_observation_rejected"
+            };
             self.events.write_value(serde_json::json!({
-                "event": "semantic_observation_deduplicated",
+                "event": event,
                 "task_id": task_id,
                 "snapshot_hash": snapshot_hash,
                 "reason": format!("{rejection:?}"),
@@ -894,7 +906,10 @@ impl SemanticObservationPlane {
                 task_id_for_task.clone(),
                 snapshot_hash_for_task.clone(),
             );
-            let reviewed = reviewer.review(request).await;
+            let reviewed = match tokio::spawn(async move { reviewer.review(request).await }).await {
+                Ok(reviewed) => reviewed,
+                Err(error) => Err(format!("reviewer task ended without a reply: {error}")),
+            };
             let reviewer_reply_hash = reviewed
                 .as_ref()
                 .ok()
@@ -943,6 +958,7 @@ impl SemanticObservationPlane {
                 }
             }
             guard.disarm();
+            let _ = sender.send(receipt.clone());
             events.write_value(serde_json::json!({
                 "event": "semantic_observation_completed",
                 "task_id": receipt.task_id,
@@ -955,7 +971,6 @@ impl SemanticObservationPlane {
                 "protocol_failure": receipt.decision.failure().map(|failure| &failure.kind),
                 "authority": "observation_only",
             }));
-            let _ = sender.send(receipt);
         });
 
         SemanticObservationSubmission::Started(SemanticObservationHandle {
@@ -1100,6 +1115,26 @@ fn require_nonempty_unique<'a>(
         bail!("{label} list must not be empty");
     }
     require_unique_values(label, values)
+}
+
+fn canonicalize_json_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                canonicalize_json_value(item);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            let old = std::mem::take(object);
+            let mut fields: Vec<(String, serde_json::Value)> = old.into_iter().collect();
+            fields.sort_by(|left, right| left.0.cmp(&right.0));
+            for (key, mut field) in fields {
+                canonicalize_json_value(&mut field);
+                object.insert(key, field);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn sha256_label(bytes: &[u8]) -> String {
@@ -1260,11 +1295,93 @@ mod tests {
         );
     }
 
+    #[test]
+    fn every_protocol_action_parses_only_through_its_typed_payload() {
+        let snapshot = draft(7, "trace").seal().unwrap();
+        let citation = serde_json::json!([
+            {"source_id": "signal:progress", "observation": "the sealed progress signal"}
+        ]);
+        let cases = [
+            (
+                serde_json::json!({"action": "CONTINUE", "summary": "progress is healthy", "evidence": citation}),
+                SemanticJudgeAction::Continue,
+            ),
+            (
+                serde_json::json!({"action": "NUDGE", "summary": "wrong command", "evidence": citation, "guidance": "run pagination"}),
+                SemanticJudgeAction::Nudge,
+            ),
+            (
+                serde_json::json!({
+                    "action": "SPLIT_PROPOSAL",
+                    "summary": "two independently specified boundaries are visible",
+                    "evidence": citation,
+                    "boundaries": [
+                        {"label": "left", "objective": "implement left", "requirement_ids": ["all-pages"], "evidence_source_ids": ["signal:progress"], "owned_paths": ["left.py"]},
+                        {"label": "right", "objective": "implement right", "requirement_ids": ["all-pages"], "evidence_source_ids": ["signal:progress"], "owned_paths": ["right.py"]}
+                    ]
+                }),
+                SemanticJudgeAction::SplitProposal,
+            ),
+            (
+                serde_json::json!({"action": "ROUTE_FINDING", "summary": "the join owns this finding", "evidence": citation, "target_task_id": "integrate-verify"}),
+                SemanticJudgeAction::RouteFinding,
+            ),
+            (
+                serde_json::json!({"action": "ACCEPT_CANDIDATE", "summary": "the oracle is covered", "evidence": citation, "covered_requirements": ["all-pages"]}),
+                SemanticJudgeAction::AcceptCandidate,
+            ),
+            (
+                serde_json::json!({"action": "REQUEST_EVIDENCE", "summary": "one probe is missing", "evidence": citation, "requests": ["run the cursor-expiry probe"]}),
+                SemanticJudgeAction::RequestEvidence,
+            ),
+            (
+                serde_json::json!({"action": "ABSTAIN", "reason": "the excerpt is ambiguous"}),
+                SemanticJudgeAction::Abstain,
+            ),
+            (
+                serde_json::json!({"action": "INCOMPLETE", "summary": "the all-pages case is open", "evidence": citation, "unmet_requirements": ["all-pages"]}),
+                SemanticJudgeAction::Incomplete,
+            ),
+        ];
+        for (body, expected) in cases {
+            let raw = reply(&snapshot, body);
+            assert_eq!(
+                parse_semantic_observation_reply(&snapshot, &raw).action(),
+                expected
+            );
+        }
+
+        for body in [
+            serde_json::json!({"action": "REQUEST_EVIDENCE", "summary": "missing", "evidence": citation, "requests": []}),
+            serde_json::json!({"action": "SPLIT_PROPOSAL", "summary": "empty boundary", "evidence": citation, "boundaries": [
+                {"label": "left", "objective": "implement left", "requirement_ids": [], "evidence_source_ids": ["signal:progress"], "owned_paths": ["left.py"]},
+                {"label": "right", "objective": "implement right", "requirement_ids": ["all-pages"], "evidence_source_ids": ["signal:progress"], "owned_paths": ["right.py"]}
+            ]}),
+        ] {
+            assert_eq!(
+                parse_semantic_observation_reply(&snapshot, &reply(&snapshot, body)).action(),
+                SemanticJudgeAction::Abstain
+            );
+        }
+    }
+
     struct BlockingReviewer {
         calls: AtomicUsize,
         started: Notify,
         release: Notify,
         response: Mutex<Option<String>>,
+    }
+
+    struct PanickingReviewer;
+
+    #[async_trait]
+    impl SemanticObservationReviewer for PanickingReviewer {
+        async fn review(
+            &self,
+            _request: SemanticObservationRequest,
+        ) -> std::result::Result<String, String> {
+            panic!("adversarial reviewer panic")
+        }
     }
 
     #[async_trait]
@@ -1333,6 +1450,44 @@ mod tests {
                 SemanticObservationRejection::OlderThanCurrent { .. }
             )
         ));
+    }
+
+    #[tokio::test]
+    async fn reviewer_panic_becomes_an_abstention_and_releases_one_flight_state() {
+        let plane = SemanticObservationPlane::without_events(Arc::new(PanickingReviewer));
+        let first = draft(7, "first").seal().unwrap();
+        let handle = match plane.submit(first) {
+            SemanticObservationSubmission::Started(handle) => handle,
+            SemanticObservationSubmission::Rejected(reason) => {
+                panic!("unexpected rejection: {reason:?}")
+            }
+        };
+        let receipt = handle.wait().await.unwrap();
+        assert_eq!(receipt.action(), SemanticJudgeAction::Abstain);
+        assert_eq!(
+            receipt.decision.failure().map(|failure| &failure.kind),
+            Some(&SemanticProtocolFailureKind::ReviewerFailed)
+        );
+
+        let next = draft(8, "next").seal().unwrap();
+        assert!(matches!(
+            plane.submit(next),
+            SemanticObservationSubmission::Started(_)
+        ));
+    }
+
+    #[test]
+    fn neutral_signal_object_order_does_not_change_snapshot_identity() {
+        let mut left = draft(7, "trace");
+        left.neutral_signals[0].value =
+            serde_json::from_str(r#"{"z":1,"a":{"y":2,"b":3}}"#).unwrap();
+        let mut right = draft(7, "trace");
+        right.neutral_signals[0].value =
+            serde_json::from_str(r#"{"a":{"b":3,"y":2},"z":1}"#).unwrap();
+        assert_eq!(
+            left.seal().unwrap().snapshot_hash(),
+            right.seal().unwrap().snapshot_hash()
+        );
     }
 
     #[test]
