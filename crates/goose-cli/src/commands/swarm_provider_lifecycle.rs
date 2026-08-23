@@ -7,7 +7,7 @@ use goose::providers::base::{
     SingleAttemptFailureProvenance, SingleAttemptStream, SingleAttemptStreamOutcome,
 };
 use goose_provider_types::base::{
-    ProviderStreamChunkKind, ProviderStreamProgressSink, scope_provider_stream_progress,
+    scope_provider_stream_progress, ProviderStreamChunkKind, ProviderStreamProgressSink,
 };
 use goose_provider_types::errors::ProviderError;
 use goose_provider_types::model::ModelConfig;
@@ -1926,19 +1926,15 @@ mod tests {
             .await
             .unwrap();
         let error = output.next().await.unwrap().unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("without explicit provider terminal")
-        );
-        assert!(
-            tokio::time::timeout(
-                Duration::from_millis(50),
-                work.complete_local(LocalCompletionKind::Error),
-            )
-            .await
-            .is_err()
-        );
+        assert!(error
+            .to_string()
+            .contains("without explicit provider terminal"));
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            work.complete_local(LocalCompletionKind::Error),
+        )
+        .await
+        .is_err());
         assert_eq!(control.occupancy().await, (0, 1));
     }
 
@@ -1946,12 +1942,10 @@ mod tests {
     async fn provider_error_records_failed_terminal() {
         let (control, work) = admitted().await;
         let provider = wrapped_for(Behavior::Failed, work.lifecycle()).await;
-        assert!(
-            provider
-                .stream(&ModelConfig::new("model-a"), "", &[], &[])
-                .await
-                .is_err()
-        );
+        assert!(provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .is_err());
         work.complete_local(LocalCompletionKind::Error)
             .await
             .unwrap();
@@ -1962,20 +1956,16 @@ mod tests {
     async fn network_error_before_stream_keeps_provider_claim_unresolved() {
         let (control, work) = admitted().await;
         let provider = wrapped_for(Behavior::NetworkFailed, work.lifecycle()).await;
-        assert!(
-            provider
-                .stream(&ModelConfig::new("model-a"), "", &[], &[])
-                .await
-                .is_err()
-        );
-        assert!(
-            tokio::time::timeout(
-                Duration::from_millis(50),
-                work.complete_local(LocalCompletionKind::Error),
-            )
+        assert!(provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
             .await
-            .is_err()
-        );
+            .is_err());
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            work.complete_local(LocalCompletionKind::Error),
+        )
+        .await
+        .is_err());
         assert_eq!(control.occupancy().await, (0, 1));
     }
 
@@ -1988,14 +1978,12 @@ mod tests {
             .await
             .unwrap();
         assert!(output.next().await.unwrap().is_err());
-        assert!(
-            tokio::time::timeout(
-                Duration::from_millis(50),
-                work.complete_local(LocalCompletionKind::StreamDropped),
-            )
-            .await
-            .is_err()
-        );
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            work.complete_local(LocalCompletionKind::StreamDropped),
+        )
+        .await
+        .is_err());
         assert_eq!(control.occupancy().await, (0, 1));
     }
 
@@ -2008,14 +1996,12 @@ mod tests {
             .await
             .unwrap();
         drop(output);
-        assert!(
-            tokio::time::timeout(
-                Duration::from_millis(50),
-                work.complete_local(LocalCompletionKind::StreamDropped),
-            )
-            .await
-            .is_err()
-        );
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            work.complete_local(LocalCompletionKind::StreamDropped),
+        )
+        .await
+        .is_err());
         assert_eq!(control.occupancy().await, (0, 1));
     }
 
@@ -2044,14 +2030,12 @@ mod tests {
             control.provider_start_registry().query(&provider_start),
             Err(ProviderStartLookupError::NotLive { .. })
         ));
-        assert!(
-            tokio::time::timeout(
-                Duration::from_millis(50),
-                work.complete_local(LocalCompletionKind::CancellationRequested),
-            )
-            .await
-            .is_err()
-        );
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            work.complete_local(LocalCompletionKind::CancellationRequested),
+        )
+        .await
+        .is_err());
         assert_eq!(control.occupancy().await, (0, 1));
     }
 }
