@@ -14,7 +14,7 @@ use crate::broker::{
 use crate::context::SharedContext;
 use crate::control_plane::{
     BrokeredTaskDispatcher, PhysicalAdmissionControl, PhysicalDispatchAuthority,
-    ProviderLifecycleDispatcher,
+    ProviderLifecycleDispatcher, ProviderStartKey,
 };
 use crate::dag::{Dag, Difficulty, TaskId, TaskSpec, TaskState};
 use crate::dispatch::{
@@ -728,6 +728,7 @@ struct SchedulerSemanticObservationRuntime {
 struct ScheduledSemanticObservationCaptureRequest {
     request: SemanticObservationCaptureRequest,
     task_authority: EngineSemanticTaskAuthority,
+    provider_start: ProviderStartKey,
 }
 
 enum SemanticObservationAttemptDisposition {
@@ -764,9 +765,29 @@ impl SchedulerSemanticObservationRuntime {
         let ScheduledSemanticObservationCaptureRequest {
             request,
             task_authority,
+            provider_start,
         } = scheduled;
         let task_id = request.task_id.clone();
         let attempt = request.attempt;
+        let provider_session = match self
+            .control
+            .provider_start_registry()
+            .query(&provider_start)
+        {
+            Ok(session) => session,
+            Err(error) => {
+                self.capture_failed(
+                    &task_id,
+                    attempt,
+                    format!("source provider start is unavailable: {error}"),
+                );
+                return SemanticObservationAttemptResult {
+                    task_id,
+                    revision: None,
+                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                };
+            }
+        };
         let task_evidence = match self
             .plane
             .register_scheduler_task_evidence(task_authority, &request)
@@ -830,6 +851,18 @@ impl SchedulerSemanticObservationRuntime {
                 };
             }
         };
+        if let Err(error) = provider_session.ensure_live() {
+            self.capture_failed(
+                &task_id,
+                attempt,
+                format!("source provider ended during capture: {error}"),
+            );
+            return SemanticObservationAttemptResult {
+                task_id,
+                revision: None,
+                disposition: SemanticObservationAttemptDisposition::NoCapture,
+            };
+        }
         let revision = capture.revision();
         if revision.authority_scope != admitted_source.authority_scope
             || revision.phase_epoch != admitted_source.phase_epoch
@@ -1027,6 +1060,7 @@ struct State {
     held_by: HashMap<TaskId, Vec<String>>,
     claimed_device: HashMap<TaskId, usize>,
     physical_activity_publishers: HashMap<TaskId, SemanticActivityPublisher>,
+    physical_provider_starts: HashMap<TaskId, ProviderStartKey>,
     dispatched_per_device: HashMap<String, u32>,
     ctx: SharedContext,
     max_attempts: u32,
@@ -1271,6 +1305,10 @@ impl PhysicalDispatchAuthority for SchedulerPhysicalAuthority {
         state
             .physical_activity_publishers
             .insert(req.task_id.clone(), activity_publisher);
+        state.physical_provider_starts.insert(
+            req.task_id.clone(),
+            ProviderStartKey::from_admission(admission),
+        );
         *state
             .dispatched_per_device
             .entry(req.device_id.clone())
@@ -1579,6 +1617,7 @@ impl State {
         Some(ScheduledSemanticObservationCaptureRequest {
             request,
             task_authority,
+            provider_start: self.physical_provider_starts.get(task_id)?.clone(),
         })
     }
 
@@ -3874,6 +3913,7 @@ impl Scheduler {
             held_by: HashMap::new(),
             claimed_device: HashMap::new(),
             physical_activity_publishers: HashMap::new(),
+            physical_provider_starts: HashMap::new(),
             dispatched_per_device: HashMap::new(),
             ctx: SharedContext::new(),
             max_attempts: self.max_attempts,
