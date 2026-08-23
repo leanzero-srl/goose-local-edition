@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import os
 import signal
@@ -8,6 +9,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from base64 import b64decode
@@ -26,17 +28,34 @@ class CloudSb7HarnessTest(unittest.TestCase):
         campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
         lease_id = "fixture-monitor-lease"
         pid = os.getpid()
+        lock_path = root / "locks/monitor-run.claim"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock = lock_path.open("a+")
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(lock.close)
+        topology = mock.patch.object(
+            cloud_sb7,
+            "monitor_process_topology",
+            return_value={"parent_pid": 1, "pgid": pid, "session_id": pid},
+        )
+        topology.start()
+        self.addCleanup(topology.stop)
+        identity = cloud_sb7.process_identity(pid)
         cloud_sb7.monitor_state(
             root,
             status="RUNNING",
             pid=pid,
             pgid=pid,
-            identity=cloud_sb7.process_identity(pid),
+            identity=identity,
             parent_pid=1,
             session_id=pid,
             detached_session=True,
             smoke_contract_sha256=campaign.get("smoke_contract_sha256"),
             lease_id=lease_id,
+            lease_owner_pid=pid,
+            lease_owner_identity=identity,
+            lease_renewals=1,
+            lease_heartbeat_failure=None,
         )
         cloud_sb7.manager_state(
             root,
@@ -5047,6 +5066,57 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertNotIn("publisher-super-secret", log.read_text())
             self.assertIn("[REDACTED]", log.read_text())
 
+    def test_blocking_publisher_process_polls_and_enforces_monitor_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            log = root / "publisher.log"
+            started: list[int] = []
+            with self.assertRaisesRegex(RuntimeError, "monitor lease failed"):
+                cloud_sb7.run_logged_process(
+                    [sys.executable, "-c", "import time; time.sleep(120)"],
+                    cwd=root,
+                    env={"PATH": os.environ.get("PATH", "")},
+                    log_path=log,
+                    timeout_seconds=120,
+                    redactions=[],
+                    on_started=lambda proc: started.append(proc.pid),
+                    lease_probe=lambda: "fixture lease loss",
+                )
+            self.assertEqual(len(started), 1)
+            self.assertFalse(cloud_sb7.process_alive(started[0]))
+            self.assertEqual(cloud_sb7.process_group_members(started[0]), [])
+
+    def test_rendered_verification_refuses_network_after_monitor_lease_loss(
+        self,
+    ) -> None:
+        verdict = self.fixture_verdict()
+        campaign = self.public_identity_campaign(verdict)
+        campaign["publisher"].update(
+            {
+                "website_base_url": "https://example.invalid",
+                "verify_timeout_seconds": 1,
+                "verify_interval_seconds": 0.01,
+            }
+        )
+        entry = {
+            "label": "Fixture Model",
+            "model": "fixture-model",
+            "doc_id": "brun-baseline-fixture-model-sb70",
+        }
+        with (
+            mock.patch.object(cloud_sb7, "fetch_rendered_page") as fetch,
+            self.assertRaisesRegex(
+                cloud_sb7.MonitorLeaseError, "monitor lease failed"
+            ),
+        ):
+            cloud_sb7.verify_rendered_publication(
+                campaign,
+                entry,
+                verdict,
+                lease_probe=lambda: "fixture lease loss",
+            )
+        fetch.assert_not_called()
+
     def test_rendered_verification_requires_exact_board_and_run_evidence(self) -> None:
         verdict = self.fixture_verdict()
         campaign = self.public_identity_campaign(verdict)
@@ -5840,22 +5910,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.start(root)
             launch.assert_not_called()
 
-            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
-            cloud_sb7.monitor_state(
-                root,
-                status="RUNNING",
-                pid=24680,
-                pgid=24680,
-                identity="monitor-identity",
-                parent_pid=1,
-                session_id=24680,
-                detached_session=True,
-                smoke_contract_sha256=campaign["smoke_contract_sha256"],
-                lease_id="fixture-monitor-lease",
-            )
+            self.install_live_monitor_lease(root)
             with (
                 mock.patch.object(cloud_sb7, "require_smoke_proofs"),
-                mock.patch.object(cloud_sb7, "process_alive", return_value=True),
                 mock.patch.object(
                     cloud_sb7, "launch_detached", return_value=Launched()
                 ) as launch,
@@ -6193,12 +6250,14 @@ class CloudSb7HarnessTest(unittest.TestCase):
     def test_smoke_manager_hands_success_to_detached_monitor(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
             observed = []
 
             def start_monitor(start_root: Path) -> int:
                 observed.append(
                     cloud_sb7.read_smoke_manager_state(start_root)["status"]
                 )
+                self.install_live_monitor_lease(start_root)
                 return 0
 
             with (
@@ -6206,9 +6265,6 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 mock.patch.object(
                     cloud_sb7, "monitor_start", side_effect=start_monitor
                 ) as monitor,
-                mock.patch.object(
-                    cloud_sb7, "process_identity", return_value="smoke-manager"
-                ),
             ):
                 self.assertEqual(cloud_sb7.smoke_manage(root), 0)
             monitor.assert_called_once_with(root)
@@ -6216,6 +6272,94 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(
                 cloud_sb7.read_smoke_manager_state(root)["status"], "HANDED_OFF"
             )
+            self.assertIsNone(cloud_sb7.smoke_monitor_handoff_failure(root))
+            state = cloud_sb7.read_smoke_manager_state(root)
+            self.assertEqual(
+                state["monitor_handoff"]["lease_id"], "fixture-monitor-lease"
+            )
+
+    def test_monitor_lease_requires_the_live_exclusive_runtime_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            pid = os.getpid()
+            identity = cloud_sb7.process_identity(pid)
+            cloud_sb7.monitor_state(
+                root,
+                status="RUNNING",
+                pid=pid,
+                pgid=pid,
+                identity=identity,
+                parent_pid=1,
+                session_id=pid,
+                detached_session=True,
+                smoke_contract_sha256=campaign["smoke_contract_sha256"],
+                lease_id="unlocked-monitor",
+                lease_owner_pid=pid,
+                lease_owner_identity=identity,
+                lease_heartbeat_failure=None,
+            )
+            with mock.patch.object(
+                cloud_sb7,
+                "monitor_process_topology",
+                return_value={"parent_pid": 1, "pgid": pid, "session_id": pid},
+            ):
+                failure = cloud_sb7.monitor_lease_snapshot_failure(
+                    root, cloud_sb7.read_monitor_state(root), campaign
+                )
+            self.assertIn("exclusive runtime claim", failure or "")
+
+    def test_monitor_heartbeat_renews_while_the_main_monitor_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            pid = os.getpid()
+            identity = cloud_sb7.process_identity(pid)
+            lease_id = "heartbeat-monitor"
+            lock_path = root / "locks/monitor-run.claim"
+            stop_event = threading.Event()
+            with lock_path.open("a+") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                cloud_sb7.monitor_state(
+                    root,
+                    status="RUNNING",
+                    pid=pid,
+                    pgid=pid,
+                    identity=identity,
+                    parent_pid=1,
+                    session_id=pid,
+                    detached_session=True,
+                    smoke_contract_sha256=campaign["smoke_contract_sha256"],
+                    lease_id=lease_id,
+                    lease_owner_pid=pid,
+                    lease_owner_identity=identity,
+                    lease_renewals=0,
+                    lease_heartbeat_failure=None,
+                )
+                with mock.patch.object(
+                    cloud_sb7,
+                    "monitor_process_topology",
+                    return_value={"parent_pid": 1, "pgid": pid, "session_id": pid},
+                ):
+                    heartbeat = threading.Thread(
+                        target=cloud_sb7.monitor_lease_heartbeat,
+                        args=(root, pid, str(identity), lease_id, stop_event, 0.01),
+                    )
+                    heartbeat.start()
+                    deadline = time.monotonic() + 1
+                    while (
+                        cloud_sb7.read_monitor_state(root).get("lease_renewals", 0)
+                        < 2
+                        and time.monotonic() < deadline
+                    ):
+                        time.sleep(0.01)
+                    stop_event.set()
+                    heartbeat.join(timeout=1)
+            monitor = cloud_sb7.read_monitor_state(root)
+            self.assertGreaterEqual(monitor["lease_renewals"], 2)
+            self.assertIsNone(monitor["lease_heartbeat_failure"])
 
     def test_durable_smoke_relaunches_a_dead_manager_and_adopts_handoff(
         self,
@@ -6247,6 +6391,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 ),
                 mock.patch.object(
                     cloud_sb7, "process_identity", return_value="smoke-manager"
+                ),
+                mock.patch.object(
+                    cloud_sb7, "smoke_monitor_handoff_failure", return_value=None
                 ),
                 mock.patch.object(
                     cloud_sb7, "launch_after_receipt", side_effect=launch

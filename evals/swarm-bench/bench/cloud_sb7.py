@@ -30,6 +30,7 @@ import stat as stat_module
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -237,6 +238,8 @@ MONITOR_TERMINAL_STATES = {"PUBLISHED", "ATTENTION", "STOPPED"}
 MONITOR_DETACH_TIMEOUT_SECONDS = 5.0
 MONITOR_HEARTBEAT_INTERVAL_SECONDS = 10.0
 MONITOR_LEASE_TIMEOUT_SECONDS = 35.0
+MONITOR_LEASE_RENEWAL_SECONDS = 5.0
+MONITOR_NETWORK_TIMEOUT_SECONDS = 10.0
 MANAGER_WATCH_POLL_SECONDS = 1.0
 GATED_EXEC_RECEIPT_TIMEOUT_SECONDS = 10.0
 MONITOR_PROGRESS_SCHEMA = 1
@@ -9289,6 +9292,17 @@ def exclusive_claim(path: Path, blocking: bool = False) -> Iterator[bool]:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
+def exclusive_claim_is_held(path: Path) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    return False
+
+
 def smoke_supervise(root: Path, entrant_id: str) -> int:
     with exclusive_claim(root / "locks" / f"smoke-{entrant_id}.claim") as claimed:
         if not claimed:
@@ -9925,6 +9939,34 @@ def process_alive(pid: Any, expected_identity: Any = None) -> bool:
     if identity is None:
         return False
     return expected_identity is None or identity == str(expected_identity)
+
+
+def monitor_process_topology(pid: Any) -> Dict[str, int] | None:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return None
+    proc = subprocess.run(
+        ["ps", "-p", str(value), "-o", "ppid=", "-o", "pgid=", "-o", "stat="],
+        text=True,
+        capture_output=True,
+        check=False,
+        start_new_session=True,
+    )
+    fields = proc.stdout.split()
+    if proc.returncode != 0 or len(fields) < 3 or fields[2].startswith("Z"):
+        return None
+    try:
+        parent_pid = int(fields[0])
+        pgid = int(fields[1])
+        session_id = os.getsid(value)
+    except (OSError, TypeError, ValueError):
+        return None
+    return {
+        "parent_pid": parent_pid,
+        "pgid": pgid,
+        "session_id": session_id,
+    }
 
 
 def monitor_progress_file_evidence(path: Path) -> Dict[str, Any]:
@@ -11804,13 +11846,9 @@ def smoke_manage(root: Path) -> int:
             )
             return result
         monitor_start(root)
-        smoke_manager_state(
-            root,
-            status="HANDED_OFF",
-            exit_code=0,
-            finished_at=utc_now(),
-            failure=None,
-        )
+        campaign = load_json(campaign_file(root))
+        monitor = wait_for_authenticated_monitor(root, campaign)
+        commit_smoke_monitor_handoff(root, campaign, monitor)
         return 0
     except (Exception, SystemExit) as error:
         safe = f"{type(error).__name__}: {error}"[:1000]
@@ -11825,6 +11863,103 @@ def smoke_manage(root: Path) -> int:
         return 1
 
 
+def wait_for_authenticated_monitor(
+    root: Path,
+    campaign: Mapping[str, Any],
+    timeout_seconds: float = MONITOR_LEASE_TIMEOUT_SECONDS,
+    poll_seconds: float = 0.05,
+) -> Dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_problem = "monitor has not entered RUNNING"
+    while time.monotonic() < deadline:
+        monitor = read_monitor_state(root)
+        problem = monitor_lease_snapshot_failure(root, monitor, campaign)
+        if problem is None:
+            return monitor
+        last_problem = problem
+        if monitor.get("status") in MONITOR_TERMINAL_STATES:
+            break
+        time.sleep(poll_seconds)
+    raise SystemExit(
+        "detached monitor did not establish authenticated RUNNING ownership: "
+        f"{last_problem}"
+    )
+
+
+def commit_smoke_monitor_handoff(
+    root: Path,
+    campaign: Mapping[str, Any],
+    monitor: Mapping[str, Any],
+) -> Dict[str, Any]:
+    problem = monitor_lease_snapshot_failure(root, monitor, campaign)
+    if problem:
+        raise SystemExit(f"smoke monitor handoff is not authenticated: {problem}")
+    receipt = {
+        "schema_version": CAMPAIGN_SCHEMA,
+        "handed_off_at": utc_now(),
+        "monitor_pid": monitor["pid"],
+        "monitor_pgid": monitor["pgid"],
+        "monitor_session_id": monitor["session_id"],
+        "monitor_identity": monitor["identity"],
+        "lease_id": monitor["lease_id"],
+        "smoke_contract_sha256": monitor["smoke_contract_sha256"],
+    }
+    return smoke_manager_state(
+        root,
+        status="HANDED_OFF",
+        monitor_handoff=receipt,
+        exit_code=0,
+        finished_at=utc_now(),
+        failure=None,
+    )
+
+
+def smoke_monitor_handoff_failure(root: Path) -> str | None:
+    try:
+        campaign = load_json(campaign_file(root))
+        state = read_smoke_manager_state(root)
+        receipt = state.get("monitor_handoff")
+        if state.get("status") != "HANDED_OFF" or not isinstance(receipt, dict):
+            return "smoke manager has no committed monitor handoff"
+        expected_keys = {
+            "schema_version",
+            "handed_off_at",
+            "monitor_pid",
+            "monitor_pgid",
+            "monitor_session_id",
+            "monitor_identity",
+            "lease_id",
+            "smoke_contract_sha256",
+        }
+        if (
+            set(receipt) != expected_keys
+            or receipt.get("schema_version") != CAMPAIGN_SCHEMA
+            or not isinstance(receipt.get("handed_off_at"), str)
+            or not receipt.get("handed_off_at")
+        ):
+            return "smoke monitor handoff receipt is malformed"
+        monitor = read_monitor_state(root)
+        problem = monitor_lease_snapshot_failure(
+            root, monitor, campaign, str(receipt.get("lease_id", ""))
+        )
+        if problem:
+            return problem
+        exact = {
+            "monitor_pid": monitor.get("pid"),
+            "monitor_pgid": monitor.get("pgid"),
+            "monitor_session_id": monitor.get("session_id"),
+            "monitor_identity": monitor.get("identity"),
+            "lease_id": monitor.get("lease_id"),
+            "smoke_contract_sha256": monitor.get("smoke_contract_sha256"),
+        }
+        for key, value in exact.items():
+            if receipt.get(key) != value:
+                return f"smoke monitor handoff differs on {key}"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"smoke monitor handoff cannot be verified: {error}"
+    return None
+
+
 def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
     while True:
         with exclusive_claim(
@@ -11837,8 +11972,15 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
             if campaign.get("smoke_status") == "PASS":
                 require_smoke_proofs(root)
                 monitor = read_monitor_state(root)
-                if not process_alive(monitor.get("pid"), monitor.get("identity")):
+                if monitor_lease_snapshot_failure(root, monitor, campaign):
                     monitor_start(root)
+                    monitor = wait_for_authenticated_monitor(root, campaign)
+                commit_smoke_monitor_handoff(root, campaign, monitor)
+                handoff_problem = smoke_monitor_handoff_failure(root)
+                if handoff_problem:
+                    raise SystemExit(
+                        f"durable smoke monitor handoff failed: {handoff_problem}"
+                    )
                 return 0
             current = read_smoke_manager_state(root)
             if not process_alive(current.get("pid"), current.get("identity")):
@@ -11879,12 +12021,10 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
                     )
         campaign = load_json(campaign_file(root))
         state = read_smoke_manager_state(root)
-        if campaign.get("smoke_status") == "PASS" and state.get("status") in {
-            "HANDED_OFF",
-            "RUNNING",
-        }:
+        if campaign.get("smoke_status") == "PASS" and state.get("status") == "HANDED_OFF":
             require_smoke_proofs(root)
-            return 0
+            if smoke_monitor_handoff_failure(root) is None:
+                return 0
         if state.get("status") == "ATTENTION" or campaign.get(
             "smoke_status"
         ) == "ATTENTION":
@@ -12187,6 +12327,18 @@ class PublicationError(RuntimeError):
     pass
 
 
+class MonitorLeaseError(PublicationError):
+    pass
+
+
+def publication_lease_checkpoint(lease_probe: Any, stage: str) -> None:
+    if lease_probe is None:
+        return
+    failure = lease_probe()
+    if failure:
+        raise MonitorLeaseError(f"monitor lease failed during {stage}: {failure}")
+
+
 def redact_text(value: str, redactions: Iterable[str]) -> str:
     redacted = value
     for secret_value in redactions:
@@ -12352,6 +12504,7 @@ def run_logged_process(
     timeout_seconds: float,
     redactions: Iterable[str],
     on_started: Any = None,
+    lease_probe: Any = None,
 ) -> Dict[str, Any]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     proc = launch_after_receipt(
@@ -12384,6 +12537,13 @@ def run_logged_process(
 
         with log_path.open("w", buffering=1) as log:
             while selector.get_map() or proc.poll() is None:
+                if lease_probe is not None:
+                    lease_problem = lease_probe()
+                    if lease_problem:
+                        stop_group(proc.pid, grace_seconds=5.0)
+                        raise RuntimeError(
+                            f"monitor lease failed during child process: {lease_problem}"
+                        )
                 if (
                     not timed_out
                     and proc.poll() is None
@@ -12409,6 +12569,12 @@ def run_logged_process(
             if pending:
                 persist(pending, log)
         exit_code = proc.wait()
+        if lease_probe is not None:
+            lease_problem = lease_probe()
+            if lease_problem:
+                raise RuntimeError(
+                    f"monitor lease failed as child process exited: {lease_problem}"
+                )
         return {
             "exit_code": exit_code,
             "timed_out": timed_out,
@@ -12589,6 +12755,7 @@ def run_publisher(
         timeout_seconds=float(publisher["process_timeout_seconds"]),
         redactions=redactions,
         on_started=started,
+        lease_probe=lambda: active_manager_monitor_lease_failure(root, campaign),
     )
     update_state(
         root,
@@ -12640,8 +12807,12 @@ def publisher_plan_from_log(log_path: Path, runs: Path) -> list[Dict[str, Any]]:
 
 
 def sanity_document(
-    campaign: Mapping[str, Any], document_id: str
+    campaign: Mapping[str, Any],
+    document_id: str,
+    *,
+    lease_probe: Any = None,
 ) -> Dict[str, Any] | None:
+    publication_lease_checkpoint(lease_probe, "Sanity receipt preflight")
     publisher = campaign["publisher"]
     values = pinned_publisher_env_values(campaign)
     token = values.get("SANITY_WRITE_TOKEN", "")
@@ -12665,7 +12836,9 @@ def sanity_document(
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(
+            request, timeout=MONITOR_NETWORK_TIMEOUT_SECONDS
+        ) as response:
             status = int(getattr(response, "status", response.getcode()))
             raw = response.read(10 * 1024 * 1024 + 1)
     except urllib.error.HTTPError as error:
@@ -12676,6 +12849,7 @@ def sanity_document(
         raise PublicationError(
             f"Sanity receipt read failed: {type(error).__name__}"
         ) from None
+    publication_lease_checkpoint(lease_probe, "Sanity receipt response")
     if status != 200 or len(raw) > 10 * 1024 * 1024:
         raise PublicationError(f"Sanity receipt read returned invalid HTTP {status}")
     try:
@@ -12778,10 +12952,19 @@ def remote_publication_receipt(
     entry: Mapping[str, str],
     verdict: Mapping[str, Any],
     screenshot_plan: list[Mapping[str, Any]],
+    *,
+    lease_probe: Any = None,
 ) -> Dict[str, Any]:
+    publication_lease_checkpoint(lease_probe, "remote publication receipt preflight")
     public = public_publication_identity(campaign, verdict)
     raw_identity_sha256 = raw_publication_identity_sha256(verdict)
-    document = sanity_document(campaign, entry["doc_id"])
+    document = (
+        sanity_document(campaign, entry["doc_id"])
+        if lease_probe is None
+        else sanity_document(
+            campaign, entry["doc_id"], lease_probe=lease_probe
+        )
+    )
     if document is None:
         return {
             "checked_at": utc_now(),
@@ -12948,7 +13131,11 @@ def remote_publication_receipt(
             if not isinstance(asset_ref, str):
                 reasons.append(f"document screenshot {index} has no asset reference")
                 continue
-            asset_doc = sanity_document(campaign, asset_ref)
+            asset_doc = (
+                sanity_document(campaign, asset_ref)
+                if lease_probe is None
+                else sanity_document(campaign, asset_ref, lease_probe=lease_probe)
+            )
             asset_sha1 = str((asset_doc or {}).get("sha1hash", "")).lower()
             expected_sha1 = str(planned["sha1"]).lower()
             asset_id_matches = asset_ref.startswith(f"image-{expected_sha1}-")
@@ -12958,6 +13145,7 @@ def remote_publication_receipt(
                 reasons.append(f"document screenshot {index} caption differs")
 
     canonical = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+    publication_lease_checkpoint(lease_probe, "remote publication receipt completion")
     return {
         "checked_at": utc_now(),
         "doc_id": entry["doc_id"],
@@ -12974,8 +13162,12 @@ def remote_publication_receipt(
 
 
 def revalidate_publication(
-    campaign: Mapping[str, Any], entry: Mapping[str, str]
+    campaign: Mapping[str, Any],
+    entry: Mapping[str, str],
+    *,
+    lease_probe: Any = None,
 ) -> Dict[str, Any]:
+    publication_lease_checkpoint(lease_probe, "revalidation preflight")
     publisher = campaign["publisher"]
     values = pinned_publisher_env_values(campaign)
     token = values.get("SANITY_WRITE_TOKEN", "")
@@ -12994,7 +13186,9 @@ def revalidate_publication(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(
+            request, timeout=MONITOR_NETWORK_TIMEOUT_SECONDS
+        ) as response:
             status = int(getattr(response, "status", response.getcode()))
             raw = response.read(1024 * 1024 + 1)
     except urllib.error.HTTPError as error:
@@ -13005,6 +13199,7 @@ def revalidate_publication(
         raise PublicationError(
             f"benchmark revalidation failed: {type(error).__name__}"
         ) from None
+    publication_lease_checkpoint(lease_probe, "revalidation response")
     if status != 200 or len(raw) > 1024 * 1024:
         raise PublicationError(f"benchmark revalidation returned invalid HTTP {status}")
     try:
@@ -13160,7 +13355,10 @@ def rendered_publication_matches(
     }
 
 
-def fetch_rendered_page(url: str) -> tuple[int, str, Dict[str, str]]:
+def fetch_rendered_page(
+    url: str, *, lease_probe: Any = None
+) -> tuple[int, str, Dict[str, str]]:
+    publication_lease_checkpoint(lease_probe, "rendered-page request preflight")
     request = urllib.request.Request(
         url,
         headers={
@@ -13168,7 +13366,9 @@ def fetch_rendered_page(url: str) -> tuple[int, str, Dict[str, str]]:
             "User-Agent": "goose-sb7-cloud-publisher/1",
         },
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(
+        request, timeout=MONITOR_NETWORK_TIMEOUT_SECONDS
+    ) as response:
         status = int(getattr(response, "status", response.getcode()))
         raw = response.read(10 * 1024 * 1024 + 1)
         if len(raw) > 10 * 1024 * 1024:
@@ -13179,6 +13379,7 @@ def fetch_rendered_page(url: str) -> tuple[int, str, Dict[str, str]]:
             for key in ("x-cache", "x-nextjs-cache", "age")
             if response.headers.get(key)
         }
+    publication_lease_checkpoint(lease_probe, "rendered-page response")
     return status, raw.decode(content_type, errors="replace"), headers
 
 
@@ -13186,6 +13387,8 @@ def verify_rendered_publication(
     campaign: Mapping[str, Any],
     entry: Mapping[str, str],
     verdict: Mapping[str, Any],
+    *,
+    lease_probe: Any = None,
 ) -> Dict[str, Any]:
     publisher = campaign["publisher"]
     base_url = str(publisher["website_base_url"]).rstrip("/")
@@ -13199,8 +13402,21 @@ def verify_rendered_publication(
     while True:
         attempts += 1
         try:
-            board_status, board_html, board_headers = fetch_rendered_page(board_url)
-            run_status, run_html, run_headers = fetch_rendered_page(run_url)
+            publication_lease_checkpoint(
+                lease_probe, "rendered verification attempt preflight"
+            )
+            if lease_probe is None:
+                board_status, board_html, board_headers = fetch_rendered_page(
+                    board_url
+                )
+                run_status, run_html, run_headers = fetch_rendered_page(run_url)
+            else:
+                board_status, board_html, board_headers = fetch_rendered_page(
+                    board_url, lease_probe=lease_probe
+                )
+                run_status, run_html, run_headers = fetch_rendered_page(
+                    run_url, lease_probe=lease_probe
+                )
             matched, checks = rendered_publication_matches(
                 campaign, board_html, run_html, base_url, entry, verdict
             )
@@ -13227,6 +13443,8 @@ def verify_rendered_publication(
                         raw_publication_identity_sha256(verdict)
                     ),
                 }
+        except MonitorLeaseError:
+            raise
         except Exception as error:
             last = {
                 "attempt": attempts,
@@ -13245,22 +13463,35 @@ def publication_failed(
     root: Path, entrant_id: str, stage: str, error: BaseException
 ) -> None:
     campaign = load_json(campaign_file(root))
+    state = read_state(root, entrant_id)
     redactions: list[str] = []
     try:
         _, redactions = publisher_environment(campaign)
     except (OSError, SystemExit, PublicationError):
         pass
     safe = redact_text(str(error), redactions)[:1000]
-    update_state(
-        root,
-        entrant_id,
-        status="PUBLISH_FAILED",
-        publication_failure_stage=stage,
-        publisher_pid=None,
-        publisher_pgid=None,
-        publisher_identity=None,
-        failure=f"publication {stage} failed: {safe}",
-    )
+    clean = True
+    if state.get("publisher_pid") or state.get("publisher_pgid"):
+        clean = stop_recorded_group(
+            state.get("publisher_pid"),
+            state.get("publisher_pgid"),
+            state.get("publisher_identity"),
+        )
+    changes: Dict[str, Any] = {
+        "status": "PUBLISH_FAILED" if clean else "INCOMPLETE",
+        "publication_failure_stage": stage,
+        "failure": (
+            f"publication {stage} failed: {safe}"
+            + ("" if clean else "; publisher process topology survived cleanup")
+        ),
+    }
+    if clean:
+        changes.update(
+            publisher_pid=None,
+            publisher_pgid=None,
+            publisher_identity=None,
+        )
+    update_state(root, entrant_id, **changes)
 
 
 def publish_one(root: Path, entrant_id: str) -> bool:
@@ -13281,6 +13512,7 @@ def publish_one(root: Path, entrant_id: str) -> bool:
             failure=f"monitor lease refused publication: {monitor_problem}",
         )
         return False
+    lease_probe = lambda: active_manager_monitor_lease_failure(root, campaign)
     lineage_problem = lineage_failure(root)
     if lineage_problem:
         update_state(
@@ -13348,7 +13580,11 @@ def publish_one(root: Path, entrant_id: str) -> bool:
 
         stage = "pre-write-receipt"
         pre_write_receipt = remote_publication_receipt(
-            campaign, entry, load_json(runs / f"{entrant_id}.json"), screenshot_plan
+            campaign,
+            entry,
+            load_json(runs / f"{entrant_id}.json"),
+            screenshot_plan,
+            lease_probe=lease_probe,
         )
         update_state(
             root,
@@ -13405,6 +13641,7 @@ def publish_one(root: Path, entrant_id: str) -> bool:
                 entry,
                 load_json(runs / f"{entrant_id}.json"),
                 screenshot_plan,
+                lease_probe=lease_probe,
             )
             update_state(
                 root,
@@ -13432,7 +13669,9 @@ def publish_one(root: Path, entrant_id: str) -> bool:
 
         stage = "revalidation"
         update_state(root, entrant_id, status="REVALIDATING")
-        revalidation = revalidate_publication(campaign, entry)
+        revalidation = revalidate_publication(
+            campaign, entry, lease_probe=lease_probe
+        )
         update_state(
             root,
             entrant_id,
@@ -13443,7 +13682,9 @@ def publish_one(root: Path, entrant_id: str) -> bool:
         stage = "rendered-verification"
         update_state(root, entrant_id, status="VERIFYING_RENDERED")
         verdict = load_json(runs / f"{entrant_id}.json")
-        rendered = verify_rendered_publication(campaign, entry, verdict)
+        rendered = verify_rendered_publication(
+            campaign, entry, verdict, lease_probe=lease_probe
+        )
         update_state(
             root,
             entrant_id,
@@ -13764,7 +14005,7 @@ def manage_claimed(root: Path) -> int:
     require_smoke_proofs(root)
     recover_interrupted_scoring(root)
     monitor = read_monitor_state(root)
-    monitor_problem = monitor_lease_snapshot_failure(monitor, campaign)
+    monitor_problem = monitor_lease_snapshot_failure(root, monitor, campaign)
     if monitor_problem:
         failure = f"manager monitor lease refused execution: {monitor_problem}"
         manager_state(root, status="ATTENTION", failure=failure)
@@ -13835,7 +14076,7 @@ def start(root: Path) -> int:
             raise SystemExit(f"campaign cannot start from {campaign['status']}")
         require_smoke_proofs(root)
         monitor = read_monitor_state(root)
-        monitor_problem = monitor_lease_snapshot_failure(monitor, campaign)
+        monitor_problem = monitor_lease_snapshot_failure(root, monitor, campaign)
         if monitor_problem:
             raise SystemExit(f"manager requires a ready detached monitor: {monitor_problem}")
         monitor_lease_id = str(monitor["lease_id"])
@@ -13872,6 +14113,7 @@ def start(root: Path) -> int:
 
 
 def monitor_lease_snapshot_failure(
+    root: Path,
     monitor: Mapping[str, Any],
     campaign: Mapping[str, Any],
     expected_lease_id: str | None = None,
@@ -13883,16 +14125,33 @@ def monitor_lease_snapshot_failure(
         return "monitor has no valid process id"
     if not process_alive(pid, monitor.get("identity")):
         return "monitor process identity is not alive"
-    if monitor.get("parent_pid") != 1:
-        return "monitor has not proven parent pid 1"
+    topology = monitor_process_topology(pid)
+    if topology is None:
+        return "monitor process topology cannot be authenticated"
+    if topology["parent_pid"] != 1 or monitor.get("parent_pid") != 1:
+        return "monitor has not proven actual parent pid 1"
     if monitor.get("detached_session") is not True:
         return "monitor has not proven a detached session"
-    if monitor.get("pgid") != pid or monitor.get("session_id") != pid:
+    if (
+        topology["pgid"] != pid
+        or topology["session_id"] != pid
+        or monitor.get("pgid") != topology["pgid"]
+        or monitor.get("session_id") != topology["session_id"]
+    ):
         return "monitor process, group, and session identities differ"
+    if not exclusive_claim_is_held(root / "locks/monitor-run.claim"):
+        return "monitor process does not hold its exclusive runtime claim"
     if monitor.get("smoke_contract_sha256") != campaign.get(
         "smoke_contract_sha256"
     ):
         return "monitor is bound to another smoke contract"
+    if monitor.get("lease_heartbeat_failure"):
+        return "monitor heartbeat worker reported failure"
+    if (
+        monitor.get("lease_owner_pid") != pid
+        or monitor.get("lease_owner_identity") != monitor.get("identity")
+    ):
+        return "monitor renewable lease owner differs from its process generation"
     lease_id = monitor.get("lease_id")
     if not isinstance(lease_id, str) or not lease_id:
         return "monitor has no renewable lease identity"
@@ -13917,7 +14176,7 @@ def manager_monitor_gate_failure(
     expected_lease_id: str | None = None,
 ) -> str | None:
     return monitor_lease_snapshot_failure(
-        read_monitor_state(root), campaign, expected_lease_id
+        root, read_monitor_state(root), campaign, expected_lease_id
     )
 
 
@@ -14203,6 +14462,59 @@ def wait_for_monitor_detachment(
         time.sleep(poll_seconds)
 
 
+def renew_monitor_lease(
+    root: Path,
+    pid: int,
+    identity: str,
+    lease_id: str,
+) -> None:
+    current = read_monitor_state(root)
+    if (
+        current.get("status") != "RUNNING"
+        or current.get("pid") != pid
+        or current.get("identity") != identity
+        or current.get("lease_id") != lease_id
+    ):
+        raise RuntimeError("monitor lease ownership changed before renewal")
+    topology = monitor_process_topology(pid)
+    if (
+        topology is None
+        or topology.get("parent_pid") != 1
+        or topology.get("pgid") != pid
+        or topology.get("session_id") != pid
+        or not exclusive_claim_is_held(root / "locks/monitor-run.claim")
+    ):
+        raise RuntimeError("monitor lease lost its authenticated OS/lock ownership")
+    monitor_state(
+        root,
+        lease_owner_pid=pid,
+        lease_owner_identity=identity,
+        lease_renewals=int(current.get("lease_renewals", 0)) + 1,
+        lease_heartbeat_failure=None,
+    )
+
+
+def monitor_lease_heartbeat(
+    root: Path,
+    pid: int,
+    identity: str,
+    lease_id: str,
+    stop_event: threading.Event,
+    interval_seconds: float = MONITOR_LEASE_RENEWAL_SECONDS,
+) -> None:
+    while not stop_event.wait(interval_seconds):
+        try:
+            renew_monitor_lease(root, pid, identity, lease_id)
+        except (Exception, SystemExit) as error:
+            monitor_state(
+                root,
+                lease_heartbeat_failure=(
+                    f"{type(error).__name__}: {str(error)[:1000]}"
+                ),
+            )
+            return
+
+
 def monitor_campaign(
     root: Path, poll_seconds: float = MONITOR_HEARTBEAT_INTERVAL_SECONDS
 ) -> int:
@@ -14222,31 +14534,59 @@ def monitor_campaign(
         except SystemExit as error:
             monitor_attention(root, f"monitor detachment proof failed: {error}")
             return 1
+        monitor_pid = os.getpid()
+        monitor_identity = process_identity(monitor_pid)
+        if monitor_identity is None:
+            monitor_attention(root, "monitor process identity vanished at startup")
+            return 1
+        lease_id = secrets.token_hex(16)
         monitor_state(
             root,
             status="RUNNING",
-            pid=os.getpid(),
+            pid=monitor_pid,
             pgid=os.getpgrp(),
-            identity=process_identity(os.getpid()),
+            identity=monitor_identity,
             parent_pid=parent_pid,
             session_id=os.getsid(0),
-            detached_session=os.getsid(0) == os.getpid(),
+            detached_session=os.getsid(0) == monitor_pid,
             smoke_contract_sha256=contract,
-            lease_id=secrets.token_hex(16),
+            lease_id=lease_id,
+            lease_owner_pid=monitor_pid,
+            lease_owner_identity=monitor_identity,
+            lease_renewals=0,
+            lease_heartbeat_failure=None,
             started_at=utc_now(),
             failure=None,
         )
-        while True:
-            try:
-                terminal, exit_code = monitor_tick(root)
-            except (Exception, SystemExit) as error:
-                monitor_attention(
-                    root, f"monitor crashed while evaluating campaign state: {error}"
-                )
-                return 1
-            if terminal:
-                return exit_code
-            time.sleep(poll_seconds)
+        stop_event = threading.Event()
+        heartbeat = threading.Thread(
+            target=monitor_lease_heartbeat,
+            args=(
+                root,
+                monitor_pid,
+                monitor_identity,
+                lease_id,
+                stop_event,
+            ),
+            name="sb7-monitor-lease",
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            while True:
+                try:
+                    terminal, exit_code = monitor_tick(root)
+                except (Exception, SystemExit) as error:
+                    monitor_attention(
+                        root, f"monitor crashed while evaluating campaign state: {error}"
+                    )
+                    return 1
+                if terminal:
+                    return exit_code
+                time.sleep(poll_seconds)
+        finally:
+            stop_event.set()
+            heartbeat.join(timeout=MONITOR_LEASE_RENEWAL_SECONDS + 1)
 
 
 def monitor_start(root: Path) -> int:
