@@ -3457,6 +3457,77 @@ def lifecycle_failure(summary: Mapping[str, Any]) -> str | None:
     return "; ".join(reasons) if reasons else None
 
 
+def carried_prelaunch_ancestor_failure(
+    root: Path,
+    entrant_id: str,
+    state: Mapping[str, Any],
+    receipt_campaign_id: Any,
+) -> str | None:
+    try:
+        campaign = load_json(campaign_file(root))
+        pointer = campaign.get("lineage")
+        if (
+            not isinstance(pointer, dict)
+            or pointer.get("generation") != 1
+            or pointer.get("path") != "lineage/lineage.json"
+            or state.get("lineage_role") != "carried_success"
+        ):
+            return "predecessor receipt is not attached to a carried successor"
+        lineage_path = root / "lineage/lineage.json"
+        if lineage_path.is_symlink() or not lineage_path.is_file():
+            return "carried successor lineage is missing or linked"
+        if sha256_file(lineage_path) != pointer.get("sha256"):
+            return "carried successor lineage hash changed"
+        lineage = load_json(lineage_path)
+        transition_id = lineage.get("transition_id")
+        predecessor_campaign_id = lineage.get("predecessor_campaign_id")
+        carried = lineage.get("carried_entrants")
+        attempts = lineage.get("predecessor_episode_attempts")
+        if (
+            lineage.get("generation") != 1
+            or transition_id != pointer.get("transition_id")
+            or transition_id != state.get("supersession_transition_id")
+            or lineage.get("successor_root") != str(root.resolve())
+            or predecessor_campaign_id != pointer.get("predecessor_campaign_id")
+            or receipt_campaign_id != predecessor_campaign_id
+            or not isinstance(carried, list)
+            or entrant_id not in carried
+            or not isinstance(attempts, dict)
+            or attempts.get(entrant_id) != state.get("provider_episode_attempts")
+        ):
+            return "predecessor receipt differs from carried successor lineage"
+
+        seal_path = root / "lineage/predecessor-seal.json"
+        expected_seal_sha = lineage.get("predecessor_seal_sha256")
+        if (
+            seal_path.is_symlink()
+            or not seal_path.is_file()
+            or sha256_file(seal_path) != expected_seal_sha
+        ):
+            return "carried predecessor seal is missing or changed"
+        seal = load_json(seal_path)
+        sealed = seal.get("entrants")
+        sealed_entrant = sealed.get(entrant_id) if isinstance(sealed, dict) else None
+        if (
+            seal.get("transition_id") != transition_id
+            or not isinstance(sealed_entrant, dict)
+            or state.get("predecessor_state_sha256")
+            != sealed_entrant.get("state_sha256")
+            or state.get("predecessor_unit_sha256")
+            != sealed_entrant.get("unit_sha256")
+        ):
+            return "carried entrant state differs from predecessor seal"
+        unit = root / "entrants" / entrant_id
+        if artifact_tree_sha256(
+            unit,
+            excluded_relative_paths={"state.json", "state.lock"},
+        ) != sealed_entrant.get("immutable_unit_sha256"):
+            return "carried predecessor immutable payload changed"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"carried predecessor ancestry cannot be verified: {error}"
+    return None
+
+
 def full_episode_lifecycle_paths(
     root: Path,
     entrant_id: str,
@@ -3466,6 +3537,7 @@ def full_episode_lifecycle_paths(
     attempts_root = unit / "attempts"
     paths: list[Path] = []
     campaign_id = load_json(campaign_file(root)).get("campaign_id")
+    current = state if state is not None else read_state(root, entrant_id)
     if attempts_root.exists():
         if attempts_root.is_symlink() or not attempts_root.is_dir():
             raise SystemExit(
@@ -3482,6 +3554,10 @@ def full_episode_lifecycle_paths(
                 )
             lifecycle = attempt_root / "provider-lifecycle.jsonl"
             receipt_path = attempt_root / "prelaunch-receipt.json"
+            if receipt_path.is_symlink() or not receipt_path.is_file():
+                raise SystemExit(
+                    f"{entrant_id} full-episode prelaunch receipt is missing or linked"
+                )
             try:
                 receipt = load_json(receipt_path)
             except (OSError, json.JSONDecodeError, SystemExit) as error:
@@ -3500,7 +3576,6 @@ def full_episode_lifecycle_paths(
                     "prepared_at",
                 }
                 or receipt.get("schema_version") != CAMPAIGN_SCHEMA
-                or receipt.get("campaign_id") != campaign_id
                 or receipt.get("entrant") != entrant_id
                 or receipt.get("attempt") != attempt
                 or receipt.get("lifecycle") != "provider-lifecycle.jsonl"
@@ -3510,6 +3585,19 @@ def full_episode_lifecycle_paths(
                 raise SystemExit(
                     f"{entrant_id} full-episode prelaunch receipt is malformed"
                 )
+            receipt_campaign_id = receipt.get("campaign_id")
+            if receipt_campaign_id != campaign_id:
+                ancestry_failure = carried_prelaunch_ancestor_failure(
+                    root,
+                    entrant_id,
+                    current,
+                    receipt_campaign_id,
+                )
+                if ancestry_failure:
+                    raise SystemExit(
+                        f"{entrant_id} full-episode prelaunch ancestry is invalid: "
+                        f"{ancestry_failure}"
+                    )
             if lifecycle.is_symlink() or not lifecycle.is_file():
                 raise SystemExit(
                     f"{entrant_id} full-episode lifecycle is not a regular file"
@@ -3525,7 +3613,6 @@ def full_episode_lifecycle_paths(
         paths.append(legacy)
 
     paths = list(dict.fromkeys(path.resolve(strict=False) for path in paths))
-    current = state if state is not None else read_state(root, entrant_id)
     current_value = current.get("provider_lifecycle")
     if isinstance(current_value, str) and current_value:
         current_path = Path(current_value)
