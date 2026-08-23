@@ -83,15 +83,17 @@ target; a fork or second qualification restart is refused. One authenticated
 roster snapshot is reused by target initialization only after its binary,
 roster, ports, credential mode, and publisher snapshot are locally revalidated.
 
-The corrected publisher continues to validate and seal the raw hermetic
-`sb-7.0-rc` verdict and its uncalibrated disclosure internally, but maps that
-evidence onto the site's one stable public `sb-7.0` board. Remote Sanity
-verification therefore requires public `scorerVersion` to equal `sb-7.0` and
-requires the calibration field to be absent. Rendered verification requires the
-same public scorer in visible text and Dataset JSON-LD and rejects any residual
-`sb-7.0-rc` or calibration text, including hidden serialized residue. The
-post-publication audit reconstructs this same public identity from the sealed
-raw verdict so an unattended monitor cannot demote a valid stable-board result.
+The qualification transition still pins the historical publisher bytes exactly,
+but that pin grants no authority to rewrite benchmark identity. The hermetic
+`sb-7.0-rc` scorer version, complete uncalibrated disclosure, and provisional
+status must now survive publication exactly. Before any live process, the
+publisher dry run must emit one sealed machine-readable receipt carrying those
+three exact values. The pinned publisher maps the RC version onto stable
+`sb-7.0` and omits calibration/provisional fields, so it is deliberately refused
+at that boundary. Remote Sanity and rendered verification require the same
+exact values once a future public schema and pinned publisher can represent
+them; until then scoring evidence may remain sealed locally but no cloud result
+can be published.
 
 The target remains generation zero for benchmark outcomes. If a later full
 episode proves a genuine infrastructure defect, the existing single-hop

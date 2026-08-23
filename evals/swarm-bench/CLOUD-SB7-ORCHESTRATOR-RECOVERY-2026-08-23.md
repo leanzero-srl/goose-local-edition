@@ -144,18 +144,19 @@ crash window.
 There is no build-duration or silence cap. While a manager is alive, the
 monitor hash-chains observations of lifecycle counts, provider and process
 generation, assistant stream, telemetry, raw tree, and logs. Silence is
-persisted and surfaced but never kills work. Automatic `ATTENTION` requires a
-second observation in the same process and provider-request generation with
-continued assistant-stream growth and matching exact repeated windows and
-sentences. The ledger is replayed on monitor startup; gaps, tamper, foreign
-entries, or an invalid crash-orphan tail fail closed. If the monitor lease dies
+persisted and surfaced but never kills work. Exact repeated windows and
+sentences are persisted as neutral evidence only; content patterns have no
+fail-stop field and cannot produce `ATTENTION`. The ledger has a separate random
+identity, a committed identity-file hash, and committed per-entrant heads. It is replayed on monitor startup;
+deletion, replacement, gaps, tamper, foreign entries, or an invalid crash-orphan
+tail fail closed as instrument defects. If the monitor lease dies
 or expires, the manager stops every recorded supervisor group before another
 provider admission can occur. Resuming `ATTENTION` resets only retry-safe state
 and restores the monitor before the manager.
 
 ## Regression coverage
 
-The warning-as-error cloud harness suite passes all 125 tests. Recovery tests
+The warning-as-error cloud harness suite passes all 128 tests. Recovery tests
 cover exact attempt/ambiguity/budget conservation, reset detection, idempotent
 resume, fork refusal, build-outcome refusal, accounting drift, evidence tamper,
 crashes after the source receipt and final root rename, a failure midway through
@@ -165,5 +166,8 @@ detachment. Unattended tests additionally exercise direct-entry refusal,
 pre-exec receipt loss, stale scorer/publication leases, smoke-manager death and
 handoff, real monitor death stopping a real supervisor group, generation-2
 reservation discrimination, provider-spawn rollback, measured growth and
-silence, exact recurrence across observations, crash-orphan ledger adoption,
-and ledger corruption.
+silence, recurrence followed by productive output, tool-only evidence,
+crash-orphan ledger adoption, ledger deletion, and ledger corruption. Exact
+publication tests prove that the current RC-to-stable publisher is refused
+before a live process and that scorer, calibration, and provisional truth must
+all survive remote and rendered verification.
