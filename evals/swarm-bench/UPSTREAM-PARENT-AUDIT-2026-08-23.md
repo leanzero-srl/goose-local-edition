@@ -11,10 +11,8 @@ behaviors below are now implemented on `codex/cloud-sb7-harness` by
 `8d216614413459007a737e8e6bfaa8c4f31943a9`, but neither is yet an ancestor of
 the main `local-edition` branch. Conflict risk is branch-specific:
 `1844d3fb` applies mechanically to current `local-edition` but conflicts with
-the cloud branch's newer parser hardening. Finally, the archived
-`developer.*`-name count is post-dispatch evidence, not a raw-wire negative;
-it cannot prove the provider never emitted a mangled name. The exact-frame gate
-for that candidate therefore remains mandatory.
+the cloud branch's newer parser hardening. The exact-frame semantic gates for
+conditional candidates remain mandatory.
 
 This is a focused addendum to `SWARM-ENGINE-AUDIT-2026-08-22.md`. It answers a
 narrow question: which changes made in the parent `block/goose` repository after
