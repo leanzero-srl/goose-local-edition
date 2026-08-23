@@ -16,6 +16,7 @@ pub mod judge;
 pub mod memory_classify;
 pub mod replan;
 pub mod scheduler;
+pub mod semantic_control;
 pub mod semantic_observation;
 
 pub use broker::{
@@ -52,14 +53,21 @@ pub use scheduler::{
     tail_review_enabled, testgen_enabled, AttemptRecord, DeviceCfg, DeviceSummary, RunReport,
     Scheduler, TaskOutcome,
 };
+pub use semantic_control::{
+    semantic_observation_task_version, AdmittedSemanticObservationHandle,
+    AdmittedSemanticObservationReceipt, AdmittedSemanticObservationRequest,
+    AdmittedSemanticObservationReviewer, BrokeredSemanticObservationPlane,
+    RejectedSemanticObservationAdmission, SemanticObservationAdmissionError,
+    SemanticObservationAdmissionPolicy, SemanticObservationAdmissionStage,
+    SemanticObservationAdmissionSubmission,
+};
 pub use semantic_observation::{
     parse_semantic_observation_reply, semantic_observation_response_schema,
     AcceptanceCriterionSnapshot, ArtifactExcerptSnapshot, NeutralJudgeSignal,
     ParsedSemanticObservation, SealedSemanticObservationSnapshot, SemanticEvidenceCitation,
-    SemanticJudgeAction, SemanticObservationBody, SemanticObservationHandle,
-    SemanticObservationPlane, SemanticObservationReceipt, SemanticObservationRejection,
-    SemanticObservationReply, SemanticObservationRequest, SemanticObservationReviewer,
-    SemanticObservationSnapshotDraft, SemanticObservationSubmission, SemanticProtocolFailure,
-    SemanticProtocolFailureKind, SemanticSplitBoundary, SemanticTraceSnapshot,
-    SEMANTIC_OBSERVATION_PROTOCOL, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+    SemanticJudgeAction, SemanticObservationBody, SemanticObservationReceipt,
+    SemanticObservationRejection, SemanticObservationReply, SemanticObservationRequest,
+    SemanticObservationSnapshotDraft, SemanticProtocolFailure, SemanticProtocolFailureKind,
+    SemanticSplitBoundary, SemanticTraceSnapshot, SEMANTIC_OBSERVATION_PROTOCOL,
+    SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
