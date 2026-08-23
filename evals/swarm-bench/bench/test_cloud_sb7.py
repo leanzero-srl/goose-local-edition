@@ -40,7 +40,12 @@ class CloudSb7HarnessTest(unittest.TestCase):
         cloud_sb7.manager_state(
             root,
             status="RUNNING",
+            pid=pid,
+            pgid=os.getpgrp(),
+            sid=os.getsid(0),
+            identity=cloud_sb7.process_identity(pid),
             monitor_lease_id=lease_id,
+            launched_at="fixture-manager-launch",
         )
         return lease_id
 
@@ -335,6 +340,15 @@ class CloudSb7HarnessTest(unittest.TestCase):
             root = Path(raw)
             row = self.make_smoke_campaign(root, entrant_count=1)[0]
             entrant_id = str(row["id"])
+            cloud_sb7.update_smoke_state(
+                root,
+                entrant_id,
+                supervisor_pid=os.getpid(),
+                supervisor_pgid=os.getpgrp(),
+                supervisor_sid=os.getsid(0),
+                supervisor_identity=cloud_sb7.process_identity(os.getpid()),
+                supervisor_launched_at="fixture-supervisor-launch",
+            )
             with mock.patch.object(
                 cloud_sb7,
                 "persist_listener_isolation",
@@ -3412,7 +3426,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
             _log_path: Path,
             *,
             on_started: object,
+            child_role: str | None = None,
         ) -> Launched:
+            self.assertEqual(child_role, "monitor")
             on_started(Launched())
             return Launched()
 
@@ -4694,6 +4710,14 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 root = Path(raw)
                 self.make_recovery_campaign(root, status)
                 self.install_live_monitor_lease(root)
+                cloud_sb7.manager_state(
+                    root,
+                    status="IDLE",
+                    pid=None,
+                    pgid=None,
+                    identity=None,
+                    launched_at=None,
+                )
 
                 def launch(*_args: object, **kwargs: object) -> Launched:
                     kwargs["on_started"](Launched())  # type: ignore[index,operator]
@@ -5441,7 +5465,17 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.campaign_file(root),
                 {"status": "BUILD_COMPLETE", "campaign_id": "fixture"},
             )
-            cloud_sb7.atomic_json(root / "manager.json", {"status": "IDLE"})
+            cloud_sb7.atomic_json(
+                root / "manager.json",
+                {
+                    "status": "RUNNING",
+                    "pid": os.getpid(),
+                    "pgid": os.getpgrp(),
+                    "sid": os.getsid(0),
+                    "identity": cloud_sb7.process_identity(os.getpid()),
+                    "launched_at": "fixture-manager-launch",
+                },
+            )
             calls: list[str] = []
 
             def score(_root: Path, entrant_id: str) -> bool:
@@ -5489,6 +5523,15 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
             cloud_sb7.atomic_json(root / "manager.json", {"status": "RUNNING"})
             self.install_live_monitor_lease(root)
+            cloud_sb7.manager_state(
+                root,
+                status="STARTING",
+                pid=os.getpid(),
+                pgid=os.getpgrp(),
+                sid=os.getsid(0),
+                identity=cloud_sb7.process_identity(os.getpid()),
+                launched_at="fixture-manager-launch",
+            )
             for entrant_id, status in (
                 ("complete", "BUILD_COMPLETE"),
                 ("failed", "INCOMPLETE"),
@@ -5953,9 +5996,120 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 )
             launch.assert_not_called()
 
+    def test_hidden_runtime_entrypoints_require_parent_committed_process_ownership(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            cloud_sb7.update_campaign(root, status="RUNNING")
+            cloud_sb7.monitor_state(root, status="IDLE")
+            cloud_sb7.smoke_manager_state(root, status="IDLE")
+            protected = [
+                cloud_sb7.campaign_file(root),
+                root / "manager.json",
+                root / "monitor.json",
+                cloud_sb7.state_file(root, entrant_id),
+                cloud_sb7.smoke_state_file(root, entrant_id),
+                root / "smoke-manager.json",
+            ]
+            before = {path: path.read_bytes() for path in protected}
+
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "smoke") as smoke,
+                mock.patch.object(cloud_sb7.subprocess, "Popen") as launch,
+            ):
+                self.assertEqual(cloud_sb7.manage(root), 2)
+                self.assertEqual(cloud_sb7.smoke_manage(root), 2)
+                self.assertEqual(cloud_sb7.supervise_claimed(root, entrant_id), 2)
+                self.assertEqual(
+                    cloud_sb7.smoke_supervise_claimed(root, entrant_id), 2
+                )
+                self.assertEqual(
+                    cloud_sb7.monitor_campaign(root, poll_seconds=0.001), 2
+                )
+                with self.assertRaisesRegex(SystemExit, "launched manager"):
+                    cloud_sb7.score_all(root, [entrant_id])
+
+            smoke.assert_not_called()
+            launch.assert_not_called()
+            self.assertEqual(before, {path: path.read_bytes() for path in protected})
+
+    def test_attention_campaign_requires_resume_before_manager_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            cloud_sb7.update_campaign(root, status="ATTENTION")
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "require_smoke_proofs") as smoke,
+                mock.patch.object(cloud_sb7, "launch_detached") as launch,
+                self.assertRaisesRegex(SystemExit, "cannot start from ATTENTION"),
+            ):
+                cloud_sb7.start(root)
+            smoke.assert_not_called()
+            launch.assert_not_called()
+
+    def test_committed_child_ownership_matches_exact_process_generation(self) -> None:
+        pid = os.getpid()
+        state = {
+            "status": "STARTING",
+            "pid": pid,
+            "pgid": os.getpgrp(),
+            "sid": os.getsid(0),
+            "identity": cloud_sb7.process_identity(pid),
+            "launched_at": "fixture-launch",
+        }
+        self.assertIsNone(
+            cloud_sb7.launched_child_ownership_failure(
+                state,
+                expected_statuses={"STARTING"},
+                pid_key="pid",
+                pgid_key="pgid",
+                sid_key="sid",
+                identity_key="identity",
+                launched_key="launched_at",
+                role="fixture child",
+            )
+        )
+        for field, value in (
+            ("pid", pid + 1),
+            ("pgid", os.getpgrp() + 1),
+            ("sid", os.getsid(0) + 1),
+            ("identity", "another process generation"),
+            ("launched_at", None),
+        ):
+            altered = dict(state)
+            altered[field] = value
+            self.assertIsNotNone(
+                cloud_sb7.launched_child_ownership_failure(
+                    altered,
+                    expected_statuses={"STARTING"},
+                    pid_key="pid",
+                    pgid_key="pgid",
+                    sid_key="sid",
+                    identity_key="identity",
+                    launched_key="launched_at",
+                    role="fixture child",
+                )
+            )
+
     def test_smoke_manager_hands_success_to_detached_monitor(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            cloud_sb7.smoke_manager_state(
+                root,
+                status="STARTING",
+                pid=os.getpid(),
+                pgid=os.getpgrp(),
+                sid=os.getsid(0),
+                identity=cloud_sb7.process_identity(os.getpid()),
+                launched_at="fixture-smoke-manager-launch",
+            )
             observed = []
 
             def start_monitor(start_root: Path) -> int:
@@ -5965,13 +6119,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 return 0
 
             with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
                 mock.patch.object(cloud_sb7, "smoke", return_value=0),
                 mock.patch.object(
                     cloud_sb7, "monitor_start", side_effect=start_monitor
                 ) as monitor,
-                mock.patch.object(
-                    cloud_sb7, "process_identity", return_value="smoke-manager"
-                ),
             ):
                 self.assertEqual(cloud_sb7.smoke_manage(root), 0)
             monitor.assert_called_once_with(root)
@@ -6108,6 +6260,90 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     cloud_sb7.stop_group(parent.pid, grace_seconds=0.1)
                 if child and cloud_sb7.process_alive(child):
                     cloud_sb7.stop_group(child, grace_seconds=0.1)
+
+    def test_post_exec_launch_capability_is_role_bound_and_consumed_once(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            marker = root / "capability.txt"
+            bench = Path(cloud_sb7.__file__).resolve().parent
+            command = (
+                "import os,sys; from pathlib import Path; "
+                f"sys.path.insert(0, {str(bench)!r}); import cloud_sb7; "
+                "cloud_sb7.consume_child_launch_capability('fixture-child'); "
+                f"Path({str(marker)!r}).write_text(str(any(name in os.environ for name in "
+                "(cloud_sb7.CHILD_GATE_PATH_ENV, cloud_sb7.CHILD_GATE_TOKEN_ENV, "
+                "cloud_sb7.CHILD_GATE_ROLE_ENV))))"
+            )
+            proc = cloud_sb7.launch_after_receipt(
+                [sys.executable, "-c", command],
+                cwd=root,
+                env=None,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+                gate_dir=root / "gates",
+                on_started=lambda _proc: None,
+                child_role="fixture-child",
+            )
+            self.assertEqual(proc.wait(timeout=5), 0)
+            self.assertEqual(marker.read_text(), "False")
+            self.assertEqual(list((root / "gates").iterdir()), [])
+            with self.assertRaisesRegex(SystemExit, "one-shot parent launch"):
+                cloud_sb7.consume_child_launch_capability("fixture-child")
+
+    def test_hidden_cli_entrypoints_reject_direct_invocation_before_state_access(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            cases = (
+                ("_manage",),
+                ("_monitor",),
+                ("_smoke_manage",),
+                ("_supervise", "--entrant", "fixture"),
+                ("_smoke_supervise", "--entrant", "fixture"),
+            )
+            with mock.patch.dict(os.environ, {}, clear=False):
+                for name in (
+                    cloud_sb7.CHILD_GATE_PATH_ENV,
+                    cloud_sb7.CHILD_GATE_TOKEN_ENV,
+                    cloud_sb7.CHILD_GATE_ROLE_ENV,
+                ):
+                    os.environ.pop(name, None)
+                for arguments in cases:
+                    with (
+                        self.subTest(command=arguments[0]),
+                        mock.patch.object(
+                            sys,
+                            "argv",
+                            ["cloud_sb7.py", *arguments, "--root", str(root)],
+                        ),
+                        self.assertRaisesRegex(
+                            SystemExit, "one-shot parent launch capability"
+                        ),
+                    ):
+                        cloud_sb7.main()
+
+    def test_watch_is_read_only_when_manager_is_dead(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            cloud_sb7.update_campaign(root, status="RUNNING")
+            cloud_sb7.manager_state(
+                root,
+                status="RUNNING",
+                pid=99999999,
+                identity="dead-manager",
+            )
+            with (
+                mock.patch.object(
+                    sys, "argv", ["cloud_sb7.py", "watch", "--root", str(root)]
+                ),
+                mock.patch.object(cloud_sb7, "print_status"),
+                mock.patch.object(cloud_sb7, "start") as start,
+            ):
+                self.assertEqual(cloud_sb7.main(), 2)
+            start.assert_not_called()
 
     def test_orchestrator_evidence_requires_clean_tree_and_distinct_artifacts(
         self,
