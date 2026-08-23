@@ -134,6 +134,7 @@ fn macos_profile_for_paths(
          (deny process-info*) \
          (allow process-info* (target self)) \
          (allow process-info-codesignature) \
+         (deny mach-lookup) \
          (deny network*) \
          (allow network-inbound \
              (local tcp \"localhost:*\") \
@@ -219,6 +220,7 @@ mod tests {
             "(deny process-info*)",
             "(allow process-info* (target self))",
             "(allow process-info-codesignature)",
+            "(deny mach-lookup)",
             "(deny network*)",
             "(allow network-inbound",
             "(local tcp \"localhost:*\")",
@@ -325,6 +327,13 @@ except OSError:
     pass
 else:
     assert secret not in probe.stdout + probe.stderr
+for command in [["/usr/bin/pbpaste"], ["/usr/bin/security", "list-keychains"]]:
+    try:
+        probe = subprocess.run(command, capture_output=True, text=True)
+    except OSError:
+        pass
+    else:
+        assert probe.returncode != 0, f"sandbox exposed personal service through {command}"
 print("SB7_PROFILE_OK")
 "#;
         let output = Command::new("/usr/bin/sandbox-exec")
