@@ -100,6 +100,11 @@ ORCHESTRATOR_RECOVERY_EVIDENCE = "orchestrator-recovery-evidence"
 ORCHESTRATOR_RECOVERY_PATH = "recovery/orchestrator-recovery.json"
 PRE_SMOKE_INSTRUMENT_REPAIR_SCHEMA = 1
 PRE_SMOKE_INSTRUMENT_REPAIR_PATH = "lineage/pre-smoke-instrument-repair"
+BUDGET_BLOCKED_CARRIED_SMOKE_SCHEMA = 1
+BUDGET_BLOCKED_CARRIED_SMOKE_PATH = "lineage/budget-blocked-carried-smoke"
+BUDGET_BLOCKED_CARRIED_SMOKE_STATUS = "PASS_WITH_CARRIED_PROOF"
+BUDGET_BLOCKED_CARRIED_SMOKE_APPLICATION = "applied.json"
+CARRIED_SMOKE_PUBLIC_REASON = "document carried-smoke provenance differs"
 COORDINATOR_INSTRUMENT_PATH = "evals/swarm-bench/bench/cloud_sb7.py"
 ORCHESTRATOR_MONITOR_FAILURE = (
     "cloud campaign lineage refused execution: unstarted entrant acquired or "
@@ -6560,6 +6565,11 @@ def lineage_failure(
         )
         if repair_problem:
             return repair_problem
+        carried_smoke_problem = budget_blocked_carried_smoke_failure(
+            root, campaign, lineage
+        )
+        if carried_smoke_problem:
+            return carried_smoke_problem
         smoke_lineage = validated_campaign_lineage(campaign)
         if (
             smoke_lineage["generation"] != 1
@@ -6852,7 +6862,10 @@ def supersession_smoke_gate_failure(root: Path) -> str | None:
     try:
         require_smoke_proofs(root)
     except SystemExit as error:
-        return f"supersession requires a fresh strict all-entrant smoke proof: {error}"
+        return (
+            "supersession requires a fresh strict all-entrant smoke proof or "
+            f"an explicit typed carried proof: {error}"
+        )
     return None
 
 
@@ -9538,9 +9551,17 @@ def current_smoke_budget_requests(
 
 
 def smoke_admission_history(
-    root: Path, entrant_id: str, row: Mapping[str, Any]
+    root: Path,
+    entrant_id: str,
+    row: Mapping[str, Any],
+    *,
+    campaign_override: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    campaign = load_json(campaign_file(root))
+    campaign = (
+        dict(campaign_override)
+        if campaign_override is not None
+        else load_json(campaign_file(root))
+    )
     state = read_smoke_state(root, entrant_id)
     errors: list[str] = []
     try:
@@ -10213,8 +10234,13 @@ def smoke_proof_mismatch(
     row: Mapping[str, Any],
     *,
     check_live_instrument: bool = True,
+    campaign_override: Mapping[str, Any] | None = None,
 ) -> str | None:
-    campaign = load_json(campaign_file(root))
+    campaign = (
+        dict(campaign_override)
+        if campaign_override is not None
+        else load_json(campaign_file(root))
+    )
     try:
         state = read_smoke_state(root, entrant_id)
     except (OSError, json.JSONDecodeError, SystemExit) as error:
@@ -10395,7 +10421,12 @@ def smoke_proof_mismatch(
         set(settled)
     ):
         return "shared budget ledger lost the smoke request settlements"
-    history = smoke_admission_history(root, entrant_id, row)
+    history = smoke_admission_history(
+        root,
+        entrant_id,
+        row,
+        campaign_override=campaign,
+    )
     if not history["valid"]:
         return "cumulative smoke admission evidence is invalid: " + "; ".join(
             history["errors"]
@@ -10441,9 +10472,12 @@ def require_smoke_proofs(
         raise SystemExit(f"cloud smoke contract is invalid: {error}") from None
     if campaign.get("smoke_contract_sha256") != contract:
         raise SystemExit("campaign smoke contract identity is stale")
-    if campaign.get("smoke_status") != "PASS":
+    if campaign.get("smoke_status") not in {
+        "PASS",
+        BUDGET_BLOCKED_CARRIED_SMOKE_STATUS,
+    }:
         raise SystemExit(
-            f"campaign smoke status is {campaign.get('smoke_status')}, not PASS"
+            f"campaign smoke status is {campaign.get('smoke_status')}, not qualified"
         )
     raw_before = campaign.get("smoke_raw_tree_sha256_before")
     raw_after = campaign.get("smoke_raw_tree_sha256_after")
@@ -10458,25 +10492,65 @@ def require_smoke_proofs(
     proof_hashes = campaign.get("smoke_proof_sha256")
     if not isinstance(proof_hashes, dict):
         raise SystemExit("campaign has no sealed smoke proof index")
+    mixed_receipt: Mapping[str, Any] | None = None
+    source_campaign: Mapping[str, Any] | None = None
+    if campaign.get("smoke_status") == BUDGET_BLOCKED_CARRIED_SMOKE_STATUS:
+        mixed_problem = budget_blocked_carried_smoke_failure(root, campaign)
+        if mixed_problem:
+            raise SystemExit(
+                "mixed smoke qualification is invalid: " + mixed_problem
+            )
+        pointer = campaign["budget_blocked_carried_smoke"]
+        bundle = root / BUDGET_BLOCKED_CARRIED_SMOKE_PATH
+        mixed_receipt = load_json(bundle / "receipt.json")
+        source_campaign = load_json(bundle / "source-campaign.json")
+        if pointer.get("sha256") != sha256_file(bundle / "receipt.json"):
+            raise SystemExit("mixed smoke qualification pointer changed")
+
     failures = []
     for row in rows:
         entrant_id = str(row["id"])
-        mismatch = smoke_proof_mismatch(
-            root,
-            entrant_id,
-            row,
-            check_live_instrument=check_live_instrument,
+        carried = bool(
+            mixed_receipt is not None
+            and entrant_id in mixed_receipt["carried_entrants"]
         )
-        state = read_smoke_state(root, entrant_id)
-        if proof_hashes.get(entrant_id) != state.get("proof_sha256"):
-            mismatch = (
-                mismatch or "campaign smoke proof index differs from entrant state"
+        if carried:
+            carried_record = mixed_receipt["carried_proofs"][entrant_id]
+            predecessor_root = Path(str(carried_record["predecessor_root"]))
+            predecessor_row = manifest_row(predecessor_root, entrant_id)
+            mismatch = smoke_proof_mismatch(
+                predecessor_root,
+                entrant_id,
+                predecessor_row,
+                check_live_instrument=False,
             )
+            if proof_hashes.get(entrant_id) != carried_record.get(
+                "predecessor_proof_sha256"
+            ):
+                mismatch = mismatch or (
+                    "campaign smoke proof index differs from carried predecessor proof"
+                )
+        else:
+            mismatch = smoke_proof_mismatch(
+                root,
+                entrant_id,
+                row,
+                check_live_instrument=(
+                    check_live_instrument and source_campaign is None
+                ),
+                campaign_override=source_campaign,
+            )
+            state = read_smoke_state(root, entrant_id)
+            if proof_hashes.get(entrant_id) != state.get("proof_sha256"):
+                mismatch = (
+                    mismatch or "campaign smoke proof index differs from entrant state"
+                )
         if mismatch:
             failures.append(f"{entrant_id}: {mismatch}")
     if failures:
         raise SystemExit(
-            "cloud builds require five untampered smoke PASS proofs: "
+            "cloud builds require five untampered smoke PASS proofs or an "
+            "explicit typed carried proof: "
             + "; ".join(failures)
         )
 
@@ -13828,6 +13902,20 @@ def pre_smoke_instrument_repair_failure(
     ):
         return "pre-smoke instrument repair receipt is missing or changed"
     receipt = load_json(receipt_path)
+    validation_campaign = campaign
+    validation_lineage = lineage
+    validation_coordinator = campaign_instrument_path(
+        campaign, COORDINATOR_INSTRUMENT_PATH
+    )
+    later_pointer = lineage.get("budget_blocked_carried_smoke")
+    if later_pointer is not None:
+        later_bundle = root / BUDGET_BLOCKED_CARRIED_SMOKE_PATH
+        try:
+            validation_campaign = load_json(later_bundle / "source-campaign.json")
+            validation_lineage = load_json(later_bundle / "source-lineage.json")
+            validation_coordinator = later_bundle / "source-coordinator.py"
+        except (OSError, json.JSONDecodeError, SystemExit) as error:
+            return f"pre-smoke repair continuation cannot be read: {error}"
     expected = {
         "schema_version",
         "kind",
@@ -13857,18 +13945,18 @@ def pre_smoke_instrument_repair_failure(
         or receipt.get("schema_version") != PRE_SMOKE_INSTRUMENT_REPAIR_SCHEMA
         or receipt.get("kind") != "pre_smoke_instrument_repair"
         or receipt.get("root") != str(root.resolve())
-        or receipt.get("campaign_id") != campaign.get("campaign_id")
+        or receipt.get("campaign_id") != validation_campaign.get("campaign_id")
         or receipt.get("no_smoke_provider_activity") is not True
         or receipt.get("no_successor_full_activity") is not True
-        or campaign.get("pre_smoke_instrument_repair_transition_id")
+        or validation_campaign.get("pre_smoke_instrument_repair_transition_id")
         != receipt.get("transition_id")
-        or campaign.get("source_commit") != receipt.get("source_commit")
-        or campaign.get("source_branch") != receipt.get("source_branch")
-        or campaign.get("instrument_set_sha256")
+        or validation_campaign.get("source_commit") != receipt.get("source_commit")
+        or validation_campaign.get("source_branch") != receipt.get("source_branch")
+        or validation_campaign.get("instrument_set_sha256")
         != receipt.get("target_instrument_set_sha256")
-        or campaign.get("smoke_contract_sha256")
+        or validation_campaign.get("smoke_contract_sha256")
         != receipt.get("target_smoke_contract_sha256")
-        or lineage.get("successor_smoke_contract_sha256")
+        or validation_lineage.get("successor_smoke_contract_sha256")
         != receipt.get("target_smoke_contract_sha256")
     ):
         return "pre-smoke instrument repair receipt is bound to another transition"
@@ -13903,8 +13991,8 @@ def pre_smoke_instrument_repair_failure(
                 or sha256_file(path) != expected_sha
             ):
                 return f"pre-smoke instrument repair state changed: {entrant_id}"
-    coordinator = campaign_instrument_path(campaign, COORDINATOR_INSTRUMENT_PATH)
-    hashes = campaign.get("instrument_hashes")
+    coordinator = validation_coordinator
+    hashes = validation_campaign.get("instrument_hashes")
     if (
         not isinstance(hashes, dict)
         or hashes.get(COORDINATOR_INSTRUMENT_PATH)
@@ -14283,6 +14371,1409 @@ def repair_pre_smoke_instrument(
                 )
 
 
+def provider_reserve_evidence(
+    campaign: Mapping[str, Any],
+    row: Mapping[str, Any],
+    *,
+    ledger_override: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    config_path = Path(str(campaign.get("budget_config", "")))
+    if (
+        config_path.is_symlink()
+        or not config_path.is_file()
+        or sha256_file(config_path) != campaign.get("budget_config_sha256")
+    ):
+        raise SystemExit("frozen budget config changed before reserve proof")
+    config = load_json(config_path)
+    ledger = (
+        dict(ledger_override)
+        if ledger_override is not None
+        else load_json(Path(str(campaign.get("budget_ledger", ""))))
+    )
+    problem = budget_ledger_failure(ledger, config)
+    if problem:
+        raise SystemExit(problem)
+    provider = str(row["provider"])
+    model = str(row["model"])
+    profile = budget_model_profile(config, provider, model)
+    if profile is None:
+        raise SystemExit(f"frozen budget profile is missing for {provider}/{model}")
+    reserve = budget_price(
+        profile,
+        int(profile["context_limit"]),
+        int(profile["max_output_tokens"]),
+    )
+    if reserve is None:
+        raise SystemExit(f"frozen reserve cannot be priced for {provider}/{model}")
+    provider_outstanding = sum(
+        float(value["reserved_usd"])
+        for value in ledger["outstanding"].values()
+        if value["provider"] == provider
+    )
+    total_outstanding = sum(
+        float(value["reserved_usd"])
+        for value in ledger["outstanding"].values()
+    )
+    provider_spent = float(ledger["provider_spent_upper_bound"][provider])
+    total_spent = float(ledger["spent_upper_bound"])
+    provider_cap = float(ledger["provider_caps"][provider])
+    total_cap = float(ledger["total_cap"])
+    provider_remaining = provider_cap - provider_spent - provider_outstanding
+    total_remaining = total_cap - total_spent - total_outstanding
+    blocked_by = []
+    if reserve > provider_remaining + 1e-9:
+        blocked_by.append("provider")
+    if reserve > total_remaining + 1e-9:
+        blocked_by.append("total")
+    return {
+        "provider": provider,
+        "model": model,
+        "budget_config_sha256": campaign["budget_config_sha256"],
+        "reserve_usd": reserve,
+        "provider_cap": provider_cap,
+        "provider_spent_upper_bound": provider_spent,
+        "provider_outstanding_usd": provider_outstanding,
+        "provider_remaining_usd": provider_remaining,
+        "total_cap": total_cap,
+        "total_spent_upper_bound": total_spent,
+        "total_outstanding_usd": total_outstanding,
+        "total_remaining_usd": total_remaining,
+        "blocked_by": blocked_by,
+    }
+
+
+def smoke_attempt_proves_local_budget_exhaustion(
+    attempt_root: Path,
+    row: Mapping[str, Any],
+    reserve: float,
+) -> bool:
+    log_path = attempt_root / "logs/smoke.log"
+    if log_path.is_symlink() or not log_path.is_file():
+        return False
+    notification = False
+    complete = False
+    try:
+        for line in log_path.read_text().splitlines():
+            value = json.loads(line)
+            if value.get("type") == "complete":
+                complete = True
+            message = value.get("message")
+            contents = message.get("content") if isinstance(message, dict) else None
+            if isinstance(contents, list) and any(
+                isinstance(content, dict)
+                and content.get("type") == "systemNotification"
+                and content.get("notificationType") == "creditsExhausted"
+                for content in contents
+            ):
+                notification = True
+    except (OSError, json.JSONDecodeError):
+        return False
+    expected = (
+        f"benchmark reserve ${reserve:.6f} for {row['provider']}/{row['model']} "
+        "does not fit remaining campaign/provider envelope"
+    )
+    internal_logs = attempt_root / "profile/state/logs/cli"
+    local_budget_error = False
+    if internal_logs.is_dir() and not internal_logs.is_symlink():
+        for path in internal_logs.rglob("*.log"):
+            if path.is_symlink() or not path.is_file():
+                return False
+            if expected in path.read_text(errors="replace"):
+                local_budget_error = True
+    return notification and complete and local_budget_error
+
+
+def collect_budget_blocked_carried_smoke_evidence(
+    root: Path,
+    campaign: Mapping[str, Any],
+    lineage: Mapping[str, Any],
+    rows_by_id: Mapping[str, Mapping[str, Any]],
+) -> tuple[Dict[str, Any], Dict[str, str], Dict[str, Dict[str, Any]]]:
+    source_ledger = load_json(Path(str(campaign["budget_ledger"])))
+    config = load_json(Path(str(campaign["budget_config"])))
+    ledger_problem = budget_ledger_failure(source_ledger, config)
+    if ledger_problem:
+        raise SystemExit(ledger_problem)
+    predecessor_root = Path(str(lineage["predecessor_root"]))
+    require_smoke_proofs(predecessor_root, check_live_instrument=False)
+    carried_lineage = lineage.get("carried_entrants")
+    if not isinstance(carried_lineage, list):
+        raise SystemExit("mixed smoke lineage has no carried entrant partition")
+
+    carried_candidates: Dict[str, Dict[str, Any]] = {}
+    fresh_proofs: Dict[str, str] = {}
+    for entrant_id, row in rows_by_id.items():
+        build_state = read_state(root, entrant_id)
+        for pid_key, pgid_key, identity_key in (
+            ("supervisor_pid", "supervisor_pgid", "supervisor_identity"),
+            ("goose_pid", "process_group", "goose_identity"),
+            ("publisher_pid", "publisher_pgid", "publisher_identity"),
+            ("score_pid", "score_pgid", "score_identity"),
+        ):
+            if process_alive(
+                build_state.get(pid_key), build_state.get(identity_key)
+            ):
+                raise SystemExit(
+                    f"build runtime is still active: {entrant_id}/{pid_key}"
+                )
+            pgid = int(build_state.get(pgid_key) or 0)
+            if pgid and process_group_members(pgid):
+                raise SystemExit(
+                    f"build runtime group is still active: {entrant_id}/{pgid}"
+                )
+        if scorer_runtime_survivors(build_state):
+            raise SystemExit(
+                f"scorer descendants are still active: {entrant_id}"
+            )
+        smoke_state = read_smoke_state(root, entrant_id)
+        for pid_key, identity_key, pgid_key in (
+            ("supervisor_pid", "supervisor_identity", "supervisor_pgid"),
+            ("goose_pid", "goose_identity", "goose_pgid"),
+        ):
+            if process_alive(
+                smoke_state.get(pid_key),
+                smoke_state.get(identity_key),
+            ) or process_group_members(int(smoke_state.get(pgid_key) or 0)):
+                raise SystemExit(f"smoke runtime is still active: {entrant_id}")
+        if smoke_state.get("status") == "PASS":
+            mismatch = smoke_proof_mismatch(
+                root,
+                entrant_id,
+                row,
+                check_live_instrument=False,
+                campaign_override=campaign,
+            )
+            if mismatch:
+                raise SystemExit(
+                    f"fresh smoke proof is invalid: {entrant_id}: {mismatch}"
+                )
+            fresh_proofs[entrant_id] = str(smoke_state["proof_sha256"])
+            continue
+
+        if (
+            entrant_id not in carried_lineage
+            or build_state.get("lineage_role") != "carried_success"
+            or build_state.get("status") not in BUILD_SUCCESS_STATES
+            or build_state.get("score") is None
+            or smoke_state.get("status") != "PRE_ADMISSION_FAILURE"
+            or smoke_state.get("active_attempt") is not False
+        ):
+            raise SystemExit(
+                f"failed smoke has no successful carried outcome: {entrant_id}"
+            )
+        history = smoke_admission_history(
+            root,
+            entrant_id,
+            row,
+            campaign_override=campaign,
+        )
+        attempts_root = root / "smoke" / entrant_id / "attempts"
+        reserve_evidence = provider_reserve_evidence(
+            campaign,
+            row,
+            ledger_override=source_ledger,
+        )
+        if (
+            not history["valid"]
+            or history["episodes_admitted"] != 0
+            or history["current_settled_request_ids"]
+            or history["outstanding_request_ids"]
+            or not history["attempts"]
+            or not reserve_evidence["blocked_by"]
+        ):
+            raise SystemExit(
+                "failed smoke is not a proven zero-admission budget block: "
+                f"{entrant_id}"
+            )
+        attempts_sha = sha256_tree_exact(attempts_root)
+        for attempt in history["attempts"]:
+            if attempt.get("prelaunch_only"):
+                raise SystemExit(
+                    f"failed smoke has a crash-half attempt: {entrant_id}"
+                )
+            if not smoke_attempt_proves_local_budget_exhaustion(
+                attempts_root / str(attempt["name"]),
+                row,
+                float(reserve_evidence["reserve_usd"]),
+            ):
+                raise SystemExit(
+                    f"failed smoke lacks local budget evidence: {entrant_id}"
+                )
+
+        predecessor_campaign_path = campaign_file(predecessor_root)
+        predecessor_campaign = load_json(predecessor_campaign_path)
+        predecessor_row = manifest_row(predecessor_root, entrant_id)
+        predecessor_state = read_smoke_state(predecessor_root, entrant_id)
+        predecessor_mismatch = smoke_proof_mismatch(
+            predecessor_root,
+            entrant_id,
+            predecessor_row,
+            check_live_instrument=False,
+        )
+        if (
+            predecessor_mismatch
+            or predecessor_campaign.get("smoke_status") != "PASS"
+            or predecessor_campaign.get("binary_sha256")
+            != campaign.get("binary_sha256")
+            or predecessor_campaign.get("entrant_manifest_sha256")
+            != campaign.get("entrant_manifest_sha256")
+            or predecessor_campaign.get("budget_config_sha256")
+            != campaign.get("budget_config_sha256")
+            or predecessor_campaign.get("smoke_max_turns")
+            != campaign.get("smoke_max_turns")
+            or predecessor_row.get("provider") != row.get("provider")
+            or predecessor_row.get("model") != row.get("model")
+        ):
+            raise SystemExit(
+                f"carried predecessor smoke is invalid: {entrant_id}: "
+                f"{predecessor_mismatch or 'identity mismatch'}"
+            )
+        carried_candidates[entrant_id] = {
+            "predecessor_root": str(predecessor_root),
+            "predecessor_campaign_id": predecessor_campaign["campaign_id"],
+            "predecessor_campaign_sha256": sha256_file(
+                predecessor_campaign_path
+            ),
+            "predecessor_state_sha256": sha256_file(
+                smoke_state_file(predecessor_root, entrant_id)
+            ),
+            "predecessor_smoke_tree_sha256": sha256_tree_exact(
+                predecessor_root / "smoke" / entrant_id
+            ),
+            "predecessor_proof_sha256": predecessor_state["proof_sha256"],
+            "current_attempts_sha256": attempts_sha,
+            "reserve_evidence": reserve_evidence,
+        }
+    if not carried_candidates:
+        raise SystemExit(
+            "mixed smoke recovery found no budget-blocked carried entrant"
+        )
+    return source_ledger, fresh_proofs, carried_candidates
+
+
+def budget_blocked_carried_smoke_pointer(bundle: Path) -> Dict[str, str]:
+    return {
+        "path": f"{BUDGET_BLOCKED_CARRIED_SMOKE_PATH}/receipt.json",
+        "sha256": sha256_file(bundle / "receipt.json"),
+    }
+
+
+def budget_blocked_carried_smoke_application(
+    bundle: Path, receipt: Mapping[str, Any]
+) -> Dict[str, Any]:
+    return {
+        "schema_version": BUDGET_BLOCKED_CARRIED_SMOKE_SCHEMA,
+        "kind": "budget_blocked_carried_smoke_application",
+        "transition_id": receipt["transition_id"],
+        "receipt_sha256": sha256_file(bundle / "receipt.json"),
+        "target_smoke_contract_sha256": receipt["target_smoke_contract_sha256"],
+        "applied_at": receipt["recovered_at"],
+    }
+
+
+def budget_blocked_carried_smoke_campaign(
+    source_campaign: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+    pointer: Mapping[str, str],
+    application_sha256: str,
+) -> Dict[str, Any]:
+    hashes = dict(source_campaign["instrument_hashes"])
+    hashes[COORDINATOR_INSTRUMENT_PATH] = receipt["target_coordinator_sha256"]
+    campaign = dict(source_campaign)
+    campaign.update(
+        {
+            "source_commit": receipt["source_commit"],
+            "source_branch": receipt["source_branch"],
+            "instrument_hashes": hashes,
+            "instrument_set_sha256": receipt["target_instrument_set_sha256"],
+            "smoke_status": BUDGET_BLOCKED_CARRIED_SMOKE_STATUS,
+            "smoke_failure": (
+                "qualification uses fresh current proofs plus explicitly carried "
+                "predecessor proof(s) for budget-blocked carried outcomes"
+            ),
+            "smoke_proof_sha256": receipt["proof_index"],
+            "budget_blocked_carried_smoke_transition_id": receipt[
+                "transition_id"
+            ],
+            "budget_blocked_carried_smoke": dict(pointer),
+            "budget_blocked_carried_smoke_application_sha256": application_sha256,
+            "updated_at": receipt["recovered_at"],
+        }
+    )
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    return bind_smoke_contract(campaign, entrants(manifest))
+
+
+def budget_blocked_carried_smoke_lineage(
+    source_lineage: Mapping[str, Any],
+    target_contract: str,
+    pointer: Mapping[str, str],
+) -> Dict[str, Any]:
+    lineage = dict(source_lineage)
+    lineage["successor_smoke_contract_sha256"] = target_contract
+    lineage["budget_blocked_carried_smoke"] = dict(pointer)
+    return lineage
+
+
+def budget_blocked_carried_smoke_manager(
+    source_manager: Mapping[str, Any], recovered_at: str
+) -> Dict[str, Any]:
+    manager = dict(source_manager)
+    manager.update(
+        {
+            "status": "IDLE",
+            "pid": None,
+            "pgid": None,
+            "sid": None,
+            "identity": None,
+            "failure": None,
+            "exit_code": None,
+            "finished_at": None,
+            "updated_at": recovered_at,
+        }
+    )
+    return manager
+
+
+def carried_smoke_public_provenance(
+    campaign: Mapping[str, Any], entrant_id: str
+) -> str | None:
+    if campaign.get("smoke_status") != BUDGET_BLOCKED_CARRIED_SMOKE_STATUS:
+        return None
+    pointer = campaign.get("budget_blocked_carried_smoke")
+    if not isinstance(pointer, dict):
+        raise PublicationError("mixed smoke campaign has no qualification receipt")
+    campaign_root = Path(str(campaign["instrument_root"])).parents[1]
+    bundle = campaign_root / BUDGET_BLOCKED_CARRIED_SMOKE_PATH
+    receipt_path = bundle / "receipt.json"
+    if (
+        receipt_path.is_symlink()
+        or not receipt_path.is_file()
+        or sha256_file(receipt_path) != pointer.get("sha256")
+    ):
+        raise PublicationError("mixed smoke qualification receipt changed")
+    receipt = load_json(receipt_path)
+    if entrant_id not in receipt.get("carried_entrants", []):
+        return None
+    record = receipt.get("carried_proofs", {}).get(entrant_id)
+    if not isinstance(record, dict):
+        raise PublicationError("carried smoke provenance record is malformed")
+    return (
+        "Smoke qualification provenance: predecessor-carried, not fresh. This "
+        "result's full build and hermetic score were carried unchanged from "
+        f"campaign {record['predecessor_campaign_id']}; its contract proof is that "
+        "predecessor campaign's sealed PASS smoke proof. The successor's fresh "
+        "smoke attempts made zero provider admissions and were blocked by the "
+        "unchanged frozen campaign/provider budget envelope."
+    )
+
+
+def budget_blocked_carried_smoke_bundle_failure(
+    root: Path,
+    bundle: Path,
+    receipt: Mapping[str, Any],
+    coordinator_source: Path,
+) -> str | None:
+    expected_fields = {
+        "schema_version",
+        "kind",
+        "transition_id",
+        "recovered_at",
+        "root",
+        "campaign_id",
+        "source_commit",
+        "source_branch",
+        "source_campaign_sha256",
+        "source_lineage_sha256",
+        "source_coordinator_sha256",
+        "target_coordinator_sha256",
+        "source_instrument_set_sha256",
+        "target_instrument_set_sha256",
+        "source_smoke_contract_sha256",
+        "target_smoke_contract_sha256",
+        "budget_config_sha256",
+        "source_budget_ledger_sha256",
+        "source_smoke_manager_sha256",
+        "source_build_state_sha256",
+        "source_smoke_state_sha256",
+        "fresh_entrants",
+        "carried_entrants",
+        "fresh_proof_sha256",
+        "carried_proofs",
+        "proof_index",
+        "raw_tree_sha256_before",
+        "raw_tree_sha256_after",
+        "no_active_processes",
+        "no_full_episode_mutation",
+    }
+    if (
+        set(receipt) != expected_fields
+        or receipt.get("schema_version") != BUDGET_BLOCKED_CARRIED_SMOKE_SCHEMA
+        or receipt.get("kind") != "budget_blocked_carried_smoke"
+        or receipt.get("root") != str(root.resolve())
+        or receipt.get("no_active_processes") is not True
+        or receipt.get("no_full_episode_mutation") is not True
+        or sha256_file(coordinator_source)
+        != receipt.get("target_coordinator_sha256")
+    ):
+        return "mixed smoke recovery bundle is bound to another transition"
+    allowed_entries = {
+        "receipt.json",
+        "source-campaign.json",
+        "source-lineage.json",
+        "source-coordinator.py",
+        "source-budget-ledger.json",
+        "source-smoke-manager.json",
+        "build-states",
+        "smoke-states",
+        BUDGET_BLOCKED_CARRIED_SMOKE_APPLICATION,
+    }
+    if {path.name for path in bundle.iterdir()} - allowed_entries:
+        return "mixed smoke recovery bundle has unexpected artifacts"
+    source_files = {
+        "source-campaign.json": receipt.get("source_campaign_sha256"),
+        "source-lineage.json": receipt.get("source_lineage_sha256"),
+        "source-coordinator.py": receipt.get("source_coordinator_sha256"),
+        "source-budget-ledger.json": receipt.get("source_budget_ledger_sha256"),
+        "source-smoke-manager.json": receipt.get("source_smoke_manager_sha256"),
+    }
+    for name, expected_sha in source_files.items():
+        path = bundle / name
+        if (
+            not isinstance(expected_sha, str)
+            or path.is_symlink()
+            or not path.is_file()
+            or sha256_file(path) != expected_sha
+        ):
+            return f"mixed smoke recovery bundle source changed: {name}"
+    for field, directory_name in (
+        ("source_build_state_sha256", "build-states"),
+        ("source_smoke_state_sha256", "smoke-states"),
+    ):
+        values = receipt.get(field)
+        directory = bundle / directory_name
+        if (
+            not isinstance(values, dict)
+            or directory.is_symlink()
+            or not directory.is_dir()
+            or {path.name for path in directory.iterdir()}
+            != {f"{entrant_id}.json" for entrant_id in values}
+        ):
+            return f"mixed smoke recovery bundle {directory_name} are malformed"
+        for entrant_id, expected_sha in values.items():
+            path = directory / f"{entrant_id}.json"
+            if (
+                not isinstance(entrant_id, str)
+                or not isinstance(expected_sha, str)
+                or path.is_symlink()
+                or not path.is_file()
+                or sha256_file(path) != expected_sha
+            ):
+                return f"mixed smoke recovery bundle state changed: {entrant_id}"
+    source_campaign = load_json(bundle / "source-campaign.json")
+    if (
+        source_campaign.get("campaign_id") != receipt.get("campaign_id")
+        or source_campaign.get("smoke_status") != "ATTENTION"
+        or source_campaign.get("instrument_set_sha256")
+        != receipt.get("source_instrument_set_sha256")
+        or source_campaign.get("smoke_contract_sha256")
+        != receipt.get("source_smoke_contract_sha256")
+        or source_campaign.get("budget_config_sha256")
+        != receipt.get("budget_config_sha256")
+    ):
+        return "mixed smoke recovery source campaign differs from its receipt"
+    return None
+
+
+def budget_blocked_carried_smoke_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    lineage: Mapping[str, Any] | None = None,
+) -> str | None:
+    pointer = campaign.get("budget_blocked_carried_smoke")
+    if pointer is None:
+        if campaign.get("smoke_status") == BUDGET_BLOCKED_CARRIED_SMOKE_STATUS:
+            return "mixed smoke status has no immutable qualification receipt"
+        return None
+    try:
+        if not isinstance(pointer, dict) or set(pointer) != {"path", "sha256"}:
+            return "mixed smoke qualification pointer is malformed"
+        if (
+            pointer.get("path")
+            != f"{BUDGET_BLOCKED_CARRIED_SMOKE_PATH}/receipt.json"
+        ):
+            return "mixed smoke qualification path is not frozen"
+        bundle = root / BUDGET_BLOCKED_CARRIED_SMOKE_PATH
+        receipt_path = bundle / "receipt.json"
+        if (
+            receipt_path.is_symlink()
+            or not receipt_path.is_file()
+            or sha256_file(receipt_path) != pointer.get("sha256")
+        ):
+            return "mixed smoke qualification receipt is missing or changed"
+        receipt = load_json(receipt_path)
+        bundle_problem = budget_blocked_carried_smoke_bundle_failure(
+            root,
+            bundle,
+            receipt,
+            campaign_instrument_path(campaign, COORDINATOR_INSTRUMENT_PATH),
+        )
+        if bundle_problem:
+            return bundle_problem
+        expected_fields = {
+            "schema_version",
+            "kind",
+            "transition_id",
+            "recovered_at",
+            "root",
+            "campaign_id",
+            "source_commit",
+            "source_branch",
+            "source_campaign_sha256",
+            "source_lineage_sha256",
+            "source_coordinator_sha256",
+            "target_coordinator_sha256",
+            "source_instrument_set_sha256",
+            "target_instrument_set_sha256",
+            "source_smoke_contract_sha256",
+            "target_smoke_contract_sha256",
+            "budget_config_sha256",
+            "source_budget_ledger_sha256",
+            "source_smoke_manager_sha256",
+            "source_build_state_sha256",
+            "source_smoke_state_sha256",
+            "fresh_entrants",
+            "carried_entrants",
+            "fresh_proof_sha256",
+            "carried_proofs",
+            "proof_index",
+            "raw_tree_sha256_before",
+            "raw_tree_sha256_after",
+            "no_active_processes",
+            "no_full_episode_mutation",
+        }
+        if (
+            set(receipt) != expected_fields
+            or receipt.get("schema_version")
+            != BUDGET_BLOCKED_CARRIED_SMOKE_SCHEMA
+            or receipt.get("kind") != "budget_blocked_carried_smoke"
+            or receipt.get("root") != str(root.resolve())
+            or receipt.get("campaign_id") != campaign.get("campaign_id")
+            or receipt.get("no_active_processes") is not True
+            or receipt.get("no_full_episode_mutation") is not True
+            or campaign.get("smoke_status")
+            != BUDGET_BLOCKED_CARRIED_SMOKE_STATUS
+            or campaign.get("budget_blocked_carried_smoke_transition_id")
+            != receipt.get("transition_id")
+            or campaign.get("source_commit") != receipt.get("source_commit")
+            or campaign.get("source_branch") != receipt.get("source_branch")
+            or campaign.get("instrument_set_sha256")
+            != receipt.get("target_instrument_set_sha256")
+            or campaign.get("smoke_contract_sha256")
+            != receipt.get("target_smoke_contract_sha256")
+            or campaign.get("budget_config_sha256")
+            != receipt.get("budget_config_sha256")
+            or campaign.get("smoke_proof_sha256") != receipt.get("proof_index")
+            or campaign.get("smoke_raw_tree_sha256_before")
+            != receipt.get("raw_tree_sha256_before")
+            or campaign.get("smoke_raw_tree_sha256_after")
+            != receipt.get("raw_tree_sha256_after")
+        ):
+            return "mixed smoke qualification receipt is bound to another transition"
+
+        application_path = bundle / BUDGET_BLOCKED_CARRIED_SMOKE_APPLICATION
+        if application_path.is_symlink() or not application_path.is_file():
+            return "mixed smoke qualification application is missing or linked"
+        application = load_json(application_path)
+        expected_application = budget_blocked_carried_smoke_application(
+            bundle, receipt
+        )
+        if (
+            application != expected_application
+            or campaign.get(
+                "budget_blocked_carried_smoke_application_sha256"
+            )
+            != sha256_file(application_path)
+        ):
+            return "mixed smoke qualification application changed"
+
+        source_files = {
+            "source-campaign.json": receipt["source_campaign_sha256"],
+            "source-lineage.json": receipt["source_lineage_sha256"],
+            "source-coordinator.py": receipt["source_coordinator_sha256"],
+            "source-budget-ledger.json": receipt["source_budget_ledger_sha256"],
+            "source-smoke-manager.json": receipt["source_smoke_manager_sha256"],
+        }
+        for name, expected_sha in source_files.items():
+            path = bundle / name
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or sha256_file(path) != expected_sha
+            ):
+                return f"mixed smoke qualification source changed: {name}"
+        for field, directory_name in (
+            ("source_build_state_sha256", "build-states"),
+            ("source_smoke_state_sha256", "smoke-states"),
+        ):
+            values = receipt.get(field)
+            directory = bundle / directory_name
+            if (
+                not isinstance(values, dict)
+                or not directory.is_dir()
+                or directory.is_symlink()
+            ):
+                return f"mixed smoke qualification {directory_name} are malformed"
+            for entrant_id, expected_sha in values.items():
+                path = directory / f"{entrant_id}.json"
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or sha256_file(path) != expected_sha
+                ):
+                    return f"mixed smoke qualification state changed: {entrant_id}"
+
+        source_campaign = load_json(bundle / "source-campaign.json")
+        source_lineage = load_json(bundle / "source-lineage.json")
+        current_lineage = lineage or load_json(root / "lineage/lineage.json")
+        expected_lineage = budget_blocked_carried_smoke_lineage(
+            source_lineage,
+            receipt["target_smoke_contract_sha256"],
+            pointer,
+        )
+        if current_lineage != expected_lineage:
+            return (
+                "mixed smoke qualification lineage differs from its source "
+                "transition"
+            )
+        if (
+            source_campaign.get("smoke_status") != "ATTENTION"
+            or source_campaign.get("instrument_set_sha256")
+            != receipt.get("source_instrument_set_sha256")
+            or source_campaign.get("smoke_contract_sha256")
+            != receipt.get("source_smoke_contract_sha256")
+            or smoke_contract_identity(source_campaign)
+            != receipt.get("source_smoke_contract_sha256")
+        ):
+            return "mixed smoke qualification source campaign is not the failed smoke"
+        source_hashes = source_campaign.get("instrument_hashes")
+        target_hashes = campaign.get("instrument_hashes")
+        if (
+            not isinstance(source_hashes, dict)
+            or not isinstance(target_hashes, dict)
+            or source_hashes.get(COORDINATOR_INSTRUMENT_PATH)
+            != receipt.get("source_coordinator_sha256")
+            or target_hashes.get(COORDINATOR_INSTRUMENT_PATH)
+            != receipt.get("target_coordinator_sha256")
+            or {
+                key
+                for key in set(source_hashes) | set(target_hashes)
+                if source_hashes.get(key) != target_hashes.get(key)
+            }
+            != {COORDINATOR_INSTRUMENT_PATH}
+            or sha256_bytes(json.dumps(target_hashes, sort_keys=True).encode())
+            != receipt.get("target_instrument_set_sha256")
+        ):
+            return "mixed smoke qualification changed more than the coordinator"
+        coordinator = campaign_instrument_path(campaign, COORDINATOR_INSTRUMENT_PATH)
+        hashes = campaign.get("instrument_hashes")
+        if (
+            not isinstance(hashes, dict)
+            or hashes.get(COORDINATOR_INSTRUMENT_PATH)
+            != receipt.get("target_coordinator_sha256")
+            or coordinator.is_symlink()
+            or not coordinator.is_file()
+            or sha256_file(coordinator) != receipt.get("target_coordinator_sha256")
+            or instrument_mismatch(campaign) is not None
+        ):
+            return "mixed smoke qualification target coordinator changed"
+
+        source_ledger = load_json(bundle / "source-budget-ledger.json")
+        current_ledger = load_json(Path(str(campaign["budget_ledger"])))
+        config = load_json(Path(str(campaign["budget_config"])))
+        ledger_problem = budget_ledger_descendant_failure(
+            source_ledger, current_ledger, config
+        )
+        if ledger_problem:
+            return ledger_problem
+
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        rows = entrants(manifest)
+        rows_by_id = {str(row["id"]): row for row in rows}
+        fresh = receipt.get("fresh_entrants")
+        carried = receipt.get("carried_entrants")
+        if (
+            not isinstance(fresh, list)
+            or not isinstance(carried, list)
+            or fresh != sorted(set(fresh))
+            or carried != sorted(set(carried))
+            or set(fresh) & set(carried)
+            or set(fresh) | set(carried) != set(rows_by_id)
+            or set(receipt.get("fresh_proof_sha256", {})) != set(fresh)
+            or set(receipt.get("carried_proofs", {})) != set(carried)
+            or set(receipt.get("source_build_state_sha256", {}))
+            != set(rows_by_id)
+            or set(receipt.get("source_smoke_state_sha256", {}))
+            != set(rows_by_id)
+        ):
+            return "mixed smoke qualification entrant partition is malformed"
+        successor_carried = set(current_lineage.get("carried_entrants", []))
+        if not set(carried).issubset(successor_carried):
+            return "mixed smoke qualification carries a non-carried build entrant"
+        predecessor_root = Path(str(current_lineage.get("predecessor_root", "")))
+        try:
+            require_smoke_proofs(
+                predecessor_root,
+                check_live_instrument=False,
+            )
+        except SystemExit as error:
+            return f"carried predecessor all-entrant smoke changed: {error}"
+
+        for entrant_id in fresh:
+            row = rows_by_id[entrant_id]
+            mismatch = smoke_proof_mismatch(
+                root,
+                entrant_id,
+                row,
+                check_live_instrument=False,
+                campaign_override=source_campaign,
+            )
+            state = read_smoke_state(root, entrant_id)
+            if mismatch or state.get("proof_sha256") != receipt[
+                "fresh_proof_sha256"
+            ].get(entrant_id):
+                return f"fresh smoke proof changed: {entrant_id}: {mismatch or 'hash'}"
+
+        for entrant_id in carried:
+            row = rows_by_id[entrant_id]
+            record = receipt["carried_proofs"][entrant_id]
+            if not isinstance(record, dict) or set(record) != {
+                "predecessor_root",
+                "predecessor_campaign_id",
+                "predecessor_campaign_sha256",
+                "predecessor_state_sha256",
+                "predecessor_smoke_tree_sha256",
+                "predecessor_proof_sha256",
+                "current_attempts_sha256",
+                "reserve_evidence",
+            }:
+                return f"carried smoke record is malformed: {entrant_id}"
+            state = read_state(root, entrant_id)
+            smoke_state = read_smoke_state(root, entrant_id)
+            if (
+                state.get("lineage_role") != "carried_success"
+                or state.get("status") not in BUILD_SUCCESS_STATES
+                or state.get("score") is None
+                or smoke_state.get("status") != "PRE_ADMISSION_FAILURE"
+                or smoke_state.get("active_attempt") is not False
+            ):
+                return (
+                    "carried smoke entrant has no successful carried outcome: "
+                    f"{entrant_id}"
+                )
+            history = smoke_admission_history(
+                root,
+                entrant_id,
+                row,
+                campaign_override=source_campaign,
+            )
+            attempts_root = root / "smoke" / entrant_id / "attempts"
+            if (
+                not history["valid"]
+                or history["episodes_admitted"] != 0
+                or history["current_settled_request_ids"]
+                or history["outstanding_request_ids"]
+                or sha256_tree_exact(attempts_root)
+                != record.get("current_attempts_sha256")
+            ):
+                return f"carried smoke current attempts are not pristine: {entrant_id}"
+            source_reserve = provider_reserve_evidence(
+                source_campaign, row, ledger_override=source_ledger
+            )
+            current_reserve = provider_reserve_evidence(campaign, row)
+            if source_reserve != record.get("reserve_evidence"):
+                return f"carried smoke reserve evidence changed: {entrant_id}"
+            if (
+                not current_reserve["blocked_by"]
+                or not money_equal(
+                    float(current_reserve["reserve_usd"]),
+                    float(source_reserve["reserve_usd"]),
+                )
+            ):
+                return (
+                    "carried smoke reserve now fits the frozen envelope: "
+                    f"{entrant_id}"
+                )
+            for attempt in history["attempts"]:
+                if attempt.get("prelaunch_only"):
+                    return f"carried smoke has a crash-half attempt: {entrant_id}"
+                attempt_root = attempts_root / str(attempt["name"])
+                if not smoke_attempt_proves_local_budget_exhaustion(
+                    attempt_root, row, float(source_reserve["reserve_usd"])
+                ):
+                    return (
+                        "carried smoke attempt lacks local budget proof: "
+                        f"{entrant_id}"
+                    )
+
+            predecessor_root = Path(str(record.get("predecessor_root", "")))
+            if predecessor_root != Path(
+                str(current_lineage.get("predecessor_root", ""))
+            ):
+                return f"carried smoke predecessor root differs: {entrant_id}"
+            predecessor_campaign_path = campaign_file(predecessor_root)
+            predecessor_state_path = smoke_state_file(predecessor_root, entrant_id)
+            predecessor_smoke_root = predecessor_root / "smoke" / entrant_id
+            if (
+                predecessor_campaign_path.is_symlink()
+                or not predecessor_campaign_path.is_file()
+                or sha256_file(predecessor_campaign_path)
+                != record.get("predecessor_campaign_sha256")
+                or predecessor_state_path.is_symlink()
+                or not predecessor_state_path.is_file()
+                or sha256_file(predecessor_state_path)
+                != record.get("predecessor_state_sha256")
+                or sha256_tree_exact(predecessor_smoke_root)
+                != record.get("predecessor_smoke_tree_sha256")
+            ):
+                return f"carried predecessor smoke evidence changed: {entrant_id}"
+            predecessor_campaign = load_json(predecessor_campaign_path)
+            if (
+                predecessor_campaign.get("campaign_id")
+                != record.get("predecessor_campaign_id")
+                or predecessor_campaign.get("smoke_status") != "PASS"
+                or predecessor_campaign.get("binary_sha256")
+                != campaign.get("binary_sha256")
+                or predecessor_campaign.get("entrant_manifest_sha256")
+                != campaign.get("entrant_manifest_sha256")
+                or predecessor_campaign.get("budget_config_sha256")
+                != campaign.get("budget_config_sha256")
+                or predecessor_campaign.get("smoke_max_turns")
+                != campaign.get("smoke_max_turns")
+            ):
+                return f"carried predecessor contract differs: {entrant_id}"
+            predecessor_row = manifest_row(predecessor_root, entrant_id)
+            if (
+                predecessor_row.get("provider") != row.get("provider")
+                or predecessor_row.get("model") != row.get("model")
+            ):
+                return f"carried predecessor proof is cross-entrant: {entrant_id}"
+            mismatch = smoke_proof_mismatch(
+                predecessor_root,
+                entrant_id,
+                predecessor_row,
+                check_live_instrument=False,
+            )
+            predecessor_state = read_smoke_state(predecessor_root, entrant_id)
+            if mismatch or predecessor_state.get("proof_sha256") != record.get(
+                "predecessor_proof_sha256"
+            ):
+                return (
+                    f"carried predecessor smoke proof changed: {entrant_id}: "
+                    f"{mismatch or 'hash'}"
+                )
+    except (
+        OSError,
+        KeyError,
+        ValueError,
+        TypeError,
+        json.JSONDecodeError,
+        SystemExit,
+    ) as error:
+        return f"mixed smoke qualification cannot be verified: {error}"
+    return None
+
+
+def apply_budget_blocked_carried_smoke(
+    root: Path,
+    bundle: Path,
+    coordinator_source: Path,
+) -> Dict[str, Any]:
+    receipt = load_json(bundle / "receipt.json")
+    bundle_problem = budget_blocked_carried_smoke_bundle_failure(
+        root, bundle, receipt, coordinator_source
+    )
+    if bundle_problem:
+        raise SystemExit(bundle_problem)
+    source_campaign = load_json(bundle / "source-campaign.json")
+    source_lineage = load_json(bundle / "source-lineage.json")
+    if sha256_file(coordinator_source) != receipt["target_coordinator_sha256"]:
+        raise SystemExit("mixed smoke coordinator changed after receipt commit")
+    current_campaign = load_json(campaign_file(root))
+    if current_campaign.get("smoke_status") == BUDGET_BLOCKED_CARRIED_SMOKE_STATUS:
+        problem = budget_blocked_carried_smoke_failure(root, current_campaign)
+        if problem:
+            raise SystemExit(
+                f"committed mixed smoke qualification is invalid: {problem}"
+            )
+        require_smoke_proofs(root)
+        return current_campaign
+    if current_campaign != source_campaign:
+        raise SystemExit(
+            "mixed smoke transition source campaign changed before commit"
+        )
+
+    pointer = budget_blocked_carried_smoke_pointer(bundle)
+    application = budget_blocked_carried_smoke_application(bundle, receipt)
+    application_path = bundle / BUDGET_BLOCKED_CARRIED_SMOKE_APPLICATION
+    if application_path.exists():
+        if (
+            application_path.is_symlink()
+            or not application_path.is_file()
+            or load_json(application_path) != application
+        ):
+            raise SystemExit("mixed smoke application record is stale or malformed")
+        application_sha256 = sha256_file(application_path)
+    else:
+        application_sha256 = sha256_bytes(
+            (json.dumps(application, indent=2, sort_keys=True) + "\n").encode()
+        )
+    campaign = budget_blocked_carried_smoke_campaign(
+        source_campaign,
+        receipt,
+        pointer,
+        application_sha256,
+    )
+    if campaign["smoke_contract_sha256"] != receipt["target_smoke_contract_sha256"]:
+        raise SystemExit("mixed smoke target contract changed after receipt commit")
+    lineage = budget_blocked_carried_smoke_lineage(
+        source_lineage,
+        campaign["smoke_contract_sha256"],
+        pointer,
+    )
+    lineage_path = root / "lineage/lineage.json"
+    current_lineage = load_json(lineage_path)
+    if current_lineage not in (source_lineage, lineage):
+        raise SystemExit("mixed smoke transition lineage is stale or half-mutated")
+    coordinator = campaign_instrument_path(
+        source_campaign, COORDINATOR_INSTRUMENT_PATH
+    )
+    coordinator_sha256 = sha256_file(coordinator)
+    if coordinator_sha256 not in {
+        receipt["source_coordinator_sha256"],
+        receipt["target_coordinator_sha256"],
+    }:
+        raise SystemExit(
+            "mixed smoke transition coordinator is stale or half-mutated"
+        )
+    source_manager = load_json(bundle / "source-smoke-manager.json")
+    target_manager = budget_blocked_carried_smoke_manager(
+        source_manager, receipt["recovered_at"]
+    )
+    current_manager = read_smoke_manager_state(root)
+    if current_manager not in (source_manager, target_manager):
+        raise SystemExit("mixed smoke transition manager is stale or half-mutated")
+    if not application_path.exists() and (
+        current_lineage != source_lineage
+        or coordinator_sha256 != receipt["source_coordinator_sha256"]
+        or current_manager != source_manager
+    ):
+        raise SystemExit(
+            "mixed smoke transition changed before its application record"
+        )
+    if sha256_file(Path(str(source_campaign["budget_ledger"]))) != receipt[
+        "source_budget_ledger_sha256"
+    ]:
+        raise SystemExit("mixed smoke transition budget changed before commit")
+    for field, directory_name, path_for in (
+        ("source_build_state_sha256", "build-states", state_file),
+        ("source_smoke_state_sha256", "smoke-states", smoke_state_file),
+    ):
+        for entrant_id, expected_sha in receipt[field].items():
+            if sha256_file(path_for(root, entrant_id)) != expected_sha:
+                raise SystemExit(
+                    f"mixed smoke transition {directory_name} changed before commit: "
+                    f"{entrant_id}"
+                )
+
+    for runtime_name, runtime in (
+        ("manager", load_json(root / "manager.json")),
+        ("monitor", read_monitor_state(root)),
+        ("smoke manager", read_smoke_manager_state(root)),
+    ):
+        if process_alive(runtime.get("pid"), runtime.get("identity")):
+            raise SystemExit(f"mixed smoke {runtime_name} is still alive")
+        if process_group_members(int(runtime.get("pgid") or 0)):
+            raise SystemExit(f"mixed smoke {runtime_name} group is not clean")
+
+    manifest = load_json(Path(str(source_campaign["entrant_manifest"])))
+    rows = entrants(manifest)
+    rows_by_id = {str(row["id"]): row for row in rows}
+    build_states = [read_state(root, entrant_id) for entrant_id in rows_by_id]
+    dirty = full_build_activity_before_smoke(root, source_campaign, build_states)
+    if dirty:
+        raise SystemExit(
+            "mixed smoke recovery is forbidden after successor full activity: "
+            + ", ".join(dirty)
+        )
+    busy = [
+        str(row["vendor_port"])
+        for row in rows
+        if not port_is_free(int(row["vendor_port"]))
+    ]
+    if busy:
+        raise SystemExit(
+            "mixed smoke recovery vendor ports are occupied: " + ", ".join(busy)
+        )
+    for relative, expected_sha in source_campaign["instrument_hashes"].items():
+        path = campaign_instrument_path(source_campaign, relative)
+        allowed_hashes = {expected_sha}
+        if relative == COORDINATOR_INSTRUMENT_PATH:
+            allowed_hashes.add(receipt["target_coordinator_sha256"])
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or sha256_file(path) not in allowed_hashes
+        ):
+            raise SystemExit(
+                f"mixed smoke transition instrument changed before commit: {relative}"
+            )
+
+    _, fresh_proofs, carried_proofs = (
+        collect_budget_blocked_carried_smoke_evidence(
+            root,
+            source_campaign,
+            source_lineage,
+            rows_by_id,
+        )
+    )
+    expected_proof_index = {
+        **fresh_proofs,
+        **{
+            entrant_id: record["predecessor_proof_sha256"]
+            for entrant_id, record in carried_proofs.items()
+        },
+    }
+    if (
+        fresh_proofs != receipt["fresh_proof_sha256"]
+        or carried_proofs != receipt["carried_proofs"]
+        or sorted(fresh_proofs) != receipt["fresh_entrants"]
+        or sorted(carried_proofs) != receipt["carried_entrants"]
+        or expected_proof_index != receipt["proof_index"]
+    ):
+        raise SystemExit("mixed smoke transition evidence changed before commit")
+
+    if not application_path.exists():
+        atomic_json(application_path, application)
+        if sha256_file(application_path) != application_sha256:
+            raise SystemExit("mixed smoke application serialization changed")
+    atomic_copy(coordinator_source, coordinator, 0o600)
+    atomic_json(lineage_path, lineage)
+    atomic_json(root / "smoke-manager.json", target_manager)
+    campaign["lineage"] = {
+        **dict(campaign["lineage"]),
+        "sha256": sha256_file(lineage_path),
+    }
+    atomic_json(campaign_file(root), campaign)
+    problem = lineage_failure(root)
+    if problem:
+        raise SystemExit(f"mixed smoke recovery failed lineage validation: {problem}")
+    require_smoke_proofs(root)
+    return load_json(campaign_file(root))
+
+
+def recover_budget_blocked_carried_smoke(
+    root: Path,
+    coordinator_source: Path | None = None,
+    source_commit: str | None = None,
+    source_branch: str | None = None,
+) -> Dict[str, Any]:
+    root = root.resolve()
+    coordinator_source = (coordinator_source or Path(__file__)).resolve()
+    if coordinator_source.is_symlink() or not coordinator_source.is_file():
+        raise SystemExit("mixed smoke recovery coordinator is missing or linked")
+    require_clean_source_worktree()
+    source_commit = source_commit or git_value("rev-parse", "HEAD")
+    source_branch = source_branch or git_value("branch", "--show-current")
+    bundle = root / BUDGET_BLOCKED_CARRIED_SMOKE_PATH
+    with exclusive_claim(
+        root / "locks/budget-blocked-carried-smoke.claim", blocking=True
+    ) as transition_claimed:
+        if not transition_claimed:
+            raise SystemExit("cannot claim mixed smoke recovery")
+        with exclusive_claim(
+            root / "locks/manager-launch.claim", blocking=True
+        ) as manager_claimed:
+            if not manager_claimed:
+                raise SystemExit(
+                    "cannot freeze manager launch for mixed smoke recovery"
+                )
+            with exclusive_claim(
+                root / "locks/smoke-launch.claim", blocking=True
+            ) as launch_claimed:
+                if not launch_claimed:
+                    raise SystemExit(
+                        "cannot freeze smoke launch for mixed smoke recovery"
+                    )
+                with (
+                    exclusive_claim(
+                        root / "locks/monitor-launch.claim", blocking=True
+                    ) as monitor_claimed,
+                    exclusive_claim(
+                        root / "locks/smoke-run.claim", blocking=True
+                    ) as smoke_claimed,
+                ):
+                    if not monitor_claimed:
+                        raise SystemExit(
+                            "cannot freeze monitor launch for mixed smoke recovery"
+                        )
+                    if not smoke_claimed:
+                        raise SystemExit(
+                            "cannot freeze smoke run for mixed smoke recovery"
+                        )
+                    if bundle.exists():
+                        return apply_budget_blocked_carried_smoke(
+                            root, bundle, coordinator_source
+                        )
+                    require_lineage(root)
+                    campaign = load_json(campaign_file(root))
+                    lineage = load_json(root / "lineage/lineage.json")
+                    if (
+                        validated_campaign_lineage(campaign)["generation"] != 1
+                        or campaign.get("status") != "INITIALIZED"
+                        or campaign.get("smoke_status") != "ATTENTION"
+                        or not isinstance(lineage.get("carried_entrants"), list)
+                    ):
+                        raise SystemExit(
+                            "mixed smoke recovery requires an ATTENTION "
+                            "supersession successor"
+                        )
+                    if instrument_mismatch(campaign):
+                        raise SystemExit(
+                            "mixed smoke source instrument already changed"
+                        )
+                    for runtime_name, runtime in (
+                        ("manager", load_json(root / "manager.json")),
+                        ("monitor", read_monitor_state(root)),
+                        ("smoke manager", read_smoke_manager_state(root)),
+                    ):
+                        if process_alive(runtime.get("pid"), runtime.get("identity")):
+                            raise SystemExit(
+                                f"mixed smoke {runtime_name} is still alive"
+                            )
+                        if process_group_members(int(runtime.get("pgid") or 0)):
+                            raise SystemExit(
+                                f"mixed smoke {runtime_name} group is not clean"
+                            )
+
+                    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+                    rows = entrants(manifest)
+                    rows_by_id = {str(row["id"]): row for row in rows}
+                    build_states = {
+                        entrant_id: read_state(root, entrant_id)
+                        for entrant_id in rows_by_id
+                    }
+                    dirty = full_build_activity_before_smoke(
+                        root, campaign, build_states.values()
+                    )
+                    if dirty:
+                        raise SystemExit(
+                            "mixed smoke recovery is forbidden after successor "
+                            "full activity: "
+                            + ", ".join(dirty)
+                        )
+                    busy = [
+                        str(row["vendor_port"])
+                        for row in rows
+                        if not port_is_free(int(row["vendor_port"]))
+                    ]
+                    if busy:
+                        raise SystemExit(
+                            "mixed smoke recovery vendor ports are occupied: "
+                            + ", ".join(busy)
+                        )
+
+                    (
+                        source_ledger,
+                        fresh_proofs,
+                        carried_candidates,
+                    ) = collect_budget_blocked_carried_smoke_evidence(
+                        root,
+                        campaign,
+                        lineage,
+                        rows_by_id,
+                    )
+
+                    current_hashes = instrument_hashes()
+                    current_hashes[COORDINATOR_INSTRUMENT_PATH] = sha256_file(
+                        coordinator_source
+                    )
+                    changed = {
+                        key
+                        for key in set(campaign["instrument_hashes"])
+                        | set(current_hashes)
+                        if campaign["instrument_hashes"].get(key)
+                        != current_hashes.get(key)
+                    }
+                    if changed != {COORDINATOR_INSTRUMENT_PATH}:
+                        raise SystemExit(
+                            "mixed smoke recovery must change exactly the frozen "
+                            "coordinator"
+                        )
+                    target_instrument_set = sha256_bytes(
+                        json.dumps(current_hashes, sort_keys=True).encode()
+                    )
+                    recovered_at = utc_now()
+                    proof_index = {
+                        **fresh_proofs,
+                        **{
+                            entrant_id: record["predecessor_proof_sha256"]
+                            for entrant_id, record in carried_candidates.items()
+                        },
+                    }
+                    candidate = {
+                        **campaign,
+                        "source_commit": source_commit,
+                        "source_branch": source_branch,
+                        "instrument_hashes": current_hashes,
+                        "instrument_set_sha256": target_instrument_set,
+                        "smoke_status": BUDGET_BLOCKED_CARRIED_SMOKE_STATUS,
+                        "smoke_proof_sha256": proof_index,
+                    }
+                    candidate = bind_smoke_contract(candidate, rows)
+                    transition_id = sha256_bytes(
+                        json.dumps(
+                            {
+                                "kind": "budget_blocked_carried_smoke",
+                                "root": str(root),
+                                "source_campaign_sha256": sha256_file(
+                                    campaign_file(root)
+                                ),
+                                "target_coordinator_sha256": current_hashes[
+                                    COORDINATOR_INSTRUMENT_PATH
+                                ],
+                                "carried_entrants": sorted(carried_candidates),
+                            },
+                            sort_keys=True,
+                        ).encode()
+                    )
+                    staging = Path(
+                        tempfile.mkdtemp(
+                            prefix=".budget-blocked-carried-smoke-",
+                            dir=root / "lineage",
+                        )
+                    )
+                    try:
+                        atomic_copy(
+                            campaign_file(root),
+                            staging / "source-campaign.json",
+                            0o600,
+                        )
+                        atomic_copy(
+                            root / "lineage/lineage.json",
+                            staging / "source-lineage.json",
+                            0o600,
+                        )
+                        atomic_copy(
+                            campaign_instrument_path(
+                                campaign, COORDINATOR_INSTRUMENT_PATH
+                            ),
+                            staging / "source-coordinator.py",
+                            0o600,
+                        )
+                        atomic_copy(
+                            Path(str(campaign["budget_ledger"])),
+                            staging / "source-budget-ledger.json",
+                            0o600,
+                        )
+                        atomic_copy(
+                            root / "smoke-manager.json",
+                            staging / "source-smoke-manager.json",
+                            0o600,
+                        )
+                        (staging / "build-states").mkdir()
+                        (staging / "smoke-states").mkdir()
+                        for entrant_id in sorted(rows_by_id):
+                            atomic_copy(
+                                state_file(root, entrant_id),
+                                staging / "build-states" / f"{entrant_id}.json",
+                                0o600,
+                            )
+                            atomic_copy(
+                                smoke_state_file(root, entrant_id),
+                                staging / "smoke-states" / f"{entrant_id}.json",
+                                0o600,
+                            )
+                        receipt = {
+                            "schema_version": BUDGET_BLOCKED_CARRIED_SMOKE_SCHEMA,
+                            "kind": "budget_blocked_carried_smoke",
+                            "transition_id": transition_id,
+                            "recovered_at": recovered_at,
+                            "root": str(root),
+                            "campaign_id": campaign["campaign_id"],
+                            "source_commit": source_commit,
+                            "source_branch": source_branch,
+                            "source_campaign_sha256": sha256_file(
+                                staging / "source-campaign.json"
+                            ),
+                            "source_lineage_sha256": sha256_file(
+                                staging / "source-lineage.json"
+                            ),
+                            "source_coordinator_sha256": sha256_file(
+                                staging / "source-coordinator.py"
+                            ),
+                            "target_coordinator_sha256": current_hashes[
+                                COORDINATOR_INSTRUMENT_PATH
+                            ],
+                            "source_instrument_set_sha256": campaign[
+                                "instrument_set_sha256"
+                            ],
+                            "target_instrument_set_sha256": target_instrument_set,
+                            "source_smoke_contract_sha256": campaign[
+                                "smoke_contract_sha256"
+                            ],
+                            "target_smoke_contract_sha256": candidate[
+                                "smoke_contract_sha256"
+                            ],
+                            "budget_config_sha256": campaign["budget_config_sha256"],
+                            "source_budget_ledger_sha256": sha256_file(
+                                staging / "source-budget-ledger.json"
+                            ),
+                            "source_smoke_manager_sha256": sha256_file(
+                                staging / "source-smoke-manager.json"
+                            ),
+                            "source_build_state_sha256": {
+                                entrant_id: sha256_file(
+                                    staging
+                                    / "build-states"
+                                    / f"{entrant_id}.json"
+                                )
+                                for entrant_id in sorted(rows_by_id)
+                            },
+                            "source_smoke_state_sha256": {
+                                entrant_id: sha256_file(
+                                    staging
+                                    / "smoke-states"
+                                    / f"{entrant_id}.json"
+                                )
+                                for entrant_id in sorted(rows_by_id)
+                            },
+                            "fresh_entrants": sorted(fresh_proofs),
+                            "carried_entrants": sorted(carried_candidates),
+                            "fresh_proof_sha256": fresh_proofs,
+                            "carried_proofs": carried_candidates,
+                            "proof_index": proof_index,
+                            "raw_tree_sha256_before": campaign[
+                                "smoke_raw_tree_sha256_before"
+                            ],
+                            "raw_tree_sha256_after": campaign[
+                                "smoke_raw_tree_sha256_after"
+                            ],
+                            "no_active_processes": True,
+                            "no_full_episode_mutation": True,
+                        }
+                        atomic_json(staging / "receipt.json", receipt)
+                        fsync_directory(staging)
+                        os.replace(staging, bundle)
+                        fsync_directory(bundle.parent)
+                    finally:
+                        if staging.exists():
+                            shutil.rmtree(staging)
+                    return apply_budget_blocked_carried_smoke(
+                        root, bundle, coordinator_source
+                    )
+
+
 def smoke(root: Path) -> int:
     with exclusive_claim(root / "locks/smoke-run.claim", blocking=True) as claimed:
         if not claimed:
@@ -14515,7 +16006,10 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
                 raise SystemExit("cannot claim durable cloud smoke launch")
             require_lineage(root)
             campaign = load_json(campaign_file(root))
-            if campaign.get("smoke_status") == "PASS":
+            if campaign.get("smoke_status") in {
+                "PASS",
+                BUDGET_BLOCKED_CARRIED_SMOKE_STATUS,
+            }:
                 require_smoke_proofs(root)
                 monitor = read_monitor_state(root)
                 monitor_alive = process_alive(
@@ -14577,7 +16071,10 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
                     )
         campaign = load_json(campaign_file(root))
         state = read_smoke_manager_state(root)
-        if campaign.get("smoke_status") == "PASS" and state.get("status") == "HANDED_OFF":
+        if campaign.get("smoke_status") in {
+            "PASS",
+            BUDGET_BLOCKED_CARRIED_SMOKE_STATUS,
+        } and state.get("status") == "HANDED_OFF":
             require_smoke_proofs(root)
             if smoke_monitor_handoff_failure(root) is None:
                 return 0
@@ -16564,6 +18061,130 @@ def sanity_document(
     return dict(matches[0]) if matches else None
 
 
+def ensure_carried_smoke_public_provenance(
+    campaign: Mapping[str, Any],
+    entry: Mapping[str, str],
+    *,
+    lease_probe: Any = None,
+) -> Dict[str, Any] | None:
+    entry_key = entry.get("key")
+    if not isinstance(entry_key, str) or not entry_key:
+        if campaign.get("smoke_status") == BUDGET_BLOCKED_CARRIED_SMOKE_STATUS:
+            raise PublicationError("publisher entry has no mixed-smoke entrant key")
+        return None
+    entrant_id = entry_key
+    provenance = carried_smoke_public_provenance(campaign, entrant_id)
+    if provenance is None:
+        return None
+    publication_lease_checkpoint(lease_probe, "carried-smoke provenance preflight")
+    document = sanity_document(campaign, entry["doc_id"], lease_probe=lease_probe)
+    if document is None:
+        raise PublicationError("cannot annotate a missing benchmark document")
+    revision = document.get("_rev")
+    notes = document.get("notes")
+    if not isinstance(revision, str) or not revision or not isinstance(notes, str):
+        raise PublicationError("benchmark document provenance inputs are malformed")
+    paragraphs = notes.split("\n\n")
+    if paragraphs.count(provenance) == 1:
+        return {
+            "document_id": entry["doc_id"],
+            "revision": revision,
+            "provenance_sha256": sha256_bytes(provenance.encode()),
+            "already_present": True,
+            "verified_at": utc_now(),
+        }
+    if provenance in notes:
+        raise PublicationError("benchmark document has ambiguous smoke provenance")
+
+    values = pinned_publisher_env_values(campaign)
+    token = values.get("SANITY_WRITE_TOKEN", "")
+    project_id = values.get("NEXT_PUBLIC_SANITY_PROJECT_ID", "")
+    dataset = values.get("NEXT_PUBLIC_SANITY_DATASET", "production")
+    if not token or not re.fullmatch(r"[a-z0-9-]+", project_id):
+        raise PublicationError("Sanity mutation credentials are missing or malformed")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", dataset):
+        raise PublicationError("Sanity mutation dataset is malformed")
+    encoded_dataset = urllib.parse.quote(dataset, safe="")
+    url = (
+        f"https://{project_id}.api.sanity.io/v2025-02-19/data/mutate/"
+        f"{encoded_dataset}?returnIds=true&visibility=sync"
+    )
+    payload = json.dumps(
+        {
+            "mutations": [
+                {
+                    "patch": {
+                        "id": entry["doc_id"],
+                        "ifRevisionID": revision,
+                        "set": {"notes": f"{notes}\n\n{provenance}"},
+                    }
+                }
+            ]
+        },
+        separators=(",", ":"),
+    ).encode()
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "User-Agent": "goose-sb7-cloud-publisher/1",
+        },
+    )
+    try:
+        with urllib.request.urlopen(
+            request, timeout=MONITOR_NETWORK_TIMEOUT_SECONDS
+        ) as response:
+            status = int(getattr(response, "status", response.getcode()))
+            raw = read_response_with_lease(
+                response,
+                1024 * 1024,
+                lease_probe=lease_probe,
+                stage="carried-smoke provenance mutation",
+            )
+    except urllib.error.HTTPError as error:
+        raise PublicationError(
+            f"carried-smoke provenance mutation returned HTTP {error.code}"
+        ) from None
+    except MonitorLeaseError:
+        raise
+    except Exception as error:
+        raise PublicationError(
+            "carried-smoke provenance mutation failed: "
+            f"{type(error).__name__}"
+        ) from None
+    if status != 200 or len(raw) > 1024 * 1024:
+        raise PublicationError(
+            f"carried-smoke provenance mutation returned invalid HTTP {status}"
+        )
+    try:
+        mutation = json.loads(raw)
+    except json.JSONDecodeError:
+        raise PublicationError(
+            "carried-smoke provenance mutation returned invalid JSON"
+        ) from None
+    if not isinstance(mutation, dict) or mutation.get("transactionId") is None:
+        raise PublicationError("carried-smoke provenance mutation has no receipt")
+    publication_lease_checkpoint(lease_probe, "carried-smoke provenance receipt")
+    verified = sanity_document(campaign, entry["doc_id"], lease_probe=lease_probe)
+    verified_notes = verified.get("notes") if isinstance(verified, dict) else None
+    if (
+        not isinstance(verified_notes, str)
+        or verified_notes.split("\n\n").count(provenance) != 1
+    ):
+        raise PublicationError("carried-smoke provenance did not converge")
+    return {
+        "document_id": entry["doc_id"],
+        "revision": verified.get("_rev"),
+        "transaction_id": mutation["transactionId"],
+        "provenance_sha256": sha256_bytes(provenance.encode()),
+        "already_present": False,
+        "verified_at": utc_now(),
+    }
+
+
 def verdict_tier_mean(verdict: Mapping[str, Any], letter: str) -> float:
     tiers = verdict.get("tiers")
     if not isinstance(tiers, dict):
@@ -16816,6 +18437,23 @@ def remote_publication_receipt(
             reasons.append(
                 f"document field {forbidden_field} must be absent on the stable SB7 board"
             )
+    entry_key = entry.get("key")
+    provenance = (
+        carried_smoke_public_provenance(campaign, entry_key)
+        if isinstance(entry_key, str) and entry_key
+        else None
+    )
+    if (
+        campaign.get("smoke_status") == BUDGET_BLOCKED_CARRIED_SMOKE_STATUS
+        and provenance is None
+        and (not isinstance(entry_key, str) or not entry_key)
+    ):
+        raise PublicationError("publisher entry has no mixed-smoke entrant key")
+    if provenance is not None:
+        notes = document.get("notes")
+        paragraphs = notes.split("\n\n") if isinstance(notes, str) else []
+        if paragraphs.count(provenance) != 1:
+            reasons.append(CARRIED_SMOKE_PUBLIC_REASON)
     numeric_fields = {
         "score": verdict.get("score"),
         "tierA": verdict_tier_mean(verdict, "A"),
@@ -17523,6 +19161,29 @@ def publish_one(root: Path, entrant_id: str) -> bool:
             entrant_id,
             publisher_pre_write_receipt=pre_write_receipt,
         )
+        if pre_write_receipt.get("reasons") == [CARRIED_SMOKE_PUBLIC_REASON]:
+            stage = "carried-smoke-provenance"
+            require_lineage(root)
+            publication_lease_checkpoint(
+                lease_probe, "carried-smoke provenance write"
+            )
+            provenance_receipt = ensure_carried_smoke_public_provenance(
+                campaign, entry, lease_probe=lease_probe
+            )
+            pre_write_receipt = remote_publication_receipt(
+                campaign,
+                entry,
+                verdict,
+                screenshot_plan,
+                lease_probe=lease_probe,
+            )
+            update_state(
+                root,
+                entrant_id,
+                publisher_carried_smoke_provenance=provenance_receipt,
+                publisher_pre_write_receipt=pre_write_receipt,
+                publisher_live_succeeded_at=utc_now(),
+            )
         state = read_state(root, entrant_id)
         if pre_write_receipt["matched"]:
             update_state(
@@ -17575,6 +19236,26 @@ def publish_one(root: Path, entrant_id: str) -> bool:
                 screenshot_plan,
                 lease_probe=lease_probe,
             )
+            if post_write_receipt.get("reasons") == [
+                CARRIED_SMOKE_PUBLIC_REASON
+            ]:
+                stage = "carried-smoke-provenance"
+                provenance_receipt = ensure_carried_smoke_public_provenance(
+                    campaign, entry, lease_probe=lease_probe
+                )
+                update_state(
+                    root,
+                    entrant_id,
+                    publisher_carried_smoke_provenance=provenance_receipt,
+                )
+                stage = "post-write-receipt"
+                post_write_receipt = remote_publication_receipt(
+                    campaign,
+                    entry,
+                    load_json(runs / f"{entrant_id}.json"),
+                    screenshot_plan,
+                    lease_probe=lease_probe,
+                )
             update_state(
                 root,
                 entrant_id,
@@ -19740,8 +21421,9 @@ def results(root: Path) -> Dict[str, Any]:
     campaign = load_json(campaign_file(root))
     rows = []
     for state in status_rows(root):
+        entrant_id = str(state["entrant"])
         row = {
-            "entrant": state["entrant"],
+            "entrant": entrant_id,
             "provider": state["provider"],
             "model": state["model"],
             "status": state["status"],
@@ -19755,6 +21437,11 @@ def results(root: Path) -> Dict[str, Any]:
             "published_at": state.get("published_at"),
             "rendered_verification": state.get("rendered_verification"),
             "failure": state.get("failure"),
+            "smoke_qualification": (
+                "predecessor_carried"
+                if carried_smoke_public_provenance(campaign, entrant_id) is not None
+                else "current_campaign_fresh"
+            ),
         }
         rows.append(row)
     budget = None
@@ -19887,6 +21574,11 @@ def main() -> int:
     p_pre_smoke_repair = sub.add_parser("repair-pre-smoke-instrument")
     root_arg(p_pre_smoke_repair)
 
+    p_carried_smoke_recovery = sub.add_parser(
+        "recover-budget-blocked-carried-smoke"
+    )
+    root_arg(p_carried_smoke_recovery)
+
     p_gated_exec = sub.add_parser("_gated_exec")
     p_gated_exec.add_argument("--gate", type=Path, required=True)
     p_gated_exec.add_argument("--token", required=True)
@@ -20003,6 +21695,13 @@ def main() -> int:
         value = repair_pre_smoke_instrument(args.root)
         print(
             f"repaired pre-smoke instrument for {value['campaign_id']} "
+            f"at {args.root.resolve()}"
+        )
+        return 0
+    if args.command == "recover-budget-blocked-carried-smoke":
+        value = recover_budget_blocked_carried_smoke(args.root)
+        print(
+            f"qualified budget-blocked carried smoke for {value['campaign_id']} "
             f"at {args.root.resolve()}"
         )
         return 0
