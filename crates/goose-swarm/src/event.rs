@@ -91,6 +91,13 @@ pub enum SwarmEvent {
     SemanticObservationSourcePublished {
         source: TaskVersion,
     },
+    SemanticObservationDeferred {
+        task_id: String,
+        attempt: u32,
+        source_revision: u64,
+        snapshot_hash: String,
+        reason: String,
+    },
     BrokerWorkQueued {
         receipt: QueueReceipt,
     },

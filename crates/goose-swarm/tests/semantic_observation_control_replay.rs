@@ -241,6 +241,28 @@ impl AdmittedSemanticObservationReviewer for FailingReviewer {
     }
 }
 
+#[derive(Default)]
+struct PreflightRejectingReviewer {
+    preflights: AtomicUsize,
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl AdmittedSemanticObservationReviewer for PreflightRejectingReviewer {
+    fn verify_admission(
+        &self,
+        _request: &AdmittedSemanticObservationRequest,
+    ) -> Result<(), String> {
+        self.preflights.fetch_add(1, Ordering::SeqCst);
+        Err("verified route no longer matches the provider adapter".into())
+    }
+
+    async fn review(&self, _request: AdmittedSemanticObservationRequest) -> Result<String, String> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        panic!("review must not run after a failed provider preflight")
+    }
+}
+
 fn event_count(sink: &RecordingSink, name: &str) -> usize {
     sink.events
         .lock()
@@ -661,6 +683,111 @@ async fn cancelling_a_queued_submission_withdraws_it_and_allows_one_exact_retry(
     };
     handle.wait().await.unwrap();
     assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
+#[tokio::test]
+async fn immediate_idle_submission_never_waits_behind_build_work_and_can_retry_the_same_revision() {
+    let sink = Arc::new(RecordingSink::default());
+    let event_sink: Arc<dyn EventSink> = sink.clone();
+    let control = control("semantic-immediate-idle", event_sink.clone());
+    let plane = BrokeredSemanticObservationPlane::new(control.clone(), event_sink).unwrap();
+    let reviewer = Arc::new(ContinueReviewer::default());
+
+    let blocker_source = TaskVersion {
+        task_id: "blocker".into(),
+        attempt: 0,
+        revision: 1,
+        kind: SourceRevisionKind::TaskAttempt,
+    };
+    control
+        .set_source_revision(blocker_source.clone())
+        .await
+        .unwrap();
+    let blocker = control
+        .admit(WorkOpportunity {
+            work_id: "build:blocker".into(),
+            role: WorkRole::Build,
+            priority: WorkRole::Build.priority(),
+            task_rank: 0,
+            source: blocker_source,
+            eligible_logical_device_ids: Vec::new(),
+            preferred_model_id: None,
+            excluded_logical_device_id: None,
+        })
+        .await
+        .unwrap();
+
+    let sealed = snapshot("detail-idle", 26, "measured trace changed");
+    assert!(plane
+        .submit_if_idle(
+            sealed.clone(),
+            SemanticObservationAdmissionPolicy::default(),
+            reviewer.clone(),
+        )
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(reviewer.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(event_count(&sink, "broker_work_withdrawn"), 1);
+    assert_eq!(event_count(&sink, "semantic_observation_deferred"), 1);
+    assert_eq!(event_count(&sink, "broker_admission_granted"), 1);
+    assert_eq!(event_count(&sink, "broker_provider_not_started"), 0);
+
+    finish_blocker(&blocker).await;
+    let handle = match plane
+        .submit_if_idle(
+            sealed,
+            SemanticObservationAdmissionPolicy::default(),
+            reviewer.clone(),
+        )
+        .await
+        .unwrap()
+        .expect("the same sealed revision remains eligible once a route is idle")
+    {
+        SemanticObservationAdmissionSubmission::Started(handle) => handle,
+        SemanticObservationAdmissionSubmission::Rejected(_) => panic!("idle retry rejected"),
+    };
+    handle.wait().await.unwrap();
+
+    assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(event_count(&sink, "broker_admission_granted"), 2);
+    assert_eq!(event_count(&sink, "broker_provider_request_permitted"), 2);
+    assert_eq!(event_count(&sink, "broker_provider_terminal_observed"), 2);
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
+#[tokio::test]
+async fn provider_preflight_rejection_records_not_started_without_calling_the_adapter() {
+    let sink = Arc::new(RecordingSink::default());
+    let event_sink: Arc<dyn EventSink> = sink.clone();
+    let control = control("semantic-preflight", event_sink.clone());
+    let plane = BrokeredSemanticObservationPlane::new(control.clone(), event_sink).unwrap();
+    let reviewer = Arc::new(PreflightRejectingReviewer::default());
+
+    let handle = match plane
+        .submit_if_idle(
+            snapshot("detail-preflight", 27, "route may have drifted"),
+            SemanticObservationAdmissionPolicy::default(),
+            reviewer.clone(),
+        )
+        .await
+        .unwrap()
+        .expect("verified capacity is idle")
+    {
+        SemanticObservationAdmissionSubmission::Started(handle) => handle,
+        SemanticObservationAdmissionSubmission::Rejected(_) => panic!("review rejected"),
+    };
+    let receipt = handle.wait().await.unwrap();
+
+    assert_eq!(reviewer.preflights.load(Ordering::SeqCst), 1);
+    assert_eq!(reviewer.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(receipt.local_completion, LocalCompletionKind::Error);
+    assert_eq!(receipt.observation.action(), SemanticJudgeAction::Abstain);
+    assert_eq!(event_count(&sink, "broker_provider_request_queued"), 0);
+    assert_eq!(event_count(&sink, "broker_provider_request_permitted"), 0);
+    assert_eq!(event_count(&sink, "broker_provider_not_started"), 1);
+    assert_eq!(event_count(&sink, "broker_admission_released"), 1);
     assert_eq!(control.occupancy().await, (0, 0));
 }
 
