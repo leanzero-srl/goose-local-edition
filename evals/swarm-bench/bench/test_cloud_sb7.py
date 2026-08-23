@@ -6340,15 +6340,18 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertNotIn("publisher-super-secret", log.read_text())
             self.assertIn("[REDACTED]", log.read_text())
 
-    def test_publisher_identity_receipt_requires_exact_rc_calibration_truth(
+    def test_publisher_identity_receipt_seals_raw_truth_and_stable_public_mapping(
         self,
     ) -> None:
         verdict = self.fixture_verdict()
         campaign = self.public_identity_campaign(verdict)
         expected = {
-            "scorer_version": "sb-7.0-rc",
-            "calibration": verdict["calibration"],
-            "provisional": True,
+            "raw_scorer_version": "sb-7.0-rc",
+            "raw_calibration": verdict["calibration"],
+            "raw_provisional": True,
+            "public_scorer_version": "sb-7.0",
+            "public_calibration_published": False,
+            "public_provisional_published": False,
         }
         self.assertEqual(
             cloud_sb7.public_publication_identity(campaign, verdict), expected
@@ -6356,12 +6359,15 @@ class CloudSb7HarnessTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             log = Path(raw) / "publisher.log"
             log.write_text(
-                cloud_sb7.PUBLISHER_PUBLIC_IDENTITY_PREFIX
-                + json.dumps(expected, sort_keys=True)
-                + "\n"
+                f"  scorer sb-7.0-rc · calibration {verdict['calibration']}\n"
+                "  document brun-baseline-fixture-model-sb70 · "
+                "scorerVersion sb-7.0 · 1 shot(s)\n"
             )
             receipt = cloud_sb7.publisher_public_identity_receipt_from_log(
-                log, verdict, campaign
+                log,
+                verdict,
+                campaign,
+                "brun-baseline-fixture-model-sb70",
             )
             self.assertEqual(receipt["identity"], expected)
             self.assertIsNone(
@@ -6375,48 +6381,59 @@ class CloudSb7HarnessTest(unittest.TestCase):
                         "log": str(log),
                         "log_sha256": cloud_sb7.sha256_file(log),
                     },
+                    "brun-baseline-fixture-model-sb70",
                 )
             )
 
-            concealed = dict(expected, scorer_version="sb-7.0")
             log.write_text(
-                cloud_sb7.PUBLISHER_PUBLIC_IDENTITY_PREFIX
-                + json.dumps(concealed, sort_keys=True)
-                + "\n"
+                f"  scorer sb-7.0-rc · calibration {verdict['calibration']}\n"
+                "  document brun-baseline-fixture-model-sb70 · "
+                "scorerVersion sb-7.0-rc · 1 shot(s)\n"
             )
             with self.assertRaisesRegex(
-                cloud_sb7.PublicationError, "conceal or alter"
+                cloud_sb7.PublicationError, "authorized stable SB7"
             ):
                 cloud_sb7.publisher_public_identity_receipt_from_log(
-                    log, verdict, campaign
+                    log,
+                    verdict,
+                    campaign,
+                    "brun-baseline-fixture-model-sb70",
                 )
-            wrong_type = dict(expected, provisional=1)
             log.write_text(
-                cloud_sb7.PUBLISHER_PUBLIC_IDENTITY_PREFIX
-                + json.dumps(wrong_type, sort_keys=True)
-                + "\n"
+                f"  scorer sb-7.0-rc · calibration {verdict['calibration']}\n"
+                "  document brun-baseline-other-sb70 · "
+                "scorerVersion sb-7.0 · 1 shot(s)\n"
             )
             with self.assertRaisesRegex(
-                cloud_sb7.PublicationError, "conceal or alter"
+                cloud_sb7.PublicationError, "authorized stable SB7"
             ):
                 cloud_sb7.publisher_public_identity_receipt_from_log(
-                    log, verdict, campaign
+                    log,
+                    verdict,
+                    campaign,
+                    "brun-baseline-fixture-model-sb70",
                 )
             log.write_text("document scorerVersion sb-7.0\n")
             with self.assertRaisesRegex(
-                cloud_sb7.PublicationError, "cannot prove one exact public"
+                cloud_sb7.PublicationError, "cannot prove one exact raw-to-public"
             ):
                 cloud_sb7.publisher_public_identity_receipt_from_log(
-                    log, verdict, campaign
+                    log,
+                    verdict,
+                    campaign,
+                    "brun-baseline-fixture-model-sb70",
                 )
 
             log.write_text(
-                cloud_sb7.PUBLISHER_PUBLIC_IDENTITY_PREFIX
-                + json.dumps(expected, sort_keys=True)
-                + "\n"
+                f"  scorer sb-7.0-rc · calibration {verdict['calibration']}\n"
+                "  document brun-baseline-fixture-model-sb70 · "
+                "scorerVersion sb-7.0 · 1 shot(s)\n"
             )
             sealed = cloud_sb7.publisher_public_identity_receipt_from_log(
-                log, verdict, campaign
+                log,
+                verdict,
+                campaign,
+                "brun-baseline-fixture-model-sb70",
             )
             dry_run = {
                 "exit_code": 0,
@@ -6428,12 +6445,16 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertIn(
                 "differs from sealed dry-run evidence",
                 cloud_sb7.publisher_public_identity_receipt_failure(
-                    sealed, verdict, campaign, dry_run
+                    sealed,
+                    verdict,
+                    campaign,
+                    dry_run,
+                    "brun-baseline-fixture-model-sb70",
                 )
                 or "",
             )
 
-    def test_current_stable_mapping_refuses_before_live_publication(self) -> None:
+    def test_stable_mapping_requires_raw_evidence_before_live_publication(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             self.make_scored_campaign(root)
@@ -6467,7 +6488,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             remote.assert_not_called()
             final = cloud_sb7.read_state(root, "fixture-model")
             self.assertEqual(final["status"], "PUBLISH_FAILED")
-            self.assertIn("cannot prove one exact public", final["failure"])
+            self.assertIn("cannot prove one exact raw-to-public", final["failure"])
             campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
             campaign["publisher"]["frozen"] = {"root": str(root)}
             cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
@@ -6610,20 +6631,16 @@ class CloudSb7HarnessTest(unittest.TestCase):
             + json.dumps(
                 {
                     "@type": "Dataset",
-                    "name": "fixture-model on sb-7.0-rc",
+                    "name": "fixture-model on sb-7.0",
                     "url": run_url,
                     "variableMeasured": [
                         {"value": 0.42},
-                        {"value": "sb-7.0-rc"},
-                        {"value": verdict["calibration"]},
-                        {"value": True},
                     ],
                 }
             )
             + "</script>"
-            + "<h1>Fixture Model — 0.4200 on sb-7.0-rc</h1>"
-            + "<p>fixture-model · scorer sb-7.0-rc</p>"
-            + f"<p>{verdict['calibration']} · provisional true</p>"
+            + "<h1>Fixture Model — 0.4200 on sb-7.0</h1>"
+            + "<p>fixture-model · scorer sb-7.0</p>"
         )
         matched, evidence = cloud_sb7.rendered_publication_matches(
             campaign, board, run, "https://example.invalid", entry, verdict
@@ -6640,16 +6657,16 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertFalse(matched)
         self.assertFalse(evidence["board_item_exact"])
 
-        for concealed in (
-            run.replace("sb-7.0-rc", "sb-7.0"),
-            run.replace(str(verdict["calibration"]), "calibration omitted"),
-            run.replace("provisional true", "provisional false"),
+        for leaked in (
+            run.replace("sb-7.0", "sb-7.0-rc"),
+            run + f"<p>{verdict['calibration']}</p>",
+            run + "<p>provisional true</p>",
         ):
-            with self.subTest(concealed=concealed[-100:]):
+            with self.subTest(leaked=leaked[-100:]):
                 matched, evidence = cloud_sb7.rendered_publication_matches(
                     campaign,
                     board,
-                    concealed,
+                    leaked,
                     "https://example.invalid",
                     entry,
                     verdict,
@@ -6681,9 +6698,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "tierC": 0.5,
             "tierD": 0.5,
             "wallSecs": 123,
-            "scorerVersion": "sb-7.0-rc",
-            "calibration": verdict["calibration"],
-            "provisional": True,
+            "scorerVersion": "sb-7.0",
             "excellent": False,
             "checksSummary": [
                 {
@@ -6717,9 +6732,12 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(
                 receipt["expected_public_identity"],
                 {
-                    "scorer_version": "sb-7.0-rc",
-                    "calibration": verdict["calibration"],
-                    "provisional": True,
+                    "raw_scorer_version": "sb-7.0-rc",
+                    "raw_calibration": verdict["calibration"],
+                    "raw_provisional": True,
+                    "public_scorer_version": "sb-7.0",
+                    "public_calibration_published": False,
+                    "public_provisional_published": False,
                 },
             )
             self.assertEqual(
@@ -6734,7 +6752,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertIn("document check 0 differs", receipt["reasons"])
             document["checksSummary"][0]["score"] = 0.5
             for stale in (
-                {"scorerVersion": "sb-7.0"},
+                {"scorerVersion": "sb-7.0-rc"},
                 {"calibration": "frozen"},
                 {"provisional": False},
                 {"provisional": 1},
@@ -6747,12 +6765,18 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     )
                     self.assertFalse(receipt["matched"])
                     field = next(iter(stale))
-                    self.assertIn(
-                        f"document field {field} differs", receipt["reasons"]
+                    expected_reason = (
+                        f"document field {field} differs"
+                        if field == "scorerVersion"
+                        else f"document field {field} must be absent on the stable SB7 board"
                     )
-                    document.update(original)
+                    self.assertIn(expected_reason, receipt["reasons"])
+                    if original[field] is None:
+                        document.pop(field, None)
+                    else:
+                        document[field] = original[field]
 
-    def test_rendered_receipt_persists_exact_raw_rc_identity(self) -> None:
+    def test_rendered_receipt_persists_raw_evidence_and_stable_public_identity(self) -> None:
         verdict = self.fixture_verdict()
         campaign = self.public_identity_campaign(verdict)
         campaign["publisher"].update(
@@ -6792,20 +6816,16 @@ class CloudSb7HarnessTest(unittest.TestCase):
             + json.dumps(
                 {
                     "@type": "Dataset",
-                    "name": "fixture-model on sb-7.0-rc",
+                    "name": "fixture-model on sb-7.0",
                     "url": run_url,
                     "variableMeasured": [
                         {"value": 0.42},
-                        {"value": "sb-7.0-rc"},
-                        {"value": verdict["calibration"]},
-                        {"value": True},
                     ],
                 }
             )
             + "</script>"
-            + "<h1>Fixture Model — 0.4200 on sb-7.0-rc</h1>"
-            + "<p>fixture-model · scorer sb-7.0-rc</p>"
-            + f"<p>{verdict['calibration']} · provisional true</p>"
+            + "<h1>Fixture Model — 0.4200 on sb-7.0</h1>"
+            + "<p>fixture-model · scorer sb-7.0</p>"
         )
         with mock.patch.object(
             cloud_sb7,
@@ -6822,20 +6842,24 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "label": entry["label"],
                 "model": entry["model"],
                 "score": 0.42,
-                "scorer_version": "sb-7.0-rc",
-                "calibration": verdict["calibration"],
-                "provisional": True,
+                "raw_scorer_version": "sb-7.0-rc",
+                "raw_calibration": verdict["calibration"],
+                "raw_provisional": True,
+                "public_scorer_version": "sb-7.0",
+                "public_calibration_published": False,
+                "public_provisional_published": False,
             },
         )
-        self.assertIn("sb-7.0-rc", json.dumps(receipt["expected"]))
-        self.assertEqual(receipt["expected"]["calibration"], verdict["calibration"])
-        self.assertIs(receipt["expected"]["provisional"], True)
+        self.assertEqual(
+            receipt["expected"]["raw_calibration"], verdict["calibration"]
+        )
+        self.assertEqual(receipt["expected"]["public_scorer_version"], "sb-7.0")
         self.assertEqual(
             receipt["raw_verdict_identity_sha256"],
             cloud_sb7.raw_publication_identity_sha256(verdict),
         )
 
-    def test_published_audit_reconstructs_exact_identity_and_rejects_concealment(
+    def test_published_audit_reconstructs_raw_and_stable_public_identity(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -6899,9 +6923,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             ):
                 self.assertIsNone(cloud_sb7.published_campaign_mismatch(root))
                 stale = json.loads(json.dumps(rendered))
-                stale["expected"]["scorer_version"] = "sb-7.0"
-                stale["expected"].pop("calibration")
-                stale["expected"]["provisional"] = False
+                stale["expected"]["public_scorer_version"] = "sb-7.0-rc"
                 cloud_sb7.update_state(
                     root, "fixture-model", rendered_verification=stale
                 )

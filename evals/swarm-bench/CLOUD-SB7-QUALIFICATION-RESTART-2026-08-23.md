@@ -4,6 +4,14 @@ Date: 2026-08-23
 
 ## Decision
 
+The publication paragraph later in this incident record is historical. The
+operator subsequently reaffirmed that the website must remain one stable
+`sb-7.0` board, never an `sb-7.0-rc` era. Current code therefore seals the raw
+RC/calibration identity locally while requiring the pinned publisher's exact
+authorized mapping to public `scorerVersion=sb-7.0`; remote and rendered
+receipts verify both the stable public document and the separate raw identity
+hash. The operator also authorized launch once all technical gates pass.
+
 The roots `cloud-sb7-20260823-ac376` and
 `cloud-sb7-20260823-0a905-s1` are instrument-qualification history, not SB7
 benchmark outcomes. No full build episode began in either root. The first root
