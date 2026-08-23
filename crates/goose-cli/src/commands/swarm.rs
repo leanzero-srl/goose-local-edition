@@ -14391,6 +14391,28 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
     }
 
     #[test]
+    fn model_advice_cannot_invent_a_package_entry_during_finalization() {
+        let plan = serde_json::json!({
+            "subtasks": [
+                {"id":"service","description":"Build it.","difficulty":"hard","model":"qwen","depends_on":[],"files":["src/service.ts"]},
+                {"id":"integrate-verify","description":"Run it.","difficulty":"hard","model":"qwen","depends_on":["service"],"files":[]}
+            ]
+        })
+        .to_string();
+        let raw_spec = "Build a TypeScript service with `src/service.ts`.";
+        let mutable_model_prompt =
+            format!("{raw_spec}\n\nResearch default: expose `python -m poisoned`.");
+        let final_binding_spec = binding_spec_with_user_decisions(raw_spec, "");
+        assert_ne!(mutable_model_prompt, final_binding_spec);
+
+        let stale_dag = Dag::from_planner_json(&plan).unwrap();
+        let (final_json, _, added) =
+            finalize_advertised_entry_plan(plan, stale_dag, &final_binding_spec).unwrap();
+        assert!(added.is_empty());
+        assert!(!final_json.contains("poisoned/__main__.py"));
+    }
+
+    #[test]
     fn run_pillar_checks_flags_only_failing_checks() {
         let dir = tempfile::tempdir().unwrap();
         let swarm = dir.path().join(".swarm");
@@ -15675,6 +15697,10 @@ fn clarity_probe_secs() -> u64 {
         // #123: 120 timed out on a single 27B call at large context; 180 is cheap headroom (still clamped).
         .unwrap_or(180)
         .clamp(30, 900)
+}
+
+fn reset_clarity_failure(failure: &Mutex<Option<String>>) {
+    *failure.lock().unwrap() = None;
 }
 
 /// GOOSE_SWARM_RETARGET_ROUNDS: bounded retarget budget. Default 2; clamped [0,4] (0 = OFF). Mirrors
@@ -17670,9 +17696,7 @@ impl GooseAgentDispatcher {
         let validated_activity_publisher = match (physical_activity_required, activity_publisher) {
             (true, Some(publisher)) => {
                 publisher.validate().map_err(anyhow::Error::msg)?;
-                if Some(publisher.task_id.as_str()) != activity_key
-                    || publisher.model_id != model_id
-                {
+                if Some(publisher.task_id()) != activity_key || publisher.model_id() != model_id {
                     return Err(anyhow!(
                         "physical semantic activity publisher does not match task/model dispatch"
                     ));
@@ -26452,6 +26476,7 @@ impl GooseAgentDispatcher {
         goal: &str,
         plan_json: &str,
     ) -> Option<(u8, Vec<String>, bool)> {
+        reset_clarity_failure(&self.clarity_fail);
         let system = "You judge whether a coding request pins down WHAT to build, or leaves it to guesswork. \
             First: `product_specified` — TRUE only if the request names a specific tool with a specific \
             purpose (e.g. \"a CLI markdown-to-HTML renderer\"); FALSE if it leaves the core product open (e.g. \
