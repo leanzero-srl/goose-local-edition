@@ -35,6 +35,28 @@ pub struct AdmittedSemanticObservationRequest {
     pub provider_request_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AdmittedSemanticReviewError {
+    TerminalFailure(String),
+    ProviderLifecycleUnresolved(String),
+}
+
+impl AdmittedSemanticReviewError {
+    pub fn terminal_failure(detail: impl Into<String>) -> Self {
+        Self::TerminalFailure(detail.into())
+    }
+
+    pub fn unresolved(detail: impl Into<String>) -> Self {
+        Self::ProviderLifecycleUnresolved(detail.into())
+    }
+
+    fn detail(&self) -> &str {
+        match self {
+            Self::TerminalFailure(detail) | Self::ProviderLifecycleUnresolved(detail) => detail,
+        }
+    }
+}
+
 #[async_trait]
 pub trait AdmittedSemanticObservationReviewer: Send + Sync {
     /// Exact logical lanes for which this reviewer has a provider binding. `None` preserves the
@@ -56,7 +78,7 @@ pub trait AdmittedSemanticObservationReviewer: Send + Sync {
     async fn review(
         &self,
         request: AdmittedSemanticObservationRequest,
-    ) -> std::result::Result<String, String>;
+    ) -> std::result::Result<String, AdmittedSemanticReviewError>;
 }
 
 #[derive(Clone, Debug)]
@@ -485,17 +507,22 @@ impl SemanticObservationReviewer for LifecycleBoundSemanticReviewer {
         };
 
         let reviewer = self.inner.clone();
-        let reviewed =
-            match tokio::spawn(async move { reviewer.review(admitted_request).await }).await {
-                Ok(reviewed) => reviewed,
-                Err(error) => Err(format!(
-                    "semantic provider task ended without a reply: {error}"
-                )),
-            };
-        let terminal_kind = if reviewed.is_ok() {
-            ProviderTerminalKind::Finished
-        } else {
-            ProviderTerminalKind::Failed
+        let reviewed = match tokio::spawn(async move { reviewer.review(admitted_request).await }).await
+        {
+            Ok(reviewed) => reviewed,
+            Err(error) => {
+                let detail = format!("semantic provider task ended without a reply: {error}");
+                self.set_proof(ProviderLifecycleProof::Unresolved(detail.clone()));
+                return Err(detail);
+            }
+        };
+        let terminal_kind = match &reviewed {
+            Ok(_) => ProviderTerminalKind::Finished,
+            Err(AdmittedSemanticReviewError::TerminalFailure(_)) => ProviderTerminalKind::Failed,
+            Err(AdmittedSemanticReviewError::ProviderLifecycleUnresolved(detail)) => {
+                self.set_proof(ProviderLifecycleProof::Unresolved(detail.clone()));
+                return Err(detail.clone());
+            }
         };
         match self.lifecycle.provider_terminal(key, terminal_kind).await {
             Ok(()) => self.set_proof(ProviderLifecycleProof::TerminalObserved(terminal_kind)),
@@ -505,7 +532,7 @@ impl SemanticObservationReviewer for LifecycleBoundSemanticReviewer {
                 return Err(detail);
             }
         }
-        reviewed
+        reviewed.map_err(|error| error.detail().to_string())
     }
 }
 

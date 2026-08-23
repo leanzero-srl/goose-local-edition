@@ -8,8 +8,13 @@ use super::swarm_control_registry::{
     apply_uncapped_effective_values, control_registry_export, merge_effective_config_controls,
     resolve_control_precedence,
 };
-use super::swarm_provider_lifecycle::{bind_current_provider_lifecycle, scope_provider_lifecycle};
-use super::swarm_semantic::{activity_digest_key, ReasoningRecurrenceMeter};
+use super::swarm_provider_lifecycle::{
+    bind_current_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
+};
+use super::swarm_semantic::{
+    activity_digest_key, GooseAdmittedSemanticObservationReviewer,
+    GooseSemanticObservationSnapshotProducer, GooseSemanticProviderRoute, ReasoningRecurrenceMeter,
+};
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use console::style;
@@ -2811,8 +2816,8 @@ fn probe_lms_http() -> Vec<LmsProcess> {
 /// The model ids the ENDPOINT will actually serve — i.e. the only ids a worker can dispatch to.
 ///
 /// `None` means the probe itself failed (endpoint down, curl missing, unparseable body). That is NOT the
-/// same as "no models", and the caller must never gate on it: an instrument reporting zero has been wrong
-/// seven times in this project, and gating a whole run off a failed probe would be the eighth.
+/// same as "no models", so legacy dispatch never treats it as a proven negative. Physical admission has
+/// the opposite burden: without a positive same-endpoint listing it cannot mint verified route evidence.
 ///
 /// WHY THIS IS NOT `lms ps`: `lms ps` lists what is RESIDENT; `/v1/models` lists what is SERVABLE, and they
 /// disagree in exactly the case that costs a run. MEASURED 2026-07-17: `lms ps` showed
@@ -3036,18 +3041,26 @@ fn short_model(identifier: &str) -> String {
 fn verified_physical_identity(
     process: &LmsProcess,
     ambiguous_model_ids: &HashSet<String>,
+    served_model_ids: Option<&HashSet<String>>,
+    provider_transport_id: &str,
 ) -> Option<VerifiedPhysicalIdentity> {
-    if ambiguous_model_ids.contains(&process.identifier) {
+    if ambiguous_model_ids.contains(&process.identifier)
+        || !served_model_ids?.contains(&process.identifier)
+    {
         return None;
     }
     let host_id = process.device.as_deref()?.trim();
     let advertised_parallel = process.parallel.filter(|parallel| *parallel > 0)?;
-    if host_id.is_empty() || process.identifier.trim().is_empty() {
+    if host_id.is_empty()
+        || process.identifier.trim().is_empty()
+        || provider_transport_id.trim().is_empty()
+    {
         return None;
     }
     Some(VerifiedPhysicalIdentity {
         host_id: host_id.to_string(),
         model_instance_id: process.identifier.clone(),
+        provider_transport_id: provider_transport_id.to_string(),
         // `PARALLEL` is an instance admission ceiling, not evidence that two decodes improve
         // aggregate throughput on one Apple host. Engine 4 therefore starts at one host-wide
         // decode until a controlled same-host profile proves a higher marginal capacity.
@@ -3095,7 +3108,10 @@ fn physical_fleet_snapshot(
 /// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
 /// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller bootstraps
 /// or bails). Weights: explicit device override, else speed_weight, else LM Studio PARALLEL, else 1.
-fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<String>) {
+fn reconcile_pool_with_fleet(
+    cfg: &SwarmConfig,
+    served_model_ids: Option<&HashSet<String>>,
+) -> (Vec<SwarmDevice>, Option<String>) {
     let procs = match probe_lms_processes() {
         Ok(p) => p,
         Err(_) => return (Vec::new(), None),
@@ -3120,6 +3136,10 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
         .into_iter()
         .filter_map(|(identifier, hosts)| (hosts.len() > 1).then_some(identifier))
         .collect();
+    let provider_transport_id = goose_providers::api_client::canonical_transport_identity(
+        &cfg.endpoint,
+        "v1/chat/completions",
+    );
     // One worker per DISTINCT loaded identifier (LM Link routes by identifier).
     let mut seen = std::collections::HashSet::new();
     let mut resident: Vec<&LmsProcess> = Vec::new();
@@ -3170,7 +3190,14 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
             instances: 1,
             host: p.device.clone(),
             provider: None,
-            physical: verified_physical_identity(p, &ambiguous_model_ids),
+            physical: provider_transport_id.as_deref().and_then(|transport| {
+                verified_physical_identity(
+                    p,
+                    &ambiguous_model_ids,
+                    served_model_ids,
+                    transport,
+                )
+            }),
         })
         .collect();
     // Planner: keep the configured planner if it is resident; else pick the best resident model for the
@@ -14108,7 +14135,14 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             .filter(|p| p.device.as_deref() == Some("Local"))
             .count();
         assert_eq!(local, 2, "the macbook (Local) hosts two distinct models");
-        let identity = verified_physical_identity(&procs[0], &HashSet::new()).unwrap();
+        let served = HashSet::from([procs[0].identifier.clone()]);
+        let identity = verified_physical_identity(
+            &procs[0],
+            &HashSet::new(),
+            Some(&served),
+            "http://lm-link.test/v1/chat/completions",
+        )
+        .unwrap();
         assert_eq!(identity.host_id, "WorksMacStudio.lan");
         assert_eq!(identity.advertised_instance_capacity, 4);
         assert_eq!(identity.capacity_evidence.max_concurrent(), 1);
@@ -14123,7 +14157,21 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             parallel: Some(4),
         };
         let ambiguous = HashSet::from(["shared-model".to_string()]);
-        assert!(verified_physical_identity(&process, &ambiguous).is_none());
+        let served = HashSet::from(["shared-model".to_string()]);
+        assert!(verified_physical_identity(
+            &process,
+            &ambiguous,
+            Some(&served),
+            "http://lm-link.test/v1/chat/completions"
+        )
+        .is_none());
+        assert!(verified_physical_identity(
+            &process,
+            &HashSet::new(),
+            None,
+            "http://lm-link.test/v1/chat/completions"
+        )
+        .is_none());
     }
 
     #[test]
@@ -16479,6 +16527,30 @@ impl GooseAgentDispatcher {
         Ok(p)
     }
 
+    fn semantic_observation_request_params(&self) -> HashMap<String, serde_json::Value> {
+        let mut params: HashMap<String, serde_json::Value> = load_config()
+            .lm_extra_body
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        for (name, value) in [
+            ("top_p", self.sampling.top_p.map(serde_json::Value::from)),
+            ("min_p", self.sampling.min_p.map(serde_json::Value::from)),
+            (
+                "repeat_penalty",
+                self.sampling.repeat_penalty.map(serde_json::Value::from),
+            ),
+        ] {
+            if let Some(value) = value {
+                params.insert(name.to_string(), value);
+            }
+        }
+        if let Some(value) = self.sampling.top_k {
+            params.insert("top_k".to_string(), serde_json::json!(value));
+        }
+        params
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         working_dir: PathBuf,
@@ -17315,6 +17387,7 @@ impl GooseAgentDispatcher {
         // deliberately not synchronous supervision for authority compilers until provider-terminal
         // cancellation and same-session continuation are proven end to end.
         let omni_judge_on = omni_judge_enabled(load_config().omni_judge)
+            && !provider_lifecycle_active()
             && activity_key.is_some()
             && activity_key != Some("integrate-verify")
             && !authority_compiler;
@@ -29982,6 +30055,50 @@ fn prereview_enabled() -> bool {
     default_on_environment_gate("GOOSE_SWARM_PREREVIEW")
 }
 
+#[derive(Clone, Copy)]
+enum LegacyAuxiliaryPhase {
+    MainExecute,
+    LegacyFixRound,
+}
+
+fn legacy_auxiliary_control_enabled(
+    requested: bool,
+    physical_main_execute: bool,
+    phase: LegacyAuxiliaryPhase,
+) -> bool {
+    requested
+        && (!physical_main_execute || matches!(phase, LegacyAuxiliaryPhase::LegacyFixRound))
+}
+
+#[cfg(test)]
+mod legacy_auxiliary_control_tests {
+    use super::{legacy_auxiliary_control_enabled, LegacyAuxiliaryPhase};
+
+    #[test]
+    fn physical_substitution_is_scoped_to_main_execute() {
+        assert!(legacy_auxiliary_control_enabled(
+            true,
+            false,
+            LegacyAuxiliaryPhase::MainExecute,
+        ));
+        assert!(!legacy_auxiliary_control_enabled(
+            true,
+            true,
+            LegacyAuxiliaryPhase::MainExecute,
+        ));
+        assert!(legacy_auxiliary_control_enabled(
+            true,
+            true,
+            LegacyAuxiliaryPhase::LegacyFixRound,
+        ));
+        assert!(!legacy_auxiliary_control_enabled(
+            false,
+            true,
+            LegacyAuxiliaryPhase::LegacyFixRound,
+        ));
+    }
+}
+
 fn ship_best_enabled() -> bool {
     swarm_gate_cfg("GOOSE_SWARM_SHIP_BEST", true)
 }
@@ -37274,10 +37391,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Auto-use what's loaded: the worker pool is derived from the models RESIDENT on the fleet
     // (`lms ps`), so the swarm runs on what's actually loaded — never spinning up the (possibly
     // stale) configured models over them. The configured pool is only a fallback for an empty fleet.
-    let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg);
-    // A model can be RESIDENT (`lms ps`) and yet UNSERVABLE (`/v1/models`), and the pool above is built from
-    // the resident list. Intersect them before anything is dispatched — see drop_unservable_devices.
+    // A model can be RESIDENT (`lms ps`) and yet UNSERVABLE (`/v1/models`). Probe the exact endpoint first:
+    // legacy dispatch remains permissive on a failed probe, while physical identity is minted only for a
+    // positively listed model. Intersect the logical pool before dispatch — see drop_unservable_devices.
     let served = endpoint_model_ids();
+    let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg, served.as_ref());
     // #128 no-start guard: if the endpoint proves it can serve models (non-empty /v1/models) but NONE of them
     // are our resident pool's — every alias withdrawn — refuse now instead of dispatching the whole run into
     // ~2s-per-attempt 400s and a dead run. `drop_unservable_devices` never empties the pool (it assumes a broken
@@ -37307,6 +37425,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .map(|identity| (device.model_id.clone(), identity))
         })
         .collect();
+    let broker_enforcement_requested = swarm_gate("GOOSE_SWARM_PHYSICAL_BROKER", false);
     // F779 i3: filled inside the MAX_NODES cap arm when the lever is on; consumed after
     // Scheduler::new via with_supervision_devices (invisible to worker_count and every fleet_*
     // capture — those are BUILD-device counts by contract).
@@ -37427,7 +37546,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // F779 i3: the excluded tail IS the supervision pool — already servability-checked
                 // (the intersect runs before this cap) and resident, with distinct model_ids. Captured
                 // before truncate drops it on the floor; empty unless the lever is on.
-                if supervision_pool_on() && capped.len() > max {
+                if (supervision_pool_on() || broker_enforcement_requested) && capped.len() > max {
                     supervision_pool_devices = capped[max..]
                         .iter()
                         .map(|d| DeviceCfg {
@@ -37827,10 +37946,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         );
     }
 
-    let broker_enforcement_requested = swarm_gate("GOOSE_SWARM_PHYSICAL_BROKER", false);
+    let mut physical_snapshot_devices = devices.clone();
+    physical_snapshot_devices.extend(supervision_pool_devices.iter().cloned());
     let physical_snapshot = physical_fleet_snapshot(
         &format!("{run_id}:lms-ps"),
-        &devices,
+        &physical_snapshot_devices,
         &verified_physical_by_model,
     );
     match &physical_snapshot {
@@ -40127,10 +40247,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         dag
     };
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts)
-        // F779 i3: borrowed machines for read-only idle work — appended AFTER the fleet_* captures
-        // above so nothing derived from `devices` (race width, fan permits, occupancy, planner
-        // sizing) can see them; the scheduler drops any model_id collision instead of bailing.
-        .with_supervision_devices(supervision_pool_devices.clone())
         .with_sink(sink.clone())
         // DOC-PREFETCH (Phase 1, Move 2): hand the grounded facts to every worker. Empty when off =>
         // byte-identical (matches the `with_doc_facts` default).
@@ -40141,14 +40257,76 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // byte-identical for any run that never pauses. Same base dir as the #109 note inbox.
     scheduler = scheduler.with_pause_file(working_dir.join(".swarm").join("pause"));
     let replan_on = opts.dynamic_replan.unwrap_or(cfg.dynamic_replan);
-    if replan_on && cfg.max_replans > 0 {
+    let legacy_judge_requested = idle_judge_enabled();
+    let legacy_prereview_requested = prereview_enabled();
+    let speculate_on = std::env::var("GOOSE_SWARM_SPECULATE")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false);
+    if broker_enforcement_requested && speculate_on {
+        bail!(
+            "physical admission cannot race speculative twins because first-wins requires cancelling admitted provider work"
+        );
+    }
+    let judge_on = legacy_auxiliary_control_enabled(
+        legacy_judge_requested,
+        broker_enforcement_requested,
+        LegacyAuxiliaryPhase::MainExecute,
+    );
+    let prereview_on = legacy_auxiliary_control_enabled(
+        legacy_prereview_requested,
+        broker_enforcement_requested,
+        LegacyAuxiliaryPhase::MainExecute,
+    );
+    if broker_enforcement_requested {
+        let snapshot = physical_snapshot
+            .as_ref()
+            .expect("physical broker preflight rejected an unavailable snapshot")
+            .clone();
+        let routes = snapshot
+            .lanes
+            .iter()
+            .cloned()
+            .map(|lane| {
+                GooseSemanticProviderRoute::bind("lmstudio", dispatcher.provider.clone(), lane)
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(anyhow::Error::msg)?;
+        let producer = GooseSemanticObservationSnapshotProducer::new(&working_dir)
+            .map_err(anyhow::Error::msg)?;
+        let reviewer = GooseAdmittedSemanticObservationReviewer::new(
+            snapshot,
+            routes,
+            dispatcher.sampling.temperature,
+            dispatcher.semantic_observation_request_params(),
+        )
+        .map_err(anyhow::Error::msg)?;
+        scheduler = scheduler.with_semantic_observation(Arc::new(producer), Arc::new(reviewer));
+        sink.write_value(serde_json::json!({
+            "event": "physical_semantic_control_active",
+            "authority": "observation_only",
+            "verified_route_count": physical_snapshot_devices.len(),
+            "legacy_judge_substituted": legacy_judge_requested,
+            "legacy_prereview_substituted": legacy_prereview_requested,
+            "legacy_replanner_substituted": replan_on && cfg.max_replans > 0,
+            "nested_omni_judge": false,
+            "semantic_nudge_delivery": false,
+        }));
+        eprintln!(
+            "physical semantic supervision: observation-only reviews use verified idle routes"
+        );
+    } else {
+        // Borrowed machines excluded by MAX_NODES remain read-only supervision devices in the
+        // legacy scheduler. Under physical admission those same verified lanes live in the common
+        // broker snapshot and are consumed only by semantic observations.
+        scheduler = scheduler.with_supervision_devices(supervision_pool_devices.clone());
+    }
+    if !broker_enforcement_requested && replan_on && cfg.max_replans > 0 {
         eprintln!("dynamic replan: on (up to {} round(s))", cfg.max_replans);
         scheduler =
             scheduler.with_replanner(dispatcher.clone() as Arc<dyn Replanner>, cfg.max_replans);
     }
     // Idle-model judge: a node that would sit idle while tasks run inspects a busy worker and may kill +
     // re-dispatch a stuck one. On by default; GOOSE_SWARM_JUDGE=0 disables it.
-    let judge_on = idle_judge_enabled();
     if judge_on {
         eprintln!("idle-model judge: on (GOOSE_SWARM_JUDGE=0 to disable)");
         if judge_split_requested() {
@@ -40169,7 +40347,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // for the local fleet so a node never sleeps while completed work is unreviewed (it now runs CONCURRENTLY
     // with the judge, bounded by idle_capacity, instead of being starved by the single judge slot). Opt out
     // with GOOSE_SWARM_PREREVIEW=0.
-    let prereview_on = prereview_enabled();
     if prereview_on {
         eprintln!("idle-node pre-review: on (correctness-checks completed tasks)");
         scheduler = scheduler.with_pre_reviewer(dispatcher.clone() as Arc<dyn PreReviewer>);
@@ -40177,10 +40354,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // GOOSE_SWARM_SPECULATE (default-OFF, experimental): when a node would otherwise idle at a serial
     // chokepoint, race a TWIN of the longest-running in-flight task on the idle device (first-to-finish wins).
     // OFF until the Phase-2 dispatcher shadow-isolation is verified — with it off the scheduler is unchanged.
-    let speculate_on = std::env::var("GOOSE_SWARM_SPECULATE")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-        .unwrap_or(false);
-    if speculate_on {
+    if speculate_on && !broker_enforcement_requested {
         eprintln!("speculative execution: ON (idle nodes race the chokepoint — EXPERIMENTAL)");
         scheduler = scheduler.with_speculation();
     }
@@ -41131,17 +41305,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     .with_sink(sink.clone())
                                     .with_doc_facts(doc_facts.clone())
                                     .with_pause_file(working_dir.join(".swarm").join("pause"));
-                                // The judge/pre-review mirror run 1's env resolution — an
-                                // env-disabled judge must NOT reappear for fix rounds. No
-                                // replanner, no speculation: a fix round neither replans nor
-                                // races twins of its own tasks.
-                                if judge_on {
+                                // The fix scheduler is explicitly legacy even when main execution used
+                                // physical admission, so preserve the operator's requested legacy judge and
+                                // pre-review settings here. An env-disabled path must not reappear. No
+                                // replanner or speculation: a fix round neither replans nor races twins.
+                                if legacy_auxiliary_control_enabled(
+                                    legacy_judge_requested,
+                                    broker_enforcement_requested,
+                                    LegacyAuxiliaryPhase::LegacyFixRound,
+                                ) {
                                     fix_run = fix_run.with_judge(
                                         fresh.clone() as Arc<dyn Judge>,
                                         JudgeConfig::default(),
                                     );
                                 }
-                                if prereview_on {
+                                if legacy_auxiliary_control_enabled(
+                                    legacy_prereview_requested,
+                                    broker_enforcement_requested,
+                                    LegacyAuxiliaryPhase::LegacyFixRound,
+                                ) {
                                     fix_run = fix_run
                                         .with_pre_reviewer(fresh.clone() as Arc<dyn PreReviewer>);
                                 }

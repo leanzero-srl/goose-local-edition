@@ -13,6 +13,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{oneshot, Notify};
 
+const VERIFIED_TRANSPORT: &str =
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
 #[derive(Default)]
 struct RecordingSink {
     events: Mutex<Vec<serde_json::Value>>,
@@ -39,6 +42,7 @@ fn lane(
         model_id: model.to_string(),
         host_id: host.to_string(),
         model_instance_id: instance.to_string(),
+        provider_transport_id: VERIFIED_TRANSPORT.to_string(),
         advertised_instance_capacity: host_capacity.max(1),
         routing_weight: 1,
         capacity_evidence: HostCapacityEvidence::MeasuredProfile {

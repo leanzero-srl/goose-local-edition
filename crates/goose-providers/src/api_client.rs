@@ -7,6 +7,7 @@ use reqwest::{
 #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
 use reqwest::{Certificate, Identity};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fmt;
 #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
 use std::fs::read_to_string;
@@ -15,6 +16,30 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 600;
+
+pub fn canonical_transport_identity(host: &str, path: &str) -> Option<String> {
+    use std::fmt::Write as _;
+    use url::Url;
+
+    let mut base_url = Url::parse(host).ok()?;
+    let base_path = base_url.path();
+    if !base_path.is_empty() && base_path != "/" && !base_path.ends_with('/') {
+        base_url.set_path(&format!("{base_path}/"));
+    }
+    let mut endpoint = base_url.join(path).ok()?;
+    endpoint.set_username("").ok()?;
+    endpoint.set_password(None).ok()?;
+    endpoint.set_query(None);
+    endpoint.set_fragment(None);
+
+    let digest = Sha256::digest(endpoint.as_str().as_bytes());
+    let mut identity = String::with_capacity(71);
+    identity.push_str("sha256:");
+    for byte in digest {
+        write!(&mut identity, "{byte:02x}").ok()?;
+    }
+    Some(identity)
+}
 
 // reqwest's `.timeout()` is a TOTAL-request deadline — for a streamed completion it caps the ENTIRE stream,
 // so a healthy generation that keeps emitting tokens past the deadline is killed mid-stream (observed as
@@ -332,6 +357,10 @@ impl ApiClient {
 
     pub fn host(&self) -> &str {
         &self.host
+    }
+
+    pub fn transport_identity(&self, path: &str) -> Option<String> {
+        canonical_transport_identity(&self.host, path)
     }
 
     fn rebuild_client(&mut self) -> Result<()> {
@@ -682,5 +711,27 @@ mod tests {
                 .and_then(|value| value.to_str().ok());
             assert_eq!(actual, Some("test-session_id-456"));
         });
+    }
+
+    #[test]
+    fn transport_identity_hashes_request_routing_without_credentials() {
+        let identity = canonical_transport_identity(
+            "http://operator:secret@lm-link.local:1234/prefix?token=secret",
+            "v1/chat/completions",
+        )
+        .unwrap();
+        let equivalent =
+            canonical_transport_identity("http://lm-link.local:1234/prefix", "v1/chat/completions")
+                .unwrap();
+        let distinct =
+            canonical_transport_identity("http://lm-link.local:1235/prefix", "v1/chat/completions")
+                .unwrap();
+
+        assert_eq!(identity, equivalent);
+        assert_ne!(identity, distinct);
+        assert!(identity.starts_with("sha256:"));
+        assert_eq!(identity.len(), 71);
+        assert!(!identity.contains("secret"));
+        assert!(!identity.contains("lm-link"));
     }
 }

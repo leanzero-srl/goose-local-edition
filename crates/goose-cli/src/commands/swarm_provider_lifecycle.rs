@@ -29,6 +29,10 @@ where
     ACTIVE_PROVIDER_LIFECYCLE.scope(lifecycle, future).await
 }
 
+pub(crate) fn provider_lifecycle_active() -> bool {
+    ACTIVE_PROVIDER_LIFECYCLE.try_with(|_| ()).is_ok()
+}
+
 pub(crate) fn bind_current_provider_lifecycle(provider: Arc<dyn Provider>) -> Arc<dyn Provider> {
     ACTIVE_PROVIDER_LIFECYCLE
         .try_with(|lifecycle| {
@@ -80,33 +84,37 @@ impl ProviderTerminalGuard {
     }
 }
 
-impl Drop for ProviderTerminalGuard {
-    fn drop(&mut self) {
-        let Some(key) = self.key.take() else {
-            return;
-        };
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        let lifecycle = self.lifecycle.clone();
-        handle.spawn(async move {
-            let _ = lifecycle
-                .provider_terminal(key, ProviderTerminalKind::Cancelled)
-                .await;
-        });
-    }
-}
-
 fn lifecycle_error(action: &str, error: impl std::fmt::Display) -> ProviderError {
     ProviderError::ExecutionError(format!(
         "physical provider lifecycle {action} failed: {error}"
     ))
 }
 
+pub(crate) fn provider_error_proves_terminal_response(error: &ProviderError) -> bool {
+    matches!(
+        error,
+        ProviderError::Authentication(_)
+            | ProviderError::ContextLengthExceeded(_)
+            | ProviderError::RateLimitExceeded { .. }
+            | ProviderError::ServerError(_)
+            | ProviderError::EndpointNotFound(_)
+            | ProviderError::CreditsExhausted { .. }
+            | ProviderError::Refusal { .. }
+    )
+}
+
 #[async_trait]
 impl Provider for LifecycleProvider {
     fn get_name(&self) -> &str {
         self.inner.get_name()
+    }
+
+    fn transport_identity(&self, model_name: &str) -> Option<String> {
+        self.inner.transport_identity(model_name)
+    }
+
+    fn supports_single_attempt_streaming(&self) -> bool {
+        self.inner.supports_single_attempt_streaming()
     }
 
     async fn stream(
@@ -116,6 +124,33 @@ impl Provider for LifecycleProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
+        if self
+            .inner
+            .transport_identity(&model_config.model_name)
+            .as_deref()
+            != Some(self.lifecycle.admission().provider_transport_id.as_str())
+        {
+            let detail = format!(
+                "provider `{}` transport does not match its sealed physical admission",
+                self.inner.get_name()
+            );
+            self.lifecycle
+                .provider_not_started(detail.clone())
+                .await
+                .map_err(|error| lifecycle_error("provider-not-started receipt", error))?;
+            return Err(ProviderError::ExecutionError(detail));
+        }
+        if !self.inner.supports_single_attempt_streaming() {
+            let detail = format!(
+                "provider `{}` has no receipt-safe single-attempt stream boundary",
+                self.inner.get_name()
+            );
+            self.lifecycle
+                .provider_not_started(detail.clone())
+                .await
+                .map_err(|error| lifecycle_error("provider-not-started receipt", error))?;
+            return Err(ProviderError::NotImplemented(detail));
+        }
         let key = self
             .lifecycle
             .provider_request_started(self.next_request_id())
@@ -124,19 +159,21 @@ impl Provider for LifecycleProvider {
         let mut terminal = ProviderTerminalGuard::new(self.lifecycle.clone(), key);
         let stream = match self
             .inner
-            .stream(model_config, system, messages, tools)
+            .stream_once(model_config, system, messages, tools)
             .await
         {
             Ok(stream) => stream,
             Err(provider_error) => {
-                terminal
-                    .finish(ProviderTerminalKind::Failed)
-                    .await
-                    .map_err(|receipt_error| {
-                        ProviderError::ExecutionError(format!(
-                            "provider failed ({provider_error}); physical provider lifecycle terminal receipt failed: {receipt_error}"
-                        ))
-                    })?;
+                if provider_error_proves_terminal_response(&provider_error) {
+                    terminal
+                        .finish(ProviderTerminalKind::Failed)
+                        .await
+                        .map_err(|receipt_error| {
+                            ProviderError::ExecutionError(format!(
+                                "provider failed ({provider_error}); physical provider lifecycle terminal receipt failed: {receipt_error}"
+                            ))
+                        })?;
+                }
                 return Err(provider_error);
             }
         };
@@ -147,12 +184,8 @@ impl Provider for LifecycleProvider {
                 match item {
                     Ok(value) => yield Ok(value),
                     Err(provider_error) => {
-                        match terminal.finish(ProviderTerminalKind::Failed).await {
-                            Ok(()) => yield Err(provider_error),
-                            Err(receipt_error) => yield Err(ProviderError::ExecutionError(format!(
-                                "provider stream failed ({provider_error}); {receipt_error}"
-                            ))),
-                        }
+                        // A mid-stream client error does not prove that the remote decoder stopped.
+                        yield Err(provider_error);
                         return;
                     }
                 }
@@ -161,6 +194,16 @@ impl Provider for LifecycleProvider {
                 yield Err(receipt_error);
             }
         }))
+    }
+
+    async fn stream_once(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        self.stream(model_config, system, messages, tools).await
     }
 
     async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
@@ -249,10 +292,17 @@ mod tests {
     };
     use std::time::Duration;
 
+    const TRANSPORT_A: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const TRANSPORT_B: &str =
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
     #[derive(Clone)]
     enum Behavior {
         Finished,
         Failed,
+        NetworkFailed,
+        StreamFailed,
         Pending,
         StartPending(Arc<tokio::sync::Notify>),
     }
@@ -261,13 +311,37 @@ mod tests {
         behavior: Behavior,
     }
 
+    struct RetryOnlyProvider;
+
+    struct WrongTransportProvider;
+
     #[async_trait]
     impl Provider for MockProvider {
         fn get_name(&self) -> &str {
             "mock"
         }
 
+        fn transport_identity(&self, _model_name: &str) -> Option<String> {
+            Some(TRANSPORT_A.to_string())
+        }
+
+        fn supports_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
         async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Err(ProviderError::ExecutionError(
+                "retry-capable stream path must not be called".to_string(),
+            ))
+        }
+
+        async fn stream_once(
             &self,
             _model_config: &ModelConfig,
             _system: &str,
@@ -281,7 +355,15 @@ mod tests {
                         Some(ProviderUsage::new("mock".to_string(), Usage::default())),
                     ))
                 }))),
-                Behavior::Failed => Err(ProviderError::ExecutionError("mock failure".to_string())),
+                Behavior::Failed => Err(ProviderError::ServerError("mock failure".to_string())),
+                Behavior::NetworkFailed => {
+                    Err(ProviderError::NetworkError("mock network loss".to_string()))
+                }
+                Behavior::StreamFailed => Ok(Box::pin(stream::once(async {
+                    Err(ProviderError::NetworkError(
+                        "mock mid-stream loss".to_string(),
+                    ))
+                }))),
                 Behavior::Pending => Ok(Box::pin(stream::pending())),
                 Behavior::StartPending(entered) => {
                     entered.notify_one();
@@ -291,10 +373,73 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl Provider for RetryOnlyProvider {
+        fn get_name(&self) -> &str {
+            "retry-only"
+        }
+
+        fn transport_identity(&self, _model_name: &str) -> Option<String> {
+            Some(TRANSPORT_A.to_string())
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Err(ProviderError::ExecutionError(
+                "ordinary stream must not be reached".to_string(),
+            ))
+        }
+    }
+
+    #[async_trait]
+    impl Provider for WrongTransportProvider {
+        fn get_name(&self) -> &str {
+            "wrong-transport"
+        }
+
+        fn transport_identity(&self, _model_name: &str) -> Option<String> {
+            Some(TRANSPORT_B.to_string())
+        }
+
+        fn supports_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Err(ProviderError::ExecutionError(
+                "transport-drift provider must not be called".to_string(),
+            ))
+        }
+
+        async fn stream_once(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Err(ProviderError::ExecutionError(
+                "transport-drift provider must not be called".to_string(),
+            ))
+        }
+    }
+
     async fn admitted() -> (PhysicalAdmissionControl, goose_swarm::AdmittedWork) {
         let identity = VerifiedPhysicalIdentity {
             host_id: "host-a".to_string(),
             model_instance_id: "instance-a".to_string(),
+            provider_transport_id: TRANSPORT_A.to_string(),
             advertised_instance_capacity: 1,
             capacity_evidence: HostCapacityEvidence::ProbeSingleStream {
                 probe_epoch: "probe-a".to_string(),
@@ -338,6 +483,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lifecycle_scope_is_visible_only_while_admitted() {
+        let (_, work) = admitted().await;
+        assert!(!provider_lifecycle_active());
+        scope_provider_lifecycle(work.lifecycle(), async {
+            assert!(provider_lifecycle_active());
+            let provider = bind_current_provider_lifecycle(Arc::new(MockProvider {
+                behavior: Behavior::Finished,
+            }));
+            assert_eq!(
+                provider.transport_identity("model-a").as_deref(),
+                Some(TRANSPORT_A)
+            );
+        })
+        .await;
+        assert!(!provider_lifecycle_active());
+        work.complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn retry_only_provider_is_rejected_before_a_request_starts() {
+        let (control, work) = admitted().await;
+        let provider = scope_provider_lifecycle(work.lifecycle(), async {
+            bind_current_provider_lifecycle(Arc::new(RetryOnlyProvider))
+        })
+        .await;
+        let error = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .err()
+            .expect("provider without stream_once must fail closed");
+        assert!(matches!(error, ProviderError::NotImplemented(_)));
+        work.complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        assert_eq!(control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn transport_drift_is_rejected_before_a_request_starts() {
+        let (control, work) = admitted().await;
+        let provider = scope_provider_lifecycle(work.lifecycle(), async {
+            bind_current_provider_lifecycle(Arc::new(WrongTransportProvider))
+        })
+        .await;
+        let error = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .err()
+            .expect("provider transport drift must fail closed");
+        assert!(error.to_string().contains("transport"));
+        work.complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        assert_eq!(control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
     async fn natural_stream_end_records_finished_before_local_success() {
         let (control, work) = admitted().await;
         let provider = wrapped_for(Behavior::Finished, work.lifecycle()).await;
@@ -369,7 +573,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dropped_stream_records_cancelled_terminal() {
+    async fn network_error_before_stream_keeps_provider_claim_unresolved() {
+        let (control, work) = admitted().await;
+        let provider = wrapped_for(Behavior::NetworkFailed, work.lifecycle()).await;
+        assert!(provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .is_err());
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            work.complete_local(LocalCompletionKind::Error),
+        )
+        .await
+        .is_err());
+        assert_eq!(control.occupancy().await, (0, 1));
+    }
+
+    #[tokio::test]
+    async fn mid_stream_error_keeps_provider_claim_unresolved() {
+        let (control, work) = admitted().await;
+        let provider = wrapped_for(Behavior::StreamFailed, work.lifecycle()).await;
+        let mut output = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .unwrap();
+        assert!(output.next().await.unwrap().is_err());
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            work.complete_local(LocalCompletionKind::StreamDropped),
+        )
+        .await
+        .is_err());
+        assert_eq!(control.occupancy().await, (0, 1));
+    }
+
+    #[tokio::test]
+    async fn dropped_stream_keeps_provider_claim_unresolved() {
         let (control, work) = admitted().await;
         let provider = wrapped_for(Behavior::Pending, work.lifecycle()).await;
         let output = provider
@@ -377,25 +616,17 @@ mod tests {
             .await
             .unwrap();
         drop(output);
-        tokio::time::timeout(Duration::from_secs(2), async {
-            loop {
-                if work
-                    .complete_local(LocalCompletionKind::Error)
-                    .await
-                    .is_ok()
-                {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            work.complete_local(LocalCompletionKind::StreamDropped),
+        )
         .await
-        .unwrap();
-        assert_eq!(control.occupancy().await, (0, 0));
+        .is_err());
+        assert_eq!(control.occupancy().await, (0, 1));
     }
 
     #[tokio::test]
-    async fn cancelled_stream_creation_records_cancelled_terminal() {
+    async fn cancelled_stream_creation_keeps_provider_claim_unresolved() {
         let (control, work) = admitted().await;
         let entered = Arc::new(tokio::sync::Notify::new());
         let waiting = entered.notified();
@@ -410,13 +641,12 @@ mod tests {
             .unwrap();
         task.abort();
         let _ = task.await;
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            work.complete_local(LocalCompletionKind::Error),
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            work.complete_local(LocalCompletionKind::CancellationRequested),
         )
         .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(control.occupancy().await, (0, 0));
+        .is_err());
+        assert_eq!(control.occupancy().await, (0, 1));
     }
 }

@@ -376,11 +376,24 @@ pub fn stream_from_single_message(message: Message, usage: ProviderUsage) -> Mes
     Box::pin(stream)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SingleAttemptFailureProvenance {
+    TerminalResponse,
+    Unresolved,
+}
+
 /// Base trait for AI providers (OpenAI, Anthropic, etc)
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// Get the name of this provider instance
     fn get_name(&self) -> &str;
+
+    /// Opaque, credential-free identity of the canonical transport endpoint this instance will
+    /// call. Admission-sensitive callers fail closed when a provider does not expose one rather
+    /// than inferring an endpoint from ambient configuration.
+    fn transport_identity(&self, _model_name: &str) -> Option<String> {
+        None
+    }
 
     /// Primary streaming method that all providers must implement.
     async fn stream(
@@ -395,6 +408,17 @@ pub trait Provider: Send + Sync {
     /// preflight; a false value must prevent provider-start lifecycle from being claimed.
     fn supports_single_attempt_streaming(&self) -> bool {
         false
+    }
+
+    /// Classify an error returned before `stream_once` establishes its stream. The default is
+    /// deliberately unresolved: a shared `ProviderError` variant does not prove that a remote
+    /// request reached a terminal response. Implementations may opt in only when their own
+    /// single-attempt boundary can attribute that error to a received terminal response.
+    fn single_attempt_failure_provenance(
+        &self,
+        _error: &ProviderError,
+    ) -> SingleAttemptFailureProvenance {
+        SingleAttemptFailureProvenance::Unresolved
     }
 
     /// Start exactly one external provider request. Implementations must not perform credential,

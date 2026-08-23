@@ -114,6 +114,13 @@ provider-not-started receipt). Terminal failure/cancellation overrides a contrad
 success. The broker exposes host occupancy as exact reserved/live provider-turn permits, separately
 from queued work and active task envelopes.
 
+Before provider start, the CLI lifecycle wrapper compares the provider's current transport identity
+with the sealed admission and refuses missing or drifted identity. It also refuses a provider without
+a separately implemented single-attempt stream and calls `stream_once`, never the provider's
+retry-capable `stream`. One receipt therefore cannot conceal multiple external POSTs. A locally
+dropped or aborted stream emits no provider terminal and keeps the physical claim unresolved; only
+an observed stream end or typed provider failure can close the turn.
+
 Source authority is monotonic compare-and-set: rollback, conflicting equal revisions, stale
 removal, generic auxiliary prose, role/priority laundering, unknown routes, and route sets that
 exclude the whole verified snapshot fail closed. Host aliases must share the full capacity evidence,
@@ -129,13 +136,18 @@ different capacity truths never share one snapshot identity. Active admissions r
 snapshot and capacity evidence under which they were routed; later admissions cite the new one.
 Capacity changes are compare-and-set against the caller's current fleet-snapshot id, so an older
 asynchronous measurement cannot overwrite newer evidence. Aliases of one physical instance must
-also share exact route evidence.
+also share exact route evidence and the same credential-free hash of the canonical provider transport
+endpoint. The SHA-256 identity is derived with the same URL join used by `ApiClient`, without serializing
+or logging the endpoint; missing or contradictory transport provenance makes the fleet snapshot invalid.
 
 LM Link routes by model identifier, not by the display host. If one identifier is reported on two
 hosts, goose-cli continues its legacy one-logical-worker reconciliation but does not certify either
-physical route. Persisted `host` configuration and non-LM-Studio providers are likewise never
-promoted to live physical evidence. A run may observe a complete same-run snapshot or an explicit
-unavailable event; it never fills missing physical identity from a logical lane.
+physical route. A same-run `lms ps` row also needs the exact configured endpoint's positive
+`/v1/models` listing; a failed, empty, or model-missing endpoint probe cannot mint physical identity,
+even though the legacy logical pool remains permissive on an inconclusive probe. Persisted `host`
+configuration and non-LM-Studio providers are likewise never promoted to live physical evidence. A
+run may observe a complete same-run snapshot or an explicit unavailable event; it never fills missing
+physical identity from a logical lane.
 
 The lifecycle seam is intentionally a new `ProviderLifecycleDispatcher`, not a default method on
 `TaskDispatcher`. The broker adaptively selects among verified physical routes; the scheduler's
@@ -147,6 +159,7 @@ The brokered scheduler rejects the old judge, pre-review/QA/tail/testgen, idle-c
 speculative twin, runtime-review-as-build, and reserved-supervision paths rather than letting any of
 them bypass the queue. Runtime review remains task-derived: physical capacity or observed idleness
 never creates review work. This does not remove or alter the existing semantic judge; the ordinary
-scheduler path remains on its existing behavior. A physical semantic judge is Engine 5 work and
-must enter as a trace-versioned, lifecycle-capable, observation-only opportunity; there is no
-deterministic verdict or blind `idle => judge` substitute in Engine 4.
+scheduler path remains on its existing behavior. The opt-in physical CLI now substitutes a
+trace-versioned, lifecycle-capable, observation-only semantic reviewer for those legacy paths. It can
+borrow verified build-excluded nodes, but only to review a concrete running task revision; there is no
+deterministic verdict or blind `idle => judge` substitute.
