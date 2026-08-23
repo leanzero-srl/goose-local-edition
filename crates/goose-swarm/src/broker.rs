@@ -403,6 +403,8 @@ pub enum WorkPriority {
 pub enum WorkRole {
     Build,
     Repair,
+    ResearchEvidence,
+    PlanningAuthority,
     RuntimeAcceptanceReview,
     CompletedArtifactReview,
     SemanticJudgeObservation,
@@ -442,7 +444,9 @@ impl WorkRole {
     pub fn priority(self) -> WorkPriority {
         match self {
             Self::Repair | Self::AcceptanceOracle => WorkPriority::CriticalPath,
-            Self::Build => WorkPriority::Implementation,
+            Self::Build | Self::ResearchEvidence | Self::PlanningAuthority => {
+                WorkPriority::Implementation
+            }
             Self::RuntimeAcceptanceReview
             | Self::CompletedArtifactReview
             | Self::SemanticJudgeObservation
@@ -1962,7 +1966,10 @@ fn validate_opportunity(opportunity: &WorkOpportunity) -> Result<(), BrokerError
         });
     }
     let valid_authority = match opportunity.role {
-        WorkRole::Build | WorkRole::Repair => {
+        WorkRole::Build
+        | WorkRole::Repair
+        | WorkRole::ResearchEvidence
+        | WorkRole::PlanningAuthority => {
             matches!(opportunity.source.kind, SourceRevisionKind::TaskAttempt)
         }
         WorkRole::RuntimeAcceptanceReview | WorkRole::ContractReview => {

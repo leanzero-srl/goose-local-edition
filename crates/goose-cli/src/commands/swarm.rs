@@ -11,11 +11,13 @@ use super::swarm_control_registry::{
 use super::swarm_provider_journal::DurableProviderLifecycleJournal;
 use super::swarm_provider_lifecycle::{
     bind_current_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
-    ProviderNudgeDeliveryFactory, ProviderStreamProgressMeter, ProviderStreamProgressSnapshot,
+    PreSchedulerJudgeLaunchAdmission, ProviderNudgeDeliveryFactory, ProviderStreamProgressMeter,
+    ProviderStreamProgressSnapshot,
 };
 use super::swarm_semantic::{
     activity_digest_key, ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
     GooseSemanticObservationSnapshotProducer, GooseSemanticProviderRoute, ReasoningRecurrenceMeter,
+    ReasoningRecurrenceSnapshot,
 };
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
@@ -35,14 +37,15 @@ use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
-    deterministic_verdict, is_split_candidate, AdmissionReceipt, AuthorityScope, ChildSpec, Dag,
-    DeviceCfg, DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig,
-    JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalAdmissionControl,
-    PhysicalExecutionAuthority, PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest,
-    PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher, ProviderNudgeDelivery,
-    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler,
-    SemanticActivityPublisher, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord,
-    Verdict, VerifiedPhysicalIdentity, WorkRole,
+    deterministic_verdict, is_split_candidate, AdmissionReceipt, AdmittedWork, AuthorityScope,
+    ChildSpec, Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, HostCapacityEvidence,
+    Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
+    PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot, PreReviewOutput,
+    PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
+    ProviderNudgeDelivery, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner,
+    Scheduler, SemanticActivityPublisher, SourceRevisionKind, SwarmEvent, TaskDispatcher,
+    TaskRunOutput, TaskSpec, TaskVersion, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
+    WorkOpportunity, WorkRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -51,7 +54,7 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 const FINAL_OUTPUT_TOOL: &str = "recipe__final_output";
 const SWARM_CONFIG_KEY: &str = "swarm";
@@ -10591,6 +10594,55 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(parse_judge_reply("VERDICT|HIGH|").verdict, Verdict::Ok);
     }
 
+    #[test]
+    fn pre_scheduler_recurrence_requires_distant_evidence_but_no_share_cap() {
+        let without_distant_sample = ReasoningRecurrenceSnapshot {
+            window_chars: 48,
+            observed_windows: 10,
+            repeated_windows: 9,
+            repeat_share: 0.9,
+            earlier_reasoning: String::new(),
+        };
+        assert!(!recurrence_warrants_semantic_review(
+            &without_distant_sample
+        ));
+
+        let measured_recurrence = ReasoningRecurrenceSnapshot {
+            window_chars: 48,
+            observed_windows: 10_000,
+            repeated_windows: 1,
+            repeat_share: 0.0001,
+            earlier_reasoning: "a distant matching reasoning sample".to_string(),
+        };
+        assert!(recurrence_warrants_semantic_review(&measured_recurrence));
+    }
+
+    #[test]
+    fn growing_or_active_structured_output_vetoes_pre_scheduler_nudge() {
+        let captured = ProviderStreamProgressSnapshot {
+            structured_output_bytes: 277,
+            ..ProviderStreamProgressSnapshot::default()
+        };
+        let growing = ProviderStreamProgressSnapshot {
+            structured_output_bytes: 22_841,
+            ..ProviderStreamProgressSnapshot::default()
+        };
+        assert!(structured_output_blocks_pre_scheduler_nudge(
+            captured, growing
+        ));
+        let active = ProviderStreamProgressSnapshot {
+            structured_output_bytes: 277,
+            structured_output_active: true,
+            ..ProviderStreamProgressSnapshot::default()
+        };
+        assert!(structured_output_blocks_pre_scheduler_nudge(
+            captured, active
+        ));
+        assert!(!structured_output_blocks_pre_scheduler_nudge(
+            captured, captured
+        ));
+    }
+
     /// GOOSE_SWARM_REQUIRE_TESTS. An EMPTY suite is not a PASSING suite.
     ///
     /// MEASURED on verify-6 (the only fan_verify run that reached run_finished): `verify::analytics-io`
@@ -20211,6 +20263,339 @@ impl ProviderNudgeDelivery for AgentProviderNudgeChannel {
     }
 }
 
+#[derive(Clone)]
+struct PreSchedulerSourceContext {
+    runtime: Arc<PreSchedulerSemanticRuntime>,
+    lifecycle: ProviderLifecycle,
+    label: String,
+}
+
+tokio::task_local! {
+    static ACTIVE_PRE_SCHEDULER_SOURCE: PreSchedulerSourceContext;
+}
+
+struct PreSchedulerSemanticRuntime {
+    control: PhysicalAdmissionControl,
+    snapshot: PhysicalFleetSnapshot,
+    run_id: String,
+    dispatcher: Weak<GooseAgentDispatcher>,
+    sequence: AtomicU64,
+}
+
+impl PreSchedulerSemanticRuntime {
+    fn new(
+        control: PhysicalAdmissionControl,
+        snapshot: PhysicalFleetSnapshot,
+        run_id: String,
+        dispatcher: Weak<GooseAgentDispatcher>,
+    ) -> Self {
+        Self {
+            control,
+            snapshot,
+            run_id,
+            dispatcher,
+            sequence: AtomicU64::new(0),
+        }
+    }
+
+    fn next_sequence(&self) -> u64 {
+        self.sequence.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn source_role(label: &str) -> WorkRole {
+        if label.starts_with("research-") || label.starts_with("scout-") {
+            WorkRole::ResearchEvidence
+        } else {
+            WorkRole::PlanningAuthority
+        }
+    }
+
+    async fn admit_source(&self, model_id: &str, label: &str) -> Result<AdmittedWork> {
+        let sequence = self.next_sequence();
+        let task_id = format!("{label}:pre-scheduler:{sequence}");
+        let source = TaskVersion {
+            authority_scope: AuthorityScope::new(self.run_id.clone(), "pre-scheduler"),
+            phase_epoch: 0,
+            task_id: task_id.clone(),
+            attempt: 0,
+            revision: sequence,
+            kind: SourceRevisionKind::TaskAttempt,
+        };
+        self.control.set_source_revision(source.clone()).await?;
+        let eligible_logical_device_ids = self
+            .snapshot
+            .lanes
+            .iter()
+            .filter(|lane| lane.model_id == model_id)
+            .map(|lane| lane.logical_device_id.clone())
+            .collect::<Vec<_>>();
+        if eligible_logical_device_ids.is_empty() {
+            return Err(anyhow!(
+                "pre-scheduler physical broker has no verified route for model `{model_id}`"
+            ));
+        }
+        let role = Self::source_role(label);
+        self.control
+            .admit(WorkOpportunity {
+                work_id: task_id,
+                role,
+                priority: role.priority(),
+                task_rank: sequence,
+                source,
+                eligible_logical_device_ids,
+                preferred_model_id: Some(model_id.to_string()),
+                excluded_logical_device_id: None,
+            })
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn try_spawn_recurrence_review(
+        self: &Arc<Self>,
+        source: &PreSchedulerSourceContext,
+        recurrence: ReasoningRecurrenceSnapshot,
+        recent_reasoning: String,
+        progress: Arc<ProviderStreamProgressMeter>,
+    ) -> Result<Option<tokio::sync::oneshot::Receiver<()>>> {
+        let source_host = source.lifecycle.admission().physical_host_id.as_str();
+        let eligible_logical_device_ids = self
+            .snapshot
+            .lanes
+            .iter()
+            .filter(|lane| lane.host_id != source_host)
+            .map(|lane| lane.logical_device_id.clone())
+            .collect::<Vec<_>>();
+        if eligible_logical_device_ids.is_empty() {
+            return Ok(None);
+        }
+        let occupancy = self.control.physical_occupancy().await;
+        let idle_hosts = occupancy
+            .iter()
+            .filter(|host| host.provider_turn_permits_held < host.capacity)
+            .map(|host| host.physical_host_id.as_str())
+            .collect::<HashSet<_>>();
+        if !self.snapshot.lanes.iter().any(|lane| {
+            lane.host_id != source_host
+                && idle_hosts.contains(lane.host_id.as_str())
+                && eligible_logical_device_ids.contains(&lane.logical_device_id)
+        }) {
+            return Ok(None);
+        }
+
+        let sequence = self.next_sequence();
+        let snapshot_material = serde_json::json!({
+            "source_admission_id": source.lifecycle.admission().admission_id,
+            "observed_windows": recurrence.observed_windows,
+            "repeated_windows": recurrence.repeated_windows,
+            "repeat_share": recurrence.repeat_share,
+            "earlier_reasoning": recurrence.earlier_reasoning,
+            "recent_reasoning": recent_reasoning,
+        });
+        let snapshot_hash = lowercase_hex(Sha256::digest(snapshot_material.to_string()).as_slice());
+        let task_id = format!("pre-scheduler-judge:{}:{sequence}", source.label);
+        let judge_source = TaskVersion {
+            authority_scope: AuthorityScope::new(self.run_id.clone(), "pre-scheduler-judge"),
+            phase_epoch: 0,
+            task_id: task_id.clone(),
+            attempt: 0,
+            revision: sequence,
+            kind: SourceRevisionKind::Trace {
+                trace_sequence: sequence,
+                snapshot_hash,
+            },
+        };
+        self.control
+            .set_source_revision(judge_source.clone())
+            .await?;
+        let opportunity = WorkOpportunity {
+            work_id: task_id.clone(),
+            role: WorkRole::SemanticJudgeObservation,
+            priority: WorkRole::SemanticJudgeObservation.priority(),
+            task_rank: sequence,
+            source: judge_source,
+            eligible_logical_device_ids,
+            preferred_model_id: None,
+            excluded_logical_device_id: None,
+        };
+        let Some(admitted) = self.control.try_admit_idle(opportunity).await? else {
+            return Ok(None);
+        };
+        if let Err(error) =
+            PreSchedulerJudgeLaunchAdmission::try_new(Some(&source.lifecycle), Some(&admitted))
+        {
+            admitted.complete_local(LocalCompletionKind::Error).await?;
+            return Err(anyhow!(error));
+        }
+        let Some(dispatcher) = self.dispatcher.upgrade() else {
+            admitted.complete_local(LocalCompletionKind::Error).await?;
+            return Ok(None);
+        };
+        dispatcher.events.write_value(serde_json::json!({
+            "event": "pre_scheduler_semantic_judge_summoned",
+            "source_task": source.label,
+            "source_admission_id": source.lifecycle.admission().admission_id,
+            "judge_admission_id": admitted.receipt().admission_id,
+            "judge_device": admitted.receipt().logical_device_id,
+            "judge_physical_host": admitted.receipt().physical_host_id,
+            "recurrence_observed_windows": recurrence.observed_windows,
+            "recurrence_repeated_windows": recurrence.repeated_windows,
+            "recurrence_repeat_share": recurrence.repeat_share,
+            "physical_idle_admission": true,
+            "payload_logged": false,
+        }));
+
+        let source_lifecycle = source.lifecycle.clone();
+        let source_label = source.label.clone();
+        let source_progress_at_capture = progress.snapshot();
+        let events = dispatcher.events.clone();
+        let (done, receiver) = tokio::sync::oneshot::channel();
+        let runtime_handle = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            runtime_handle.block_on(async move {
+                let judge_model = admitted.receipt().model_id.clone();
+                let judge_key = admitted.receipt().source.task_id.clone();
+                let judge_publisher = SemanticActivityPublisher::from_admission(admitted.receipt());
+                let judge_lifecycle = admitted.lifecycle();
+                let system = "You are supervising one live local-model call. Decide only whether its reasoning is semantically looping: the same analysis recurs without new information. Deep but advancing reasoning is OK. Reply exactly VERDICT|CONFIDENCE|hint where VERDICT is OK or LOOPING and CONFIDENCE is HIGH or LOW. Never request termination; a HIGH LOOPING verdict may only redirect the same session.".to_string();
+                let user = format!(
+                    "Measured recurrence: {} repeated of {} retained {}-character windows ({:.4}).\n\nEarlier reasoning sample:\n{}\n\nRecent reasoning sample:\n{}",
+                    recurrence.repeated_windows,
+                    recurrence.observed_windows,
+                    recurrence.window_chars,
+                    recurrence.repeat_share,
+                    recurrence.earlier_reasoning,
+                    recent_reasoning,
+                );
+                let review = std::panic::AssertUnwindSafe(scope_provider_lifecycle(
+                    judge_lifecycle,
+                    dispatcher.run_agent_in(
+                        dispatcher.working_dir.clone(),
+                        &judge_model,
+                        system,
+                        user,
+                        None,
+                        Some(1),
+                        &[],
+                        AgentToolSurface::ResponseOnly,
+                        0,
+                        Some(&judge_key),
+                        Some(&judge_publisher),
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                ))
+                .catch_unwind()
+                .await;
+                let review = match review {
+                    Ok(review) => review,
+                    Err(_) => {
+                        let completion = admitted
+                            .complete_local_with_completion(LocalCompletionKind::Error)
+                            .await;
+                        events.write_value(serde_json::json!({
+                            "event": "pre_scheduler_semantic_judge_failed",
+                            "source_task": source_label,
+                            "review_error": "judge_future_panicked",
+                            "completion_error": completion.err().map(|error| error.to_string()),
+                            "nudge_delivered": false,
+                            "payload_logged": false,
+                        }));
+                        let _ = done.send(());
+                        return;
+                    }
+                };
+                let completion_kind = if review.is_ok() {
+                    LocalCompletionKind::Success
+                } else {
+                    LocalCompletionKind::Error
+                };
+                let completed = admitted
+                    .complete_local_with_completion(completion_kind)
+                    .await;
+                let (review, completed) = match (review, completed) {
+                    (Ok(review), Ok(completed)) => (review, completed),
+                    (review, completion) => {
+                        events.write_value(serde_json::json!({
+                            "event": "pre_scheduler_semantic_judge_failed",
+                            "source_task": source_label,
+                            "review_error": review.err().map(|error| error.to_string()),
+                            "completion_error": completion.err().map(|error| error.to_string()),
+                            "nudge_delivered": false,
+                            "payload_logged": false,
+                        }));
+                        let _ = done.send(());
+                        return;
+                    }
+                };
+                if !omni_judge_says_looping(&review.text) {
+                    events.write_value(serde_json::json!({
+                        "event": "pre_scheduler_semantic_judge_observed",
+                        "source_task": source_label,
+                        "verdict": "continue",
+                        "nudge_delivered": false,
+                        "payload_logged": false,
+                    }));
+                    let _ = done.send(());
+                    return;
+                }
+                let current_progress = progress.snapshot();
+                if structured_output_blocks_pre_scheduler_nudge(
+                    source_progress_at_capture,
+                    current_progress,
+                ) {
+                    events.write_value(serde_json::json!({
+                        "event": "pre_scheduler_semantic_nudge_deferred",
+                        "source_task": source_label,
+                        "reason": "structured_output_active_or_advanced",
+                        "structured_output_bytes_at_capture": source_progress_at_capture.structured_output_bytes,
+                        "structured_output_bytes_now": current_progress.structured_output_bytes,
+                        "structured_output_active": current_progress.structured_output_active,
+                        "nudge_delivered": false,
+                        "payload_logged": false,
+                    }));
+                    let _ = done.send(());
+                    return;
+                }
+                let parsed = parse_judge_reply(&review.text);
+                let direction = parsed.hint.trim();
+                let direction = if direction.is_empty() {
+                    "stop repeating the same analysis and take the next concrete step using the evidence already established"
+                        .to_string()
+                } else {
+                    direction.chars().take(400).collect::<String>()
+                };
+                let guidance = format!(
+                    "SUPERVISOR NOTE: an independently admitted judge found your latest reasoning semantically recurrent. {direction}. Continue the SAME task and preserve valid work already completed."
+                );
+                match source_lifecycle
+                    .deliver_nudge_after_judge(completed, guidance)
+                    .await
+                {
+                    Ok(receipt) => events.write_value(serde_json::json!({
+                        "event": "pre_scheduler_semantic_nudge_delivered",
+                        "source_task": source_label,
+                        "receipt": receipt,
+                        "judge_verdict": "looping_high",
+                        "deterministic_stop": false,
+                        "payload_logged": false,
+                    })),
+                    Err(error) => events.write_value(serde_json::json!({
+                        "event": "pre_scheduler_semantic_nudge_not_delivered",
+                        "source_task": source_label,
+                        "reason": error.to_string(),
+                        "nudge_delivered": false,
+                        "payload_logged": false,
+                    })),
+                }
+                let _ = done.send(());
+            })
+        });
+        Ok(Some(receiver))
+    }
+}
+
 pub struct GooseAgentDispatcher {
     provider: Arc<dyn Provider>,
     /// model_id → provider name for CLOUD pool devices; consulted at the single update_provider
@@ -20361,6 +20746,10 @@ pub struct GooseAgentDispatcher {
     /// Required, atomically-replaced worker activity evidence while physical semantic supervision is active.
     /// Legacy runs retain best-effort digests; physical runs fail closed before dispatch or after provider EOF.
     activity_sink_health: Arc<ActivitySinkHealth>,
+    /// Active only between physical preflight and the execute scheduler. Every direct research /
+    /// planning model call is admitted here so recurrence supervision can consume only verified
+    /// spare capacity on a distinct host.
+    pre_scheduler_semantic: Mutex<Option<Arc<PreSchedulerSemanticRuntime>>>,
     /// Notes older than this belong to a PREVIOUS run in the same directory (nothing ever cleared the inbox).
     /// Epoch-ms of this run's start.
     notes_since_ms: i64,
@@ -20508,7 +20897,12 @@ impl GooseAgentDispatcher {
             replan_authority: Mutex::new(None),
             repeat_break,
             activity_sink_health,
+            pre_scheduler_semantic: Mutex::new(None),
         })
+    }
+
+    fn set_pre_scheduler_semantic(&self, runtime: Option<Arc<PreSchedulerSemanticRuntime>>) {
+        *self.pre_scheduler_semantic.lock().unwrap() = runtime;
     }
 
     /// Build the isolated SHADOW workspace for a speculative twin: a cp -r of the real tree (heavy dirs
@@ -20975,6 +21369,64 @@ impl GooseAgentDispatcher {
         // FOR the swarm and had zero callers; None (every planner-side call) is byte-identical.
         single_owned_file: Option<String>,
     ) -> Result<RunAgentOut> {
+        let pre_scheduler_runtime = if provider_lifecycle_active() {
+            None
+        } else {
+            self.pre_scheduler_semantic.lock().unwrap().clone()
+        };
+        if let Some(runtime) = pre_scheduler_runtime {
+            let label = activity_key.unwrap_or("planner-call").to_string();
+            let admitted = runtime.admit_source(model_id, &label).await?;
+            let admitted_key = admitted.receipt().source.task_id.clone();
+            let publisher = SemanticActivityPublisher::from_admission(admitted.receipt());
+            let lifecycle = admitted.lifecycle();
+            let context = PreSchedulerSourceContext {
+                runtime,
+                lifecycle: lifecycle.clone(),
+                label,
+            };
+            let result = ACTIVE_PRE_SCHEDULER_SOURCE
+                .scope(
+                    context,
+                    scope_provider_lifecycle(
+                        lifecycle,
+                        Box::pin(self.run_agent_in(
+                            work_dir,
+                            model_id,
+                            system_prompt,
+                            user_text,
+                            response,
+                            max_turns,
+                            extensions,
+                            tool_surface,
+                            0,
+                            Some(&admitted_key),
+                            Some(&publisher),
+                            prefill_assistant,
+                            force_tool_until_act,
+                            temp_override,
+                            single_owned_file,
+                        )),
+                    ),
+                )
+                .await;
+            let completion_kind = if result.is_ok() {
+                LocalCompletionKind::Success
+            } else {
+                LocalCompletionKind::Error
+            };
+            let completion = admitted.complete_local(completion_kind).await;
+            return match (result, completion) {
+                (Ok(output), Ok(())) => Ok(output),
+                (Err(error), Ok(())) => Err(error),
+                (Ok(_), Err(error)) => Err(anyhow!(
+                    "pre-scheduler physical lifecycle completion failed: {error}"
+                )),
+                (Err(error), Err(completion)) => Err(anyhow!(
+                    "{error}; pre-scheduler physical lifecycle completion also failed: {completion}"
+                )),
+            };
+        }
         // Captured before the strings move into the message/session below — feeds the
         // prefill-aware first-token budget at the watchdog site.
         let prompt_chars = system_prompt.len() + user_text.len();
@@ -21316,6 +21768,9 @@ impl GooseAgentDispatcher {
         let semantic_saturation_call = activity_key.is_some_and(|key| {
             key.starts_with("research-pod-") || key.starts_with("research-queue-")
         });
+        let pre_scheduler_semantic_source = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(|_| ()).is_ok();
+        let pre_scheduler_semantic_call = pre_scheduler_semantic_source
+            || activity_key.is_some_and(|key| key.starts_with("pre-scheduler-judge:"));
         // PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS): the `idle` watchdog above only fires when the
         // stream goes SILENT. A task that streams THINKING tokens continuously resets it forever — measured
         // live, tasks ran 899s/348s/26min while emitting reasoning tokens and were never cut (the pathology
@@ -21328,6 +21783,7 @@ impl GooseAgentDispatcher {
         let thinking_only_budget = if activity_key == Some("integrate-verify")
             || authority_compiler
             || semantic_saturation_call
+            || pre_scheduler_semantic_call
         {
             None
         } else {
@@ -21348,17 +21804,19 @@ impl GooseAgentDispatcher {
         let repeat_break_on = (self.repeat_break || semantic_saturation_call)
             && activity_key.is_some()
             && activity_key != Some("integrate-verify")
-            && !authority_compiler;
+            && !authority_compiler
+            && !pre_scheduler_semantic_call;
         // #135 GLOBAL SPIRAL BREAK. Authority-bearing response compilers are exempt: detail no longer has a
         // one-line fallback, and silently dropping a contract result is not equivalent to finishing it.
-        let spiral_budget = if authority_compiler || semantic_saturation_call {
-            0
-        } else {
-            spiral_budget_for(
-                activity_key,
-                spiral_break_chars(load_config().spiral_break_chars),
-            )
-        };
+        let spiral_budget =
+            if authority_compiler || semantic_saturation_call || pre_scheduler_semantic_call {
+                0
+            } else {
+                spiral_budget_for(
+                    activity_key,
+                    spiral_break_chars(load_config().spiral_break_chars),
+                )
+            };
         // #135 OMNI-JUDGE: armed for calls with an activity key that have a safe continuation path. It is
         // deliberately not synchronous supervision for authority compilers until provider-terminal
         // cancellation and same-session continuation are proven end to end.
@@ -21385,7 +21843,57 @@ impl GooseAgentDispatcher {
         let mut observed_structured_output_bytes = 0u64;
         let mut observed_structured_output_active = false;
         let mut last_provider_progress_event_at: Option<tokio::time::Instant> = None;
+        let mut pre_scheduler_review: Option<tokio::sync::oneshot::Receiver<()>> = None;
+        let mut next_pre_scheduler_review_check = tokio::time::Instant::now();
         loop {
+            if let Some(review) = pre_scheduler_review.as_mut() {
+                match review.try_recv() {
+                    Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                        pre_scheduler_review = None;
+                        reasoning_recurrence.reset();
+                        next_pre_scheduler_review_check = tokio::time::Instant::now();
+                    }
+                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+                }
+            }
+            if pre_scheduler_review.is_none()
+                && tokio::time::Instant::now() >= next_pre_scheduler_review_check
+            {
+                let recurrence = reasoning_recurrence.snapshot();
+                if recurrence_warrants_semantic_review(&recurrence) {
+                    if let Ok(source) = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone) {
+                        match source
+                            .runtime
+                            .try_spawn_recurrence_review(
+                                &source,
+                                recurrence,
+                                last_thinking.clone(),
+                                provider_stream_progress.clone(),
+                            )
+                            .await
+                        {
+                            Ok(Some(review)) => pre_scheduler_review = Some(review),
+                            Ok(None) => {
+                                // This cadence only rechecks idle-route availability. It never ends,
+                                // truncates, or advances the source call and leaves no broker work queued.
+                                next_pre_scheduler_review_check =
+                                    tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+                            }
+                            Err(error) => {
+                                self.events.write_value(serde_json::json!({
+                                    "event": "pre_scheduler_semantic_judge_not_admitted",
+                                    "task_id": activity_key,
+                                    "reason": error.to_string(),
+                                    "nudge_delivered": false,
+                                    "payload_logged": false,
+                                }));
+                                next_pre_scheduler_review_check =
+                                    tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+                            }
+                        }
+                    }
+                }
+            }
             // #136: cut a REPEATED-IDENTICAL-CALL loop — the same tool call returning the same result N times
             // in a row over at least the time floor. This is the ONLY guard that sees it: each repeat is a
             // successful ToolResponse, so `message_content_is_productive` keeps resetting the progress
@@ -31592,6 +32100,20 @@ where
 fn omni_judge_says_looping(reply: &str) -> bool {
     let out = parse_judge_reply(reply);
     matches!(out.verdict, Verdict::Looping | Verdict::OverReading) && out.confidence >= 0.8
+}
+
+fn recurrence_warrants_semantic_review(snapshot: &ReasoningRecurrenceSnapshot) -> bool {
+    snapshot.observed_windows > 0
+        && snapshot.repeated_windows > 0
+        && !snapshot.earlier_reasoning.trim().is_empty()
+}
+
+fn structured_output_blocks_pre_scheduler_nudge(
+    captured: ProviderStreamProgressSnapshot,
+    current: ProviderStreamProgressSnapshot,
+) -> bool {
+    current.structured_output_active
+        || current.structured_output_bytes > captured.structured_output_bytes
 }
 
 /// Parse the semantic judge's one-line `VERDICT|CONFIDENCE|hint` reply. Conservative: anything not a
@@ -45114,6 +45636,38 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         repeat_break: repeat_break_enabled(cfg.repeat_break),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
+    let pre_scheduler_control = if broker_enforcement_requested {
+        let snapshot = physical_snapshot
+            .as_ref()
+            .expect("physical broker preflight rejected an unavailable snapshot")
+            .clone();
+        let control = PhysicalAdmissionControl::new_with_journal(
+            format!("{run_id}:physical"),
+            snapshot.clone(),
+            sink.clone(),
+            provider_journal
+                .as_ref()
+                .expect("physical provider journal was preflighted")
+                .clone(),
+        )?;
+        dispatcher.set_pre_scheduler_semantic(Some(Arc::new(PreSchedulerSemanticRuntime::new(
+            control.clone(),
+            snapshot,
+            run_id.clone(),
+            Arc::downgrade(&dispatcher),
+        ))));
+        sink.write_value(serde_json::json!({
+            "event": "pre_scheduler_physical_supervision_enabled",
+            "source_calls_physically_admitted": true,
+            "judge_admission": "verified_idle_distinct_host_only",
+            "judge_queueing": false,
+            "deterministic_stop": false,
+            "payload_logged": false,
+        }));
+        Some(control)
+    } else {
+        None
+    };
     // F781/#16 c6: the fix-round dispatcher is seeded with the SAME frozen contracts + pillars the
     // run-1 dispatcher got — captured at their set sites below (set_contracts takes ownership).
     let mut fix_contracts_bundle = String::new();
@@ -47483,21 +48037,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     };
     // Planning ends here (skeleton draft + verbalized confidence + any ASK/re-plan + detailing are all
     // behind us); the scheduler.run below IS the execute phase (workers + judge + integrate-verify).
+    if let Some(control) = pre_scheduler_control.as_ref() {
+        // A naturally slow semantic review must not become a new phase wall. Execute inherits the
+        // same broker, so it can use every genuinely free lane while the admitted review drains and
+        // still cannot oversubscribe the host carrying that review.
+        dispatcher.set_pre_scheduler_semantic(None);
+        let (pending, active) = control.occupancy().await;
+        sink.write_value(serde_json::json!({
+            "event": "pre_scheduler_physical_supervision_handoff",
+            "pending": pending,
+            "active": active,
+            "shared_with_execute": true,
+        }));
+    }
     let t_plan = std::time::Instant::now();
     let report = if broker_enforcement_requested {
-        let snapshot = physical_snapshot
-            .as_ref()
-            .expect("physical broker preflight rejected an unavailable snapshot")
-            .clone();
-        let control = PhysicalAdmissionControl::new_with_journal(
-            format!("{run_id}:execute"),
-            snapshot,
-            sink.clone(),
-            provider_journal
-                .as_ref()
-                .expect("physical provider journal was preflighted")
-                .clone(),
-        )?;
+        let control = pre_scheduler_control
+            .clone()
+            .expect("physical pre-scheduler control was preflighted");
         scheduler
             .run_with_physical_admission(
                 dag,
