@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -537,6 +538,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         )
         return {
             "scorer_version": verdict["scorer_version"],
+            "calibration": verdict["calibration"],
             "publisher": target,
         }
 
@@ -2092,7 +2094,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     cloud_sb7.qualification_manifest_failure(source, candidate) or "",
                 )
 
-    def test_qualification_publisher_transition_is_one_exact_stable_board_fix(
+    def test_qualification_publisher_transition_pins_bytes_without_identity_authority(
         self,
     ) -> None:
         stable = {
@@ -3580,7 +3582,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(cloud_sb7.monitor_tick(root), (True, 2))
             self.assertEqual(cloud_sb7.read_monitor_state(root)["status"], "STOPPED")
 
-    def test_offline_progress_replay_has_no_duration_cap_and_requires_recurrence_corroboration(
+    def test_offline_progress_replay_has_no_duration_cap_and_content_is_observation_only(
         self,
     ) -> None:
         healthy = " ".join(
@@ -3643,7 +3645,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertTrue(
             all(
                 record["classification"] == "PROVIDER_SILENCE_OBSERVED"
-                and record["fail_stop"] is False
+                and "fail_stop" not in record
                 for record in replayed[1:]
             )
         )
@@ -3657,7 +3659,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(
             local_silence[-1]["classification"], "LOCAL_SILENCE_OBSERVED"
         )
-        self.assertIs(local_silence[-1]["fail_stop"], False)
+        self.assertNotIn("fail_stop", local_silence[-1])
 
         loop_sentence = (
             "I am still considering the identical plan and will reconsider it "
@@ -3672,17 +3674,26 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 self.progress_observation(longer_looping),
             ]
         )
-        self.assertEqual(repeated[0]["classification"], "REPETITION_SUSPECTED")
-        self.assertIs(repeated[0]["fail_stop"], False)
+        self.assertEqual(repeated[0]["classification"], "PROCESS_BASELINE")
         self.assertEqual(
-            repeated[1]["classification"], "REPETITION_SUSPECTED"
+            repeated[1]["classification"], "PROVIDER_SILENCE_OBSERVED"
         )
-        self.assertIs(repeated[1]["fail_stop"], False)
+        self.assertEqual(repeated[2]["classification"], "PROGRESSING")
+        self.assertNotIn("fail_stop", repeated[2])
+        self.assertEqual(repeated[2]["recurrence_prior_sequence"], 1)
+        self.assertTrue(repeated[2]["evidence"]["repetition"]["detected"])
+
+        productive_after_repeat = cloud_sb7.replay_monitor_progress(
+            [
+                self.progress_observation(looping),
+                self.progress_observation(longer_looping),
+                self.progress_observation(longer_looping + " " + healthy),
+            ]
+        )
         self.assertEqual(
-            repeated[2]["classification"], "REPETITION_CORROBORATED"
+            productive_after_repeat[-1]["classification"], "PROGRESSING"
         )
-        self.assertIs(repeated[2]["fail_stop"], True)
-        self.assertEqual(repeated[2]["corroborated_by_sequence"], 1)
+        self.assertNotIn("fail_stop", productive_after_repeat[-1])
 
         restarted = cloud_sb7.replay_monitor_progress(
             [
@@ -3693,8 +3704,8 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 ),
             ]
         )
-        self.assertEqual(restarted[-1]["classification"], "REPETITION_SUSPECTED")
-        self.assertIs(restarted[-1]["fail_stop"], False)
+        self.assertEqual(restarted[-1]["classification"], "PROCESS_BASELINE")
+        self.assertIsNone(restarted[-1]["recurrence_prior_sequence"])
         new_provider_request = cloud_sb7.replay_monitor_progress(
             [
                 self.progress_observation(looping),
@@ -3704,10 +3715,8 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 ),
             ]
         )
-        self.assertEqual(
-            new_provider_request[-1]["classification"], "REPETITION_SUSPECTED"
-        )
-        self.assertIs(new_provider_request[-1]["fail_stop"], False)
+        self.assertEqual(new_provider_request[-1]["classification"], "PROGRESSING")
+        self.assertIsNone(new_provider_request[-1]["recurrence_prior_sequence"])
         unstable = self.progress_observation(longer_looping)
         unstable["evidence"]["telemetry"]["stable_read"] = False
         unstable_replay = cloud_sb7.replay_monitor_progress(
@@ -3716,7 +3725,51 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(
             unstable_replay[-1]["classification"], "EVIDENCE_UNSTABLE"
         )
-        self.assertIs(unstable_replay[-1]["fail_stop"], False)
+        self.assertNotIn("fail_stop", unstable_replay[-1])
+
+        tool_only = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "shell",
+                                    "input": {"command": "inspect"},
+                                }
+                            ],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "tool",
+                            "content": "Repeated tool bytes. " * 500,
+                        },
+                    }
+                ),
+            ]
+        )
+        self.assertEqual(cloud_sb7.assistant_semantic_stream(tool_only), "")
+        tool_first = self.progress_observation("")
+        tool_second = self.progress_observation("")
+        tool_second["evidence"]["build_log"].update(
+            {
+                "bytes": len(tool_only),
+                "sha256": cloud_sb7.sha256_bytes(tool_only.encode()),
+            }
+        )
+        tool_replay = cloud_sb7.replay_monitor_progress([tool_first, tool_second])
+        self.assertEqual(tool_replay[-1]["classification"], "PROGRESSING")
+        self.assertEqual(
+            tool_replay[-1]["evidence"]["repetition"]["semantic_chars"], 0
+        )
+        self.assertNotIn("fail_stop", tool_replay[-1])
 
     def test_monitor_progress_real_process_growth_silence_and_durable_orphan_adoption(
         self,
@@ -3840,7 +3893,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     self.assertEqual(
                         silent["classification"], "PROVIDER_SILENCE_OBSERVED"
                     )
-                    self.assertIs(silent["fail_stop"], False)
+                    self.assertNotIn("fail_stop", silent)
 
                 latest = cloud_sb7.monitor_progress_history(root, entrant_id)[-1]
                 orphan_observation = cloud_sb7.monitor_progress_observation(
@@ -3908,18 +3961,19 @@ class CloudSb7HarnessTest(unittest.TestCase):
                         )
                     )
                 self.assertEqual(
-                    recurrence_records[0]["classification"],
-                    "REPETITION_SUSPECTED",
+                    recurrence_records[0]["classification"], "PROGRESSING"
                 )
-                self.assertIs(recurrence_records[0]["fail_stop"], False)
+                self.assertNotIn("fail_stop", recurrence_records[0])
                 self.assertEqual(
-                    recurrence_records[1]["classification"],
-                    "REPETITION_CORROBORATED",
+                    recurrence_records[1]["classification"], "PROGRESSING"
                 )
-                self.assertIs(recurrence_records[1]["fail_stop"], True)
-                summaries, progress_failure = cloud_sb7.monitor_progress_tick(root)
-                self.assertIs(summaries[0]["fail_stop"], True)
-                self.assertIn("monitor progress fail-stop", progress_failure)
+                self.assertNotIn("fail_stop", recurrence_records[1])
+                self.assertIsNotNone(
+                    recurrence_records[1]["recurrence_prior_sequence"]
+                )
+                summaries = cloud_sb7.monitor_progress_tick(root)
+                self.assertTrue(summaries[0]["recurrence"]["detected"])
+                self.assertNotIn("fail_stop", summaries[0])
             finally:
                 if supervisor.poll() is None:
                     cloud_sb7.stop_group(supervisor.pid, grace_seconds=0.1)
@@ -3928,7 +3982,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     cloud_sb7.stop_group(goose.pid, grace_seconds=0.1)
                     goose.wait(timeout=5)
 
-    def test_monitor_progress_corruption_and_corroborated_failure_fail_closed(
+    def test_monitor_progress_corruption_fails_closed_but_content_does_not(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -3978,6 +4032,8 @@ class CloudSb7HarnessTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             self.make_smoke_campaign(root, entrant_count=1)
+            ledger = cloud_sb7.ensure_monitor_progress_ledger(root, create=True)
+            assert ledger is not None
             cloud_sb7.manager_state(
                 root,
                 status="RUNNING",
@@ -3990,7 +4046,40 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 mock.patch.object(
                     cloud_sb7,
                     "monitor_progress_tick",
-                    return_value=([], "corroborated repetition fixture"),
+                    return_value=[
+                        {
+                            "entrant": "fixture",
+                            "sequence": 1,
+                            "classification": "PROGRESSING",
+                            "stagnant_observations": 0,
+                            "recurrence": {
+                                "detected": True,
+                                "prior_sequence": None,
+                                "semantic_chars": 10000,
+                                "repeated_windows": 9000,
+                                "window_count": 9953,
+                                "duplicate_sentences": 99,
+                                "sentence_count": 100,
+                            },
+                            "reason": "artifacts changed",
+                            "record_sha256": "a" * 64,
+                        }
+                    ],
+                ),
+                mock.patch.object(cloud_sb7, "stop_runtime_groups_for_attention") as stop,
+            ):
+                self.assertEqual(cloud_sb7.monitor_tick(root), (False, 0))
+            stop.assert_not_called()
+            self.assertEqual(
+                cloud_sb7.load_json(cloud_sb7.campaign_file(root))["status"],
+                "INITIALIZED",
+            )
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(
+                    cloud_sb7,
+                    "monitor_progress_tick",
+                    side_effect=SystemExit("ledger tamper fixture"),
                 ),
                 mock.patch.object(
                     cloud_sb7, "stop_runtime_groups_for_attention", return_value=[]
@@ -4002,9 +4091,67 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "ATTENTION",
             )
             self.assertIn(
-                "corroborated repetition",
+                "ledger tamper fixture",
                 cloud_sb7.read_monitor_state(root)["failure"],
             )
+
+    def test_monitor_progress_ledger_deletion_after_commitment_fails_closed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            unit = root / "entrants" / entrant_id
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                provider_lifecycle=str(unit / "provider-lifecycle.jsonl"),
+                build_log=str(unit / "logs/build.log"),
+            )
+            summaries = cloud_sb7.monitor_progress_tick(root)
+            ledger = cloud_sb7.ensure_monitor_progress_ledger(root, create=False)
+            assert ledger is not None
+            cloud_sb7.monitor_state(
+                root,
+                progress_ledger_id=ledger["ledger_id"],
+                progress_ledger_sha256=cloud_sb7.sha256_file(
+                    cloud_sb7.monitor_progress_ledger_path(root)
+                ),
+                entrant_progress=summaries,
+            )
+            shutil.rmtree(root / cloud_sb7.MONITOR_PROGRESS_ROOT)
+            with self.assertRaisesRegex(
+                SystemExit, "ledger was deleted after commitment"
+            ):
+                cloud_sb7.validate_monitor_progress_ledger(root)
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            unit = root / "entrants" / entrant_id
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                provider_lifecycle=str(unit / "provider-lifecycle.jsonl"),
+                build_log=str(unit / "logs/build.log"),
+            )
+            summaries = cloud_sb7.monitor_progress_tick(root)
+            ledger_path = cloud_sb7.monitor_progress_ledger_path(root)
+            ledger = cloud_sb7.load_json(ledger_path)
+            cloud_sb7.monitor_state(
+                root,
+                progress_ledger_id=ledger["ledger_id"],
+                progress_ledger_sha256=cloud_sb7.sha256_file(ledger_path),
+                entrant_progress=summaries,
+            )
+            ledger["created_at"] = "tampered"
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            with self.assertRaisesRegex(
+                SystemExit, "ledger bytes changed after commitment"
+            ):
+                cloud_sb7.validate_monitor_progress_ledger(root)
 
     def test_stop_owns_live_smoke_supervisor_group(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -4954,6 +5101,154 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertNotIn("publisher-super-secret", log.read_text())
             self.assertIn("[REDACTED]", log.read_text())
 
+    def test_publisher_identity_receipt_requires_exact_rc_calibration_truth(
+        self,
+    ) -> None:
+        verdict = self.fixture_verdict()
+        campaign = self.public_identity_campaign(verdict)
+        expected = {
+            "scorer_version": "sb-7.0-rc",
+            "calibration": verdict["calibration"],
+            "provisional": True,
+        }
+        self.assertEqual(
+            cloud_sb7.public_publication_identity(campaign, verdict), expected
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            log = Path(raw) / "publisher.log"
+            log.write_text(
+                cloud_sb7.PUBLISHER_PUBLIC_IDENTITY_PREFIX
+                + json.dumps(expected, sort_keys=True)
+                + "\n"
+            )
+            receipt = cloud_sb7.publisher_public_identity_receipt_from_log(
+                log, verdict, campaign
+            )
+            self.assertEqual(receipt["identity"], expected)
+            self.assertIsNone(
+                cloud_sb7.publisher_public_identity_receipt_failure(
+                    receipt,
+                    verdict,
+                    campaign,
+                    {
+                        "exit_code": 0,
+                        "timed_out": False,
+                        "log": str(log),
+                        "log_sha256": cloud_sb7.sha256_file(log),
+                    },
+                )
+            )
+
+            concealed = dict(expected, scorer_version="sb-7.0")
+            log.write_text(
+                cloud_sb7.PUBLISHER_PUBLIC_IDENTITY_PREFIX
+                + json.dumps(concealed, sort_keys=True)
+                + "\n"
+            )
+            with self.assertRaisesRegex(
+                cloud_sb7.PublicationError, "conceal or alter"
+            ):
+                cloud_sb7.publisher_public_identity_receipt_from_log(
+                    log, verdict, campaign
+                )
+            wrong_type = dict(expected, provisional=1)
+            log.write_text(
+                cloud_sb7.PUBLISHER_PUBLIC_IDENTITY_PREFIX
+                + json.dumps(wrong_type, sort_keys=True)
+                + "\n"
+            )
+            with self.assertRaisesRegex(
+                cloud_sb7.PublicationError, "conceal or alter"
+            ):
+                cloud_sb7.publisher_public_identity_receipt_from_log(
+                    log, verdict, campaign
+                )
+            log.write_text("document scorerVersion sb-7.0\n")
+            with self.assertRaisesRegex(
+                cloud_sb7.PublicationError, "cannot prove one exact public"
+            ):
+                cloud_sb7.publisher_public_identity_receipt_from_log(
+                    log, verdict, campaign
+                )
+
+            log.write_text(
+                cloud_sb7.PUBLISHER_PUBLIC_IDENTITY_PREFIX
+                + json.dumps(expected, sort_keys=True)
+                + "\n"
+            )
+            sealed = cloud_sb7.publisher_public_identity_receipt_from_log(
+                log, verdict, campaign
+            )
+            dry_run = {
+                "exit_code": 0,
+                "timed_out": False,
+                "log": str(log),
+                "log_sha256": cloud_sb7.sha256_file(log),
+            }
+            log.write_text(log.read_text() + "tampered after validation\n")
+            self.assertIn(
+                "differs from sealed dry-run evidence",
+                cloud_sb7.publisher_public_identity_receipt_failure(
+                    sealed, verdict, campaign, dry_run
+                )
+                or "",
+            )
+
+    def test_current_stable_mapping_refuses_before_live_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_scored_campaign(root)
+            runs = cloud_sb7.publication_stage(root, "fixture-model")
+            shot = runs / "fixture-model-r0/sb7-shots/100-loaded.png"
+            log = root / "publisher-dry-run.log"
+            log.write_text(
+                f'  shot loaded · "Final render" · {shot} (1KB)\n'
+                "  document brun-baseline-fixture-model-sb70 · "
+                "scorerVersion sb-7.0 · 1 shot(s)\n"
+            )
+            dry_run = {
+                "exit_code": 0,
+                "timed_out": False,
+                "log": str(log),
+                "log_sha256": cloud_sb7.sha256_file(log),
+                "pid": 1,
+            }
+            with (
+                mock.patch.object(
+                    cloud_sb7, "run_publisher", return_value=dry_run
+                ) as publisher,
+                mock.patch.object(
+                    cloud_sb7, "remote_publication_receipt"
+                ) as remote,
+            ):
+                self.assertFalse(cloud_sb7.publish_one(root, "fixture-model"))
+            publisher.assert_called_once_with(
+                root, "fixture-model", runs, live=False
+            )
+            remote.assert_not_called()
+            final = cloud_sb7.read_state(root, "fixture-model")
+            self.assertEqual(final["status"], "PUBLISH_FAILED")
+            self.assertIn("cannot prove one exact public", final["failure"])
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            campaign["publisher"]["frozen"] = {"root": str(root)}
+            cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
+            with (
+                mock.patch.object(
+                    cloud_sb7, "publisher_mismatch", return_value=None
+                ),
+                mock.patch.object(
+                    cloud_sb7, "frozen_publisher_mismatch", return_value=None
+                ),
+                mock.patch.object(cloud_sb7, "run_logged_process") as process,
+            ):
+                with self.assertRaisesRegex(
+                    cloud_sb7.PublicationError, "live publication refused"
+                ):
+                    cloud_sb7.run_publisher(
+                        root, "fixture-model", runs, live=True
+                    )
+            process.assert_not_called()
+
     def test_rendered_verification_requires_exact_board_and_run_evidence(self) -> None:
         verdict = self.fixture_verdict()
         campaign = self.public_identity_campaign(verdict)
@@ -4987,14 +5282,20 @@ class CloudSb7HarnessTest(unittest.TestCase):
             + json.dumps(
                 {
                     "@type": "Dataset",
-                    "name": "fixture-model on sb-7.0",
+                    "name": "fixture-model on sb-7.0-rc",
                     "url": run_url,
-                    "variableMeasured": [{"value": 0.42}],
+                    "variableMeasured": [
+                        {"value": 0.42},
+                        {"value": "sb-7.0-rc"},
+                        {"value": verdict["calibration"]},
+                        {"value": True},
+                    ],
                 }
             )
             + "</script>"
-            + "<h1>Fixture Model — 0.4200 on sb-7.0</h1>"
-            + "<p>fixture-model · scorer sb-7.0</p>"
+            + "<h1>Fixture Model — 0.4200 on sb-7.0-rc</h1>"
+            + "<p>fixture-model · scorer sb-7.0-rc</p>"
+            + f"<p>{verdict['calibration']} · provisional true</p>"
         )
         matched, evidence = cloud_sb7.rendered_publication_matches(
             campaign, board, run, "https://example.invalid", entry, verdict
@@ -5011,17 +5312,16 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertFalse(matched)
         self.assertFalse(evidence["board_item_exact"])
 
-        for residue in (
-            "<p>sb-7.0-rc</p>",
-            "<p>Scorer calibration · UNCALIBRATED</p>",
-            "<p>rc-grade only</p>",
-            '<script type="application/json">{"calibration":"uncalibrated"}</script>',
+        for concealed in (
+            run.replace("sb-7.0-rc", "sb-7.0"),
+            run.replace(str(verdict["calibration"]), "calibration omitted"),
+            run.replace("provisional true", "provisional false"),
         ):
-            with self.subTest(residue=residue):
+            with self.subTest(concealed=concealed[-100:]):
                 matched, evidence = cloud_sb7.rendered_publication_matches(
                     campaign,
                     board,
-                    run + residue,
+                    concealed,
                     "https://example.invalid",
                     entry,
                     verdict,
@@ -5053,7 +5353,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "tierC": 0.5,
             "tierD": 0.5,
             "wallSecs": 123,
-            "scorerVersion": "sb-7.0",
+            "scorerVersion": "sb-7.0-rc",
+            "calibration": verdict["calibration"],
+            "provisional": True,
             "excellent": False,
             "checksSummary": [
                 {
@@ -5086,7 +5388,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertTrue(receipt["matched"], receipt)
             self.assertEqual(
                 receipt["expected_public_identity"],
-                {"scorer_version": "sb-7.0", "calibration_absent": True},
+                {
+                    "scorer_version": "sb-7.0-rc",
+                    "calibration": verdict["calibration"],
+                    "provisional": True,
+                },
             )
             self.assertEqual(
                 receipt["raw_verdict_identity_sha256"],
@@ -5100,40 +5406,25 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertIn("document check 0 differs", receipt["reasons"])
             document["checksSummary"][0]["score"] = 0.5
             for stale in (
-                {"scorerVersion": "sb-7.0-rc"},
-                {"calibration": verdict["calibration"]},
+                {"scorerVersion": "sb-7.0"},
+                {"calibration": "frozen"},
+                {"provisional": False},
+                {"provisional": 1},
             ):
                 with self.subTest(stale=stale):
+                    original = {key: document.get(key) for key in stale}
                     document.update(stale)
                     receipt = cloud_sb7.remote_publication_receipt(
                         campaign, entry, verdict, plan
                     )
                     self.assertFalse(receipt["matched"])
-                    if "calibration" in stale:
-                        self.assertIn(
-                            "document field calibration must be absent",
-                            receipt["reasons"],
-                        )
-                        document.pop("calibration")
-                    else:
-                        self.assertIn(
-                            "document field scorerVersion differs",
-                            receipt["reasons"],
-                        )
-                        document["scorerVersion"] = "sb-7.0"
-            document["notes"] = (
-                "Scored by sb-7.0-rc. Calibration: UNCALIBRATED; rc-grade only."
-            )
-            receipt = cloud_sb7.remote_publication_receipt(
-                campaign, entry, verdict, plan
-            )
-            self.assertFalse(receipt["matched"])
-            self.assertIn(
-                "document notes retain forbidden RC/calibration residue",
-                receipt["reasons"],
-            )
+                    field = next(iter(stale))
+                    self.assertIn(
+                        f"document field {field} differs", receipt["reasons"]
+                    )
+                    document.update(original)
 
-    def test_rendered_receipt_persists_public_identity_not_raw_rc(self) -> None:
+    def test_rendered_receipt_persists_exact_raw_rc_identity(self) -> None:
         verdict = self.fixture_verdict()
         campaign = self.public_identity_campaign(verdict)
         campaign["publisher"].update(
@@ -5173,14 +5464,20 @@ class CloudSb7HarnessTest(unittest.TestCase):
             + json.dumps(
                 {
                     "@type": "Dataset",
-                    "name": "fixture-model on sb-7.0",
+                    "name": "fixture-model on sb-7.0-rc",
                     "url": run_url,
-                    "variableMeasured": [{"value": 0.42}],
+                    "variableMeasured": [
+                        {"value": 0.42},
+                        {"value": "sb-7.0-rc"},
+                        {"value": verdict["calibration"]},
+                        {"value": True},
+                    ],
                 }
             )
             + "</script>"
-            + "<h1>Fixture Model — 0.4200 on sb-7.0</h1>"
-            + "<p>fixture-model · scorer sb-7.0</p>"
+            + "<h1>Fixture Model — 0.4200 on sb-7.0-rc</h1>"
+            + "<p>fixture-model · scorer sb-7.0-rc</p>"
+            + f"<p>{verdict['calibration']} · provisional true</p>"
         )
         with mock.patch.object(
             cloud_sb7,
@@ -5197,18 +5494,20 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "label": entry["label"],
                 "model": entry["model"],
                 "score": 0.42,
-                "scorer_version": "sb-7.0",
-                "calibration_absent": True,
+                "scorer_version": "sb-7.0-rc",
+                "calibration": verdict["calibration"],
+                "provisional": True,
             },
         )
-        self.assertNotIn("sb-7.0-rc", json.dumps(receipt["expected"]))
-        self.assertNotIn("calibration", receipt["expected"])
+        self.assertIn("sb-7.0-rc", json.dumps(receipt["expected"]))
+        self.assertEqual(receipt["expected"]["calibration"], verdict["calibration"])
+        self.assertIs(receipt["expected"]["provisional"], True)
         self.assertEqual(
             receipt["raw_verdict_identity_sha256"],
             cloud_sb7.raw_publication_identity_sha256(verdict),
         )
 
-    def test_published_audit_reconstructs_public_identity_and_rejects_stale_rc(
+    def test_published_audit_reconstructs_exact_identity_and_rejects_concealment(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -5272,9 +5571,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
             ):
                 self.assertIsNone(cloud_sb7.published_campaign_mismatch(root))
                 stale = json.loads(json.dumps(rendered))
-                stale["expected"]["scorer_version"] = "sb-7.0-rc"
-                stale["expected"].pop("calibration_absent")
-                stale["expected"]["calibration"] = verdict["calibration"]
+                stale["expected"]["scorer_version"] = "sb-7.0"
+                stale["expected"].pop("calibration")
+                stale["expected"]["provisional"] = False
                 cloud_sb7.update_state(
                     root, "fixture-model", rendered_verification=stale
                 )
@@ -5329,6 +5628,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
             with (
                 mock.patch.object(
                     cloud_sb7,
+                    "publisher_public_identity_receipt_failure",
+                    return_value=None,
+                ),
+                mock.patch.object(
+                    cloud_sb7,
                     "remote_publication_receipt",
                     return_value={"matched": True, "document_sha256": "remote"},
                 ),
@@ -5378,6 +5682,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 {"matched": True, "document_sha256": "new document"},
             ]
             with (
+                mock.patch.object(
+                    cloud_sb7,
+                    "publisher_public_identity_receipt_failure",
+                    return_value=None,
+                ),
                 mock.patch.object(
                     cloud_sb7, "remote_publication_receipt", side_effect=receipts
                 ),
@@ -5439,6 +5748,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "pid": 1,
             }
             with (
+                mock.patch.object(
+                    cloud_sb7,
+                    "publisher_public_identity_receipt_failure",
+                    return_value=None,
+                ),
                 mock.patch.object(
                     cloud_sb7,
                     "remote_publication_receipt",
