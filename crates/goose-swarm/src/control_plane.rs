@@ -227,10 +227,21 @@ impl PhysicalAdmissionControl {
     pub async fn update_host_capacity(
         &self,
         host_id: &str,
+        expected_fleet_snapshot_id: &str,
         evidence: HostCapacityEvidence,
     ) -> Result<CapacityUpdateReceipt, BrokerError> {
         let mut state = self.inner.state.lock().await;
-        let receipt = state.broker.update_host_capacity(host_id, evidence)?;
+        let receipt =
+            match state
+                .broker
+                .update_host_capacity(host_id, expected_fleet_snapshot_id, evidence)
+            {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    self.emit_rejection(None, None, None, "capacity_update", &error);
+                    return Err(error);
+                }
+            };
         self.inner.sink.emit(&SwarmEvent::BrokerCapacityUpdated {
             receipt: receipt.clone(),
         });

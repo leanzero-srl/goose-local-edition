@@ -980,6 +980,7 @@ async fn measured_capacity_update_admits_waiting_work_and_emits_its_evidence() {
         ))
         .await
         .unwrap();
+    let initial_snapshot_id = first.receipt().fleet_snapshot_id.clone();
     let second_source = build("second");
     control
         .set_source_revision(second_source.clone())
@@ -1002,6 +1003,7 @@ async fn measured_capacity_update_admits_waiting_work_and_emits_its_evidence() {
     let update = control
         .update_host_capacity(
             "host-a",
+            &initial_snapshot_id,
             HostCapacityEvidence::MeasuredProfile {
                 profile_hash: "measured-capacity-two".to_string(),
                 profile_key: "test-runtime:model:context:role".to_string(),
@@ -1022,6 +1024,25 @@ async fn measured_capacity_update_admits_waiting_work_and_emits_its_evidence() {
     assert_ne!(
         first.receipt().fleet_snapshot_id,
         second.receipt().fleet_snapshot_id
+    );
+    let stale_update = control
+        .update_host_capacity(
+            "host-a",
+            &initial_snapshot_id,
+            HostCapacityEvidence::MeasuredProfile {
+                profile_hash: "stale-capacity-three".to_string(),
+                profile_key: "test-runtime:model:context:role".to_string(),
+                max_concurrent: 3,
+            },
+        )
+        .await;
+    assert!(matches!(
+        stale_update,
+        Err(BrokerError::FleetSnapshotMismatch { .. })
+    ));
+    assert_eq!(
+        control.snapshot().await.snapshot_id,
+        update.new_fleet_snapshot_id
     );
     assert_eq!(control.occupancy().await, (0, 2));
     finish(&first, "provider:first").await;
