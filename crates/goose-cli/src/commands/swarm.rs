@@ -29,10 +29,11 @@ use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
     deterministic_verdict, is_split_candidate, AdmissionReceipt, ChildSpec, Dag, DeviceCfg,
     DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig,
-    JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalFleetSnapshot, PreReviewOutput,
-    PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
-    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler, SwarmEvent,
-    TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
+    JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalAdmissionControl,
+    PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle,
+    ProviderLifecycleDispatcher, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext,
+    Replanner, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord,
+    Verdict, VerifiedPhysicalIdentity,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -37737,14 +37738,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         Ok(snapshot) => sink.emit(&SwarmEvent::PhysicalFleetSnapshotObserved {
             snapshot: snapshot.clone(),
             enforcement: if broker_enforcement_requested {
-                "requested".to_string()
+                "provider-boundary-ready".to_string()
             } else {
                 "shadow".to_string()
             },
-            // TaskDispatcher::run is a multi-turn agent boundary and currently exposes neither
-            // provider request ids nor terminal reasons. Claiming otherwise would recreate phantom
-            // capacity under a new name.
-            provider_lifecycle_available: false,
+            provider_lifecycle_available: broker_enforcement_requested,
         }),
         Err(error) => sink.emit(&SwarmEvent::PhysicalFleetSnapshotUnavailable {
             reason: error.to_string(),
@@ -37756,16 +37754,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             provider_lifecycle_available: false,
         }),
     }
-    if broker_enforcement_requested {
-        let snapshot_status = physical_snapshot
+    if broker_enforcement_requested && physical_snapshot.is_err() {
+        let error = physical_snapshot
             .as_ref()
-            .map(|_| "physical snapshot verified".to_string())
-            .unwrap_or_else(|error| format!("physical snapshot unavailable: {error}"));
+            .expect_err("physical snapshot was checked as unavailable");
         anyhow::bail!(
-            "GOOSE_SWARM_PHYSICAL_BROKER requested, but provider lifecycle correlation is not wired: \
-             TaskDispatcher::run spans multiple provider turns and supplies no provider request/terminal \
-             receipts ({snapshot_status}). Refusing to release capacity from a local future or silently \
-             fall back to logical DeviceCfg.weight."
+            "GOOSE_SWARM_PHYSICAL_BROKER requested without a complete same-run physical fleet snapshot: \
+             {error}. Refusing to fall back to logical DeviceCfg.weight."
         );
     }
 
@@ -40133,16 +40128,34 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Planning ends here (skeleton draft + verbalized confidence + any ASK/re-plan + detailing are all
     // behind us); the scheduler.run below IS the execute phase (workers + judge + integrate-verify).
     let t_plan = std::time::Instant::now();
-    let report = scheduler
-        .run_with_decisions(
-            dag,
-            dispatcher as Arc<dyn TaskDispatcher>,
-            opts.prompt.clone(),
-            // The amended spec (arg 3) reaches only the replanner/judge/pre-reviewer. THIS is the copy that
-            // reaches a worker.
-            user_decisions.clone(),
-        )
-        .await?;
+    let report = if broker_enforcement_requested {
+        let snapshot = physical_snapshot
+            .as_ref()
+            .expect("physical broker preflight rejected an unavailable snapshot")
+            .clone();
+        let control =
+            PhysicalAdmissionControl::new(format!("{run_id}:execute"), snapshot, sink.clone())?;
+        scheduler
+            .run_with_physical_admission(
+                dag,
+                dispatcher.clone() as Arc<dyn ProviderLifecycleDispatcher>,
+                control,
+                opts.prompt.clone(),
+                user_decisions.clone(),
+            )
+            .await?
+    } else {
+        scheduler
+            .run_with_decisions(
+                dag,
+                dispatcher as Arc<dyn TaskDispatcher>,
+                opts.prompt.clone(),
+                // The amended spec (arg 3) reaches only the replanner/judge/pre-reviewer. THIS is the copy that
+                // reaches a worker.
+                user_decisions.clone(),
+            )
+            .await?
+    };
     // F857b (speed hunt 2026-08-16): the pre-run snapshot cannot know files that replan/split added
     // mid-run, so every post-run scope (orphan check, complete-phase instruments, fix all_files) was
     // structurally blind to them — ~17 node-min of replan-added tests flagged as orphans and excluded
