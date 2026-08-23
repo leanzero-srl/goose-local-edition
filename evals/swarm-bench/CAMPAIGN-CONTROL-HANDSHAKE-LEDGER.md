@@ -116,6 +116,48 @@ held by an exact baseline hash and cannot be smuggled into a causal behavior arm
   165 rows and the digest above. This command did not inspect or contact LM Studio.
 
 Confidence is high for catalogue elimination, attribution checks, and binary/manifest sealing. Confidence is
-lower at the deployment seam: the historical launcher is outside this repository and remains untouched by
-design. It must copy only a successfully receipted staged config, preserve its existing live-run guard, and
-record the receipt path beside the run before any real campaign resumes.
+also high for the external adoption seam after the follow-up implementation below. Confidence remains lower
+for the first real activation because the installed DMG has not yet been rebuilt with this engine command and
+the deliberately stopped live campaign has not been migrated or exercised.
+
+## External loop-state adoption (2026-08-23)
+
+`campaign_runtime.py` now owns the transaction around the three handshake boundaries. Queue generation asks
+the sealed manifest for every persisted behavior control, writes a complete explicit reference profile,
+automatically inverts booleans (including default-on controls), and requires a preregistered alternative for
+every non-boolean behavior control. It emits a complete inventory that classifies config and environment
+controls as behavior, runtime profile, removal, telemetry, or unreachable from persisted config. The queue is
+immutable JSONL, hash-bound to the campaign plan, and written last; it is never popped. A crash during
+generation resumes only if every already-written byte is identical.
+
+Activation performs the heartbeat check twice: once before waiting for the mutation lock and once while
+holding it. It then re-verifies the binary, build, registry, environment readers, baseline, spec, queue, and
+arm receipt. Before replacing global `config.yaml` it writes an activation intent and an exact backup. A crash
+before or after the global write therefore resumes the same receipt; another arm cannot acquire the active
+lease. Unexpected global-config drift is refused unless explicit same-arm crash recovery is requested, in
+which case the observed digest is preserved before the sealed staged config is restored.
+
+Verification now gates measurement and rotation. A ledger row is appended only after one terminal
+`run_finished` and one valid `levers_resolved` prove the complete executed profile against the verified
+reference. Ledger writes and release are idempotent across crashes. Static `ARM_LEVERS`, mechanism-event
+maps, `ALL-ON.env`, and whitespace queue parsing are absent from the adoption source; mechanism correctness is
+reported unassessed when the engine does not export a firing predicate rather than being guessed from a stale
+Python map.
+
+The actual tracked loop-state sources were changed only in a separate worktree on branch
+`codex/schema2-adoption`; the live campaign directory and its dirty state were read but never modified. Both
+healthy rotation and empty-state cold start use one queue-launch helper; crash recovery calls the same
+receipt-bound `launch.sh`. Repeated crashes and any verification failure stop with the receipt intact rather
+than skipping the arm. The old queue/catalogue files are retained only as explicit `RETIRED` tombstones.
+
+Additional regression evidence:
+
+- `python3 -m unittest bench.test_campaign_controls bench.test_campaign_runtime`: 30 passed. These include
+  process races, heartbeat TOCTOU injection, crashes on both sides of global config replacement, idempotent
+  resume/release, stale binary, queue tamper, unknown/missing/alias/default-on controls, and global-config
+  divergence.
+- `python3 -m unittest -v test_schema2_harness.py` in the isolated loop-state worktree: six passed. These
+  prove both daemon paths use the schema-2 seam, mutation follows activation, STOP is not silently removed,
+  static executable catalogues are gone, missing runtime fails closed, and both shell files parse.
+- No fleet, model, LM Studio process, benchmark, scorer, website, or live campaign state was started or
+  changed by these tests.
