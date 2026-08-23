@@ -6,6 +6,8 @@ This is a coordinator infrastructure defect, not model output or provider behavi
 
 The correction distinguishes retry eligibility from attempt preparation. `SMOKE_RETRYABLE_STATES` remains unchanged for supervisor admission and recovery; `prepare_smoke_attempt` additionally accepts the already-admitted `WAITING_PROVIDER_LANE` transition. The regression test reproduces that exact durable transition and proves it reaches `PREPARING` with one launch attempt and zero admitted provider episodes.
 
+The first recovery attempt exposed a second half of the same state-machine defect before any supersession receipt was committed: supersession required at least one affected entrant, but rejected every entrant whose coordinator activity stopped before `launch_attempts` incremented. The recovery gate now recognizes only a durable, terminal pre-admission failure with a queue timestamp, non-empty failure, zero launch attempts, zero admitted episodes, no active attempt, unambiguous empty lifecycle, and conserved budget ledger. A pristine `PLANNED` entrant still cannot authorize supersession, and model/output-driven reruns remain impossible.
+
 Frozen predecessor identity:
 
 - Binary SHA-256: `5d9de4ac8d9222458b3b6c80d2fdb261df99e9f7047669f1b992add33cc7db7a`

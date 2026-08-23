@@ -3326,6 +3326,21 @@ def full_entrant_was_never_started(
     )
 
 
+def smoke_has_proven_pre_admission_activity(state: Mapping[str, Any]) -> bool:
+    failure = state.get("failure")
+    queued_at = state.get("queued_at")
+    return (
+        state.get("status") in {"FAILED", "PRE_ADMISSION_FAILURE", "STOPPED"}
+        and int(state.get("launch_attempts", 0)) == 0
+        and int(state.get("admitted_episodes", 0)) == 0
+        and state.get("active_attempt") is False
+        and isinstance(queued_at, str)
+        and bool(queued_at.strip())
+        and isinstance(failure, str)
+        and bool(failure.strip())
+    )
+
+
 def validate_stopped_predecessor(
     root: Path,
     campaign: Mapping[str, Any],
@@ -3427,7 +3442,11 @@ def validate_stopped_predecessor(
             )
         if state.get("score") is not None or state.get("verdict"):
             raise SystemExit(f"scored or outcome-bearing entrant cannot be rerun: {entrant_id}")
-        if full_entrant_was_never_started(state, lifecycle) and not smoke_launched:
+        if (
+            full_entrant_was_never_started(state, lifecycle)
+            and not smoke_launched
+            and not smoke_has_proven_pre_admission_activity(smoke_state)
+        ):
             raise SystemExit(
                 f"defect evidence names an entrant with no smoke or full activity: {entrant_id}"
             )
