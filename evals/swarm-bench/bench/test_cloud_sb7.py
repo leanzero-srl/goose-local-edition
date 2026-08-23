@@ -6424,6 +6424,28 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     "brun-baseline-fixture-model-sb70",
                 )
 
+            for duplicate in (
+                f"  scorer sb-7.0-rc · calibration {verdict['calibration']}\n",
+                "  document brun-baseline-fixture-model-sb70 · "
+                "scorerVersion sb-7.0 · 1 shot(s)\n",
+            ):
+                log.write_text(
+                    f"  scorer sb-7.0-rc · calibration {verdict['calibration']}\n"
+                    "  document brun-baseline-fixture-model-sb70 · "
+                    "scorerVersion sb-7.0 · 1 shot(s)\n"
+                    + duplicate
+                )
+                with self.assertRaisesRegex(
+                    cloud_sb7.PublicationError,
+                    "cannot prove one exact raw-to-public",
+                ):
+                    cloud_sb7.publisher_public_identity_receipt_from_log(
+                        log,
+                        verdict,
+                        campaign,
+                        "brun-baseline-fixture-model-sb70",
+                    )
+
             log.write_text(
                 f"  scorer sb-7.0-rc · calibration {verdict['calibration']}\n"
                 "  document brun-baseline-fixture-model-sb70 · "
@@ -6657,16 +6679,25 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertFalse(matched)
         self.assertFalse(evidence["board_item_exact"])
 
-        for leaked in (
-            run.replace("sb-7.0", "sb-7.0-rc"),
-            run + f"<p>{verdict['calibration']}</p>",
-            run + "<p>provisional true</p>",
+        for leaked_board, leaked_run in (
+            (board, run.replace("sb-7.0", "SB-7.0-RC")),
+            (board, run + f"<p>{verdict['calibration']}</p>"),
+            (board, run + "<p>Calibration omitted</p>"),
+            (board, run + "<p>provisional false</p>"),
+            (
+                board,
+                run
+                + '<script type="application/ld+json">'
+                + json.dumps({"@type": "Thing", "name": "Provisional false"})
+                + "</script>",
+            ),
+            (board + "<p>RC-grade board</p>", run),
         ):
-            with self.subTest(leaked=leaked[-100:]):
+            with self.subTest(leaked=(leaked_board + leaked_run)[-100:]):
                 matched, evidence = cloud_sb7.rendered_publication_matches(
                     campaign,
-                    board,
-                    leaked,
+                    leaked_board,
+                    leaked_run,
                     "https://example.invalid",
                     entry,
                     verdict,

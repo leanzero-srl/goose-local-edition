@@ -218,6 +218,11 @@ PUBLISHER_FILES = (
 PUBLISHER_RUNTIME_PACKAGES = ("@sanity/client", "dotenv")
 PUBLISHER_REQUIRED_ENV = ("SANITY_WRITE_TOKEN", "NEXT_PUBLIC_SANITY_PROJECT_ID")
 PUBLIC_SB7_SCORER_VERSION = "sb-7.0"
+FORBIDDEN_PUBLIC_SB7_IDENTITY = re.compile(
+    r"\bsb-7\.0-rc\b|\buncalibrated\b|\brc-grade\b|"
+    r"\bcalibrat(?:e|ed|es|ing|ion|ions)?\b|\bprovisional\b",
+    re.IGNORECASE,
+)
 PUBLISHER_PUBLIC_IDENTITY_RECEIPT_SCHEMA = 2
 DEFAULT_WEBSITE_BASE_URL = "https://leanzero.net"
 DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS = 900.0
@@ -16617,22 +16622,19 @@ def rendered_publication_matches(
     ]
     expected_visible = [" ".join(value.split()) for value in expected_visible]
     missing_visible = [value for value in expected_visible if value not in run_text]
-    forbidden_visible = [
-        value
-        for value in (
-            (
-                str(public["raw_scorer_version"])
-                if public["raw_scorer_version"] != scorer
-                else ""
-            ),
-            str(public["raw_calibration"]),
-            "provisional true" if public["raw_provisional"] else "",
-        )
-        if value and value in run_text
-    ]
+    forbidden_identity = sorted(
+        {
+            match.group(0).lower()
+            for html_document in (board_html, run_html)
+            for match in FORBIDDEN_PUBLIC_SB7_IDENTITY.finditer(html_document)
+        }
+    )
 
     dataset = False
     dataset_identity = False
+    scorer_pattern = re.compile(
+        rf"(?<![\w.-]){re.escape(scorer)}(?![\w.-])", re.IGNORECASE
+    )
     for item in json_ld_objects(run_parser):
         if item.get("@type") != "Dataset" or item.get("url") != run_url:
             continue
@@ -16641,21 +16643,10 @@ def rendered_publication_matches(
             continue
         values = [row.get("value") for row in measured if isinstance(row, dict)]
         score_present = any(same_number(value, score) for value in values)
-        if scorer in str(item.get("name", "")) and score_present:
+        if scorer_pattern.search(str(item.get("name", ""))) and score_present:
             dataset = True
             encoded_item = json.dumps(item, sort_keys=True)
-            dataset_identity = not any(
-                forbidden and forbidden in encoded_item
-                for forbidden in (
-                    (
-                        str(public["raw_scorer_version"])
-                        if public["raw_scorer_version"] != scorer
-                        else ""
-                    ),
-                    str(public["raw_calibration"]),
-                    "provisional true" if public["raw_provisional"] else "",
-                )
-            )
+            dataset_identity = not FORBIDDEN_PUBLIC_SB7_IDENTITY.search(encoded_item)
             if dataset_identity:
                 break
 
@@ -16666,10 +16657,10 @@ def rendered_publication_matches(
         reasons.append(
             f"run page lacks exact visible fields: {', '.join(missing_visible)}"
         )
-    if forbidden_visible:
+    if forbidden_identity:
         reasons.append(
-            "run page leaked the raw hermetic identity into the stable SB7 era: "
-            + ", ".join(forbidden_visible)
+            "rendered board/run leaked forbidden RC, calibration, or provisional "
+            "identity into stable SB7: " + ", ".join(forbidden_identity)
         )
     if not dataset:
         reasons.append("run Dataset JSON-LD lacks the exact URL, scorer and score")
@@ -16679,10 +16670,10 @@ def rendered_publication_matches(
         )
     return not reasons, {
         "board_item_exact": board_item,
-        "run_visible_exact": not missing_visible and not forbidden_visible,
+        "run_visible_exact": not missing_visible and not forbidden_identity,
         "run_dataset_exact": dataset and dataset_identity,
         "run_public_identity_exact": (
-            not missing_visible and not forbidden_visible and dataset_identity
+            not missing_visible and not forbidden_identity and dataset_identity
         ),
         "reasons": reasons,
     }
