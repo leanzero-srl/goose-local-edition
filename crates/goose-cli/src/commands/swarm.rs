@@ -5642,6 +5642,106 @@ mod tests {
     }
 
     #[test]
+    fn research_saturation_accepts_semantic_queue_larger_than_legacy_question_cap() {
+        let requirements = (0..12)
+            .map(|index| RequirementRecord {
+                id: format!("REQ-{index}"),
+                section: "task".to_string(),
+                quote: format!("requirement {index}"),
+            })
+            .collect::<Vec<_>>();
+        let raw = serde_json::json!({
+            "status": "continue",
+            "coverage": requirements.iter().map(|requirement| serde_json::json!({
+                "requirement_id": requirement.id,
+                "state": "unresolved",
+                "evidence_ids": [],
+                "rationale": "A current external fact is required."
+            })).collect::<Vec<_>>(),
+            "next_questions": requirements.iter().enumerate().map(|(index, requirement)| serde_json::json!({
+                "id": format!("fact-{index}"),
+                "question": format!("What exact current fact settles requirement {index}?"),
+                "kind": "web",
+                "requirement_ids": [requirement.id.clone()],
+                "evidence_needed": format!("current fact for requirement {index}")
+            })).collect::<Vec<_>>(),
+            "summary": "Twelve independent evidence slots remain."
+        })
+        .to_string();
+        let compiled =
+            compile_research_saturation(&raw, &requirements, &[], &HashSet::new()).unwrap();
+        assert_eq!(compiled.status, ResearchSaturationStatus::Continue);
+        assert_eq!(compiled.next_questions.len(), 12);
+    }
+
+    #[test]
+    fn research_saturation_requires_real_grounding_and_rejects_repeated_semantic_slots() {
+        let requirements = vec![RequirementRecord {
+            id: "REQ-api".to_string(),
+            section: "task".to_string(),
+            quote: "Use the vendor API".to_string(),
+        }];
+        let evidence = vec![ResearchEvidenceRecord {
+            id: "RESEARCH-docs".to_string(),
+            question: "What is the endpoint?".to_string(),
+            requirement_ids: vec!["REQ-api".to_string()],
+            evidence_needed: "exact endpoint".to_string(),
+            findings: "Model recall only".to_string(),
+            grounded: false,
+            lookups: Vec::new(),
+        }];
+        let false_grounding = serde_json::json!({
+            "status": "saturated",
+            "coverage": [{
+                "requirement_id": "REQ-api",
+                "state": "grounded",
+                "evidence_ids": ["RESEARCH-docs"],
+                "rationale": "The endpoint was found."
+            }],
+            "next_questions": [],
+            "summary": "Complete."
+        })
+        .to_string();
+        assert!(compile_research_saturation(
+            &false_grounding,
+            &requirements,
+            &evidence,
+            &HashSet::new(),
+        )
+        .is_err());
+
+        let previous = ResearchQuestion {
+            id: "endpoint-1".to_string(),
+            question: "Which endpoint must be called?".to_string(),
+            kind: "library_docs".to_string(),
+            requirement_ids: vec!["REQ-api".to_string()],
+            evidence_needed: "exact current vendor endpoint and method".to_string(),
+        };
+        let seen = [research_question_slot(&previous)]
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let repeated = serde_json::json!({
+            "status": "continue",
+            "coverage": [{
+                "requirement_id": "REQ-api",
+                "state": "unresolved",
+                "evidence_ids": [],
+                "rationale": "The endpoint is still unknown."
+            }],
+            "next_questions": [{
+                "id": "endpoint-rephrased",
+                "question": "What method and route do the current vendor docs specify?",
+                "kind": "library_docs",
+                "requirement_ids": ["REQ-api"],
+                "evidence_needed": "vendor method, current endpoint, and exact endpoint"
+            }],
+            "summary": "The same evidence is still missing."
+        })
+        .to_string();
+        assert!(compile_research_saturation(&repeated, &requirements, &[], &seen).is_err());
+    }
+
+    #[test]
     fn relax_contracted_deps_flattens_chain_keeps_sink_and_tests() {
         fn deps(plan: &serde_json::Value, id: &str) -> String {
             plan["subtasks"]
@@ -6794,6 +6894,8 @@ mod tests {
         let f = ResearchFinding {
             question: "q".into(),
             kind: "web".into(),
+            requirement_ids: Vec::new(),
+            evidence_needed: "fact".into(),
             findings: "f".into(),
             grounded: false,
             lookups: Vec::new(),
@@ -15889,11 +15991,16 @@ struct RunAgentOut {
     tool_calls: Vec<ToolCallRecord>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 struct ResearchQuestion {
     id: String,
     question: String,
     kind: String,
+    #[serde(default)]
+    requirement_ids: Vec<String>,
+    #[serde(default)]
+    evidence_needed: String,
 }
 
 /// The tool-attempt OUTCOME behind a research finding — the deterministic substrate the preference-vs-
@@ -15939,6 +16046,8 @@ fn classify_research_attempt(tool_calls: &[ToolCallRecord]) -> ResearchAttempt {
 struct ResearchFinding {
     question: String,
     kind: String,
+    requirement_ids: Vec<String>,
+    evidence_needed: String,
     findings: String,
     /// PROVENANCE: did the agent actually LOOK THIS UP, or reason it out? A research worker is only given
     /// research MCP extensions (context7 / web-search / doc-processor, swarm.rs:158), so a SUCCESSFUL MCP
@@ -15953,6 +16062,293 @@ struct ResearchFinding {
     /// four distinct cases: NeverCalled / Errored / CalledEmpty / Grounded. Not yet routed on.
     #[allow(dead_code)]
     attempt: ResearchAttempt,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum ResearchCoverageState {
+    Grounded,
+    SpecSufficient,
+    Unresolved,
+    Blocked,
+}
+
+impl ResearchCoverageState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Grounded => "grounded",
+            Self::SpecSufficient => "spec-sufficient",
+            Self::Unresolved => "unresolved",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum ResearchSaturationStatus {
+    Continue,
+    Saturated,
+    Blocked,
+}
+
+impl ResearchSaturationStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Continue => "continue",
+            Self::Saturated => "saturated",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ResearchCoverageAssessment {
+    requirement_id: String,
+    state: ResearchCoverageState,
+    evidence_ids: Vec<String>,
+    rationale: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ResearchSaturationDraft {
+    status: ResearchSaturationStatus,
+    coverage: Vec<ResearchCoverageAssessment>,
+    next_questions: Vec<ResearchQuestion>,
+    summary: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct ResearchEvidenceRecord {
+    id: String,
+    question: String,
+    requirement_ids: Vec<String>,
+    evidence_needed: String,
+    findings: String,
+    grounded: bool,
+    lookups: Vec<String>,
+}
+
+fn normalized_research_slot_text(value: &str) -> String {
+    let mut terms = value
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|term| !term.is_empty())
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>();
+    terms.sort();
+    terms.dedup();
+    terms.join(" ")
+}
+
+fn research_question_slot(question: &ResearchQuestion) -> String {
+    let mut requirements = question.requirement_ids.clone();
+    requirements.sort();
+    requirements.dedup();
+    format!(
+        "{}|{}|{}",
+        question.kind,
+        requirements.join(","),
+        normalized_research_slot_text(&question.evidence_needed)
+    )
+}
+
+fn research_evidence_inventory(findings: &[ResearchFinding]) -> Vec<ResearchEvidenceRecord> {
+    let mut occurrences = HashMap::<String, usize>::new();
+    findings
+        .iter()
+        .map(|finding| {
+            let material = format!(
+                "{}\n{}\n{}\n{}",
+                finding.question,
+                finding.requirement_ids.join(","),
+                finding.evidence_needed,
+                finding.findings
+            );
+            let occurrence = occurrences.entry(material.clone()).or_default();
+            let id = stable_inventory_id("RESEARCH", &material, *occurrence);
+            *occurrence += 1;
+            ResearchEvidenceRecord {
+                id,
+                question: finding.question.clone(),
+                requirement_ids: finding.requirement_ids.clone(),
+                evidence_needed: finding.evidence_needed.clone(),
+                findings: finding.findings.clone(),
+                grounded: finding.grounded,
+                lookups: finding.lookups.clone(),
+            }
+        })
+        .collect()
+}
+
+fn compile_research_saturation(
+    raw: &str,
+    requirements: &[RequirementRecord],
+    evidence: &[ResearchEvidenceRecord],
+    seen_question_slots: &HashSet<String>,
+) -> Result<ResearchSaturationDraft> {
+    let draft: ResearchSaturationDraft = serde_json::from_str(strip_code_fences(raw).trim())
+        .map_err(|error| anyhow!("research saturation ledger was not valid typed JSON: {error}"))?;
+    if draft.summary.trim().is_empty() {
+        bail!("research saturation ledger omitted its semantic completion summary");
+    }
+
+    let requirement_ids = requirements
+        .iter()
+        .map(|requirement| requirement.id.as_str())
+        .collect::<HashSet<_>>();
+    let evidence_by_id = evidence
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect::<HashMap<_, _>>();
+    let mut covered = HashSet::new();
+    for assessment in &draft.coverage {
+        if !requirement_ids.contains(assessment.requirement_id.as_str())
+            || !covered.insert(assessment.requirement_id.as_str())
+        {
+            bail!(
+                "research saturation ledger repeated or invented requirement `{}`",
+                assessment.requirement_id
+            );
+        }
+        if assessment.rationale.trim().is_empty() {
+            bail!(
+                "research coverage for `{}` omitted its rationale",
+                assessment.requirement_id
+            );
+        }
+        let mut cited = HashSet::new();
+        for evidence_id in &assessment.evidence_ids {
+            let Some(record) = evidence_by_id.get(evidence_id.as_str()) else {
+                bail!(
+                    "research coverage for `{}` cited unknown evidence `{evidence_id}`",
+                    assessment.requirement_id
+                );
+            };
+            if !cited.insert(evidence_id.as_str()) {
+                bail!(
+                    "research coverage for `{}` repeated evidence `{evidence_id}`",
+                    assessment.requirement_id
+                );
+            }
+            if assessment.state == ResearchCoverageState::Grounded && !record.grounded {
+                bail!(
+                    "research coverage for `{}` called ungrounded model recall `{evidence_id}` grounded",
+                    assessment.requirement_id
+                );
+            }
+        }
+        if assessment.state == ResearchCoverageState::Grounded && assessment.evidence_ids.is_empty()
+        {
+            bail!(
+                "research coverage for `{}` claimed grounding without evidence",
+                assessment.requirement_id
+            );
+        }
+    }
+    if covered != requirement_ids {
+        let mut missing = requirement_ids
+            .difference(&covered)
+            .copied()
+            .collect::<Vec<_>>();
+        missing.sort();
+        bail!("research saturation ledger omitted requirements {missing:?}");
+    }
+
+    let coverage_state = draft
+        .coverage
+        .iter()
+        .map(|assessment| (assessment.requirement_id.as_str(), assessment.state))
+        .collect::<HashMap<_, _>>();
+    let mut batch_ids = HashSet::new();
+    let mut batch_slots = HashSet::new();
+    for question in &draft.next_questions {
+        if question.id.trim().is_empty()
+            || !question.id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            })
+            || !batch_ids.insert(question.id.as_str())
+        {
+            bail!(
+                "research saturation ledger emitted unsafe or repeated question id `{}`",
+                question.id
+            );
+        }
+        if question.question.trim().is_empty()
+            || !question.question.trim_end().ends_with('?')
+            || question.evidence_needed.trim().is_empty()
+            || !matches!(question.kind.as_str(), "library_docs" | "web" | "codebase")
+            || question.requirement_ids.is_empty()
+        {
+            bail!(
+                "research question `{}` lacked an interrogative, evidence target, kind, or requirement binding",
+                question.id
+            );
+        }
+        let mut question_requirements = HashSet::new();
+        for requirement_id in &question.requirement_ids {
+            if !requirement_ids.contains(requirement_id.as_str())
+                || !question_requirements.insert(requirement_id.as_str())
+            {
+                bail!(
+                    "research question `{}` repeated or invented requirement `{requirement_id}`",
+                    question.id
+                );
+            }
+            if coverage_state.get(requirement_id.as_str())
+                != Some(&ResearchCoverageState::Unresolved)
+            {
+                bail!(
+                    "research question `{}` targeted requirement `{requirement_id}` that is not unresolved",
+                    question.id
+                );
+            }
+        }
+        let slot = research_question_slot(question);
+        if seen_question_slots.contains(&slot) || !batch_slots.insert(slot) {
+            bail!(
+                "research queue made no semantic progress: question `{}` repeats an evidence slot already investigated",
+                question.id
+            );
+        }
+    }
+
+    let unresolved = draft
+        .coverage
+        .iter()
+        .filter(|assessment| assessment.state == ResearchCoverageState::Unresolved)
+        .count();
+    let blocked = draft
+        .coverage
+        .iter()
+        .filter(|assessment| assessment.state == ResearchCoverageState::Blocked)
+        .count();
+    match draft.status {
+        ResearchSaturationStatus::Saturated => {
+            if unresolved > 0 || blocked > 0 || !draft.next_questions.is_empty() {
+                bail!(
+                    "research cannot be saturated while coverage is unresolved/blocked or questions remain"
+                );
+            }
+        }
+        ResearchSaturationStatus::Continue => {
+            if unresolved == 0 || blocked > 0 || draft.next_questions.is_empty() {
+                bail!(
+                    "research can continue only with unresolved coverage and a non-empty next evidence queue"
+                );
+            }
+        }
+        ResearchSaturationStatus::Blocked => {
+            if unresolved == 0 && blocked == 0 {
+                bail!("research cannot be blocked when every requirement is complete");
+            }
+            if !draft.next_questions.is_empty() {
+                bail!("blocked research must not claim another runnable evidence question");
+            }
+        }
+    }
+    Ok(draft)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18966,7 +19362,7 @@ impl GooseAgentDispatcher {
         // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
         // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
         // every turn and must be allowed to finish. idle_secs == 0 disables the watchdog.
-        let idle = std::time::Duration::from_secs(if idle_secs == 0 { 86_400 } else { idle_secs });
+        let idle = (idle_secs > 0).then(|| std::time::Duration::from_secs(idle_secs));
         // PREFILL-AWARE FIRST-TOKEN BUDGET (F905 third catch, r9): prefill streams NOTHING, so a
         // large prompt on a contended node is indistinguishable from a dead stream to this
         // watchdog — r9's completed calls measured 164s TTFT at 14k prompt tokens while the
@@ -19067,6 +19463,12 @@ impl GooseAgentDispatcher {
                     || key.starts_with("contract-")
                     || key.starts_with("reqbind-")
             });
+        // Research saturation is bounded by a typed semantic ledger, not by elapsed time or generated
+        // volume. A slow local decode is not evidence of failure. Exact repeated tool-call/result cycles
+        // remain armed below because recurrence is a true stall, independent of speed.
+        let semantic_saturation_call = activity_key.is_some_and(|key| {
+            key.starts_with("research-pod-") || key.starts_with("research-queue-")
+        });
         // PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS): the `idle` watchdog above only fires when the
         // stream goes SILENT. A task that streams THINKING tokens continuously resets it forever — measured
         // live, tasks ran 899s/348s/26min while emitting reasoning tokens and were never cut (the pathology
@@ -19076,7 +19478,9 @@ impl GooseAgentDispatcher {
         // turn and resets it, so a legitimate long build survives while a thinking-only spiral is cut. 0 = OFF
         // (byte-identical). Gated OFF for the integrate-verify SINK and authority-bearing response compilers:
         // neither has a safe re-route/continuation path.
-        let thinking_only_budget = if activity_key == Some("integrate-verify") || authority_compiler
+        let thinking_only_budget = if activity_key == Some("integrate-verify")
+            || authority_compiler
+            || semantic_saturation_call
         {
             None
         } else {
@@ -19094,13 +19498,13 @@ impl GooseAgentDispatcher {
         // they have no retry path — cutting one loses the whole planning round. The integrate-verify SINK is
         // exempt for the same reason the thinking watchdog exempts it (it owns no deliverable and is bounded by
         // its own wall-clock cap). OFF => these stay untouched and nothing below runs => byte-identical.
-        let repeat_break_on = self.repeat_break
+        let repeat_break_on = (self.repeat_break || semantic_saturation_call)
             && activity_key.is_some()
             && activity_key != Some("integrate-verify")
             && !authority_compiler;
         // #135 GLOBAL SPIRAL BREAK. Authority-bearing response compilers are exempt: detail no longer has a
         // one-line fallback, and silently dropping a contract result is not equivalent to finishing it.
-        let spiral_budget = if authority_compiler {
+        let spiral_budget = if authority_compiler || semantic_saturation_call {
             0
         } else {
             spiral_budget_for(
@@ -19115,7 +19519,8 @@ impl GooseAgentDispatcher {
             && !provider_lifecycle_active()
             && activity_key.is_some()
             && activity_key != Some("integrate-verify")
-            && !authority_compiler;
+            && !authority_compiler
+            && !semantic_saturation_call;
         let mut omni_next_look = tokio::time::Instant::now()
             + std::time::Duration::from_secs(OMNI_JUDGE_FIRST_LOOK_SECS);
         let mut omni_looks: u32 = 0;
@@ -19386,62 +19791,72 @@ impl GooseAgentDispatcher {
             // WHOLE call, not just before the first token: the failsafe still catches a genuinely
             // dead socket (it stays finite), but it can no longer mistake a compaction for a death.
             // Capped runs are byte-identical.
-            let quiet_budget = if first_event_seen && !uncapped() {
-                idle
-            } else {
-                idle + prefill_grace
-            };
-            let wait = match sink_deadline {
-                Some(dl) => {
-                    quiet_budget.min(dl.saturating_duration_since(tokio::time::Instant::now()))
+            let quiet_budget = idle.map(|idle| {
+                if first_event_seen && !uncapped() {
+                    idle
+                } else {
+                    idle + prefill_grace
                 }
-                None => quiet_budget,
-            };
-            let ev = match tokio::time::timeout(wait, stream.next()).await {
-                Ok(Some(ev)) => {
-                    first_event_seen = true;
-                    ev
+            });
+            let wait = match (quiet_budget, sink_deadline) {
+                (Some(quiet), Some(deadline)) => {
+                    Some(quiet.min(deadline.saturating_duration_since(tokio::time::Instant::now())))
                 }
-                Ok(None) => break,
-                Err(_) => {
-                    // Distinguish the sink wall-clock cap from a genuine idle stall: on the cap, finalize
-                    // as DONE (the app files are already built; the sink owns no deliverables) instead of
-                    // re-routing, so the run can terminate; otherwise re-route as before.
-                    if sink_deadline.is_some_and(|dl| tokio::time::Instant::now() >= dl) {
-                        eprintln!(
+                (Some(quiet), None) => Some(quiet),
+                (None, Some(deadline)) => {
+                    Some(deadline.saturating_duration_since(tokio::time::Instant::now()))
+                }
+                (None, None) => None,
+            };
+            let (next_event, timed_out) = match wait {
+                Some(wait) => match tokio::time::timeout(wait, stream.next()).await {
+                    Ok(event) => (event, false),
+                    Err(_) => (None, true),
+                },
+                None => (stream.next().await, false),
+            };
+            if timed_out {
+                // Distinguish the sink wall-clock cap from a genuine idle stall: on the cap, finalize
+                // as DONE (the app files are already built; the sink owns no deliverables) instead of
+                // re-routing, so the run can terminate; otherwise re-route as before.
+                if sink_deadline.is_some_and(|dl| tokio::time::Instant::now() >= dl) {
+                    eprintln!(
                             "↳ integrate-verify hit the sink wall-clock cap — finalizing as done (smoke gate backstops)"
                         );
-                        // SECOND cap site, same event. The cap can fire either at the top of the loop
-                        // (a continuously-active sink) or here on an event gap, and instrumenting only
-                        // one of them would make the truncation visible on some runs and invisible on
-                        // others — which is worse than never recording it, because the gap would read
-                        // as "this sink finished normally".
-                        self.events.write_value(serde_json::json!({
-                            "event": "sink_capped",
-                            "task_id": "integrate-verify",
-                            // Same three fields as the top-of-loop site, for the same reason. The two
-                            // sites must stay field-identical or a reader has to know WHICH branch fired
-                            // before it can parse the row — which is exactly the asymmetry the comment
-                            // above this emit was added to prevent.
-                            "cap_secs": sink_cap_plan.map(|(_, secs, _)| secs),
-                            "cap_base_secs": sink_cap_plan.map(|(base, _, _)| base),
-                            "tree_bytes": sink_cap_plan.map(|(_, _, bytes)| bytes),
-                            "detail": "the sink was CUT OFF at its wall-clock cap on an event gap, not \
-                                       finished — finalized as done so the run can terminate",
-                        }));
-                        break;
-                    }
-                    return Err(anyhow!(
-                        "agent stalled — no progress for {}s (no token/tool activity{})",
-                        quiet_budget.as_secs(),
-                        if first_event_seen {
-                            ""
-                        } else {
-                            "; budget included measured prefill grace for the first token"
-                        }
-                    ));
+                    // SECOND cap site, same event. The cap can fire either at the top of the loop
+                    // (a continuously-active sink) or here on an event gap, and instrumenting only
+                    // one of them would make the truncation visible on some runs and invisible on
+                    // others — which is worse than never recording it, because the gap would read
+                    // as "this sink finished normally".
+                    self.events.write_value(serde_json::json!({
+                        "event": "sink_capped",
+                        "task_id": "integrate-verify",
+                        // Same three fields as the top-of-loop site, for the same reason. The two
+                        // sites must stay field-identical or a reader has to know WHICH branch fired
+                        // before it can parse the row — which is exactly the asymmetry the comment
+                        // above this emit was added to prevent.
+                        "cap_secs": sink_cap_plan.map(|(_, secs, _)| secs),
+                        "cap_base_secs": sink_cap_plan.map(|(base, _, _)| base),
+                        "tree_bytes": sink_cap_plan.map(|(_, _, bytes)| bytes),
+                        "detail": "the sink was CUT OFF at its wall-clock cap on an event gap, not \
+                                   finished — finalized as done so the run can terminate",
+                    }));
+                    break;
                 }
+                return Err(anyhow!(
+                    "agent stalled — no progress for {}s (no token/tool activity{})",
+                    quiet_budget.map(|budget| budget.as_secs()).unwrap_or(0),
+                    if first_event_seen {
+                        ""
+                    } else {
+                        "; budget included measured prefill grace for the first token"
+                    }
+                ));
+            }
+            let Some(ev) = next_event else {
+                break;
             };
+            first_event_seen = true;
             match ev {
                 Ok(AgentEvent::Message(msg)) => {
                     // PROGRESS WATCHDOG: a message counts as PRODUCTIVE if it carries a real tool call/result
@@ -19717,6 +20132,8 @@ impl GooseAgentDispatcher {
                 id: q.id,
                 question: q.question,
                 kind: q.kind,
+                requirement_ids: Vec::new(),
+                evidence_needed: String::new(),
             })
             .collect())
     }
@@ -19908,6 +20325,8 @@ impl GooseAgentDispatcher {
                 ResearchFinding {
                     question: q.question,
                     kind: q.kind,
+                    requirement_ids: q.requirement_ids,
+                    evidence_needed: q.evidence_needed,
                     findings,
                     grounded: !lookups.is_empty(),
                     lookups,
@@ -19916,6 +20335,318 @@ impl GooseAgentDispatcher {
             }
         })
         .await
+    }
+
+    async fn run_research_queue(
+        self: &Arc<Self>,
+        cycle: u64,
+        questions: Vec<ResearchQuestion>,
+        research_extensions: Arc<Vec<ExtensionConfig>>,
+        worker_models: Vec<String>,
+        spec_doc_urls: Arc<Vec<String>>,
+    ) -> Vec<ResearchFinding> {
+        let models = one_lane_per_host(worker_models);
+        if models.is_empty() {
+            return Vec::new();
+        }
+        let me = self.clone();
+        fanout_over_fleet(models, questions, move |question, model| {
+            let me = me.clone();
+            let extensions = research_extensions.clone();
+            let doc_urls = spec_doc_urls.clone();
+            async move {
+                let started = std::time::Instant::now();
+                let activity_key = format!("research-queue-{cycle}-{}", question.id);
+                me.events.write_value(serde_json::json!({
+                    "event": "research_pod_role_started",
+                    "cycle": cycle,
+                    "role": "evidence-worker",
+                    "question_id": question.id,
+                    "model": model,
+                    "requirement_ids": question.requirement_ids,
+                    "evidence_needed": question.evidence_needed,
+                    "question_kind": question.kind,
+                    "elapsed_cap_secs": null,
+                    "reasoning_volume_cap_chars": null,
+                    "lookup_cap": null,
+                }));
+                let route = match question.kind.as_str() {
+                    "library_docs" if !extensions.is_empty() => {
+                        "Use the attached documentation/search tools and cite exact API names and signatures."
+                            .to_string()
+                    }
+                    "web" if !extensions.is_empty() => {
+                        "Use the attached search tools and distinguish sourced facts from inference."
+                            .to_string()
+                    }
+                    "codebase" => "Use shell/tree to inspect the current working directory and cite exact paths and symbols."
+                        .to_string(),
+                    _ if !doc_urls.is_empty() => format!(
+                        "The specification names these source documents: {}. Fetch the relevant source with curl and cite the exact text that answers the question.",
+                        doc_urls.join(", ")
+                    ),
+                    _ => "No external lookup connector or specification-named document is available. Do not guess: report the evidence as UNAVAILABLE and explain exactly which source would be needed."
+                        .to_string(),
+                };
+                let system = format!(
+                    "You are one evidence worker in a collaborative research pod. Investigate ONLY the assigned \
+                     evidence need; do not draft a plan and do not create or modify files. {route} Return the \
+                     specific facts, exact values/signatures/paths, source provenance, contradictions, and planning \
+                     implication needed to settle it. If the source cannot be reached or does not answer it, say \
+                     UNAVAILABLE rather than filling the gap from memory. There is no token, lookup, turn, or \
+                     elapsed-time quota: stop when this evidence need is actually answered or proven unavailable."
+                );
+                let user = serde_json::to_string_pretty(&serde_json::json!({
+                    "question_id": question.id,
+                    "question": question.question,
+                    "kind": question.kind,
+                    "requirement_ids": question.requirement_ids,
+                    "evidence_needed": question.evidence_needed,
+                }))
+                .unwrap_or_default();
+                let output = me
+                    .run_agent_in(
+                        me.working_dir.clone(),
+                        &model,
+                        system,
+                        user,
+                        None,
+                        Some(UNBOUNDED_AGENT_TURNS),
+                        &extensions,
+                        AgentToolSurface::Developer,
+                        0,
+                        Some(&activity_key),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                let (findings, mut lookups, attempt) = match output {
+                    Ok(output) => {
+                        let mut lookups = research_lookups(&output.tool_calls);
+                        if question.kind == "codebase" {
+                            lookups.extend(
+                                output
+                                    .tool_calls
+                                    .iter()
+                                    .filter(|call| {
+                                        call.ok == Some(true)
+                                            && (call.name.contains("shell")
+                                                || call.name.contains("tree"))
+                                    })
+                                    .map(|call| call.name.clone()),
+                            );
+                            lookups.sort();
+                            lookups.dedup();
+                        }
+                        let attempt = if !lookups.is_empty() {
+                            ResearchAttempt::Grounded
+                        } else {
+                            classify_research_attempt(&output.tool_calls)
+                        };
+                        (output.text, lookups, attempt)
+                    }
+                    Err(error) => (
+                        format!("UNAVAILABLE: research worker failed: {error}"),
+                        Vec::new(),
+                        ResearchAttempt::Errored,
+                    ),
+                };
+                lookups.sort();
+                lookups.dedup();
+                let grounded = !lookups.is_empty();
+                me.events.write_value(serde_json::json!({
+                    "event": "research_pod_role_completed",
+                    "cycle": cycle,
+                    "role": "evidence-worker",
+                    "question_id": question.id,
+                    "model": model,
+                    "requirement_ids": question.requirement_ids,
+                    "evidence_needed": question.evidence_needed,
+                    "grounded": grounded,
+                    "lookups": lookups,
+                    "finding_chars": findings.chars().count(),
+                    "elapsed_secs": started.elapsed().as_secs_f64(),
+                }));
+                ResearchFinding {
+                    question: question.question,
+                    kind: question.kind,
+                    requirement_ids: question.requirement_ids,
+                    evidence_needed: question.evidence_needed,
+                    findings,
+                    grounded,
+                    lookups,
+                    attempt,
+                }
+            }
+        })
+        .await
+    }
+
+    async fn research_to_saturation(
+        self: &Arc<Self>,
+        planner_model: &str,
+        user_prompt: &str,
+        is_amendment: bool,
+        research_extensions: Arc<Vec<ExtensionConfig>>,
+        worker_models: Vec<String>,
+    ) -> Result<Vec<ResearchFinding>> {
+        let requirements = normalized_requirement_inventory(user_prompt);
+        if requirements.is_empty() {
+            bail!("semantic research cannot inventory any authored requirement");
+        }
+        let worker_models = one_lane_per_host(worker_models);
+        if worker_models.is_empty() {
+            bail!("semantic research has no evidence-worker model");
+        }
+        let spec_doc_urls = Arc::new(spec_doc_urls(user_prompt));
+        self.events.write_value(serde_json::json!({
+            "event": "research_pod_started",
+            "topology": "one-evidence-ledger-dynamic-nonduplicate-queue",
+            "coordinator_model": planner_model,
+            "worker_models": worker_models,
+            "requirements": requirements.len(),
+            "completion_basis": "semantic-requirement-evidence-saturation",
+            "fixed_lens_fan": false,
+            "fixed_question_count": null,
+            "round_cap": null,
+            "elapsed_cap_secs": null,
+            "reasoning_volume_cap_chars": null,
+            "lookup_cap": null,
+        }));
+
+        let mut findings = Vec::new();
+        let mut seen_question_slots = HashSet::new();
+        let mut cycle = 0u64;
+        loop {
+            cycle += 1;
+            let evidence = research_evidence_inventory(&findings);
+            let coordinator_key = format!("research-pod-coordinator-{cycle}");
+            self.events.write_value(serde_json::json!({
+                "event": "research_pod_role_started",
+                "cycle": cycle,
+                "role": "evidence-saturation-coordinator",
+                "model": planner_model,
+                "evidence_records": evidence.len(),
+            }));
+            let lookup_routes = serde_json::json!({
+                "attached_extensions": research_extensions.iter().map(|extension| extension.name().to_string()).collect::<Vec<_>>(),
+                "spec_document_urls": spec_doc_urls.as_ref(),
+                "codebase_shell": is_amendment,
+            });
+            let system = "You are the canonical evidence-saturation coordinator for a coding swarm. Maintain \
+                exactly one coverage row for every immutable requirement id. Mark a requirement `spec-sufficient` \
+                only when its authored text itself contains every fact planning needs; mark it `grounded` only \
+                when the supplied evidence ledger has real tool provenance and cite those evidence ids; otherwise \
+                keep it `unresolved`. For unresolved coverage, emit independent, non-overlapping evidence questions \
+                bound to exact requirement ids and state the exact evidence that would settle each one. Do not emit \
+                a fixed number of questions, do not create work to fill hardware, and do not draft a plan. Use \
+                `blocked` only when evidence is required but no runnable source route remains. Use `saturated` only \
+                when every requirement is grounded or spec-sufficient and the next queue is empty. There is no \
+                round, question, token, or elapsed-time quota; semantic completeness is the only successful stop. \
+                Then call final_output."
+                .to_string();
+            let user = serde_json::to_string_pretty(&serde_json::json!({
+                "task": user_prompt,
+                "is_amendment": is_amendment,
+                "requirements": requirements,
+                "available_lookup_routes": lookup_routes,
+                "evidence_ledger": evidence,
+                "previously_investigated_evidence_slots": seen_question_slots.len(),
+            }))?;
+            let output = self
+                .run_response_only_agent(
+                    planner_model,
+                    system,
+                    user,
+                    Some(Response {
+                        json_schema: Some(research_saturation_schema()),
+                    }),
+                    0,
+                    Some(&coordinator_key),
+                )
+                .await?;
+            let raw = output
+                .final_output
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+                .ok_or_else(|| {
+                    anyhow!("research saturation coordinator returned no typed ledger")
+                })?;
+            let compiled =
+                compile_research_saturation(&raw, &requirements, &evidence, &seen_question_slots)?;
+            let state_count = |state| {
+                compiled
+                    .coverage
+                    .iter()
+                    .filter(|assessment| assessment.state == state)
+                    .count()
+            };
+            self.events.write_value(serde_json::json!({
+                "event": "research_saturation_checked",
+                "cycle": cycle,
+                "role": "evidence-saturation-coordinator",
+                "model": planner_model,
+                "status": compiled.status.as_str(),
+                "coverage_total": compiled.coverage.len(),
+                "grounded": state_count(ResearchCoverageState::Grounded),
+                "spec_sufficient": state_count(ResearchCoverageState::SpecSufficient),
+                "unresolved": state_count(ResearchCoverageState::Unresolved),
+                "blocked": state_count(ResearchCoverageState::Blocked),
+                "next_questions": compiled.next_questions.len(),
+                "summary": compiled.summary,
+                "completion_basis": "semantic-requirement-evidence-saturation",
+            }));
+            self.events.write_value(serde_json::json!({
+                "event": "research_pod_role_completed",
+                "cycle": cycle,
+                "role": "evidence-saturation-coordinator",
+                "model": planner_model,
+                "status": compiled.status.as_str(),
+                "contribution": {
+                    "coverage_rows": compiled.coverage.len(),
+                    "next_evidence_slots": compiled.next_questions.len(),
+                },
+            }));
+
+            match compiled.status {
+                ResearchSaturationStatus::Saturated => return Ok(findings),
+                ResearchSaturationStatus::Blocked => {
+                    bail!("semantic research blocked: {}", compiled.summary)
+                }
+                ResearchSaturationStatus::Continue => {}
+            }
+            for question in &compiled.next_questions {
+                seen_question_slots.insert(research_question_slot(question));
+            }
+            self.events.write_value(serde_json::json!({
+                "event": "research_queue_dispatched",
+                "cycle": cycle,
+                "questions": compiled.next_questions.iter().map(|question| serde_json::json!({
+                    "id": question.id,
+                    "kind": question.kind,
+                    "requirement_ids": question.requirement_ids,
+                    "evidence_needed": question.evidence_needed,
+                })).collect::<Vec<_>>(),
+                "dispatch_basis": "unresolved-semantic-evidence-slots",
+                "fleet_capacity_used_to_create_work": false,
+            }));
+            let batch = self
+                .run_research_queue(
+                    cycle,
+                    compiled.next_questions,
+                    research_extensions.clone(),
+                    worker_models.clone(),
+                    spec_doc_urls.clone(),
+                )
+                .await;
+            if batch.is_empty() {
+                bail!("semantic research queue made no progress: no evidence worker returned");
+            }
+            findings.extend(batch);
+        }
     }
 
     /// Fan out fixed-lens SCOUTS IN PARALLEL across the fleet — each self-directs its lens with no
@@ -20146,6 +20877,8 @@ impl GooseAgentDispatcher {
                 ResearchFinding {
                     question: lens.title.to_string(),
                     kind: lens.id.to_string(),
+                    requirement_ids: Vec::new(),
+                    evidence_needed: lens.brief.to_string(),
                     findings,
                     grounded: !lookups.is_empty(),
                     lookups,
@@ -35399,6 +36132,58 @@ fn research_schema() -> serde_json::Value {
     })
 }
 
+fn research_saturation_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "coverage", "next_questions", "summary"],
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["continue", "saturated", "blocked"]
+            },
+            "coverage": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["requirement_id", "state", "evidence_ids", "rationale"],
+                    "properties": {
+                        "requirement_id": {"type": "string"},
+                        "state": {
+                            "type": "string",
+                            "enum": ["grounded", "spec-sufficient", "unresolved", "blocked"]
+                        },
+                        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                        "rationale": {"type": "string"}
+                    }
+                }
+            },
+            "next_questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "id", "question", "kind", "requirement_ids", "evidence_needed"
+                    ],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "question": {"type": "string"},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["library_docs", "web", "codebase"]
+                        },
+                        "requirement_ids": {"type": "array", "items": {"type": "string"}},
+                        "evidence_needed": {"type": "string"}
+                    }
+                }
+            },
+            "summary": {"type": "string"}
+        }
+    })
+}
+
 fn plan_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -41417,99 +42202,54 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // which is exactly why every retarget resolution comes back with lookups:[].
         let research_tools: Vec<String> =
             research_exts.iter().map(|e| e.name().to_string()).collect();
+        let named_research_docs = spec_doc_urls(&opts.prompt);
+        let has_research_route = !research_tools.is_empty() || !named_research_docs.is_empty();
         sink.write_value(serde_json::json!({
             "event": "research_tools",
             "available": research_tools,
-            "can_look_things_up": !research_tools.is_empty(),
+            "spec_document_urls": named_research_docs,
+            "can_look_things_up": has_research_route,
         }));
         // The retarget's triage reads THIS, so the routing and the reported event can never disagree.
-        can_research = !research_tools.is_empty();
-        if research_tools.is_empty() {
+        can_research = has_research_route;
+        if !has_research_route {
             eprintln!(
                 "{}",
                 style(
-                    "research: NO lookup tools configured (set WEBSEARCH_BEARER and/or CONTEXT7_API_KEY) — \
-                     planning from the model's own knowledge only, nothing will be looked up"
+                    "research: no external lookup route is configured; the evidence coordinator will \
+                     accept only spec-sufficient requirements and explicitly block any external fact gap"
                 )
                 .yellow()
             );
         }
         let worker_models: Vec<String> = fleet_slot_models(&devices);
-        let findings = if cfg.research_scouts {
-            phase_banner(
-                "SCOUT",
-                "fixed-lens scouts investigate IN PARALLEL across the fleet — no serial scoping",
-            );
-            let lenses: Vec<&str> = select_lenses(is_amendment, cfg.max_research_questions)
-                .iter()
-                .map(|l| l.id)
-                .collect();
-            eprintln!(
-                "  {} lens scout(s) → running across the fleet:",
-                lenses.len()
-            );
-            sink.write_value(serde_json::json!({"event": "scouts_planned", "lenses": lenses}));
-            // F818: the SpecDocs prompt branch fires deep inside the per-scout builder where no
-            // sink reaches, which left its arm's registered mechanism check PERMANENTLY
-            // unverifiable (the transcripts are not retained). The same condition is computed
-            // here at orchestration level so the run log carries the ground truth.
-            {
-                let (gate_on, urls) = scout_docs_decision(&opts.prompt);
-                sink.write_value(serde_json::json!({
-                    "event": "scout_docs_mode",
-                    "gate_on": gate_on,
-                    "spec_named_docs": urls,
-                }));
-            }
-            dispatcher
-                .run_scouts(
-                    &opts.prompt,
-                    is_amendment,
-                    cfg.max_research_questions,
-                    research_exts,
-                    worker_models,
-                    ScoutBudget {
-                        max_lookups: cfg.scout_max_lookups,
-                        backstop_secs: if uncapped() {
-                            UNCAPPED_SECS
-                        } else {
-                            cfg.scout_budget_secs
-                        },
-                    },
-                )
-                .await
-        } else {
-            phase_banner(
-                "RESEARCH",
-                "27B scopes questions ALONE, then the fleet researches them IN PARALLEL",
-            );
-            eprintln!("  scoping research questions on {} ...", cfg.planner_model);
-            let questions = dispatcher
-                .research_questions(
-                    &cfg.planner_model,
-                    &opts.prompt,
-                    cfg.max_research_questions,
-                    is_amendment,
-                )
-                .await
-                .unwrap_or_default();
-            sink.write_value(serde_json::json!({
-                "event": "research_planned",
-                "count": questions.len(),
-                "questions": questions.iter().map(|q| serde_json::json!({"id": q.id, "kind": q.kind, "question": q.question})).collect::<Vec<_>>(),
-            }));
-            if questions.is_empty() {
-                Vec::new()
-            } else {
-                eprintln!(
-                    "  {} research question(s) → running across the fleet:",
-                    questions.len()
-                );
-                dispatcher
-                    .run_research(questions, research_exts, worker_models)
-                    .await
-            }
-        };
+        phase_banner(
+            "RESEARCH POD",
+            "one evidence ledger dispatches unresolved research across the fleet until semantic saturation",
+        );
+        sink.write_value(serde_json::json!({
+            "event": "research_policy",
+            "completion_basis": "semantic-requirement-evidence-saturation",
+            "fixed_lenses": false,
+            "fixed_question_count": null,
+            "round_cap": null,
+            "elapsed_cap_secs": null,
+            "reasoning_volume_cap_chars": null,
+            "lookup_cap": null,
+            "legacy_research_scouts_ignored": cfg.research_scouts,
+            "legacy_max_research_questions_ignored": cfg.max_research_questions,
+            "legacy_scout_max_lookups_ignored": cfg.scout_max_lookups,
+            "legacy_scout_budget_secs_ignored": cfg.scout_budget_secs,
+        }));
+        let findings = dispatcher
+            .research_to_saturation(
+                &cfg.planner_model,
+                &opts.prompt,
+                is_amendment,
+                research_exts,
+                worker_models,
+            )
+            .await?;
         research_findings = findings
             .iter()
             .map(|f| format!("### [{}] {}\n{}", f.kind, f.question, f.findings))
@@ -42569,6 +43309,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                          Give the concrete choice a senior engineer would pick and a one-line reason."
                                     ),
                                     kind: "web".to_string(),
+                                    requirement_ids: Vec::new(),
+                                    evidence_needed: d.clone(),
                                 })
                                 .collect();
                                 let research_exts: Arc<Vec<ExtensionConfig>> =
