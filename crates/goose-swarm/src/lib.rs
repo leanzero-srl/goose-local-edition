@@ -17,10 +17,12 @@ pub mod replan;
 pub mod scheduler;
 
 pub use broker::{
-    AdmissionReceipt, BrokerError, LocalCompletionKind, LocalCompletionReceipt, PhysicalBroker,
-    PhysicalEvidenceKind, ProviderRequestReceipt, ProviderTerminalKind, ProviderTerminalReceipt,
-    QueueReceipt, ReleasedAdmissionReceipt, StaleWorkReceipt, TaskVersion, VerifiedPhysicalLane,
-    WorkOpportunity, WorkPriority, WorkRole,
+    AdmissionReceipt, BrokerError, CapacityUpdateReceipt, HostCapacityEvidence,
+    LocalCompletionKind, LocalCompletionReceipt, PhysicalBroker, PhysicalFleetSnapshot,
+    ProviderNotStartedReceipt, ProviderRequestKey, ProviderRequestReceipt, ProviderTerminalKind,
+    ProviderTerminalReceipt, QueueReceipt, ReleasedAdmissionReceipt, SourceRevisionKind,
+    StaleWorkReceipt, TaskVersion, VerifiedPhysicalIdentity, VerifiedPhysicalLane, WorkOpportunity,
+    WorkPriority, WorkRole,
 };
 pub use coherence::{extract_signatures, scope_contract_bundle, SigLang};
 pub use context::SharedContext;

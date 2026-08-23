@@ -1,47 +1,293 @@
-//! Physical-host admission for model requests.
+//! Physical-host admission for model work.
 //!
-//! The scheduler's historical `DeviceCfg::weight` is a logical-lane limit. This broker is a
-//! separate, opt-in correctness boundary: it admits work only against a verified physical host
-//! and loaded model instance, and it keeps that occupancy until the provider emits a matching
-//! terminal receipt. A local future ending is recorded but never interpreted as physical idleness.
+//! A logical scheduler lane is not a physical decoder. This opt-in broker admits model work only
+//! through a same-run physical fleet snapshot, keeps the physical claim across local completion,
+//! and releases it only after every provider turn has an exact terminal receipt. It deliberately
+//! has no API for cancelling admitted work.
 
 use serde::Serialize;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PhysicalEvidenceKind {
-    LmStudioProcessTable,
-    MeasuredProfile,
-    ReplayFixture,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HostCapacityEvidence {
+    /// A same-run probe proved the host and loaded instance exist. It does not prove that two
+    /// concurrent Apple decodes improve throughput, so its host-wide capacity is exactly one.
+    ProbeSingleStream { probe_epoch: String },
+    /// Controlled one-versus-N measurements for one exact runtime/model/context/role profile.
+    MeasuredProfile {
+        profile_hash: String,
+        profile_key: String,
+        max_concurrent: u32,
+    },
+    /// Deterministic tests only.
+    ReplayFixture {
+        fixture_id: String,
+        max_concurrent: u32,
+    },
 }
 
-/// A logical route whose physical identity and admission ceilings came from explicit evidence.
-///
-/// `host_capacity` is shared by every lane with the same `host_id`; it is deliberately not summed.
-/// `instance_capacity` is shared by aliases with the same `(host_id, model_instance_id)` pair.
+impl HostCapacityEvidence {
+    pub fn max_concurrent(&self) -> u32 {
+        match self {
+            Self::ProbeSingleStream { .. } => 1,
+            Self::MeasuredProfile { max_concurrent, .. }
+            | Self::ReplayFixture { max_concurrent, .. } => *max_concurrent,
+        }
+    }
+
+    fn identity(&self) -> &str {
+        match self {
+            Self::ProbeSingleStream { probe_epoch } => probe_epoch,
+            Self::MeasuredProfile { profile_hash, .. } => profile_hash,
+            Self::ReplayFixture { fixture_id, .. } => fixture_id,
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.identity().trim().is_empty() {
+            return Err("capacity evidence id is empty".to_string());
+        }
+        if self.max_concurrent() == 0 {
+            return Err("host capacity is zero".to_string());
+        }
+        if let Self::MeasuredProfile { profile_key, .. } = self {
+            if profile_key.trim().is_empty() {
+                return Err("measured profile key is empty".to_string());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Same-run physical identity carried outside `DeviceCfg`; a configured host string never becomes
+/// runtime evidence merely because it was deserialized.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct VerifiedPhysicalIdentity {
+    pub host_id: String,
+    pub model_instance_id: String,
+    /// LM Studio's instance `PARALLEL` ceiling. It never becomes host capacity and is never summed
+    /// across model rows on one host.
+    pub advertised_instance_capacity: u32,
+    pub capacity_evidence: HostCapacityEvidence,
+    pub route_evidence_id: String,
+}
+
+impl VerifiedPhysicalIdentity {
+    pub fn into_lane(
+        self,
+        logical_device_id: String,
+        model_id: String,
+        routing_weight: u32,
+    ) -> VerifiedPhysicalLane {
+        VerifiedPhysicalLane {
+            logical_device_id,
+            model_id,
+            host_id: self.host_id,
+            model_instance_id: self.model_instance_id,
+            advertised_instance_capacity: self.advertised_instance_capacity,
+            routing_weight,
+            capacity_evidence: self.capacity_evidence,
+            route_evidence_id: self.route_evidence_id,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct VerifiedPhysicalLane {
     pub logical_device_id: String,
     pub model_id: String,
     pub host_id: String,
     pub model_instance_id: String,
-    pub host_capacity: u32,
-    pub instance_capacity: u32,
-    pub supervision_only: bool,
+    pub advertised_instance_capacity: u32,
     pub routing_weight: u32,
-    pub evidence_kind: PhysicalEvidenceKind,
-    pub evidence_id: String,
+    pub capacity_evidence: HostCapacityEvidence,
+    pub route_evidence_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PhysicalFleetSnapshot {
+    pub snapshot_id: String,
+    pub lanes: Vec<VerifiedPhysicalLane>,
+}
+
+impl PhysicalFleetSnapshot {
+    pub fn new(
+        snapshot_id: impl Into<String>,
+        lanes: Vec<VerifiedPhysicalLane>,
+    ) -> Result<Self, BrokerError> {
+        let snapshot = Self {
+            snapshot_id: snapshot_id.into(),
+            lanes,
+        };
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+
+    fn validate(&self) -> Result<(), BrokerError> {
+        if self.snapshot_id.trim().is_empty() {
+            return Err(BrokerError::InvalidSnapshot(
+                "snapshot id is empty".to_string(),
+            ));
+        }
+        if self.lanes.is_empty() {
+            return Err(BrokerError::NoVerifiedLanes);
+        }
+        let mut logical_devices = HashMap::new();
+        let mut routes_by_model = HashMap::new();
+        let mut host_capacities = HashMap::new();
+        let mut instance_capacities = HashMap::new();
+        for lane in &self.lanes {
+            validate_lane(lane)?;
+            if logical_devices
+                .insert(&lane.logical_device_id, &lane.model_id)
+                .is_some()
+            {
+                return Err(BrokerError::InvalidLane {
+                    device_id: lane.logical_device_id.clone(),
+                    reason: "logical device id is duplicated".to_string(),
+                });
+            }
+            let route = (&lane.host_id, &lane.model_instance_id);
+            if let Some(first) = routes_by_model.insert(&lane.model_id, route) {
+                if first != route {
+                    return Err(BrokerError::AmbiguousModelRoute {
+                        model_id: lane.model_id.clone(),
+                    });
+                }
+            }
+            let host_capacity = lane.capacity_evidence.max_concurrent();
+            if let Some(first) = host_capacities.insert(&lane.host_id, host_capacity) {
+                if first != host_capacity {
+                    return Err(BrokerError::ConflictingHostCapacity {
+                        host_id: lane.host_id.clone(),
+                        first,
+                        second: host_capacity,
+                    });
+                }
+            }
+            let instance_key = (&lane.host_id, &lane.model_instance_id);
+            if let Some(first) =
+                instance_capacities.insert(instance_key, lane.advertised_instance_capacity)
+            {
+                if first != lane.advertised_instance_capacity {
+                    return Err(BrokerError::ConflictingInstanceCapacity {
+                        host_id: lane.host_id.clone(),
+                        model_instance_id: lane.model_instance_id.clone(),
+                        first,
+                        second: lane.advertised_instance_capacity,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_lane(lane: &VerifiedPhysicalLane) -> Result<(), BrokerError> {
+    let invalid = [
+        ("logical device id", lane.logical_device_id.trim()),
+        ("model id", lane.model_id.trim()),
+        ("physical host id", lane.host_id.trim()),
+        ("model instance id", lane.model_instance_id.trim()),
+        ("route evidence id", lane.route_evidence_id.trim()),
+    ]
+    .into_iter()
+    .find(|(_, value)| value.is_empty())
+    .map(|(name, _)| format!("{name} is empty"))
+    .or_else(|| {
+        (lane.advertised_instance_capacity == 0)
+            .then(|| "advertised instance capacity is zero".to_string())
+    })
+    .or_else(|| lane.capacity_evidence.validate().err());
+    if let Some(reason) = invalid {
+        return Err(BrokerError::InvalidLane {
+            device_id: lane.logical_device_id.clone(),
+            reason,
+        });
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SourceRevisionKind {
+    TaskAttempt,
+    Artifact {
+        snapshot_hash: String,
+    },
+    Trace {
+        trace_sequence: u64,
+        snapshot_hash: String,
+    },
+    Contract {
+        binding_task_id: String,
+        slice_id: String,
+        snapshot_hash: String,
+    },
+}
+
+/// Immutable authority for one queued opportunity.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize)]
 pub struct TaskVersion {
     pub task_id: String,
     pub attempt: u32,
-    /// Monotonic scheduler-owned revision. It changes whenever the authoritative task state or
-    /// artifact snapshot changes; it is not a model-authored timestamp.
     pub revision: u64,
+    pub kind: SourceRevisionKind,
+}
+
+impl TaskVersion {
+    fn authority_key(&self) -> String {
+        match &self.kind {
+            SourceRevisionKind::TaskAttempt => format!("{}:attempt", self.task_id),
+            SourceRevisionKind::Artifact { .. } => format!("{}:artifact", self.task_id),
+            SourceRevisionKind::Trace { .. } => format!("{}:trace", self.task_id),
+            SourceRevisionKind::Contract {
+                binding_task_id,
+                slice_id,
+                ..
+            } => format!("{}:contract:{binding_task_id}:{slice_id}", self.task_id),
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.task_id.trim().is_empty() {
+            return Err("source task id is empty".to_string());
+        }
+        match &self.kind {
+            SourceRevisionKind::TaskAttempt => Ok(()),
+            SourceRevisionKind::Artifact { snapshot_hash }
+            | SourceRevisionKind::Trace { snapshot_hash, .. } => {
+                if self.revision == 0 {
+                    Err("artifact/trace source revision is zero".to_string())
+                } else if snapshot_hash.trim().is_empty() {
+                    Err("snapshot hash is empty".to_string())
+                } else {
+                    Ok(())
+                }
+            }
+            SourceRevisionKind::Contract {
+                binding_task_id,
+                slice_id,
+                snapshot_hash,
+            } => {
+                if self.revision == 0 {
+                    return Err("contract source revision is zero".to_string());
+                }
+                if binding_task_id.trim().is_empty()
+                    || slice_id.trim().is_empty()
+                    || snapshot_hash.trim().is_empty()
+                {
+                    return Err(
+                        "contract source requires binding task, slice, and snapshot hash"
+                            .to_string(),
+                    );
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -64,23 +310,15 @@ pub enum WorkRole {
     AcceptanceOracle,
 }
 
-impl WorkRole {
-    fn requires_task_version(self) -> bool {
-        !matches!(self, Self::Build | Self::Repair)
-    }
-
-    fn requires_build_lane(self) -> bool {
-        matches!(self, Self::Build | Self::Repair)
-    }
-}
-
-/// One version-bound candidate for the common admission queue.
+/// One task-derived, version-current candidate for the common queue.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorkOpportunity {
     pub work_id: String,
     pub role: WorkRole,
     pub priority: WorkPriority,
     pub source: TaskVersion,
+    /// Empty means any verified route. This is a contract constraint, not a roster-shaped task fan.
+    pub eligible_logical_device_ids: Vec<String>,
     pub preferred_model_id: Option<String>,
     pub excluded_logical_device_id: Option<String>,
 }
@@ -104,24 +342,32 @@ pub struct StaleWorkReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AdmissionReceipt {
-    pub request_id: String,
+    pub admission_id: String,
     pub work_id: String,
     pub role: WorkRole,
     pub priority: WorkPriority,
     pub source: TaskVersion,
+    pub fleet_snapshot_id: String,
     pub logical_device_id: String,
     pub model_id: String,
     pub physical_host_id: String,
     pub model_instance_id: String,
-    pub identity_evidence_id: String,
+    pub route_evidence_id: String,
+    pub capacity_evidence: HostCapacityEvidence,
     pub queue_sequence: u64,
     pub admission_sequence: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize)]
+pub struct ProviderRequestKey {
+    pub ordinal: u32,
+    pub provider_request_id: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProviderRequestReceipt {
-    pub request_id: String,
-    pub provider_request_id: String,
+    pub admission_id: String,
+    pub key: ProviderRequestKey,
     pub physical_host_id: String,
     pub model_instance_id: String,
 }
@@ -137,12 +383,13 @@ pub enum LocalCompletionKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct LocalCompletionReceipt {
-    pub request_id: String,
+    pub admission_id: String,
     pub work_id: String,
     pub physical_host_id: String,
     pub model_instance_id: String,
     pub kind: LocalCompletionKind,
-    pub provider_terminal_observed: bool,
+    pub provider_requests_started: usize,
+    pub provider_requests_terminal: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -155,26 +402,48 @@ pub enum ProviderTerminalKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProviderTerminalReceipt {
-    pub request_id: String,
-    pub provider_request_id: String,
+    pub admission_id: String,
+    pub key: ProviderRequestKey,
     pub physical_host_id: String,
     pub model_instance_id: String,
     pub kind: ProviderTerminalKind,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProviderNotStartedReceipt {
+    pub admission_id: String,
+    pub physical_host_id: String,
+    pub model_instance_id: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ReleasedAdmissionReceipt {
     pub admission: AdmissionReceipt,
-    pub terminal: ProviderTerminalReceipt,
+    pub local_completion: LocalCompletionKind,
+    pub provider_terminals: Vec<ProviderTerminalReceipt>,
+    pub provider_not_started: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CapacityUpdateReceipt {
+    pub physical_host_id: String,
+    pub previous_capacity: u32,
+    pub new_capacity: u32,
+    pub capacity_evidence: HostCapacityEvidence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BrokerError {
     EmptyCorrelationScope,
     NoVerifiedLanes,
+    InvalidSnapshot(String),
     InvalidLane {
         device_id: String,
         reason: String,
+    },
+    AmbiguousModelRoute {
+        model_id: String,
     },
     ConflictingHostCapacity {
         host_id: String,
@@ -193,23 +462,37 @@ pub enum BrokerError {
     },
     StaleOpportunity {
         work_id: String,
-        queued: TaskVersion,
-        current: Option<TaskVersion>,
+        queued: Box<TaskVersion>,
+        current: Option<Box<TaskVersion>>,
     },
     DuplicateWork(String),
-    UnknownRequest(String),
-    DuplicateProviderRequest(String),
+    UnknownAdmission(String),
+    DuplicateProviderRequest(ProviderRequestKey),
+    DuplicateProviderTerminal(ProviderRequestKey),
     ProviderRequestMismatch {
-        request_id: String,
-        expected: Option<String>,
-        received: String,
+        admission_id: String,
+        received: ProviderRequestKey,
     },
     PhysicalReceiptMismatch {
-        request_id: String,
+        admission_id: String,
         expected_host: String,
         received_host: String,
         expected_instance: String,
         received_instance: String,
+    },
+    ConflictingLocalCompletion {
+        admission_id: String,
+        first: LocalCompletionKind,
+        second: LocalCompletionKind,
+    },
+    InvalidProviderNotStarted {
+        admission_id: String,
+        reason: String,
+    },
+    UnknownPhysicalHost(String),
+    InvalidCapacityEvidence {
+        host_id: String,
+        reason: String,
     },
 }
 
@@ -218,9 +501,14 @@ impl std::fmt::Display for BrokerError {
         match self {
             Self::EmptyCorrelationScope => write!(f, "physical broker correlation scope is empty"),
             Self::NoVerifiedLanes => write!(f, "physical broker has no verified lanes"),
+            Self::InvalidSnapshot(reason) => write!(f, "invalid physical fleet snapshot: {reason}"),
             Self::InvalidLane { device_id, reason } => {
                 write!(f, "invalid verified lane `{device_id}`: {reason}")
             }
+            Self::AmbiguousModelRoute { model_id } => write!(
+                f,
+                "model id `{model_id}` resolves to multiple physical routes"
+            ),
             Self::ConflictingHostCapacity {
                 host_id,
                 first,
@@ -252,31 +540,53 @@ impl std::fmt::Display for BrokerError {
             Self::DuplicateWork(work_id) => {
                 write!(f, "broker work `{work_id}` is already queued or admitted")
             }
-            Self::UnknownRequest(request_id) => {
-                write!(f, "unknown broker request `{request_id}`")
+            Self::UnknownAdmission(admission_id) => {
+                write!(f, "unknown broker admission `{admission_id}`")
             }
-            Self::DuplicateProviderRequest(provider_request_id) => write!(
-                f,
-                "provider request `{provider_request_id}` is already bound to another admission"
-            ),
+            Self::DuplicateProviderRequest(key) => {
+                write!(f, "provider request {key:?} is already bound")
+            }
+            Self::DuplicateProviderTerminal(key) => {
+                write!(f, "provider request {key:?} already has a terminal receipt")
+            }
             Self::ProviderRequestMismatch {
-                request_id,
-                expected,
+                admission_id,
                 received,
             } => write!(
                 f,
-                "provider request mismatch for `{request_id}`: expected {expected:?}, received `{received}`"
+                "provider request {received:?} is not bound to admission `{admission_id}`"
             ),
             Self::PhysicalReceiptMismatch {
-                request_id,
+                admission_id,
                 expected_host,
                 received_host,
                 expected_instance,
                 received_instance,
             } => write!(
                 f,
-                "physical receipt mismatch for `{request_id}`: expected `{expected_host}`/`{expected_instance}`, received `{received_host}`/`{received_instance}`"
+                "physical receipt mismatch for `{admission_id}`: expected `{expected_host}`/`{expected_instance}`, received `{received_host}`/`{received_instance}`"
             ),
+            Self::ConflictingLocalCompletion {
+                admission_id,
+                first,
+                second,
+            } => write!(
+                f,
+                "admission `{admission_id}` has conflicting local completions {first:?} and {second:?}"
+            ),
+            Self::InvalidProviderNotStarted {
+                admission_id,
+                reason,
+            } => write!(
+                f,
+                "invalid provider-not-started receipt for `{admission_id}`: {reason}"
+            ),
+            Self::UnknownPhysicalHost(host_id) => {
+                write!(f, "unknown physical host `{host_id}`")
+            }
+            Self::InvalidCapacityEvidence { host_id, reason } => {
+                write!(f, "invalid capacity evidence for `{host_id}`: {reason}")
+            }
         }
     }
 }
@@ -290,15 +600,23 @@ struct QueuedWork {
 }
 
 #[derive(Clone, Debug)]
-struct ActiveAdmission {
-    receipt: AdmissionReceipt,
-    provider_request_id: Option<String>,
-    local_completion: Option<LocalCompletionKind>,
+struct ProviderTurn {
+    start: ProviderRequestReceipt,
+    terminal: Option<ProviderTerminalReceipt>,
 }
 
-/// Stateful admission controller. It intentionally has no API for cancelling an admitted request.
+#[derive(Clone, Debug)]
+struct ActiveAdmission {
+    receipt: AdmissionReceipt,
+    provider_requests: BTreeMap<u32, ProviderTurn>,
+    local_completion: Option<LocalCompletionKind>,
+    provider_not_started: bool,
+}
+
+/// Stateful admission controller. There is intentionally no admitted-request cancellation API.
 pub struct PhysicalBroker {
     correlation_scope: String,
+    snapshot_id: String,
     lanes: Vec<VerifiedPhysicalLane>,
     host_capacities: HashMap<String, u32>,
     instance_capacities: HashMap<(String, String), u32>,
@@ -312,45 +630,29 @@ pub struct PhysicalBroker {
 impl PhysicalBroker {
     pub fn new(
         correlation_scope: impl Into<String>,
-        lanes: Vec<VerifiedPhysicalLane>,
+        snapshot: PhysicalFleetSnapshot,
     ) -> Result<Self, BrokerError> {
         let correlation_scope = correlation_scope.into();
         if correlation_scope.trim().is_empty() {
             return Err(BrokerError::EmptyCorrelationScope);
         }
-        if lanes.is_empty() {
-            return Err(BrokerError::NoVerifiedLanes);
-        }
-
+        snapshot.validate()?;
         let mut host_capacities = HashMap::new();
         let mut instance_capacities = HashMap::new();
-        for lane in &lanes {
-            Self::validate_lane(lane)?;
-            if let Some(first) = host_capacities.insert(lane.host_id.clone(), lane.host_capacity) {
-                if first != lane.host_capacity {
-                    return Err(BrokerError::ConflictingHostCapacity {
-                        host_id: lane.host_id.clone(),
-                        first,
-                        second: lane.host_capacity,
-                    });
-                }
-            }
-            let instance_key = (lane.host_id.clone(), lane.model_instance_id.clone());
-            if let Some(first) = instance_capacities.insert(instance_key, lane.instance_capacity) {
-                if first != lane.instance_capacity {
-                    return Err(BrokerError::ConflictingInstanceCapacity {
-                        host_id: lane.host_id.clone(),
-                        model_instance_id: lane.model_instance_id.clone(),
-                        first,
-                        second: lane.instance_capacity,
-                    });
-                }
-            }
+        for lane in &snapshot.lanes {
+            host_capacities.insert(
+                lane.host_id.clone(),
+                lane.capacity_evidence.max_concurrent(),
+            );
+            instance_capacities.insert(
+                (lane.host_id.clone(), lane.model_instance_id.clone()),
+                lane.advertised_instance_capacity,
+            );
         }
-
         Ok(Self {
             correlation_scope,
-            lanes,
+            snapshot_id: snapshot.snapshot_id,
+            lanes: snapshot.lanes,
             host_capacities,
             instance_capacities,
             current_versions: HashMap::new(),
@@ -361,41 +663,18 @@ impl PhysicalBroker {
         })
     }
 
-    fn validate_lane(lane: &VerifiedPhysicalLane) -> Result<(), BrokerError> {
-        let invalid = [
-            ("logical device id", lane.logical_device_id.trim()),
-            ("model id", lane.model_id.trim()),
-            ("physical host id", lane.host_id.trim()),
-            ("model instance id", lane.model_instance_id.trim()),
-            ("identity evidence id", lane.evidence_id.trim()),
-        ]
-        .into_iter()
-        .find(|(_, value)| value.is_empty())
-        .map(|(name, _)| format!("{name} is empty"))
-        .or_else(|| (lane.host_capacity == 0).then(|| "host capacity is zero".to_string()))
-        .or_else(|| (lane.instance_capacity == 0).then(|| "instance capacity is zero".to_string()));
-        if let Some(reason) = invalid {
-            return Err(BrokerError::InvalidLane {
-                device_id: lane.logical_device_id.clone(),
-                reason,
-            });
-        }
-        Ok(())
-    }
-
-    pub fn set_task_version(&mut self, version: TaskVersion) -> Vec<StaleWorkReceipt> {
-        self.current_versions
-            .insert(version.task_id.clone(), version);
+    pub fn set_source_revision(&mut self, source: TaskVersion) -> Vec<StaleWorkReceipt> {
+        self.current_versions.insert(source.authority_key(), source);
         self.prune_stale()
     }
 
-    pub fn remove_task_version(&mut self, task_id: &str) -> Vec<StaleWorkReceipt> {
-        self.current_versions.remove(task_id);
+    pub fn remove_source_revision(&mut self, source: &TaskVersion) -> Vec<StaleWorkReceipt> {
+        self.current_versions.remove(&source.authority_key());
         self.prune_stale()
     }
 
     pub fn enqueue(&mut self, opportunity: WorkOpportunity) -> Result<QueueReceipt, BrokerError> {
-        self.validate_opportunity(&opportunity)?;
+        validate_opportunity(&opportunity)?;
         if self.pending.contains_key(&opportunity.work_id)
             || self
                 .active
@@ -407,11 +686,8 @@ impl PhysicalBroker {
         if !self.is_current(&opportunity.source) {
             return Err(BrokerError::StaleOpportunity {
                 work_id: opportunity.work_id,
-                queued: opportunity.source.clone(),
-                current: self
-                    .current_versions
-                    .get(&opportunity.source.task_id)
-                    .cloned(),
+                queued: Box::new(opportunity.source.clone()),
+                current: self.current_source(&opportunity.source).map(Box::new),
             });
         }
         self.queue_sequence += 1;
@@ -432,29 +708,6 @@ impl PhysicalBroker {
         Ok(receipt)
     }
 
-    fn validate_opportunity(&self, opportunity: &WorkOpportunity) -> Result<(), BrokerError> {
-        if opportunity.work_id.trim().is_empty() {
-            return Err(BrokerError::InvalidOpportunity {
-                work_id: opportunity.work_id.clone(),
-                reason: "work id is empty".to_string(),
-            });
-        }
-        if opportunity.source.task_id.trim().is_empty() {
-            return Err(BrokerError::InvalidOpportunity {
-                work_id: opportunity.work_id.clone(),
-                reason: "source task id is empty".to_string(),
-            });
-        }
-        if opportunity.role.requires_task_version() && opportunity.source.revision == 0 {
-            return Err(BrokerError::InvalidOpportunity {
-                work_id: opportunity.work_id.clone(),
-                reason: "auxiliary work requires a non-zero authoritative source revision"
-                    .to_string(),
-            });
-        }
-        Ok(())
-    }
-
     pub fn prune_stale(&mut self) -> Vec<StaleWorkReceipt> {
         let stale_ids: Vec<String> = self
             .pending
@@ -466,26 +719,28 @@ impl PhysicalBroker {
             .into_iter()
             .filter_map(|work_id| {
                 let queued = self.pending.remove(&work_id)?;
-                let source = queued.opportunity.source;
                 Some(StaleWorkReceipt {
-                    work_id,
+                    current_source: self.current_source(&queued.opportunity.source),
+                    queued_source: queued.opportunity.source,
                     role: queued.opportunity.role,
-                    current_source: self.current_versions.get(&source.task_id).cloned(),
-                    queued_source: source,
+                    work_id,
                 })
             })
             .collect()
     }
 
+    fn current_source(&self, source: &TaskVersion) -> Option<TaskVersion> {
+        self.current_versions.get(&source.authority_key()).cloned()
+    }
+
     fn is_current(&self, source: &TaskVersion) -> bool {
-        self.current_versions.get(&source.task_id) == Some(source)
+        self.current_source(source).as_ref() == Some(source)
     }
 
     pub fn admit_next(&mut self) -> Option<AdmissionReceipt> {
         self.prune_stale();
         let host_occupancy = self.host_occupancy();
         let instance_occupancy = self.instance_occupancy();
-
         let selected = self
             .pending
             .iter()
@@ -494,48 +749,42 @@ impl PhysicalBroker {
                     self.select_lane(&queued.opportunity, &host_occupancy, &instance_occupancy)?;
                 Some((work_id.clone(), queued.clone(), lane))
             })
-            .max_by(|(_, left, _), (_, right, _)| Self::compare_queued(left, right))?;
+            .max_by(|(_, left, _), (_, right, _)| compare_queued(left, right))?;
 
         let (work_id, queued, lane_index) = selected;
         self.pending.remove(&work_id);
         self.admission_sequence += 1;
         let lane = &self.lanes[lane_index];
-        let request_id = format!(
-            "{}:request:{:08}",
+        let admission_id = format!(
+            "{}:admission:{:08}",
             self.correlation_scope, self.admission_sequence
         );
         let receipt = AdmissionReceipt {
-            request_id: request_id.clone(),
+            admission_id: admission_id.clone(),
             work_id,
             role: queued.opportunity.role,
             priority: queued.opportunity.priority,
             source: queued.opportunity.source,
+            fleet_snapshot_id: self.snapshot_id.clone(),
             logical_device_id: lane.logical_device_id.clone(),
             model_id: lane.model_id.clone(),
             physical_host_id: lane.host_id.clone(),
             model_instance_id: lane.model_instance_id.clone(),
-            identity_evidence_id: lane.evidence_id.clone(),
+            route_evidence_id: lane.route_evidence_id.clone(),
+            capacity_evidence: lane.capacity_evidence.clone(),
             queue_sequence: queued.sequence,
             admission_sequence: self.admission_sequence,
         };
         self.active.insert(
-            request_id,
+            admission_id,
             ActiveAdmission {
                 receipt: receipt.clone(),
-                provider_request_id: None,
+                provider_requests: BTreeMap::new(),
                 local_completion: None,
+                provider_not_started: false,
             },
         );
         Some(receipt)
-    }
-
-    fn compare_queued(left: &QueuedWork, right: &QueuedWork) -> Ordering {
-        left.opportunity
-            .priority
-            .cmp(&right.opportunity.priority)
-            // FIFO within a priority class: the smaller sequence wins `max_by`.
-            .then_with(|| right.sequence.cmp(&left.sequence))
-            .then_with(|| right.opportunity.work_id.cmp(&left.opportunity.work_id))
     }
 
     fn select_lane(
@@ -548,7 +797,11 @@ impl PhysicalBroker {
             .iter()
             .enumerate()
             .filter(|(_, lane)| {
-                if opportunity.role.requires_build_lane() && lane.supervision_only {
+                if !opportunity.eligible_logical_device_ids.is_empty()
+                    && !opportunity
+                        .eligible_logical_device_ids
+                        .contains(&lane.logical_device_id)
+                {
                     return false;
                 }
                 if opportunity.excluded_logical_device_id.as_deref()
@@ -572,15 +825,9 @@ impl PhysicalBroker {
                     Some(preferred) if preferred == lane.model_id => 0,
                     _ => 1,
                 };
-                let supervision_rank = if opportunity.role.requires_build_lane() {
-                    0
-                } else {
-                    u8::from(!lane.supervision_only)
-                };
                 (
                     host_used,
                     instance_used,
-                    supervision_rank,
                     preferred_rank,
                     u32::MAX - lane.routing_weight.max(1),
                     *index,
@@ -594,109 +841,213 @@ impl PhysicalBroker {
         receipt: ProviderRequestReceipt,
     ) -> Result<(), BrokerError> {
         if self.active.values().any(|active| {
-            active.provider_request_id.as_deref() == Some(receipt.provider_request_id.as_str())
-                && active.receipt.request_id != receipt.request_id
+            active.provider_requests.values().any(|turn| {
+                turn.start.key.provider_request_id == receipt.key.provider_request_id
+                    && active.receipt.admission_id != receipt.admission_id
+            })
         }) {
-            return Err(BrokerError::DuplicateProviderRequest(
-                receipt.provider_request_id,
-            ));
+            return Err(BrokerError::DuplicateProviderRequest(receipt.key));
         }
         let active = self
             .active
-            .get_mut(&receipt.request_id)
-            .ok_or_else(|| BrokerError::UnknownRequest(receipt.request_id.clone()))?;
-        Self::validate_physical_receipt(
+            .get_mut(&receipt.admission_id)
+            .ok_or_else(|| BrokerError::UnknownAdmission(receipt.admission_id.clone()))?;
+        validate_physical_receipt(
             &active.receipt,
-            &receipt.request_id,
+            &receipt.admission_id,
             &receipt.physical_host_id,
             &receipt.model_instance_id,
         )?;
-        if let Some(expected) = &active.provider_request_id {
-            if expected != &receipt.provider_request_id {
-                return Err(BrokerError::ProviderRequestMismatch {
-                    request_id: receipt.request_id,
-                    expected: Some(expected.clone()),
-                    received: receipt.provider_request_id,
-                });
-            }
-            return Ok(());
+        if active.provider_not_started {
+            return Err(BrokerError::InvalidProviderNotStarted {
+                admission_id: receipt.admission_id,
+                reason: "a provider request arrived after provider-not-started was certified"
+                    .to_string(),
+            });
         }
-        active.provider_request_id = Some(receipt.provider_request_id);
+        if let Some(existing) = active.provider_requests.get(&receipt.key.ordinal) {
+            if existing.start == receipt {
+                return Ok(());
+            }
+            return Err(BrokerError::DuplicateProviderRequest(receipt.key));
+        }
+        active.provider_requests.insert(
+            receipt.key.ordinal,
+            ProviderTurn {
+                start: receipt,
+                terminal: None,
+            },
+        );
         Ok(())
     }
 
     pub fn record_local_completion(
         &mut self,
-        request_id: &str,
+        admission_id: &str,
         kind: LocalCompletionKind,
     ) -> Result<LocalCompletionReceipt, BrokerError> {
         let active = self
             .active
-            .get_mut(request_id)
-            .ok_or_else(|| BrokerError::UnknownRequest(request_id.to_string()))?;
-        active.local_completion = Some(kind);
+            .get_mut(admission_id)
+            .ok_or_else(|| BrokerError::UnknownAdmission(admission_id.to_string()))?;
+        if let Some(first) = active.local_completion {
+            if first != kind {
+                return Err(BrokerError::ConflictingLocalCompletion {
+                    admission_id: admission_id.to_string(),
+                    first,
+                    second: kind,
+                });
+            }
+        } else {
+            active.local_completion = Some(kind);
+        }
         Ok(LocalCompletionReceipt {
-            request_id: request_id.to_string(),
+            admission_id: admission_id.to_string(),
             work_id: active.receipt.work_id.clone(),
             physical_host_id: active.receipt.physical_host_id.clone(),
             model_instance_id: active.receipt.model_instance_id.clone(),
             kind,
-            provider_terminal_observed: false,
+            provider_requests_started: active.provider_requests.len(),
+            provider_requests_terminal: active
+                .provider_requests
+                .values()
+                .filter(|turn| turn.terminal.is_some())
+                .count(),
         })
     }
 
     pub fn observe_provider_terminal(
         &mut self,
         terminal: ProviderTerminalReceipt,
-    ) -> Result<ReleasedAdmissionReceipt, BrokerError> {
+    ) -> Result<(), BrokerError> {
         let active = self
             .active
-            .get(&terminal.request_id)
-            .ok_or_else(|| BrokerError::UnknownRequest(terminal.request_id.clone()))?;
-        Self::validate_physical_receipt(
+            .get_mut(&terminal.admission_id)
+            .ok_or_else(|| BrokerError::UnknownAdmission(terminal.admission_id.clone()))?;
+        validate_physical_receipt(
             &active.receipt,
-            &terminal.request_id,
+            &terminal.admission_id,
             &terminal.physical_host_id,
             &terminal.model_instance_id,
         )?;
-        if active.provider_request_id.as_deref() != Some(terminal.provider_request_id.as_str()) {
+        let Some(turn) = active.provider_requests.get_mut(&terminal.key.ordinal) else {
             return Err(BrokerError::ProviderRequestMismatch {
-                request_id: terminal.request_id,
-                expected: active.provider_request_id.clone(),
-                received: terminal.provider_request_id,
+                admission_id: terminal.admission_id,
+                received: terminal.key,
+            });
+        };
+        if turn.start.key != terminal.key {
+            return Err(BrokerError::ProviderRequestMismatch {
+                admission_id: terminal.admission_id,
+                received: terminal.key,
             });
         }
-        let active = self
-            .active
-            .remove(&terminal.request_id)
-            .expect("active admission was checked above");
-        Ok(ReleasedAdmissionReceipt {
-            admission: active.receipt,
-            terminal,
-        })
-    }
-
-    fn validate_physical_receipt(
-        admission: &AdmissionReceipt,
-        request_id: &str,
-        host_id: &str,
-        model_instance_id: &str,
-    ) -> Result<(), BrokerError> {
-        if admission.physical_host_id != host_id || admission.model_instance_id != model_instance_id
-        {
-            return Err(BrokerError::PhysicalReceiptMismatch {
-                request_id: request_id.to_string(),
-                expected_host: admission.physical_host_id.clone(),
-                received_host: host_id.to_string(),
-                expected_instance: admission.model_instance_id.clone(),
-                received_instance: model_instance_id.to_string(),
-            });
+        if turn.terminal.is_some() {
+            return Err(BrokerError::DuplicateProviderTerminal(terminal.key));
         }
+        turn.terminal = Some(terminal);
         Ok(())
     }
 
-    pub fn active_receipt(&self, request_id: &str) -> Option<&AdmissionReceipt> {
-        self.active.get(request_id).map(|active| &active.receipt)
+    pub fn record_provider_not_started(
+        &mut self,
+        receipt: ProviderNotStartedReceipt,
+    ) -> Result<(), BrokerError> {
+        let active = self
+            .active
+            .get_mut(&receipt.admission_id)
+            .ok_or_else(|| BrokerError::UnknownAdmission(receipt.admission_id.clone()))?;
+        validate_physical_receipt(
+            &active.receipt,
+            &receipt.admission_id,
+            &receipt.physical_host_id,
+            &receipt.model_instance_id,
+        )?;
+        if receipt.reason.trim().is_empty() {
+            return Err(BrokerError::InvalidProviderNotStarted {
+                admission_id: receipt.admission_id,
+                reason: "reason is empty".to_string(),
+            });
+        }
+        if !active.provider_requests.is_empty() {
+            return Err(BrokerError::InvalidProviderNotStarted {
+                admission_id: receipt.admission_id,
+                reason: "one or more provider requests already started".to_string(),
+            });
+        }
+        active.provider_not_started = true;
+        Ok(())
+    }
+
+    /// Release only after local work ended and either no provider call started (explicit receipt) or
+    /// every provider turn has an exact terminal receipt.
+    pub fn release_if_terminal(
+        &mut self,
+        admission_id: &str,
+    ) -> Result<Option<ReleasedAdmissionReceipt>, BrokerError> {
+        let Some(active) = self.active.get(admission_id) else {
+            return Err(BrokerError::UnknownAdmission(admission_id.to_string()));
+        };
+        let Some(local_completion) = active.local_completion else {
+            return Ok(None);
+        };
+        let releasable = active.provider_not_started
+            || (!active.provider_requests.is_empty()
+                && active
+                    .provider_requests
+                    .values()
+                    .all(|turn| turn.terminal.is_some()));
+        if !releasable {
+            return Ok(None);
+        }
+        let active = self
+            .active
+            .remove(admission_id)
+            .expect("active admission was checked above");
+        Ok(Some(ReleasedAdmissionReceipt {
+            admission: active.receipt,
+            local_completion,
+            provider_terminals: active
+                .provider_requests
+                .into_values()
+                .filter_map(|turn| turn.terminal)
+                .collect(),
+            provider_not_started: active.provider_not_started,
+        }))
+    }
+
+    pub fn update_host_capacity(
+        &mut self,
+        host_id: &str,
+        evidence: HostCapacityEvidence,
+    ) -> Result<CapacityUpdateReceipt, BrokerError> {
+        evidence
+            .validate()
+            .map_err(|reason| BrokerError::InvalidCapacityEvidence {
+                host_id: host_id.to_string(),
+                reason,
+            })?;
+        let previous_capacity = self
+            .host_capacities
+            .get(host_id)
+            .copied()
+            .ok_or_else(|| BrokerError::UnknownPhysicalHost(host_id.to_string()))?;
+        let new_capacity = evidence.max_concurrent();
+        self.host_capacities
+            .insert(host_id.to_string(), new_capacity);
+        for lane in self.lanes.iter_mut().filter(|lane| lane.host_id == host_id) {
+            lane.capacity_evidence = evidence.clone();
+        }
+        Ok(CapacityUpdateReceipt {
+            physical_host_id: host_id.to_string(),
+            previous_capacity,
+            new_capacity,
+            capacity_evidence: evidence,
+        })
+    }
+
+    pub fn active_receipt(&self, admission_id: &str) -> Option<&AdmissionReceipt> {
+        self.active.get(admission_id).map(|active| &active.receipt)
     }
 
     pub fn pending_len(&self) -> usize {
@@ -712,6 +1063,10 @@ impl PhysicalBroker {
             .values()
             .filter(|active| active.receipt.physical_host_id == host_id)
             .count()
+    }
+
+    pub fn pending_work_ids(&self) -> Vec<String> {
+        self.pending.keys().cloned().collect()
     }
 
     fn host_occupancy(&self) -> HashMap<String, u32> {
@@ -736,4 +1091,74 @@ impl PhysicalBroker {
         }
         occupancy
     }
+}
+
+fn validate_opportunity(opportunity: &WorkOpportunity) -> Result<(), BrokerError> {
+    if opportunity.work_id.trim().is_empty() {
+        return Err(BrokerError::InvalidOpportunity {
+            work_id: opportunity.work_id.clone(),
+            reason: "work id is empty".to_string(),
+        });
+    }
+    opportunity
+        .source
+        .validate()
+        .map_err(|reason| BrokerError::InvalidOpportunity {
+            work_id: opportunity.work_id.clone(),
+            reason,
+        })?;
+    let valid_authority = match opportunity.role {
+        WorkRole::Build | WorkRole::Repair => {
+            matches!(opportunity.source.kind, SourceRevisionKind::TaskAttempt)
+        }
+        WorkRole::RuntimeAcceptanceReview | WorkRole::ContractReview => {
+            matches!(opportunity.source.kind, SourceRevisionKind::Contract { .. })
+        }
+        WorkRole::CompletedArtifactReview => {
+            matches!(opportunity.source.kind, SourceRevisionKind::Artifact { .. })
+        }
+        WorkRole::SemanticJudgeObservation => {
+            matches!(opportunity.source.kind, SourceRevisionKind::Trace { .. })
+        }
+        WorkRole::AcceptanceOracle => matches!(
+            opportunity.source.kind,
+            SourceRevisionKind::Artifact { .. } | SourceRevisionKind::Contract { .. }
+        ),
+    };
+    if !valid_authority {
+        return Err(BrokerError::InvalidOpportunity {
+            work_id: opportunity.work_id.clone(),
+            reason: format!(
+                "role {:?} cannot use source authority {:?}",
+                opportunity.role, opportunity.source.kind
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn compare_queued(left: &QueuedWork, right: &QueuedWork) -> Ordering {
+    left.opportunity
+        .priority
+        .cmp(&right.opportunity.priority)
+        .then_with(|| right.sequence.cmp(&left.sequence))
+        .then_with(|| right.opportunity.work_id.cmp(&left.opportunity.work_id))
+}
+
+fn validate_physical_receipt(
+    admission: &AdmissionReceipt,
+    admission_id: &str,
+    host_id: &str,
+    model_instance_id: &str,
+) -> Result<(), BrokerError> {
+    if admission.physical_host_id != host_id || admission.model_instance_id != model_instance_id {
+        return Err(BrokerError::PhysicalReceiptMismatch {
+            admission_id: admission_id.to_string(),
+            expected_host: admission.physical_host_id.clone(),
+            received_host: host_id.to_string(),
+            expected_instance: admission.model_instance_id.clone(),
+            received_instance: model_instance_id.to_string(),
+        });
+    }
+    Ok(())
 }
