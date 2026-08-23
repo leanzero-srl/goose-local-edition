@@ -5689,22 +5689,28 @@ mod tests {
             "node-b".to_string(),
             "node-c".to_string(),
         ];
-        let assignments = plan_research_seed_assignments(&requirements, &models).unwrap();
-        assert_eq!(assignments.len(), models.len());
+        let partitions = plan_research_seed_partitions(&requirements, 6).unwrap();
+        assert_eq!(partitions.len(), 6);
+        let assignments = partitions
+            .into_iter()
+            .enumerate()
+            .map(|(index, partition)| ResearchSeedAssignment {
+                partition_id: partition.partition_id,
+                model: models[index % models.len()].clone(),
+                requirements: partition.requirements,
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
             assignments
                 .iter()
+                .take(models.len())
                 .map(|assignment| assignment.model.as_str())
                 .collect::<Vec<_>>(),
             vec!["node-a", "node-b", "node-c"]
         );
-        assert_eq!(
-            assignments
-                .iter()
-                .map(|assignment| assignment.requirements.len())
-                .collect::<Vec<_>>(),
-            vec![4, 3, 3]
-        );
+        assert!(assignments
+            .iter()
+            .all(|assignment| !assignment.requirements.is_empty()));
         assert_eq!(
             assignments
                 .iter()
@@ -5714,12 +5720,22 @@ mod tests {
                         .iter()
                         .map(|requirement| requirement.id.as_str())
                 })
-                .collect::<Vec<_>>(),
+                .collect::<HashSet<_>>(),
             requirements
                 .iter()
                 .map(|requirement| requirement.id.as_str())
-                .collect::<Vec<_>>()
+                .collect::<HashSet<_>>()
         );
+        let source_positions = requirements
+            .iter()
+            .enumerate()
+            .map(|(index, requirement)| (requirement.id.as_str(), index))
+            .collect::<HashMap<_, _>>();
+        assert!(assignments.iter().all(|assignment| assignment
+            .requirements
+            .windows(2)
+            .all(|pair| source_positions[pair[0].id.as_str()]
+                < source_positions[pair[1].id.as_str()])));
 
         let ledgers = assignments
             .iter()
@@ -5755,6 +5771,58 @@ mod tests {
             .iter()
             .all(|finding| finding.requirement_ids.len() == 1 && !finding.grounded));
         assert!(merged.blocked_requirement_ids.is_empty());
+    }
+
+    #[test]
+    fn research_seed_packets_preserve_authority_and_balance_authored_cost() {
+        let requirements = (0..197)
+            .map(|index| RequirementRecord {
+                id: format!("REQ-{index}"),
+                section: format!("section-{}", index / 20),
+                quote: format!("requirement {index}"),
+            })
+            .collect::<Vec<_>>();
+        let partitions = plan_research_seed_partitions(&requirements, 9).unwrap();
+        assert_eq!(partitions.len(), 9);
+        let assigned_ids = partitions
+            .iter()
+            .flat_map(|partition| {
+                partition
+                    .requirements
+                    .iter()
+                    .map(|requirement| requirement.id.as_str())
+            })
+            .collect::<HashSet<_>>();
+        assert_eq!(assigned_ids.len(), requirements.len());
+        assert_eq!(
+            assigned_ids,
+            requirements
+                .iter()
+                .map(|requirement| requirement.id.as_str())
+                .collect::<HashSet<_>>()
+        );
+        let source_positions = requirements
+            .iter()
+            .enumerate()
+            .map(|(index, requirement)| (requirement.id.as_str(), index))
+            .collect::<HashMap<_, _>>();
+        assert!(partitions.iter().all(|partition| partition
+            .requirements
+            .windows(2)
+            .all(|pair| source_positions[pair[0].id.as_str()]
+                < source_positions[pair[1].id.as_str()])));
+        let costs = partitions
+            .iter()
+            .map(|partition| {
+                partition
+                    .requirements
+                    .iter()
+                    .map(research_seed_unit_cost)
+                    .sum::<usize>()
+            })
+            .collect::<Vec<_>>();
+        assert!(costs.iter().all(|cost| *cost > 0));
+        assert!(costs.iter().max().unwrap() < &(costs.iter().sum::<usize>() / 3));
     }
 
     #[test]
@@ -16260,6 +16328,12 @@ struct ResearchSeedLedgerDraft {
 }
 
 #[derive(Clone, Debug)]
+struct ResearchSeedPartition {
+    partition_id: String,
+    requirements: Vec<RequirementRecord>,
+}
+
+#[derive(Clone, Debug)]
 struct ResearchSeedAssignment {
     partition_id: String,
     model: String,
@@ -16279,35 +16353,112 @@ struct MergedResearchSeed {
     blocked_requirement_ids: Vec<String>,
 }
 
-fn plan_research_seed_assignments(
+fn research_seed_unit_cost(requirement: &RequirementRecord) -> usize {
+    requirement.section.chars().count() + requirement.quote.chars().count().max(1)
+}
+
+fn plan_research_seed_partitions(
     requirements: &[RequirementRecord],
-    models: &[String],
-) -> Result<Vec<ResearchSeedAssignment>> {
-    if models.is_empty() {
-        bail!("research seed fan has no available node");
+    desired_partitions: usize,
+) -> Result<Vec<ResearchSeedPartition>> {
+    if requirements.is_empty() || desired_partitions == 0 {
+        bail!("research seed partitioner needs requirements and runnable fleet capacity");
     }
-    if requirements.len() < models.len() {
-        bail!(
-            "research seed fan cannot give {} nodes non-duplicate authoritative work from only {} requirements",
-            models.len(),
-            requirements.len()
-        );
+    let desired_partitions = desired_partitions.min(requirements.len());
+
+    // Begin with authored leaf sections. They are the strongest reusable semantic boundary the task
+    // gives us; unlike equal contiguous counts, they do not make one worker digest half of one concept
+    // and another worker infer the rest.
+    let mut groups: Vec<Vec<RequirementRecord>> = Vec::new();
+    for requirement in requirements {
+        if groups
+            .last()
+            .and_then(|group| group.last())
+            .is_some_and(|last| last.section == requirement.section)
+        {
+            groups.last_mut().unwrap().push(requirement.clone());
+        } else {
+            groups.push(vec![requirement.clone()]);
+        }
     }
-    let base = requirements.len() / models.len();
-    let remainder = requirements.len() % models.len();
-    let mut cursor = 0usize;
-    Ok(models
+
+    let total_cost = requirements
         .iter()
+        .map(research_seed_unit_cost)
+        .sum::<usize>();
+    let target_cost = total_cost.div_ceil(desired_partitions).max(1);
+
+    // A single oversized authored section is still a straggler. Split only such sections, at the
+    // requirement boundary nearest half their measured authored-text cost; there is no token/time cap
+    // and no task-count literal here.
+    loop {
+        let split_candidate = groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| group.len() > 1)
+            .map(|(index, group)| {
+                (
+                    index,
+                    group.iter().map(research_seed_unit_cost).sum::<usize>(),
+                )
+            })
+            .filter(|(_, cost)| *cost > target_cost)
+            .max_by_key(|(_, cost)| *cost);
+        let Some((index, cost)) = split_candidate else {
+            break;
+        };
+        let group = groups.remove(index);
+        let split_at = (1..group.len())
+            .min_by_key(|candidate| {
+                let prefix_cost = group[..*candidate]
+                    .iter()
+                    .map(research_seed_unit_cost)
+                    .sum::<usize>();
+                prefix_cost.abs_diff(cost - prefix_cost)
+            })
+            .expect("a multi-requirement section has a split boundary");
+        let left = group[..split_at].to_vec();
+        let right = group[split_at..].to_vec();
+        groups.insert(index, right);
+        groups.insert(index, left);
+    }
+
+    // Coalesce the least-cost adjacent packets until the queue matches the capacity-derived demand.
+    // Adjacency preserves authored order; the dynamic fan, not a static ownership guess, decides which
+    // host consumes each next packet based on who actually becomes free first.
+    while groups.len() > desired_partitions {
+        let merge_at = (0..groups.len() - 1)
+            .min_by_key(|index| {
+                groups[*index]
+                    .iter()
+                    .chain(groups[*index + 1].iter())
+                    .map(research_seed_unit_cost)
+                    .sum::<usize>()
+            })
+            .expect("more than one research group has an adjacent pair");
+        let right = groups.remove(merge_at + 1);
+        groups[merge_at].extend(right);
+    }
+    while groups.len() < desired_partitions {
+        let split_at_group = groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| group.len() > 1)
+            .max_by_key(|(_, group)| group.iter().map(research_seed_unit_cost).sum::<usize>())
+            .map(|(index, _)| index)
+            .expect("fewer groups than requirements leaves a splittable group");
+        let group = groups.remove(split_at_group);
+        let midpoint = group.len() / 2;
+        groups.insert(split_at_group, group[midpoint..].to_vec());
+        groups.insert(split_at_group, group[..midpoint].to_vec());
+    }
+
+    Ok(groups
+        .into_iter()
         .enumerate()
-        .map(|(index, model)| {
-            let width = base + usize::from(index < remainder);
-            let partition = ResearchSeedAssignment {
-                partition_id: format!("seed-{}", index + 1),
-                model: model.clone(),
-                requirements: requirements[cursor..cursor + width].to_vec(),
-            };
-            cursor += width;
-            partition
+        .map(|(index, requirements)| ResearchSeedPartition {
+            partition_id: format!("seed-{}", index + 1),
+            requirements,
         })
         .collect())
 }
@@ -20803,18 +20954,33 @@ impl GooseAgentDispatcher {
 
     async fn run_research_seed_fan(
         self: &Arc<Self>,
-        assignments: Vec<ResearchSeedAssignment>,
+        partitions: Vec<ResearchSeedPartition>,
         research_extensions: Arc<Vec<ExtensionConfig>>,
         spec_doc_urls: Arc<Vec<String>>,
         is_amendment: bool,
-    ) -> Result<Vec<CompiledResearchSeedLedger>> {
-        let mut join_set = tokio::task::JoinSet::new();
-        let assignment_count = assignments.len();
-        for (index, assignment) in assignments.into_iter().enumerate() {
-            let me = self.clone();
-            let extensions = research_extensions.clone();
-            let doc_urls = spec_doc_urls.clone();
-            join_set.spawn(async move {
+        worker_models: Vec<String>,
+    ) -> Result<(Vec<ResearchSeedAssignment>, Vec<CompiledResearchSeedLedger>)> {
+        let me = self.clone();
+        let events = self.events.clone();
+        let fan = fanout_staged(
+            worker_models,
+            partitions,
+            move |partition: ResearchSeedPartition, model: String| {
+                let me = me.clone();
+                let extensions = research_extensions.clone();
+                let doc_urls = spec_doc_urls.clone();
+                async move {
+                    let assignment = ResearchSeedAssignment {
+                        partition_id: partition.partition_id,
+                        model,
+                        requirements: partition.requirements,
+                    };
+                    let failed_partition_id = assignment.partition_id.clone();
+                    let failed_model = assignment.model.clone();
+                    let result: Result<(
+                        ResearchSeedAssignment,
+                        CompiledResearchSeedLedger,
+                    )> = async {
                 let activity_key = format!("research-pod-{}", assignment.partition_id);
                 me.events.write_value(serde_json::json!({
                     "event": "research_pod_role_started",
@@ -20831,8 +20997,8 @@ impl GooseAgentDispatcher {
                     "codebase_shell": is_amendment,
                 });
                 let system = "You are one seed evidence mapper in a collaborative research pod. You own only \
-                    the contiguous authoritative requirement partition supplied below; every other node owns a \
-                    different partition concurrently. Return exactly one typed assessment per requirement id, \
+                    the capacity-derived semantic requirement packet supplied below; every other active node owns a \
+                    different packet concurrently and the next free node takes the next packet. Return exactly one typed assessment per requirement id, \
                     never one summary for the partition and never a plan. `spec-sufficient` means the authored \
                     requirement itself contains every exact fact planning needs. `needs-evidence` means a specific \
                     external, library-documentation, or codebase fact can materially change implementation: emit \
@@ -20875,7 +21041,7 @@ impl GooseAgentDispatcher {
                         None,
                     )
                     .await?;
-                let raw = output
+                let mut raw = output
                     .final_output
                     .filter(|value| !value.trim().is_empty())
                     .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
@@ -20885,7 +21051,68 @@ impl GooseAgentDispatcher {
                             assignment.partition_id
                         )
                     })?;
-                let compiled = compile_research_seed_ledger(&raw, &assignment)?;
+                let tool_call_count = output.tool_calls.len();
+                let mut invalid_ledgers = HashSet::new();
+                let mut repair = 0u64;
+                let compiled = loop {
+                    match compile_research_seed_ledger(&raw, &assignment) {
+                        Ok(compiled) => break compiled,
+                        Err(error) => {
+                            if !invalid_ledgers.insert(raw.clone()) {
+                                bail!(
+                                    "research seed partition `{}` repeated an identical invalid ledger after correction: {error}",
+                                    assignment.partition_id
+                                );
+                            }
+                            repair += 1;
+                            me.events.write_value(serde_json::json!({
+                                "event": "research_seed_ledger_correction_started",
+                                "partition_id": assignment.partition_id,
+                                "model": assignment.model,
+                                "repair": repair,
+                                "compiler_error": error.to_string(),
+                                "completion_basis": "typed-authority-exact-cover",
+                                "attempt_cap": null,
+                            }));
+                            let correction_system = "The deterministic research-ledger compiler rejected your previous response. \
+                                Re-emit the ENTIRE ledger for this one partition, with exactly one assessment for every supplied \
+                                requirement id: no omissions, inventions, duplicates, prose wrapper, or plan. The compiler error \
+                                is factual authority feedback. There is no attempt or elapsed-time cap; finish only by calling \
+                                final_output with a compiler-complete ledger.";
+                            let correction_user = serde_json::to_string_pretty(&serde_json::json!({
+                                "partition_id": assignment.partition_id,
+                                "compiler_error": error.to_string(),
+                                "authoritative_requirements": assignment.requirements,
+                            }))?;
+                            let correction_key =
+                                format!("research-pod-{}-correction-{repair}", assignment.partition_id);
+                            let corrected = me
+                                .run_response_only_agent(
+                                    &assignment.model,
+                                    correction_system.to_string(),
+                                    correction_user,
+                                    Some(Response {
+                                        json_schema: Some(research_seed_schema()),
+                                    }),
+                                    0,
+                                    Some(&correction_key),
+                                )
+                                .await?;
+                            raw = corrected
+                                .final_output
+                                .filter(|value| !value.trim().is_empty())
+                                .or_else(|| {
+                                    (!corrected.text.trim().is_empty()).then_some(corrected.text)
+                                })
+                                .ok_or_else(|| {
+                                    anyhow!(
+                                        "research seed correction for `{}` returned no typed ledger",
+                                        assignment.partition_id
+                                    )
+                                })?;
+                        }
+                    }
+                };
                 me.events.write_value(serde_json::json!({
                     "event": "research_pod_role_completed",
                     "role": "seed-requirement-evidence-mapper",
@@ -20895,19 +21122,56 @@ impl GooseAgentDispatcher {
                     "spec_sufficient": compiled.assessments.iter().filter(|assessment| assessment.state == ResearchSeedState::SpecSufficient).count(),
                     "needs_evidence": compiled.assessments.iter().filter(|assessment| assessment.state == ResearchSeedState::NeedsEvidence).count(),
                     "blocked": compiled.assessments.iter().filter(|assessment| assessment.state == ResearchSeedState::Blocked).count(),
-                    "tool_calls": output.tool_calls.len(),
+                    "tool_calls": tool_call_count,
+                    "ledger_corrections": repair,
                     "seed_records_admitted_as_grounded": 0,
                 }));
-                Ok::<_, anyhow::Error>((index, compiled))
-            });
-        }
-        let mut ordered = vec![None; assignment_count];
+                        Ok((assignment, compiled))
+                    }
+                    .await;
+                    match result {
+                        Ok(result) => Ok(result),
+                        Err(error) => {
+                            me.events.write_value(serde_json::json!({
+                                "event": "research_pod_role_failed",
+                                "role": "seed-requirement-evidence-mapper",
+                                "partition_id": failed_partition_id,
+                                "model": failed_model,
+                                "error": error.to_string(),
+                            }));
+                            Err(error.to_string())
+                        }
+                    }
+                }
+            },
+            |_result, _model| async {},
+            |_result| false,
+            |partition| partition.partition_id.clone(),
+            move |observation| {
+                if observation.kind == StagedFanObservationKind::DetailTailStarted {
+                    events.write_value(serde_json::json!({
+                        "event": "research_seed_tail_started",
+                        "outstanding_partition": observation.outstanding_detail,
+                        "completed_partitions": observation.completed_details,
+                        "in_flight_partitions": observation.in_flight_details,
+                        "logically_free_nodes": observation.logically_free_lanes,
+                        "action": "semantic-supervision-remains-available",
+                    }));
+                }
+            },
+        )
+        .await?;
+
+        let mut assignments = Vec::with_capacity(fan.details.len());
+        let mut ledgers = Vec::with_capacity(fan.details.len());
         let mut failures = Vec::new();
-        while let Some(joined) = join_set.join_next().await {
-            match joined {
-                Ok(Ok((index, ledger))) => ordered[index] = Some(ledger),
-                Ok(Err(error)) => failures.push(error.to_string()),
-                Err(error) => failures.push(format!("research seed task panicked: {error}")),
+        for result in fan.details {
+            match result {
+                Ok((assignment, ledger)) => {
+                    assignments.push(assignment);
+                    ledgers.push(ledger);
+                }
+                Err(error) => failures.push(error),
             }
         }
         if !failures.is_empty() {
@@ -20916,7 +21180,7 @@ impl GooseAgentDispatcher {
                 failures.join("; ")
             );
         }
-        Ok(ordered.into_iter().flatten().collect())
+        Ok((assignments, ledgers))
     }
 
     async fn run_research_queue(
@@ -21079,6 +21343,7 @@ impl GooseAgentDispatcher {
         if requirements.is_empty() {
             bail!("semantic research cannot inventory any authored requirement");
         }
+        let available_execution_slots = worker_models.len();
         let worker_models = one_lane_per_host(worker_models);
         if worker_models.is_empty() {
             bail!("semantic research has no evidence-worker model");
@@ -21086,7 +21351,7 @@ impl GooseAgentDispatcher {
         let spec_doc_urls = Arc::new(spec_doc_urls(user_prompt));
         self.events.write_value(serde_json::json!({
             "event": "research_pod_started",
-            "topology": "full-fleet-seed-fan-then-one-evidence-ledger-dynamic-nonduplicate-queue",
+            "topology": "full-fleet-semantic-work-stealing-seed-then-one-evidence-ledger-dynamic-nonduplicate-queue",
             "coordinator_model": planner_model,
             "worker_models": worker_models,
             "requirements": requirements.len(),
@@ -21099,27 +21364,48 @@ impl GooseAgentDispatcher {
             "lookup_cap": null,
         }));
 
-        let seed_assignments = plan_research_seed_assignments(&requirements, &worker_models)?;
+        // One initial semantic packet per physical host keeps every node active; one additional packet
+        // per configured execution slot gives the faster hosts useful queued work to pull as soon as they
+        // become free. The queue depth comes from the resolved fleet, never a fixed task/time/token cap.
+        let requested_seed_partitions = worker_models
+            .len()
+            .saturating_add(available_execution_slots)
+            .min(requirements.len());
+        let seed_partitions =
+            plan_research_seed_partitions(&requirements, requested_seed_partitions)?;
+        let speed_weights = load_config().speed_weights;
+        let initial_models = order_fleet_by_speed(worker_models.clone(), &speed_weights);
         self.events.write_value(serde_json::json!({
             "event": "research_seed_roles_assigned",
-            "roles": seed_assignments.iter().map(|assignment| serde_json::json!({
-                "partition_id": assignment.partition_id,
-                "model": assignment.model,
-                "requirement_ids": assignment.requirements.iter().map(|requirement| requirement.id.as_str()).collect::<Vec<_>>(),
-                "requirement_count": assignment.requirements.len(),
+            "roles": seed_partitions.iter().map(|partition| serde_json::json!({
+                "partition_id": partition.partition_id,
+                "model": null,
+                "requirement_ids": partition.requirements.iter().map(|requirement| requirement.id.as_str()).collect::<Vec<_>>(),
+                "requirement_count": partition.requirements.len(),
+                "authored_cost": partition.requirements.iter().map(research_seed_unit_cost).sum::<usize>(),
+            })).collect::<Vec<_>>(),
+            "initial_node_roles": initial_models.iter().zip(seed_partitions.iter()).map(|(model, partition)| serde_json::json!({
+                "partition_id": partition.partition_id,
+                "model": model,
+                "capacity_weight": configured_speed_weight(&speed_weights, model),
             })).collect::<Vec<_>>(),
             "available_nodes": worker_models.len(),
-            "assigned_nodes": seed_assignments.len(),
-            "all_nodes_assigned_before_first_model_call": seed_assignments.len() == worker_models.len(),
+            "available_execution_slots": available_execution_slots,
+            "seed_partitions": seed_partitions.len(),
+            "assigned_nodes": worker_models.len(),
+            "queued_partitions_after_initial_admission": seed_partitions.len().saturating_sub(worker_models.len()),
+            "all_nodes_assigned_before_first_model_call": seed_partitions.len() >= worker_models.len(),
             "coordinator_calls_started": 0,
-            "partition_basis": "balanced-contiguous-authoritative-requirement-order",
+            "partition_basis": "authored-semantic-boundaries-balanced-by-authority-cost-dynamic-work-stealing",
+            "queue_depth_basis": "physical-hosts-plus-resolved-execution-slots",
         }));
-        let seed_ledgers = self
+        let (seed_assignments, seed_ledgers) = self
             .run_research_seed_fan(
-                seed_assignments.clone(),
+                seed_partitions,
                 research_extensions.clone(),
                 spec_doc_urls.clone(),
                 is_amendment,
+                worker_models.clone(),
             )
             .await?;
         let seed = merge_research_seed_ledgers(&seed_assignments, seed_ledgers)?;
