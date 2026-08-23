@@ -62,7 +62,7 @@ benchmark fleet, LM Studio mutation, scorer change, or SB7 change.
 
 ## Intended increments
 
-- [ ] Pure broker state machine and replay tests for physical-host capacity, exact terminal
+- [x] Pure broker state machine and replay tests for physical-host capacity, exact terminal
   correlation, priority, and freshness.
 - [ ] Carry verified `lms ps` identity/capacity through goose-cli into `DeviceCfg` and expose it
   in `pool_resolved`.
@@ -76,4 +76,6 @@ benchmark fleet, LM Studio mutation, scorer change, or SB7 change.
 
 ## Gate log
 
-No implementation gate has run yet.
+- Pure broker increment: `cargo test -p goose-swarm --test physical_broker_replay` (6/6),
+  `cargo test -p goose-swarm --lib` (65/65), and
+  `cargo clippy -p goose-swarm --all-targets -- -D warnings` pass with the shared target.
