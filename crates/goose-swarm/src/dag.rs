@@ -89,13 +89,25 @@ pub fn extract_subsplit(spec_text: &str) -> Vec<String> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskState {
     Pending,
     Ready,
     Claimed,
     Done,
+    Salvaged,
     Failed,
+}
+
+impl TaskState {
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Done | Self::Salvaged | Self::Failed)
+    }
+
+    pub fn releases_dependents(self) -> bool {
+        matches!(self, Self::Done | Self::Salvaged)
+    }
 }
 
 #[derive(Debug)]
@@ -367,14 +379,15 @@ impl Dag {
         let mut wiring: Vec<(String, Vec<String>)> = Vec::new();
         let added_ids: Vec<String> = specs.iter().map(|spec| spec.id.clone()).collect();
         for s in specs {
-            // a dep already Done does not count toward indegree (it will never re-fire `complete`).
+            // A dependency that already released its consumers does not count toward indegree; neither
+            // accepted nor provisional completion will re-fire the scheduler transition.
             let indeg_remaining = s
                 .deps
                 .iter()
                 .filter(|d| {
                     self.tasks
                         .get(d.as_str())
-                        .map(|n| n.state != TaskState::Done)
+                        .map(|n| !n.state.releases_dependents())
                         .unwrap_or(true)
                 })
                 .count();

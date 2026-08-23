@@ -12,12 +12,13 @@ fs2.workspace = true
 goose-provider-types = { version = "1.41.0", path = "../goose-provider-types" }
 libc = "0.2.182"
 rand.workspace = true
+regex.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tempfile.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
