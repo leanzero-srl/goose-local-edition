@@ -3,6 +3,17 @@
 Status: read-only upstream audit. No upstream commit was merged, no source code was
 changed, and no model/provider call was made.
 
+Adversarial refresh at 2026-08-23: both official upstream refs still resolve to
+`8d844eecbdfd65626a881c9e8784ae8dc6093f1d`; there is no newer parent delta and
+parent still has no swarm scheduler, fan, or judge implementation. The two P0
+behaviors below are now implemented on `codex/cloud-sb7-harness` by
+`d59234f543a367f1eda705e48d745c458a3b950c` and
+`8d216614413459007a737e8e6bfaa8c4f31943a9`, but neither is yet an ancestor of
+the main `local-edition` branch. Conflict risk is branch-specific:
+`1844d3fb` applies mechanically to current `local-edition` but conflicts with
+the cloud branch's newer parser hardening. The exact-frame semantic gates for
+conditional candidates remain mandatory.
+
 This is a focused addendum to `SWARM-ENGINE-AUDIT-2026-08-22.md`. It answers a
 narrow question: which changes made in the parent `block/goose` repository after
 this fork diverged are useful to the LM Studio / LM Link execution path, and which
