@@ -1,7 +1,7 @@
 //! Physical admission and provider-lifecycle binding for semantic observations.
 //!
-//! This adapter can produce an observation receipt. It cannot deliver the observed action or mutate
-//! scheduler state.
+//! This adapter admits typed observations and lets engine-held, provider-bound authority redeem a
+//! grounded NUDGE into the exact live worker session.
 
 use crate::broker::{
     AdmissionReceipt, BrokerError, LocalCompletionKind, ProviderRequestKey, ProviderTerminalKind,
@@ -10,7 +10,7 @@ use crate::broker::{
 use crate::control_plane::{
     AdmittedWork, CompletedAdmission, CompletedProviderRequest, ExposedProviderRequestWitness,
     PhysicalAdmissionControl, ProviderLifecycle, ProviderLifecycleTransitionError,
-    StartedProviderRequest,
+    ProviderStartSession, StartedProviderRequest,
 };
 use crate::event::EventSink;
 use crate::semantic_observation::{
@@ -395,7 +395,7 @@ struct SemanticCapabilityRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SemanticCapabilityState {
     Eligible,
-    SpentDeliveryUnavailable,
+    SpentDelivered,
     Invalidated,
 }
 
@@ -420,14 +420,20 @@ impl fmt::Display for SemanticNudgeAuthorityError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TaskEvidenceConflict => {
-                write!(formatter, "semantic task evidence conflicts with engine authority")
+                write!(
+                    formatter,
+                    "semantic task evidence conflicts with engine authority"
+                )
             }
             Self::TaskEvidenceNotRegistered => {
                 write!(formatter, "semantic task evidence is not registered")
             }
             Self::AuthorityMismatch => write!(formatter, "semantic authority id does not match"),
             Self::CapturePermitInvalid => {
-                write!(formatter, "semantic capture permit is invalid or already consumed")
+                write!(
+                    formatter,
+                    "semantic capture permit is invalid or already consumed"
+                )
             }
             Self::SnapshotAlreadyBound => write!(
                 formatter,
@@ -448,7 +454,7 @@ impl fmt::Display for SemanticNudgeAuthorityError {
             }
             Self::DeliveryUnavailableAfterSpend => write!(
                 formatter,
-                "semantic nudge capability was spent but the provider-pinned delivery seam is unavailable"
+                "provider-pinned semantic nudge delivery is unavailable; capability was not spent"
             ),
             Self::InvalidEvidence(error) => error.fmt(formatter),
             Self::InvalidCapture(detail) => write!(formatter, "invalid semantic capture: {detail}"),
@@ -502,19 +508,16 @@ impl SemanticNudgeAuthority {
             .map_err(SemanticNudgeAuthorityError::InvalidCapture)
     }
 
-    fn mint_capture_permit(
+    fn mint_capture_permit_from_provider_start(
         &self,
         task_evidence: &SemanticTaskEvidenceCapability,
         request: &SemanticObservationCaptureRequest,
-        started_provider_request: &StartedProviderRequest,
+        provider_start: ProviderStartSession,
     ) -> Result<SemanticNudgeCapturePermit, SemanticNudgeAuthorityError> {
-        SemanticSourceProviderSessionBoundary::validate_started_provider_request(
-            &request.activity_publisher,
-            started_provider_request,
-        )
-        .map_err(SemanticNudgeAuthorityError::InvalidCapture)?;
         let task_key = semantic_task_key(request);
-        let provider_request_hash = canonical_sha256(started_provider_request.receipt());
+        provider_start
+            .ensure_live()
+            .map_err(|_| SemanticNudgeAuthorityError::SourceProviderNotLive)?;
         let provider_session = {
             let mut ledger = lock_nudge_ledger(&self.inner);
             prune_closed_provider_authority(&mut ledger);
@@ -527,29 +530,19 @@ impl SemanticNudgeAuthority {
             {
                 return Err(SemanticNudgeAuthorityError::TaskEvidenceNotRegistered);
             }
-            if let Some(witness) = ledger.source_provider_sessions.get(&provider_request_hash) {
-                witness
-                    .bind_started_request(started_provider_request)
-                    .map_err(|error| {
-                        SemanticNudgeAuthorityError::InvalidCapture(error.to_string())
-                    })?
-            } else {
-                let witness = started_provider_request
-                    .take_exposed_witness()
-                    .map_err(|error| {
-                        SemanticNudgeAuthorityError::InvalidCapture(error.to_string())
-                    })?;
-                let session = witness
-                    .bind_started_request(started_provider_request)
-                    .map_err(|error| {
-                        SemanticNudgeAuthorityError::InvalidCapture(error.to_string())
-                    })?;
-                ledger
-                    .source_provider_sessions
-                    .insert(provider_request_hash.clone(), witness);
-                session
-            }
+            let witness = provider_start
+                .take_exposed_witness()
+                .map_err(|error| SemanticNudgeAuthorityError::InvalidCapture(error.to_string()))?;
+            let session = witness
+                .bind_provider_start_session(&provider_start)
+                .map_err(|error| SemanticNudgeAuthorityError::InvalidCapture(error.to_string()))?;
+            let provider_request_hash = canonical_sha256(session.receipt());
+            ledger
+                .source_provider_sessions
+                .insert(provider_request_hash, witness);
+            session
         };
+        let provider_request_hash = canonical_sha256(provider_session.receipt());
         let source_provider_session = SemanticSourceProviderSessionBoundary::from_provider_session(
             &request.activity_publisher,
             provider_session,
@@ -831,6 +824,7 @@ impl SemanticNudgeAuthority {
                 return Err(SemanticNudgeAuthorityError::SourceProviderNotLive);
             }
         };
+        drop(source_pin);
         let record = ledger
             .capabilities
             .get(&eligibility.evidence_receipt_hash)
@@ -857,14 +851,15 @@ impl SemanticNudgeAuthority {
                 .state = SemanticCapabilityState::Invalidated;
             return Err(SemanticNudgeAuthorityError::CaptureNotCurrent);
         }
+        provider_session
+            .try_enqueue_nudge(eligibility.guidance.clone(), on_pinned_spend)
+            .map_err(|_| SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)?;
         ledger
             .capabilities
             .get_mut(&eligibility.evidence_receipt_hash)
             .expect("semantic capability remains registered")
-            .state = SemanticCapabilityState::SpentDeliveryUnavailable;
-        on_pinned_spend();
-        drop(source_pin);
-        Err(SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)
+            .state = SemanticCapabilityState::SpentDelivered;
+        Ok(())
     }
 }
 
@@ -1025,18 +1020,11 @@ impl std::error::Error for SemanticNudgeEligibilityError {}
 #[derive(Debug)]
 struct SemanticJudgeNudgeEligibility {
     boundary: SemanticNudgeBoundary,
-    task_slice: SemanticTaskAcceptanceSlice,
+    _task_slice: SemanticTaskAcceptanceSlice,
     guidance: String,
-    evidence: Vec<SemanticEvidenceCitation>,
+    _evidence: Vec<SemanticEvidenceCitation>,
     evidence_receipt_hash: String,
-    reviewer_provider_request_id: String,
-}
-
-impl SemanticJudgeNudgeEligibility {
-    /// Eligibility remains evidence until the engine-held authority atomically consumes it.
-    fn has_intervention_authority(&self) -> bool {
-        false
-    }
+    _reviewer_provider_request_id: String,
 }
 
 /// Derive nudge eligibility from one exact admitted observation and its bound source evidence.
@@ -1165,11 +1153,11 @@ fn derive_semantic_judge_nudge_eligibility(
     let (task_slice, boundary) = bound_capture.into_nudge_parts();
     Ok(Some(SemanticJudgeNudgeEligibility {
         boundary,
-        task_slice,
+        _task_slice: task_slice,
         guidance,
-        evidence,
+        _evidence: evidence,
         evidence_receipt_hash,
-        reviewer_provider_request_id: reviewer_provider_request_id.to_string(),
+        _reviewer_provider_request_id: reviewer_provider_request_id.to_string(),
     }))
 }
 
@@ -1368,14 +1356,28 @@ impl BrokeredSemanticObservationPlane {
     }
 
     /// Mint one non-cloneable capture permit while borrowing the exact engine-owned source request.
+    #[cfg(test)]
     fn mint_semantic_nudge_capture_permit(
         &self,
         task_evidence: &SemanticTaskEvidenceCapability,
         request: &SemanticObservationCaptureRequest,
         started_provider_request: &StartedProviderRequest,
     ) -> Result<SemanticNudgeCapturePermit, SemanticNudgeAuthorityError> {
+        let provider_start = started_provider_request
+            .provider_start_session_for_test()
+            .map_err(|_| SemanticNudgeAuthorityError::SourceProviderNotLive)?;
         self.nudge_authority
-            .mint_capture_permit(task_evidence, request, started_provider_request)
+            .mint_capture_permit_from_provider_start(task_evidence, request, provider_start)
+    }
+
+    fn mint_semantic_nudge_capture_permit_from_provider_start(
+        &self,
+        task_evidence: &SemanticTaskEvidenceCapability,
+        request: &SemanticObservationCaptureRequest,
+        provider_start: ProviderStartSession,
+    ) -> Result<SemanticNudgeCapturePermit, SemanticNudgeAuthorityError> {
+        self.nudge_authority
+            .mint_capture_permit_from_provider_start(task_evidence, request, provider_start)
     }
 
     /// Advance the engine-held activity head before any capture can be reviewed or sealed.
@@ -1388,6 +1390,35 @@ impl BrokeredSemanticObservationPlane {
         self.nudge_authority
             .publish_activity(task_evidence, request, capture)
             .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn redeem_scheduler_nudge(
+        &self,
+        capture: SemanticObservationCapture,
+        request: &SemanticObservationCaptureRequest,
+        task_evidence: &SemanticTaskEvidenceCapability,
+        provider_start: ProviderStartSession,
+        receipt: AdmittedSemanticObservationReceipt,
+    ) -> Result<bool, String> {
+        let permit = self
+            .mint_semantic_nudge_capture_permit_from_provider_start(
+                task_evidence,
+                request,
+                provider_start,
+            )
+            .map_err(|error| error.to_string())?;
+        let bound = self
+            .seal_semantic_nudge_capture(capture, request, task_evidence, permit)
+            .map_err(|error| error.to_string())?;
+        let Some(eligibility) = self
+            .issue_semantic_nudge_eligibility(bound, receipt)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(false);
+        };
+        self.redeem_existing_judge_nudge(&eligibility)
+            .map_err(|error| error.to_string())?;
+        Ok(true)
     }
 
     /// Consume a one-shot provider-bound permit and seal observation bytes for eligibility review.
@@ -1413,9 +1444,6 @@ impl BrokeredSemanticObservationPlane {
     }
 
     /// Atomically consume a capability after checking current trace and source-session state.
-    ///
-    /// The provider-owned synchronous pin/enqueue seam does not exist yet, so this always fails
-    /// closed after spending a valid capability. It cannot call or emulate the live judge nudge.
     fn redeem_existing_judge_nudge(
         &self,
         eligibility: &SemanticJudgeNudgeEligibility,

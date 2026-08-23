@@ -10,7 +10,9 @@ use goose_provider_types::errors::ProviderError;
 use goose_provider_types::model::ModelConfig;
 use goose_provider_types::permission::PermissionConfirmation;
 use goose_provider_types::retry::RetryConfig;
-use goose_swarm::{ProviderLifecycle, ProviderTerminalKind, StartedProviderRequest};
+use goose_swarm::{
+    ProviderLifecycle, ProviderNudgeDelivery, ProviderTerminalKind, StartedProviderRequest,
+};
 use rmcp::model::Tool;
 use std::future::Future;
 use std::sync::Arc;
@@ -33,12 +35,20 @@ pub(crate) fn provider_lifecycle_active() -> bool {
     ACTIVE_PROVIDER_LIFECYCLE.try_with(|_| ()).is_ok()
 }
 
-pub(crate) fn bind_current_provider_lifecycle(provider: Arc<dyn Provider>) -> Arc<dyn Provider> {
+pub(crate) trait ProviderNudgeDeliveryFactory: Send + Sync {
+    fn open(&self) -> Arc<dyn ProviderNudgeDelivery>;
+}
+
+pub(crate) fn bind_current_provider_lifecycle(
+    provider: Arc<dyn Provider>,
+    nudge_factory: Option<Arc<dyn ProviderNudgeDeliveryFactory>>,
+) -> Arc<dyn Provider> {
     ACTIVE_PROVIDER_LIFECYCLE
         .try_with(|lifecycle| {
             Arc::new(LifecycleProvider {
                 inner: provider.clone(),
                 lifecycle: lifecycle.clone(),
+                nudge_factory: nudge_factory.clone(),
             }) as Arc<dyn Provider>
         })
         .unwrap_or(provider)
@@ -47,6 +57,7 @@ pub(crate) fn bind_current_provider_lifecycle(provider: Arc<dyn Provider>) -> Ar
 struct LifecycleProvider {
     inner: Arc<dyn Provider>,
     lifecycle: ProviderLifecycle,
+    nudge_factory: Option<Arc<dyn ProviderNudgeDeliveryFactory>>,
 }
 
 struct ProviderTerminalGuard {
@@ -72,6 +83,21 @@ impl ProviderTerminalGuard {
             return Err(lifecycle_error("terminal receipt", detail));
         }
         Ok(())
+    }
+
+    async fn finish_cooperatively(
+        &mut self,
+        requested: ProviderTerminalKind,
+        delivery: Option<&Arc<dyn ProviderNudgeDelivery>>,
+    ) -> Result<(), ProviderError> {
+        let kind = match delivery {
+            Some(delivery) if !delivery.natural_terminal_allowed() => {
+                delivery.cancelled().await;
+                ProviderTerminalKind::Cancelled
+            }
+            _ => requested,
+        };
+        self.finish(kind).await
     }
 }
 
@@ -174,7 +200,12 @@ impl Provider for LifecycleProvider {
                 };
             }
         }
-        if let Err(error) = started.publish_for_scheduler() {
+        let nudge_delivery = self.nudge_factory.as_ref().map(|factory| factory.open());
+        let publication = match &nudge_delivery {
+            Some(delivery) => started.publish_for_scheduler_with_nudge_delivery(delivery.clone()),
+            None => started.publish_for_scheduler(),
+        };
+        if let Err(error) = publication {
             let detail = format!("provider start publication failed: {error}");
             return match started.abandon_before_exposure(&detail).await {
                 Ok(()) => Err(lifecycle_error("provider start publication", error)),
@@ -183,15 +214,34 @@ impl Provider for LifecycleProvider {
                 ))),
             };
         }
-        let single_attempt_result = started
-            .scope_http(self.inner.stream_once_with_terminal_proof(
-                model_config,
-                system,
-                messages,
-                tools,
-            ))
-            .await;
+        let single_attempt_result = if let Some(delivery) = &nudge_delivery {
+            tokio::select! {
+                biased;
+                _ = delivery.cancelled() => None,
+                result = started.scope_http(self.inner.stream_once_with_terminal_proof(
+                    model_config,
+                    system,
+                    messages,
+                    tools,
+                )) => Some(result),
+            }
+        } else {
+            Some(
+                started
+                    .scope_http(self.inner.stream_once_with_terminal_proof(
+                        model_config,
+                        system,
+                        messages,
+                        tools,
+                    ))
+                    .await,
+            )
+        };
         let mut terminal = ProviderTerminalGuard::new(started);
+        let Some(single_attempt_result) = single_attempt_result else {
+            terminal.finish(ProviderTerminalKind::Cancelled).await?;
+            return Ok(Box::pin(futures::stream::empty()));
+        };
         let single_attempt = match single_attempt_result {
             Ok(stream) => stream,
             Err(provider_error) => {
@@ -216,7 +266,21 @@ impl Provider for LifecycleProvider {
             let mut stream = single_attempt.stream;
             let terminal_proof = single_attempt.terminal;
             let mut terminal = terminal;
-            while let Some(item) = stream.next().await {
+            loop {
+                let next = match &nudge_delivery {
+                    Some(delivery) => tokio::select! {
+                        biased;
+                        _ = delivery.cancelled() => {
+                            if let Err(receipt_error) = terminal.finish(ProviderTerminalKind::Cancelled).await {
+                                yield Err(receipt_error);
+                            }
+                            return;
+                        }
+                        item = stream.next() => item,
+                    },
+                    None => stream.next().await,
+                };
+                let Some(item) = next else { break; };
                 match item {
                     Ok(value) => {
                         let terminal_kind = match terminal_proof.outcome() {
@@ -225,7 +289,10 @@ impl Provider for LifecycleProvider {
                             SingleAttemptStreamOutcome::Pending => None,
                         };
                         if let Some(kind) = terminal_kind {
-                            if let Err(receipt_error) = terminal.finish(kind).await {
+                            if let Err(receipt_error) = terminal
+                                .finish_cooperatively(kind, nudge_delivery.as_ref())
+                                .await
+                            {
                                 yield Err(receipt_error);
                                 return;
                             }
@@ -239,7 +306,10 @@ impl Provider for LifecycleProvider {
                             SingleAttemptStreamOutcome::Pending => None,
                         };
                         if let Some(kind) = terminal_kind {
-                            if let Err(receipt_error) = terminal.finish(kind).await {
+                            if let Err(receipt_error) = terminal
+                                .finish_cooperatively(kind, nudge_delivery.as_ref())
+                                .await
+                            {
                                 yield Err(ProviderError::ExecutionError(format!(
                                     "provider stream failed ({provider_error}); physical provider lifecycle terminal receipt failed: {receipt_error}"
                                 )));
@@ -258,7 +328,10 @@ impl Provider for LifecycleProvider {
             };
             match terminal_kind {
                 Some(kind) => {
-                    if let Err(receipt_error) = terminal.finish(kind).await {
+                    if let Err(receipt_error) = terminal
+                        .finish_cooperatively(kind, nudge_delivery.as_ref())
+                        .await
+                    {
                         yield Err(receipt_error);
                     }
                 }
@@ -601,7 +674,7 @@ mod tests {
 
     async fn wrapped_for(behavior: Behavior, lifecycle: ProviderLifecycle) -> Arc<dyn Provider> {
         scope_provider_lifecycle(lifecycle, async move {
-            bind_current_provider_lifecycle(Arc::new(MockProvider { behavior }))
+            bind_current_provider_lifecycle(Arc::new(MockProvider { behavior }), None)
         })
         .await
     }
@@ -612,9 +685,12 @@ mod tests {
         assert!(!provider_lifecycle_active());
         scope_provider_lifecycle(work.lifecycle(), async {
             assert!(provider_lifecycle_active());
-            let provider = bind_current_provider_lifecycle(Arc::new(MockProvider {
-                behavior: Behavior::Finished,
-            }));
+            let provider = bind_current_provider_lifecycle(
+                Arc::new(MockProvider {
+                    behavior: Behavior::Finished,
+                }),
+                None,
+            );
             assert_eq!(
                 provider.transport_identity("model-a").as_deref(),
                 Some(TRANSPORT_A)
@@ -631,7 +707,7 @@ mod tests {
     async fn retry_only_provider_is_rejected_before_a_request_starts() {
         let (control, work) = admitted().await;
         let provider = scope_provider_lifecycle(work.lifecycle(), async {
-            bind_current_provider_lifecycle(Arc::new(RetryOnlyProvider))
+            bind_current_provider_lifecycle(Arc::new(RetryOnlyProvider), None)
         })
         .await;
         let error = provider
@@ -650,7 +726,7 @@ mod tests {
     async fn transport_drift_is_rejected_before_a_request_starts() {
         let (control, work) = admitted().await;
         let provider = scope_provider_lifecycle(work.lifecycle(), async {
-            bind_current_provider_lifecycle(Arc::new(WrongTransportProvider))
+            bind_current_provider_lifecycle(Arc::new(WrongTransportProvider), None)
         })
         .await;
         let error = provider

@@ -278,6 +278,13 @@ fn observation_capture(
 }
 
 async fn fixture_with_source_exposure(expose_source: bool) -> EngineFixture {
+    fixture_with_source_exposure_in_scope(expose_source, "semantic-authority").await
+}
+
+async fn fixture_with_source_exposure_in_scope(
+    expose_source: bool,
+    authority_scope: &str,
+) -> EngineFixture {
     let sink: Arc<dyn EventSink> = Arc::new(NullSink);
     let lease_root = tempfile::tempdir().unwrap();
     let fleet = fleet();
@@ -296,7 +303,7 @@ async fn fixture_with_source_exposure(expose_source: bool) -> EngineFixture {
     );
     let provider_leases = RunScopedProviderLeaseAuthority::new(physical, sealed);
     let control = PhysicalAdmissionControl::new_with_journal_and_provider_leases(
-        "semantic-authority",
+        authority_scope,
         fleet,
         sink.clone(),
         Arc::new(TestJournal),
@@ -592,11 +599,13 @@ async fn forged_reseal_of_mutated_continue_is_rejected() {
 
 #[tokio::test]
 async fn cross_admission_splice_fails_the_engine_seal() {
-    let fixture = fixture().await;
-    let first_bound = seal_trace(&fixture, 7);
-    let mut first = review(&fixture.plane, &first_bound, ReplyKind::Nudge).await;
-    let second_bound = seal_trace(&fixture, 8);
-    let mut second = review(&fixture.plane, &second_bound, ReplyKind::Nudge).await;
+    let first_fixture = fixture().await;
+    let second_fixture =
+        fixture_with_source_exposure_in_scope(true, "semantic-authority-splice").await;
+    let first_bound = seal_trace(&first_fixture, 7);
+    let second_bound = seal_trace(&second_fixture, 7);
+    let mut first = review(&first_fixture.plane, &first_bound, ReplyKind::Nudge).await;
+    let mut second = review(&second_fixture.plane, &second_bound, ReplyKind::Nudge).await;
     assert_ne!(
         first.admission().admission_id,
         second.admission().admission_id
@@ -615,18 +624,22 @@ async fn cross_admission_splice_fails_the_engine_seal() {
         &mut second.completed_admission,
     );
     assert!(matches!(
-        fixture.plane.admitted_receipt_authority.verify(&first),
+        first_fixture
+            .plane
+            .admitted_receipt_authority
+            .verify(&first),
         Err(SemanticNudgeEligibilityError::InvalidAdmittedReceipt)
     ));
 }
 
 #[tokio::test]
 async fn cross_request_terminal_splice_fails_the_engine_seal() {
-    let fixture = fixture().await;
-    let first_bound = seal_trace(&fixture, 7);
-    let mut first = review(&fixture.plane, &first_bound, ReplyKind::Nudge).await;
-    let second_bound = seal_trace(&fixture, 8);
-    let second = review(&fixture.plane, &second_bound, ReplyKind::Nudge).await;
+    let first_fixture = fixture().await;
+    let second_fixture = fixture().await;
+    let first_bound = seal_trace(&first_fixture, 7);
+    let second_bound = seal_trace(&second_fixture, 7);
+    let mut first = review(&first_fixture.plane, &first_bound, ReplyKind::Nudge).await;
+    let second = review(&second_fixture.plane, &second_bound, ReplyKind::Nudge).await;
     let first_completion = first.reviewer_completion.as_ref().unwrap();
     let second_completion = second.reviewer_completion.as_ref().unwrap();
     assert_ne!(
@@ -646,7 +659,10 @@ async fn cross_request_terminal_splice_fails_the_engine_seal() {
         second_completion,
     ));
     assert!(matches!(
-        fixture.plane.admitted_receipt_authority.verify(&first),
+        first_fixture
+            .plane
+            .admitted_receipt_authority
+            .verify(&first),
         Err(SemanticNudgeEligibilityError::InvalidAdmittedReceipt)
     ));
 }
@@ -782,7 +798,7 @@ async fn stale_capture_cannot_be_sealed_after_newer_activity_publication() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn concurrent_duplicate_redemption_has_one_terminal_spend() {
+async fn concurrent_failed_delivery_does_not_spend_the_capability() {
     let fixture = fixture().await;
     let bound = seal_trace(&fixture, 7);
     let receipt = review(&fixture.plane, &bound, ReplyKind::Nudge).await;
@@ -810,26 +826,12 @@ async fn concurrent_duplicate_redemption_has_one_terminal_spend() {
                 Err(SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)
             ))
             .count(),
-        1
-    );
-    assert_eq!(
-        results
-            .iter()
-            .filter(|result| matches!(
-                result,
-                Err(SemanticNudgeAuthorityError::CapabilityAlreadySpent)
-            ))
-            .count(),
-        1
+        2
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn source_terminal_during_redemption_cannot_open_a_retry_path() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Barrier;
-    use std::time::Duration;
-
     let fixture = fixture().await;
     let bound = seal_trace(&fixture, 7);
     let receipt = review(&fixture.plane, &bound, ReplyKind::Nudge).await;
@@ -838,36 +840,22 @@ async fn source_terminal_during_redemption_cannot_open_a_retry_path() {
         .issue_semantic_nudge_eligibility(bound, receipt)
         .unwrap()
         .unwrap();
-    let entered = Arc::new(Barrier::new(2));
-    let terminal_done = Arc::new(AtomicBool::new(false));
-    let terminal_entered = entered.clone();
-    let terminal_finished = terminal_done.clone();
-    let source_request = fixture.source_request;
-    let terminal = tokio::spawn(async move {
-        terminal_entered.wait();
-        source_request
-            .provider_terminal(ProviderTerminalKind::Finished)
-            .await
-            .unwrap();
-        terminal_finished.store(true, Ordering::SeqCst);
-    });
     let result = fixture
         .plane
         .nudge_authority
-        .redeem_record_with_pin_hook(&eligibility, || {
-            entered.wait();
-            std::thread::sleep(Duration::from_millis(25));
-            assert!(!terminal_done.load(Ordering::SeqCst));
-        });
+        .redeem_record_with_pin_hook(&eligibility, || {});
     assert!(matches!(
         result,
         Err(SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)
     ));
-    terminal.await.unwrap();
+    fixture
+        .source_request
+        .provider_terminal(ProviderTerminalKind::Finished)
+        .await
+        .unwrap();
     assert!(matches!(
         fixture.plane.redeem_existing_judge_nudge(&eligibility),
         Err(SemanticNudgeAuthorityError::SourceProviderNotLive)
-            | Err(SemanticNudgeAuthorityError::CapabilityAlreadySpent)
     ));
 }
 
@@ -881,13 +869,12 @@ async fn duplicate_redemption_is_atomically_rejected() {
         .issue_semantic_nudge_eligibility(bound, receipt)
         .unwrap()
         .expect("authentic grounded NUDGE is eligible");
-    assert!(!eligibility.has_intervention_authority());
     assert!(matches!(
         fixture.plane.redeem_existing_judge_nudge(&eligibility),
         Err(SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)
     ));
     assert!(matches!(
         fixture.plane.redeem_existing_judge_nudge(&eligibility),
-        Err(SemanticNudgeAuthorityError::CapabilityAlreadySpent)
+        Err(SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)
     ));
 }

@@ -122,6 +122,17 @@ impl std::fmt::Display for ProviderStartLookupError {
 
 impl std::error::Error for ProviderStartLookupError {}
 
+/// Dispatcher-owned cooperative delivery for one exact provider request.
+///
+/// Enqueue must be non-blocking. A successful enqueue reserves cancellation for this request; the
+/// dispatcher queues the steer into its exact Agent/session and only then wakes `cancelled`.
+#[async_trait]
+pub trait ProviderNudgeDelivery: Send + Sync {
+    fn try_enqueue(&self, guidance: String) -> Result<(), String>;
+    fn natural_terminal_allowed(&self) -> bool;
+    async fn cancelled(&self);
+}
+
 struct ProviderStartRegistryEntry {
     key: ProviderStartKey,
     request: Weak<ProviderRequestAuthority>,
@@ -232,6 +243,12 @@ impl ProviderStartSession {
 
     pub fn ensure_live(&self) -> Result<(), ProviderStartLookupError> {
         self.request.ensure_started_live()
+    }
+
+    pub(crate) fn take_exposed_witness(
+        &self,
+    ) -> Result<ExposedProviderRequestWitness, ProviderLifecycleOperationError> {
+        self.request.take_exposed_witness()
     }
 }
 
@@ -1345,6 +1362,8 @@ struct ProviderRequestExposureState {
 struct ProviderRequestAuthority {
     receipt: Arc<ProviderRequestReceipt>,
     exposure: StdMutex<ProviderRequestExposureState>,
+    boundary: StdMutex<Option<ProviderLeaseHttpBoundary>>,
+    nudge_delivery: StdMutex<Option<Arc<dyn ProviderNudgeDelivery>>>,
 }
 
 impl ProviderRequestAuthority {
@@ -1352,6 +1371,8 @@ impl ProviderRequestAuthority {
         Arc::new(Self {
             receipt: Arc::new(receipt),
             exposure: StdMutex::new(ProviderRequestExposureState::default()),
+            boundary: StdMutex::new(None),
+            nudge_delivery: StdMutex::new(None),
         })
     }
 
@@ -1359,6 +1380,8 @@ impl ProviderRequestAuthority {
         Arc::new(Self {
             receipt: previous.receipt.clone(),
             exposure: StdMutex::new(ProviderRequestExposureState::default()),
+            boundary: StdMutex::new(None),
+            nudge_delivery: StdMutex::new(None),
         })
     }
 
@@ -1385,6 +1408,57 @@ impl ProviderRequestAuthority {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .live_use_closed = true;
+    }
+
+    fn bind_scheduler_runtime(
+        &self,
+        boundary: Option<ProviderLeaseHttpBoundary>,
+        nudge_delivery: Option<Arc<dyn ProviderNudgeDelivery>>,
+    ) -> Result<(), ProviderStartLookupError> {
+        self.ensure_started_live()?;
+        *self
+            .boundary
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = boundary;
+        *self
+            .nudge_delivery
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = nudge_delivery;
+        Ok(())
+    }
+
+    fn take_exposed_witness(
+        self: &Arc<Self>,
+    ) -> Result<ExposedProviderRequestWitness, ProviderLifecycleOperationError> {
+        let status = self
+            .boundary
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .ok_or_else(|| {
+                ProviderLifecycleOperationError::Unresolved(
+                    "provider request has no verified physical lease boundary".to_string(),
+                )
+            })?
+            .status()?;
+        if status != ProviderLeaseBoundaryStatus::Exposed {
+            return Err(ProviderLifecycleOperationError::Unresolved(format!(
+                "provider request is not exposed at witness mint: {status:?}"
+            )));
+        }
+        let mut state = self
+            .exposure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.live_use_closed || state.witness_issued {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "provider request exposure witness is closed or already issued".to_string(),
+            ));
+        }
+        state.witness_issued = true;
+        Ok(ExposedProviderRequestWitness {
+            request: self.clone(),
+        })
     }
 }
 
@@ -1472,24 +1546,13 @@ impl ExposedProviderRequestWitness {
         pin_live_provider_request(&self.request.exposure)
     }
 
-    pub(crate) fn bind_started_request(
+    pub(crate) fn bind_provider_start_session(
         &self,
-        started: &StartedProviderRequest,
+        started: &ProviderStartSession,
     ) -> Result<LiveProviderRequestSession, ProviderLifecycleOperationError> {
-        if !Arc::ptr_eq(&self.request, started.request_authority()) {
+        if !Arc::ptr_eq(&self.request, &started.request) {
             return Err(ProviderLifecycleOperationError::Unresolved(
-                "provider exposure witness does not belong to the borrowed started request"
-                    .to_string(),
-            ));
-        }
-        let boundary = started.boundary.as_ref().ok_or_else(|| {
-            ProviderLifecycleOperationError::Unresolved(
-                "provider request has no verified physical lease boundary".to_string(),
-            )
-        })?;
-        if boundary.status()? != ProviderLeaseBoundaryStatus::Exposed {
-            return Err(ProviderLifecycleOperationError::Unresolved(
-                "provider request is no longer exposed".to_string(),
+                "provider exposure witness does not belong to the registry session".to_string(),
             ));
         }
         let pin = self.try_pin()?;
@@ -1509,6 +1572,24 @@ impl LiveProviderRequestSession {
         &self,
     ) -> Result<LiveProviderRequestPin<'_>, ProviderLifecycleOperationError> {
         pin_live_provider_request(&self.request.exposure)
+    }
+
+    pub(crate) fn try_enqueue_nudge(
+        &self,
+        guidance: String,
+        on_pinned_enqueue: impl FnOnce(),
+    ) -> Result<(), String> {
+        let _pin = self.try_pin().map_err(|error| error.to_string())?;
+        let delivery = self
+            .request
+            .nudge_delivery
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .ok_or_else(|| "provider request has no dispatcher-owned nudge delivery".to_string())?;
+        delivery.try_enqueue(guidance)?;
+        on_pinned_enqueue();
+        Ok(())
     }
 }
 
@@ -1671,14 +1752,42 @@ impl StartedProviderRequest {
             .expect("live started provider request retains its engine authority")
     }
 
+    #[cfg(test)]
+    pub(crate) fn provider_start_session_for_test(
+        &self,
+    ) -> Result<ProviderStartSession, ProviderStartLookupError> {
+        self.request_authority()
+            .bind_scheduler_runtime(self.boundary.clone(), None)?;
+        Ok(ProviderStartSession {
+            key: ProviderStartKey::from_admission(&self.lifecycle.admission),
+            request: self.request_authority().clone(),
+        })
+    }
+
     /// Publish this exact engine-owned request to the scheduler before entering provider HTTP.
     pub fn publish_for_scheduler(&self) -> Result<(), ProviderStartLookupError> {
+        self.publish_for_scheduler_with_delivery(None)
+    }
+
+    pub fn publish_for_scheduler_with_nudge_delivery(
+        &self,
+        delivery: Arc<dyn ProviderNudgeDelivery>,
+    ) -> Result<(), ProviderStartLookupError> {
+        self.publish_for_scheduler_with_delivery(Some(delivery))
+    }
+
+    fn publish_for_scheduler_with_delivery(
+        &self,
+        delivery: Option<Arc<dyn ProviderNudgeDelivery>>,
+    ) -> Result<(), ProviderStartLookupError> {
         let key = ProviderStartKey::from_admission(&self.lifecycle.admission);
         if self.receipt().admission_id != key.admission_id {
             return Err(ProviderStartLookupError::Missing {
                 admission_id: key.admission_id,
             });
         }
+        self.request_authority()
+            .bind_scheduler_runtime(self.boundary.clone(), delivery)?;
         self.lifecycle
             .control
             .inner
@@ -1696,43 +1805,6 @@ impl StartedProviderRequest {
         self.boundary
             .as_ref()
             .map(ProviderLeaseHttpBoundary::transport_identity)
-    }
-
-    pub(crate) fn take_exposed_witness(
-        &self,
-    ) -> Result<ExposedProviderRequestWitness, ProviderLifecycleOperationError> {
-        let boundary = self.boundary.as_ref().ok_or_else(|| {
-            ProviderLifecycleOperationError::Unresolved(
-                "provider request has no verified physical lease boundary".to_string(),
-            )
-        })?;
-        match boundary.status()? {
-            ProviderLeaseBoundaryStatus::Exposed => {}
-            status => {
-                return Err(ProviderLifecycleOperationError::Unresolved(format!(
-                    "provider request is not exposed at witness mint: {status:?}"
-                )))
-            }
-        }
-        let mut state = self
-            .request_authority()
-            .exposure
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if state.live_use_closed {
-            return Err(ProviderLifecycleOperationError::Unresolved(
-                "provider request live use is already closed".to_string(),
-            ));
-        }
-        if state.witness_issued {
-            return Err(ProviderLifecycleOperationError::Unresolved(
-                "provider request exposure witness was already issued".to_string(),
-            ));
-        }
-        state.witness_issued = true;
-        Ok(ExposedProviderRequestWitness {
-            request: self.request_authority().clone(),
-        })
     }
 
     pub async fn scope_http<F>(&self, future: F) -> F::Output
