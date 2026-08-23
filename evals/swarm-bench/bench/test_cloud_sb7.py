@@ -896,12 +896,52 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 descendants_clean=True,
             )
         )
+        score_dir = successor / "scores" / carried_id / "attempt-1"
+        shots = score_dir / "tree/sb7-shots"
+        shots.mkdir(parents=True)
+        (shots / "100-loaded.png").write_bytes(PNG_1X1)
+        verdict = score_dir / "verdict.json"
+        cloud_sb7.atomic_json(verdict, {"score": 0.3844})
+        (score_dir / "score.log").write_text("fixture hermetic score\n")
+        listeners = score_dir / "sandbox-listeners.json"
+        cloud_sb7.atomic_json(listeners, {"fixture": True})
+        carried_tree = successor / "entrants" / carried_id / "tree"
+        verdict_sha256 = cloud_sb7.sha256_file(verdict)
         cloud_sb7.update_state(
             successor,
             carried_id,
-            status="BUILD_COMPLETE",
+            status="PUBLISH_FAILED",
             score=0.3844,
             lineage_role="carried_success",
+            raw_tree_sha256=cloud_sb7.hash_tree(carried_tree),
+            score_attempts=1,
+            score_attempt_root=str(score_dir),
+            verdict=str(verdict),
+            verdict_sha256=verdict_sha256,
+            score_listener_snapshot=str(listeners),
+            score_listener_snapshot_sha256=cloud_sb7.sha256_file(listeners),
+            score_sandbox_profile_sha256="a" * 64,
+        )
+        successor_campaign = cloud_sb7.load_json(
+            cloud_sb7.campaign_file(successor)
+        )
+        carried_state = cloud_sb7.read_state(successor, carried_id)
+        score_seal = cloud_sb7.score_evidence_seal(
+            successor,
+            carried_id,
+            successor_campaign,
+            carried_state,
+            expected_verdict_sha256=verdict_sha256,
+        )
+        cloud_sb7.update_state(
+            successor,
+            carried_id,
+            score_evidence_seal=score_seal,
+            score_evidence_seal_sha256=cloud_sb7.sha256_bytes(
+                json.dumps(
+                    score_seal, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ),
         )
         raw_hashes = {
             str(row["id"]): cloud_sb7.sha256_tree_exact(
@@ -2299,6 +2339,127 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     )
                 )
 
+    def test_carried_score_seal_digest_is_rebound_and_legacy_remap_is_proven(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            predecessor = root / "predecessor"
+            predecessor.mkdir()
+            self.make_scored_campaign(predecessor)
+            entrant_id = "fixture-model"
+            predecessor_state_path = cloud_sb7.state_file(
+                predecessor, entrant_id
+            )
+            predecessor_state = cloud_sb7.load_json(predecessor_state_path)
+            predecessor_digest = predecessor_state[
+                "score_evidence_seal_sha256"
+            ]
+            staged = root / "staged"
+            target = root / "successor"
+            (staged / "entrants" / entrant_id).mkdir(parents=True)
+            (staged / "scores").mkdir()
+            (staged / "publish").mkdir()
+            sealed = {
+                "state_sha256": cloud_sb7.sha256_file(predecessor_state_path),
+                "unit_sha256": cloud_sb7.artifact_tree_sha256(
+                    predecessor / "entrants" / entrant_id
+                ),
+                "immutable_unit_sha256": cloud_sb7.artifact_tree_sha256(
+                    predecessor / "entrants" / entrant_id,
+                    excluded_relative_paths={"state.json", "state.lock"},
+                ),
+                "scores_sha256": cloud_sb7.optional_artifact_tree_sha256(
+                    predecessor / "scores" / entrant_id
+                ),
+                "publish_sha256": cloud_sb7.optional_artifact_tree_sha256(
+                    predecessor / "publish" / entrant_id
+                ),
+            }
+            transition_id = "fixture-transition"
+            cloud_sb7.copy_carried_entrant(
+                predecessor,
+                staged,
+                target,
+                entrant_id,
+                sealed,
+                transition_id,
+            )
+            copied_state = cloud_sb7.read_state(staged, entrant_id)
+            copied_digest = cloud_sb7.sha256_bytes(
+                json.dumps(
+                    copied_state["score_evidence_seal"],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            )
+            self.assertEqual(
+                copied_state["score_evidence_seal_sha256"], copied_digest
+            )
+            self.assertNotEqual(copied_digest, predecessor_digest)
+
+            staged.rename(target)
+            (target / "lineage").mkdir()
+            lineage = {
+                "transition_id": transition_id,
+                "predecessor_root": str(predecessor),
+                "carried_entrants": [entrant_id],
+            }
+            cloud_sb7.atomic_json(target / "lineage/lineage.json", lineage)
+            target_campaign = cloud_sb7.load_json(
+                cloud_sb7.campaign_file(predecessor)
+            )
+            target_campaign["lineage"] = {
+                "generation": 1,
+                "path": "lineage/lineage.json",
+                "sha256": cloud_sb7.sha256_file(
+                    target / "lineage/lineage.json"
+                ),
+            }
+            cloud_sb7.atomic_json(
+                cloud_sb7.campaign_file(target), target_campaign
+            )
+            current_state = cloud_sb7.read_state(target, entrant_id)
+            self.assertIsNone(
+                cloud_sb7.score_evidence_seal_failure(
+                    target, entrant_id, target_campaign, current_state
+                )
+            )
+
+            cloud_sb7.update_state(
+                target,
+                entrant_id,
+                score_evidence_seal_sha256=predecessor_digest,
+            )
+            legacy_state = cloud_sb7.read_state(target, entrant_id)
+            self.assertIsNone(
+                cloud_sb7.score_evidence_seal_failure(
+                    target, entrant_id, target_campaign, legacy_state
+                )
+            )
+            successor_campaign = {
+                **target_campaign,
+                "instrument_set_sha256": "successor-instrument-set",
+            }
+            self.assertTrue(
+                cloud_sb7.publication_stage_instrument_set_matches(
+                    target,
+                    entrant_id,
+                    successor_campaign,
+                    legacy_state,
+                    target_campaign["instrument_set_sha256"],
+                )
+            )
+            self.assertFalse(
+                cloud_sb7.publication_stage_instrument_set_matches(
+                    target,
+                    entrant_id,
+                    successor_campaign,
+                    legacy_state,
+                    "unrelated-instrument-set",
+                )
+            )
+
     def test_budget_blocked_carried_smoke_rejects_identity_activity_and_artifact_drift(
         self,
     ) -> None:
@@ -2611,6 +2772,35 @@ class CloudSb7HarnessTest(unittest.TestCase):
             finally:
                 application.write_bytes(original_application)
 
+            score_log = (
+                root
+                / "scores"
+                / carried_id
+                / "attempt-1"
+                / "score.log"
+            )
+            rejects_file_change(
+                score_log,
+                score_log.read_bytes() + b"post-seal drift\n",
+            )
+
+            bundle = root / cloud_sb7.BUDGET_BLOCKED_CARRIED_SMOKE_PATH
+            real_bundle = bundle.with_name(f"{bundle.name}-real")
+            bundle.rename(real_bundle)
+            bundle.symlink_to(real_bundle, target_is_directory=True)
+            try:
+                self.assertIn(
+                    "linked",
+                    cloud_sb7.budget_blocked_carried_smoke_failure(
+                        root,
+                        cloud_sb7.load_json(cloud_sb7.campaign_file(root)),
+                    )
+                    or "",
+                )
+            finally:
+                bundle.unlink()
+                real_bundle.rename(bundle)
+
     def test_budget_blocked_carried_smoke_rejects_unrecorded_partial_transition(
         self,
     ) -> None:
@@ -2657,6 +2847,50 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.COORDINATOR_INSTRUMENT_PATH,
             )
             original_coordinator = frozen_coordinator.read_bytes()
+
+            carried_tree = (
+                root
+                / "entrants"
+                / str(fixture["carried_id"])
+                / "tree"
+            )
+            drift = carried_tree / "unrecorded-post-bundle-drift.txt"
+            drift.write_text("must not cross the transition\n")
+            try:
+                with (
+                    mock.patch.object(
+                        cloud_sb7, "process_alive", return_value=False
+                    ),
+                    mock.patch.object(
+                        cloud_sb7, "process_group_members", return_value=[]
+                    ),
+                    mock.patch.object(
+                        cloud_sb7, "port_is_free", return_value=True
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        SystemExit, "carried entrant raw tree changed"
+                    ):
+                        cloud_sb7.apply_budget_blocked_carried_smoke(
+                            root,
+                            bundle,
+                            coordinator_source,
+                        )
+                self.assertEqual(
+                    cloud_sb7.load_json(cloud_sb7.campaign_file(root))[
+                        "smoke_status"
+                    ],
+                    "ATTENTION",
+                )
+                self.assertFalse(
+                    (
+                        bundle
+                        / cloud_sb7.BUDGET_BLOCKED_CARRIED_SMOKE_APPLICATION
+                    ).exists()
+                )
+            finally:
+                drift.unlink()
+
             cloud_sb7.atomic_copy(coordinator_source, frozen_coordinator, 0o600)
             try:
                 with self.assertRaisesRegex(
