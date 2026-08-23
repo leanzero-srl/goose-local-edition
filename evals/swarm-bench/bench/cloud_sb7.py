@@ -107,6 +107,11 @@ BUDGET_BLOCKED_CARRIED_SMOKE_STATUS = "PASS_WITH_CARRIED_PROOF"
 BUDGET_BLOCKED_CARRIED_SMOKE_APPLICATION = "applied.json"
 CARRIED_SMOKE_PUBLIC_REASON = "document carried-smoke provenance differs"
 COORDINATOR_INSTRUMENT_PATH = "evals/swarm-bench/bench/cloud_sb7.py"
+POST_SMOKE_COORDINATOR_REPAIR_SCHEMA = 1
+POST_SMOKE_COORDINATOR_REPAIR_PATH = "lineage/post-smoke-coordinator-repair"
+POST_SMOKE_RUNTIME_INSTRUMENT_PATH = (
+    f"{POST_SMOKE_COORDINATOR_REPAIR_PATH}/runtime-instrument/source"
+)
 ORCHESTRATOR_MONITOR_FAILURE = (
     "cloud campaign lineage refused execution: unstarted entrant acquired or "
     "reset attempts: deepseek-v4-flash\n"
@@ -1700,6 +1705,95 @@ def instrument_mismatch(campaign: Mapping[str, Any]) -> str | None:
     )
     changed = sorted(set(changed) | set(missing))
     return f"instrument changed after freeze: {', '.join(changed)}"
+
+
+def campaign_runtime_coordinator(campaign: Mapping[str, Any]) -> tuple[Path, str]:
+    pointer = campaign.get("post_smoke_coordinator_repair")
+    if pointer is None:
+        path = campaign_instrument_path(campaign, COORDINATOR_INSTRUMENT_PATH)
+        hashes = campaign.get("instrument_hashes")
+        expected_sha = (
+            hashes.get(COORDINATOR_INSTRUMENT_PATH)
+            if isinstance(hashes, dict)
+            else None
+        )
+        if campaign.get("coordinator") != str(path):
+            raise SystemExit("campaign coordinator escaped its frozen instrument")
+    else:
+        path = Path(str(campaign.get("coordinator", "")))
+        expected_root = Path(str(campaign.get("runtime_instrument_root", "")))
+        expected_path = expected_root / COORDINATOR_INSTRUMENT_PATH
+        hashes = campaign.get("runtime_instrument_hashes")
+        expected_sha = (
+            hashes.get(COORDINATOR_INSTRUMENT_PATH)
+            if isinstance(hashes, dict)
+            else None
+        )
+        if (
+            not expected_root.is_absolute()
+            or path != expected_path
+            or campaign.get("runtime_coordinator_sha256") != expected_sha
+        ):
+            raise SystemExit("campaign runtime coordinator identity is malformed")
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+        or path.resolve() != path
+        or not isinstance(expected_sha, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected_sha) is None
+        or sha256_file(path) != expected_sha
+    ):
+        raise SystemExit("campaign runtime coordinator is missing, linked, or changed")
+    return path, expected_sha
+
+
+def current_runtime_coordinator_report(
+    campaign: Mapping[str, Any],
+) -> Dict[str, str]:
+    expected_path, expected_sha = campaign_runtime_coordinator(campaign)
+    invoked_path = Path(__file__)
+    actual_path = invoked_path.resolve()
+    if (
+        actual_path != expected_path
+        or invoked_path.is_symlink()
+        or sha256_file(actual_path) != expected_sha
+    ):
+        raise SystemExit(
+            "high-stakes child is not executing the campaign runtime coordinator"
+        )
+    return {
+        "runtime_coordinator_path": str(actual_path),
+        "runtime_coordinator_sha256": expected_sha,
+    }
+
+
+def record_child_runtime_coordinator(
+    root: Path, role: str, entrant_id: str | None = None
+) -> Dict[str, str]:
+    campaign = load_json(campaign_file(root))
+    report = current_runtime_coordinator_report(campaign)
+    if role == "manager":
+        manager_state(root, **report)
+    elif role == "monitor":
+        monitor_state(root, **report)
+    elif role == "monitor-launcher":
+        monitor_state(
+            root,
+            launcher_runtime_coordinator_path=report["runtime_coordinator_path"],
+            launcher_runtime_coordinator_sha256=report[
+                "runtime_coordinator_sha256"
+            ],
+        )
+    elif role == "smoke-manager":
+        smoke_manager_state(root, **report)
+    elif role == "build-supervisor" and entrant_id is not None:
+        update_state(root, entrant_id, **report)
+    elif role == "smoke-supervisor" and entrant_id is not None:
+        update_smoke_state(root, entrant_id, **report)
+    else:
+        raise SystemExit("unknown high-stakes child runtime role")
+    return report
 
 
 def fetch_json(url: str, headers: Mapping[str, str]) -> Dict[str, Any]:
@@ -7473,6 +7567,11 @@ def lineage_failure(
         )
         if carried_smoke_problem:
             return carried_smoke_problem
+        post_smoke_repair_problem = post_smoke_coordinator_repair_failure(
+            root, campaign, lineage
+        )
+        if post_smoke_repair_problem:
+            return post_smoke_repair_problem
         smoke_lineage = validated_campaign_lineage(campaign)
         if (
             smoke_lineage["generation"] != 1
@@ -12231,7 +12330,7 @@ def launch_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
     return launch_detached(
         [
             sys.executable,
-            str(campaign["coordinator"]),
+            str(campaign_runtime_coordinator(campaign)[0]),
             "_supervise",
             "--root",
             str(root),
@@ -12265,7 +12364,7 @@ def launch_smoke_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any
     return launch_detached(
         [
             sys.executable,
-            str(campaign["coordinator"]),
+            str(campaign_runtime_coordinator(campaign)[0]),
             "_smoke_supervise",
             "--root",
             str(root),
@@ -16019,12 +16118,27 @@ def budget_blocked_carried_smoke_failure(
         source_campaign = load_json(bundle / "source-campaign.json")
         source_lineage = load_json(bundle / "source-lineage.json")
         current_lineage = lineage or load_json(root / "lineage/lineage.json")
+        mixed_validation_lineage = current_lineage
+        if campaign.get("post_smoke_coordinator_repair") is not None:
+            post_problem = post_smoke_coordinator_repair_failure(
+                root, campaign, current_lineage
+            )
+            if post_problem:
+                return post_problem
+            post_source_lineage = (
+                root
+                / POST_SMOKE_COORDINATOR_REPAIR_PATH
+                / "source-lineage.json"
+            )
+            if post_source_lineage.is_symlink() or not post_source_lineage.is_file():
+                return "mixed smoke post-repair source lineage is missing or linked"
+            mixed_validation_lineage = load_json(post_source_lineage)
         expected_lineage = budget_blocked_carried_smoke_lineage(
             source_lineage,
             receipt["target_smoke_contract_sha256"],
             pointer,
         )
-        if current_lineage != expected_lineage:
+        if mixed_validation_lineage != expected_lineage:
             return (
                 "mixed smoke qualification lineage differs from its source "
                 "transition"
@@ -16100,10 +16214,14 @@ def budget_blocked_carried_smoke_failure(
             != set(rows_by_id)
         ):
             return "mixed smoke qualification entrant partition is malformed"
-        successor_carried = set(current_lineage.get("carried_entrants", []))
+        successor_carried = set(
+            mixed_validation_lineage.get("carried_entrants", [])
+        )
         if not set(carried).issubset(successor_carried):
             return "mixed smoke qualification carries a non-carried build entrant"
-        predecessor_root = Path(str(current_lineage.get("predecessor_root", "")))
+        predecessor_root = Path(
+            str(mixed_validation_lineage.get("predecessor_root", ""))
+        )
         try:
             require_smoke_proofs(
                 predecessor_root,
@@ -16767,6 +16885,807 @@ def recover_budget_blocked_carried_smoke(
                     )
 
 
+def post_smoke_coordinator_fault(_stage: str) -> None:
+    return None
+
+
+def post_smoke_artifact_seals(
+    root: Path, campaign: Mapping[str, Any]
+) -> Dict[str, Any]:
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    sealed: Dict[str, Any] = {}
+    for row in entrants(manifest):
+        entrant_id = str(row["id"])
+        unit = root / "entrants" / entrant_id
+        smoke_unit = root / "smoke" / entrant_id
+        sealed[entrant_id] = {
+            "build_state_sha256": sha256_file(state_file(root, entrant_id)),
+            "smoke_state_sha256": sha256_file(
+                smoke_state_file(root, entrant_id)
+            ),
+            "immutable_build_unit_sha256": artifact_tree_sha256(
+                unit,
+                excluded_relative_paths={"state.json", "state.lock"},
+            ),
+            "smoke_unit_sha256": sha256_tree_exact(smoke_unit),
+            "scores_sha256": optional_artifact_tree_sha256(
+                root / "scores" / entrant_id
+            ),
+            "publish_sha256": optional_artifact_tree_sha256(
+                root / "publish" / entrant_id
+            ),
+        }
+    return sealed
+
+
+def post_smoke_source_evidence(
+    root: Path, campaign: Mapping[str, Any]
+) -> Dict[str, Any]:
+    files = {
+        "campaign": campaign_file(root),
+        "lineage": root / "lineage/lineage.json",
+        "manager": root / "manager.json",
+        "monitor": root / "monitor.json",
+        "smoke_manager": root / "smoke-manager.json",
+        "budget_ledger": Path(str(campaign["budget_ledger"])),
+    }
+    hashes: Dict[str, str] = {}
+    for name, path in files.items():
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(
+                f"post-smoke coordinator repair source {name} is missing or linked"
+            )
+        hashes[name] = sha256_file(path)
+    return {
+        "files": hashes,
+        "artifacts": post_smoke_artifact_seals(root, campaign),
+    }
+
+
+def post_smoke_runtime_tree_failure(
+    runtime_root: Path,
+    expected_hashes: Mapping[str, Any],
+    expected_tree_sha256: Any,
+) -> str | None:
+    if (
+        runtime_root.is_symlink()
+        or not runtime_root.is_dir()
+        or runtime_root.resolve() != runtime_root
+    ):
+        return "post-smoke runtime instrument is missing or linked"
+    observed: Dict[str, str] = {}
+    for path in sorted(runtime_root.rglob("*")):
+        metadata = path.lstat()
+        if stat_module.S_ISDIR(metadata.st_mode):
+            continue
+        if not stat_module.S_ISREG(metadata.st_mode):
+            return "post-smoke runtime instrument contains a non-regular entry"
+        relative = str(path.relative_to(runtime_root))
+        observed[relative] = sha256_file(path)
+    if observed != expected_hashes:
+        return "post-smoke runtime instrument files or hashes changed"
+    if sha256_tree_exact(runtime_root) != expected_tree_sha256:
+        return "post-smoke runtime instrument tree digest changed"
+    return None
+
+
+def post_smoke_coordinator_repair_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    lineage: Mapping[str, Any],
+) -> str | None:
+    pointer = campaign.get("post_smoke_coordinator_repair")
+    lineage_pointer = lineage.get("post_smoke_coordinator_repair")
+    repair_fields = {
+        "post_smoke_coordinator_repair_transition_id",
+        "runtime_instrument_root",
+        "runtime_instrument_hashes",
+        "runtime_instrument_set_sha256",
+        "runtime_coordinator_sha256",
+        "runtime_source_commit",
+        "runtime_source_branch",
+    }
+    if pointer is None and lineage_pointer is None:
+        if any(field in campaign for field in repair_fields):
+            return "campaign has unproven post-smoke runtime fields"
+        try:
+            campaign_runtime_coordinator(campaign)
+        except SystemExit as error:
+            return str(error)
+        return None
+    try:
+        if (
+            not isinstance(pointer, dict)
+            or set(pointer) != {"path", "sha256"}
+            or pointer != lineage_pointer
+            or pointer.get("path")
+            != f"{POST_SMOKE_COORDINATOR_REPAIR_PATH}/receipt.json"
+        ):
+            return "post-smoke coordinator repair pointer is malformed"
+        bundle = root / POST_SMOKE_COORDINATOR_REPAIR_PATH
+        receipt_path = bundle / "receipt.json"
+        if (
+            bundle.is_symlink()
+            or not bundle.is_dir()
+            or bundle.resolve() != bundle
+            or receipt_path.is_symlink()
+            or not receipt_path.is_file()
+            or sha256_file(receipt_path) != pointer.get("sha256")
+        ):
+            return "post-smoke coordinator repair receipt is missing or changed"
+        receipt = load_json(receipt_path)
+        expected_fields = {
+            "schema_version",
+            "kind",
+            "transition_id",
+            "repaired_at",
+            "root",
+            "campaign_id",
+            "runtime_source_commit",
+            "runtime_source_branch",
+            "observed_attention_failure",
+            "source_campaign_sha256",
+            "source_lineage_sha256",
+            "source_coordinator_sha256",
+            "source_manager_sha256",
+            "source_monitor_sha256",
+            "source_smoke_manager_sha256",
+            "source_budget_ledger_sha256",
+            "source_build_state_sha256",
+            "source_smoke_state_sha256",
+            "source_artifact_seals_sha256",
+            "source_instrument_set_sha256",
+            "source_instrument_hashes",
+            "smoke_contract_sha256",
+            "runtime_instrument_root",
+            "runtime_instrument_hashes",
+            "runtime_instrument_set_sha256",
+            "runtime_instrument_tree_sha256",
+            "runtime_coordinator_sha256",
+            "only_coordinator_changed",
+            "no_paid_artifact_mutation",
+        }
+        if (
+            set(receipt) != expected_fields
+            or receipt.get("schema_version")
+            != POST_SMOKE_COORDINATOR_REPAIR_SCHEMA
+            or receipt.get("kind") != "post_smoke_coordinator_repair"
+            or receipt.get("root") != str(root.resolve())
+            or receipt.get("campaign_id") != campaign.get("campaign_id")
+            or receipt.get("only_coordinator_changed") is not True
+            or receipt.get("no_paid_artifact_mutation") is not True
+            or re.fullmatch(
+                r"[0-9a-f]{40}(?:[0-9a-f]{24})?",
+                str(receipt.get("runtime_source_commit", "")),
+            )
+            is None
+            or not isinstance(receipt.get("runtime_source_branch"), str)
+            or not receipt.get("runtime_source_branch")
+        ):
+            return "post-smoke coordinator repair receipt is bound elsewhere"
+        allowed_entries = {
+            "receipt.json",
+            "source-campaign.json",
+            "source-lineage.json",
+            "source-coordinator.py",
+            "source-manager.json",
+            "source-monitor.json",
+            "source-smoke-manager.json",
+            "source-budget-ledger.json",
+            "source-artifact-seals.json",
+            "build-states",
+            "smoke-states",
+            "runtime-instrument",
+        }
+        if {path.name for path in bundle.iterdir()} != allowed_entries:
+            return "post-smoke coordinator repair bundle has unexpected artifacts"
+        source_files = {
+            "source-campaign.json": receipt.get("source_campaign_sha256"),
+            "source-lineage.json": receipt.get("source_lineage_sha256"),
+            "source-coordinator.py": receipt.get("source_coordinator_sha256"),
+            "source-manager.json": receipt.get("source_manager_sha256"),
+            "source-monitor.json": receipt.get("source_monitor_sha256"),
+            "source-smoke-manager.json": receipt.get(
+                "source_smoke_manager_sha256"
+            ),
+            "source-budget-ledger.json": receipt.get(
+                "source_budget_ledger_sha256"
+            ),
+            "source-artifact-seals.json": receipt.get(
+                "source_artifact_seals_sha256"
+            ),
+        }
+        for name, expected_sha in source_files.items():
+            path = bundle / name
+            if (
+                not isinstance(expected_sha, str)
+                or path.is_symlink()
+                or not path.is_file()
+                or sha256_file(path) != expected_sha
+            ):
+                return f"post-smoke coordinator repair source changed: {name}"
+        for field, directory_name in (
+            ("source_build_state_sha256", "build-states"),
+            ("source_smoke_state_sha256", "smoke-states"),
+        ):
+            expected = receipt.get(field)
+            directory = bundle / directory_name
+            if (
+                not isinstance(expected, dict)
+                or directory.is_symlink()
+                or not directory.is_dir()
+                or {path.name for path in directory.iterdir()}
+                != {f"{entrant_id}.json" for entrant_id in expected}
+            ):
+                return f"post-smoke coordinator repair {directory_name} are malformed"
+            for entrant_id, expected_sha in expected.items():
+                path = directory / f"{entrant_id}.json"
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or sha256_file(path) != expected_sha
+                ):
+                    return f"post-smoke coordinator repair state changed: {entrant_id}"
+        source_campaign = load_json(bundle / "source-campaign.json")
+        source_lineage = load_json(bundle / "source-lineage.json")
+        source_artifacts = load_json(bundle / "source-artifact-seals.json")
+        build_state_hashes = receipt.get("source_build_state_sha256")
+        smoke_state_hashes = receipt.get("source_smoke_state_sha256")
+        artifact_fields = {
+            "build_state_sha256",
+            "smoke_state_sha256",
+            "immutable_build_unit_sha256",
+            "smoke_unit_sha256",
+            "scores_sha256",
+            "publish_sha256",
+        }
+        if (
+            not isinstance(source_artifacts, dict)
+            or not isinstance(build_state_hashes, dict)
+            or not isinstance(smoke_state_hashes, dict)
+            or set(source_artifacts) != set(build_state_hashes)
+            or set(source_artifacts) != set(smoke_state_hashes)
+            or any(
+                not isinstance(record, dict)
+                or set(record) != artifact_fields
+                or record.get("build_state_sha256")
+                != build_state_hashes.get(entrant_id)
+                or record.get("smoke_state_sha256")
+                != smoke_state_hashes.get(entrant_id)
+                for entrant_id, record in source_artifacts.items()
+            )
+        ):
+            return "post-smoke coordinator repair artifact seals are malformed"
+        source_hashes = receipt.get("source_instrument_hashes")
+        runtime_hashes = receipt.get("runtime_instrument_hashes")
+        if (
+            not isinstance(source_hashes, dict)
+            or not isinstance(runtime_hashes, dict)
+            or source_campaign.get("status") != "ATTENTION"
+            or source_campaign.get("smoke_status")
+            not in {"PASS", BUDGET_BLOCKED_CARRIED_SMOKE_STATUS}
+            or source_campaign.get("failure")
+            != receipt.get("observed_attention_failure")
+            or source_campaign.get("campaign_id") != receipt.get("campaign_id")
+            or source_campaign.get("instrument_hashes") != source_hashes
+            or source_campaign.get("instrument_set_sha256")
+            != receipt.get("source_instrument_set_sha256")
+            or source_campaign.get("smoke_contract_sha256")
+            != receipt.get("smoke_contract_sha256")
+            or sha256_bytes(json.dumps(source_hashes, sort_keys=True).encode())
+            != receipt.get("source_instrument_set_sha256")
+            or {
+                key
+                for key in set(source_hashes) | set(runtime_hashes)
+                if source_hashes.get(key) != runtime_hashes.get(key)
+            }
+            != {COORDINATOR_INSTRUMENT_PATH}
+            or source_hashes.get(COORDINATOR_INSTRUMENT_PATH)
+            != receipt.get("source_coordinator_sha256")
+            or runtime_hashes.get(COORDINATOR_INSTRUMENT_PATH)
+            != receipt.get("runtime_coordinator_sha256")
+            or sha256_bytes(json.dumps(runtime_hashes, sort_keys=True).encode())
+            != receipt.get("runtime_instrument_set_sha256")
+        ):
+            return "post-smoke coordinator repair did not change exactly the coordinator"
+        try:
+            source_coordinator, source_coordinator_sha = (
+                campaign_runtime_coordinator(source_campaign)
+            )
+        except SystemExit as error:
+            return f"post-smoke coordinator repair source is invalid: {error}"
+        if (
+            source_coordinator_sha != receipt.get("source_coordinator_sha256")
+            or sha256_file(bundle / "source-coordinator.py")
+            != source_coordinator_sha
+        ):
+            return "post-smoke coordinator repair source coordinator changed"
+        runtime_root = root / POST_SMOKE_RUNTIME_INSTRUMENT_PATH
+        if (
+            receipt.get("runtime_instrument_root") != str(runtime_root)
+            or campaign.get("runtime_instrument_root") != str(runtime_root)
+        ):
+            return "post-smoke runtime instrument root is not frozen"
+        tree_problem = post_smoke_runtime_tree_failure(
+            runtime_root,
+            runtime_hashes,
+            receipt.get("runtime_instrument_tree_sha256"),
+        )
+        if tree_problem:
+            return tree_problem
+        runtime_coordinator = runtime_root / COORDINATOR_INSTRUMENT_PATH
+        if (
+            campaign.get("coordinator") != str(runtime_coordinator)
+            or campaign.get("runtime_instrument_hashes") != runtime_hashes
+            or campaign.get("runtime_instrument_set_sha256")
+            != receipt.get("runtime_instrument_set_sha256")
+            or campaign.get("runtime_coordinator_sha256")
+            != receipt.get("runtime_coordinator_sha256")
+            or campaign.get("runtime_source_commit")
+            != receipt.get("runtime_source_commit")
+            or campaign.get("runtime_source_branch")
+            != receipt.get("runtime_source_branch")
+            or campaign.get("post_smoke_coordinator_repair_transition_id")
+            != receipt.get("transition_id")
+        ):
+            return "campaign runtime coordinator differs from its repair receipt"
+        source_mutable_campaign_fields = {
+            "status",
+            "failure",
+            "updated_at",
+            "started_at",
+            "build_finished_at",
+            "score_started_at",
+            "finished_at",
+            "stopping_at",
+            "stopped_at",
+            "coordinator",
+            "lineage",
+        }
+        immutable_campaign_fields = set(source_campaign) - source_mutable_campaign_fields
+        if any(
+            campaign.get(field) != source_campaign.get(field)
+            for field in immutable_campaign_fields
+        ):
+            return "post-smoke coordinator repair changed qualified campaign identity"
+        source_campaign_lineage = source_campaign.get("lineage")
+        current_campaign_lineage = campaign.get("lineage")
+        if (
+            not isinstance(source_campaign_lineage, dict)
+            or not isinstance(current_campaign_lineage, dict)
+            or {
+                key: value
+                for key, value in current_campaign_lineage.items()
+                if key != "sha256"
+            }
+            != {
+                key: value
+                for key, value in source_campaign_lineage.items()
+                if key != "sha256"
+            }
+        ):
+            return "post-smoke coordinator repair changed campaign lineage identity"
+        expected_lineage = dict(source_lineage)
+        expected_lineage["post_smoke_coordinator_repair"] = dict(pointer)
+        if lineage != expected_lineage:
+            return "post-smoke coordinator repair changed supersession lineage"
+        if source_artifacts != load_json(bundle / "source-artifact-seals.json"):
+            return "post-smoke coordinator repair artifact seal changed"
+        try:
+            campaign_runtime_coordinator(campaign)
+        except SystemExit as error:
+            return str(error)
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ) as error:
+        return f"post-smoke coordinator repair cannot be verified: {error}"
+    return None
+
+
+def post_smoke_source_evidence_matches_bundle(
+    root: Path,
+    source_campaign: Mapping[str, Any],
+    bundle: Path,
+    receipt: Mapping[str, Any],
+) -> bool:
+    current = post_smoke_source_evidence(root, source_campaign)
+    expected_files = {
+        "campaign": receipt["source_campaign_sha256"],
+        "manager": receipt["source_manager_sha256"],
+        "monitor": receipt["source_monitor_sha256"],
+        "smoke_manager": receipt["source_smoke_manager_sha256"],
+        "budget_ledger": receipt["source_budget_ledger_sha256"],
+    }
+    if any(current["files"].get(key) != value for key, value in expected_files.items()):
+        return False
+    return current["artifacts"] == load_json(bundle / "source-artifact-seals.json")
+
+
+def apply_post_smoke_coordinator_repair(
+    root: Path, bundle: Path
+) -> Dict[str, Any]:
+    expected_bundle = root / POST_SMOKE_COORDINATOR_REPAIR_PATH
+    receipt_path = bundle / "receipt.json"
+    if (
+        bundle != expected_bundle
+        or bundle.is_symlink()
+        or not bundle.is_dir()
+        or bundle.resolve() != bundle
+        or receipt_path.is_symlink()
+        or not receipt_path.is_file()
+    ):
+        raise SystemExit("post-smoke coordinator repair bundle is outside its campaign")
+    receipt = load_json(bundle / "receipt.json")
+    source_campaign = load_json(bundle / "source-campaign.json")
+    source_lineage = load_json(bundle / "source-lineage.json")
+    pointer = {
+        "path": f"{POST_SMOKE_COORDINATOR_REPAIR_PATH}/receipt.json",
+        "sha256": sha256_file(bundle / "receipt.json"),
+    }
+    expected_target_lineage = dict(source_lineage)
+    expected_target_lineage["post_smoke_coordinator_repair"] = pointer
+    runtime_root = root / POST_SMOKE_RUNTIME_INSTRUMENT_PATH
+    validation_campaign = dict(source_campaign)
+    validation_campaign.update(
+        {
+            "coordinator": str(runtime_root / COORDINATOR_INSTRUMENT_PATH),
+            "runtime_instrument_root": str(runtime_root),
+            "runtime_instrument_hashes": receipt.get("runtime_instrument_hashes"),
+            "runtime_instrument_set_sha256": receipt.get(
+                "runtime_instrument_set_sha256"
+            ),
+            "runtime_coordinator_sha256": receipt.get(
+                "runtime_coordinator_sha256"
+            ),
+            "runtime_source_commit": receipt.get("runtime_source_commit"),
+            "runtime_source_branch": receipt.get("runtime_source_branch"),
+            "post_smoke_coordinator_repair_transition_id": receipt.get(
+                "transition_id"
+            ),
+            "post_smoke_coordinator_repair": pointer,
+        }
+    )
+    bundle_problem = post_smoke_coordinator_repair_failure(
+        root, validation_campaign, expected_target_lineage
+    )
+    if bundle_problem:
+        raise SystemExit(
+            "post-smoke coordinator repair bundle is invalid: " + bundle_problem
+        )
+    current_campaign = load_json(campaign_file(root))
+    if current_campaign.get("post_smoke_coordinator_repair_transition_id") == receipt.get(
+        "transition_id"
+    ):
+        current_lineage = load_json(root / "lineage/lineage.json")
+        problem = post_smoke_coordinator_repair_failure(
+            root, current_campaign, current_lineage
+        )
+        if problem:
+            raise SystemExit("committed post-smoke coordinator repair is invalid: " + problem)
+        return current_campaign
+    if sha256_file(campaign_file(root)) != receipt.get("source_campaign_sha256"):
+        raise SystemExit("post-smoke coordinator repair source campaign changed before apply")
+    current_lineage = load_json(root / "lineage/lineage.json")
+    if current_lineage not in (source_lineage, expected_target_lineage):
+        raise SystemExit("post-smoke coordinator repair lineage changed before apply")
+    if not post_smoke_source_evidence_matches_bundle(
+        root, source_campaign, bundle, receipt
+    ):
+        raise SystemExit("post-smoke paid or runtime evidence changed before apply")
+    tree_problem = post_smoke_runtime_tree_failure(
+        runtime_root,
+        receipt["runtime_instrument_hashes"],
+        receipt["runtime_instrument_tree_sha256"],
+    )
+    if tree_problem:
+        raise SystemExit(tree_problem)
+    atomic_json(root / "lineage/lineage.json", expected_target_lineage)
+    post_smoke_coordinator_fault("lineage_committed")
+    target_campaign = dict(source_campaign)
+    target_campaign.update(
+        {
+            "coordinator": str(runtime_root / COORDINATOR_INSTRUMENT_PATH),
+            "runtime_instrument_root": str(runtime_root),
+            "runtime_instrument_hashes": receipt["runtime_instrument_hashes"],
+            "runtime_instrument_set_sha256": receipt[
+                "runtime_instrument_set_sha256"
+            ],
+            "runtime_coordinator_sha256": receipt["runtime_coordinator_sha256"],
+            "runtime_source_commit": receipt["runtime_source_commit"],
+            "runtime_source_branch": receipt["runtime_source_branch"],
+            "post_smoke_coordinator_repair_transition_id": receipt[
+                "transition_id"
+            ],
+            "post_smoke_coordinator_repair": pointer,
+            "lineage": {
+                **dict(source_campaign["lineage"]),
+                "sha256": sha256_file(root / "lineage/lineage.json"),
+            },
+            "updated_at": receipt["repaired_at"],
+        }
+    )
+    atomic_json(campaign_file(root), target_campaign)
+    post_smoke_coordinator_fault("campaign_committed")
+    problem = lineage_failure(root)
+    if problem:
+        raise SystemExit("post-smoke coordinator repair failed validation: " + problem)
+    return load_json(campaign_file(root))
+
+
+def post_smoke_runtime_quiescence_failure(
+    root: Path, campaign: Mapping[str, Any]
+) -> str | None:
+    runtime_records = [
+        ("manager", load_json(root / "manager.json"), (("pid", "identity"),), ("pgid",)),
+        ("monitor", load_json(root / "monitor.json"), (("pid", "identity"), ("launcher_pid", "launcher_identity")), ("pgid", "launcher_pgid")),
+        ("smoke manager", load_json(root / "smoke-manager.json"), (("pid", "identity"),), ("pgid",)),
+    ]
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    rows = entrants(manifest)
+    for row in rows:
+        entrant_id = str(row["id"])
+        runtime_records.append(
+            (
+                f"build {entrant_id}",
+                read_state(root, entrant_id),
+                (("supervisor_pid", "supervisor_identity"), ("goose_pid", "goose_identity")),
+                ("supervisor_pgid", "process_group"),
+            )
+        )
+        runtime_records.append(
+            (
+                f"smoke {entrant_id}",
+                read_smoke_state(root, entrant_id),
+                (("supervisor_pid", "supervisor_identity"), ("goose_pid", "goose_identity")),
+                ("supervisor_pgid", "process_group"),
+            )
+        )
+    for name, state, processes, groups in runtime_records:
+        for pid_key, identity_key in processes:
+            if process_alive(state.get(pid_key), state.get(identity_key)):
+                return f"post-smoke coordinator repair {name} process is alive"
+        for group_key in groups:
+            group = int(state.get(group_key) or 0)
+            if group > 1 and process_group_members(group):
+                return f"post-smoke coordinator repair {name} group is alive"
+    busy = [
+        str(row["vendor_port"])
+        for row in rows
+        if not port_is_free(int(row["vendor_port"]))
+    ]
+    if busy:
+        return "post-smoke coordinator repair vendor ports are occupied: " + ", ".join(busy)
+    return None
+
+
+def repair_post_smoke_coordinator(
+    root: Path,
+    coordinator_source: Path | None = None,
+    runtime_source_commit: str | None = None,
+    runtime_source_branch: str | None = None,
+) -> Dict[str, Any]:
+    root = root.resolve()
+    coordinator_source_input = coordinator_source or Path(__file__)
+    if coordinator_source_input.is_symlink() or not coordinator_source_input.is_file():
+        raise SystemExit("post-smoke repair coordinator source is missing or linked")
+    coordinator_source = coordinator_source_input.resolve()
+    if coordinator_source != (REPO / COORDINATOR_INSTRUMENT_PATH).resolve():
+        raise SystemExit("post-smoke repair requires the tracked coordinator source")
+    require_clean_source_worktree()
+    observed_commit = git_value("rev-parse", "HEAD")
+    observed_branch = git_value("branch", "--show-current")
+    if runtime_source_commit is not None and runtime_source_commit != observed_commit:
+        raise SystemExit("post-smoke runtime commit differs from the source checkout")
+    if runtime_source_branch is not None and runtime_source_branch != observed_branch:
+        raise SystemExit("post-smoke runtime branch differs from the source checkout")
+    runtime_source_commit = observed_commit
+    runtime_source_branch = observed_branch
+    bundle = root / POST_SMOKE_COORDINATOR_REPAIR_PATH
+    with contextlib.ExitStack() as locks:
+        for relative in (
+            "locks/manager-launch.claim",
+            "locks/supersession.claim",
+            "locks/monitor-launch.claim",
+            "locks/resume.claim",
+            "locks/smoke-launch.claim",
+            "locks/smoke-run.claim",
+            "locks/post-smoke-coordinator-repair.claim",
+        ):
+            claimed = locks.enter_context(
+                exclusive_claim(root / relative, blocking=True)
+            )
+            if not claimed:
+                raise SystemExit("cannot claim post-smoke coordinator repair boundary")
+        campaign = load_json(campaign_file(root))
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        for lane in sorted({str(row["provider_lane"]) for row in entrants(manifest)}):
+            locks.enter_context(provider_lane(root, lane))
+        ledger_claimed = locks.enter_context(
+            exclusive_claim(
+                Path(str(campaign["budget_ledger"])).with_suffix(".lock"),
+                blocking=True,
+            )
+        )
+        if not ledger_claimed:
+            raise SystemExit("cannot claim post-smoke coordinator budget boundary")
+        if bundle.exists():
+            return apply_post_smoke_coordinator_repair(root, bundle)
+        require_lineage(root)
+        require_smoke_proofs(root)
+        campaign = load_json(campaign_file(root))
+        if (
+            validated_campaign_lineage(campaign)["generation"] != 1
+            or campaign.get("lineage", {}).get("path") != "lineage/lineage.json"
+            or
+            campaign.get("status") != "ATTENTION"
+            or campaign.get("smoke_status")
+            not in {"PASS", BUDGET_BLOCKED_CARRIED_SMOKE_STATUS}
+            or not isinstance(campaign.get("failure"), str)
+            or not campaign.get("failure")
+            or campaign.get("post_smoke_coordinator_repair") is not None
+        ):
+            raise SystemExit(
+                "post-smoke coordinator repair requires a qualified ATTENTION campaign"
+            )
+        quiescence_problem = post_smoke_runtime_quiescence_failure(root, campaign)
+        if quiescence_problem:
+            raise SystemExit(quiescence_problem)
+        source_coordinator, source_coordinator_sha = campaign_runtime_coordinator(
+            campaign
+        )
+        target_coordinator_sha = sha256_file(coordinator_source)
+        if target_coordinator_sha == source_coordinator_sha:
+            raise SystemExit("post-smoke coordinator repair changes no coordinator bytes")
+        source_hashes = dict(campaign["instrument_hashes"])
+        if source_hashes.get(COORDINATOR_INSTRUMENT_PATH) != source_coordinator_sha:
+            raise SystemExit("post-smoke source coordinator is not the qualified instrument")
+        runtime_hashes = {
+            **source_hashes,
+            COORDINATOR_INSTRUMENT_PATH: target_coordinator_sha,
+        }
+        runtime_instrument_set = sha256_bytes(
+            json.dumps(runtime_hashes, sort_keys=True).encode()
+        )
+        evidence_before = post_smoke_source_evidence(root, campaign)
+        transition_id = sha256_bytes(
+            json.dumps(
+                {
+                    "schema_version": POST_SMOKE_COORDINATOR_REPAIR_SCHEMA,
+                    "root": str(root),
+                    "campaign_id": campaign["campaign_id"],
+                    "source_campaign_sha256": evidence_before["files"]["campaign"],
+                    "source_lineage_sha256": evidence_before["files"]["lineage"],
+                    "runtime_coordinator_sha256": target_coordinator_sha,
+                    "runtime_source_commit": runtime_source_commit,
+                    "observed_attention_failure": campaign["failure"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        )
+        staging = Path(
+            tempfile.mkdtemp(
+                prefix=".post-smoke-coordinator-repair-",
+                dir=root / "lineage",
+            )
+        )
+        try:
+            source_files = {
+                "source-campaign.json": campaign_file(root),
+                "source-lineage.json": root / "lineage/lineage.json",
+                "source-coordinator.py": source_coordinator,
+                "source-manager.json": root / "manager.json",
+                "source-monitor.json": root / "monitor.json",
+                "source-smoke-manager.json": root / "smoke-manager.json",
+                "source-budget-ledger.json": Path(str(campaign["budget_ledger"])),
+            }
+            for name, source in source_files.items():
+                atomic_copy(source, staging / name, 0o600)
+            atomic_json(
+                staging / "source-artifact-seals.json",
+                evidence_before["artifacts"],
+            )
+            (staging / "build-states").mkdir()
+            (staging / "smoke-states").mkdir()
+            for entrant_id in sorted(evidence_before["artifacts"]):
+                atomic_copy(
+                    state_file(root, entrant_id),
+                    staging / "build-states" / f"{entrant_id}.json",
+                    0o600,
+                )
+                atomic_copy(
+                    smoke_state_file(root, entrant_id),
+                    staging / "smoke-states" / f"{entrant_id}.json",
+                    0o600,
+                )
+            runtime_staging = staging / "runtime-instrument/source"
+            for relative, expected_sha in sorted(source_hashes.items()):
+                source = campaign_instrument_path(campaign, relative)
+                if (
+                    source.is_symlink()
+                    or not source.is_file()
+                    or sha256_file(source) != expected_sha
+                ):
+                    raise SystemExit(
+                        f"post-smoke source instrument changed: {relative}"
+                    )
+                atomic_copy(source, runtime_staging / relative, 0o600)
+            atomic_copy(
+                coordinator_source,
+                runtime_staging / COORDINATOR_INSTRUMENT_PATH,
+                0o600,
+            )
+            runtime_tree_sha = sha256_tree_exact(runtime_staging)
+            runtime_root = root / POST_SMOKE_RUNTIME_INSTRUMENT_PATH
+            receipt = {
+                "schema_version": POST_SMOKE_COORDINATOR_REPAIR_SCHEMA,
+                "kind": "post_smoke_coordinator_repair",
+                "transition_id": transition_id,
+                "repaired_at": utc_now(),
+                "root": str(root),
+                "campaign_id": campaign["campaign_id"],
+                "runtime_source_commit": runtime_source_commit,
+                "runtime_source_branch": runtime_source_branch,
+                "observed_attention_failure": campaign["failure"],
+                "source_campaign_sha256": sha256_file(staging / "source-campaign.json"),
+                "source_lineage_sha256": sha256_file(staging / "source-lineage.json"),
+                "source_coordinator_sha256": source_coordinator_sha,
+                "source_manager_sha256": sha256_file(staging / "source-manager.json"),
+                "source_monitor_sha256": sha256_file(staging / "source-monitor.json"),
+                "source_smoke_manager_sha256": sha256_file(
+                    staging / "source-smoke-manager.json"
+                ),
+                "source_budget_ledger_sha256": sha256_file(
+                    staging / "source-budget-ledger.json"
+                ),
+                "source_build_state_sha256": {
+                    entrant_id: sha256_file(
+                        staging / "build-states" / f"{entrant_id}.json"
+                    )
+                    for entrant_id in sorted(evidence_before["artifacts"])
+                },
+                "source_smoke_state_sha256": {
+                    entrant_id: sha256_file(
+                        staging / "smoke-states" / f"{entrant_id}.json"
+                    )
+                    for entrant_id in sorted(evidence_before["artifacts"])
+                },
+                "source_artifact_seals_sha256": sha256_file(
+                    staging / "source-artifact-seals.json"
+                ),
+                "source_instrument_set_sha256": campaign["instrument_set_sha256"],
+                "source_instrument_hashes": source_hashes,
+                "smoke_contract_sha256": campaign["smoke_contract_sha256"],
+                "runtime_instrument_root": str(runtime_root),
+                "runtime_instrument_hashes": runtime_hashes,
+                "runtime_instrument_set_sha256": runtime_instrument_set,
+                "runtime_instrument_tree_sha256": runtime_tree_sha,
+                "runtime_coordinator_sha256": target_coordinator_sha,
+                "only_coordinator_changed": True,
+                "no_paid_artifact_mutation": True,
+            }
+            atomic_json(staging / "receipt.json", receipt)
+            post_smoke_coordinator_fault("runtime_staged")
+            evidence_after = post_smoke_source_evidence(root, campaign)
+            if evidence_after != evidence_before:
+                raise SystemExit(
+                    "post-smoke paid or runtime evidence changed while staging repair"
+                )
+            fsync_directory(staging)
+            os.replace(staging, bundle)
+            fsync_directory(bundle.parent)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+        post_smoke_coordinator_fault("receipt_committed")
+        return apply_post_smoke_coordinator_repair(root, bundle)
+
+
 def smoke(root: Path) -> int:
     with exclusive_claim(root / "locks/smoke-run.claim", blocking=True) as claimed:
         if not claimed:
@@ -17048,7 +17967,7 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
                     launch_after_receipt(
                         [
                             sys.executable,
-                            str(campaign["coordinator"]),
+                            str(campaign_runtime_coordinator(campaign)[0]),
                             "_smoke_manage",
                             "--root",
                             str(root),
@@ -21485,7 +22404,7 @@ def start(root: Path) -> int:
         proc = launch_detached(
             [
                 sys.executable,
-                str(campaign["coordinator"]),
+                str(campaign_runtime_coordinator(campaign)[0]),
                 "_manage",
                 "--root",
                 str(root),
@@ -21507,6 +22426,19 @@ def monitor_lease_snapshot_failure(
     pid = monitor.get("pid")
     if monitor.get("status") != "RUNNING":
         return f"monitor status is {monitor.get('status')}, not RUNNING"
+    if campaign.get("post_smoke_coordinator_repair") is not None:
+        try:
+            runtime_path, runtime_sha = campaign_runtime_coordinator(campaign)
+        except SystemExit as error:
+            return f"monitor runtime coordinator is invalid: {error}"
+        if (
+            monitor.get("runtime_coordinator_path") != str(runtime_path)
+            or monitor.get("runtime_coordinator_sha256") != runtime_sha
+            or monitor.get("launcher_runtime_coordinator_path")
+            != str(runtime_path)
+            or monitor.get("launcher_runtime_coordinator_sha256") != runtime_sha
+        ):
+            return "monitor and launcher did not report the campaign runtime coordinator"
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 1:
         return "monitor has no valid process id"
     identity = monitor.get("identity")
@@ -22137,7 +23069,7 @@ def monitor_launch(root: Path) -> int:
     proc = launch_detached(
         [
             sys.executable,
-            str(campaign["coordinator"]),
+            str(campaign_runtime_coordinator(campaign)[0]),
             "_monitor",
             "--root",
             str(root),
@@ -22318,7 +23250,7 @@ def monitor_start(root: Path) -> int:
         proc = launch_detached(
             [
                 sys.executable,
-                str(campaign["coordinator"]),
+                str(campaign_runtime_coordinator(campaign)[0]),
                 "_monitor_launch",
                 "--root",
                 str(root),
@@ -22760,6 +23692,8 @@ def main() -> int:
         "recover-budget-blocked-carried-smoke"
     )
     root_arg(p_carried_smoke_recovery)
+    p_post_smoke_repair = sub.add_parser("repair-post-smoke-coordinator")
+    root_arg(p_post_smoke_repair)
 
     p_gated_exec = sub.add_parser("_gated_exec")
     p_gated_exec.add_argument("--gate", type=Path, required=True)
@@ -22887,6 +23821,13 @@ def main() -> int:
             f"at {args.root.resolve()}"
         )
         return 0
+    if args.command == "repair-post-smoke-coordinator":
+        value = repair_post_smoke_coordinator(args.root)
+        print(
+            f"repaired post-smoke runtime coordinator for {value['campaign_id']} "
+            f"at {args.root.resolve()}"
+        )
+        return 0
     if args.command == "_gated_exec":
         return gated_exec(args.gate.resolve(), args.token, args.exec_command)
     root = args.root.resolve()
@@ -22894,25 +23835,33 @@ def main() -> int:
         return durable_smoke(root)
     if args.command == "_smoke_supervise":
         consume_child_launch_capability(f"smoke-supervisor:{args.entrant}")
+        record_child_runtime_coordinator(
+            root, "smoke-supervisor", args.entrant
+        )
         return smoke_supervise(root, args.entrant)
     if args.command == "_smoke_manage":
         consume_child_launch_capability("smoke-manager")
+        record_child_runtime_coordinator(root, "smoke-manager")
         return smoke_manage(root)
     if args.command == "monitor-start":
         return monitor_start(root)
     if args.command == "_monitor_launch":
         consume_child_launch_capability("monitor-launcher")
+        record_child_runtime_coordinator(root, "monitor-launcher")
         return monitor_launch(root)
     if args.command == "_monitor":
         consume_child_launch_capability("monitor")
+        record_child_runtime_coordinator(root, "monitor")
         return monitor_campaign(root)
     if args.command == "start":
         return start(root)
     if args.command == "_manage":
         consume_child_launch_capability("manager")
+        record_child_runtime_coordinator(root, "manager")
         return manage(root)
     if args.command == "_supervise":
         consume_child_launch_capability(f"build-supervisor:{args.entrant}")
+        record_child_runtime_coordinator(root, "build-supervisor", args.entrant)
         return supervise(root, args.entrant)
     if args.command == "status":
         print_status(root)
