@@ -2067,6 +2067,72 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(successor["qualification_history"]["restart_count"], 1)
             self.assertIsNone(cloud_sb7.lineage_failure(successor_root))
 
+    def test_same_binary_supersession_is_smoke_only_and_instrument_exact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            rows = [
+                {
+                    "id": "model",
+                    "provider": "google",
+                    "model": "gemini-fixture",
+                }
+            ]
+            tree = root / "tree"
+            tree.mkdir()
+            lifecycle = root / "provider-lifecycle.jsonl"
+            lifecycle.write_text("")
+            state = {
+                "status": "STOPPED",
+                "provider_episode_attempts": 0,
+                "admitted_requests": 0,
+                "provider_terminal_requests": 0,
+                "score": None,
+                "verdict": None,
+                "provider_lifecycle": str(lifecycle),
+                "tree": str(tree),
+            }
+            coordinator = "evals/swarm-bench/bench/cloud_sb7.py"
+            stable = "evals/swarm-bench/spec-build-sb7.md"
+            predecessor = {
+                "instrument_hashes": {coordinator: "old", stable: "same"}
+            }
+            replacement = {coordinator: "new", stable: "same"}
+            self.assertIsNone(
+                cloud_sb7.same_binary_supersession_failure(
+                    predecessor, rows, {"model": state}, replacement
+                )
+            )
+
+            no_change = cloud_sb7.same_binary_supersession_failure(
+                predecessor,
+                rows,
+                {"model": state},
+                dict(predecessor["instrument_hashes"]),
+            )
+            self.assertIn("exactly one coordinator", no_change or "")
+
+            extra_change = cloud_sb7.same_binary_supersession_failure(
+                predecessor,
+                rows,
+                {"model": state},
+                {coordinator: "new", stable: "changed"},
+            )
+            self.assertIn("exactly one coordinator", extra_change or "")
+
+            started = {**state, "provider_episode_attempts": 1}
+            full_episode = cloud_sb7.same_binary_supersession_failure(
+                predecessor, rows, {"model": started}, replacement
+            )
+            self.assertIn("smoke-only defects", full_episode or "")
+
+            (tree / "artifact.txt").write_text("not pristine\n")
+            nonempty = cloud_sb7.same_binary_supersession_failure(
+                predecessor, rows, {"model": state}, replacement
+            )
+            self.assertIn("raw benchmark tree", nonempty or "")
+
     def test_qualification_restart_crash_boundaries_recover_without_new_spend(self) -> None:
         for boundary in (
             "evidence_bundle_staged",
