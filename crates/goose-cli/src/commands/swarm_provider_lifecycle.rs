@@ -46,11 +46,15 @@ pub(crate) trait ProviderNudgeDeliveryFactory: Send + Sync {
     fn open(&self) -> Arc<dyn ProviderNudgeDelivery>;
 }
 
+// This boundary stays dormant until research/planning owns physical broker admissions; keeping it
+// compiled preserves the terminal-proof implementation without enabling an unaccounted judge call.
+#[allow(dead_code)]
 pub(crate) struct PreSchedulerJudgeLaunchAdmission<'a> {
     _worker: &'a ProviderLifecycle,
     _judge: &'a AdmittedWork,
 }
 
+#[allow(dead_code)]
 impl<'a> PreSchedulerJudgeLaunchAdmission<'a> {
     pub(crate) fn try_new(
         worker: Option<&'a ProviderLifecycle>,
@@ -79,6 +83,7 @@ impl<'a> PreSchedulerJudgeLaunchAdmission<'a> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub(crate) enum PreSchedulerProviderTerminalKind {
     Finished,
     Failed,
@@ -88,12 +93,14 @@ pub(crate) enum PreSchedulerProviderTerminalKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub(crate) enum PreSchedulerProviderLifecyclePhase {
     Started,
     Terminal,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[allow(dead_code)]
 pub(crate) struct PreSchedulerProviderLifecycleEvent {
     pub(crate) generation: u64,
     pub(crate) phase: PreSchedulerProviderLifecyclePhase,
@@ -103,28 +110,33 @@ pub(crate) struct PreSchedulerProviderLifecycleEvent {
     pub(crate) payload_logged: bool,
 }
 
+#[allow(dead_code)]
 struct PreSchedulerActiveProviderRequest {
     generation: u64,
     delivery: Arc<dyn ProviderNudgeDelivery>,
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 struct PreSchedulerProviderControlState {
     next_generation: u64,
     active: Option<PreSchedulerActiveProviderRequest>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 pub(crate) struct PreSchedulerNudgeCapture {
     pub(crate) generation: u64,
     structured_output_bytes: u64,
 }
 
+#[allow(dead_code)]
 pub(crate) struct PreSchedulerProviderControl {
     state: Mutex<PreSchedulerProviderControlState>,
     observer: Arc<dyn Fn(PreSchedulerProviderLifecycleEvent) + Send + Sync>,
 }
 
+#[allow(dead_code)]
 impl PreSchedulerProviderControl {
     pub(crate) fn new(
         observer: Arc<dyn Fn(PreSchedulerProviderLifecycleEvent) + Send + Sync>,
@@ -221,6 +233,7 @@ impl PreSchedulerProviderControl {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn bind_pre_scheduler_provider_lifecycle(
     provider: Arc<dyn Provider>,
     nudge_factory: Arc<dyn ProviderNudgeDeliveryFactory>,
@@ -263,6 +276,7 @@ struct LifecycleProvider {
     nudge_factory: Option<Arc<dyn ProviderNudgeDeliveryFactory>>,
 }
 
+#[allow(dead_code)]
 struct PreSchedulerLifecycleProvider {
     inner: Arc<dyn Provider>,
     nudge_factory: Arc<dyn ProviderNudgeDeliveryFactory>,
@@ -566,6 +580,7 @@ impl Provider for StreamProgressProvider {
     }
 }
 
+#[allow(dead_code)]
 async fn finish_pre_scheduler_naturally(
     control: &PreSchedulerProviderControl,
     generation: u64,
