@@ -76,6 +76,16 @@ POST_BUILD_STATES = {
 BUILD_SUCCESS_STATES = {"BUILD_COMPLETE"} | POST_BUILD_STATES
 CAMPAIGN_SCHEMA = 2
 MAX_SCORER_VERDICT_BYTES = 32 * 1024 * 1024
+PUBLISHER_SCREENSHOT_PATTERN = re.compile(
+    r"^(?P<epoch>[0-9]+)-(?P<scenario>loaded|synced|error|empty|mobile|viz|"
+    r"viz-fallback|flow|flow-approved|boot|note)\.png$"
+)
+PUBLISHER_SCREENSHOT_MAX_BYTES = math.floor(1.4 * 1024 * 1024)
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+CHROMIUM_MACH_RENDEZVOUS_GLOBAL_NAME_REGEX = (
+    "^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.]"
+    "[1-9][0-9]?[0-9]?[0-9]?[0-9]?$"
+)
 SUPERSESSION_SCHEMA = 1
 SUPERSESSION_RECEIPT = "supersession-receipt.json"
 QUALIFICATION_RESTART_SCHEMA = 1
@@ -14240,10 +14250,16 @@ def scorer_sandbox_profile(
         for port in canonical_listener_ports(denied_local_ports)
     )
     cache_metadata = ""
+    chromium_mach_lookup = ""
     if runtime is not None:
         cache = Path(str(runtime["browser_cache_root"]))
         cache_metadata = (
             f'(allow file-read-metadata (literal "{sandbox_profile_path(cache)}")) '
+        )
+        chromium_mach_lookup = (
+            '(allow mach-lookup (global-name-regex #"'
+            f"{CHROMIUM_MACH_RENDEZVOUS_GLOBAL_NAME_REGEX}"
+            '")) '
         )
     return (
         "(version 1) (allow default) "
@@ -14254,6 +14270,7 @@ def scorer_sandbox_profile(
         "(allow signal (target self)) "
         "(allow signal (target same-sandbox)) "
         "(deny mach-lookup) "
+        f"{chromium_mach_lookup}"
         "(deny network*) "
         '(allow network-inbound (local tcp "localhost:*") '
         '(local udp "localhost:*")) '
@@ -15639,28 +15656,31 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
     if not isinstance(rep, int) or rep < 0:
         raise PublicationError("scored verdict has an invalid repetition index")
     source_shots = source_verdict.parent / "tree" / "sb7-shots"
-    if not source_shots.is_dir():
-        raise PublicationError(f"scorer screenshots are missing: {source_shots}")
-    linked = [path for path in source_shots.rglob("*") if path.is_symlink()]
-    if linked:
-        raise PublicationError("scorer screenshot evidence contains a symbolic link")
     try:
-        source_shots_sha256 = artifact_tree_sha256(source_shots)
+        source_screenshots = screenshot_evidence(source_shots)
     except SystemExit as error:
         raise PublicationError(str(error)) from None
+    if source_screenshots != sealed.get("screenshots"):
+        raise PublicationError("scorer screenshots differ from the score evidence seal")
+    source_shots_sha256 = source_screenshots["tree_sha256"]
 
     if target.exists():
         if not runs.is_dir() or not artifact_manifest.is_file():
             raise PublicationError(f"partial publication stage is present: {target}")
         artifact = load_json(artifact_manifest)
-        actual_hash = hash_tree(runs)
+        try:
+            actual_hash = artifact_tree_sha256(runs)
+        except SystemExit as error:
+            raise PublicationError(str(error)) from None
         staged_verdict = runs / f"{entrant_id}.json"
         staged_shots = runs / f"{entrant_id}-r{rep}" / "sb7-shots"
         try:
-            staged_shots_sha256 = artifact_tree_sha256(staged_shots)
-            current_source_shots_sha256 = artifact_tree_sha256(source_shots)
+            staged_screenshots = screenshot_evidence(staged_shots)
+            current_source_screenshots = screenshot_evidence(source_shots)
         except SystemExit as error:
             raise PublicationError(str(error)) from None
+        staged_shots_sha256 = staged_screenshots["tree_sha256"]
+        current_source_shots_sha256 = current_source_screenshots["tree_sha256"]
         actual_files = {
             str(path.relative_to(runs)): sha256_file(path)
             for path in sorted(runs.rglob("*"))
@@ -15676,6 +15696,9 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
             or not staged_verdict.is_file()
             or sha256_file(staged_verdict) != expected_verdict_sha256
             or artifact.get("source_shots_sha256") != source_shots_sha256
+            or artifact.get("source_screenshot_evidence") != source_screenshots
+            or current_source_screenshots != source_screenshots
+            or staged_screenshots != source_screenshots
             or current_source_shots_sha256 != source_shots_sha256
             or staged_shots_sha256 != source_shots_sha256
             or artifact.get("score_evidence_seal_sha256")
@@ -15721,16 +15744,20 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
             staged_shots,
         )
         try:
-            copied_shots_sha256 = artifact_tree_sha256(staged_shots)
-            source_shots_after_copy = artifact_tree_sha256(source_shots)
+            copied_screenshots = screenshot_evidence(staged_shots)
+            source_screenshots_after_copy = screenshot_evidence(source_shots)
         except SystemExit as error:
             raise PublicationError(str(error)) from None
+        copied_shots_sha256 = copied_screenshots["tree_sha256"]
+        source_shots_after_copy = source_screenshots_after_copy["tree_sha256"]
         current_state = read_state(root, entrant_id)
         post_copy_seal_problem = score_evidence_seal_failure(
             root, entrant_id, campaign, current_state
         )
         if (
             copied_shots_sha256 != source_shots_sha256
+            or copied_screenshots != source_screenshots
+            or source_screenshots_after_copy != source_screenshots
             or source_shots_after_copy != source_shots_sha256
             or sha256_file(source_verdict) != expected_verdict_sha256
             or sha256_file(staged_verdict) != expected_verdict_sha256
@@ -15743,7 +15770,10 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
             raise PublicationError(
                 "sealed score evidence changed while publication was staged"
             )
-        runs_hash = hash_tree(temporary_runs)
+        try:
+            runs_hash = artifact_tree_sha256(temporary_runs)
+        except SystemExit as error:
+            raise PublicationError(str(error)) from None
         files = {
             str(path.relative_to(temporary_runs)): sha256_file(path)
             for path in sorted(temporary_runs.rglob("*"))
@@ -15758,6 +15788,7 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
             "source_verdict": str(source_verdict),
             "source_verdict_sha256": expected_verdict_sha256,
             "source_shots_sha256": source_shots_sha256,
+            "source_screenshot_evidence": source_screenshots,
             "score_evidence_seal_sha256": state.get(
                 "score_evidence_seal_sha256"
             ),
@@ -17228,6 +17259,87 @@ def drain_scorer_verdict_fd(fd: int, capture: Dict[str, Any]) -> None:
     capture.update(payload=bytes(payload), overflow=overflow, error=error)
 
 
+def screenshot_evidence(shots: Path) -> Dict[str, Any]:
+    if shots.is_symlink() or not shots.is_dir():
+        raise SystemExit(f"score screenshot directory is missing or symbolic: {shots}")
+    tree_before = artifact_tree_sha256(shots)
+    files: list[Dict[str, Any]] = []
+    publisher_loaded: list[str] = []
+    for path in sorted(shots.iterdir()):
+        metadata_before = path.lstat()
+        if stat_module.S_ISLNK(metadata_before.st_mode):
+            raise SystemExit(f"score screenshot evidence is symbolic: {path}")
+        if not stat_module.S_ISREG(metadata_before.st_mode):
+            raise SystemExit(f"score screenshot evidence is not a regular file: {path}")
+        if path.suffix != ".png":
+            raise SystemExit(f"score screenshot evidence is not PNG: {path}")
+        digest = hashlib.sha256()
+        header = bytearray()
+        total_bytes = 0
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                if len(header) < 24:
+                    header.extend(chunk[: 24 - len(header)])
+                digest.update(chunk)
+                total_bytes += len(chunk)
+        metadata_after = path.lstat()
+        stable_identity = (
+            metadata_before.st_dev,
+            metadata_before.st_ino,
+            metadata_before.st_size,
+            metadata_before.st_mtime_ns,
+        )
+        if stable_identity != (
+            metadata_after.st_dev,
+            metadata_after.st_ino,
+            metadata_after.st_size,
+            metadata_after.st_mtime_ns,
+        ) or total_bytes != metadata_after.st_size:
+            raise SystemExit(f"score screenshot changed while it was sealed: {path}")
+        if (
+            len(header) < 24
+            or bytes(header[:8]) != PNG_SIGNATURE
+            or bytes(header[12:16]) != b"IHDR"
+        ):
+            raise SystemExit(f"score screenshot has an invalid PNG header: {path}")
+        width = int.from_bytes(header[16:20], "big")
+        height = int.from_bytes(header[20:24], "big")
+        if width <= 0 or height <= 0:
+            raise SystemExit(f"score screenshot has invalid dimensions: {path}")
+        match = PUBLISHER_SCREENSHOT_PATTERN.fullmatch(path.name)
+        publisher_scenario = match.group("scenario") if match else None
+        publisher_accepted = bool(
+            match and total_bytes <= PUBLISHER_SCREENSHOT_MAX_BYTES
+        )
+        if publisher_accepted and publisher_scenario == "loaded":
+            publisher_loaded.append(path.name)
+        files.append(
+            {
+                "name": path.name,
+                "bytes": total_bytes,
+                "sha256": digest.hexdigest(),
+                "width": width,
+                "height": height,
+                "publisher_scenario": publisher_scenario,
+                "publisher_accepted": publisher_accepted,
+            }
+        )
+    tree_after = artifact_tree_sha256(shots)
+    if tree_before != tree_after:
+        raise SystemExit("score screenshot evidence changed while it was sealed")
+    if not publisher_loaded:
+        raise SystemExit(
+            "score screenshot evidence has no publisher-consumable loaded capture"
+        )
+    return {
+        "schema_version": 1,
+        "tree_sha256": tree_after,
+        "files": files,
+        "publisher_loaded": publisher_loaded,
+        "publisher_max_file_bytes": PUBLISHER_SCREENSHOT_MAX_BYTES,
+    }
+
+
 def score_evidence_seal(
     root: Path,
     entrant_id: str,
@@ -17252,6 +17364,7 @@ def score_evidence_seal(
             raise SystemExit(f"score {name} is missing or symbolic")
     if score_tree.is_symlink() or not score_tree.is_dir():
         raise SystemExit("score tree is missing or symbolic")
+    screenshots = screenshot_evidence(score_tree / "sb7-shots")
     if sha256_file(listeners) != state.get("score_listener_snapshot_sha256"):
         raise SystemExit("score listener snapshot changed during scoring")
     verdict_sha256 = sha256_file(verdict)
@@ -17273,6 +17386,7 @@ def score_evidence_seal(
         "raw_tree_sha256": state.get("raw_tree_sha256"),
         "verdict_sha256": verdict_sha256,
         "score_tree_sha256": artifact_tree_sha256(score_tree),
+        "screenshots": screenshots,
         "score_log_sha256": sha256_file(score_log),
         "listener_snapshot_sha256": sha256_file(listeners),
         "sandbox_profile_sha256": sandbox_sha,
@@ -18190,20 +18304,43 @@ def published_campaign_mismatch(root: Path) -> str | None:
             stage != expected_stage
             or stage.is_symlink()
             or not stage.is_dir()
-            or hash_tree(stage) != state.get("publish_stage_sha256")
             or artifact_path != expected_stage.parent / "artifact-manifest.json"
             or artifact_path.is_symlink()
             or not artifact_path.is_file()
         ):
             return f"{entrant_id} sealed publication stage is missing or changed"
-        artifact = load_json(artifact_path)
+        rep = verdict.get("rep")
+        source_shots = verdict_path.parent / "tree" / "sb7-shots"
+        staged_shots = stage / f"{entrant_id}-r{rep}" / "sb7-shots"
+        try:
+            stage_sha256 = artifact_tree_sha256(stage)
+            artifact = load_json(artifact_path)
+            source_screenshots = screenshot_evidence(source_shots)
+            staged_screenshots = screenshot_evidence(staged_shots)
+            actual_files = {
+                str(path.relative_to(stage)): sha256_file(path)
+                for path in sorted(stage.rglob("*"))
+                if path.is_file() and not path.is_symlink()
+            }
+        except (OSError, json.JSONDecodeError, SystemExit) as error:
+            return f"{entrant_id} publication evidence cannot be read: {error}"
+        if stage_sha256 != state.get("publish_stage_sha256"):
+            return f"{entrant_id} sealed publication stage is missing or changed"
+        sealed = state.get("score_evidence_seal")
         if (
-            artifact.get("entrant") != entrant_id
+            not isinstance(sealed, dict)
+            or source_screenshots != sealed.get("screenshots")
+            or staged_screenshots != source_screenshots
+            or artifact.get("entrant") != entrant_id
             or artifact.get("score_attempt") != attempt
             or artifact.get("source_verdict_sha256") != sha256_file(verdict_path)
+            or artifact.get("source_shots_sha256")
+            != source_screenshots.get("tree_sha256")
+            or artifact.get("source_screenshot_evidence") != source_screenshots
             or artifact.get("score_evidence_seal_sha256")
             != state.get("score_evidence_seal_sha256")
             or artifact.get("runs_sha256") != state.get("publish_stage_sha256")
+            or artifact.get("files") != actual_files
         ):
             return f"{entrant_id} publication artifact manifest differs"
         receipt = state.get("publisher_remote_receipt")
