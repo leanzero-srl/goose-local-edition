@@ -197,6 +197,46 @@ class CloudSb7HarnessTest(unittest.TestCase):
             {"type": "complete", "total_tokens": 10},
         ]
 
+    def test_smoke_attempt_prepares_after_provider_lane_admission(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            cloud_sb7.update_smoke_state(
+                root,
+                entrant_id,
+                status="WAITING_PROVIDER_LANE",
+                supervisor_pid=os.getpid(),
+                supervisor_pgid=os.getpgrp(),
+            )
+
+            state = cloud_sb7.prepare_smoke_attempt(root, entrant_id, row)
+
+            self.assertEqual(state["status"], "PREPARING")
+            self.assertEqual(state["launch_attempts"], 1)
+            self.assertEqual(state["admitted_episodes"], 0)
+            self.assertTrue(Path(str(state["attempt_root"])).is_dir())
+
+    def test_smoke_supervisor_crosses_provider_lane_before_local_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            with mock.patch.object(
+                cloud_sb7,
+                "persist_listener_isolation",
+                side_effect=SystemExit("controlled local preflight stop"),
+            ):
+                self.assertEqual(
+                    cloud_sb7.smoke_supervise_claimed(root, entrant_id),
+                    2,
+                )
+
+            state = cloud_sb7.read_smoke_state(root, entrant_id)
+            self.assertEqual(state["launch_attempts"], 1)
+            self.assertEqual(state["admitted_episodes"], 0)
+            self.assertNotIn("cannot launch from WAITING_PROVIDER_LANE", state["failure"])
+
     def complete_smoke_attempt(
         self,
         root: Path,

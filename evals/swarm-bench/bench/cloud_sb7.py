@@ -117,6 +117,7 @@ SMOKE_PROOF_SCHEMA = 1
 SMOKE_NONCE_NAME = "contract-smoke-nonce.bin"
 SMOKE_TERMINAL_STATES = {"PASS", "FAILED", "PRE_ADMISSION_FAILURE", "STOPPED"}
 SMOKE_RETRYABLE_STATES = {"PLANNED", "PRE_ADMISSION_FAILURE"}
+SMOKE_PREPARABLE_STATES = SMOKE_RETRYABLE_STATES | {"WAITING_PROVIDER_LANE"}
 MONITOR_TERMINAL_STATES = {"PUBLISHED", "ATTENTION", "STOPPED"}
 MONITOR_DETACH_TIMEOUT_SECONDS = 5.0
 
@@ -1657,7 +1658,7 @@ def prepare_smoke_attempt(
 ) -> Dict[str, Any]:
     campaign = load_json(campaign_file(root))
     state = read_smoke_state(root, entrant_id)
-    if state.get("status") not in SMOKE_RETRYABLE_STATES:
+    if state.get("status") not in SMOKE_PREPARABLE_STATES:
         raise SystemExit(f"{entrant_id} smoke cannot launch from {state.get('status')}")
     ambiguity = smoke_attempt_history_failure(root, entrant_id, row)
     if ambiguity:
