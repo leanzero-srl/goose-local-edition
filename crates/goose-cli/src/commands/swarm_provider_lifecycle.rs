@@ -174,6 +174,15 @@ impl Provider for LifecycleProvider {
                 };
             }
         }
+        if let Err(error) = started.publish_for_scheduler() {
+            let detail = format!("provider start publication failed: {error}");
+            return match started.abandon_before_exposure(&detail).await {
+                Ok(()) => Err(lifecycle_error("provider start publication", error)),
+                Err(abandon_error) => Err(ProviderError::ExecutionError(format!(
+                    "{detail}; physical provider lifecycle abandon failed: {abandon_error}"
+                ))),
+            };
+        }
         let single_attempt_result = started
             .scope_http(self.inner.stream_once_with_terminal_proof(
                 model_config,
@@ -354,8 +363,9 @@ mod tests {
     use goose::providers::base::{ProviderUsage, Usage};
     use goose_swarm::{
         AuthorityScope, HostCapacityEvidence, LocalCompletionKind, NullSink,
-        PhysicalAdmissionControl, PhysicalFleetSnapshot, SourceRevisionKind, TaskVersion,
-        VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
+        PhysicalAdmissionControl, PhysicalFleetSnapshot, ProviderStartKey,
+        ProviderStartLookupError, SourceRevisionKind, TaskVersion, VerifiedPhysicalIdentity,
+        WorkOpportunity, WorkRole,
     };
     use std::time::Duration;
 
@@ -656,16 +666,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_stream_terminal_records_finished_before_local_success() {
+    async fn explicit_stream_terminal_closes_published_provider_start() {
         let (control, work) = admitted().await;
+        let provider_start = ProviderStartKey::from_admission(work.receipt());
         let provider = wrapped_for(Behavior::Finished, work.lifecycle()).await;
         let mut output = provider
             .stream(&ModelConfig::new("model-a"), "", &[], &[])
             .await
             .unwrap();
+        control
+            .provider_start_registry()
+            .query(&provider_start)
+            .unwrap();
         while let Some(item) = output.next().await {
             item.unwrap();
         }
+        assert!(matches!(
+            control.provider_start_registry().query(&provider_start),
+            Err(ProviderStartLookupError::NotLive { .. })
+        ));
         work.complete_local(LocalCompletionKind::Success)
             .await
             .unwrap();
@@ -761,8 +780,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_stream_creation_keeps_provider_claim_unresolved() {
+    async fn cancelled_stream_creation_closes_published_provider_start() {
         let (control, work) = admitted().await;
+        let provider_start = ProviderStartKey::from_admission(work.receipt());
         let entered = Arc::new(tokio::sync::Notify::new());
         let waiting = entered.notified();
         let provider = wrapped_for(Behavior::StartPending(entered.clone()), work.lifecycle()).await;
@@ -774,8 +794,16 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(2), waiting)
             .await
             .unwrap();
+        control
+            .provider_start_registry()
+            .query(&provider_start)
+            .expect("LifecycleProvider must publish before entering provider HTTP");
         task.abort();
         let _ = task.await;
+        assert!(matches!(
+            control.provider_start_registry().query(&provider_start),
+            Err(ProviderStartLookupError::NotLive { .. })
+        ));
         assert!(tokio::time::timeout(
             Duration::from_millis(50),
             work.complete_local(LocalCompletionKind::CancellationRequested),

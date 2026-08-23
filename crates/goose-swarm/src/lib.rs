@@ -37,7 +37,8 @@ pub use context::SharedContext;
 pub use control_plane::{
     AdmittedWork, PhysicalAdmissionControl, ProviderLifecycle, ProviderLifecycleDispatcher,
     ProviderLifecycleJournal, ProviderLifecycleOperationError, ProviderLifecycleStartError,
-    ProviderLifecycleTransitionError, StartedProviderRequest,
+    ProviderLifecycleTransitionError, ProviderStartKey, ProviderStartLookupError,
+    ProviderStartRegistry, ProviderStartSession, StartedProviderRequest,
 };
 pub use dag::{
     expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag, Difficulty,
