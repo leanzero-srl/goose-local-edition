@@ -1,5 +1,60 @@
 # Swarm work pause checkpoint — 2026-08-23
 
+## Active resume update — 2026-08-23, post-review
+
+Mihai has returned and authorized both local and cloud launches once their technical gates are
+actually green. The launch gate is still closed. No benchmark, scorer, publisher, or website write
+has started. The orphaned read-only `tail` left from the old Qwen run was stopped; no model run was
+affected.
+
+Current integration HEAD is `106926a28` on `codex/swarm-provider-boundary`. The cross-process
+provider lease landed at `3cec04ff3`; lower-layer LM Studio/OpenAI HTTP integration is in progress.
+Its required authority shape is now explicit: the engine mints the provider request ID, returns a
+non-Clone live request object, exposes only a borrowed HTTP scope, and consumes the live object for
+terminal/abandon while returning it on retryable settlement failure. A receipt is evidence, never a
+replacement for possession of that live request object.
+
+Canonical-planning correction `4c7d1716f` is pushed. It runs semantic adjudication after every
+nonempty valid first round (including one-node), binds immutable raw spec plus explicit user
+decisions, retains raw inter-draft agreement beside typed adjudication state, requires one primary
+owner plus typed applies/verifies coverage for every binding requirement, removes task-name
+exemptions, restricts model IDs to the resolved roster, and checks path/ownership/DAG/integration
+closure before acceptance. Its focused tests and isolated warnings-as-errors clippy pass; a fresh
+independent adversarial review is active. Legacy/incremental round two remains fallback only when
+adjudication fails or reports a material conflict.
+
+The semantic-nudge evidence slice passed its focused tests but failed adversarial review on four P0s
+and remains uncommitted. Its repair must use opaque engine-minted task/acceptance and provider-start
+capabilities, bind the exact source request into snapshot production, make review completion opaque
+and bind the canonical parsed reply to the full reviewer lifecycle, and atomically consume an
+eligibility against engine-held current lifecycle/newest-trace/replay state. Required negative
+replays include forged acceptance, one snapshot bound to two requests, CONTINUE rewritten as NUDGE,
+cross-admission terminal splice, source terminal after review, newer trace after review, and duplicate
+redemption. Plain equality against a caller-returned boundary is not freshness.
+
+Cloud harness commits `6dddf93e5` and `a91c9187b` correct and adversarially harden the publication
+contract while preserving the raw
+hermetic identity. The dry-run and live publication chain now seals the raw scorer/calibration/
+provisional evidence separately from the authorized public mapping (`scorerVersion=sb-7.0`, with no
+public calibration or provisional fields), and remote/rendered verification rejects case-insensitive
+RC/calibration/provisional leakage, duplicate dry-run identity lines, and unrelated JSON-LD. All 203
+warnings-as-errors offline tests and the actual website publisher's five unit tests pass. The fresh
+adversarial review passed; the isolated scorer-only Chromium/macOS sandbox smoke is active as the
+final cloud runtime gate. The website itself stays untouched until a real score is ready.
+
+Local integration commit `fc36a1afba9d46aa483c7fbed352838df778eb0b` seals the exact OpenAI HTTP
+protocol and final transport immediately before POST, reserves the engine-minted provider request
+against the global physical authority, and consumes terminal ownership without fabricating release
+on drop or ambiguous failure. Owned gates pass: 90 provider tests, six HTTP-boundary adversarial
+replays, 20 authority replays, ten lifecycle tests, formatting, and warnings-as-errors clippy. The
+full swarm suite advanced through 194 tests and exposed one remaining semantic panic-path assertion,
+which belongs to the active semantic one-shot authority correction.
+
+Next integration order: complete and independently review canonical planning; complete and
+independently review semantic one-shot redemption; port causal repair only after those authorities
+exist; clear the cloud publication review and run the real scorer-only sandbox smoke; then run
+consolidated gates and launch the authorized local/cloud campaigns under their monitors.
+
 ## Resume update — 2026-08-23
 
 Mihai returned and explicitly authorized local and cloud launches once the offline implementation gates are genuinely ready. No model benchmark, hermetic scorer, publisher, or website process has started yet. Authorization is open; the technical launch gate remains closed until the blockers below pass.
