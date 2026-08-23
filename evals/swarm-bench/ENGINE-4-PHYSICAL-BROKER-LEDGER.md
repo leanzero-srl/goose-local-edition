@@ -2,6 +2,7 @@
 
 Branch: `codex/swarm-physical-broker`  
 Base: `10ab496465a7b9cdff94298ec64cde8e8f87c03e`
+Sealed-repair integration authority: `1af43ef0264eefbc1ec28bf30cbbc662e7e397ce`
 
 This ledger is the compaction-safe authority for Engine 4. It records the implementation
 contract and the evidence used to accept or reject each increment. It does not authorize a
@@ -74,7 +75,7 @@ benchmark fleet, LM Studio mutation, scorer change, or SB7 change.
 - [x] Scheduler replays for one logical task/one host, two lanes/one host, stale auxiliary,
   critical-ready priority, terminal-not-yet-observed occupancy, and DAG identity.
 - [x] Format, targeted crate tests, and strict goose-swarm clippy with the shared target directory.
-- [ ] Integrate on the sealed-repair head, then rerun the broker replays, repair-tree seal tests,
+- [x] Integrate on the sealed-repair head, then rerun the broker replays, repair-tree seal tests,
   goose-cli tests, and strict clippy.
 
 ## Gate log
@@ -92,6 +93,15 @@ benchmark fleet, LM Studio mutation, scorer change, or SB7 change.
   `cargo clippy -p goose-swarm --all-targets -- -D warnings` passes with the shared target. The
   scheduled replay compares the exact input DAG ids, provider-dispatch calls, and completed report;
   all three sets are identical.
+- Sealed-repair integration: the exact `1af43ef02` head merged as `c28b17a35` without source
+  conflict. `OpenRepairTree`, `SealedCompleteTree`, the canonical ruler, and the archived r1
+  post-gate mutation fixture remain present. The six `repair_tree_seal_tests` pass. Full
+  `cargo test -p goose-cli` passes 593 tests with one intentional ignore, and full
+  `cargo test -p goose-swarm` retains the counts above. Combined
+  `cargo clippy -p goose-swarm -p goose-cli --all-targets -- -D warnings` passes. The full CLI
+  gate exposed and then closed one integration defect: the default-off
+  `GOOSE_SWARM_PHYSICAL_BROKER` reader now has an exact environment-only `retain_disabled`
+  registry row instead of bypassing the machine-auditable control catalog.
 
 Red-team refinement: `PARALLEL` is represented only as a model-instance ceiling. Same-run
 `lms ps` evidence starts at one host-wide admission; a higher host capacity requires an exact
