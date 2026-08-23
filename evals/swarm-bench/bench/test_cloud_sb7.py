@@ -411,6 +411,17 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "rep": 0,
         }
 
+    def public_identity_campaign(
+        self, verdict: dict[str, object]
+    ) -> dict[str, object]:
+        target = json.loads(
+            json.dumps(cloud_sb7.QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION["target"])
+        )
+        return {
+            "scorer_version": verdict["scorer_version"],
+            "publisher": target,
+        }
+
     def make_scored_campaign(self, root: Path) -> tuple[Path, dict[str, object]]:
         entrant_id = "fixture-model"
         row = {
@@ -480,6 +491,12 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "verify_interval_seconds": 0.01,
             "process_timeout_seconds": 1,
             "env_file": str(root / "site/.env.local"),
+            "expected_checks": 1,
+            **json.loads(
+                json.dumps(
+                    cloud_sb7.QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION["target"]
+                )
+            ),
         }
         campaign = {
             "schema_version": cloud_sb7.CAMPAIGN_SCHEMA,
@@ -496,6 +513,8 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "entrant_manifest_sha256": cloud_sb7.sha256_file(entrant_manifest),
             "secret_file": str(secret_file),
             "publisher": publisher,
+            "scorer_version": verdict["scorer_version"],
+            "calibration": verdict["calibration"],
         }
         cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
         cloud_sb7.atomic_json(root / "manager.json", {"status": "IDLE"})
@@ -675,8 +694,15 @@ class CloudSb7HarnessTest(unittest.TestCase):
             return {
                 "checked_at": "now",
                 "binary_sha256": cloud_sb7.sha256_file(binary),
-                "models": {},
-                "roster_evidence": {},
+                "models": {
+                    "fixture": [failed_row["model"], carried_row["model"]]
+                },
+                "roster_evidence": {
+                    "fixture": {
+                        str(failed_row["model"]): {},
+                        str(carried_row["model"]): {},
+                    }
+                },
                 "requested_models": [failed_row["model"], carried_row["model"]],
                 "ports_free": True,
                 "credential_file_mode": "0600",
@@ -860,6 +886,185 @@ class CloudSb7HarnessTest(unittest.TestCase):
             return cloud_sb7.supersede_campaign(
                 Path(str(fixture["predecessor"])),
                 Path(str(fixture["successor"])),
+                Path(str(fixture["binary"])),
+                Path(str(fixture["manifest"])),
+                Path(str(fixture["secrets"])),
+                Path(str(fixture["publisher"])),
+                Path(str(fixture["evidence"])),
+                True,
+            )
+
+    def make_qualification_fixture(self, root: Path) -> dict[str, object]:
+        fixture = self.make_supersession_fixture(root)
+        source_root = Path(str(fixture["predecessor"]))
+        source = cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))
+        source_manifest = cloud_sb7.load_json(Path(str(source["entrant_manifest"])))
+        rows = cloud_sb7.entrants(source_manifest)
+        for row in rows:
+            entrant_id = str(row["id"])
+            state = cloud_sb7.read_state(source_root, entrant_id)
+            tree = Path(str(state["tree"]))
+            for child in tree.iterdir():
+                child.unlink()
+            Path(str(state["provider_lifecycle"])).write_text("")
+            cloud_sb7.update_state(
+                source_root,
+                entrant_id,
+                status="STOPPED",
+                provider_episode_attempts=0,
+                admitted_requests=0,
+                provider_terminal_requests=0,
+                score=None,
+                verdict=None,
+                failure=None,
+            )
+            cloud_sb7.update_smoke_state(
+                source_root,
+                entrant_id,
+                status="FAILED",
+                launch_attempts=0,
+                admitted_episodes=0,
+                active_attempt=False,
+                queued_at="2026-08-23T01:05:35Z",
+                failure="instrument qualification failed before admission",
+                attempt_evidence_sha256={},
+            )
+        ledger_path = Path(str(source["budget_ledger"]))
+        ledger = cloud_sb7.load_json(ledger_path)
+        ledger["spent_upper_bound"] = 0
+        ledger["provider_spent_upper_bound"] = {
+            provider: 0 for provider in ledger["provider_caps"]
+        }
+        ledger["outstanding"] = {}
+        ledger["settled"] = []
+        cloud_sb7.atomic_json(ledger_path, ledger)
+
+        paid_row = rows[0]
+        paid_id = str(paid_row["id"])
+        cloud_sb7.update_smoke_state(source_root, paid_id, status="PLANNED")
+        paid_smoke = self.complete_smoke_attempt(source_root, paid_row)
+        cloud_sb7.update_smoke_state(
+            source_root,
+            paid_id,
+            status="FAILED",
+            supervisor_pid=None,
+            supervisor_pgid=None,
+            supervisor_identity=None,
+        )
+        ledger = cloud_sb7.load_json(ledger_path)
+        reserve = cloud_sb7.budget_price(
+            cloud_sb7.budget_model_profile(
+                cloud_sb7.load_json(Path(str(source["budget_config"]))),
+                str(paid_row["provider"]),
+                str(paid_row["model"]),
+            ),
+            int(paid_row["context_limit"]),
+            int(paid_row["max_output_tokens"]),
+        )
+        self.assertIsNotNone(reserve)
+        charge = cloud_sb7.budget_price(
+            cloud_sb7.budget_model_profile(
+                cloud_sb7.load_json(Path(str(source["budget_config"]))),
+                str(paid_row["provider"]),
+                str(paid_row["model"]),
+            ),
+            2,
+            3,
+        )
+        self.assertIsNotNone(charge)
+        request_ids = [f"{paid_id}-request-1", f"{paid_id}-request-2"]
+        ledger["settled"] = [
+            {
+                "request_id": request_id,
+                "provider": paid_row["provider"],
+                "model": paid_row["model"],
+                "reported_model": paid_row["model"],
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "total_tokens": 5,
+                "charged_upper_bound_usd": charge,
+                "reserved_usd": reserve,
+                "settled_at_unix_ms": index + 1,
+            }
+            for index, request_id in enumerate(request_ids)
+        ]
+        ledger["spent_upper_bound"] = charge * len(request_ids)
+        ledger["provider_spent_upper_bound"] = {
+            provider: (
+                charge * len(request_ids)
+                if provider == paid_row["provider"]
+                else 0
+            )
+            for provider in ledger["provider_caps"]
+        }
+        cloud_sb7.atomic_json(ledger_path, ledger)
+        cloud_sb7.manager_state(
+            source_root, status="STOPPED", pid=None, pgid=None, identity=None
+        )
+        cloud_sb7.monitor_state(
+            source_root, status="STOPPED", pid=None, pgid=None, identity=None
+        )
+        cloud_sb7.update_campaign(source_root, status="STOPPED")
+
+        target_manifest = root / "qualification-entrants.json"
+        target_value = cloud_sb7.load_json(Path(str(fixture["manifest"])))
+        target_manifest.write_text(json.dumps(target_value))
+        binary = Path(str(source["binary"]))
+        checked_value = dict(fixture["checked"])
+        checked_value["binary_sha256"] = cloud_sb7.sha256_file(binary)
+        root_cause = root / "qualification-root-cause.txt"
+        root_cause.write_text("stream verifier rejected valid structured tool proof\n")
+        regression = root / "qualification-regression.txt"
+        regression.write_text("structured smoke verifier regression passed\n")
+        evidence = root / "qualification-evidence.json"
+        cloud_sb7.atomic_json(
+            evidence,
+            {
+                "schema_version": cloud_sb7.QUALIFICATION_RESTART_SCHEMA,
+                "classification": "infrastructure_defect",
+                "defect_id": "qualification-stream-verifier-001",
+                "summary": "The verifier rejected valid provider/tool smoke evidence.",
+                "affected_entrants": [row["id"] for row in rows],
+                "predecessor_campaign_id": source["campaign_id"],
+                "predecessor_binary_sha256": source["binary_sha256"],
+                "replacement_binary_sha256": source["binary_sha256"],
+                "fix_source_commit": cloud_sb7.git_value("rev-parse", "HEAD"),
+                "artifacts": [
+                    {
+                        "role": "root_cause",
+                        "path": str(root_cause),
+                        "sha256": cloud_sb7.sha256_file(root_cause),
+                    },
+                    {
+                        "role": "regression_test",
+                        "path": str(regression),
+                        "sha256": cloud_sb7.sha256_file(regression),
+                    },
+                ],
+            },
+        )
+        return {
+            "source": source_root,
+            "target": root / "qualification-target",
+            "binary": binary,
+            "manifest": target_manifest,
+            "secrets": fixture["secrets"],
+            "publisher": fixture["publisher"],
+            "evidence": evidence,
+            "checked": checked_value,
+            "paid_id": paid_id,
+            "paid_smoke": paid_smoke,
+        }
+
+    def qualification_restart_fixture(
+        self, fixture: dict[str, object]
+    ) -> dict[str, object]:
+        with mock.patch.object(
+            cloud_sb7, "preflight", return_value=fixture["checked"]
+        ):
+            return cloud_sb7.qualification_restart_campaign(
+                Path(str(fixture["source"])),
+                Path(str(fixture["target"])),
                 Path(str(fixture["binary"])),
                 Path(str(fixture["manifest"])),
                 Path(str(fixture["secrets"])),
@@ -1322,6 +1527,648 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     )
                     expected = "attempt count reset"
                 self.assertIn(expected, cloud_sb7.lineage_failure(root) or "")
+
+    def test_qualification_restart_carries_smoke_spend_and_resets_no_full_outcome(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_qualification_fixture(Path(raw))
+            source_root = Path(str(fixture["source"]))
+            source_campaign_before = cloud_sb7.campaign_file(source_root).read_bytes()
+            source_ledger_before = Path(
+                str(
+                    cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))[
+                        "budget_ledger"
+                    ]
+                )
+            ).read_bytes()
+            state_before = {
+                path: path.read_bytes()
+                for path in source_root.glob("entrants/*/state.json")
+            }
+            smoke_before = {
+                path: path.read_bytes()
+                for path in source_root.glob("smoke/*/state.json")
+            }
+
+            target = self.qualification_restart_fixture(fixture)
+
+            target_root = Path(str(fixture["target"]))
+            self.assertEqual(target["lineage"]["generation"], 0)
+            self.assertEqual(target["qualification_history"]["restart_count"], 1)
+            self.assertEqual(source_campaign_before, cloud_sb7.campaign_file(source_root).read_bytes())
+            self.assertEqual(
+                source_ledger_before,
+                Path(
+                    str(
+                        cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))[
+                            "budget_ledger"
+                        ]
+                    )
+                ).read_bytes(),
+            )
+            self.assertEqual(
+                state_before,
+                {path: path.read_bytes() for path in source_root.glob("entrants/*/state.json")},
+            )
+            self.assertEqual(
+                smoke_before,
+                {path: path.read_bytes() for path in source_root.glob("smoke/*/state.json")},
+            )
+            self.assertIsNone(cloud_sb7.lineage_failure(target_root))
+            self.assertIn(
+                "immutable qualification restart receipt",
+                cloud_sb7.lineage_failure(source_root) or "",
+            )
+            source_ledger = cloud_sb7.load_json(
+                Path(
+                    str(
+                        cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))[
+                            "budget_ledger"
+                        ]
+                    )
+                )
+            )
+            target_ledger = cloud_sb7.load_json(Path(str(target["budget_ledger"])))
+            self.assertEqual(target_ledger, source_ledger)
+            paid_id = str(fixture["paid_id"])
+            self.assertEqual(
+                len(target["smoke_budget_settled_baselines"][paid_id]), 2
+            )
+            qualification_lineage = cloud_sb7.load_json(
+                target_root / cloud_sb7.QUALIFICATION_HISTORY_PATH
+            )
+            for entrant_id in qualification_lineage["entrant_ids"]:
+                state = cloud_sb7.read_state(target_root, entrant_id)
+                smoke = cloud_sb7.read_smoke_state(target_root, entrant_id)
+                self.assertEqual(state["status"], "PLANNED")
+                self.assertEqual(state["provider_episode_attempts"], 0)
+                self.assertEqual(state["lineage_role"], "qualification_restart")
+                self.assertEqual(smoke["status"], "PLANNED")
+                self.assertEqual(smoke["launch_attempts"], 0)
+
+    def test_qualification_endpoint_transition_is_exact_and_provider_scoped(
+        self,
+    ) -> None:
+        target = cloud_sb7.load_json(cloud_sb7.DEFAULT_ENTRANTS)
+        source = json.loads(json.dumps(target))
+        source_zai = next(
+            row for row in source["entrants"] if row["provider"] == "zai_api"
+        )
+        source_zai["endpoint_family"] = "https://api.z.ai/api/paas/v4"
+        source_zai.pop("base_url_env", None)
+        self.assertIsNone(cloud_sb7.qualification_manifest_failure(source, target))
+
+        for provider, model in (
+            ("zai_api", "glm-5.3"),
+            ("google", "gemini-3.7-flash"),
+            ("custom_deepseek", "deepseek-v4-pro"),
+        ):
+            with self.subTest(provider=provider):
+                candidate = json.loads(json.dumps(target))
+                row = next(
+                    item
+                    for item in candidate["entrants"]
+                    if item["provider"] == provider and item["model"] == model
+                )
+                row["endpoint_family"] = "https://credential-sink.invalid/v1"
+                self.assertIn(
+                    "unapproved endpoint transition",
+                    cloud_sb7.qualification_manifest_failure(source, candidate) or "",
+                )
+
+    def test_qualification_publisher_transition_is_one_exact_stable_board_fix(
+        self,
+    ) -> None:
+        stable = {
+            "repo": "/Users/mihaiperdum/Projects/LeanZero-website",
+            "branch": "master",
+            "script": "scripts/seed-baseline-sb7.mjs",
+            "manifest": "scripts/data/sb7-cloud-entrants.json",
+            "runtime_hashes": {
+                "node_modules/@sanity/client": "runtime-client",
+                "node_modules/dotenv": "runtime-dotenv",
+            },
+            "node": {
+                "path": "/opt/homebrew/bin/node",
+                "sha256": "node-sha256",
+                "version": "v26.5.0",
+            },
+            "env_file": "/Users/mihaiperdum/Projects/LeanZero-website/.env.local",
+            "env_file_mode": "0600",
+            "env_file_sha256": "env-sha256",
+            "sanity_target": {"project_id": "3oa2omis", "dataset": "production"},
+            "required_env_present": [
+                "SANITY_WRITE_TOKEN",
+                "NEXT_PUBLIC_SANITY_PROJECT_ID",
+            ],
+            "expected_checks": 91,
+            "entries": {"glm-5.3": {"doc_id": "brun-baseline-glm-5-3-sb70"}},
+            "mode": "live",
+            "website_base_url": "https://leanzero.net",
+            "revalidate_endpoint": (
+                "https://leanzero.net/api/revalidate-benchmarks"
+            ),
+            "verify_timeout_seconds": 900.0,
+            "verify_interval_seconds": 15.0,
+            "process_timeout_seconds": 900.0,
+        }
+        source = {
+            **stable,
+            **json.loads(
+                json.dumps(
+                    cloud_sb7.QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION["source"]
+                )
+            ),
+            "frozen": {"root": "/source/instrument/publisher"},
+        }
+        target = {
+            **stable,
+            **json.loads(
+                json.dumps(
+                    cloud_sb7.QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION["target"]
+                )
+            ),
+            "frozen": {"root": "/target/instrument/publisher"},
+        }
+        self.assertIsNone(cloud_sb7.qualification_publisher_failure(source, target))
+
+        release_tampers = (
+            ("commit", "f" * 40),
+            ("instrument_set_sha256", "e" * 64),
+        )
+        for field, value in release_tampers:
+            with self.subTest(field=field):
+                candidate = json.loads(json.dumps(target))
+                candidate[field] = value
+                self.assertIn(
+                    "unapproved publisher transition",
+                    cloud_sb7.qualification_publisher_failure(source, candidate)
+                    or "",
+                )
+        for tracked_file in (
+            "scripts/seed-baseline-sb7.mjs",
+            "scripts/lib/sb7-cloud-publisher.mjs",
+            "scripts/data/sb7-cloud-entrants.json",
+            "package.json",
+            "package-lock.json",
+        ):
+            with self.subTest(tracked_file=tracked_file):
+                candidate = json.loads(json.dumps(target))
+                candidate["tracked_hashes"][tracked_file] = "d" * 64
+                self.assertIn(
+                    "unapproved publisher transition",
+                    cloud_sb7.qualification_publisher_failure(source, candidate)
+                    or "",
+                )
+        for field, value in (
+            ("runtime_hashes", {"node_modules/dotenv": "changed"}),
+            ("env_file_sha256", "changed"),
+            ("sanity_target", {"project_id": "other", "dataset": "production"}),
+            ("expected_checks", 90),
+            ("entries", {}),
+            ("manifest", "scripts/data/other.json"),
+            ("website_base_url", "https://other.invalid"),
+            ("process_timeout_seconds", 1.0),
+        ):
+            with self.subTest(stable_field=field):
+                candidate = json.loads(json.dumps(target))
+                candidate[field] = value
+                self.assertEqual(
+                    cloud_sb7.qualification_publisher_failure(source, candidate),
+                    f"qualification restart changed publisher field {field}",
+                )
+
+    def test_qualification_rejects_local_publisher_tamper_before_preflight(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_qualification_fixture(Path(raw))
+            source_root = Path(str(fixture["source"]))
+            source = cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))
+            candidate = json.loads(json.dumps(source["publisher"]))
+            candidate.pop("frozen", None)
+            candidate["commit"] = "f" * 40
+            candidate["instrument_set_sha256"] = "e" * 64
+            candidate["tracked_hashes"]["scripts/seed-baseline-sb7.mjs"] = "d" * 64
+            with (
+                mock.patch.object(
+                    cloud_sb7, "publisher_snapshot", return_value=candidate
+                ),
+                mock.patch.object(cloud_sb7, "preflight") as preflight,
+                self.assertRaisesRegex(
+                    SystemExit, "unapproved publisher transition"
+                ),
+            ):
+                cloud_sb7.qualification_restart_campaign(
+                    source_root,
+                    Path(str(fixture["target"])),
+                    Path(str(fixture["binary"])),
+                    Path(str(fixture["manifest"])),
+                    Path(str(fixture["secrets"])),
+                    Path(str(fixture["publisher"])),
+                    Path(str(fixture["evidence"])),
+                    True,
+                )
+            preflight.assert_not_called()
+            self.assertFalse(
+                (source_root / cloud_sb7.QUALIFICATION_RESTART_RECEIPT).exists()
+            )
+
+    def test_qualification_restart_reuses_one_authenticated_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_qualification_fixture(Path(raw))
+            with mock.patch.object(
+                cloud_sb7, "preflight", return_value=fixture["checked"]
+            ) as checked:
+                target = cloud_sb7.qualification_restart_campaign(
+                    Path(str(fixture["source"])),
+                    Path(str(fixture["target"])),
+                    Path(str(fixture["binary"])),
+                    Path(str(fixture["manifest"])),
+                    Path(str(fixture["secrets"])),
+                    Path(str(fixture["publisher"])),
+                    Path(str(fixture["evidence"])),
+                    True,
+                )
+            self.assertEqual(checked.call_count, 1)
+            self.assertIsNone(
+                cloud_sb7.lineage_failure(Path(str(fixture["target"])))
+            )
+            self.assertEqual(target["qualification_history"]["restart_count"], 1)
+
+    def test_qualification_restart_freezes_publisher_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_qualification_fixture(Path(raw))
+            source = cloud_sb7.load_json(
+                cloud_sb7.campaign_file(Path(str(fixture["source"])))
+            )
+            for field, value in (
+                ("mode", "dry-run"),
+                ("website_base_url", "https://example.invalid"),
+                (
+                    "revalidate_endpoint",
+                    "https://example.invalid/api/revalidate-benchmarks",
+                ),
+                ("verify_timeout_seconds", 1),
+                ("verify_interval_seconds", 1),
+                ("process_timeout_seconds", 1),
+            ):
+                with self.subTest(field=field):
+                    target = json.loads(json.dumps(source))
+                    target["publisher"][field] = value
+                    self.assertEqual(
+                        cloud_sb7.qualification_instrument_failure(source, target),
+                        f"qualification restart changed publisher field {field}",
+                    )
+
+            with mock.patch.object(cloud_sb7, "preflight") as checked:
+                with self.assertRaisesRegex(
+                    SystemExit, "changed publisher field website_base_url"
+                ):
+                    cloud_sb7.qualification_restart_campaign(
+                        Path(str(fixture["source"])),
+                        Path(str(fixture["target"])),
+                        Path(str(fixture["binary"])),
+                        Path(str(fixture["manifest"])),
+                        Path(str(fixture["secrets"])),
+                        Path(str(fixture["publisher"])),
+                        Path(str(fixture["evidence"])),
+                        True,
+                        "https://example.invalid",
+                    )
+                checked.assert_not_called()
+
+    def test_qualification_restart_refuses_any_full_activity_or_hidden_output(self) -> None:
+        for defect in ("attempt", "lifecycle", "tree", "score", "outstanding"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_qualification_fixture(Path(raw))
+                source_root = Path(str(fixture["source"]))
+                source = cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))
+                entrant_id = cloud_sb7.load_json(
+                    Path(str(source["entrant_manifest"]))
+                )["entrants"][0]["id"]
+                state = cloud_sb7.read_state(source_root, entrant_id)
+                if defect == "attempt":
+                    cloud_sb7.update_state(
+                        source_root, entrant_id, provider_episode_attempts=1
+                    )
+                    expected = "after any full benchmark activity"
+                elif defect == "lifecycle":
+                    Path(str(state["provider_lifecycle"])).write_text("{}\n")
+                    expected = "after any full benchmark activity"
+                elif defect == "tree":
+                    (Path(str(state["tree"])) / "hidden.txt").write_text("outcome\n")
+                    expected = "tree is not empty"
+                elif defect == "score":
+                    (source_root / "scores" / entrant_id).mkdir(parents=True)
+                    expected = "score or publication artifacts"
+                else:
+                    ledger_path = Path(str(source["budget_ledger"]))
+                    ledger = cloud_sb7.load_json(ledger_path)
+                    ledger["outstanding"]["hidden"] = {
+                        "request_id": "hidden",
+                        "provider": "fixture",
+                        "model": entrant_id,
+                        "reserved_usd": 0.00012,
+                        "input_reserve_tokens": 100,
+                        "output_reserve_tokens": 20,
+                        "created_at_unix_ms": 3,
+                    }
+                    cloud_sb7.atomic_json(ledger_path, ledger)
+                    expected = "outstanding budget reservations"
+                with self.assertRaisesRegex(SystemExit, expected):
+                    self.qualification_restart_fixture(fixture)
+
+    def test_qualification_restart_is_idempotent_and_rejects_forks(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_qualification_fixture(Path(raw))
+            first = self.qualification_restart_fixture(fixture)
+            second = self.qualification_restart_fixture(fixture)
+            self.assertEqual(
+                first["qualification_history"], second["qualification_history"]
+            )
+            fork = dict(fixture)
+            fork["target"] = Path(raw) / "qualification-fork"
+            with self.assertRaisesRegex(SystemExit, "another target"):
+                self.qualification_restart_fixture(fork)
+
+    def test_qualification_receipt_blocks_all_internal_source_mutators(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_qualification_fixture(Path(raw))
+            self.qualification_restart_fixture(fixture)
+            source_root = Path(str(fixture["source"]))
+            target_root = Path(str(fixture["target"]))
+            source_files = [
+                cloud_sb7.campaign_file(source_root),
+                source_root / "manager.json",
+                source_root / "monitor.json",
+                *source_root.glob("smoke/*/state.json"),
+            ]
+            before = {path: path.read_bytes() for path in source_files}
+            entrant_ids = [
+                state["entrant"] for state in cloud_sb7.status_rows(source_root)
+            ]
+            for operation in (
+                lambda: cloud_sb7.score_all(source_root, entrant_ids),
+                lambda: cloud_sb7.monitor_campaign(source_root, poll_seconds=0.001),
+                lambda: cloud_sb7.smoke_supervise_claimed(
+                    source_root, entrant_ids[0]
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit, "immutable qualification restart receipt"
+                ):
+                    operation()
+            self.assertEqual(before, {path: path.read_bytes() for path in source_files})
+            self.assertIsNone(cloud_sb7.lineage_failure(target_root))
+
+    def test_qualified_campaign_preserves_history_across_one_full_supersession(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_qualification_fixture(Path(raw))
+            target = self.qualification_restart_fixture(fixture)
+            target_root = Path(str(fixture["target"]))
+            self.assertEqual(cloud_sb7.stop(target_root), 0)
+            manifest_path = Path(str(target["entrant_manifest"]))
+            rows = cloud_sb7.entrants(cloud_sb7.load_json(manifest_path))
+            carried_row, failed_row = rows
+            carried_id = str(carried_row["id"])
+            failed_id = str(failed_row["id"])
+
+            carried = cloud_sb7.read_state(target_root, carried_id)
+            carried_tree = Path(str(carried["tree"]))
+            (carried_tree / "carried.txt").write_text("preserve qualified build\n")
+            cloud_sb7.update_state(
+                target_root,
+                carried_id,
+                status="BUILD_COMPLETE",
+                provider_episode_attempts=1,
+                admitted_requests=1,
+                provider_terminal_requests=1,
+                raw_tree_sha256=cloud_sb7.hash_tree(carried_tree),
+            )
+            failed = cloud_sb7.read_state(target_root, failed_id)
+            request_id = "qualified-full-failed-request"
+            usage = {
+                "reported_model": failed_row["model"],
+                "input_tokens": 10,
+                "output_tokens": 10,
+                "total_tokens": 20,
+            }
+            base = {
+                "schema_version": 1,
+                "timestamp": "now",
+                "request_id": request_id,
+                "provider": failed_row["provider"],
+                "model": failed_row["model"],
+                "session": "qualified-full-session",
+            }
+            events = [
+                {**base, "state": "queued"},
+                {**base, "state": "admitted"},
+                {**base, "state": "first_item"},
+                {**base, "state": "usage_reported", "usage": usage},
+                {**base, "state": "provider_terminal", "usage": usage},
+            ]
+            Path(str(failed["provider_lifecycle"])).write_text(
+                "\n".join(map(json.dumps, events)) + "\n"
+            )
+            cloud_sb7.update_state(
+                target_root,
+                failed_id,
+                status="STOPPED",
+                provider_episode_attempts=1,
+                admitted_requests=1,
+                provider_terminal_requests=1,
+                failure="audited infrastructure defect",
+            )
+            ledger_path = Path(str(target["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            config = cloud_sb7.load_json(Path(str(target["budget_config"])))
+            profile = cloud_sb7.budget_model_profile(
+                config, str(failed_row["provider"]), str(failed_row["model"])
+            )
+            reserve = cloud_sb7.budget_price(
+                profile,
+                int(failed_row["context_limit"]),
+                int(failed_row["max_output_tokens"]),
+            )
+            charge = cloud_sb7.budget_price(profile, 10, 10)
+            self.assertIsNotNone(reserve)
+            self.assertIsNotNone(charge)
+            ledger["settled"].append(
+                {
+                    "request_id": request_id,
+                    "provider": failed_row["provider"],
+                    "model": failed_row["model"],
+                    **usage,
+                    "charged_upper_bound_usd": charge,
+                    "reserved_usd": reserve,
+                    "settled_at_unix_ms": 10,
+                }
+            )
+            ledger["spent_upper_bound"] += charge
+            ledger["provider_spent_upper_bound"][failed_row["provider"]] += charge
+            cloud_sb7.atomic_json(ledger_path, ledger)
+
+            replacement = Path(raw) / "goose-qualified-replacement"
+            replacement.write_text("qualified replacement binary\n")
+            replacement.chmod(0o700)
+            root_cause = Path(raw) / "qualified-full-root-cause.txt"
+            root_cause.write_text("full provider terminal parser defect\n")
+            regression = Path(raw) / "qualified-full-regression.txt"
+            regression.write_text("full provider terminal regression passed\n")
+            evidence = Path(raw) / "qualified-full-evidence.json"
+            cloud_sb7.atomic_json(
+                evidence,
+                {
+                    "schema_version": cloud_sb7.SUPERSESSION_SCHEMA,
+                    "classification": "infrastructure_defect",
+                    "defect_id": "qualified-full-infrastructure-001",
+                    "summary": "A full provider infrastructure defect was proven.",
+                    "affected_entrants": [failed_id],
+                    "predecessor_campaign_id": target["campaign_id"],
+                    "predecessor_binary_sha256": target["binary_sha256"],
+                    "replacement_binary_sha256": cloud_sb7.sha256_file(replacement),
+                    "fix_source_commit": cloud_sb7.git_value("rev-parse", "HEAD"),
+                    "artifacts": [
+                        {
+                            "role": "root_cause",
+                            "path": str(root_cause),
+                            "sha256": cloud_sb7.sha256_file(root_cause),
+                        },
+                        {
+                            "role": "regression_test",
+                            "path": str(regression),
+                            "sha256": cloud_sb7.sha256_file(regression),
+                        },
+                    ],
+                },
+            )
+            checked_value = dict(fixture["checked"])
+            checked_value["binary_sha256"] = cloud_sb7.sha256_file(replacement)
+            successor_root = Path(raw) / "qualified-full-successor"
+            with mock.patch.object(
+                cloud_sb7, "preflight", return_value=checked_value
+            ):
+                successor = cloud_sb7.supersede_campaign(
+                    target_root,
+                    successor_root,
+                    replacement,
+                    manifest_path,
+                    Path(str(fixture["secrets"])),
+                    Path(str(fixture["publisher"])),
+                    evidence,
+                    True,
+                )
+            self.assertEqual(successor["lineage"]["generation"], 1)
+            self.assertEqual(successor["qualification_history"]["restart_count"], 1)
+            self.assertIsNone(cloud_sb7.lineage_failure(successor_root))
+
+    def test_qualification_restart_crash_boundaries_recover_without_new_spend(self) -> None:
+        for boundary in (
+            "evidence_bundle_staged",
+            "evidence_bundle_committed",
+            "source_receipt_committed",
+            "staged_initialized",
+            "lineage_staged",
+            "root_committed",
+        ):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_qualification_fixture(Path(raw))
+
+                def crash(stage: str) -> None:
+                    if stage == boundary:
+                        raise RuntimeError(f"crash at {stage}")
+
+                with mock.patch.object(
+                    cloud_sb7, "qualification_fault", side_effect=crash
+                ), self.assertRaisesRegex(RuntimeError, boundary):
+                    self.qualification_restart_fixture(fixture)
+                target = self.qualification_restart_fixture(fixture)
+                target_root = Path(str(fixture["target"]))
+                self.assertEqual(target["qualification_history"]["restart_count"], 1)
+                self.assertIsNone(cloud_sb7.lineage_failure(target_root))
+
+    def test_qualification_restart_recovers_from_mid_evidence_copy_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_qualification_fixture(Path(raw))
+            original_copy = cloud_sb7.atomic_copy
+            failed = False
+
+            def fail_after_first_artifact(
+                source: Path, destination: Path, mode: int | None = None
+            ) -> None:
+                nonlocal failed
+                original_copy(source, destination, mode)
+                if (
+                    not failed
+                    and destination.parent.name
+                    == cloud_sb7.QUALIFICATION_RESTART_EVIDENCE
+                    and destination.name.startswith("artifact-00-")
+                ):
+                    failed = True
+                    raise RuntimeError("simulated mid-copy process loss")
+
+            with mock.patch.object(
+                cloud_sb7, "atomic_copy", side_effect=fail_after_first_artifact
+            ), self.assertRaisesRegex(RuntimeError, "mid-copy"):
+                self.qualification_restart_fixture(fixture)
+            source_root = Path(str(fixture["source"]))
+            self.assertTrue(
+                (source_root / cloud_sb7.QUALIFICATION_RESTART_SEAL).is_file()
+            )
+            self.assertFalse(
+                (source_root / cloud_sb7.QUALIFICATION_RESTART_RECEIPT).exists()
+            )
+            self.assertFalse(Path(str(fixture["target"])).exists())
+
+            target = self.qualification_restart_fixture(fixture)
+            target_root = Path(str(fixture["target"]))
+            self.assertEqual(target["qualification_history"]["restart_count"], 1)
+            self.assertIsNone(cloud_sb7.lineage_failure(target_root))
+
+    def test_qualification_restart_detects_semantic_and_sealed_artifact_tampering(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_qualification_fixture(Path(raw))
+            manifest = cloud_sb7.load_json(Path(str(fixture["manifest"])))
+            manifest["entrants"][0]["thinking_effort"] = "high"
+            Path(str(fixture["manifest"])).write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(SystemExit, "manifest semantics"):
+                self.qualification_restart_fixture(fixture)
+
+        for tamper in ("ledger", "source-seal", "target-artifact"):
+            with self.subTest(tamper=tamper), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_qualification_fixture(Path(raw))
+                target = self.qualification_restart_fixture(fixture)
+                target_root = Path(str(fixture["target"]))
+                if tamper == "ledger":
+                    ledger_path = Path(str(target["budget_ledger"]))
+                    ledger = cloud_sb7.load_json(ledger_path)
+                    ledger["settled"] = []
+                    ledger["spent_upper_bound"] = 0
+                    ledger["provider_spent_upper_bound"] = {
+                        provider: 0 for provider in ledger["provider_caps"]
+                    }
+                    cloud_sb7.atomic_json(ledger_path, ledger)
+                    expected = "spend decreased"
+                elif tamper == "source-seal":
+                    seal = Path(str(fixture["source"])) / cloud_sb7.QUALIFICATION_RESTART_SEAL
+                    seal.write_text("{}\n")
+                    expected = "source seal"
+                else:
+                    artifact = next(
+                        (target_root / "qualification/evidence").glob("artifact-*")
+                    )
+                    artifact.write_text("changed\n")
+                    expected = "artifact changed"
+                self.assertIn(expected, cloud_sb7.lineage_failure(target_root) or "")
 
     def test_manifest_has_exact_unique_models_and_ports(self) -> None:
         manifest = cloud_sb7.load_json(cloud_sb7.DEFAULT_ENTRANTS)
@@ -3086,6 +3933,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
     def test_rendered_verification_requires_exact_board_and_run_evidence(self) -> None:
         verdict = self.fixture_verdict()
+        campaign = self.public_identity_campaign(verdict)
         entry = {
             "label": "Fixture Model",
             "model": "fixture-model",
@@ -3116,21 +3964,21 @@ class CloudSb7HarnessTest(unittest.TestCase):
             + json.dumps(
                 {
                     "@type": "Dataset",
-                    "name": "fixture-model on sb-7.0-rc",
+                    "name": "fixture-model on sb-7.0",
                     "url": run_url,
                     "variableMeasured": [{"value": 0.42}],
                 }
             )
             + "</script>"
-            + "<h1>Fixture Model — 0.4200 on sb-7.0-rc</h1>"
-            + "<p>fixture-model · scorer sb-7.0-rc</p>"
-            + "<p>Scorer calibration · UNCALIBRATED — fixture defaults; rc-grade only</p>"
+            + "<h1>Fixture Model — 0.4200 on sb-7.0</h1>"
+            + "<p>fixture-model · scorer sb-7.0</p>"
         )
         matched, evidence = cloud_sb7.rendered_publication_matches(
-            board, run, "https://example.invalid", entry, verdict
+            campaign, board, run, "https://example.invalid", entry, verdict
         )
         self.assertTrue(matched, evidence)
         matched, evidence = cloud_sb7.rendered_publication_matches(
+            campaign,
             board.replace("0.4200", "0.4100"),
             run,
             "https://example.invalid",
@@ -3140,8 +3988,27 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertFalse(matched)
         self.assertFalse(evidence["board_item_exact"])
 
+        for residue in (
+            "<p>sb-7.0-rc</p>",
+            "<p>Scorer calibration · UNCALIBRATED</p>",
+            "<p>rc-grade only</p>",
+            '<script type="application/json">{"calibration":"uncalibrated"}</script>',
+        ):
+            with self.subTest(residue=residue):
+                matched, evidence = cloud_sb7.rendered_publication_matches(
+                    campaign,
+                    board,
+                    run + residue,
+                    "https://example.invalid",
+                    entry,
+                    verdict,
+                )
+                self.assertFalse(matched)
+                self.assertFalse(evidence["run_public_identity_exact"])
+
     def test_remote_receipt_compares_full_checks_and_screenshot_bytes(self) -> None:
         verdict = self.fixture_verdict()
+        campaign = self.public_identity_campaign(verdict)
         entry = {
             "label": "Fixture Model",
             "model": "fixture-model",
@@ -3163,8 +4030,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "tierC": 0.5,
             "tierD": 0.5,
             "wallSecs": 123,
-            "scorerVersion": verdict["scorer_version"],
-            "calibration": verdict["calibration"],
+            "scorerVersion": "sb-7.0",
             "excellent": False,
             "checksSummary": [
                 {
@@ -3191,12 +4057,208 @@ class CloudSb7HarnessTest(unittest.TestCase):
             return None
 
         with mock.patch.object(cloud_sb7, "sanity_document", side_effect=lookup):
-            receipt = cloud_sb7.remote_publication_receipt({}, entry, verdict, plan)
+            receipt = cloud_sb7.remote_publication_receipt(
+                campaign, entry, verdict, plan
+            )
             self.assertTrue(receipt["matched"], receipt)
+            self.assertEqual(
+                receipt["expected_public_identity"],
+                {"scorer_version": "sb-7.0", "calibration_absent": True},
+            )
+            self.assertEqual(
+                receipt["raw_verdict_identity_sha256"],
+                cloud_sb7.raw_publication_identity_sha256(verdict),
+            )
             document["checksSummary"][0]["score"] = 0.4
-            receipt = cloud_sb7.remote_publication_receipt({}, entry, verdict, plan)
+            receipt = cloud_sb7.remote_publication_receipt(
+                campaign, entry, verdict, plan
+            )
             self.assertFalse(receipt["matched"])
             self.assertIn("document check 0 differs", receipt["reasons"])
+            document["checksSummary"][0]["score"] = 0.5
+            for stale in (
+                {"scorerVersion": "sb-7.0-rc"},
+                {"calibration": verdict["calibration"]},
+            ):
+                with self.subTest(stale=stale):
+                    document.update(stale)
+                    receipt = cloud_sb7.remote_publication_receipt(
+                        campaign, entry, verdict, plan
+                    )
+                    self.assertFalse(receipt["matched"])
+                    if "calibration" in stale:
+                        self.assertIn(
+                            "document field calibration must be absent",
+                            receipt["reasons"],
+                        )
+                        document.pop("calibration")
+                    else:
+                        self.assertIn(
+                            "document field scorerVersion differs",
+                            receipt["reasons"],
+                        )
+                        document["scorerVersion"] = "sb-7.0"
+            document["notes"] = (
+                "Scored by sb-7.0-rc. Calibration: UNCALIBRATED; rc-grade only."
+            )
+            receipt = cloud_sb7.remote_publication_receipt(
+                campaign, entry, verdict, plan
+            )
+            self.assertFalse(receipt["matched"])
+            self.assertIn(
+                "document notes retain forbidden RC/calibration residue",
+                receipt["reasons"],
+            )
+
+    def test_rendered_receipt_persists_public_identity_not_raw_rc(self) -> None:
+        verdict = self.fixture_verdict()
+        campaign = self.public_identity_campaign(verdict)
+        campaign["publisher"].update(
+            {
+                "website_base_url": "https://example.invalid",
+                "verify_timeout_seconds": 1,
+                "verify_interval_seconds": 0.01,
+            }
+        )
+        entry = {
+            "label": "Fixture Model",
+            "model": "fixture-model",
+            "doc_id": "brun-baseline-fixture-model-sb70",
+        }
+        run_url = (
+            "https://example.invalid/agentic-benchmarks/run/"
+            "brun-baseline-fixture-model-sb70"
+        )
+        board = (
+            '<script type="application/ld+json">'
+            + json.dumps(
+                {
+                    "@type": "ItemList",
+                    "itemListElement": [
+                        {
+                            "@type": "ListItem",
+                            "name": "Fixture Model — 0.4200",
+                            "url": run_url,
+                        }
+                    ],
+                }
+            )
+            + "</script>"
+        )
+        run = (
+            '<script type="application/ld+json">'
+            + json.dumps(
+                {
+                    "@type": "Dataset",
+                    "name": "fixture-model on sb-7.0",
+                    "url": run_url,
+                    "variableMeasured": [{"value": 0.42}],
+                }
+            )
+            + "</script>"
+            + "<h1>Fixture Model — 0.4200 on sb-7.0</h1>"
+            + "<p>fixture-model · scorer sb-7.0</p>"
+        )
+        with mock.patch.object(
+            cloud_sb7,
+            "fetch_rendered_page",
+            side_effect=[(200, board, {}), (200, run, {})],
+        ):
+            receipt = cloud_sb7.verify_rendered_publication(
+                campaign, entry, verdict
+            )
+        self.assertEqual(
+            receipt["expected"],
+            {
+                "doc_id": entry["doc_id"],
+                "label": entry["label"],
+                "model": entry["model"],
+                "score": 0.42,
+                "scorer_version": "sb-7.0",
+                "calibration_absent": True,
+            },
+        )
+        self.assertNotIn("sb-7.0-rc", json.dumps(receipt["expected"]))
+        self.assertNotIn("calibration", receipt["expected"])
+        self.assertEqual(
+            receipt["raw_verdict_identity_sha256"],
+            cloud_sb7.raw_publication_identity_sha256(verdict),
+        )
+
+    def test_published_audit_reconstructs_public_identity_and_rejects_stale_rc(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _, verdict = self.make_scored_campaign(root)
+            runs = cloud_sb7.publication_stage(root, "fixture-model")
+            state = cloud_sb7.read_state(root, "fixture-model")
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            entry = cloud_sb7.publish_entry(campaign, "fixture-model")
+            run_url = (
+                "https://example.invalid/agentic-benchmarks/run/"
+                "brun-baseline-fixture-model-sb70"
+            )
+            public = cloud_sb7.public_publication_identity(campaign, verdict)
+            rendered = {
+                "board_status": 200,
+                "run_status": 200,
+                "board_item_exact": True,
+                "run_visible_exact": True,
+                "run_dataset_exact": True,
+                "run_public_identity_exact": True,
+                "run_url": run_url,
+                "expected": cloud_sb7.rendered_publication_expected(
+                    campaign, entry, verdict
+                ),
+                "raw_verdict_identity_sha256": (
+                    cloud_sb7.raw_publication_identity_sha256(verdict)
+                ),
+            }
+            cloud_sb7.update_state(
+                root,
+                "fixture-model",
+                status="PUBLISHED",
+                publisher_remote_receipt={
+                    "matched": True,
+                    "expected_public_identity": public,
+                    "raw_verdict_identity_sha256": (
+                        cloud_sb7.raw_publication_identity_sha256(verdict)
+                    ),
+                },
+                revalidation={
+                    "status": 200,
+                    "paths": [
+                        "/agentic-benchmarks",
+                        f"/agentic-benchmarks/run/{entry['doc_id']}",
+                    ],
+                },
+                rendered_verification=rendered,
+                published_url=run_url,
+                publish_stage=str(runs),
+                score_attempts=state["score_attempts"],
+            )
+            cloud_sb7.update_campaign(root, status="PUBLISHED")
+            cloud_sb7.manager_state(root, status="PUBLISHED")
+            row = cloud_sb7.load_json(Path(str(campaign["entrant_manifest"])))[
+                "entrants"
+            ][0]
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "entrants", return_value=[row] * 5),
+            ):
+                self.assertIsNone(cloud_sb7.published_campaign_mismatch(root))
+                stale = json.loads(json.dumps(rendered))
+                stale["expected"]["scorer_version"] = "sb-7.0-rc"
+                stale["expected"].pop("calibration_absent")
+                stale["expected"]["calibration"] = verdict["calibration"]
+                cloud_sb7.update_state(
+                    root, "fixture-model", rendered_verification=stale
+                )
+                self.assertIn(
+                    "rendered board/run verification is incomplete",
+                    cloud_sb7.published_campaign_mismatch(root) or "",
+                )
 
     def test_hermetic_verdict_must_match_frozen_scorer_and_check_contract(self) -> None:
         verdict = self.fixture_verdict()
@@ -3392,6 +4454,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 return True
 
             with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
                 mock.patch.object(cloud_sb7, "recover_interrupted_scoring"),
                 mock.patch.object(cloud_sb7, "score_one", side_effect=score),
                 mock.patch.object(cloud_sb7, "publish_one", side_effect=publish),
