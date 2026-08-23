@@ -12,7 +12,7 @@ use super::swarm_provider_journal::DurableProviderLifecycleJournal;
 use super::swarm_provider_lifecycle::{
     bind_current_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
     PreSchedulerJudgeLaunchAdmission, ProviderNudgeDeliveryFactory, ProviderStreamProgressMeter,
-    ProviderStreamProgressSnapshot,
+    ProviderStreamProgressSnapshot, StructuredOutputNudgeSafetyGate,
 };
 use super::swarm_semantic::{
     activity_digest_key, ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
@@ -38,14 +38,15 @@ use goose::session::SessionManager;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
     deterministic_verdict, is_split_candidate, AdmissionReceipt, AdmittedWork, AuthorityScope,
-    ChildSpec, Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, HostCapacityEvidence,
-    Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
-    PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot, PreReviewOutput,
-    PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
-    ProviderNudgeDelivery, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner,
-    Scheduler, SemanticActivityPublisher, SourceRevisionKind, SwarmEvent, TaskDispatcher,
-    TaskRunOutput, TaskSpec, TaskVersion, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
-    WorkOpportunity, WorkRole,
+    ChildSpec, CompletedProviderRequest, Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink,
+    HostCapacityEvidence, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
+    LocalCompletionKind, NullSink, PhysicalAdmissionControl, PhysicalExecutionAuthority,
+    PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle,
+    ProviderLifecycleDispatcher, ProviderNudgeDelivery, ProviderRequestKey, ProviderRequestReceipt,
+    ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
+    ReplanContext, Replanner, Scheduler, SemanticActivityPublisher, SourceRevisionKind, SwarmEvent,
+    TaskDispatcher, TaskRunOutput, TaskSpec, TaskVersion, ToolCallRecord, Verdict,
+    VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -3104,6 +3105,36 @@ fn physical_fleet_snapshot(
         );
     }
     PhysicalFleetSnapshot::new(snapshot_id, lanes).map_err(anyhow::Error::from)
+}
+
+fn physical_snapshot_devices(
+    execute_devices: &[DeviceCfg],
+    supervision_devices: &[DeviceCfg],
+    planner_model: &str,
+    planner_speed_weight: u32,
+) -> Vec<DeviceCfg> {
+    let mut devices = execute_devices.to_vec();
+    devices.extend(supervision_devices.iter().cloned());
+    if devices
+        .iter()
+        .any(|device| device.model_id == planner_model)
+    {
+        return devices;
+    }
+
+    let mut logical_device_id = "pre-scheduler-planner".to_string();
+    while devices.iter().any(|device| device.id == logical_device_id) {
+        logical_device_id.push('-');
+    }
+    devices.push(DeviceCfg {
+        id: logical_device_id,
+        model_id: planner_model.to_string(),
+        weight: 1,
+        enabled: true,
+        speed_weight: planner_speed_weight.max(1),
+        supervision: true,
+    });
+    devices
 }
 
 /// "Auto-use what's loaded": build the worker pool from the models currently resident on the fleet
@@ -10874,6 +10905,35 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn recurrence_from_a_finished_turn_cannot_summon_for_the_next_turn() {
+        let first = ProviderRequestKey {
+            ordinal: 0,
+            provider_request_id: "turn-one".to_string(),
+        };
+        let second = ProviderRequestKey {
+            ordinal: 1,
+            provider_request_id: "turn-two".to_string(),
+        };
+        let mut tracked = Some(first);
+        let mut meter = ReasoningRecurrenceMeter::default();
+        let repeated = "the same recurrent reasoning cycle ".repeat(400);
+        meter.push(&repeated);
+        let mut recent = repeated;
+        assert!(recurrence_warrants_semantic_review(&meter.snapshot()));
+
+        bind_recurrence_to_provider_request(
+            Some(second.clone()),
+            &mut tracked,
+            &mut meter,
+            &mut recent,
+        );
+
+        assert_eq!(tracked, Some(second));
+        assert!(recent.is_empty());
+        assert!(!recurrence_warrants_semantic_review(&meter.snapshot()));
+    }
+
+    #[test]
     fn growing_or_active_structured_output_vetoes_pre_scheduler_nudge() {
         let captured = ProviderStreamProgressSnapshot {
             structured_output_bytes: 277,
@@ -10897,6 +10957,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(!structured_output_blocks_pre_scheduler_nudge(
             captured, captured
         ));
+    }
+
+    #[test]
+    fn pre_scheduler_source_and_judge_keep_existing_no_progress_watchdogs() {
+        assert_eq!(pre_scheduler_source_no_progress_secs(420), 420);
+        assert_eq!(pre_scheduler_judge_no_progress_secs(900), 900);
     }
 
     /// GOOSE_SWARM_REQUIRE_TESTS. An EMPTY suite is not a PASSING suite.
@@ -20615,9 +20681,75 @@ enum AgentToolSurface {
     ResponseOnly,
 }
 
+#[derive(Clone)]
+struct PreSchedulerCallCancellation {
+    requested: tokio::sync::watch::Sender<bool>,
+}
+
+impl PreSchedulerCallCancellation {
+    fn new() -> Self {
+        let (requested, _) = tokio::sync::watch::channel(false);
+        Self { requested }
+    }
+
+    fn request(&self) {
+        self.requested.send_replace(true);
+    }
+
+    fn is_requested(&self) -> bool {
+        *self.requested.borrow()
+    }
+
+    async fn requested(&self) {
+        let mut receiver = self.requested.subscribe();
+        while !*receiver.borrow_and_update() {
+            if receiver.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
+struct PreSchedulerCallAwaitGuard {
+    cancellation: Option<PreSchedulerCallCancellation>,
+}
+
+impl PreSchedulerCallAwaitGuard {
+    fn new(cancellation: PreSchedulerCallCancellation) -> Self {
+        Self {
+            cancellation: Some(cancellation),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.cancellation.take();
+    }
+}
+
+impl Drop for PreSchedulerCallAwaitGuard {
+    fn drop(&mut self) {
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.request();
+        }
+    }
+}
+
+tokio::task_local! {
+    static ACTIVE_PRE_SCHEDULER_CANCELLATION: PreSchedulerCallCancellation;
+}
+
+pub(super) fn pre_scheduler_source_no_progress_secs(caller_idle_secs: u64) -> u64 {
+    caller_idle_secs
+}
+
+pub(super) fn pre_scheduler_judge_no_progress_secs(planner_idle_secs: u64) -> u64 {
+    planner_idle_secs
+}
+
 struct AgentProviderNudgeFactory {
     agent: Arc<Agent>,
     session_id: String,
+    external_cancellation: Option<PreSchedulerCallCancellation>,
 }
 
 impl ProviderNudgeDeliveryFactory for AgentProviderNudgeFactory {
@@ -20625,26 +20757,37 @@ impl ProviderNudgeDeliveryFactory for AgentProviderNudgeFactory {
         Arc::new(AgentProviderNudgeChannel::new(
             self.agent.clone(),
             self.session_id.clone(),
+            self.external_cancellation.clone(),
         ))
     }
 }
 
 #[derive(Default)]
 struct AgentProviderNudgeState {
+    bound_request: Option<ProviderRequestReceipt>,
     reserved: bool,
     closed: bool,
+    confirmation_finalized: bool,
 }
 
 struct AgentProviderNudgeChannel {
     sender: tokio::sync::mpsc::UnboundedSender<String>,
     cancelled: tokio::sync::watch::Sender<bool>,
+    confirmed_terminal:
+        tokio::sync::watch::Sender<Option<std::result::Result<ProviderTerminalReceipt, String>>>,
+    external_cancellation: Option<PreSchedulerCallCancellation>,
     state: Mutex<AgentProviderNudgeState>,
 }
 
 impl AgentProviderNudgeChannel {
-    fn new(agent: Arc<Agent>, session_id: String) -> Self {
+    fn new(
+        agent: Arc<Agent>,
+        session_id: String,
+        external_cancellation: Option<PreSchedulerCallCancellation>,
+    ) -> Self {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
         let (cancelled, _) = tokio::sync::watch::channel(false);
+        let (confirmed_terminal, _) = tokio::sync::watch::channel(None);
         let wake_cancelled = cancelled.clone();
         tokio::spawn(async move {
             if let Some(guidance) = receiver.recv().await {
@@ -20657,6 +20800,8 @@ impl AgentProviderNudgeChannel {
         Self {
             sender,
             cancelled,
+            confirmed_terminal,
+            external_cancellation,
             state: Mutex::new(AgentProviderNudgeState::default()),
         }
     }
@@ -20664,8 +20809,32 @@ impl AgentProviderNudgeChannel {
 
 #[async_trait]
 impl ProviderNudgeDelivery for AgentProviderNudgeChannel {
+    fn bind_request(&self, request: &ProviderRequestReceipt) -> std::result::Result<(), String> {
+        let mut state = self.state.lock().unwrap();
+        match &state.bound_request {
+            Some(bound) if bound != request => {
+                Err("provider nudge delivery is already bound to another request".to_string())
+            }
+            Some(_) => Ok(()),
+            None => {
+                state.bound_request = Some(request.clone());
+                Ok(())
+            }
+        }
+    }
+
     fn try_enqueue(&self, guidance: String) -> std::result::Result<(), String> {
         let mut state = self.state.lock().unwrap();
+        if state.bound_request.is_none() {
+            return Err("provider nudge delivery is not bound to a request".to_string());
+        }
+        if self
+            .external_cancellation
+            .as_ref()
+            .is_some_and(PreSchedulerCallCancellation::is_requested)
+        {
+            return Err("provider source caller has already cancelled this request".to_string());
+        }
         if state.closed || state.reserved {
             return Err("provider nudge delivery is closed or already reserved".to_string());
         }
@@ -20678,19 +20847,103 @@ impl ProviderNudgeDelivery for AgentProviderNudgeChannel {
 
     fn natural_terminal_allowed(&self) -> bool {
         let mut state = self.state.lock().unwrap();
-        if state.reserved {
+        if state.reserved
+            || self
+                .external_cancellation
+                .as_ref()
+                .is_some_and(PreSchedulerCallCancellation::is_requested)
+        {
             return false;
         }
         state.closed = true;
         true
     }
 
+    fn cancellation_terminal_confirmation_required(&self) -> bool {
+        self.state.lock().unwrap().reserved
+    }
+
     async fn cancelled(&self) {
         let mut receiver = self.cancelled.subscribe();
-        while !*receiver.borrow_and_update() {
-            if receiver.changed().await.is_err() {
+        loop {
+            if *receiver.borrow_and_update()
+                || self
+                    .external_cancellation
+                    .as_ref()
+                    .is_some_and(PreSchedulerCallCancellation::is_requested)
+            {
                 return;
             }
+            match &self.external_cancellation {
+                Some(external) => tokio::select! {
+                    _ = external.requested() => return,
+                    changed = receiver.changed() => {
+                        if changed.is_err() {
+                            return;
+                        }
+                    }
+                },
+                None => {
+                    if receiver.changed().await.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    fn confirm_cancelled_terminal(
+        &self,
+        completed: CompletedProviderRequest,
+    ) -> std::result::Result<(), String> {
+        let terminal = completed.terminal();
+        let request = completed.request();
+        let admission = completed.admission();
+        let mut state = self.state.lock().unwrap();
+        if state.confirmation_finalized {
+            return Err("provider cancellation confirmation is already finalized".to_string());
+        }
+        let confirmation = match state.bound_request.as_ref() {
+            None => Err("provider nudge delivery is not bound to a request".to_string()),
+            Some(_) if !state.reserved => {
+                Err("provider cancellation terminal arrived before nudge reservation".to_string())
+            }
+            Some(bound)
+                if terminal.kind != ProviderTerminalKind::Cancelled
+                    || request != bound
+                    || terminal.admission_id != bound.admission_id
+                    || terminal.key != bound.key
+                    || terminal.physical_host_id != bound.physical_host_id
+                    || terminal.model_instance_id != bound.model_instance_id
+                    || admission.admission_id != bound.admission_id
+                    || admission.physical_host_id != bound.physical_host_id
+                    || admission.model_instance_id != bound.model_instance_id =>
+            {
+                Err(
+                    "provider cancellation proof does not match the delivery's exact bound request"
+                        .to_string(),
+                )
+            }
+            Some(_) => Ok(terminal.clone()),
+        };
+        state.confirmation_finalized = true;
+        drop(state);
+        self.confirmed_terminal
+            .send_replace(Some(confirmation.clone()));
+        confirmation.map(drop)
+    }
+
+    async fn confirmed_cancelled_terminal(
+        &self,
+    ) -> std::result::Result<ProviderTerminalReceipt, String> {
+        let mut receiver = self.confirmed_terminal.subscribe();
+        loop {
+            if let Some(confirmation) = receiver.borrow_and_update().clone() {
+                return confirmation;
+            }
+            receiver.changed().await.map_err(|_| {
+                "provider cancellation confirmation channel closed without proof".to_string()
+            })?;
         }
     }
 }
@@ -20785,6 +21038,7 @@ impl PreSchedulerSemanticRuntime {
     async fn try_spawn_recurrence_review(
         self: &Arc<Self>,
         source: &PreSchedulerSourceContext,
+        evidence_request: ProviderRequestKey,
         recurrence: ReasoningRecurrenceSnapshot,
         recent_reasoning: String,
         progress: Arc<ProviderStreamProgressMeter>,
@@ -20815,8 +21069,17 @@ impl PreSchedulerSemanticRuntime {
         }
 
         let sequence = self.next_sequence();
+        let observed_source_request = match source.lifecycle.current_live_provider_request_receipt()
+        {
+            Ok(request) => request,
+            Err(_) => return Ok(None),
+        };
+        if observed_source_request.key != evidence_request {
+            return Ok(None);
+        }
         let snapshot_material = serde_json::json!({
             "source_admission_id": source.lifecycle.admission().admission_id,
+            "source_provider_request": observed_source_request.key,
             "observed_windows": recurrence.observed_windows,
             "repeated_windows": recurrence.repeated_windows,
             "repeat_share": recurrence.repeat_share,
@@ -20824,6 +21087,16 @@ impl PreSchedulerSemanticRuntime {
             "recent_reasoning": recent_reasoning,
         });
         let snapshot_hash = lowercase_hex(Sha256::digest(snapshot_material.to_string()).as_slice());
+        let captured_source = match source
+            .lifecycle
+            .capture_live_provider_request(snapshot_hash.clone())
+        {
+            Ok(captured) => captured,
+            Err(_) => return Ok(None),
+        };
+        if captured_source.request().key != observed_source_request.key {
+            return Ok(None);
+        }
         let task_id = format!("pre-scheduler-judge:{}:{sequence}", source.label);
         let judge_source = TaskVersion {
             authority_scope: AuthorityScope::new(self.run_id.clone(), "pre-scheduler-judge"),
@@ -20888,6 +21161,10 @@ impl PreSchedulerSemanticRuntime {
                 let judge_key = admitted.receipt().source.task_id.clone();
                 let judge_publisher = SemanticActivityPublisher::from_admission(admitted.receipt());
                 let judge_lifecycle = admitted.lifecycle();
+                let judge_cancellation = PreSchedulerCallCancellation::new();
+                if !captured_source.is_live() {
+                    judge_cancellation.request();
+                }
                 let system = "You are supervising one live local-model call. Decide only whether its reasoning is semantically looping: the same analysis recurs without new information. Deep but advancing reasoning is OK. Reply exactly VERDICT|CONFIDENCE|hint where VERDICT is OK or LOOPING and CONFIDENCE is HIGH or LOW. Never request termination; a HIGH LOOPING verdict may only redirect the same session.".to_string();
                 let user = format!(
                     "Measured recurrence: {} repeated of {} retained {}-character windows ({:.4}).\n\nEarlier reasoning sample:\n{}\n\nRecent reasoning sample:\n{}",
@@ -20898,28 +21175,88 @@ impl PreSchedulerSemanticRuntime {
                     recurrence.earlier_reasoning,
                     recent_reasoning,
                 );
-                let review = std::panic::AssertUnwindSafe(scope_provider_lifecycle(
-                    judge_lifecycle,
-                    dispatcher.run_agent_in(
-                        dispatcher.working_dir.clone(),
-                        &judge_model,
-                        system,
-                        user,
-                        None,
-                        Some(1),
-                        &[],
-                        AgentToolSurface::ResponseOnly,
-                        0,
-                        Some(&judge_key),
-                        Some(&judge_publisher),
-                        None,
-                        None,
-                        None,
-                        None,
+                let review = std::panic::AssertUnwindSafe(
+                    ACTIVE_PRE_SCHEDULER_CANCELLATION.scope(
+                        judge_cancellation.clone(),
+                        scope_provider_lifecycle(
+                            judge_lifecycle.clone(),
+                            dispatcher.run_agent_in(
+                                dispatcher.working_dir.clone(),
+                                &judge_model,
+                                system,
+                                user,
+                                None,
+                                Some(1),
+                                &[],
+                                AgentToolSurface::ResponseOnly,
+                                pre_scheduler_judge_no_progress_secs(
+                                    dispatcher.planner_timeout_secs,
+                                ),
+                                Some(&judge_key),
+                                Some(&judge_publisher),
+                                None,
+                                None,
+                                None,
+                                None,
+                            ),
+                        ),
                     ),
-                ))
-                .catch_unwind()
-                .await;
+                )
+                .catch_unwind();
+                tokio::pin!(review);
+                let source_closed = captured_source.closed();
+                tokio::pin!(source_closed);
+                let (review, source_request_closed_before_judge) = tokio::select! {
+                    review = &mut review => (review, false),
+                    _ = &mut source_closed => {
+                        judge_cancellation.request();
+                        (review.await, true)
+                    }
+                };
+                drop(source_closed);
+                let reconciliation = judge_lifecycle.reconcile_cancelled_after_drop().await;
+                if let Err(error) = reconciliation {
+                    let quarantine = admitted
+                        .quarantine_unproven(error.to_string())
+                        .await;
+                    events.write_value(serde_json::json!({
+                        "event": "pre_scheduler_semantic_judge_failed",
+                        "source_task": source_label,
+                        "review_error": "judge_terminal_reconciliation_failed",
+                        "completion_error": error.to_string(),
+                        "quarantine": quarantine.as_ref().ok(),
+                        "quarantine_error": quarantine.err().map(|error| error.to_string()),
+                        "nudge_delivered": false,
+                        "payload_logged": false,
+                    }));
+                    let _ = done.send(());
+                    return;
+                }
+                if source_request_closed_before_judge {
+                    let completion = admitted
+                        .complete_local_with_completion(LocalCompletionKind::CancellationRequested)
+                        .await;
+                    match completion {
+                        Ok(_) => events.write_value(serde_json::json!({
+                            "event": "pre_scheduler_semantic_judge_observed",
+                            "source_task": source_label,
+                            "verdict": "captured_source_request_closed_before_judge",
+                            "judge_future_panicked": review.is_err(),
+                            "nudge_delivered": false,
+                            "payload_logged": false,
+                        })),
+                        Err(error) => events.write_value(serde_json::json!({
+                            "event": "pre_scheduler_semantic_judge_failed",
+                            "source_task": source_label,
+                            "review_error": "captured_source_request_closed_before_judge",
+                            "completion_error": error.to_string(),
+                            "nudge_delivered": false,
+                            "payload_logged": false,
+                        })),
+                    }
+                    let _ = done.send(());
+                    return;
+                }
                 let review = match review {
                     Ok(review) => review,
                     Err(_) => {
@@ -20961,6 +21298,17 @@ impl PreSchedulerSemanticRuntime {
                         return;
                     }
                 };
+                if !captured_source.is_live() {
+                    events.write_value(serde_json::json!({
+                        "event": "pre_scheduler_semantic_judge_observed",
+                        "source_task": source_label,
+                        "verdict": "captured_source_request_closed_before_judge",
+                        "nudge_delivered": false,
+                        "payload_logged": false,
+                    }));
+                    let _ = done.send(());
+                    return;
+                }
                 if !omni_judge_says_looping(&review.text) {
                     events.write_value(serde_json::json!({
                         "event": "pre_scheduler_semantic_judge_observed",
@@ -21001,8 +21349,17 @@ impl PreSchedulerSemanticRuntime {
                 let guidance = format!(
                     "SUPERVISOR NOTE: an independently admitted judge found your latest reasoning semantically recurrent. {direction}. Continue the SAME task and preserve valid work already completed."
                 );
+                let safety = StructuredOutputNudgeSafetyGate::new(
+                    progress.clone(),
+                    source_progress_at_capture,
+                );
                 match source_lifecycle
-                    .deliver_nudge_after_judge(completed, guidance)
+                    .deliver_nudge_after_judge(
+                        captured_source,
+                        completed,
+                        guidance,
+                        &safety,
+                    )
                     .await
                 {
                     Ok(receipt) => events.write_value(serde_json::json!({
@@ -21606,6 +21963,29 @@ impl GooseAgentDispatcher {
         .await
     }
 
+    async fn run_agent_timed_labeled(
+        &self,
+        model_id: &str,
+        system_prompt: String,
+        user_text: String,
+        response: Option<Response>,
+        max_turns: u32,
+        extensions: &[ExtensionConfig],
+        semantic_source_label: &str,
+    ) -> Result<RunAgentOut> {
+        self.run_agent(
+            model_id,
+            system_prompt,
+            user_text,
+            response,
+            max_turns,
+            extensions,
+            self.planner_timeout_secs,
+            Some(semantic_source_label),
+        )
+        .await
+    }
+
     /// Like `run_agent_timed` but at a specific per-call temperature (None = shared default). Skeleton
     /// drafting uses this to draft at a LOW temperature so independent drafts converge — steadying the weak
     /// fleet's structural decomposition (higher, less-noisy agreement) without touching worker/coding calls.
@@ -21817,52 +22197,115 @@ impl GooseAgentDispatcher {
             let admitted_key = admitted.receipt().source.task_id.clone();
             let publisher = SemanticActivityPublisher::from_admission(admitted.receipt());
             let lifecycle = admitted.lifecycle();
+            let dispatcher = runtime.dispatcher.upgrade().ok_or_else(|| {
+                anyhow!("pre-scheduler dispatcher was dropped before source admission")
+            })?;
             let context = PreSchedulerSourceContext {
                 runtime,
                 lifecycle: lifecycle.clone(),
                 label,
             };
-            let result = ACTIVE_PRE_SCHEDULER_SOURCE
-                .scope(
-                    context,
-                    scope_provider_lifecycle(
-                        lifecycle,
-                        Box::pin(self.run_agent_in(
-                            work_dir,
-                            model_id,
-                            system_prompt,
-                            user_text,
-                            response,
-                            max_turns,
-                            extensions,
-                            tool_surface,
-                            0,
-                            Some(&admitted_key),
-                            Some(&publisher),
-                            prefill_assistant,
-                            force_tool_until_act,
-                            temp_override,
-                            single_owned_file,
+            let cancellation = PreSchedulerCallCancellation::new();
+            let cleanup_cancellation = cancellation.clone();
+            let model_id = model_id.to_string();
+            let extensions = extensions.to_vec();
+            let prefill_assistant = prefill_assistant.map(str::to_string);
+            let force_tool_until_act = force_tool_until_act.map(str::to_string);
+            let (result_sender, result_receiver) = tokio::sync::oneshot::channel();
+            let runtime_handle = tokio::runtime::Handle::current();
+            tokio::task::spawn_blocking(move || {
+                runtime_handle.block_on(async move {
+                    let result = std::panic::AssertUnwindSafe(
+                        ACTIVE_PRE_SCHEDULER_CANCELLATION.scope(
+                            cleanup_cancellation.clone(),
+                            ACTIVE_PRE_SCHEDULER_SOURCE.scope(
+                                context,
+                                scope_provider_lifecycle(
+                                    lifecycle.clone(),
+                                    Box::pin(dispatcher.run_agent_in(
+                                        work_dir,
+                                        &model_id,
+                                        system_prompt,
+                                        user_text,
+                                        response,
+                                        max_turns,
+                                        &extensions,
+                                        tool_surface,
+                                        pre_scheduler_source_no_progress_secs(idle_secs),
+                                        Some(&admitted_key),
+                                        Some(&publisher),
+                                        prefill_assistant.as_deref(),
+                                        force_tool_until_act.as_deref(),
+                                        temp_override,
+                                        single_owned_file,
+                                    )),
+                                ),
+                            ),
+                        ),
+                    )
+                    .catch_unwind()
+                    .await;
+                    let mut result = match result {
+                        Ok(result) => result,
+                        Err(_) => Err(anyhow!("pre-scheduler source future panicked")),
+                    };
+                    let caller_cancelled = cleanup_cancellation.is_requested();
+                    if caller_cancelled && result.is_ok() {
+                        result = Err(anyhow!(
+                            "pre-scheduler source caller cancelled after provider terminal proof"
+                        ));
+                    }
+                    if let Err(reconcile) = lifecycle.reconcile_cancelled_after_drop().await {
+                        let detail = reconcile.to_string();
+                        result = Err(match result {
+                            Ok(_) => anyhow!(
+                                "pre-scheduler source terminal reconciliation failed: {detail}"
+                            ),
+                            Err(error) => anyhow!(
+                                "{error}; pre-scheduler source terminal reconciliation failed: {detail}"
+                            ),
+                        });
+                        let quarantine = admitted.quarantine_unproven(detail).await;
+                        if let Err(quarantine_error) = quarantine {
+                            result = Err(match result {
+                                Ok(_) => anyhow!(
+                                    "pre-scheduler source quarantine failed: {quarantine_error}"
+                                ),
+                                Err(error) => anyhow!(
+                                    "{error}; pre-scheduler source quarantine failed: {quarantine_error}"
+                                ),
+                            });
+                        }
+                        let _ = result_sender.send(result);
+                        return;
+                    }
+                    let completion_kind = if caller_cancelled {
+                        LocalCompletionKind::CancellationRequested
+                    } else if result.is_ok() {
+                        LocalCompletionKind::Success
+                    } else {
+                        LocalCompletionKind::Error
+                    };
+                    let completion = admitted.complete_local(completion_kind).await;
+                    let result = match (result, completion) {
+                        (Ok(output), Ok(())) => Ok(output),
+                        (Err(error), Ok(())) => Err(error),
+                        (Ok(_), Err(error)) => Err(anyhow!(
+                            "pre-scheduler physical lifecycle completion failed: {error}"
                         )),
-                    ),
-                )
-                .await;
-            let completion_kind = if result.is_ok() {
-                LocalCompletionKind::Success
-            } else {
-                LocalCompletionKind::Error
-            };
-            let completion = admitted.complete_local(completion_kind).await;
-            return match (result, completion) {
-                (Ok(output), Ok(())) => Ok(output),
-                (Err(error), Ok(())) => Err(error),
-                (Ok(_), Err(error)) => Err(anyhow!(
-                    "pre-scheduler physical lifecycle completion failed: {error}"
-                )),
-                (Err(error), Err(completion)) => Err(anyhow!(
-                    "{error}; pre-scheduler physical lifecycle completion also failed: {completion}"
-                )),
-            };
+                        (Err(error), Err(completion)) => Err(anyhow!(
+                            "{error}; pre-scheduler physical lifecycle completion also failed: {completion}"
+                        )),
+                    };
+                    let _ = result_sender.send(result);
+                })
+            });
+            let mut cancellation_guard = PreSchedulerCallAwaitGuard::new(cancellation);
+            let result = result_receiver.await.map_err(|_| {
+                anyhow!("pre-scheduler source supervisor ended without a terminal result")
+            })?;
+            cancellation_guard.disarm();
+            return result;
         }
         // Captured before the strings move into the message/session below — feeds the
         // prefill-aware first-token budget at the watchdog site.
@@ -21939,6 +22382,9 @@ impl GooseAgentDispatcher {
             Arc::new(AgentProviderNudgeFactory {
                 agent: agent.clone(),
                 session_id: session_id.clone(),
+                external_cancellation: ACTIVE_PRE_SCHEDULER_CANCELLATION
+                    .try_with(Clone::clone)
+                    .ok(),
             });
         let provider_stream_progress = Arc::new(ProviderStreamProgressMeter::new());
         let provider = bind_current_provider_lifecycle(
@@ -22082,6 +22528,8 @@ impl GooseAgentDispatcher {
         let mut thinking_chars: usize = 0;
         let mut last_thinking: String = String::new();
         let mut reasoning_recurrence = ReasoningRecurrenceMeter::default();
+        let mut recurrence_provider_request: Option<ProviderRequestKey> = None;
+        let mut recurrence_recent_reasoning = String::new();
         let mut final_output: Option<String> = None;
         let mut pending: HashMap<String, (String, bool, bool, String)> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
@@ -22283,6 +22731,19 @@ impl GooseAgentDispatcher {
         let mut pre_scheduler_review: Option<tokio::sync::oneshot::Receiver<()>> = None;
         let mut next_pre_scheduler_review_check = tokio::time::Instant::now();
         loop {
+            if let Ok(source) = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone) {
+                let current_request = source
+                    .lifecycle
+                    .current_live_provider_request_receipt()
+                    .ok()
+                    .map(|receipt| receipt.key);
+                bind_recurrence_to_provider_request(
+                    current_request,
+                    &mut recurrence_provider_request,
+                    &mut reasoning_recurrence,
+                    &mut recurrence_recent_reasoning,
+                );
+            }
             if let Some(review) = pre_scheduler_review.as_mut() {
                 match review.try_recv() {
                     Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
@@ -22299,33 +22760,36 @@ impl GooseAgentDispatcher {
                 let recurrence = reasoning_recurrence.snapshot();
                 if recurrence_warrants_semantic_review(&recurrence) {
                     if let Ok(source) = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone) {
-                        match source
-                            .runtime
-                            .try_spawn_recurrence_review(
-                                &source,
-                                recurrence,
-                                last_thinking.clone(),
-                                provider_stream_progress.clone(),
-                            )
-                            .await
-                        {
-                            Ok(Some(review)) => pre_scheduler_review = Some(review),
-                            Ok(None) => {
-                                // This cadence only rechecks idle-route availability. It never ends,
-                                // truncates, or advances the source call and leaves no broker work queued.
-                                next_pre_scheduler_review_check =
-                                    tokio::time::Instant::now() + std::time::Duration::from_secs(1);
-                            }
-                            Err(error) => {
-                                self.events.write_value(serde_json::json!({
-                                    "event": "pre_scheduler_semantic_judge_not_admitted",
-                                    "task_id": activity_key,
-                                    "reason": error.to_string(),
-                                    "nudge_delivered": false,
-                                    "payload_logged": false,
-                                }));
-                                next_pre_scheduler_review_check =
-                                    tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+                        if let Some(evidence_request) = recurrence_provider_request.clone() {
+                            match source
+                                .runtime
+                                .try_spawn_recurrence_review(
+                                    &source,
+                                    evidence_request,
+                                    recurrence,
+                                    recurrence_recent_reasoning.clone(),
+                                    provider_stream_progress.clone(),
+                                )
+                                .await
+                            {
+                                Ok(Some(review)) => pre_scheduler_review = Some(review),
+                                Ok(None) => {
+                                    // This cadence only rechecks idle-route availability. It never ends,
+                                    // truncates, or advances the source call and leaves no broker work queued.
+                                    next_pre_scheduler_review_check = tokio::time::Instant::now()
+                                        + std::time::Duration::from_secs(1);
+                                }
+                                Err(error) => {
+                                    self.events.write_value(serde_json::json!({
+                                        "event": "pre_scheduler_semantic_judge_not_admitted",
+                                        "task_id": activity_key,
+                                        "reason": error.to_string(),
+                                        "nudge_delivered": false,
+                                        "payload_logged": false,
+                                    }));
+                                    next_pre_scheduler_review_check = tokio::time::Instant::now()
+                                        + std::time::Duration::from_secs(1);
+                                }
                             }
                         }
                     }
@@ -22755,8 +23219,28 @@ impl GooseAgentDispatcher {
                         match content {
                             MessageContent::Text(t) => texts.push(t.text.clone()),
                             MessageContent::Thinking(t) => {
+                                if let Ok(source) =
+                                    ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone)
+                                {
+                                    let current_request = source
+                                        .lifecycle
+                                        .current_live_provider_request_receipt()
+                                        .ok()
+                                        .map(|receipt| receipt.key);
+                                    bind_recurrence_to_provider_request(
+                                        current_request,
+                                        &mut recurrence_provider_request,
+                                        &mut reasoning_recurrence,
+                                        &mut recurrence_recent_reasoning,
+                                    );
+                                }
                                 thinking_chars += t.thinking.chars().count();
                                 reasoning_recurrence.push(&t.thinking);
+                                recurrence_recent_reasoning.push_str(&t.thinking);
+                                if recurrence_recent_reasoning.chars().count() > 3000 {
+                                    recurrence_recent_reasoning =
+                                        tail_chars(&recurrence_recent_reasoning, 2400);
+                                }
                                 // ACCUMULATE a rolling tail, don't overwrite: each streamed Thinking chunk is a
                                 // single token (" the", "ents"), so assigning it made the panel show one word at
                                 // a time. Append and keep a bounded window so the digest's tail_chars(400) shows
@@ -22896,6 +23380,14 @@ impl GooseAgentDispatcher {
                     last_digest_at = Some(tokio::time::Instant::now());
                 }
             }
+        }
+        if ACTIVE_PRE_SCHEDULER_CANCELLATION
+            .try_with(PreSchedulerCallCancellation::is_requested)
+            .unwrap_or(false)
+        {
+            return Err(anyhow!(
+                "pre-scheduler source caller cancelled after provider terminal proof"
+            ));
         }
         // Requests with no response (e.g. a max-turns cutoff): record with unknown ok.
         for (_id, (name, is_mcp, fetched, summary)) in pending {
@@ -23182,8 +23674,17 @@ impl GooseAgentDispatcher {
                     "You are a RESEARCH worker. Answer EXACTLY the question below with a concise, factual summary \
                      (key API names, short snippets, file refs). {tool_hint} Do NOT write or modify any project files."
                 );
+                let source_label = format!("research-{}", q.id);
                 let (findings, lookups, attempt) = match me
-                    .run_agent_timed(&model, system, q.question.clone(), None, 12, &exts)
+                    .run_agent_timed_labeled(
+                        &model,
+                        system,
+                        q.question.clone(),
+                        None,
+                        12,
+                        &exts,
+                        &source_label,
+                    )
                     .await
                 {
                     Ok(o) => {
@@ -32717,6 +33218,19 @@ fn recurrence_warrants_semantic_review(snapshot: &ReasoningRecurrenceSnapshot) -
     snapshot.observed_windows > 0
         && snapshot.repeated_windows > 0
         && !snapshot.earlier_reasoning.trim().is_empty()
+}
+
+fn bind_recurrence_to_provider_request(
+    current: Option<ProviderRequestKey>,
+    tracked: &mut Option<ProviderRequestKey>,
+    recurrence: &mut ReasoningRecurrenceMeter,
+    recent_reasoning: &mut String,
+) {
+    if current != *tracked {
+        recurrence.reset();
+        recent_reasoning.clear();
+        *tracked = current;
+    }
 }
 
 fn structured_output_blocks_pre_scheduler_nudge(
@@ -46119,8 +46633,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         );
     }
 
-    let mut physical_snapshot_devices = devices.clone();
-    physical_snapshot_devices.extend(supervision_pool_devices.iter().cloned());
+    let physical_snapshot_devices = physical_snapshot_devices(
+        &devices,
+        &supervision_pool_devices,
+        &cfg.planner_model,
+        speed_weight_for(&cfg.planner_model),
+    );
     let physical_snapshot = physical_fleet_snapshot(
         &format!("{run_id}:lms-ps"),
         &physical_snapshot_devices,
@@ -46248,6 +46766,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
     let pre_scheduler_control = if broker_enforcement_requested {
+        dispatcher
+            .activity_sink_health
+            .activate()
+            .map_err(anyhow::Error::msg)?;
         let snapshot = physical_snapshot
             .as_ref()
             .expect("physical broker preflight rejected an unavailable snapshot")
@@ -48509,10 +49031,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         LegacyAuxiliaryPhase::MainExecute,
     );
     if broker_enforcement_requested {
-        dispatcher
-            .activity_sink_health
-            .activate()
-            .map_err(anyhow::Error::msg)?;
         let snapshot = physical_snapshot
             .as_ref()
             .expect("physical broker preflight rejected an unavailable snapshot")
@@ -50842,5 +51360,775 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         Ok(())
     } else {
         Err(anyhow!("{} core subtask(s) failed", core_failed))
+    }
+}
+
+#[cfg(test)]
+mod pre_scheduler_semantic_runtime_tests {
+    use super::*;
+    use futures::stream;
+    use goose::providers::base::{
+        MessageStream, ProviderUsage, SingleAttemptFailureProvenance, SingleAttemptStream,
+        SingleAttemptTerminalProof, Usage,
+    };
+    use goose_provider_types::errors::ProviderError;
+    use goose_provider_types::model::ModelConfig;
+    use goose_swarm::VerifiedPhysicalLane;
+    use rmcp::model::{CallToolRequestParams, Tool};
+    use rmcp::object;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::time::Duration;
+    use tempfile::TempDir;
+    use tokio::sync::Notify;
+
+    const SOURCE_MODEL: &str = "pre-scheduler-source-model";
+    const JUDGE_MODEL: &str = "pre-scheduler-judge-model";
+    const SOURCE_DEVICE: &str = "pre-scheduler-source-device";
+    const JUDGE_DEVICE: &str = "pre-scheduler-judge-device";
+    const SOURCE_HOST: &str = "pre-scheduler-source-host";
+    const JUDGE_HOST: &str = "pre-scheduler-judge-host";
+    const VERIFIED_TRANSPORT: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[derive(Default)]
+    struct RuntimeRecordingSink {
+        events: Mutex<Vec<serde_json::Value>>,
+    }
+
+    impl RuntimeRecordingSink {
+        fn values(&self) -> Vec<serde_json::Value> {
+            self.events.lock().unwrap().clone()
+        }
+
+        fn has(&self, event_name: &str) -> bool {
+            self.events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| event["event"] == event_name)
+        }
+
+        async fn wait_for(&self, event_name: &str) -> serde_json::Value {
+            tokio::time::timeout(Duration::from_secs(8), async {
+                loop {
+                    if let Some(event) = self
+                        .events
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|event| event["event"] == event_name)
+                        .cloned()
+                    {
+                        return event;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "timed out waiting for {event_name}; observed events: {:?}",
+                    self.values()
+                )
+            })
+        }
+    }
+
+    impl EventSink for RuntimeRecordingSink {
+        fn emit(&self, event: &SwarmEvent) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(serde_json::to_value(event).unwrap());
+        }
+
+        fn write_value(&self, value: serde_json::Value) {
+            self.events.lock().unwrap().push(value);
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum RuntimeProviderMode {
+        Silent,
+        NetworkFailure,
+        RecurrentSourceSilentJudge,
+        CloseCapturedTurn,
+        SuccessfulNudge,
+        FinishedText,
+        StartPanic,
+    }
+
+    struct RuntimeScriptedProvider {
+        mode: RuntimeProviderMode,
+        source_calls: AtomicUsize,
+        judge_started: Arc<Notify>,
+        source_turn_two_started: Arc<Notify>,
+    }
+
+    impl RuntimeScriptedProvider {
+        fn new(mode: RuntimeProviderMode) -> Self {
+            Self {
+                mode,
+                source_calls: AtomicUsize::new(0),
+                judge_started: Arc::new(Notify::new()),
+                source_turn_two_started: Arc::new(Notify::new()),
+            }
+        }
+
+        fn pending() -> SingleAttemptStream {
+            SingleAttemptStream::new(
+                Box::pin(stream::pending()),
+                SingleAttemptTerminalProof::default(),
+            )
+        }
+
+        fn recurrent_then_pending() -> SingleAttemptStream {
+            let recurrent =
+                "the same semantic reasoning cycle repeats without new evidence ".repeat(500);
+            let message = Message::assistant().with_thinking(recurrent, "runtime-test-signature");
+            SingleAttemptStream::new(
+                Box::pin(
+                    stream::once(async move { Ok((Some(message), None)) }).chain(stream::pending()),
+                ),
+                SingleAttemptTerminalProof::default(),
+            )
+        }
+
+        fn finished_text(model: &str, text: &str) -> SingleAttemptStream {
+            let message = Message::assistant().with_text(text.to_string());
+            let usage = ProviderUsage::new(model.to_string(), Usage::default());
+            SingleAttemptStream::finished(Box::pin(stream::once(async move {
+                Ok((Some(message), Some(usage)))
+            })))
+        }
+
+        fn close_turn_after_judge(&self) -> SingleAttemptStream {
+            let (terminal, reporter) = SingleAttemptTerminalProof::channel();
+            let judge_started = self.judge_started.clone();
+            let recurrent =
+                "the same semantic reasoning cycle repeats without new evidence ".repeat(500);
+            let thinking = Message::assistant().with_thinking(recurrent, "turn-one-signature");
+            let tool_call = CallToolRequestParams::new("developer__shell")
+                .with_arguments(object!({"command": "true"}));
+            let tool_message =
+                Message::assistant().with_tool_request("runtime-turn-one", Ok(tool_call));
+            let output = async_stream::stream! {
+                yield Ok((Some(thinking), None));
+                judge_started.notified().await;
+                reporter.mark_finished();
+                yield Ok((
+                    Some(tool_message),
+                    Some(ProviderUsage::new(SOURCE_MODEL.to_string(), Usage::default())),
+                ));
+            };
+            SingleAttemptStream::new(Box::pin(output), terminal)
+        }
+    }
+
+    #[async_trait]
+    impl Provider for RuntimeScriptedProvider {
+        fn get_name(&self) -> &str {
+            "pre-scheduler-runtime-scripted"
+        }
+
+        fn transport_identity(&self, _model_name: &str) -> Option<String> {
+            Some(VERIFIED_TRANSPORT.to_string())
+        }
+
+        fn supports_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn single_attempt_failure_provenance(
+            &self,
+            _error: &ProviderError,
+        ) -> SingleAttemptFailureProvenance {
+            SingleAttemptFailureProvenance::Unresolved
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Err(ProviderError::ExecutionError(
+                "runtime harness must use terminal-proven single-attempt streaming".to_string(),
+            ))
+        }
+
+        async fn stream_once_with_terminal_proof(
+            &self,
+            model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<SingleAttemptStream, ProviderError> {
+            if model_config.model_name == JUDGE_MODEL {
+                self.judge_started.notify_one();
+                return match self.mode {
+                    RuntimeProviderMode::SuccessfulNudge => Ok(Self::finished_text(
+                        JUDGE_MODEL,
+                        "VERDICT|LOOPING|HIGH|use the established evidence and advance",
+                    )),
+                    RuntimeProviderMode::FinishedText => {
+                        Ok(Self::finished_text(JUDGE_MODEL, "finished"))
+                    }
+                    _ => Ok(Self::pending()),
+                };
+            }
+
+            let source_call = self.source_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            match self.mode {
+                RuntimeProviderMode::Silent => Ok(Self::pending()),
+                RuntimeProviderMode::NetworkFailure => Err(ProviderError::NetworkError(
+                    "runtime test unresolved transport loss".to_string(),
+                )),
+                RuntimeProviderMode::RecurrentSourceSilentJudge => {
+                    Ok(Self::recurrent_then_pending())
+                }
+                RuntimeProviderMode::CloseCapturedTurn if source_call == 0 => {
+                    Ok(self.close_turn_after_judge())
+                }
+                RuntimeProviderMode::CloseCapturedTurn => {
+                    self.source_turn_two_started.notify_one();
+                    Ok(Self::pending())
+                }
+                RuntimeProviderMode::SuccessfulNudge if source_call == 0 => {
+                    Ok(Self::recurrent_then_pending())
+                }
+                RuntimeProviderMode::SuccessfulNudge => {
+                    self.source_turn_two_started.notify_one();
+                    Ok(Self::finished_text(
+                        SOURCE_MODEL,
+                        "source completed after semantic steer",
+                    ))
+                }
+                RuntimeProviderMode::FinishedText => {
+                    Ok(Self::finished_text(SOURCE_MODEL, "research complete"))
+                }
+                RuntimeProviderMode::StartPanic => {
+                    panic!("runtime provider panicked before returning its source stream")
+                }
+            }
+        }
+    }
+
+    struct RuntimeHarness {
+        _working_dir: TempDir,
+        dispatcher: Arc<GooseAgentDispatcher>,
+        control: PhysicalAdmissionControl,
+        sink: Arc<RuntimeRecordingSink>,
+        provider: Arc<RuntimeScriptedProvider>,
+        journal_path: PathBuf,
+    }
+
+    fn lane(device: &str, model: &str, host: &str) -> VerifiedPhysicalLane {
+        VerifiedPhysicalLane {
+            logical_device_id: device.to_string(),
+            model_id: model.to_string(),
+            host_id: host.to_string(),
+            model_instance_id: format!("runtime-instance:{host}"),
+            provider_transport_id: VERIFIED_TRANSPORT.to_string(),
+            advertised_instance_capacity: 1,
+            routing_weight: 1,
+            capacity_evidence: HostCapacityEvidence::MeasuredProfile {
+                profile_hash: format!("runtime-profile:{host}"),
+                profile_key: "runtime:test:pre-scheduler".to_string(),
+                max_concurrent: 1,
+            },
+            route_evidence_id: format!("runtime-route:{host}"),
+        }
+    }
+
+    async fn runtime_harness(mode: RuntimeProviderMode) -> RuntimeHarness {
+        let working_dir = tempfile::tempdir().unwrap();
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let provider = Arc::new(RuntimeScriptedProvider::new(mode));
+        let mut dispatcher = GooseAgentDispatcher::new(
+            working_dir.path().to_path_buf(),
+            sink.clone(),
+            0,
+            4,
+            Vec::new(),
+            HashMap::new(),
+            SOURCE_MODEL.to_string(),
+            1,
+            1,
+            false,
+            SamplingParams::default(),
+            false,
+            false,
+            None,
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+        dispatcher.provider = provider.clone();
+        dispatcher.activity_sink_health.activate().unwrap();
+        let dispatcher = Arc::new(dispatcher);
+        let snapshot = PhysicalFleetSnapshot::new(
+            "pre-scheduler-runtime-snapshot",
+            vec![
+                lane(SOURCE_DEVICE, SOURCE_MODEL, SOURCE_HOST),
+                lane(JUDGE_DEVICE, JUDGE_MODEL, JUDGE_HOST),
+            ],
+        )
+        .unwrap();
+        let journal_path = working_dir
+            .path()
+            .join(".swarm")
+            .join("provider-lifecycle-v1.jsonl");
+        let journal = Arc::new(
+            DurableProviderLifecycleJournal::open(
+                working_dir.path(),
+                "pre-scheduler-runtime-run",
+                &snapshot.snapshot_id,
+            )
+            .unwrap(),
+        );
+        let control = PhysicalAdmissionControl::new_with_journal(
+            "pre-scheduler-runtime-control",
+            snapshot.clone(),
+            sink.clone(),
+            journal,
+        )
+        .unwrap();
+        dispatcher.set_pre_scheduler_semantic(Some(Arc::new(PreSchedulerSemanticRuntime::new(
+            control.clone(),
+            snapshot,
+            "pre-scheduler-runtime-run".to_string(),
+            Arc::downgrade(&dispatcher),
+        ))));
+        RuntimeHarness {
+            _working_dir: working_dir,
+            dispatcher,
+            control,
+            sink,
+            provider,
+            journal_path,
+        }
+    }
+
+    async fn run_source(
+        dispatcher: Arc<GooseAgentDispatcher>,
+        idle_secs: u64,
+        tool_surface: AgentToolSurface,
+    ) -> Result<RunAgentOut> {
+        dispatcher
+            .run_agent_in(
+                dispatcher.working_dir.clone(),
+                SOURCE_MODEL,
+                "runtime source system".to_string(),
+                "runtime source request".to_string(),
+                None,
+                Some(4),
+                &[],
+                tool_surface,
+                idle_secs,
+                Some("research-pod-runtime"),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+    }
+
+    async fn admit_direct(
+        control: &PhysicalAdmissionControl,
+        task_id: &str,
+        logical_device_id: &str,
+    ) -> Result<AdmittedWork, goose_swarm::BrokerError> {
+        let source = TaskVersion {
+            authority_scope: AuthorityScope::new("pre-scheduler-runtime-direct", task_id),
+            phase_epoch: 0,
+            task_id: task_id.to_string(),
+            attempt: 0,
+            revision: 1,
+            kind: SourceRevisionKind::TaskAttempt,
+        };
+        control.set_source_revision(source.clone()).await?;
+        control
+            .admit(WorkOpportunity {
+                work_id: task_id.to_string(),
+                role: WorkRole::Build,
+                priority: WorkRole::Build.priority(),
+                task_rank: 1,
+                source,
+                eligible_logical_device_ids: vec![logical_device_id.to_string()],
+                preferred_model_id: None,
+                excluded_logical_device_id: None,
+            })
+            .await
+    }
+
+    fn released_completion_for(events: &[serde_json::Value], model: &str) -> Vec<String> {
+        events
+            .iter()
+            .filter(|event| {
+                event["event"] == "broker_admission_released"
+                    && event["receipt"]["admission"]["model_id"] == model
+            })
+            .filter_map(|event| {
+                event["receipt"]["local_completion"]
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn production_source_watchdog_cancels_reconciles_and_releases() {
+        let harness = runtime_harness(RuntimeProviderMode::Silent).await;
+        let error = match run_source(
+            harness.dispatcher.clone(),
+            1,
+            AgentToolSurface::ResponseOnly,
+        )
+        .await
+        {
+            Ok(_) => panic!("silent production source unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("agent stalled"));
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["model_id"] == SOURCE_MODEL
+                && event["receipt"]["kind"] == "cancelled"
+        }));
+        assert_eq!(released_completion_for(&events, SOURCE_MODEL), ["error"]);
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+        let next = admit_direct(&harness.control, "after-source-watchdog", SOURCE_DEVICE)
+            .await
+            .unwrap();
+        next.complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_source_panic_reconciles_and_releases_exact_request() {
+        let harness = runtime_harness(RuntimeProviderMode::StartPanic).await;
+        assert!(run_source(
+            harness.dispatcher.clone(),
+            2,
+            AgentToolSurface::ResponseOnly,
+        )
+        .await
+        .is_err());
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["model_id"] == SOURCE_MODEL
+                && event["receipt"]["kind"] == "cancelled"
+        }));
+        assert_eq!(released_completion_for(&events, SOURCE_MODEL), ["error"]);
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+        let next = admit_direct(&harness.control, "after-source-panic", SOURCE_DEVICE)
+            .await
+            .unwrap();
+        next.complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_judge_watchdog_cancels_reconciles_and_releases() {
+        let harness = runtime_harness(RuntimeProviderMode::RecurrentSourceSilentJudge).await;
+        let source = tokio::spawn(run_source(
+            harness.dispatcher.clone(),
+            8,
+            AgentToolSurface::ResponseOnly,
+        ));
+        harness
+            .sink
+            .wait_for("pre_scheduler_semantic_judge_failed")
+            .await;
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["model_id"] == JUDGE_MODEL
+                && event["receipt"]["kind"] == "cancelled"
+        }));
+        assert_eq!(released_completion_for(&events, JUDGE_MODEL), ["error"]);
+        let next = admit_direct(&harness.control, "after-judge-watchdog", JUDGE_DEVICE)
+            .await
+            .unwrap();
+        next.complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        source.abort();
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_unproven_source_error_quarantines_without_false_release() {
+        let harness = runtime_harness(RuntimeProviderMode::NetworkFailure).await;
+        assert!(run_source(
+            harness.dispatcher.clone(),
+            2,
+            AgentToolSurface::ResponseOnly,
+        )
+        .await
+        .is_err());
+        let quarantine = harness.sink.wait_for("broker_admission_quarantined").await;
+        let quarantined_admission = quarantine["receipt"]["admission"]["admission_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            harness.control.wait_until_drained(),
+        )
+        .await
+        .expect("explicit quarantine must not phase-wall the healthy host")
+        .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 1));
+        let spare = admit_direct(&harness.control, "after-source-quarantine", JUDGE_DEVICE)
+            .await
+            .unwrap();
+        spare
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        assert!(admit_direct(
+            &harness.control,
+            "rejected-on-source-quarantine",
+            SOURCE_DEVICE,
+        )
+        .await
+        .is_err());
+        let events = harness.sink.values();
+        assert!(!events.iter().any(|event| {
+            event["event"] == "broker_admission_released"
+                && event["receipt"]["admission"]["admission_id"] == quarantined_admission
+        }));
+        assert!(!events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["admission_id"] == quarantined_admission
+        }));
+    }
+
+    #[tokio::test]
+    async fn production_captured_turn_closure_cancels_judge_before_turn_two_nudge() {
+        let harness = runtime_harness(RuntimeProviderMode::CloseCapturedTurn).await;
+        let source = tokio::spawn(run_source(
+            harness.dispatcher.clone(),
+            8,
+            AgentToolSurface::Developer,
+        ));
+        tokio::time::timeout(
+            Duration::from_secs(8),
+            harness.provider.source_turn_two_started.notified(),
+        )
+        .await
+        .expect("source did not start its second provider turn");
+        let observed = harness
+            .sink
+            .wait_for("pre_scheduler_semantic_judge_observed")
+            .await;
+        assert_eq!(
+            observed["verdict"],
+            "captured_source_request_closed_before_judge"
+        );
+        assert_eq!(observed["nudge_delivered"], false);
+        let events = harness.sink.values();
+        assert_eq!(
+            released_completion_for(&events, JUDGE_MODEL),
+            ["cancellation_requested"]
+        );
+        assert!(!harness.sink.has("pre_scheduler_semantic_nudge_delivered"));
+        let next = admit_direct(&harness.control, "after-moot-judge", JUDGE_DEVICE)
+            .await
+            .unwrap();
+        next.complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        source.abort();
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_looping_judge_nudges_same_session_after_durable_cancel_terminal() {
+        let harness = runtime_harness(RuntimeProviderMode::SuccessfulNudge).await;
+        let output = tokio::time::timeout(
+            Duration::from_secs(8),
+            run_source(
+                harness.dispatcher.clone(),
+                5,
+                AgentToolSurface::ResponseOnly,
+            ),
+        )
+        .await
+        .expect("same-session semantic steer did not complete")
+        .expect("same-session semantic steer failed");
+        assert!(output.text.contains("completed after semantic steer"));
+        assert!(!output.session_id.is_empty());
+        assert!(harness.provider.source_calls.load(AtomicOrdering::SeqCst) >= 2);
+
+        let events = harness.sink.values();
+        let nudge_index = events
+            .iter()
+            .position(|event| event["event"] == "pre_scheduler_semantic_nudge_delivered")
+            .expect("production runtime did not emit a delivered nudge receipt");
+        let nudge = &events[nudge_index];
+        assert_eq!(
+            nudge["receipt"]["source_cancel_terminal"]["kind"],
+            "cancelled"
+        );
+        let cancelled_request_id = nudge["receipt"]["source_cancel_terminal"]["key"]
+            ["provider_request_id"]
+            .as_str()
+            .unwrap();
+        let cancelled_terminal_index = events
+            .iter()
+            .position(|event| {
+                event["event"] == "broker_provider_terminal_observed"
+                    && event["receipt"]["key"]["provider_request_id"] == cancelled_request_id
+                    && event["receipt"]["kind"] == "cancelled"
+            })
+            .expect("source cancellation terminal was not broker-accepted");
+        assert!(cancelled_terminal_index < nudge_index);
+        assert_eq!(released_completion_for(&events, SOURCE_MODEL), ["success"]);
+
+        let journal = std::fs::read_to_string(&harness.journal_path).unwrap();
+        let records = journal
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(records.iter().any(|record| {
+            record["transition"] == "terminal"
+                && record["provider_request_id"] == cancelled_request_id
+                && record["terminal_kind"] == "cancelled"
+        }));
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_research_fan_uses_specific_research_evidence_identity() {
+        let harness = runtime_harness(RuntimeProviderMode::FinishedText).await;
+        let findings = harness
+            .dispatcher
+            .clone()
+            .run_research(
+                vec![ResearchQuestion {
+                    id: "api-contract".to_string(),
+                    question: "Which exact API contract applies?".to_string(),
+                    kind: "web".to_string(),
+                    requirement_ids: vec!["REQ-1".to_string()],
+                    evidence_needed: "exact API contract".to_string(),
+                }],
+                Arc::new(Vec::new()),
+                vec![SOURCE_MODEL.to_string()],
+            )
+            .await;
+        assert_eq!(findings.len(), 1);
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_admission_granted"
+                && event["receipt"]["role"] == "research_evidence"
+                && event["receipt"]["work_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("research-api-contract:pre-scheduler:"))
+        }));
+        assert!(!events.iter().any(|event| {
+            event["event"] == "broker_admission_granted"
+                && event["receipt"]["work_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("planner-call:pre-scheduler:"))
+        }));
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn distinct_planner_lane_is_admitted_without_joining_execute_roster() {
+        let execute = vec![DeviceCfg {
+            id: SOURCE_DEVICE.to_string(),
+            model_id: SOURCE_MODEL.to_string(),
+            weight: 1,
+            enabled: true,
+            speed_weight: 1,
+            supervision: false,
+        }];
+        let planner_model = "planning-only-model";
+        let snapshot_devices = physical_snapshot_devices(&execute, &[], planner_model, 3);
+        assert_eq!(execute.len(), 1);
+        assert_eq!(snapshot_devices.len(), 2);
+        assert!(snapshot_devices
+            .iter()
+            .any(|device| { device.model_id == planner_model && device.supervision }));
+
+        let identities = HashMap::from([
+            (
+                SOURCE_MODEL.to_string(),
+                VerifiedPhysicalIdentity {
+                    host_id: SOURCE_HOST.to_string(),
+                    model_instance_id: "source-instance".to_string(),
+                    provider_transport_id: VERIFIED_TRANSPORT.to_string(),
+                    advertised_instance_capacity: 1,
+                    capacity_evidence: HostCapacityEvidence::MeasuredProfile {
+                        profile_hash: "source-profile".to_string(),
+                        profile_key: "runtime:test:planner-route".to_string(),
+                        max_concurrent: 1,
+                    },
+                    route_evidence_id: "source-route".to_string(),
+                },
+            ),
+            (
+                planner_model.to_string(),
+                VerifiedPhysicalIdentity {
+                    host_id: "planner-only-host".to_string(),
+                    model_instance_id: "planner-instance".to_string(),
+                    provider_transport_id: VERIFIED_TRANSPORT.to_string(),
+                    advertised_instance_capacity: 1,
+                    capacity_evidence: HostCapacityEvidence::MeasuredProfile {
+                        profile_hash: "planner-profile".to_string(),
+                        profile_key: "runtime:test:planner-route".to_string(),
+                        max_concurrent: 1,
+                    },
+                    route_evidence_id: "planner-route".to_string(),
+                },
+            ),
+        ]);
+        let snapshot =
+            physical_fleet_snapshot("planner-only-snapshot", &snapshot_devices, &identities)
+                .unwrap();
+        let control = PhysicalAdmissionControl::new(
+            "planner-only-control",
+            snapshot.clone(),
+            Arc::new(NullSink),
+        )
+        .unwrap();
+        let runtime = PreSchedulerSemanticRuntime::new(
+            control,
+            snapshot,
+            "planner-only-run".to_string(),
+            Weak::new(),
+        );
+        let admitted = runtime
+            .admit_source(planner_model, "planner-canonical")
+            .await
+            .unwrap();
+        assert_eq!(admitted.receipt().model_id, planner_model);
+        admitted
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
     }
 }
