@@ -1,9 +1,10 @@
 # Cloud build descendant cleanup incident — 2026-08-23
 
-Gemini 3.7 Flash completed its full provider episode normally with 42 admitted
-requests and 42 provider-terminal receipts. Its model-authored integration tests
-had launched local service children. Those children were still alive when the
-Goose parent exited, so the coordinator terminated them before returning.
+Gemini 3.7 Flash and Gemini 3.1 Pro Preview completed their full provider episodes
+normally with 42/42 and 73/73 admitted/provider-terminal receipts respectively.
+Their model-authored integration tests had launched local service children. Those
+children were still alive when each Goose parent exited, so the coordinator
+terminated them before returning.
 
 `redacted_copy_until_process_exit` nevertheless returned an unclean result when
 it had merely *observed* a live descendant at parent exit. This conflated two

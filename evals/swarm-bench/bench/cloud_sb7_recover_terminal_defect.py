@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""Recover one fully accounted cloud entrant from a coordinator defect."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+from typing import Any, Mapping
+
+import cloud_sb7
+
+
+def readiness_failure(
+    campaign: Mapping[str, Any],
+    manager: Mapping[str, Any],
+    states: Mapping[str, Mapping[str, Any]],
+    affected_entrants: set[str],
+    expected_failure: str,
+    *,
+    manager_alive: bool,
+) -> tuple[str, str]:
+    if campaign.get("status") != "ATTENTION":
+        return "WAIT", f"campaign={campaign.get('status')}"
+    if manager_alive:
+        return "WAIT", "manager is finishing its terminal transition"
+    if not affected_entrants:
+        return "REFUSE", "affected entrant set is empty"
+    for entrant_id in sorted(affected_entrants):
+        affected = states.get(entrant_id)
+        if not isinstance(affected, Mapping):
+            return "REFUSE", f"affected entrant state is missing: {entrant_id}"
+        if affected.get("status") != "INCOMPLETE":
+            return "REFUSE", f"affected entrant status={affected.get('status')}: {entrant_id}"
+        if affected.get("failure") != expected_failure:
+            return "REFUSE", (
+                "affected entrant failure differs from the sealed incident: "
+                + entrant_id
+            )
+        admitted = int(affected.get("admitted_requests", -1))
+        terminal = int(affected.get("provider_terminal_requests", -1))
+        if admitted <= 0 or admitted != terminal:
+            return "REFUSE", (
+                "affected entrant provider lifecycle is not fully terminal: "
+                + entrant_id
+            )
+        if affected.get("budget_outstanding_request_ids"):
+            return "REFUSE", (
+                "affected entrant retains provider budget reservations: "
+                + entrant_id
+            )
+    unsuccessful = sorted(
+        entrant_id
+        for entrant_id, state in states.items()
+        if entrant_id not in affected_entrants and state.get("status") != "PUBLISHED"
+    )
+    if unsuccessful:
+        return "REFUSE", "unaffected entrants are not published: " + ", ".join(
+            unsuccessful
+        )
+    return "READY", f"{len(affected_entrants)} terminal entrant(s) can be superseded"
+
+
+def log(message: str) -> None:
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    print(f"{stamp} {message}", flush=True)
+
+
+def load_states(root: Path) -> dict[str, dict[str, Any]]:
+    campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+    manifest = cloud_sb7.load_json(Path(str(campaign["entrant_manifest"])))
+    return {
+        str(row["id"]): cloud_sb7.read_state(root, str(row["id"]))
+        for row in cloud_sb7.entrants(manifest)
+    }
+
+
+def wait_until_ready(
+    source_root: Path,
+    affected_entrants: set[str],
+    expected_failure: str,
+    poll_seconds: float,
+) -> None:
+    prior = None
+    while True:
+        campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))
+        manager = cloud_sb7.load_json(source_root / "manager.json")
+        states = load_states(source_root)
+        manager_alive = cloud_sb7.process_alive(
+            manager.get("pid"), manager.get("identity")
+        )
+        disposition, reason = readiness_failure(
+            campaign,
+            manager,
+            states,
+            affected_entrants,
+            expected_failure,
+            manager_alive=manager_alive,
+        )
+        current = (disposition, reason)
+        if current != prior:
+            log(f"{disposition}: {reason}")
+            prior = current
+        if disposition == "READY":
+            return
+        if disposition == "REFUSE":
+            raise SystemExit(reason)
+        time.sleep(poll_seconds)
+
+
+def write_defect_evidence(
+    source_root: Path,
+    target_root: Path,
+    affected_entrants: set[str],
+    root_cause: Path,
+    regression_test: Path,
+) -> Path:
+    campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))
+    binary = Path(str(campaign["binary"]))
+    evidence_path = source_root.parent / f".{target_root.name}-defect-evidence.json"
+    artifacts = [
+        {
+            "role": "root_cause",
+            "path": str(root_cause.resolve()),
+            "sha256": cloud_sb7.sha256_file(root_cause),
+        },
+        {
+            "role": "regression_test",
+            "path": str(regression_test.resolve()),
+            "sha256": cloud_sb7.sha256_file(regression_test),
+        },
+    ]
+    payload = {
+        "schema_version": cloud_sb7.SUPERSESSION_SCHEMA,
+        "classification": "infrastructure_defect",
+        "defect_id": "cloud-descendant-cleanup-20260823",
+        "summary": (
+            "The coordinator rejected a full provider episode after it had "
+            "successfully terminated every model-authored background process."
+        ),
+        "affected_entrants": sorted(affected_entrants),
+        "predecessor_campaign_id": campaign["campaign_id"],
+        "predecessor_binary_sha256": campaign["binary_sha256"],
+        "replacement_binary_sha256": cloud_sb7.sha256_file(binary),
+        "fix_source_commit": cloud_sb7.git_value("rev-parse", "HEAD"),
+        "artifacts": artifacts,
+    }
+    cloud_sb7.atomic_json(evidence_path, payload)
+    return evidence_path
+
+
+def recover(args: argparse.Namespace) -> None:
+    source_root = args.from_root.resolve()
+    target_root = args.root.resolve()
+    affected_entrants = set(args.affected_entrant)
+    root_cause = args.root_cause.resolve()
+    regression_test = args.regression_test.resolve()
+    if source_root == target_root or source_root.parent != target_root.parent:
+        raise SystemExit("source and target must be distinct sibling campaign roots")
+    wait_until_ready(
+        source_root,
+        affected_entrants,
+        args.expected_failure,
+        args.poll_seconds,
+    )
+    log("stopping the sealed predecessor after all unaffected publications completed")
+    cloud_sb7.stop(source_root)
+    source = cloud_sb7.load_json(cloud_sb7.campaign_file(source_root))
+    evidence = write_defect_evidence(
+        source_root,
+        target_root,
+        affected_entrants,
+        root_cause,
+        regression_test,
+    )
+    publisher = source["publisher"]
+    log("creating one-hop successor with successful entrants carried immutably")
+    cloud_sb7.supersede_campaign(
+        source_root,
+        target_root,
+        Path(str(source["binary"])),
+        Path(str(source["entrant_manifest"])),
+        Path(str(source["secret_file"])),
+        Path(str(publisher["repo"])),
+        evidence,
+        publisher.get("mode") == "live",
+        str(publisher["website_base_url"]),
+        float(publisher["verify_timeout_seconds"]),
+        float(publisher["verify_interval_seconds"]),
+        float(publisher["process_timeout_seconds"]),
+    )
+    log("running the successor's fresh strict five-provider smoke gate")
+    if cloud_sb7.durable_smoke(target_root) != 0:
+        raise SystemExit("successor smoke gate failed")
+    log("starting detached monitor and manager; only the affected full arm is planned")
+    cloud_sb7.monitor_start(target_root)
+    cloud_sb7.start(target_root)
+    for entrant_id in sorted(affected_entrants):
+        state = cloud_sb7.read_state(target_root, entrant_id)
+        if state.get("status") not in {
+            "PLANNED",
+            "WAITING_PROVIDER_LANE",
+            "BUILD_RUNNING",
+        }:
+            raise SystemExit(
+                f"affected successor did not launch: {entrant_id}={state.get('status')}"
+            )
+    carried = {
+        entrant_id: candidate.get("status")
+        for entrant_id, candidate in load_states(target_root).items()
+        if entrant_id not in affected_entrants
+    }
+    if any(status != "PUBLISHED" for status in carried.values()):
+        raise SystemExit("successor did not preserve all unaffected published entrants")
+    log(
+        f"RECOVERY_STARTED target={target_root} "
+        f"affected={','.join(sorted(affected_entrants))}"
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--from-root", type=Path, required=True)
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--affected-entrant", action="append", required=True)
+    parser.add_argument("--expected-failure", required=True)
+    parser.add_argument("--root-cause", type=Path, required=True)
+    parser.add_argument("--regression-test", type=Path, required=True)
+    parser.add_argument("--poll-seconds", type=float, default=20.0)
+    args = parser.parse_args()
+    if args.poll_seconds <= 0:
+        raise SystemExit("poll interval must be positive")
+    recover(args)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
