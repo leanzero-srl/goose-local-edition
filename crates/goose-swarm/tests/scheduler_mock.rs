@@ -836,6 +836,42 @@ struct JudgeTestDispatcher {
     slow_all: bool,
 }
 
+/// A worker that lands genuine bytes before remaining in-flight long enough for the deterministic
+/// judge to exhaust its intervention budget and exercise finalize-spin salvage.
+struct SalvageWritingDispatcher {
+    runs: Arc<Mutex<HashMap<String, u32>>>,
+    hints: Arc<Mutex<Vec<(String, String)>>>,
+    target: String,
+    delay: Duration,
+}
+
+#[async_trait]
+impl TaskDispatcher for SalvageWritingDispatcher {
+    async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        *self
+            .runs
+            .lock()
+            .unwrap()
+            .entry(req.task_id.clone())
+            .or_default() += 1;
+        if let Some(hint) = &req.prior_hint {
+            self.hints
+                .lock()
+                .unwrap()
+                .push((req.task_id.clone(), hint.clone()));
+        }
+        if req.task_id == self.target {
+            for path in &req.owned_files {
+                std::fs::write(path, format!("attempt {} produced bytes\n", req.attempt)).unwrap();
+            }
+            tokio::time::sleep(self.delay * 50).await;
+        } else {
+            tokio::time::sleep(self.delay).await;
+        }
+        Ok(format!("out-{}", req.task_id).into())
+    }
+}
+
 #[async_trait]
 impl TaskDispatcher for JudgeTestDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
@@ -953,28 +989,32 @@ async fn judge_kills_and_redispatches_stuck_worker() {
     );
 }
 
-/// Backlog #7 regression: a non-test task that LOOPS to exhaustion is SALVAGED (marked Done because its owned
-/// file was written), and that salvage MUST relax its dependents. Before the fix the salvage set state=Done
-/// but never decremented the dependents' indegree, so a downstream sink (the CLI / integrate-verify task)
-/// stayed Pending forever and the run ended `scheduler stuck` — a working library shipped with no entry point
-/// (observed on expense/tmpl). This asserts the dependent now dispatches and completes.
+/// Backlog #7 regression: a non-test task that LOOPS to exhaustion is provisionally salvaged after writing
+/// its owned file. Its dependent still runs, but the unresolved FullRepairRuler obligation blocks green.
 #[tokio::test]
 async fn salvaged_looping_task_relaxes_dependents() {
-    // The salvage gate requires the looping task's owned file to exist non-empty on disk; use an absolute
-    // path under the temp dir so the check passes regardless of the run cwd.
-    let owned = std::env::temp_dir().join("goose_wf7_salvage_owned.rs");
-    std::fs::write(&owned, "fn main() {}\n").unwrap();
-    let owned_str = owned.to_string_lossy().to_string();
+    let fixture = tempfile::Builder::new()
+        .prefix("goose-wf7-salvage-")
+        .tempdir_in(".")
+        .unwrap();
+    let owned = fixture.path().join("main.rs");
+    std::fs::write(&owned, "pre-existing bytes\n").unwrap();
+    let root = std::env::current_dir().unwrap().canonicalize().unwrap();
+    let owned_str = owned
+        .canonicalize()
+        .unwrap()
+        .strip_prefix(root)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
 
     let runs = Arc::new(Mutex::new(HashMap::new()));
     let hints = Arc::new(Mutex::new(Vec::new()));
-    // slow_all: the target loops on EVERY attempt, so after the intervention cap it terminal-fails -> salvage.
-    let disp = Arc::new(JudgeTestDispatcher {
+    let disp = Arc::new(SalvageWritingDispatcher {
         runs: runs.clone(),
         hints: hints.clone(),
         target: "app".to_string(),
         delay: Duration::from_millis(15),
-        slow_all: true,
     });
     // app (the looping, salvageable non-test task) -> verify (the sink that must still run after the salvage).
     let dag = Dag::from_specs(vec![
@@ -982,7 +1022,7 @@ async fn salvaged_looping_task_relaxes_dependents() {
         spec("verify", &["app"], &[]),
     ])
     .unwrap();
-    let judge = Arc::new(KillJudge {
+    let judge = Arc::new(DeterministicKillJudge {
         target: "app".to_string(),
     });
     let cfg = JudgeConfig {
@@ -997,16 +1037,19 @@ async fn salvaged_looping_task_relaxes_dependents() {
         Scheduler::new(vec![dev("a", "m-a", 1), dev("b", "m-b", 1)], 3).with_judge(judge, cfg);
     let report = sched.run(dag, disp, String::new()).await.unwrap();
 
-    let _ = std::fs::remove_file(&owned);
     assert!(
-        report.done.contains(&"app".to_string()),
-        "the looping task is salvaged to Done (its owned file was written)"
+        report.salvaged.contains(&"app".to_string()),
+        "the task wrote new bytes and is retained as provisional salvage"
     );
     assert!(
         report.done.contains(&"verify".to_string()),
         "backlog #7: the salvage must relax dependents so the verify sink dispatches and completes (not stuck)"
     );
-    assert!(report.failed.is_empty(), "no task fails");
+    assert_eq!(
+        report.failed,
+        vec!["app"],
+        "without a FullRepairRuler consumer, the provisional task must block green"
+    );
 }
 
 /// Counts how many times the judge inspects each task; always passes (never kills).
