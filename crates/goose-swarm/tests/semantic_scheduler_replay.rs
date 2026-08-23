@@ -194,6 +194,7 @@ impl SemanticObservationSnapshotProducer for FixedSnapshotProducer {
 struct NudgeObserver {
     calls: AtomicUsize,
     called: Notify,
+    eligible_routes: Option<Vec<String>>,
 }
 
 impl NudgeObserver {
@@ -201,12 +202,25 @@ impl NudgeObserver {
         Self {
             calls: AtomicUsize::new(0),
             called: Notify::new(),
+            eligible_routes: None,
+        }
+    }
+
+    fn bound_to(eligible_routes: Vec<String>) -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            called: Notify::new(),
+            eligible_routes: Some(eligible_routes),
         }
     }
 }
 
 #[async_trait]
 impl AdmittedSemanticObservationReviewer for NudgeObserver {
+    fn eligible_logical_device_ids(&self) -> Option<Vec<String>> {
+        self.eligible_routes.clone()
+    }
+
     async fn review(&self, request: AdmittedSemanticObservationRequest) -> Result<String, String> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.called.notify_waiters();
@@ -412,5 +426,69 @@ async fn scheduler_fails_closed_when_the_only_verified_route_is_the_observed_wor
         })
         .count();
     assert_eq!(provider_events_for_semantic, 0);
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn scheduler_never_admits_an_idle_lane_without_a_verified_reviewer_provider() {
+    let sink = Arc::new(RecordingSink::default());
+    let event_sink: Arc<dyn EventSink> = sink.clone();
+    let control = control(
+        "semantic-scheduler-no-provider-binding",
+        vec![
+            lane("lane-a", "model-a", "host-a", 1),
+            lane("lane-b", "model-b", "host-b", 1),
+        ],
+        event_sink,
+    );
+    let producer = Arc::new(FixedSnapshotProducer::new());
+    let observer = Arc::new(NudgeObserver::bound_to(vec!["lane-a".to_string()]));
+    let dispatcher = Arc::new(GapDispatcher::new());
+    let run = tokio::spawn({
+        let sink = sink.clone();
+        let control = control.clone();
+        let producer = producer.clone();
+        let observer = observer.clone();
+        let dispatcher = dispatcher.clone();
+        async move {
+            Scheduler::new(
+                vec![device("lane-a", "model-a"), device("lane-b", "model-b")],
+                2,
+            )
+            .with_sink(sink)
+            .with_semantic_observation(producer, observer)
+            .run_with_physical_admission(
+                Dag::from_specs(vec![task("a-long")]).unwrap(),
+                dispatcher,
+                control,
+                "Build the exact provider-binding fixture".to_string(),
+                String::new(),
+            )
+            .await
+        }
+    });
+
+    producer.wait_for_calls(1).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if sink.count("semantic_observation_deferred") == 1 {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("missing-provider deferral was not emitted");
+    dispatcher.release_long.notify_one();
+    let report = tokio::time::timeout(Duration::from_secs(2), run)
+        .await
+        .expect("physical run did not finish")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(report.done, vec!["a-long".to_string()]);
+    assert_eq!(observer.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(sink.count("semantic_observation_summoned"), 1);
+    assert_eq!(sink.semantic_admissions(), 0);
     assert_eq!(control.occupancy().await, (0, 0));
 }

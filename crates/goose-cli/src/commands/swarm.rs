@@ -8,6 +8,7 @@ use super::swarm_control_registry::{
     apply_uncapped_effective_values, control_registry_manifest, merge_effective_config_controls,
     resolve_control_precedence,
 };
+use super::swarm_semantic::{activity_digest_key, ReasoningRecurrenceMeter};
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use console::style;
@@ -14358,25 +14359,6 @@ fn build_reasoning(texts: &[String]) -> String {
     clip_tail(&joined, 1200)
 }
 
-/// The FILENAME a task's activity digest lives under. Task ids may contain path separators —
-/// every scheduled fix task is `fix::r{N}::{owned/file/path}` — and the digest path was built by
-/// interpolating the id directly, so the write aimed at a nested directory that does not exist and
-/// FAILED SILENTLY. Measured live (operator report): two fix workers ground for ten minutes each
-/// while the desktop showed "generating…" with no content and the judge had no digest to read, so
-/// its over-read/thrash checks were disarmed for exactly the tasks that repair the app.
-///
-/// INJECTIVE via a true escape alphabet, because the desktop reverses it to recover the task id.
-/// The previous scheme (`~` -> `~~`, then separators -> `~`) was pairwise-injective for the cases
-/// its test pinned but aliased ADJACENT mixes: `a/~b` and `a~/b` both encoded to `a~~~b`. Escapes
-/// with distinct tails cannot collide: `~` -> `~t`, `/` -> `~s`, `\` -> `~b` — every `~` in the
-/// output is an escape lead, so a left-to-right scan of `~.` pairs is an exact inverse.
-fn activity_digest_key(task_id: &str) -> String {
-    task_id
-        .replace('~', "~t")
-        .replace('/', "~s")
-        .replace('\\', "~b")
-}
-
 /// Build the `.swarm/activity/<key>.json` digest a worker/scout/planner call refreshes as it streams. The judge
 /// reads only tool_calls/errors/recent/last_text; every other key is inert to it (unknown-key-tolerant reader) and
 /// powers the desktop panel's live per-node view. Two dev-verbosity additions over the old inline block: (1) each
@@ -14391,6 +14373,7 @@ fn build_worker_digest(
     malformed: usize,
     thinking_chars: usize,
     last_thinking: &str,
+    reasoning_recurrence: &ReasoningRecurrenceMeter,
     model_id: &str,
 ) -> serde_json::Value {
     let errors = tool_calls.iter().filter(|t| t.ok == Some(false)).count();
@@ -14450,6 +14433,8 @@ fn build_worker_digest(
         // Carry a generous tail of the live reasoning so the desktop's expandable per-node box shows a real
         // run of thinking, not a sliver. The compact line still clamps it; the expand shows the whole thing.
         "last_thinking": tail_chars(last_thinking, 2000),
+        // Neutral telemetry only: these counts cannot nudge, stop, accept, split, or schedule work.
+        "reasoning_recurrence": reasoning_recurrence.snapshot(),
         "model": model_id,
     })
 }
@@ -17099,6 +17084,7 @@ impl GooseAgentDispatcher {
         // for "over_reading" three times at 457s/450s/430s with tool_calls=0, having read nothing.
         let mut thinking_chars: usize = 0;
         let mut last_thinking: String = String::new();
+        let mut reasoning_recurrence = ReasoningRecurrenceMeter::default();
         let mut final_output: Option<String> = None;
         let mut pending: HashMap<String, (String, bool, bool, String)> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
@@ -17483,6 +17469,7 @@ impl GooseAgentDispatcher {
                                 .map_err(|e| anyhow!("agent.reply (judge nudge): {e}"))?;
                             thinking_chars = 0;
                             last_thinking.clear();
+                            reasoning_recurrence.reset();
                             omni_looks = 0;
                             omni_looping_streak = 0;
                             omni_prev_looping_tail = None;
@@ -17657,6 +17644,7 @@ impl GooseAgentDispatcher {
                             MessageContent::Text(t) => texts.push(t.text.clone()),
                             MessageContent::Thinking(t) => {
                                 thinking_chars += t.thinking.chars().count();
+                                reasoning_recurrence.push(&t.thinking);
                                 // ACCUMULATE a rolling tail, don't overwrite: each streamed Thinking chunk is a
                                 // single token (" the", "ents"), so assigning it made the panel show one word at
                                 // a time. Append and keep a bounded window so the digest's tail_chars(400) shows
@@ -17776,6 +17764,7 @@ impl GooseAgentDispatcher {
                         malformed,
                         thinking_chars,
                         &last_thinking,
+                        &reasoning_recurrence,
                         model_id,
                     );
                     let _ = std::fs::write(p, digest.to_string());
@@ -17807,6 +17796,7 @@ impl GooseAgentDispatcher {
                 malformed,
                 thinking_chars,
                 &last_thinking,
+                &reasoning_recurrence,
                 model_id,
             );
             // Mark the terminal digest phase="done" so the panel drops this node out of "working" the instant
