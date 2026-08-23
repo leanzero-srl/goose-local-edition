@@ -5237,7 +5237,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
     def test_smoke_environment_uses_shared_budget_and_isolated_paths(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
+            root = Path(raw).resolve()
             row = self.make_smoke_campaign(root, entrant_count=1)[0]
             state = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
             with mock.patch.object(
@@ -6429,7 +6429,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
+            root = Path(raw).resolve()
             row = self.make_smoke_campaign(root, entrant_count=1)[0]
             entrant_id = str(row["id"])
             unit = root / "entrants" / entrant_id
@@ -6640,7 +6640,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
+            root = Path(raw).resolve()
             row = self.make_smoke_campaign(root, entrant_count=1)[0]
             entrant_id = str(row["id"])
             unit = root / "entrants" / entrant_id
@@ -6753,7 +6753,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
+            root = Path(raw).resolve()
             row = self.make_smoke_campaign(root, entrant_count=1)[0]
             entrant_id = str(row["id"])
             unit = root / "entrants" / entrant_id
@@ -6781,7 +6781,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.validate_monitor_progress_ledger(root)
 
         with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
+            root = Path(raw).resolve()
             row = self.make_smoke_campaign(root, entrant_count=1)[0]
             entrant_id = str(row["id"])
             unit = root / "entrants" / entrant_id
@@ -11749,7 +11749,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
     def test_secret_symlink_is_rejected_before_score_clone_and_by_monitor(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
+            root = Path(raw).resolve()
             rows = self.make_smoke_campaign(root, entrant_count=1)
             entrant_id = str(rows[0]["id"])
             tree = root / "entrants" / entrant_id / "tree"
