@@ -8,6 +8,7 @@
 pub mod broker;
 pub mod coherence;
 pub mod context;
+pub mod control_plane;
 pub mod dag;
 pub mod dispatch;
 pub mod event;
@@ -17,15 +18,20 @@ pub mod replan;
 pub mod scheduler;
 
 pub use broker::{
-    AdmissionReceipt, BrokerError, CapacityUpdateReceipt, HostCapacityEvidence,
+    AdmissionReceipt, BrokerError, BrokerGrant, CapacityUpdateReceipt, HostCapacityEvidence,
     LocalCompletionKind, LocalCompletionReceipt, PhysicalBroker, PhysicalFleetSnapshot,
-    ProviderNotStartedReceipt, ProviderRequestKey, ProviderRequestReceipt, ProviderTerminalKind,
-    ProviderTerminalReceipt, QueueReceipt, ReleasedAdmissionReceipt, SourceRevisionKind,
-    StaleWorkReceipt, TaskVersion, VerifiedPhysicalIdentity, VerifiedPhysicalLane, WorkOpportunity,
-    WorkPriority, WorkRole,
+    PhysicalHostOccupancy, ProviderNotStartedReceipt, ProviderRequestDisposition,
+    ProviderRequestKey, ProviderRequestQueueReceipt, ProviderRequestReceipt, ProviderStartsClosure,
+    ProviderTerminalKind, ProviderTerminalReceipt, QueueReceipt, ReleasedAdmissionReceipt,
+    RevokedAdmissionReceipt, SourceRevisionKind, StaleWorkReceipt, TaskVersion,
+    UnresolvedAdmissionReceipt, VerifiedPhysicalIdentity, VerifiedPhysicalLane,
+    WithdrawnWorkReceipt, WorkOpportunity, WorkPriority, WorkRole,
 };
 pub use coherence::{extract_signatures, scope_contract_bundle, SigLang};
 pub use context::SharedContext;
+pub use control_plane::{
+    AdmittedWork, PhysicalAdmissionControl, ProviderLifecycle, ProviderLifecycleDispatcher,
+};
 pub use dag::{
     expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag, Difficulty,
     Node, ReplanAuthorityFact, ReplanAuthorityReceipt, TaskId, TaskSpec, TaskState,
