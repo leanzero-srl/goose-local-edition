@@ -129,9 +129,13 @@ fn to_input(
         secs_since_last_write: r.secs_since_last_write,
         worker_tool_calls: r.tool_calls,
         worker_thinking_chars: r.thinking_chars,
+        worker_structured_output_bytes: None,
+        worker_structured_output_active: false,
         prev_thinking_chars: prev_think,
         prev_tool_calls: prev_calls,
         prev_observed_secs: prev_at,
+        prev_structured_output_bytes: None,
+        prev_structured_observed_secs: None,
         split_count: 0,
         attempt: 0,
     }

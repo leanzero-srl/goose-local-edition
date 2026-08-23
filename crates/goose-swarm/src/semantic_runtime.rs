@@ -359,6 +359,9 @@ impl SemanticObservationCaptureRequest {
         Ok(request)
     }
 
+    // Every argument is a separately validated scheduler authority field; a loose aggregate would
+    // make it easier to mix fields from different task attempts at this sealing boundary.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_scheduler_state(
         task_id: String,
         attempt: u32,
@@ -478,6 +481,20 @@ pub struct TraceStateMeasurement {
     pub recurrence_observed_windows: u64,
     pub recurrence_repeated_windows: u64,
     pub recurrence_repeat_share: f64,
+    #[serde(default)]
+    pub provider_stream_revision: u64,
+    #[serde(default)]
+    pub provider_stream_chunks: u64,
+    #[serde(default)]
+    pub provider_stream_bytes: u64,
+    #[serde(default)]
+    pub provider_structured_output_chunks: u64,
+    #[serde(default)]
+    pub provider_structured_output_bytes: u64,
+    #[serde(default)]
+    pub provider_last_progress_elapsed_ms: u64,
+    #[serde(default)]
+    pub provider_structured_output_active: bool,
     pub artifact_version: String,
 }
 

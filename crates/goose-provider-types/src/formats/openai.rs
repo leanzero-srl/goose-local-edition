@@ -1,4 +1,7 @@
-use crate::base::{SingleAttemptTerminalProof, SingleAttemptTerminalReporter};
+use crate::base::{
+    complete_current_provider_structured_output, record_current_provider_stream_chunk,
+    ProviderStreamChunkKind, SingleAttemptTerminalProof, SingleAttemptTerminalReporter,
+};
 use crate::conversation::message::{Message, MessageContent, ProviderMetadata};
 use crate::conversation::token_usage::{ProviderUsage, Usage};
 use crate::errors::ProviderError;
@@ -1120,6 +1123,7 @@ where
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
+            let decoded_bytes = response_str.len();
             let line = strip_data_prefix(&response_str);
 
             if line.is_some_and(|l| l == "[DONE]") {
@@ -1137,6 +1141,18 @@ where
             }
             let chunk: StreamingChunk = parse_streaming_chunk(line)?;
             validate_single_stream_choice(&chunk)?;
+            let chunk_kind = if chunk.choices.iter().any(|choice| {
+                choice
+                    .delta
+                    .tool_calls
+                    .as_ref()
+                    .is_some_and(|calls| !calls.is_empty())
+            }) {
+                ProviderStreamChunkKind::StructuredOutput
+            } else {
+                ProviderStreamChunkKind::Content
+            };
+            record_current_provider_stream_chunk(decoded_bytes, chunk_kind);
             if chunk
                 .choices
                 .iter()
@@ -1184,6 +1200,7 @@ where
                     while !done {
                         if let Some(response_chunk) = stream.next().await {
                             let response_str = response_chunk?;
+                            let decoded_bytes = response_str.len();
                             if let Some(line) = strip_data_prefix(&response_str) {
                                 if line == "[DONE]" {
                                     terminal.mark_finished();
@@ -1195,6 +1212,18 @@ where
                                 }
                                 let tool_chunk: StreamingChunk = parse_streaming_chunk(line)?;
                                 validate_single_stream_choice(&tool_chunk)?;
+                                let chunk_kind = if tool_chunk.choices.iter().any(|choice| {
+                                    choice
+                                        .delta
+                                        .tool_calls
+                                        .as_ref()
+                                        .is_some_and(|calls| !calls.is_empty())
+                                }) {
+                                    ProviderStreamChunkKind::StructuredOutput
+                                } else {
+                                    ProviderStreamChunkKind::Content
+                                };
+                                record_current_provider_stream_chunk(decoded_bytes, chunk_kind);
                                 if tool_chunk
                                     .choices
                                     .iter()
@@ -1376,6 +1405,8 @@ where
                 if let Some(id) = chunk.id {
                     msg = msg.with_id(id);
                 }
+
+                complete_current_provider_structured_output();
 
                 yield (
                     Some(msg),
@@ -1771,10 +1802,14 @@ pub fn is_valid_function_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::base::{scope_provider_stream_progress, ProviderStreamProgressSink};
     use crate::conversation::message::Message;
+    use futures::channel::mpsc;
     use rmcp::model::CallToolResult;
     use rmcp::object;
     use serde_json::json;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
     use test_case::test_case;
     use tokio::pin;
     use tokio_stream::{self, StreamExt};
@@ -4035,6 +4070,156 @@ data: [DONE]"#;
         assert_eq!(spec[0]["reasoning_content"], "think once");
         assert_eq!(spec[0]["tool_calls"][0]["function"]["name"], "test_tool");
 
+        Ok(())
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct RecordedProviderProgress {
+        revision: u64,
+        bytes: u64,
+        structured_bytes: u64,
+        structured_active: bool,
+    }
+
+    #[derive(Default)]
+    struct RecordingProviderProgress {
+        events: Mutex<Vec<RecordedProviderProgress>>,
+    }
+
+    impl ProviderStreamProgressSink for RecordingProviderProgress {
+        fn record_decoded_chunk(&self, decoded_bytes: usize, kind: ProviderStreamChunkKind) {
+            let mut events = self.events.lock().unwrap();
+            let previous = events.last().copied().unwrap_or(RecordedProviderProgress {
+                revision: 0,
+                bytes: 0,
+                structured_bytes: 0,
+                structured_active: false,
+            });
+            events.push(RecordedProviderProgress {
+                revision: previous.revision + 1,
+                bytes: previous.bytes + decoded_bytes as u64,
+                structured_bytes: previous.structured_bytes
+                    + if kind == ProviderStreamChunkKind::StructuredOutput {
+                        decoded_bytes as u64
+                    } else {
+                        0
+                    },
+                structured_active: previous.structured_active
+                    || kind == ProviderStreamChunkKind::StructuredOutput,
+            });
+        }
+
+        fn structured_output_completed(&self) {
+            let mut events = self.events.lock().unwrap();
+            let previous = events.last().copied().unwrap();
+            events.push(RecordedProviderProgress {
+                revision: previous.revision + 1,
+                structured_active: false,
+                ..previous
+            });
+        }
+    }
+
+    #[tokio::test]
+    async fn long_partial_final_output_reports_progress_without_yielding_partial_tool_request(
+    ) -> anyhow::Result<()> {
+        let (sender, receiver) = mpsc::unbounded::<anyhow::Result<String>>();
+        let progress = Arc::new(RecordingProviderProgress::default());
+        let scoped_progress: Arc<dyn ProviderStreamProgressSink> = progress.clone();
+        let parser = response_to_streaming_message(receiver);
+        let mut consumer = tokio::spawn(scope_provider_stream_progress(
+            scoped_progress,
+            async move {
+                tokio::pin!(parser);
+                parser.next().await.transpose()
+            },
+        ));
+
+        let first = json!({
+            "id": "response-1",
+            "object": "chat.completion.chunk",
+            "model": "local-model",
+            "choices": [{
+                "index": 0,
+                "delta": {"tool_calls": [{
+                    "index": 0,
+                    "id": "final-output-1",
+                    "type": "function",
+                    "function": {"name": "recipe__final_output", "arguments": "{"}
+                }]},
+                "finish_reason": null
+            }]
+        });
+        sender.unbounded_send(Ok(format!("data: {first}")))?;
+        for _ in 0..32 {
+            let delta = json!({
+                "id": "response-1",
+                "object": "chat.completion.chunk",
+                "model": "local-model",
+                "choices": [{
+                    "index": 0,
+                    "delta": {"tool_calls": [{
+                        "index": 0,
+                        "function": {"arguments": " ".repeat(1024)}
+                    }]},
+                    "finish_reason": null
+                }]
+            });
+            sender.unbounded_send(Ok(format!("data: {delta}")))?;
+        }
+        tokio::task::yield_now().await;
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut consumer)
+                .await
+                .is_err(),
+            "a partial structured argument must not become an executable ToolRequest"
+        );
+        let before_completion = progress.events.lock().unwrap().clone();
+        assert_eq!(before_completion.len(), 33);
+        assert!(before_completion
+            .iter()
+            .all(|event| event.structured_active));
+        assert!(before_completion.windows(2).all(|pair| {
+            pair[1].revision > pair[0].revision
+                && pair[1].bytes > pair[0].bytes
+                && pair[1].structured_bytes > pair[0].structured_bytes
+        }));
+
+        let final_delta = json!({
+            "id": "response-1",
+            "object": "chat.completion.chunk",
+            "model": "local-model",
+            "choices": [{
+                "index": 0,
+                "delta": {"tool_calls": [{
+                    "index": 0,
+                    "function": {"arguments": "}"}
+                }]},
+                "finish_reason": "tool_calls"
+            }]
+        });
+        sender.unbounded_send(Ok(format!("data: {final_delta}")))?;
+        drop(sender);
+
+        let (message, _) = consumer.await??.expect("complete tool request");
+        let message = message.expect("complete tool request message");
+        let request = message
+            .content
+            .into_iter()
+            .find_map(|content| match content {
+                MessageContent::ToolRequest(request) => Some(request),
+                _ => None,
+            })
+            .expect("one complete final_output request");
+        let tool_call = request.tool_call.expect("valid complete tool request");
+        assert_eq!(tool_call.name.as_ref(), "recipe__final_output");
+        assert_eq!(tool_call.arguments, Some(object!({})));
+
+        let completed = progress.events.lock().unwrap().clone();
+        assert_eq!(completed.len(), 35);
+        assert!(!completed.last().unwrap().structured_active);
+        assert!(completed.last().unwrap().revision > before_completion.last().unwrap().revision);
         Ok(())
     }
 

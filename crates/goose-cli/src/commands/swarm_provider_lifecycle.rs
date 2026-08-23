@@ -4,7 +4,10 @@ use goose::config::GooseMode;
 use goose::conversation::message::Message;
 use goose::providers::base::{
     MessageStream, ModelInfo, PermissionRouting, Provider, ProviderHttpProtocol,
-    SingleAttemptFailureProvenance, SingleAttemptStreamOutcome,
+    SingleAttemptFailureProvenance, SingleAttemptStream, SingleAttemptStreamOutcome,
+};
+use goose_provider_types::base::{
+    scope_provider_stream_progress, ProviderStreamChunkKind, ProviderStreamProgressSink,
 };
 use goose_provider_types::errors::ProviderError;
 use goose_provider_types::model::ModelConfig;
@@ -14,8 +17,11 @@ use goose_swarm::{
     ProviderLifecycle, ProviderNudgeDelivery, ProviderTerminalKind, StartedProviderRequest,
 };
 use rmcp::model::Tool;
+use serde::{Deserialize, Serialize};
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
+use tokio::sync::Notify;
 
 tokio::task_local! {
     static ACTIVE_PROVIDER_LIFECYCLE: ProviderLifecycle;
@@ -42,8 +48,9 @@ pub(crate) trait ProviderNudgeDeliveryFactory: Send + Sync {
 pub(crate) fn bind_current_provider_lifecycle(
     provider: Arc<dyn Provider>,
     nudge_factory: Option<Arc<dyn ProviderNudgeDeliveryFactory>>,
+    stream_progress: Option<Arc<ProviderStreamProgressMeter>>,
 ) -> Arc<dyn Provider> {
-    ACTIVE_PROVIDER_LIFECYCLE
+    let lifecycle_bound = ACTIVE_PROVIDER_LIFECYCLE
         .try_with(|lifecycle| {
             Arc::new(LifecycleProvider {
                 inner: provider.clone(),
@@ -51,13 +58,109 @@ pub(crate) fn bind_current_provider_lifecycle(
                 nudge_factory: nudge_factory.clone(),
             }) as Arc<dyn Provider>
         })
-        .unwrap_or(provider)
+        .unwrap_or(provider);
+    match stream_progress {
+        Some(progress) => Arc::new(StreamProgressProvider {
+            inner: lifecycle_bound,
+            progress,
+        }),
+        None => lifecycle_bound,
+    }
 }
 
 struct LifecycleProvider {
     inner: Arc<dyn Provider>,
     lifecycle: ProviderLifecycle,
     nudge_factory: Option<Arc<dyn ProviderNudgeDeliveryFactory>>,
+}
+
+struct StreamProgressProvider {
+    inner: Arc<dyn Provider>,
+    progress: Arc<ProviderStreamProgressMeter>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProviderStreamProgressSnapshot {
+    pub(crate) revision: u64,
+    pub(crate) chunks: u64,
+    pub(crate) bytes: u64,
+    pub(crate) structured_output_chunks: u64,
+    pub(crate) structured_output_bytes: u64,
+    pub(crate) last_progress_elapsed_ms: u64,
+    pub(crate) structured_output_active: bool,
+}
+
+pub(crate) struct ProviderStreamProgressMeter {
+    started: Instant,
+    snapshot: Mutex<ProviderStreamProgressSnapshot>,
+    changed: Notify,
+}
+
+impl ProviderStreamProgressMeter {
+    pub(crate) fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            snapshot: Mutex::new(ProviderStreamProgressSnapshot::default()),
+            changed: Notify::new(),
+        }
+    }
+
+    fn state(&self) -> MutexGuard<'_, ProviderStreamProgressSnapshot> {
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    pub(crate) fn snapshot(&self) -> ProviderStreamProgressSnapshot {
+        *self.state()
+    }
+
+    pub(crate) async fn changed_since(&self, revision: u64) -> ProviderStreamProgressSnapshot {
+        loop {
+            let notified = self.changed.notified();
+            let snapshot = self.snapshot();
+            if snapshot.revision > revision {
+                return snapshot;
+            }
+            notified.await;
+        }
+    }
+
+    fn elapsed_ms(&self) -> u64 {
+        self.started.elapsed().as_millis().min(u64::MAX as u128) as u64
+    }
+}
+
+impl ProviderStreamProgressSink for ProviderStreamProgressMeter {
+    fn record_decoded_chunk(&self, decoded_bytes: usize, kind: ProviderStreamChunkKind) {
+        let mut snapshot = self.state();
+        snapshot.revision = snapshot.revision.saturating_add(1);
+        snapshot.chunks = snapshot.chunks.saturating_add(1);
+        snapshot.bytes = snapshot.bytes.saturating_add(decoded_bytes as u64);
+        if kind == ProviderStreamChunkKind::StructuredOutput {
+            snapshot.structured_output_chunks = snapshot.structured_output_chunks.saturating_add(1);
+            snapshot.structured_output_bytes = snapshot
+                .structured_output_bytes
+                .saturating_add(decoded_bytes as u64);
+            snapshot.structured_output_active = true;
+        }
+        snapshot.last_progress_elapsed_ms = self.elapsed_ms();
+        drop(snapshot);
+        self.changed.notify_waiters();
+    }
+
+    fn structured_output_completed(&self) {
+        let mut snapshot = self.state();
+        if !snapshot.structured_output_active {
+            return;
+        }
+        snapshot.revision = snapshot.revision.saturating_add(1);
+        snapshot.structured_output_active = false;
+        snapshot.last_progress_elapsed_ms = self.elapsed_ms();
+        drop(snapshot);
+        self.changed.notify_waiters();
+    }
 }
 
 struct ProviderTerminalGuard {
@@ -105,6 +208,167 @@ fn lifecycle_error(action: &str, error: impl std::fmt::Display) -> ProviderError
     ProviderError::ExecutionError(format!(
         "physical provider lifecycle {action} failed: {error}"
     ))
+}
+
+fn observe_provider_stream(
+    mut stream: MessageStream,
+    progress: Arc<ProviderStreamProgressMeter>,
+) -> MessageStream {
+    Box::pin(async_stream::stream! {
+        loop {
+            let item = scope_provider_stream_progress(progress.clone(), stream.next()).await;
+            let Some(item) = item else { break; };
+            yield item;
+        }
+    })
+}
+
+#[async_trait]
+impl Provider for StreamProgressProvider {
+    fn get_name(&self) -> &str {
+        self.inner.get_name()
+    }
+
+    fn transport_identity(&self, model_name: &str) -> Option<String> {
+        self.inner.transport_identity(model_name)
+    }
+
+    fn provider_http_protocol(&self, model_name: &str) -> Option<ProviderHttpProtocol> {
+        self.inner.provider_http_protocol(model_name)
+    }
+
+    fn supports_single_attempt_streaming(&self) -> bool {
+        self.inner.supports_single_attempt_streaming()
+    }
+
+    fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+        self.inner
+            .supports_terminal_proven_single_attempt_streaming()
+    }
+
+    fn single_attempt_failure_provenance(
+        &self,
+        error: &ProviderError,
+    ) -> SingleAttemptFailureProvenance {
+        self.inner.single_attempt_failure_provenance(error)
+    }
+
+    async fn stream(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        let stream = self
+            .inner
+            .stream(model_config, system, messages, tools)
+            .await?;
+        Ok(observe_provider_stream(stream, self.progress.clone()))
+    }
+
+    async fn stream_once(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        let stream = self
+            .inner
+            .stream_once(model_config, system, messages, tools)
+            .await?;
+        Ok(observe_provider_stream(stream, self.progress.clone()))
+    }
+
+    async fn stream_once_with_terminal_proof(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<SingleAttemptStream, ProviderError> {
+        let attempt = self
+            .inner
+            .stream_once_with_terminal_proof(model_config, system, messages, tools)
+            .await?;
+        Ok(SingleAttemptStream::new(
+            observe_provider_stream(attempt.stream, self.progress.clone()),
+            attempt.terminal,
+        ))
+    }
+
+    async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
+        self.inner.get_context_limit(model_config).await
+    }
+
+    fn retry_config(&self) -> RetryConfig {
+        self.inner.retry_config()
+    }
+
+    async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
+        self.inner.fetch_supported_models().await
+    }
+
+    async fn fetch_supported_model_info(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        self.inner.fetch_supported_model_info().await
+    }
+
+    async fn fetch_model_info(&self, model_name: &str) -> Result<ModelInfo, ProviderError> {
+        self.inner.fetch_model_info(model_name).await
+    }
+
+    fn skip_canonical_filtering(&self) -> bool {
+        self.inner.skip_canonical_filtering()
+    }
+
+    async fn fetch_recommended_models(&self, toolshim: bool) -> Result<Vec<String>, ProviderError> {
+        self.inner.fetch_recommended_models(toolshim).await
+    }
+
+    async fn fetch_recommended_model_info(
+        &self,
+        toolshim: bool,
+    ) -> Result<Vec<ModelInfo>, ProviderError> {
+        self.inner.fetch_recommended_model_info(toolshim).await
+    }
+
+    async fn map_to_canonical_model(
+        &self,
+        provider_model: &str,
+    ) -> Result<Option<String>, ProviderError> {
+        self.inner.map_to_canonical_model(provider_model).await
+    }
+
+    fn manages_own_context(&self) -> bool {
+        self.inner.manages_own_context()
+    }
+
+    async fn configure_oauth(&self) -> Result<(), ProviderError> {
+        self.inner.configure_oauth().await
+    }
+
+    async fn refresh_credentials(&self) -> Result<(), ProviderError> {
+        self.inner.refresh_credentials().await
+    }
+
+    async fn update_mode(&self, session_id: &str, mode: GooseMode) -> Result<(), ProviderError> {
+        self.inner.update_mode(session_id, mode).await
+    }
+
+    fn permission_routing(&self) -> PermissionRouting {
+        self.inner.permission_routing()
+    }
+
+    async fn handle_permission_confirmation(
+        &self,
+        request_id: &str,
+        confirmation: &PermissionConfirmation,
+    ) -> bool {
+        self.inner
+            .handle_permission_confirmation(request_id, confirmation)
+            .await
+    }
 }
 
 #[async_trait]
@@ -466,6 +730,31 @@ mod tests {
 
     struct WrongTransportProvider;
 
+    struct ProgressOnlyProvider;
+
+    #[async_trait]
+    impl Provider for ProgressOnlyProvider {
+        fn get_name(&self) -> &str {
+            "progress-only"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Ok(Box::pin(stream::once(async {
+                goose_provider_types::base::record_current_provider_stream_chunk(
+                    4096,
+                    ProviderStreamChunkKind::StructuredOutput,
+                );
+                Ok((None, None))
+            })))
+        }
+    }
+
     #[async_trait]
     impl Provider for MockProvider {
         fn get_name(&self) -> &str {
@@ -674,9 +963,33 @@ mod tests {
 
     async fn wrapped_for(behavior: Behavior, lifecycle: ProviderLifecycle) -> Arc<dyn Provider> {
         scope_provider_lifecycle(lifecycle, async move {
-            bind_current_provider_lifecycle(Arc::new(MockProvider { behavior }), None)
+            bind_current_provider_lifecycle(Arc::new(MockProvider { behavior }), None, None)
         })
         .await
+    }
+
+    #[tokio::test]
+    async fn progress_observer_wraps_planning_calls_without_provider_lifecycle() {
+        assert!(!provider_lifecycle_active());
+        let progress = Arc::new(ProviderStreamProgressMeter::new());
+        let provider = bind_current_provider_lifecycle(
+            Arc::new(ProgressOnlyProvider),
+            None,
+            Some(progress.clone()),
+        );
+        let mut stream = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .unwrap();
+        stream.next().await.unwrap().unwrap();
+
+        let snapshot = progress.snapshot();
+        assert_eq!(snapshot.revision, 1);
+        assert_eq!(snapshot.chunks, 1);
+        assert_eq!(snapshot.bytes, 4096);
+        assert_eq!(snapshot.structured_output_chunks, 1);
+        assert_eq!(snapshot.structured_output_bytes, 4096);
+        assert!(snapshot.structured_output_active);
     }
 
     #[tokio::test]
@@ -689,6 +1002,7 @@ mod tests {
                 Arc::new(MockProvider {
                     behavior: Behavior::Finished,
                 }),
+                None,
                 None,
             );
             assert_eq!(
@@ -707,7 +1021,7 @@ mod tests {
     async fn retry_only_provider_is_rejected_before_a_request_starts() {
         let (control, work) = admitted().await;
         let provider = scope_provider_lifecycle(work.lifecycle(), async {
-            bind_current_provider_lifecycle(Arc::new(RetryOnlyProvider), None)
+            bind_current_provider_lifecycle(Arc::new(RetryOnlyProvider), None, None)
         })
         .await;
         let error = provider
@@ -726,7 +1040,7 @@ mod tests {
     async fn transport_drift_is_rejected_before_a_request_starts() {
         let (control, work) = admitted().await;
         let provider = scope_provider_lifecycle(work.lifecycle(), async {
-            bind_current_provider_lifecycle(Arc::new(WrongTransportProvider), None)
+            bind_current_provider_lifecycle(Arc::new(WrongTransportProvider), None, None)
         })
         .await;
         let error = provider
