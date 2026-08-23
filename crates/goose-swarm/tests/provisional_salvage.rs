@@ -7,11 +7,20 @@ use std::sync::Arc;
 
 struct SalvageDispatcher {
     salvage_task: &'static str,
+    rewrite_owned_files: bool,
 }
 
 #[async_trait]
 impl TaskDispatcher for SalvageDispatcher {
     async fn run(&self, request: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        if request.task_id == self.salvage_task && self.rewrite_owned_files {
+            for path in &request.owned_files {
+                if let Some(parent) = std::path::Path::new(path).parent() {
+                    std::fs::create_dir_all(parent).unwrap();
+                }
+                std::fs::write(path, b"artifact changed by the dispatched task\n").unwrap();
+            }
+        }
         Ok(TaskRunOutput {
             output: format!("worker output for {}", request.task_id),
             session_id: Some("salvage-session".to_string()),
@@ -71,7 +80,7 @@ fn fixture_file(relative: &str, bytes: &[u8]) -> (tempfile::TempDir, String) {
 }
 
 #[tokio::test]
-async fn salvaged_artifacts_release_dependents_but_never_become_done() {
+async fn unresolved_salvage_releases_dependents_but_blocks_a_green_report() {
     let (_fixture, module) = fixture_file("src/module.rs", b"pub fn value() -> u32 { 7 }\n");
     let dag = Dag::from_specs(vec![
         task("module", &[], vec![module.clone()]),
@@ -83,6 +92,7 @@ async fn salvaged_artifacts_release_dependents_but_never_become_done() {
             dag,
             Arc::new(SalvageDispatcher {
                 salvage_task: "module",
+                rewrite_owned_files: true,
             }),
             String::new(),
         )
@@ -91,7 +101,11 @@ async fn salvaged_artifacts_release_dependents_but_never_become_done() {
 
     assert_eq!(report.done, vec!["consumer"]);
     assert_eq!(report.salvaged, vec!["module"]);
-    assert!(report.failed.is_empty());
+    assert_eq!(report.failed, vec!["module"]);
+    assert!(
+        !report.bonus.contains(&"module".to_string()),
+        "unverified salvage cannot receive the CLI's bonus-failure exemption"
+    );
     let outcome = report
         .tasks
         .iter()
@@ -131,6 +145,7 @@ async fn partial_artifact_salvage_fails_closed_and_blocks_dependents() {
             dag,
             Arc::new(SalvageDispatcher {
                 salvage_task: "module",
+                rewrite_owned_files: false,
             }),
             String::new(),
         )
@@ -174,6 +189,7 @@ async fn archived_qwen_r1_test_task_cannot_repeat_done_salvage_contradiction() {
             Dag::from_specs(vec![task("test-webhook", &[], vec![test_file])]).unwrap(),
             Arc::new(SalvageDispatcher {
                 salvage_task: "test-webhook",
+                rewrite_owned_files: false,
             }),
             String::new(),
         )
@@ -186,5 +202,29 @@ async fn archived_qwen_r1_test_task_cannot_repeat_done_salvage_contradiction() {
     let outcome = &report.tasks[0];
     assert_eq!(outcome.status, "failed");
     assert!(!outcome.salvaged);
+    assert!(outcome.completion.is_none());
+}
+
+#[tokio::test]
+async fn preexisting_unchanged_artifact_cannot_unlock_salvage() {
+    let (_fixture, module) = fixture_file("src/preexisting.rs", b"pub fn old() {}\n");
+    let report = scheduler()
+        .run(
+            Dag::from_specs(vec![task("module", &[], vec![module])]).unwrap(),
+            Arc::new(SalvageDispatcher {
+                salvage_task: "module",
+                rewrite_owned_files: false,
+            }),
+            String::new(),
+        )
+        .await
+        .unwrap();
+
+    assert!(report.done.is_empty());
+    assert!(report.salvaged.is_empty());
+    assert_eq!(report.failed, vec!["module"]);
+    let outcome = &report.tasks[0];
+    assert_eq!(outcome.status, "failed");
+    assert_eq!(outcome.attempt_history[0].outcome, "invalid_salvage");
     assert!(outcome.completion.is_none());
 }
