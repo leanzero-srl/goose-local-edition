@@ -3455,6 +3455,63 @@ mod provider_start_registry_tests {
     }
 
     #[tokio::test]
+    async fn cancellation_confirmation_rejects_spliced_request_and_terminal_authority() {
+        let control = nudge_control(false);
+        let source = admit_role(
+            &control,
+            "spliced-source",
+            WorkRole::ResearchEvidence,
+            "source-device",
+        )
+        .await;
+        let other = admit_role(
+            &control,
+            "spliced-other",
+            WorkRole::SemanticJudgeObservation,
+            "judge-device",
+        )
+        .await;
+        let source_request = source.lifecycle().start_provider_request().await.unwrap();
+        let delivery = Arc::new(DeferredNudgeDelivery::default());
+        source_request
+            .publish_for_scheduler_with_nudge_delivery(delivery.clone())
+            .unwrap();
+        delivery.try_enqueue("redirect".to_string()).unwrap();
+        let source_completed = source_request
+            .provider_terminal_with_completion(ProviderTerminalKind::Cancelled)
+            .await
+            .unwrap();
+        let other_completed = other
+            .lifecycle()
+            .start_provider_request()
+            .await
+            .unwrap()
+            .provider_terminal_with_completion(ProviderTerminalKind::Cancelled)
+            .await
+            .unwrap();
+        let spliced =
+            CompletedProviderRequest::forge_spliced_for_replay(&source_completed, &other_completed);
+
+        assert!(delivery.confirm_cancelled_terminal(spliced).is_err());
+        let confirmation = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            delivery.confirmed_cancelled_terminal(),
+        )
+        .await
+        .expect("spliced proof must finalize the confirmation channel");
+        assert!(confirmation.is_err());
+
+        source
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        other
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn stale_capture_cannot_nudge_a_later_provider_turn() {
         let control = nudge_control(false);
         let source = admit_role(

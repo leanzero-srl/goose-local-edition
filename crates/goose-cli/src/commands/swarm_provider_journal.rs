@@ -402,6 +402,29 @@ mod tests {
     }
 
     #[test]
+    fn terminal_with_spliced_physical_identity_is_rejected_and_stays_unresolved() {
+        let root = tempfile::tempdir().unwrap();
+        let journal =
+            DurableProviderLifecycleJournal::open(root.path(), "run-a", "fleet-a").unwrap();
+        let started = start();
+        journal.provider_request_started(&started).unwrap();
+
+        let error = journal
+            .provider_terminal(&ProviderTerminalReceipt {
+                admission_id: started.admission_id.clone(),
+                key: started.key.clone(),
+                physical_host_id: "host-b".to_string(),
+                model_instance_id: started.model_instance_id.clone(),
+                kind: ProviderTerminalKind::Cancelled,
+            })
+            .unwrap_err();
+
+        assert!(error.contains("changed its physical identity"));
+        drop(journal);
+        assert!(DurableProviderLifecycleJournal::open(root.path(), "run-b", "fleet-b").is_err());
+    }
+
+    #[test]
     fn torn_or_replaced_journal_fails_closed() {
         let root = tempfile::tempdir().unwrap();
         let journal =
