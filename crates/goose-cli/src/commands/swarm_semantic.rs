@@ -131,13 +131,13 @@ impl ActivitySinkHealth {
             publisher
                 .validate()
                 .map_err(|error| self.record_authority_failure(task_id, stage, error))?;
-            if publisher.task_id != task_id {
+            if publisher.task_id() != task_id {
                 return Err(self.record_authority_failure(
                     task_id,
                     stage,
                     format!(
                         "physical semantic activity publisher task {:?} does not match write task {:?}",
-                        publisher.task_id, task_id
+                        publisher.task_id(), task_id
                     ),
                 ));
             }
@@ -157,7 +157,7 @@ impl ActivitySinkHealth {
 
             let revision = self.next_revision.fetch_add(1, Ordering::AcqRel);
             unpoison(&self.digests).insert(
-                publisher.publisher_id.clone(),
+                publisher.publisher_id().to_string(),
                 EngineActivityDigest {
                     revision,
                     bytes: contents.to_vec(),
@@ -288,10 +288,10 @@ fn validate_authoritative_activity(
         .get("model")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "activity digest has no string model".to_string())?;
-    if model != publisher.model_id {
+    if model != publisher.model_id() {
         return Err(format!(
             "activity digest model {model:?} does not match publisher model {:?}",
-            publisher.model_id
+            publisher.model_id()
         ));
     }
     if let ActivityState::Active(digest) = classify_activity(contents)? {
@@ -556,11 +556,10 @@ struct ActivityDigestRead {
     bytes: Vec<u8>,
 }
 
-#[derive(Clone)]
 struct CapturedTraceState {
     attempt: u32,
     measurement_hash: String,
-    capture: SemanticObservationCapture,
+    source_revision: u64,
 }
 
 pub struct GooseSemanticObservationSnapshotProducer {
@@ -628,7 +627,7 @@ impl GooseSemanticObservationSnapshotProducer {
                 return Err(first_error);
             }
         };
-        let first_artifacts = self.read_owned_artifacts(&request.owned_files).await?;
+        let first_artifacts = self.read_owned_artifacts(request.owned_files()).await?;
         tokio::task::yield_now().await;
         let Some(second_activity) = self.read_activity(request).await? else {
             return Ok(None);
@@ -640,7 +639,7 @@ impl GooseSemanticObservationSnapshotProducer {
             ActivityState::Inactive => return Ok(None),
             ActivityState::Active(digest) => digest,
         };
-        let second_artifacts = self.read_owned_artifacts(&request.owned_files).await?;
+        let second_artifacts = self.read_owned_artifacts(request.owned_files()).await?;
         let first = StableCaptureMaterial {
             digest: *first_digest,
             artifacts: first_artifacts,
@@ -659,7 +658,7 @@ impl GooseSemanticObservationSnapshotProducer {
     ) -> Result<Option<ActivityDigestRead>, String> {
         if let Some(health) = &self.activity_health {
             return health
-                .read_digest(&request.activity_publisher.publisher_id)
+                .read_digest(request.activity_publisher().publisher_id())
                 .map(|digest| {
                     digest.map(|digest| ActivityDigestRead {
                         revision: Some(digest.revision),
@@ -671,7 +670,7 @@ impl GooseSemanticObservationSnapshotProducer {
             .working_dir
             .join(".swarm")
             .join("activity")
-            .join(format!("{}.json", activity_digest_key(&request.task_id)));
+            .join(format!("{}.json", activity_digest_key(request.task_id())));
         match tokio::fs::read(&path).await {
             Ok(bytes) => Ok(Some(ActivityDigestRead {
                 revision: None,
@@ -729,34 +728,36 @@ impl SemanticObservationSnapshotProducer for GooseSemanticObservationSnapshotPro
         &self,
         request: SemanticObservationCaptureRequest,
     ) -> Result<Option<SemanticObservationCapture>, String> {
-        if request.task_id.trim().is_empty() {
+        if request.task_id().trim().is_empty() {
             return Err("semantic capture request task id is empty".to_string());
         }
-        if request.running_model_id.trim().is_empty() {
+        if request.running_model_id().trim().is_empty() {
             return Err("semantic capture request running model is empty".to_string());
         }
-        request.activity_publisher.validate()?;
-        if request.activity_publisher.task_id != request.task_id
-            || request.activity_publisher.attempt != request.attempt
-            || request.activity_publisher.logical_device_id != request.running_logical_device_id
-            || request.activity_publisher.model_id != request.running_model_id
+        request.activity_publisher().validate()?;
+        if request.activity_publisher().task_id() != request.task_id()
+            || request.activity_publisher().attempt() != request.attempt()
+            || request.activity_publisher().logical_device_id()
+                != request.running_logical_device_id()
+            || request.activity_publisher().model_id() != request.running_model_id()
         {
             return Err(
                 "semantic capture request does not match its engine-minted activity publisher"
                     .to_string(),
             );
         }
-        let publisher_id = request.activity_publisher.publisher_id.clone();
+        let publisher_id = request.activity_publisher().publisher_id().to_string();
         let lane = self.task_lane(&publisher_id);
         let _guard = lane.lock().await;
         let Some(material) = self.stable_material(&request).await? else {
             return Ok(None);
         };
         material.digest.validate()?;
-        if material.digest.model != request.running_model_id {
+        if material.digest.model != request.running_model_id() {
             return Err(format!(
                 "activity digest model {:?} does not match running model {:?}",
-                material.digest.model, request.running_model_id
+                material.digest.model,
+                request.running_model_id()
             ));
         }
         if !material.digest.has_meaningful_trace()
@@ -772,15 +773,16 @@ impl SemanticObservationSnapshotProducer for GooseSemanticObservationSnapshotPro
         let measurement_hash = measurement_hash(&request, &material.digest, &artifact_version)?;
         let mut state = unpoison(&self.state);
         if let Some(previous) = state.get(&publisher_id) {
-            if previous.attempt == request.attempt && previous.measurement_hash == measurement_hash
+            if previous.attempt == request.attempt()
+                && previous.measurement_hash == measurement_hash
             {
-                return Ok(Some(previous.capture.clone()));
+                return Ok(None);
             }
         }
         let source_revision = state
             .get(&publisher_id)
-            .filter(|previous| previous.attempt == request.attempt)
-            .map(|previous| previous.capture.snapshot().source_revision())
+            .filter(|previous| previous.attempt == request.attempt())
+            .map(|previous| previous.source_revision)
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(|| "semantic trace revision overflowed".to_string())?;
@@ -804,24 +806,28 @@ impl SemanticObservationSnapshotProducer for GooseSemanticObservationSnapshotPro
             provenance: format!(
                 "engine publisher {} plus two identical full owned-artifact reads; .swarm/activity/{}.json is an optional UI mirror only, and deterministic measurements grant no intervention authority",
                 publisher_id,
-                activity_digest_key(&request.task_id)
+                activity_digest_key(request.task_id())
             ),
         };
         let snapshot = SemanticObservationSnapshotDraft {
             schema_version: SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
-            authority_scope: request.activity_publisher.source.authority_scope.clone(),
-            phase_epoch: request.activity_publisher.source.phase_epoch,
-            task_id: request.task_id.clone(),
-            attempt: request.attempt,
+            authority_scope: request
+                .activity_publisher()
+                .source()
+                .authority_scope
+                .clone(),
+            phase_epoch: request.activity_publisher().source().phase_epoch,
+            task_id: request.task_id().to_string(),
+            attempt: request.attempt(),
             source_revision,
-            contract_version: request.contract_version.clone(),
+            contract_version: request.contract_version().to_string(),
             artifact_version,
-            goal: request.goal.clone(),
-            task_contract: request.task_contract.clone(),
-            acceptance_oracle: request.acceptance_oracle.clone(),
-            dependency_contract_versions: request.dependency_contract_versions.clone(),
-            sibling_contract_versions: request.sibling_contract_versions.clone(),
-            allowed_finding_routes: request.allowed_finding_routes.clone(),
+            goal: request.goal().to_string(),
+            task_contract: request.task_contract().to_string(),
+            acceptance_oracle: request.acceptance_oracle().to_vec(),
+            dependency_contract_versions: request.dependency_contract_versions().clone(),
+            sibling_contract_versions: request.sibling_contract_versions().clone(),
+            allowed_finding_routes: request.allowed_finding_routes().to_vec(),
             artifacts: artifact_snapshots(&material.artifacts),
             trace: SemanticTraceSnapshot {
                 sequence: source_revision,
@@ -838,9 +844,9 @@ impl SemanticObservationSnapshotProducer for GooseSemanticObservationSnapshotPro
         state.insert(
             publisher_id,
             CapturedTraceState {
-                attempt: request.attempt,
+                attempt: request.attempt(),
                 measurement_hash,
-                capture: capture.clone(),
+                source_revision,
             },
         );
         Ok(Some(capture))
@@ -1259,7 +1265,7 @@ impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationRev
             .map_err(AdmittedSemanticReviewError::unresolved)?;
         let messages = [Message::user().with_text(request.observation.user_prompt.clone())];
         let provider_request_id = request.provider_request_id.clone();
-        let result = goose::session_context::with_session_id(Some(provider_request_id), async {
+        let result = goose::session_context::with_session_id(provider_request_id, async {
             let single_attempt = route
                 .provider
                 .stream_once_with_terminal_proof(
@@ -1611,25 +1617,26 @@ mod tests {
                 queue_sequence: admission_sequence,
                 admission_sequence,
             });
-        SemanticObservationCaptureRequest {
-            task_id: "build-api".to_string(),
+        SemanticObservationCaptureRequest::observation_only(
+            "build-api".to_string(),
             attempt,
-            task_rank: 7,
-            goal: "Build the sealed API contract".to_string(),
-            task_contract: "Implement the owned handler and prove the response".to_string(),
-            owned_files: vec!["src/api.rs".to_string()],
-            contract_version: "contract-v1".to_string(),
-            acceptance_oracle: vec![AcceptanceCriterionSnapshot {
+            7,
+            "Build the sealed API contract".to_string(),
+            "Implement the owned handler and prove the response".to_string(),
+            vec!["src/api.rs".to_string()],
+            "contract-v1".to_string(),
+            vec![AcceptanceCriterionSnapshot {
                 id: "handler".to_string(),
                 text: "The owned handler implements the frozen response".to_string(),
             }],
-            dependency_contract_versions: BTreeMap::new(),
-            sibling_contract_versions: BTreeMap::new(),
-            allowed_finding_routes: vec!["integrate-verify".to_string()],
-            running_logical_device_id: "worker-lane".to_string(),
-            running_model_id: "worker-model".to_string(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            vec!["integrate-verify".to_string()],
+            "worker-lane".to_string(),
+            "worker-model".to_string(),
             activity_publisher,
-        }
+        )
+        .expect("test capture request matches its admitted publisher")
     }
 
     fn recurrence() -> ReasoningRecurrenceSnapshot {
@@ -1730,13 +1737,13 @@ mod tests {
         health.activate().unwrap();
 
         let request = capture_request();
-        let path = health.activity_path(&request.task_id);
+        let path = health.activity_path(request.task_id());
         health
             .write_digest(
                 &path,
                 &serde_json::to_vec(&active_digest()).unwrap(),
-                &request.task_id,
-                Some(&request.activity_publisher),
+                request.task_id(),
+                Some(request.activity_publisher()),
                 "test",
                 true,
             )
@@ -1748,8 +1755,8 @@ mod tests {
             .write_digest(
                 &path,
                 &second,
-                &request.task_id,
-                Some(&request.activity_publisher),
+                request.task_id(),
+                Some(request.activity_publisher()),
                 "test",
                 true,
             )
@@ -1779,10 +1786,10 @@ mod tests {
         health.activate().unwrap();
         health
             .write_digest(
-                &health.activity_path(&request.task_id),
+                &health.activity_path(request.task_id()),
                 &serde_json::to_vec(&active_digest()).unwrap(),
-                &request.task_id,
-                Some(&request.activity_publisher),
+                request.task_id(),
+                Some(request.activity_publisher()),
                 "stream",
                 true,
             )
@@ -1809,13 +1816,13 @@ mod tests {
         let events = Arc::new(RecordingSink::default());
         let health = Arc::new(ActivitySinkHealth::new(root.path(), events.clone()).unwrap());
         health.activate().unwrap();
-        let activity_path = health.activity_path(&request.task_id);
+        let activity_path = health.activity_path(request.task_id());
         health
             .write_digest(
                 &activity_path,
                 &serde_json::to_vec(&active_digest()).unwrap(),
-                &request.task_id,
-                Some(&request.activity_publisher),
+                request.task_id(),
+                Some(request.activity_publisher()),
                 "seed",
                 true,
             )
@@ -1846,8 +1853,8 @@ mod tests {
             .write_digest(
                 &activity_path,
                 &serde_json::to_vec(&advanced).unwrap(),
-                &request.task_id,
-                Some(&request.activity_publisher),
+                request.task_id(),
+                Some(request.activity_publisher()),
                 "stream",
                 true,
             )
@@ -1856,8 +1863,8 @@ mod tests {
             .write_digest(
                 &activity_path,
                 &serde_json::to_vec(&advanced).unwrap(),
-                &request.task_id,
-                Some(&request.activity_publisher),
+                request.task_id(),
+                Some(request.activity_publisher()),
                 "final",
                 true,
             )
@@ -1878,14 +1885,14 @@ mod tests {
         let events = Arc::new(RecordingSink::default());
         let health = Arc::new(ActivitySinkHealth::new(root.path(), events.clone()).unwrap());
         health.activate().unwrap();
-        let activity_path = health.activity_path(&request.task_id);
+        let activity_path = health.activity_path(request.task_id());
 
         let first = health
             .write_digest(
                 &activity_path,
                 b"not-json",
-                &request.task_id,
-                Some(&request.activity_publisher),
+                request.task_id(),
+                Some(request.activity_publisher()),
                 "stream",
                 true,
             )
@@ -1895,8 +1902,8 @@ mod tests {
             .write_digest(
                 &activity_path,
                 &serde_json::to_vec(&active_digest()).unwrap(),
-                &request.task_id,
-                Some(&request.activity_publisher),
+                request.task_id(),
+                Some(request.activity_publisher()),
                 "final",
                 true,
             )
@@ -1963,15 +1970,15 @@ mod tests {
         let events = Arc::new(RecordingSink::default());
         let health = ActivitySinkHealth::new(root.path(), events.clone()).unwrap();
         health.activate().unwrap();
-        let path = health.activity_path(&request.task_id);
+        let path = health.activity_path(request.task_id());
         let mut wrong = active_digest();
         wrong["model"] = serde_json::json!("other-model");
         let error = health
             .write_digest(
                 &path,
                 &serde_json::to_vec(&wrong).unwrap(),
-                &request.task_id,
-                Some(&request.activity_publisher),
+                request.task_id(),
+                Some(request.activity_publisher()),
                 "stream",
                 true,
             )
@@ -1986,7 +1993,7 @@ mod tests {
         std::fs::create_dir_all(root.path().join("src")).unwrap();
         std::fs::write(root.path().join("src/api.rs"), "pub fn api() {}\n").unwrap();
         let request = capture_request();
-        write_activity(root.path(), &request.task_id, active_digest());
+        write_activity(root.path(), request.task_id(), active_digest());
         let producer =
             Arc::new(GooseSemanticObservationSnapshotProducer::new(root.path()).unwrap());
 
@@ -2023,14 +2030,14 @@ mod tests {
         let producer = GooseSemanticObservationSnapshotProducer::new(root.path()).unwrap();
         write_activity(
             root.path(),
-            &request.task_id,
+            request.task_id(),
             serde_json::json!({"model": "worker-model", "phase": "processing"}),
         );
         assert!(producer.capture(request.clone()).await.unwrap().is_none());
 
         write_activity(
             root.path(),
-            &request.task_id,
+            request.task_id(),
             serde_json::json!({"model": "worker-model"}),
         );
         assert!(producer.capture(request.clone()).await.is_err());
@@ -2056,7 +2063,7 @@ mod tests {
         )
         .unwrap();
         let request = capture_request();
-        write_activity(root.path(), &request.task_id, active_digest());
+        write_activity(root.path(), request.task_id(), active_digest());
         let producer = GooseSemanticObservationSnapshotProducer::new(root.path()).unwrap();
         assert!(producer.capture(request).await.is_err());
     }
@@ -2125,7 +2132,7 @@ mod tests {
         std::fs::create_dir_all(root.path().join("src")).unwrap();
         std::fs::write(root.path().join("src/api.rs"), "pub fn api() {}\n").unwrap();
         let capture_request = capture_request();
-        write_activity(root.path(), &capture_request.task_id, active_digest());
+        write_activity(root.path(), capture_request.task_id(), active_digest());
         let producer = GooseSemanticObservationSnapshotProducer::new(root.path()).unwrap();
         let capture = producer.capture(capture_request).await.unwrap().unwrap();
         let snapshot_hash = capture.snapshot().snapshot_hash().to_string();
@@ -2219,7 +2226,7 @@ mod tests {
         std::fs::create_dir_all(root.path().join("src")).unwrap();
         std::fs::write(root.path().join("src/api.rs"), "pub fn api() {}\n").unwrap();
         let capture_request = capture_request();
-        write_activity(root.path(), &capture_request.task_id, active_digest());
+        write_activity(root.path(), capture_request.task_id(), active_digest());
         let producer = GooseSemanticObservationSnapshotProducer::new(root.path()).unwrap();
         let capture = producer.capture(capture_request).await.unwrap().unwrap();
         let provider = Arc::new(MockProvider::new("unused".to_string()));

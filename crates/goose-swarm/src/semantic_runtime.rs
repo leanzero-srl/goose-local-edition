@@ -3,32 +3,33 @@
 //! A summons is evidence that a trace changed, not a verdict about that change. This module has no
 //! action-delivery API and cannot mutate scheduler state.
 
+use crate::control_plane::{LiveProviderRequestSession, StartedProviderRequest};
 use crate::semantic_observation::{
     AcceptanceCriterionSnapshot, NeutralJudgeSignal, SealedSemanticObservationSnapshot,
 };
-use crate::{AdmissionReceipt, TaskVersion};
+use crate::{AdmissionReceipt, ProviderRequestReceipt, SourceRevisionKind, TaskVersion};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SemanticActivityPublisher {
-    pub publisher_id: String,
-    pub task_id: String,
-    pub attempt: u32,
-    pub admission_id: String,
-    pub work_role: String,
-    pub source_id: String,
-    pub source: TaskVersion,
-    pub fleet_snapshot_id: String,
-    pub logical_device_id: String,
-    pub model_id: String,
-    pub physical_host_id: String,
-    pub model_instance_id: String,
-    pub provider_transport_id: String,
-    pub capacity_evidence_id: String,
+    pub(crate) publisher_id: String,
+    pub(crate) task_id: String,
+    pub(crate) attempt: u32,
+    pub(crate) admission_id: String,
+    pub(crate) work_role: String,
+    pub(crate) source_id: String,
+    pub(crate) source: TaskVersion,
+    pub(crate) fleet_snapshot_id: String,
+    pub(crate) logical_device_id: String,
+    pub(crate) model_id: String,
+    pub(crate) physical_host_id: String,
+    pub(crate) model_instance_id: String,
+    pub(crate) provider_transport_id: String,
+    pub(crate) capacity_evidence_id: String,
 }
 
 impl SemanticActivityPublisher {
@@ -99,6 +100,50 @@ impl SemanticActivityPublisher {
         Ok(())
     }
 
+    pub fn publisher_id(&self) -> &str {
+        &self.publisher_id
+    }
+
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
+    pub fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    pub fn admission_id(&self) -> &str {
+        &self.admission_id
+    }
+
+    pub fn work_role(&self) -> &str {
+        &self.work_role
+    }
+
+    pub fn source(&self) -> &TaskVersion {
+        &self.source
+    }
+
+    pub fn logical_device_id(&self) -> &str {
+        &self.logical_device_id
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    pub fn physical_host_id(&self) -> &str {
+        &self.physical_host_id
+    }
+
+    pub fn model_instance_id(&self) -> &str {
+        &self.model_instance_id
+    }
+
+    pub fn provider_transport_id(&self) -> &str {
+        &self.provider_transport_id
+    }
+
     fn identity_fields(&self) -> SemanticActivityPublisherIdentity<'_> {
         SemanticActivityPublisherIdentity {
             task_id: &self.task_id,
@@ -147,23 +192,327 @@ fn canonical_digest(value: &impl Serialize) -> String {
     encoded
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// Exact provider request that owns the observed worker's current source session.
+///
+/// This boundary can only be minted from a broker-admitted build or repair task plus the provider
+/// start receipt for that same admission and physical instance. Fleet idleness is intentionally not
+/// an input: spare capacity may run an observer, but it cannot identify or authorize a target.
+#[derive(Debug)]
+pub struct SemanticSourceProviderSessionBoundary {
+    publisher: SemanticActivityPublisher,
+    provider_request: ProviderRequestReceipt,
+    provider_session: Arc<LiveProviderRequestSession>,
+    binding_hash: String,
+}
+
+impl SemanticSourceProviderSessionBoundary {
+    pub(crate) fn validate_started_provider_request(
+        publisher: &SemanticActivityPublisher,
+        started_provider_request: &StartedProviderRequest,
+    ) -> Result<(), String> {
+        let provider_request = started_provider_request.receipt();
+        publisher.validate()?;
+        if !matches!(publisher.work_role.as_str(), "build" | "repair")
+            || !matches!(publisher.source.kind, SourceRevisionKind::TaskAttempt)
+        {
+            return Err(
+                "semantic source provider session must belong to admitted build or repair work"
+                    .to_string(),
+            );
+        }
+        for (name, actual, expected) in [
+            (
+                "admission id",
+                provider_request.admission_id.as_str(),
+                publisher.admission_id.as_str(),
+            ),
+            (
+                "physical host id",
+                provider_request.physical_host_id.as_str(),
+                publisher.physical_host_id.as_str(),
+            ),
+            (
+                "model instance id",
+                provider_request.model_instance_id.as_str(),
+                publisher.model_instance_id.as_str(),
+            ),
+        ] {
+            if actual != expected {
+                return Err(format!(
+                    "semantic source provider {name} does not match its activity publisher"
+                ));
+            }
+        }
+        let provider_request_id = provider_request.key.provider_request_id.as_str();
+        if provider_request_id.trim().is_empty()
+            || provider_request_id.trim() != provider_request_id
+        {
+            return Err(
+                "semantic source provider request id is empty or has surrounding whitespace"
+                    .to_string(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn from_provider_session(
+        publisher: &SemanticActivityPublisher,
+        provider_session: LiveProviderRequestSession,
+    ) -> Result<Self, String> {
+        let provider_request = provider_session.receipt();
+        publisher.validate()?;
+        if provider_request.admission_id != publisher.admission_id
+            || provider_request.physical_host_id != publisher.physical_host_id
+            || provider_request.model_instance_id != publisher.model_instance_id
+        {
+            return Err(
+                "provider session does not match its semantic activity publisher".to_string(),
+            );
+        }
+        let publisher = publisher.clone();
+        let provider_request = provider_request.clone();
+        let binding_hash = canonical_digest(&(&publisher, &provider_request));
+        Ok(Self {
+            publisher,
+            provider_request,
+            provider_session: Arc::new(provider_session),
+            binding_hash,
+        })
+    }
+
+    pub fn authority_scope(&self) -> &crate::AuthorityScope {
+        &self.publisher.source.authority_scope
+    }
+
+    pub fn phase_epoch(&self) -> u64 {
+        self.publisher.source.phase_epoch
+    }
+
+    pub fn task_id(&self) -> &str {
+        &self.publisher.source.task_id
+    }
+
+    pub fn attempt(&self) -> u32 {
+        self.publisher.source.attempt
+    }
+
+    pub fn task_source_revision(&self) -> u64 {
+        self.publisher.source.revision
+    }
+
+    pub fn publisher_id(&self) -> &str {
+        &self.publisher.publisher_id
+    }
+
+    pub fn admission_id(&self) -> &str {
+        &self.provider_request.admission_id
+    }
+
+    pub fn provider_request_id(&self) -> &str {
+        &self.provider_request.key.provider_request_id
+    }
+
+    pub fn provider_request_ordinal(&self) -> u32 {
+        self.provider_request.key.ordinal
+    }
+
+    pub fn logical_device_id(&self) -> &str {
+        &self.publisher.logical_device_id
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.publisher.model_id
+    }
+
+    pub fn physical_host_id(&self) -> &str {
+        &self.publisher.physical_host_id
+    }
+
+    pub fn model_instance_id(&self) -> &str {
+        &self.publisher.model_instance_id
+    }
+
+    pub fn provider_transport_id(&self) -> &str {
+        &self.publisher.provider_transport_id
+    }
+
+    pub fn binding_hash(&self) -> &str {
+        &self.binding_hash
+    }
+
+    pub(crate) fn provider_session(&self) -> Arc<LiveProviderRequestSession> {
+        Arc::clone(&self.provider_session)
+    }
+
+    fn matches_publisher(&self, publisher: &SemanticActivityPublisher) -> bool {
+        &self.publisher == publisher
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SemanticObservationCaptureRequest {
-    pub task_id: String,
-    pub attempt: u32,
-    pub task_rank: u64,
-    pub goal: String,
-    pub task_contract: String,
-    pub owned_files: Vec<String>,
-    pub contract_version: String,
-    pub acceptance_oracle: Vec<AcceptanceCriterionSnapshot>,
-    pub dependency_contract_versions: BTreeMap<String, String>,
-    pub sibling_contract_versions: BTreeMap<String, String>,
-    pub allowed_finding_routes: Vec<String>,
-    pub running_logical_device_id: String,
-    pub running_model_id: String,
-    pub activity_publisher: SemanticActivityPublisher,
+    pub(crate) task_id: String,
+    pub(crate) attempt: u32,
+    pub(crate) task_rank: u64,
+    pub(crate) goal: String,
+    pub(crate) task_contract: String,
+    pub(crate) owned_files: Vec<String>,
+    pub(crate) contract_version: String,
+    pub(crate) acceptance_oracle: Vec<AcceptanceCriterionSnapshot>,
+    pub(crate) dependency_contract_versions: BTreeMap<String, String>,
+    pub(crate) sibling_contract_versions: BTreeMap<String, String>,
+    pub(crate) allowed_finding_routes: Vec<String>,
+    pub(crate) running_logical_device_id: String,
+    pub(crate) running_model_id: String,
+    pub(crate) activity_publisher: SemanticActivityPublisher,
+}
+
+impl SemanticObservationCaptureRequest {
+    /// Build portable observation input. This value has no control authority; the swarm scheduler
+    /// must independently mint an opaque [`EngineSemanticTaskAuthority`] before the brokered plane
+    /// will accept it for nudge-capable evidence.
+    #[allow(clippy::too_many_arguments)]
+    pub fn observation_only(
+        task_id: String,
+        attempt: u32,
+        task_rank: u64,
+        goal: String,
+        task_contract: String,
+        owned_files: Vec<String>,
+        contract_version: String,
+        acceptance_oracle: Vec<AcceptanceCriterionSnapshot>,
+        dependency_contract_versions: BTreeMap<String, String>,
+        sibling_contract_versions: BTreeMap<String, String>,
+        allowed_finding_routes: Vec<String>,
+        running_logical_device_id: String,
+        running_model_id: String,
+        activity_publisher: SemanticActivityPublisher,
+    ) -> Result<Self, String> {
+        let request = Self {
+            task_id,
+            attempt,
+            task_rank,
+            goal,
+            task_contract,
+            owned_files,
+            contract_version,
+            acceptance_oracle,
+            dependency_contract_versions,
+            sibling_contract_versions,
+            allowed_finding_routes,
+            running_logical_device_id,
+            running_model_id,
+            activity_publisher,
+        };
+        request.validate_boundary()?;
+        Ok(request)
+    }
+
+    pub(crate) fn from_scheduler_state(
+        task_id: String,
+        attempt: u32,
+        task_rank: u64,
+        goal: String,
+        task_contract: String,
+        owned_files: Vec<String>,
+        contract_version: String,
+        acceptance_oracle: Vec<AcceptanceCriterionSnapshot>,
+        dependency_contract_versions: BTreeMap<String, String>,
+        sibling_contract_versions: BTreeMap<String, String>,
+        allowed_finding_routes: Vec<String>,
+        running_logical_device_id: String,
+        running_model_id: String,
+        activity_publisher: SemanticActivityPublisher,
+    ) -> Result<Self, String> {
+        Self::observation_only(
+            task_id,
+            attempt,
+            task_rank,
+            goal,
+            task_contract,
+            owned_files,
+            contract_version,
+            acceptance_oracle,
+            dependency_contract_versions,
+            sibling_contract_versions,
+            allowed_finding_routes,
+            running_logical_device_id,
+            running_model_id,
+            activity_publisher,
+        )
+    }
+
+    fn validate_boundary(&self) -> Result<(), String> {
+        self.activity_publisher.validate()?;
+        if self.task_id != self.activity_publisher.task_id
+            || self.attempt != self.activity_publisher.attempt
+            || self.running_logical_device_id != self.activity_publisher.logical_device_id
+            || self.running_model_id != self.activity_publisher.model_id
+        {
+            return Err(
+                "semantic capture request does not match its admitted activity publisher"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
+    pub fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    pub fn task_rank(&self) -> u64 {
+        self.task_rank
+    }
+
+    pub fn goal(&self) -> &str {
+        &self.goal
+    }
+
+    pub fn task_contract(&self) -> &str {
+        &self.task_contract
+    }
+
+    pub fn owned_files(&self) -> &[String] {
+        &self.owned_files
+    }
+
+    pub fn contract_version(&self) -> &str {
+        &self.contract_version
+    }
+
+    pub fn acceptance_oracle(&self) -> &[AcceptanceCriterionSnapshot] {
+        &self.acceptance_oracle
+    }
+
+    pub fn dependency_contract_versions(&self) -> &BTreeMap<String, String> {
+        &self.dependency_contract_versions
+    }
+
+    pub fn sibling_contract_versions(&self) -> &BTreeMap<String, String> {
+        &self.sibling_contract_versions
+    }
+
+    pub fn allowed_finding_routes(&self) -> &[String] {
+        &self.allowed_finding_routes
+    }
+
+    pub fn running_logical_device_id(&self) -> &str {
+        &self.running_logical_device_id
+    }
+
+    pub fn running_model_id(&self) -> &str {
+        &self.running_model_id
+    }
+
+    pub fn activity_publisher(&self) -> &SemanticActivityPublisher {
+        &self.activity_publisher
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -226,10 +575,294 @@ pub struct SemanticTraceRevision {
     pub snapshot_hash: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SemanticObservationCapture {
     snapshot: SealedSemanticObservationSnapshot,
     summons: SemanticObservationSummonsSignal,
+}
+
+/// Engine-minted task/acceptance authority used only while sealing a nudge-capable capture.
+///
+/// The ordinary capture request remains a portable observation input. Its contents cannot become
+/// control evidence unless they match this opaque capability issued by the engine-held authority.
+#[derive(Debug)]
+pub(crate) struct SemanticTaskEvidenceCapability {
+    authority_id: String,
+    request_hash: String,
+}
+
+/// Scheduler-owned authority for one exact task contract and admitted execution route.
+///
+/// This is deliberately separate from [`SemanticObservationCaptureRequest`]. The latter remains a
+/// portable observation input and is caller-constructible; it cannot establish control provenance.
+/// Only engine code may mint this opaque value at the point where the scheduler still owns the DAG
+/// task, acceptance oracle, and admitted activity publisher.
+#[derive(Debug)]
+pub(crate) struct EngineSemanticTaskAuthority {
+    request_hash: String,
+    lineage_key: String,
+}
+
+impl EngineSemanticTaskAuthority {
+    pub(crate) fn mint_from_scheduler_state(
+        request: &SemanticObservationCaptureRequest,
+    ) -> Result<Self, String> {
+        request.activity_publisher.validate()?;
+        if request.task_id != request.activity_publisher.task_id
+            || request.attempt != request.activity_publisher.attempt
+            || request.running_logical_device_id != request.activity_publisher.logical_device_id
+            || request.running_model_id != request.activity_publisher.model_id
+        {
+            return Err(
+                "semantic scheduler task authority does not match its admitted activity publisher"
+                    .to_string(),
+            );
+        }
+        Ok(Self {
+            request_hash: canonical_digest(&SemanticTaskEvidenceIdentity::new(request)),
+            lineage_key: canonical_digest(&(
+                "goose.semantic.task_lineage.v1",
+                &request.activity_publisher.source.authority_scope.run_id,
+                &request.task_id,
+            )),
+        })
+    }
+
+    pub(crate) fn request_hash(&self) -> &str {
+        &self.request_hash
+    }
+
+    pub(crate) fn matches(&self, request: &SemanticObservationCaptureRequest) -> bool {
+        self.request_hash == canonical_digest(&SemanticTaskEvidenceIdentity::new(request))
+    }
+
+    pub(crate) fn lineage_key(&self) -> &str {
+        &self.lineage_key
+    }
+}
+
+impl SemanticTaskEvidenceCapability {
+    pub(crate) fn mint(
+        authority_id: &str,
+        engine_authority: EngineSemanticTaskAuthority,
+    ) -> Result<Self, String> {
+        if authority_id.trim().is_empty() || authority_id.trim() != authority_id {
+            return Err("semantic task evidence authority id is invalid".to_string());
+        }
+        Ok(Self {
+            authority_id: authority_id.to_string(),
+            request_hash: engine_authority.request_hash,
+        })
+    }
+
+    pub(crate) fn matches(&self, request: &SemanticObservationCaptureRequest) -> bool {
+        self.request_hash == canonical_digest(&SemanticTaskEvidenceIdentity::new(request))
+    }
+
+    pub(crate) fn authority_id(&self) -> &str {
+        &self.authority_id
+    }
+
+    pub(crate) fn request_hash(&self) -> &str {
+        &self.request_hash
+    }
+}
+
+#[derive(Serialize)]
+struct SemanticTaskEvidenceIdentity<'a> {
+    domain: &'static str,
+    task_id: &'a str,
+    attempt: u32,
+    task_rank: u64,
+    goal: &'a str,
+    task_contract: &'a str,
+    owned_files: &'a [String],
+    contract_version: &'a str,
+    acceptance_oracle: &'a [AcceptanceCriterionSnapshot],
+    dependency_contract_versions: &'a BTreeMap<String, String>,
+    sibling_contract_versions: &'a BTreeMap<String, String>,
+    allowed_finding_routes: &'a [String],
+    running_logical_device_id: &'a str,
+    running_model_id: &'a str,
+    activity_publisher: &'a SemanticActivityPublisher,
+}
+
+impl<'a> SemanticTaskEvidenceIdentity<'a> {
+    fn new(request: &'a SemanticObservationCaptureRequest) -> Self {
+        Self {
+            domain: "goose.semantic.task_evidence.v1",
+            task_id: &request.task_id,
+            attempt: request.attempt,
+            task_rank: request.task_rank,
+            goal: &request.goal,
+            task_contract: &request.task_contract,
+            owned_files: &request.owned_files,
+            contract_version: &request.contract_version,
+            acceptance_oracle: &request.acceptance_oracle,
+            dependency_contract_versions: &request.dependency_contract_versions,
+            sibling_contract_versions: &request.sibling_contract_versions,
+            allowed_finding_routes: &request.allowed_finding_routes,
+            running_logical_device_id: &request.running_logical_device_id,
+            running_model_id: &request.running_model_id,
+            activity_publisher: &request.activity_publisher,
+        }
+    }
+}
+
+/// Canonical task and acceptance evidence that the snapshot producer was asked to observe.
+///
+/// Fields are private so this slice cannot be assembled from an idle-node count or an unbound model
+/// reply. It is minted only after the capture is checked against the engine request and source
+/// provider session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SemanticTaskAcceptanceSlice {
+    task_rank: u64,
+    goal: String,
+    task_contract: String,
+    owned_files: Vec<String>,
+    contract_version: String,
+    acceptance_oracle: Vec<AcceptanceCriterionSnapshot>,
+    dependency_contract_versions: BTreeMap<String, String>,
+    sibling_contract_versions: BTreeMap<String, String>,
+    allowed_finding_routes: Vec<String>,
+    binding_hash: String,
+}
+
+impl SemanticTaskAcceptanceSlice {
+    pub fn task_rank(&self) -> u64 {
+        self.task_rank
+    }
+
+    pub fn goal(&self) -> &str {
+        &self.goal
+    }
+
+    pub fn task_contract(&self) -> &str {
+        &self.task_contract
+    }
+
+    pub fn owned_files(&self) -> &[String] {
+        &self.owned_files
+    }
+
+    pub fn contract_version(&self) -> &str {
+        &self.contract_version
+    }
+
+    pub fn acceptance_oracle(&self) -> &[AcceptanceCriterionSnapshot] {
+        &self.acceptance_oracle
+    }
+
+    pub fn dependency_contract_versions(&self) -> &BTreeMap<String, String> {
+        &self.dependency_contract_versions
+    }
+
+    pub fn sibling_contract_versions(&self) -> &BTreeMap<String, String> {
+        &self.sibling_contract_versions
+    }
+
+    pub fn allowed_finding_routes(&self) -> &[String] {
+        &self.allowed_finding_routes
+    }
+
+    pub fn binding_hash(&self) -> &str {
+        &self.binding_hash
+    }
+}
+
+/// Exact immutable boundary a later nudge eligibility must still match at delivery time.
+#[derive(Debug)]
+pub struct SemanticNudgeBoundary {
+    authority_id: String,
+    capture_id: String,
+    authority_scope: crate::AuthorityScope,
+    phase_epoch: u64,
+    task_id: String,
+    attempt: u32,
+    task_source_revision: u64,
+    trace_source_revision: u64,
+    snapshot_hash: String,
+    source_provider_session: SemanticSourceProviderSessionBoundary,
+}
+
+impl SemanticNudgeBoundary {
+    pub(crate) fn authority_id(&self) -> &str {
+        &self.authority_id
+    }
+
+    pub(crate) fn capture_id(&self) -> &str {
+        &self.capture_id
+    }
+
+    pub fn authority_scope(&self) -> &crate::AuthorityScope {
+        &self.authority_scope
+    }
+
+    pub fn phase_epoch(&self) -> u64 {
+        self.phase_epoch
+    }
+
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
+    pub fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    pub fn task_source_revision(&self) -> u64 {
+        self.task_source_revision
+    }
+
+    pub fn trace_source_revision(&self) -> u64 {
+        self.trace_source_revision
+    }
+
+    pub fn snapshot_hash(&self) -> &str {
+        &self.snapshot_hash
+    }
+
+    pub fn source_provider_session(&self) -> &SemanticSourceProviderSessionBoundary {
+        &self.source_provider_session
+    }
+}
+
+/// Observation capture whose immutable bytes have been checked against a real task/acceptance slice
+/// and the provider request currently producing that task's source trace.
+///
+/// The ordinary [`SemanticObservationCapture`] remains valid observation-only evidence. Only this
+/// wrapper can participate in nudge eligibility.
+#[derive(Debug)]
+pub struct BoundSemanticObservationCapture {
+    capture: SemanticObservationCapture,
+    task_slice: SemanticTaskAcceptanceSlice,
+    nudge_boundary: SemanticNudgeBoundary,
+}
+
+impl BoundSemanticObservationCapture {
+    pub fn snapshot(&self) -> &SealedSemanticObservationSnapshot {
+        self.capture.snapshot()
+    }
+
+    pub fn task_slice(&self) -> &SemanticTaskAcceptanceSlice {
+        &self.task_slice
+    }
+
+    pub fn nudge_boundary(&self) -> &SemanticNudgeBoundary {
+        &self.nudge_boundary
+    }
+
+    pub(crate) fn authority_id(&self) -> &str {
+        self.nudge_boundary.authority_id()
+    }
+
+    pub(crate) fn capture_id(&self) -> &str {
+        self.nudge_boundary.capture_id()
+    }
+
+    pub(crate) fn into_nudge_parts(self) -> (SemanticTaskAcceptanceSlice, SemanticNudgeBoundary) {
+        (self.task_slice, self.nudge_boundary)
+    }
 }
 
 impl SemanticObservationCapture {
@@ -275,6 +908,192 @@ impl SemanticObservationCapture {
     pub fn into_snapshot(self) -> SealedSemanticObservationSnapshot {
         self.snapshot
     }
+
+    pub(crate) fn bind_task_session(
+        self,
+        request: &SemanticObservationCaptureRequest,
+        task_evidence: &SemanticTaskEvidenceCapability,
+        source_provider_session: SemanticSourceProviderSessionBoundary,
+        capture_id: String,
+    ) -> Result<BoundSemanticObservationCapture, String> {
+        if capture_id.trim().is_empty() || capture_id.trim() != capture_id {
+            return Err("semantic capture id is invalid".to_string());
+        }
+        if !task_evidence.matches(request) {
+            return Err(
+                "semantic capture request does not match its engine-minted task evidence"
+                    .to_string(),
+            );
+        }
+        request.activity_publisher.validate()?;
+        if !source_provider_session.matches_publisher(&request.activity_publisher) {
+            return Err(
+                "semantic capture source provider session does not match its activity publisher"
+                    .to_string(),
+            );
+        }
+        if request.task_id != request.activity_publisher.task_id
+            || request.attempt != request.activity_publisher.attempt
+            || request.running_logical_device_id != request.activity_publisher.logical_device_id
+            || request.running_model_id != request.activity_publisher.model_id
+        {
+            return Err(
+                "semantic capture request does not match its engine-minted activity publisher"
+                    .to_string(),
+            );
+        }
+
+        let snapshot = self.snapshot();
+        let payload = snapshot.payload();
+        let measurement_artifact_version = match self.summons() {
+            SemanticObservationSummonsSignal::TraceStateAdvanced { measurement, .. } => {
+                &measurement.artifact_version
+            }
+        };
+        if payload.artifact_version != *measurement_artifact_version {
+            return Err(
+                "semantic capture artifact version does not match its typed summons".to_string(),
+            );
+        }
+        if payload.neutral_signals.len() != 1 {
+            return Err(
+                "nudge-capable semantic capture contains unbound neutral signals".to_string(),
+            );
+        }
+        if snapshot.authority_scope() != &request.activity_publisher.source.authority_scope
+            || snapshot.phase_epoch() != request.activity_publisher.source.phase_epoch
+            || snapshot.task_id() != request.task_id
+            || snapshot.attempt() != request.attempt
+        {
+            return Err(
+                "semantic capture snapshot does not match the requested run/phase/task boundary"
+                    .to_string(),
+            );
+        }
+        if payload.goal != request.goal
+            || payload.task_contract != request.task_contract
+            || payload.contract_version != request.contract_version
+            || payload.dependency_contract_versions != request.dependency_contract_versions
+            || payload.sibling_contract_versions != request.sibling_contract_versions
+        {
+            return Err(
+                "semantic capture snapshot substituted task or contract evidence".to_string(),
+            );
+        }
+
+        let mut acceptance_oracle = request.acceptance_oracle.clone();
+        acceptance_oracle.sort_by(|left, right| left.id.cmp(&right.id));
+        if acceptance_oracle.is_empty() {
+            return Err(
+                "semantic nudge evidence requires a non-empty sealed acceptance oracle".to_string(),
+            );
+        }
+        if payload.acceptance_oracle != acceptance_oracle {
+            return Err("semantic capture snapshot substituted acceptance evidence".to_string());
+        }
+
+        let mut allowed_finding_routes = request.allowed_finding_routes.clone();
+        allowed_finding_routes.sort();
+        if payload.allowed_finding_routes != allowed_finding_routes {
+            return Err("semantic capture snapshot substituted finding routes".to_string());
+        }
+
+        let mut owned_files = request.owned_files.clone();
+        owned_files.sort();
+        if owned_files.iter().any(|path| {
+            path.trim().is_empty()
+                || path.trim() != path
+                || std::path::Path::new(path)
+                    .components()
+                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        }) || owned_files.windows(2).any(|pair| pair[0] == pair[1])
+        {
+            return Err(
+                "semantic task slice has an empty, absolute, padded, or duplicate owned path"
+                    .to_string(),
+            );
+        }
+        let owned_paths = owned_files
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut artifact_paths = Vec::with_capacity(payload.artifacts.len());
+        for artifact in &payload.artifacts {
+            if artifact.source_id.trim().is_empty()
+                || artifact.source_id.trim() != artifact.source_id
+                || !owned_paths.contains(&artifact.path)
+            {
+                return Err(
+                    "semantic capture artifact is not a sealed owned-path snapshot".to_string(),
+                );
+            }
+            artifact_paths.push(artifact.path.clone());
+        }
+        artifact_paths.sort();
+        if artifact_paths.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err("semantic capture has duplicate owned artifacts".to_string());
+        }
+
+        let task_slice_identity = SemanticTaskAcceptanceSliceIdentity {
+            task_rank: request.task_rank,
+            goal: &request.goal,
+            task_contract: &request.task_contract,
+            owned_files: &owned_files,
+            contract_version: &request.contract_version,
+            acceptance_oracle: &acceptance_oracle,
+            dependency_contract_versions: &request.dependency_contract_versions,
+            sibling_contract_versions: &request.sibling_contract_versions,
+            allowed_finding_routes: &allowed_finding_routes,
+            activity_publisher_id: &request.activity_publisher.publisher_id,
+            source_provider_session_hash: source_provider_session.binding_hash(),
+            task_evidence_authority_id: task_evidence.authority_id(),
+        };
+        let binding_hash = canonical_digest(&task_slice_identity);
+        let task_slice = SemanticTaskAcceptanceSlice {
+            task_rank: request.task_rank,
+            goal: request.goal.clone(),
+            task_contract: request.task_contract.clone(),
+            owned_files,
+            contract_version: request.contract_version.clone(),
+            acceptance_oracle,
+            dependency_contract_versions: request.dependency_contract_versions.clone(),
+            sibling_contract_versions: request.sibling_contract_versions.clone(),
+            allowed_finding_routes,
+            binding_hash,
+        };
+        let nudge_boundary = SemanticNudgeBoundary {
+            authority_id: task_evidence.authority_id().to_string(),
+            capture_id,
+            authority_scope: snapshot.authority_scope().clone(),
+            phase_epoch: snapshot.phase_epoch(),
+            task_id: snapshot.task_id().to_string(),
+            attempt: snapshot.attempt(),
+            task_source_revision: source_provider_session.task_source_revision(),
+            trace_source_revision: snapshot.source_revision(),
+            snapshot_hash: snapshot.snapshot_hash().to_string(),
+            source_provider_session,
+        };
+        Ok(BoundSemanticObservationCapture {
+            capture: self,
+            task_slice,
+            nudge_boundary,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct SemanticTaskAcceptanceSliceIdentity<'a> {
+    task_rank: u64,
+    goal: &'a str,
+    task_contract: &'a str,
+    owned_files: &'a [String],
+    contract_version: &'a str,
+    acceptance_oracle: &'a [AcceptanceCriterionSnapshot],
+    dependency_contract_versions: &'a BTreeMap<String, String>,
+    sibling_contract_versions: &'a BTreeMap<String, String>,
+    allowed_finding_routes: &'a [String],
+    activity_publisher_id: &'a str,
+    source_provider_session_hash: &'a str,
+    task_evidence_authority_id: &'a str,
 }
 
 #[async_trait]

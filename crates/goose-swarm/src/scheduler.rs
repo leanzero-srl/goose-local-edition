@@ -32,7 +32,7 @@ use crate::semantic_control::{
 };
 use crate::semantic_observation::AcceptanceCriterionSnapshot;
 use crate::semantic_runtime::{
-    SemanticActivityPublisher, SemanticObservationCaptureRequest,
+    EngineSemanticTaskAuthority, SemanticActivityPublisher, SemanticObservationCaptureRequest,
     SemanticObservationSnapshotProducer, SemanticTraceRevision,
 };
 use anyhow::{bail, Result};
@@ -805,6 +805,11 @@ struct SchedulerSemanticObservationRuntime {
     sink: Arc<dyn EventSink>,
 }
 
+struct ScheduledSemanticObservationCaptureRequest {
+    request: SemanticObservationCaptureRequest,
+    task_authority: EngineSemanticTaskAuthority,
+}
+
 enum SemanticObservationAttemptDisposition {
     NoCapture,
     Deferred,
@@ -832,12 +837,34 @@ impl SchedulerSemanticObservationRuntime {
 
     async fn observe(
         &self,
-        request: SemanticObservationCaptureRequest,
+        scheduled: ScheduledSemanticObservationCaptureRequest,
         last_consumed: Option<SemanticTraceRevision>,
         last_summoned: Option<SemanticTraceRevision>,
     ) -> SemanticObservationAttemptResult {
+        let ScheduledSemanticObservationCaptureRequest {
+            request,
+            task_authority,
+        } = scheduled;
         let task_id = request.task_id.clone();
         let attempt = request.attempt;
+        let _task_evidence = match self
+            .plane
+            .register_scheduler_task_evidence(task_authority, &request)
+        {
+            Ok(evidence) => evidence,
+            Err(error) => {
+                self.capture_failed(
+                    &task_id,
+                    attempt,
+                    format!("semantic scheduler task authority was rejected: {error}"),
+                );
+                return SemanticObservationAttemptResult {
+                    task_id,
+                    revision: None,
+                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                };
+            }
+        };
         if let Err(reason) = request.activity_publisher.validate() {
             self.capture_failed(
                 &task_id,
@@ -1520,7 +1547,7 @@ impl State {
         &self,
         already_capturing: &HashSet<TaskId>,
         available_provider_slots: usize,
-    ) -> Vec<SemanticObservationCaptureRequest> {
+    ) -> Vec<ScheduledSemanticObservationCaptureRequest> {
         if available_provider_slots == 0 {
             return Vec::new();
         }
@@ -1551,7 +1578,7 @@ impl State {
     fn semantic_observation_capture_request(
         &self,
         task_id: &str,
-    ) -> Option<SemanticObservationCaptureRequest> {
+    ) -> Option<ScheduledSemanticObservationCaptureRequest> {
         let node = self.dag.tasks.get(task_id)?;
         let device_index = *self.claimed_device.get(task_id)?;
         let running_device = self.devices.get(device_index)?;
@@ -1601,21 +1628,28 @@ impl State {
         allowed_finding_routes.sort();
         allowed_finding_routes.dedup();
 
-        Some(SemanticObservationCaptureRequest {
-            task_id: task_id.to_string(),
-            attempt: node.attempts,
-            task_rank: node.fan_out as u64,
-            goal: self.goal.clone(),
-            task_contract: node.spec.description.clone(),
-            owned_files: node.spec.owned_files.clone(),
+        let request = SemanticObservationCaptureRequest::from_scheduler_state(
+            task_id.to_string(),
+            node.attempts,
+            node.fan_out as u64,
+            self.goal.clone(),
+            node.spec.description.clone(),
+            node.spec.owned_files.clone(),
             contract_version,
-            acceptance_oracle: task_acceptance_oracle(&node.spec),
+            task_acceptance_oracle(&node.spec),
             dependency_contract_versions,
             sibling_contract_versions,
             allowed_finding_routes,
-            running_logical_device_id: running_device.cfg.id.clone(),
-            running_model_id: running_device.cfg.model_id.clone(),
-            activity_publisher: self.physical_activity_publishers.get(task_id)?.clone(),
+            running_device.cfg.id.clone(),
+            running_device.cfg.model_id.clone(),
+            self.physical_activity_publishers.get(task_id)?.clone(),
+        )
+        .ok()?;
+        let task_authority =
+            EngineSemanticTaskAuthority::mint_from_scheduler_state(&request).ok()?;
+        Some(ScheduledSemanticObservationCaptureRequest {
+            request,
+            task_authority,
         })
     }
 
@@ -4041,8 +4075,8 @@ impl Scheduler {
                         )
                     }
                 };
-                for request in requests {
-                    let task_id = request.task_id.clone();
+                for scheduled in requests {
+                    let task_id = scheduled.request.task_id.clone();
                     if !semantic_captures_in_flight.insert(task_id.clone()) {
                         continue;
                     }
@@ -4053,10 +4087,10 @@ impl Scheduler {
                     let completion = semantic_completion_tx.clone();
                     let semantic_notify = notify.clone();
                     tokio::spawn(async move {
-                        let attempt = request.attempt;
+                        let attempt = scheduled.request.attempt;
                         let observed = tokio::spawn(async move {
                             observation_runtime
-                                .observe(request, last_consumed, last_summoned)
+                                .observe(scheduled, last_consumed, last_summoned)
                                 .await
                         })
                         .await;

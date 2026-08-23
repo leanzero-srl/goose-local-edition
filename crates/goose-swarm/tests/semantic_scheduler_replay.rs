@@ -158,7 +158,7 @@ impl SemanticObservationSnapshotProducer for FixedSnapshotProducer {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.changed.notify_waiters();
         let measurement = TraceStateMeasurement {
-            measurement_hash: format!("measurement:{}:{}", request.task_id, request.attempt),
+            measurement_hash: format!("measurement:{}:{}", request.task_id(), request.attempt()),
             tool_calls: 1,
             failed_tool_calls: 0,
             malformed_tool_calls: 0,
@@ -171,25 +171,29 @@ impl SemanticObservationSnapshotProducer for FixedSnapshotProducer {
             artifact_version: "artifact-v1".to_string(),
         };
         let summons = SemanticObservationSummonsSignal::TraceStateAdvanced {
-            source_id: format!("measurement:{}:{}", request.task_id, request.attempt),
+            source_id: format!("measurement:{}:{}", request.task_id(), request.attempt()),
             measurement,
             provenance: "correlated test activity digest".to_string(),
         };
         let snapshot = SemanticObservationSnapshotDraft {
             schema_version: SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
-            authority_scope: request.activity_publisher.source.authority_scope.clone(),
-            phase_epoch: request.activity_publisher.source.phase_epoch,
-            task_id: request.task_id,
-            attempt: request.attempt,
+            authority_scope: request
+                .activity_publisher()
+                .source()
+                .authority_scope
+                .clone(),
+            phase_epoch: request.activity_publisher().source().phase_epoch,
+            task_id: request.task_id().to_string(),
+            attempt: request.attempt(),
             source_revision: 1,
-            contract_version: request.contract_version,
+            contract_version: request.contract_version().to_string(),
             artifact_version: "artifact-v1".to_string(),
-            goal: request.goal,
-            task_contract: request.task_contract,
-            acceptance_oracle: request.acceptance_oracle,
-            dependency_contract_versions: request.dependency_contract_versions,
-            sibling_contract_versions: request.sibling_contract_versions,
-            allowed_finding_routes: request.allowed_finding_routes,
+            goal: request.goal().to_string(),
+            task_contract: request.task_contract().to_string(),
+            acceptance_oracle: request.acceptance_oracle().to_vec(),
+            dependency_contract_versions: request.dependency_contract_versions().clone(),
+            sibling_contract_versions: request.sibling_contract_versions().clone(),
+            allowed_finding_routes: request.allowed_finding_routes().to_vec(),
             artifacts: Vec::new(),
             trace: SemanticTraceSnapshot {
                 sequence: 1,

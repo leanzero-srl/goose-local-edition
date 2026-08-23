@@ -23,7 +23,7 @@ use crate::provider_lease::{
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard};
 use tokio::sync::{oneshot, Mutex, Notify};
 
 type AdmissionResult = Result<AdmissionReceipt, BrokerError>;
@@ -1065,6 +1065,19 @@ impl AdmittedWork {
         self.complete_local_after_close(kind).await.map(|_| ())
     }
 
+    pub(crate) async fn complete_local_with_completion(
+        self,
+        kind: LocalCompletionKind,
+    ) -> Result<CompletedAdmission, BrokerError> {
+        self.lifecycle
+            .control
+            .close_provider_starts(&self.receipt.admission_id)
+            .await?;
+        self.complete_local_after_close(kind)
+            .await
+            .map(|released| CompletedAdmission { released })
+    }
+
     async fn complete_local_after_close(
         &self,
         kind: LocalCompletionKind,
@@ -1091,9 +1104,172 @@ impl AdmittedWork {
     }
 }
 
+/// Opaque proof of the broker's exact released admission state.
+pub(crate) struct CompletedAdmission {
+    released: ReleasedAdmissionReceipt,
+}
+
+impl std::fmt::Debug for CompletedAdmission {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CompletedAdmission")
+            .field("released", &self.released)
+            .finish_non_exhaustive()
+    }
+}
+
+impl CompletedAdmission {
+    pub(crate) fn released(&self) -> &ReleasedAdmissionReceipt {
+        &self.released
+    }
+}
+
+#[derive(Debug, Default)]
+struct ProviderRequestExposureState {
+    witness_issued: bool,
+    live_use_closed: bool,
+}
+
+/// One-shot proof that the exact engine-owned request crossed its verified provider boundary.
+///
+/// Receipt bytes alone are not authority. This witness is non-cloneable, is minted only while
+/// borrowing the live [`StartedProviderRequest`], and shares terminal/drop state with that request.
+pub(crate) struct ExposedProviderRequestWitness {
+    receipt: ProviderRequestReceipt,
+    state: Arc<StdMutex<ProviderRequestExposureState>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct LiveProviderRequestSession {
+    receipt: ProviderRequestReceipt,
+    state: Arc<StdMutex<ProviderRequestExposureState>>,
+}
+
+impl std::fmt::Debug for ExposedProviderRequestWitness {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExposedProviderRequestWitness")
+            .field("receipt", &self.receipt)
+            .finish_non_exhaustive()
+    }
+}
+
+pub(crate) struct LiveProviderRequestPin<'a> {
+    _state: StdMutexGuard<'a, ProviderRequestExposureState>,
+}
+
+/// Opaque proof that one exact engine-owned provider request reached an accepted terminal.
+///
+/// The request/terminal pair cannot be reconstructed from public receipts: this value is
+/// non-cloneable and is minted only after the lease, journal, and physical broker all accept the
+/// terminal transition.
+pub(crate) struct CompletedProviderRequest {
+    admission: AdmissionReceipt,
+    request: ProviderRequestReceipt,
+    terminal: ProviderTerminalReceipt,
+}
+
+impl std::fmt::Debug for CompletedProviderRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CompletedProviderRequest")
+            .field("admission", &self.admission)
+            .field("request", &self.request)
+            .field("terminal", &self.terminal)
+            .finish_non_exhaustive()
+    }
+}
+
+impl CompletedProviderRequest {
+    pub(crate) fn admission(&self) -> &AdmissionReceipt {
+        &self.admission
+    }
+
+    pub(crate) fn request(&self) -> &ProviderRequestReceipt {
+        &self.request
+    }
+
+    pub(crate) fn terminal(&self) -> &ProviderTerminalReceipt {
+        &self.terminal
+    }
+
+    #[cfg(test)]
+    pub(crate) fn forge_spliced_for_replay(request_from: &Self, terminal_from: &Self) -> Self {
+        Self {
+            admission: request_from.admission.clone(),
+            request: request_from.request.clone(),
+            terminal: terminal_from.terminal.clone(),
+        }
+    }
+}
+
+impl ExposedProviderRequestWitness {
+    pub(crate) fn try_pin(
+        &self,
+    ) -> Result<LiveProviderRequestPin<'_>, ProviderLifecycleOperationError> {
+        pin_live_provider_request(&self.state)
+    }
+
+    pub(crate) fn bind_started_request(
+        &self,
+        started: &StartedProviderRequest,
+    ) -> Result<LiveProviderRequestSession, ProviderLifecycleOperationError> {
+        if &self.receipt != started.receipt() || !Arc::ptr_eq(&self.state, &started.exposure_state)
+        {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "provider exposure witness does not belong to the borrowed started request"
+                    .to_string(),
+            ));
+        }
+        let boundary = started.boundary.as_ref().ok_or_else(|| {
+            ProviderLifecycleOperationError::Unresolved(
+                "provider request has no verified physical lease boundary".to_string(),
+            )
+        })?;
+        if boundary.status()? != ProviderLeaseBoundaryStatus::Exposed {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "provider request is no longer exposed".to_string(),
+            ));
+        }
+        let pin = self.try_pin()?;
+        drop(pin);
+        Ok(LiveProviderRequestSession {
+            receipt: self.receipt.clone(),
+            state: self.state.clone(),
+        })
+    }
+}
+
+impl LiveProviderRequestSession {
+    pub(crate) fn receipt(&self) -> &ProviderRequestReceipt {
+        &self.receipt
+    }
+
+    pub(crate) fn try_pin(
+        &self,
+    ) -> Result<LiveProviderRequestPin<'_>, ProviderLifecycleOperationError> {
+        pin_live_provider_request(&self.state)
+    }
+}
+
+fn pin_live_provider_request(
+    state: &StdMutex<ProviderRequestExposureState>,
+) -> Result<LiveProviderRequestPin<'_>, ProviderLifecycleOperationError> {
+    let state = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !state.witness_issued || state.live_use_closed {
+        return Err(ProviderLifecycleOperationError::Unresolved(
+            "provider request exposure witness is no longer live".to_string(),
+        ));
+    }
+    Ok(LiveProviderRequestPin { _state: state })
+}
+
 struct RecoverableProviderRequest {
     receipt: ProviderRequestReceipt,
     boundary: Option<ProviderLeaseHttpBoundary>,
+    exposure_state: Arc<StdMutex<ProviderRequestExposureState>>,
     issued_to_provider: bool,
     pending_terminal: Option<ProviderTerminalKind>,
 }
@@ -1206,6 +1382,7 @@ pub struct StartedProviderRequest {
     lifecycle: ProviderLifecycle,
     receipt: Option<ProviderRequestReceipt>,
     boundary: Option<ProviderLeaseHttpBoundary>,
+    exposure_state: Arc<StdMutex<ProviderRequestExposureState>>,
     pending_terminal: Option<ProviderTerminalKind>,
     armed: bool,
 }
@@ -1241,6 +1418,43 @@ impl StartedProviderRequest {
             .map(ProviderLeaseHttpBoundary::transport_identity)
     }
 
+    pub(crate) fn take_exposed_witness(
+        &self,
+    ) -> Result<ExposedProviderRequestWitness, ProviderLifecycleOperationError> {
+        let boundary = self.boundary.as_ref().ok_or_else(|| {
+            ProviderLifecycleOperationError::Unresolved(
+                "provider request has no verified physical lease boundary".to_string(),
+            )
+        })?;
+        match boundary.status()? {
+            ProviderLeaseBoundaryStatus::Exposed => {}
+            status => {
+                return Err(ProviderLifecycleOperationError::Unresolved(format!(
+                    "provider request is not exposed at witness mint: {status:?}"
+                )))
+            }
+        }
+        let mut state = self
+            .exposure_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.live_use_closed {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "provider request live use is already closed".to_string(),
+            ));
+        }
+        if state.witness_issued {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "provider request exposure witness was already issued".to_string(),
+            ));
+        }
+        state.witness_issued = true;
+        Ok(ExposedProviderRequestWitness {
+            receipt: self.receipt().clone(),
+            state: self.exposure_state.clone(),
+        })
+    }
+
     pub async fn scope_http<F>(&self, future: F) -> F::Output
     where
         F: std::future::Future,
@@ -1252,9 +1466,17 @@ impl StartedProviderRequest {
     }
 
     pub async fn provider_terminal(
-        mut self,
+        self,
         kind: ProviderTerminalKind,
     ) -> Result<(), ProviderLifecycleTransitionError> {
+        self.provider_terminal_with_completion(kind).await.map(drop)
+    }
+
+    pub(crate) async fn provider_terminal_with_completion(
+        mut self,
+        kind: ProviderTerminalKind,
+    ) -> Result<CompletedProviderRequest, ProviderLifecycleTransitionError> {
+        self.close_live_use();
         if self.pending_terminal.is_some_and(|pending| pending != kind) {
             let error = ProviderLifecycleOperationError::Unresolved(
                 "provider request has a different pending terminal kind".to_string(),
@@ -1292,7 +1514,7 @@ impl StartedProviderRequest {
         if let Err(error) = self
             .lifecycle
             .control
-            .observe_provider_terminal(terminal)
+            .observe_provider_terminal(terminal.clone())
             .await
         {
             return Err(ProviderLifecycleTransitionError::Retryable {
@@ -1300,14 +1522,21 @@ impl StartedProviderRequest {
                 request: Box::new(self),
             });
         }
+        let admission = self.lifecycle.admission.clone();
+        let request = self.receipt().clone();
         self.complete();
-        Ok(())
+        Ok(CompletedProviderRequest {
+            admission,
+            request,
+            terminal,
+        })
     }
 
     pub async fn abandon_before_exposure(
         mut self,
         reason: &str,
     ) -> Result<(), ProviderLifecycleTransitionError> {
+        self.close_live_use();
         self.pending_terminal = Some(ProviderTerminalKind::Cancelled);
         if let Some(boundary) = &self.boundary {
             if let Err(error) = boundary.abandon_reserved(reason) {
@@ -1350,6 +1579,7 @@ impl StartedProviderRequest {
     }
 
     fn complete(&mut self) {
+        self.close_live_use();
         let mut outstanding = self
             .lifecycle
             .outstanding
@@ -1367,6 +1597,7 @@ impl StartedProviderRequest {
     }
 
     fn latch_failure(&mut self, reason: String) {
+        self.close_live_use();
         let mut outstanding = self
             .lifecycle
             .outstanding
@@ -1377,6 +1608,14 @@ impl StartedProviderRequest {
         self.receipt.take();
         self.boundary.take();
     }
+
+    fn close_live_use(&self) {
+        let mut state = self
+            .exposure_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.live_use_closed = true;
+    }
 }
 
 impl Drop for StartedProviderRequest {
@@ -1384,6 +1623,7 @@ impl Drop for StartedProviderRequest {
         if !self.armed {
             return;
         }
+        self.close_live_use();
         let Some(receipt) = self.receipt.take() else {
             return;
         };
@@ -1400,6 +1640,7 @@ impl Drop for StartedProviderRequest {
                 RecoverableProviderRequest {
                     receipt,
                     boundary: self.boundary.take(),
+                    exposure_state: self.exposure_state.clone(),
                     issued_to_provider: true,
                     pending_terminal: self.pending_terminal,
                 },
@@ -1448,6 +1689,7 @@ impl ClaimedProviderRequestGuard {
             lifecycle: self.lifecycle.clone(),
             receipt: Some(request.receipt),
             boundary: request.boundary,
+            exposure_state: request.exposure_state,
             pending_terminal: request.pending_terminal,
             armed: true,
         }
@@ -1574,6 +1816,9 @@ impl ProviderLifecycle {
                         RecoverableProviderRequest {
                             receipt,
                             boundary: None,
+                            exposure_state: Arc::new(StdMutex::new(
+                                ProviderRequestExposureState::default(),
+                            )),
                             issued_to_provider: false,
                             pending_terminal: None,
                         },
