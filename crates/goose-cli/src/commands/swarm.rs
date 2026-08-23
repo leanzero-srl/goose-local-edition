@@ -27,10 +27,10 @@ use goose::session::SessionManager;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
     deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
-    DispatchRequest, EventSink, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
-    NullSink, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanAuthorityFact,
-    ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler, SwarmEvent, TaskDispatcher,
-    TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
+    DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig, JudgeInput, JudgeOutcome,
+    JudgeRequest, NullSink, PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest, PreReviewer,
+    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler, SwarmEvent,
+    TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -147,7 +147,8 @@ pub struct SwarmDevice {
     /// spins up extra instances unless you raise this.
     #[serde(default = "default_instances")]
     pub instances: u32,
-    /// Physical host (lms ps DEVICE column). Informational/display only — routing is by model_id.
+    /// Physical host (lms ps DEVICE column). Persisted configuration remains advisory; Engine 4
+    /// accepts only the same-run probe evidence in `physical` below.
     #[serde(default = "default_host")]
     pub host: Option<String>,
     /// LLM provider serving this device. None/"lmstudio" = the local fleet (default, byte-identical
@@ -157,6 +158,10 @@ pub struct SwarmDevice {
     /// check and merge into the run pool additively.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    /// Same-run physical identity/capacity evidence. Never serialized: a previous run's host label
+    /// is not proof that the model instance is resident now.
+    #[serde(skip)]
+    pub physical: Option<VerifiedPhysicalIdentity>,
 }
 
 impl SwarmDevice {
@@ -1247,6 +1252,7 @@ impl Default for SwarmConfig {
                     instances: 1,
                     host: None,
                     provider: None,
+                    physical: None,
                 },
                 SwarmDevice {
                     id: "macbook".to_string(),
@@ -1256,6 +1262,7 @@ impl Default for SwarmConfig {
                     instances: 1,
                     host: None,
                     provider: None,
+                    physical: None,
                 },
             ],
             worker_max_turns: default_worker_max_turns(),
@@ -2122,6 +2129,7 @@ async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Resu
                 instances: 1,
                 host: Some(name.to_string()),
                 provider: Some(name.to_string()),
+                physical: None,
             });
             save_config(&cfg)?;
             println!(
@@ -2447,6 +2455,7 @@ fn pool_menu() -> Result<()> {
                     instances,
                     host: None,
                     provider: None,
+                    physical: None,
                 });
             }
             "weight" => {
@@ -2668,6 +2677,7 @@ fn pool_op(pc: PoolCommand) -> Result<()> {
                 instances: instances.max(1),
                 host: None,
                 provider: None,
+                physical: None,
             });
         }
         PoolCommand::Rm { id } => cfg.devices.retain(|d| d.id != id),
@@ -3003,6 +3013,64 @@ fn short_model(identifier: &str) -> String {
         .collect()
 }
 
+fn verified_physical_identity(
+    process: &LmsProcess,
+    ambiguous_model_ids: &HashSet<String>,
+) -> Option<VerifiedPhysicalIdentity> {
+    if ambiguous_model_ids.contains(&process.identifier) {
+        return None;
+    }
+    let host_id = process.device.as_deref()?.trim();
+    let advertised_parallel = process.parallel.filter(|parallel| *parallel > 0)?;
+    if host_id.is_empty() || process.identifier.trim().is_empty() {
+        return None;
+    }
+    Some(VerifiedPhysicalIdentity {
+        host_id: host_id.to_string(),
+        model_instance_id: process.identifier.clone(),
+        // `PARALLEL` is an instance admission ceiling, not evidence that two decodes improve
+        // aggregate throughput on one Apple host. Engine 4 therefore starts at one host-wide
+        // decode until a controlled same-host profile proves a higher marginal capacity.
+        advertised_instance_capacity: advertised_parallel,
+        capacity_evidence: HostCapacityEvidence::ProbeSingleStream {
+            probe_epoch: format!("lms-ps:{host_id}:{}", process.identifier),
+        },
+        route_evidence_id: format!(
+            "lms-ps:{host_id}:{}:parallel={advertised_parallel}",
+            process.identifier
+        ),
+    })
+}
+
+fn physical_fleet_snapshot(
+    snapshot_id: &str,
+    devices: &[DeviceCfg],
+    identities_by_model: &HashMap<String, VerifiedPhysicalIdentity>,
+) -> Result<PhysicalFleetSnapshot> {
+    let mut missing = Vec::new();
+    let lanes = devices
+        .iter()
+        .filter_map(|device| {
+            let Some(identity) = identities_by_model.get(&device.model_id).cloned() else {
+                missing.push(format!("{} ({})", device.id, device.model_id));
+                return None;
+            };
+            Some(identity.into_lane(
+                device.id.clone(),
+                device.model_id.clone(),
+                device.speed_weight,
+            ))
+        })
+        .collect();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "physical fleet snapshot is incomplete; no same-run unambiguous lms-ps route for {}",
+            missing.join(", ")
+        );
+    }
+    PhysicalFleetSnapshot::new(snapshot_id, lanes).map_err(anyhow::Error::from)
+}
+
 /// "Auto-use what's loaded": build the worker pool from the models currently resident on the fleet
 /// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
 /// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller bootstraps
@@ -3012,7 +3080,27 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
         Ok(p) => p,
         Err(_) => return (Vec::new(), None),
     };
-    // One worker per DISTINCT loaded identifier (LM Link routes by identifier); first host wins.
+    // LM Link routes by identifier alone. Keep legacy one-worker-per-identifier behavior, but never
+    // certify a physical route when the same identifier appears on multiple hosts: "first host wins"
+    // is not evidence about where the request will decode.
+    let mut hosts_by_identifier: HashMap<String, HashSet<String>> = HashMap::new();
+    for process in &procs {
+        if let Some(host) = process
+            .device
+            .as_ref()
+            .filter(|host| !host.trim().is_empty())
+        {
+            hosts_by_identifier
+                .entry(process.identifier.clone())
+                .or_default()
+                .insert(host.clone());
+        }
+    }
+    let ambiguous_model_ids: HashSet<String> = hosts_by_identifier
+        .into_iter()
+        .filter_map(|(identifier, hosts)| (hosts.len() > 1).then_some(identifier))
+        .collect();
+    // One worker per DISTINCT loaded identifier (LM Link routes by identifier).
     let mut seen = std::collections::HashSet::new();
     let mut resident: Vec<&LmsProcess> = Vec::new();
     for p in &procs {
@@ -3062,6 +3150,7 @@ fn reconcile_pool_with_fleet(cfg: &SwarmConfig) -> (Vec<SwarmDevice>, Option<Str
             instances: 1,
             host: p.device.clone(),
             provider: None,
+            physical: verified_physical_identity(p, &ambiguous_model_ids),
         })
         .collect();
     // Planner: keep the configured planner if it is resident; else pick the best resident model for the
@@ -3161,6 +3250,7 @@ fn import_processes(
             instances: 1,
             host: p.device.clone(),
             provider: None,
+            physical: None,
         };
         cfg.devices.push(dev.clone());
         summary.added.push(dev);
@@ -8770,6 +8860,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             instances: 1,
             host: None,
             provider: None,
+            physical: None,
         }
     }
 
@@ -13997,6 +14088,22 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             .filter(|p| p.device.as_deref() == Some("Local"))
             .count();
         assert_eq!(local, 2, "the macbook (Local) hosts two distinct models");
+        let identity = verified_physical_identity(&procs[0], &HashSet::new()).unwrap();
+        assert_eq!(identity.host_id, "WorksMacStudio.lan");
+        assert_eq!(identity.advertised_instance_capacity, 4);
+        assert_eq!(identity.capacity_evidence.max_concurrent(), 1);
+    }
+
+    #[test]
+    fn an_identifier_seen_on_two_hosts_cannot_be_certified_by_first_host_wins() {
+        let process = LmsProcess {
+            identifier: "shared-model".to_string(),
+            status: "IDLE".to_string(),
+            device: Some("host-a".to_string()),
+            parallel: Some(4),
+        };
+        let ambiguous = HashSet::from(["shared-model".to_string()]);
+        assert!(verified_physical_identity(&process, &ambiguous).is_none());
     }
 
     #[test]
@@ -14049,6 +14156,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             instances: 1,
             host: None,
             provider: None,
+            physical: None,
         });
         let procs = vec![
             LmsProcess {
@@ -36055,6 +36163,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         ));
     }
     let (fleet_pool, unservable) = drop_unservable_devices(fleet_pool, served.as_ref());
+    // Preserve the same-run physical evidence before PIN/MAX_NODES can remove a resident row and
+    // before planner-also-works can add that model back as a logical device. The map contains only
+    // unambiguous LM Link identifiers; configured host strings and HTTP fallback rows stay absent.
+    let verified_physical_by_model: HashMap<String, VerifiedPhysicalIdentity> = fleet_pool
+        .iter()
+        .filter_map(|device| {
+            device
+                .physical
+                .clone()
+                .map(|identity| (device.model_id.clone(), identity))
+        })
+        .collect();
     // F779 i3: filled inside the MAX_NODES cap arm when the lever is on; consumed after
     // Scheduler::new via with_supervision_devices (invisible to worker_count and every fleet_*
     // capture — those are BUILD-device counts by contract).
@@ -36575,6 +36695,48 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         );
     }
 
+    let broker_enforcement_requested = swarm_gate("GOOSE_SWARM_PHYSICAL_BROKER", false);
+    let physical_snapshot = physical_fleet_snapshot(
+        &format!("{run_id}:lms-ps"),
+        &devices,
+        &verified_physical_by_model,
+    );
+    match &physical_snapshot {
+        Ok(snapshot) => sink.emit(&SwarmEvent::PhysicalFleetSnapshotObserved {
+            snapshot: snapshot.clone(),
+            enforcement: if broker_enforcement_requested {
+                "requested".to_string()
+            } else {
+                "shadow".to_string()
+            },
+            // TaskDispatcher::run is a multi-turn agent boundary and currently exposes neither
+            // provider request ids nor terminal reasons. Claiming otherwise would recreate phantom
+            // capacity under a new name.
+            provider_lifecycle_available: false,
+        }),
+        Err(error) => sink.emit(&SwarmEvent::PhysicalFleetSnapshotUnavailable {
+            reason: error.to_string(),
+            enforcement: if broker_enforcement_requested {
+                "requested".to_string()
+            } else {
+                "shadow".to_string()
+            },
+            provider_lifecycle_available: false,
+        }),
+    }
+    if broker_enforcement_requested {
+        let snapshot_status = physical_snapshot
+            .as_ref()
+            .map(|_| "physical snapshot verified".to_string())
+            .unwrap_or_else(|error| format!("physical snapshot unavailable: {error}"));
+        anyhow::bail!(
+            "GOOSE_SWARM_PHYSICAL_BROKER requested, but provider lifecycle correlation is not wired: \
+             TaskDispatcher::run spans multiple provider turns and supplies no provider request/terminal \
+             receipts ({snapshot_status}). Refusing to release capacity from a local future or silently \
+             fall back to logical DeviceCfg.weight."
+        );
+    }
+
     // THE DEVICES THAT CAN ACTUALLY RECEIVE WORK. `run_started.pool` is emitted upstream from
     // `enabled`, BEFORE the planner may be pushed, so it under-reports the worker count on exactly the
     // runs where the planner is not already in the pool — and it is the field every harness reads as
@@ -36590,6 +36752,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "id": d.id,
             "model_id": d.model_id,
             "weight": d.weight,
+            "physical": verified_physical_by_model.get(&d.model_id),
         })).collect::<Vec<_>>(),
         "worker_count": devices.len(),
         "planner_pushed": devices.iter().any(|d| d.id == "planner"),

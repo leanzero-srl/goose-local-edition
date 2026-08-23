@@ -64,8 +64,9 @@ benchmark fleet, LM Studio mutation, scorer change, or SB7 change.
 
 - [x] Pure broker state machine and replay tests for physical-host capacity, exact terminal
   correlation, priority, and freshness.
-- [ ] Carry verified `lms ps` identity/capacity through goose-cli into `DeviceCfg` and expose it
-  in `pool_resolved`.
+- [x] Carry same-run, unambiguous `lms ps` identity/capacity through goose-cli as a separate
+  `PhysicalFleetSnapshot` and expose it in `pool_resolved`. `DeviceCfg` remains a logical lane;
+  putting physical truth in it would recreate the alias/capacity bug.
 - [ ] Add request/terminal lifecycle receipts to the dispatcher boundary without pretending an
   ordinary future return is provider-terminal.
 - [ ] Integrate build plus task-derived auxiliary opportunities through one admission seam;
@@ -79,6 +80,11 @@ benchmark fleet, LM Studio mutation, scorer change, or SB7 change.
 - Pure broker increment: `cargo test -p goose-swarm --test physical_broker_replay` (10/10),
   `cargo test -p goose-swarm --lib` (65/65), and
   `cargo clippy -p goose-swarm --all-targets -- -D warnings` pass with the shared target.
+- CLI physical-snapshot increment: the real `lms ps` fixture and the duplicate-identifier-on-two-
+  hosts rejection tests pass. `cargo clippy -p goose-cli --all-targets -- -D warnings` passes with
+  the shared target. The ordinary dispatcher still exposes no provider request/terminal receipts,
+  so requesting enforcement fails closed after emitting the snapshot status; shadow observation is
+  the default.
 
 Red-team refinement: `PARALLEL` is represented only as a model-instance ceiling. Same-run
 `lms ps` evidence starts at one host-wide admission; a higher host capacity requires an exact
@@ -86,3 +92,9 @@ measured profile. An admission can own multiple provider turns and is releasable
 completion plus exact terminal receipts for every turn (or an explicit provider-not-started
 receipt). The broker accepts typed task-attempt, artifact, trace, or contract revisions; role and
 revision-kind mismatches fail closed.
+
+LM Link routes by model identifier, not by the display host. If one identifier is reported on two
+hosts, goose-cli continues its legacy one-logical-worker reconciliation but does not certify either
+physical route. Persisted `host` configuration and non-LM-Studio providers are likewise never
+promoted to live physical evidence. A run may observe a complete same-run snapshot or an explicit
+unavailable event; it never fills missing physical identity from a logical lane.
