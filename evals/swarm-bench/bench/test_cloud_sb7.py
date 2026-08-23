@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -3521,10 +3522,13 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 mock.patch.object(cloud_sb7, "process_identity", return_value=None),
                 mock.patch.object(
                     cloud_sb7, "stop_recorded_group", return_value=True
-                ) as stop,
+                ),
+                mock.patch.object(
+                    cloud_sb7, "stop_scorer_runtime", return_value=(True, True)
+                ) as stop_scorer,
             ):
                 self.assertTrue(cloud_sb7.recover_dead_manager(root))
-            self.assertIn(mock.call(3333, 3333, "scorer-process"), stop.call_args_list)
+            stop_scorer.assert_called_once_with(root, "model")
             self.assertEqual(
                 cloud_sb7.read_state(root, "model")["status"], "SCORE_FAILED"
             )
@@ -4612,6 +4616,119 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 self.assertEqual(state["status"], "SCORE_FAILED")
                 self.assertEqual(cloud_sb7.next_score_attempt(root, "model", state), 2)
                 self.assertTrue(old_tree.is_dir())
+            finally:
+                if scorer.poll() is None:
+                    cloud_sb7.stop_group(scorer.pid, grace_seconds=0.1)
+
+    def test_interrupted_scorer_stops_recorded_descendant_in_an_external_session(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            child_pid_path = root / "scorer-child.pid"
+            parent = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import pathlib,subprocess,sys,time; "
+                        "child=subprocess.Popen([sys.executable,'-c',"
+                        "'import time; time.sleep(120)'],start_new_session=True); "
+                        f"pathlib.Path({str(child_pid_path)!r}).write_text(str(child.pid)); "
+                        "time.sleep(120)"
+                    ),
+                ],
+                start_new_session=True,
+            )
+            child_pid = 0
+            try:
+                deadline = time.monotonic() + 5
+                while not child_pid_path.is_file() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(child_pid_path.is_file())
+                child_pid = int(child_pid_path.read_text())
+                cloud_sb7.update_state(
+                    root,
+                    "model",
+                    status="SCORING",
+                    score_pid=parent.pid,
+                    score_pgid=parent.pid,
+                    score_identity=cloud_sb7.process_identity(parent.pid),
+                    score_process_inventory=[],
+                )
+                inventory = cloud_sb7.record_scorer_process_inventory(
+                    root, "model", parent.pid
+                )
+                self.assertIn(child_pid, {record["pid"] for record in inventory})
+                os.kill(parent.pid, signal.SIGKILL)
+                parent.wait(timeout=5)
+
+                cloud_sb7.recover_interrupted_scoring(root)
+
+                deadline = time.monotonic() + 5
+                while cloud_sb7.process_alive(child_pid) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertFalse(cloud_sb7.process_alive(child_pid))
+                state = cloud_sb7.read_state(root, "model")
+                self.assertEqual(state["status"], "SCORE_FAILED")
+                self.assertIsNone(state["score_pid"])
+                self.assertIsNone(state["score_pgid"])
+            finally:
+                if parent.poll() is None:
+                    cloud_sb7.stop_group(parent.pid, grace_seconds=0.1)
+                if child_pid and cloud_sb7.process_alive(child_pid):
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(child_pid, signal.SIGKILL)
+
+    def test_scorer_ownership_is_not_cleared_when_cleanup_is_unproven(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            cloud_sb7.update_state(
+                root,
+                "model",
+                status="SCORING",
+                score_pid=4444,
+                score_pgid=4444,
+                score_identity="scorer-generation",
+            )
+            with mock.patch.object(
+                cloud_sb7, "stop_scorer_runtime", return_value=(False, True)
+            ):
+                cloud_sb7.recover_interrupted_scoring(root)
+            state = cloud_sb7.read_state(root, "model")
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertEqual(state["score_pid"], 4444)
+            self.assertEqual(state["score_pgid"], 4444)
+
+    def test_campaign_stop_terminates_the_recorded_scorer_group(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            scorer = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            try:
+                cloud_sb7.update_state(
+                    root,
+                    entrant_id,
+                    status="SCORING",
+                    score_pid=scorer.pid,
+                    score_pgid=scorer.pid,
+                    score_identity=cloud_sb7.process_identity(scorer.pid),
+                    score_process_inventory=[],
+                )
+
+                self.assertEqual(cloud_sb7.stop(root), 0)
+
+                scorer.wait(timeout=5)
+                self.assertFalse(cloud_sb7.process_alive(scorer.pid))
+                self.assertEqual(
+                    cloud_sb7.read_state(root, entrant_id)["status"], "STOPPED"
+                )
             finally:
                 if scorer.poll() is None:
                     cloud_sb7.stop_group(scorer.pid, grace_seconds=0.1)
