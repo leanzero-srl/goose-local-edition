@@ -5278,9 +5278,13 @@ version = "1.41.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "fs2",
+ "libc",
+ "rand 0.10.1",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "tokio",
  "tracing",
 ]
