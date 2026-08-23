@@ -5731,12 +5731,17 @@ mod tests {
             .enumerate()
             .map(|(index, requirement)| (requirement.id.as_str(), index))
             .collect::<HashMap<_, _>>();
-        assert!(assignments.iter().all(|assignment| assignment
-            .requirements
-            .windows(2)
-            .all(|pair| source_positions[pair[0].id.as_str()]
-                < source_positions[pair[1].id.as_str()])));
+        assert!(assignments.iter().all(|assignment| {
+            assignment.requirements.windows(2).all(|pair| {
+                source_positions[pair[0].id.as_str()] < source_positions[pair[1].id.as_str()]
+            })
+        }));
 
+        let routes = ResearchSeedLookupRoutes {
+            attached_extensions: Vec::new(),
+            spec_document_urls: Vec::new(),
+            codebase_shell: true,
+        };
         let ledgers = assignments
             .iter()
             .map(|assignment| {
@@ -5755,7 +5760,7 @@ mod tests {
                     })).collect::<Vec<_>>()
                 })
                 .to_string();
-                compile_research_seed_ledger(&raw, assignment).unwrap()
+                compile_research_seed_ledger(&raw, assignment, &routes).unwrap()
             })
             .collect::<Vec<_>>();
         assert!(merge_research_seed_ledgers(&assignments, ledgers[..2].to_vec()).is_err());
@@ -5771,6 +5776,119 @@ mod tests {
             .iter()
             .all(|finding| finding.requirement_ids.len() == 1 && !finding.grounded));
         assert!(merged.blocked_requirement_ids.is_empty());
+    }
+
+    #[test]
+    fn research_seed_compiler_rejects_unrunnable_evidence_routes() {
+        let assignment = ResearchSeedAssignment {
+            partition_id: "seed-1".to_string(),
+            model: "node-a".to_string(),
+            requirements: vec![RequirementRecord {
+                id: "REQ-api".to_string(),
+                section: "API".to_string(),
+                quote: "Use the current vendor endpoint.".to_string(),
+            }],
+        };
+        let unavailable = ResearchSeedLookupRoutes {
+            attached_extensions: Vec::new(),
+            spec_document_urls: Vec::new(),
+            codebase_shell: false,
+        };
+        let needs_web = serde_json::json!({
+            "partition_id": "seed-1",
+            "complete": true,
+            "assessments": [{
+                "requirement_id": "REQ-api",
+                "state": "needs-evidence",
+                "rationale": "The endpoint is external and versioned.",
+                "observations": "The authored requirement does not name the endpoint.",
+                "question_id": "vendor-endpoint",
+                "question": "What is the current vendor endpoint?",
+                "kind": "web",
+                "evidence_needed": "The vendor's current endpoint from an authoritative source."
+            }]
+        })
+        .to_string();
+        let error = compile_research_seed_ledger(&needs_web, &assignment, &unavailable)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("without a runnable downstream route"),
+            "{error}"
+        );
+
+        let blocked = serde_json::json!({
+            "partition_id": "seed-1",
+            "complete": true,
+            "assessments": [{
+                "requirement_id": "REQ-api",
+                "state": "blocked",
+                "rationale": "The endpoint is external and versioned.",
+                "observations": "No external lookup route is configured.",
+                "question_id": "",
+                "question": "",
+                "kind": "none",
+                "evidence_needed": "An authoritative vendor endpoint source is unavailable."
+            }]
+        })
+        .to_string();
+        assert!(compile_research_seed_ledger(&blocked, &assignment, &unavailable).is_ok());
+    }
+
+    #[test]
+    fn research_seed_progress_history_is_bounded_and_ignores_wording_churn() {
+        let assignment = ResearchSeedAssignment {
+            partition_id: "seed-1".to_string(),
+            model: "node-a".to_string(),
+            requirements: vec![RequirementRecord {
+                id: "REQ-api".to_string(),
+                section: "API".to_string(),
+                quote: "Use the current vendor endpoint.".to_string(),
+            }],
+        };
+        let routes = ResearchSeedLookupRoutes {
+            attached_extensions: Vec::new(),
+            spec_document_urls: Vec::new(),
+            codebase_shell: false,
+        };
+        let invalid = |rationale: &str| {
+            serde_json::json!({
+                "partition_id": "seed-1",
+                "complete": true,
+                "assessments": [{
+                    "requirement_id": "REQ-api",
+                    "state": "needs-evidence",
+                    "rationale": rationale,
+                    "observations": format!("{rationale} but still no route."),
+                    "question_id": "vendor-endpoint",
+                    "question": "What is the current vendor endpoint?",
+                    "kind": "web",
+                    "evidence_needed": "The vendor's current endpoint."
+                }]
+            })
+            .to_string()
+        };
+        let first =
+            research_seed_progress_fingerprint(&invalid("First wording"), &assignment, &routes);
+        let same_structure = research_seed_progress_fingerprint(
+            &invalid("Completely different prose"),
+            &assignment,
+            &routes,
+        );
+        assert_eq!(first, same_structure);
+        assert_eq!(first.route_infeasible_assessments, 1);
+
+        let mut history = ResearchSeedProgressHistory::for_assignment(&assignment);
+        assert!(history.admit(first.clone()));
+        assert!(!history.admit(same_structure));
+        let mut second = first.clone();
+        second.complete = false;
+        let mut third = first;
+        third.partition_matches = false;
+        assert!(history.admit(second));
+        assert!(history.admit(third));
+        assert_eq!(history.capacity, 2);
+        assert_eq!(history.fingerprints.len(), history.capacity);
     }
 
     #[test]
@@ -5806,11 +5924,11 @@ mod tests {
             .enumerate()
             .map(|(index, requirement)| (requirement.id.as_str(), index))
             .collect::<HashMap<_, _>>();
-        assert!(partitions.iter().all(|partition| partition
-            .requirements
-            .windows(2)
-            .all(|pair| source_positions[pair[0].id.as_str()]
-                < source_positions[pair[1].id.as_str()])));
+        assert!(partitions.iter().all(|partition| {
+            partition.requirements.windows(2).all(|pair| {
+                source_positions[pair[0].id.as_str()] < source_positions[pair[1].id.as_str()]
+            })
+        }));
         let costs = partitions
             .iter()
             .map(|partition| {
@@ -16343,6 +16461,74 @@ struct ResearchSeedAssignment {
     requirements: Vec<RequirementRecord>,
 }
 
+#[derive(Clone, Debug, serde::Serialize)]
+struct ResearchSeedLookupRoutes {
+    attached_extensions: Vec<String>,
+    spec_document_urls: Vec<String>,
+    codebase_shell: bool,
+}
+
+impl ResearchSeedLookupRoutes {
+    fn supports(&self, kind: &str) -> bool {
+        match kind {
+            "library_docs" | "web" => {
+                !self.attached_extensions.is_empty() || !self.spec_document_urls.is_empty()
+            }
+            "codebase" => self.codebase_shell,
+            _ => false,
+        }
+    }
+}
+
+fn research_seed_field_rules() -> serde_json::Value {
+    serde_json::json!({
+        "spec-sufficient": "kind=none and question_id/question/evidence_needed are empty",
+        "needs-evidence": "kind is library_docs/web/codebase, its downstream route is available, and question_id/question/evidence_needed are specific",
+        "blocked": "kind=none, question_id/question empty, evidence_needed names the unavailable source fact"
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResearchSeedProgressFingerprint {
+    json_kind: u8,
+    top_level_fields: u8,
+    typed: bool,
+    partition_matches: bool,
+    complete: bool,
+    assessment_count: usize,
+    assessment_fields: usize,
+    known_requirements: usize,
+    duplicate_requirements: bool,
+    invented_requirements: bool,
+    structurally_valid_assessments: usize,
+    route_infeasible_assessments: usize,
+}
+
+struct ResearchSeedProgressHistory {
+    capacity: usize,
+    fingerprints: std::collections::VecDeque<ResearchSeedProgressFingerprint>,
+}
+
+impl ResearchSeedProgressHistory {
+    fn for_assignment(assignment: &ResearchSeedAssignment) -> Self {
+        Self {
+            capacity: assignment.requirements.len().saturating_add(1),
+            fingerprints: std::collections::VecDeque::new(),
+        }
+    }
+
+    fn admit(&mut self, fingerprint: ResearchSeedProgressFingerprint) -> bool {
+        if self.fingerprints.contains(&fingerprint) {
+            return false;
+        }
+        if self.fingerprints.len() == self.capacity {
+            self.fingerprints.pop_front();
+        }
+        self.fingerprints.push_back(fingerprint);
+        true
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CompiledResearchSeedLedger {
     partition_id: String,
@@ -16466,9 +16652,171 @@ fn plan_research_seed_partitions(
         .collect())
 }
 
+fn research_seed_progress_fingerprint(
+    raw: &str,
+    assignment: &ResearchSeedAssignment,
+    routes: &ResearchSeedLookupRoutes,
+) -> ResearchSeedProgressFingerprint {
+    let mut fingerprint = ResearchSeedProgressFingerprint {
+        json_kind: 0,
+        top_level_fields: 0,
+        typed: false,
+        partition_matches: false,
+        complete: false,
+        assessment_count: 0,
+        assessment_fields: 0,
+        known_requirements: 0,
+        duplicate_requirements: false,
+        invented_requirements: false,
+        structurally_valid_assessments: 0,
+        route_infeasible_assessments: 0,
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(strip_code_fences(raw).trim()) else {
+        return fingerprint;
+    };
+    fingerprint.json_kind = 1;
+    let Some(object) = value.as_object() else {
+        return fingerprint;
+    };
+    fingerprint.json_kind = 2;
+    fingerprint.top_level_fields |= u8::from(object.contains_key("partition_id"));
+    fingerprint.top_level_fields |= u8::from(object.contains_key("complete")) << 1;
+    fingerprint.top_level_fields |= u8::from(object.contains_key("assessments")) << 2;
+    fingerprint.partition_matches = object
+        .get("partition_id")
+        .and_then(serde_json::Value::as_str)
+        == Some(assignment.partition_id.as_str());
+    fingerprint.complete =
+        object.get("complete").and_then(serde_json::Value::as_bool) == Some(true);
+    fingerprint.typed = serde_json::from_value::<ResearchSeedLedgerDraft>(value.clone()).is_ok();
+
+    let expected = assignment
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.as_str())
+        .collect::<HashSet<_>>();
+    let Some(assessments) = object
+        .get("assessments")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return fingerprint;
+    };
+    let overflow_bucket = assignment.requirements.len().saturating_add(1);
+    fingerprint.assessment_count = assessments.len().min(overflow_bucket);
+    let assessment_fields = [
+        "requirement_id",
+        "state",
+        "rationale",
+        "observations",
+        "question_id",
+        "question",
+        "kind",
+        "evidence_needed",
+    ];
+    fingerprint.assessment_fields = assessments
+        .iter()
+        .filter_map(serde_json::Value::as_object)
+        .map(|assessment| {
+            assessment_fields
+                .iter()
+                .filter(|field| assessment.contains_key(**field))
+                .count()
+        })
+        .sum::<usize>()
+        .min(overflow_bucket.saturating_mul(assessment_fields.len()));
+
+    let mut actual = HashSet::new();
+    let mut question_ids = HashSet::new();
+    for assessment in assessments.iter().filter_map(serde_json::Value::as_object) {
+        let requirement_id = assessment
+            .get("requirement_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let known = expected.contains(requirement_id);
+        let unique_requirement = actual.insert(requirement_id);
+        if known && unique_requirement {
+            fingerprint.known_requirements += 1;
+        } else if known {
+            fingerprint.duplicate_requirements = true;
+        } else {
+            fingerprint.invented_requirements = true;
+        }
+
+        let state = assessment
+            .get("state")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let rationale = assessment
+            .get("rationale")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let observations = assessment
+            .get("observations")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let question_id = assessment
+            .get("question_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let question = assessment
+            .get("question")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let kind = assessment
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let evidence_needed = assessment
+            .get("evidence_needed")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let common_valid = known
+            && unique_requirement
+            && !rationale.trim().is_empty()
+            && !observations.trim().is_empty();
+        let state_valid = match state {
+            "spec-sufficient" => {
+                question_id.is_empty()
+                    && question.is_empty()
+                    && kind == "none"
+                    && evidence_needed.is_empty()
+            }
+            "needs-evidence" => {
+                let safe_question_id = !question_id.is_empty()
+                    && question_id.chars().all(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+                    });
+                let unique_question = question_ids.insert(question_id);
+                let route_feasible = routes.supports(kind);
+                if !route_feasible {
+                    fingerprint.route_infeasible_assessments += 1;
+                }
+                safe_question_id
+                    && unique_question
+                    && question.trim_end().ends_with('?')
+                    && matches!(kind, "library_docs" | "web" | "codebase")
+                    && !evidence_needed.trim().is_empty()
+                    && route_feasible
+            }
+            "blocked" => {
+                question_id.is_empty()
+                    && question.is_empty()
+                    && kind == "none"
+                    && !evidence_needed.trim().is_empty()
+            }
+            _ => false,
+        };
+        if common_valid && state_valid {
+            fingerprint.structurally_valid_assessments += 1;
+        }
+    }
+    fingerprint
+}
+
 fn compile_research_seed_ledger(
     raw: &str,
     assignment: &ResearchSeedAssignment,
+    routes: &ResearchSeedLookupRoutes,
 ) -> Result<CompiledResearchSeedLedger> {
     let draft: ResearchSeedLedgerDraft = serde_json::from_str(strip_code_fences(raw).trim())
         .map_err(|error| anyhow!("research seed ledger was not valid typed JSON: {error}"))?;
@@ -16532,6 +16880,13 @@ fn compile_research_seed_ledger(
                     bail!(
                         "research seed assessment for `{}` emitted an invalid evidence question",
                         assessment.requirement_id
+                    );
+                }
+                if !routes.supports(&assessment.kind) {
+                    bail!(
+                        "research seed assessment for `{}` requested `{}` evidence without a runnable downstream route",
+                        assessment.requirement_id,
+                        assessment.kind
                     );
                 }
             }
@@ -20545,8 +20900,8 @@ impl GooseAgentDispatcher {
                 // re-routing, so the run can terminate; otherwise re-route as before.
                 if sink_deadline.is_some_and(|dl| tokio::time::Instant::now() >= dl) {
                     eprintln!(
-                            "↳ integrate-verify hit the sink wall-clock cap — finalizing as done (smoke gate backstops)"
-                        );
+                        "↳ integrate-verify hit the sink wall-clock cap — finalizing as done (smoke gate backstops)"
+                    );
                     // SECOND cap site, same event. The cap can fire either at the top of the loop
                     // (a continuously-active sink) or here on an event gap, and instrumenting only
                     // one of them would make the truncation visible on some runs and invisible on
@@ -21073,7 +21428,7 @@ impl GooseAgentDispatcher {
     ) -> Result<(Vec<ResearchSeedAssignment>, Vec<CompiledResearchSeedLedger>)> {
         let me = self.clone();
         let events = self.events.clone();
-        let fan = fanout_staged(
+        let results = fanout_retrying_over_fleet(
             worker_models,
             partitions,
             move |partition: ResearchSeedPartition, model: String| {
@@ -21102,11 +21457,15 @@ impl GooseAgentDispatcher {
                     "requirement_count": assignment.requirements.len(),
                     "coordinator_call_started": false,
                 }));
-                let routes = serde_json::json!({
-                    "attached_extensions": extensions.iter().map(|extension| extension.name().to_string()).collect::<Vec<_>>(),
-                    "spec_document_urls": doc_urls.as_ref(),
-                    "codebase_shell": is_amendment,
-                });
+                let routes = ResearchSeedLookupRoutes {
+                    attached_extensions: extensions
+                        .iter()
+                        .map(|extension| extension.name().to_string())
+                        .collect(),
+                    spec_document_urls: doc_urls.as_ref().clone(),
+                    codebase_shell: is_amendment,
+                };
+                let field_rules = research_seed_field_rules();
                 let system = "You are one seed evidence mapper in a collaborative research pod. You own only \
                     the capacity-derived semantic requirement packet supplied below; every other active node owns a \
                     different packet concurrently and the next free node takes the next packet. Return exactly one typed assessment per requirement id, \
@@ -21126,11 +21485,7 @@ impl GooseAgentDispatcher {
                     "partition_id": assignment.partition_id,
                     "authoritative_requirements": assignment.requirements,
                     "downstream_lookup_routes": routes,
-                    "field_rules": {
-                        "spec-sufficient": "kind=none and question_id/question/evidence_needed are empty",
-                        "needs-evidence": "kind is library_docs/web/codebase and question_id/question/evidence_needed are specific",
-                        "blocked": "kind=none, question_id/question empty, evidence_needed names the unavailable source fact"
-                    }
+                    "field_rules": field_rules,
                 }))?;
                 let output = me
                     .run_agent_in(
@@ -21162,17 +21517,19 @@ impl GooseAgentDispatcher {
                             "research seed partition `{}` returned no typed ledger",
                             assignment.partition_id
                         )
-                    })?;
+                })?;
                 let tool_call_count = output.tool_calls.len();
-                let mut invalid_ledgers = HashSet::new();
+                let mut progress_history = ResearchSeedProgressHistory::for_assignment(&assignment);
                 let mut repair = 0u64;
                 let compiled = loop {
-                    match compile_research_seed_ledger(&raw, &assignment) {
+                    match compile_research_seed_ledger(&raw, &assignment, &routes) {
                         Ok(compiled) => break compiled,
                         Err(error) => {
-                            if !invalid_ledgers.insert(raw.clone()) {
+                            let fingerprint =
+                                research_seed_progress_fingerprint(&raw, &assignment, &routes);
+                            if !progress_history.admit(fingerprint) {
                                 bail!(
-                                    "research seed partition `{}` repeated an identical invalid ledger after correction: {error}",
+                                    "research seed partition `{}` repeated a canonical invalid ledger state after correction: {error}",
                                     assignment.partition_id
                                 );
                             }
@@ -21195,6 +21552,8 @@ impl GooseAgentDispatcher {
                                 "partition_id": assignment.partition_id,
                                 "compiler_error": error.to_string(),
                                 "authoritative_requirements": assignment.requirements,
+                                "downstream_lookup_routes": routes,
+                                "field_rules": field_rules,
                             }))?;
                             let correction_key =
                                 format!("research-pod-{}-correction-{repair}", assignment.partition_id);
@@ -21256,8 +21615,13 @@ impl GooseAgentDispatcher {
                     }
                 }
             },
-            |_result, _model| async {},
-            |_result| false,
+            |partition| {
+                partition
+                    .requirements
+                    .iter()
+                    .map(research_seed_unit_cost)
+                    .fold(0usize, usize::saturating_add)
+            },
             |partition| partition.partition_id.clone(),
             move |observation| {
                 if observation.kind == StagedFanObservationKind::DetailTailStarted {
@@ -21267,30 +21631,20 @@ impl GooseAgentDispatcher {
                         "completed_partitions": observation.completed_details,
                         "in_flight_partitions": observation.in_flight_details,
                         "logically_free_nodes": observation.logically_free_lanes,
-                        "action": "semantic-supervision-remains-available",
+                        "observation": "idle_capacity_observed",
+                        "supervision_available": false,
+                        "supervision_unavailable_reason": "research-seed-precedes-physical-scheduler-lifecycle",
                     }));
                 }
             },
         )
         .await?;
 
-        let mut assignments = Vec::with_capacity(fan.details.len());
-        let mut ledgers = Vec::with_capacity(fan.details.len());
-        let mut failures = Vec::new();
-        for result in fan.details {
-            match result {
-                Ok((assignment, ledger)) => {
-                    assignments.push(assignment);
-                    ledgers.push(ledger);
-                }
-                Err(error) => failures.push(error),
-            }
-        }
-        if !failures.is_empty() {
-            bail!(
-                "research seed barrier failed before coordinator admission: {}",
-                failures.join("; ")
-            );
+        let mut assignments = Vec::with_capacity(results.len());
+        let mut ledgers = Vec::with_capacity(results.len());
+        for (assignment, ledger) in results {
+            assignments.push(assignment);
+            ledgers.push(ledger);
         }
         Ok((assignments, ledgers))
     }
@@ -29330,6 +29684,195 @@ mod fan_order_tests {
         assert!(error.contains("captured detail failure"), "{error}");
         assert!(error.contains("draining every admitted request"), "{error}");
     }
+
+    #[tokio::test]
+    async fn retrying_fan_admits_heaviest_packets_first_but_restores_source_order() {
+        let admissions = Arc::new(Mutex::new(Vec::new()));
+        let admitted = Arc::new(tokio::sync::Semaphore::new(0));
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let run = tokio::spawn(fanout_retrying_over_fleet(
+            vec!["node-a".to_string(), "node-b".to_string()],
+            vec![
+                ("source-0".to_string(), 1usize),
+                ("source-1".to_string(), 1usize),
+                ("heavy-source-2".to_string(), 100usize),
+            ],
+            {
+                let admissions = admissions.clone();
+                let admitted = admitted.clone();
+                let release = release.clone();
+                move |(id, _priority): (String, usize), device| {
+                    let admissions = admissions.clone();
+                    let admitted = admitted.clone();
+                    let release = release.clone();
+                    async move {
+                        admissions.lock().unwrap().push((id.clone(), device));
+                        admitted.add_permits(1);
+                        release.acquire_owned().await.unwrap().forget();
+                        Ok::<_, String>(id)
+                    }
+                }
+            },
+            |item| item.1,
+            |item| item.0.clone(),
+            |_| {},
+        ));
+
+        admitted
+            .clone()
+            .acquire_many_owned(2)
+            .await
+            .unwrap()
+            .forget();
+        let initial = admissions
+            .lock()
+            .unwrap()
+            .iter()
+            .take(2)
+            .map(|(id, _)| id.clone())
+            .collect::<HashSet<_>>();
+        assert!(initial.contains("heavy-source-2"));
+        release.add_permits(3);
+        let output = run.await.unwrap().unwrap();
+        assert_eq!(output, vec!["source-0", "source-1", "heavy-source-2"]);
+    }
+
+    #[tokio::test]
+    async fn retrying_fan_moves_fast_failures_to_distinct_healthy_nodes() {
+        let attempts = Arc::new(Mutex::new(Vec::new()));
+        let output = fanout_retrying_over_fleet(
+            vec![
+                "fast-failure".to_string(),
+                "healthy-a".to_string(),
+                "healthy-b".to_string(),
+            ],
+            (0..8).map(|index| format!("packet-{index}")).collect(),
+            {
+                let attempts = attempts.clone();
+                move |packet: String, device: String| {
+                    let attempts = attempts.clone();
+                    async move {
+                        attempts
+                            .lock()
+                            .unwrap()
+                            .push((packet.clone(), device.clone()));
+                        if device == "fast-failure" {
+                            Err("provider unavailable".to_string())
+                        } else {
+                            Ok(packet)
+                        }
+                    }
+                }
+            },
+            |_| 0,
+            String::clone,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            output,
+            (0..8)
+                .map(|index| format!("packet-{index}"))
+                .collect::<Vec<_>>()
+        );
+        let attempts = attempts.lock().unwrap();
+        let failed_packets = attempts
+            .iter()
+            .filter(|(_, device)| device == "fast-failure")
+            .map(|(packet, _)| packet.as_str())
+            .collect::<HashSet<_>>();
+        assert!(!failed_packets.is_empty());
+        for packet in failed_packets {
+            assert!(attempts
+                .iter()
+                .any(|(candidate, device)| candidate == packet && device != "fast-failure"));
+            assert_eq!(
+                attempts
+                    .iter()
+                    .filter(|(candidate, device)| {
+                        candidate == packet && device == "fast-failure"
+                    })
+                    .count(),
+                1,
+                "a failed packet must never return to the same node"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn retrying_fan_drains_admitted_siblings_after_distinct_node_exhaustion() {
+        let admitted = Arc::new(tokio::sync::Semaphore::new(0));
+        let release_a = Arc::new(tokio::sync::Semaphore::new(0));
+        let release_b = Arc::new(tokio::sync::Semaphore::new(0));
+        let final_failure = Arc::new(tokio::sync::Notify::new());
+        let doomed_attempts = Arc::new(AtomicU64::new(0));
+        let run = tokio::spawn(fanout_retrying_over_fleet(
+            vec!["node-a".to_string(), "node-b".to_string()],
+            vec![
+                ("doomed".to_string(), 100usize),
+                ("hold-b".to_string(), 1usize),
+                ("hold-a".to_string(), 1usize),
+            ],
+            {
+                let admitted = admitted.clone();
+                let release_a = release_a.clone();
+                let release_b = release_b.clone();
+                let final_failure = final_failure.clone();
+                let doomed_attempts = doomed_attempts.clone();
+                move |(packet, _priority): (String, usize), device: String| {
+                    let admitted = admitted.clone();
+                    let release_a = release_a.clone();
+                    let release_b = release_b.clone();
+                    let final_failure = final_failure.clone();
+                    let doomed_attempts = doomed_attempts.clone();
+                    async move {
+                        admitted.add_permits(1);
+                        match packet.as_str() {
+                            "doomed" => {
+                                if doomed_attempts.fetch_add(1, Ordering::SeqCst) + 1 == 2 {
+                                    final_failure.notify_one();
+                                }
+                                Err(format!("{device} rejected the packet"))
+                            }
+                            "hold-a" => {
+                                release_a.acquire_owned().await.unwrap().forget();
+                                Ok(packet)
+                            }
+                            "hold-b" => {
+                                release_b.acquire_owned().await.unwrap().forget();
+                                Ok(packet)
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            },
+            |item| item.1,
+            |item| item.0.clone(),
+            |_| {},
+        ));
+
+        admitted
+            .clone()
+            .acquire_many_owned(3)
+            .await
+            .unwrap()
+            .forget();
+        release_b.add_permits(1);
+        tokio::time::timeout(std::time::Duration::from_secs(2), final_failure.notified())
+            .await
+            .expect("the failed packet reached the second distinct node");
+        tokio::task::yield_now().await;
+        assert!(
+            !run.is_finished(),
+            "terminal exhaustion must await the already-admitted sibling"
+        );
+        release_a.add_permits(1);
+        let error = run.await.unwrap().unwrap_err().to_string();
+        assert!(error.contains("exhausted every distinct node"), "{error}");
+        assert!(error.contains("draining every admitted request"), "{error}");
+    }
 }
 
 async fn fanout_over_fleet<T, R, F, Fut>(devices: Vec<String>, items: Vec<T>, f: F) -> Vec<R>
@@ -29627,6 +30170,186 @@ where
         details: details.into_iter().flatten().collect(),
         auxiliary: auxiliary.into_iter().flatten().collect(),
     })
+}
+
+struct RetryingFanPending<T> {
+    index: usize,
+    item: T,
+    priority: usize,
+    attempted_devices: HashSet<String>,
+    failures: Vec<(String, String)>,
+}
+
+struct RetryingFanCompletion<T, R> {
+    pending: RetryingFanPending<T>,
+    device: String,
+    output: std::result::Result<R, String>,
+}
+
+/// Run authority-bearing packets with work stealing and failover. A failed packet may not return to a
+/// device that already failed it; it remains queued until a different device is free. There is no retry-count
+/// or time cap: the finite set of distinct physical nodes is the retry authority, and failure is terminal only
+/// after that set is exhausted. Results are restored to source order even when admission is priority-ordered.
+async fn fanout_retrying_over_fleet<T, R, F, Fut, Priority, Label, Observe>(
+    devices: Vec<String>,
+    items: Vec<T>,
+    f: F,
+    priority: Priority,
+    label: Label,
+    observe: Observe,
+) -> Result<Vec<R>>
+where
+    T: Clone + Send + 'static,
+    R: Send + 'static,
+    F: Fn(T, String) -> Fut + Clone + Send + 'static,
+    Fut: std::future::Future<Output = std::result::Result<R, String>> + Send + 'static,
+    Priority: Fn(&T) -> usize,
+    Label: Fn(&T) -> String,
+    Observe: Fn(StagedFanObservation),
+{
+    use std::collections::VecDeque;
+
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+    let devices = order_fleet_by_speed(one_lane_per_host(devices), &load_config().speed_weights);
+    if devices.is_empty() {
+        bail!("retrying fleet fan has work but no distinct node");
+    }
+    let device_count = devices.len();
+    let labels = items.iter().map(|item| label(item)).collect::<Vec<_>>();
+    let item_count = items.len();
+    let mut pending = items
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| RetryingFanPending {
+            index,
+            priority: priority(&item),
+            item,
+            attempted_devices: HashSet::new(),
+            failures: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let order_pending = |left: &RetryingFanPending<T>, right: &RetryingFanPending<T>| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left.index.cmp(&right.index))
+    };
+    pending.sort_by(&order_pending);
+
+    let mut free_devices = devices.into_iter().collect::<VecDeque<_>>();
+    let mut completions = futures::stream::FuturesUnordered::new();
+    let mut results: Vec<Option<R>> = (0..item_count).map(|_| None).collect();
+    let mut in_flight = HashSet::new();
+    let mut completed = 0usize;
+    let mut tail_reported = false;
+    let mut terminal_failures = Vec::new();
+
+    loop {
+        if terminal_failures.is_empty() {
+            let mut unmatched_devices = VecDeque::new();
+            while let Some(device) = free_devices.pop_front() {
+                let Some(position) = pending
+                    .iter()
+                    .position(|item| !item.attempted_devices.contains(&device))
+                else {
+                    unmatched_devices.push_back(device);
+                    continue;
+                };
+                let mut pending_item = pending.remove(position);
+                pending_item.attempted_devices.insert(device.clone());
+                in_flight.insert(pending_item.index);
+                let call_item = pending_item.item.clone();
+                let call_device = device.clone();
+                let f = f.clone();
+                completions.push(async move {
+                    let output = std::panic::AssertUnwindSafe(f(call_item, call_device.clone()))
+                        .catch_unwind()
+                        .await
+                        .unwrap_or_else(|payload| Err(panic_payload_message(payload)));
+                    RetryingFanCompletion {
+                        pending: pending_item,
+                        device: call_device,
+                        output,
+                    }
+                });
+            }
+            free_devices = unmatched_devices;
+        }
+
+        if pending.is_empty() && in_flight.len() == 1 && !tail_reported {
+            let index = *in_flight.iter().next().expect("one packet is in flight");
+            observe(StagedFanObservation {
+                kind: StagedFanObservationKind::DetailTailStarted,
+                outstanding_detail: labels.get(index).cloned().unwrap_or_default(),
+                pending_details: 0,
+                in_flight_details: 1,
+                completed_details: completed,
+                pending_auxiliary: 0,
+                in_flight_auxiliary: 0,
+                completed_auxiliary: 0,
+                logically_free_lanes: free_devices.len(),
+            });
+            tail_reported = true;
+        }
+
+        if completions.is_empty() {
+            if !terminal_failures.is_empty() {
+                bail!(
+                    "retrying fleet fan failed after draining every admitted request: {}",
+                    terminal_failures.join(" | ")
+                );
+            }
+            if pending.is_empty() {
+                break;
+            }
+            bail!("retrying fleet fan has queued work but no eligible distinct node");
+        }
+
+        let RetryingFanCompletion {
+            pending: mut pending_item,
+            device,
+            output,
+        } = completions
+            .next()
+            .await
+            .expect("a non-empty retrying fan has a completion");
+        in_flight.remove(&pending_item.index);
+        free_devices.push_back(device.clone());
+        match output {
+            Ok(output) => {
+                completed += 1;
+                results[pending_item.index] = Some(output);
+            }
+            Err(reason) => {
+                pending_item.failures.push((device, reason));
+                if pending_item.attempted_devices.len() == device_count {
+                    let history = pending_item
+                        .failures
+                        .iter()
+                        .map(|(device, reason)| format!("{device}: {reason}"))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    terminal_failures.push(format!(
+                        "packet `{}` exhausted every distinct node ({history})",
+                        labels
+                            .get(pending_item.index)
+                            .map(String::as_str)
+                            .unwrap_or("unknown")
+                    ));
+                } else if terminal_failures.is_empty() {
+                    pending.push(pending_item);
+                    pending.sort_by(&order_pending);
+                }
+            }
+        }
+    }
+
+    if results.iter().any(Option::is_none) {
+        bail!("retrying fleet fan ended without every source-ordered result");
+    }
+    Ok(results.into_iter().flatten().collect())
 }
 
 /// #135: like `fanout_over_fleet`, but stops the lone lagging advisory scout once the others are in. Detail
