@@ -8,6 +8,7 @@ use super::swarm_control_registry::{
     apply_uncapped_effective_values, control_registry_manifest, merge_effective_config_controls,
     resolve_control_precedence,
 };
+use super::swarm_provider_lifecycle::{bind_current_provider_lifecycle, scope_provider_lifecycle};
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use console::style;
@@ -26,9 +27,10 @@ use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
-    deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
-    DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig, JudgeInput, JudgeOutcome,
-    JudgeRequest, NullSink, PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest, PreReviewer,
+    deterministic_verdict, is_split_candidate, AdmissionReceipt, ChildSpec, Dag, DeviceCfg,
+    DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig,
+    JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalFleetSnapshot, PreReviewOutput,
+    PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
     ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler, SwarmEvent,
     TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
 };
@@ -17032,12 +17034,9 @@ impl GooseAgentDispatcher {
         if !extra.is_empty() {
             model_config = model_config.with_merged_request_params(extra);
         }
+        let provider = bind_current_provider_lifecycle(self.provider_for(model_id).await?);
         agent
-            .update_provider(
-                self.provider_for(model_id).await?,
-                model_config,
-                &session_id,
-            )
+            .update_provider(provider, model_config, &session_id)
             .await
             .map_err(|e| anyhow!("update_provider: {e}"))?;
 
@@ -32519,6 +32518,27 @@ impl TaskDispatcher for GooseAgentDispatcher {
         .unwrap_or_default();
         let (verdict, confidence) = text.trim().split_once('|').unwrap_or(("REFUTE", "LOW"));
         verdict.to_uppercase().contains("CONFIRM") && confidence.to_uppercase().contains("HIGH")
+    }
+}
+
+#[async_trait]
+impl ProviderLifecycleDispatcher for GooseAgentDispatcher {
+    async fn run_admitted(
+        &self,
+        req: DispatchRequest,
+        admission: AdmissionReceipt,
+        lifecycle: ProviderLifecycle,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        if req.device_id != admission.logical_device_id || req.model_id != admission.model_id {
+            return Err(DispatchError::Terminal(format!(
+                "physical provider route drifted before dispatch: request `{}`/`{}`, admission `{}`/`{}`",
+                req.device_id,
+                req.model_id,
+                admission.logical_device_id,
+                admission.model_id
+            )));
+        }
+        scope_provider_lifecycle(lifecycle, TaskDispatcher::run(self, req)).await
     }
 }
 

@@ -12,6 +12,7 @@ pub mod session;
 pub mod skills;
 pub mod swarm;
 pub(crate) mod swarm_control_registry;
+pub(crate) mod swarm_provider_lifecycle;
 pub mod swarm_serve;
 pub mod term;
 #[cfg(feature = "tui")]
