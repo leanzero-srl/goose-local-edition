@@ -20,7 +20,8 @@ Architecture mirrors score_sb6.py: `@check(name, tier)` registry, `g()` results,
 refusals, `compound(gate × min)`, DIAGNOSTIC anti-stacking, CALIBRATION_OWNED rungs behind
 sb7-thresholds.json + CALIB_SHA256 pin (UNCALIBRATED banner until the freeze lands),
 `gather(root, vendor_port, db_dir, trace_path, mark_phase, seed) -> Ctx`,
-`evaluate(ctx) -> dict`, CLI `--tree/--port/--reference/--json-out` (+ `--seed`).
+`evaluate(ctx) -> dict`, CLI `--tree/--port/--reference/--json-out/--json-fd`
+(+ `--seed`).
 
 Sibling surfaces this module consumes (guarded — a missing surface is a named harness
 refusal at the CLI or a `harness_missing` entry, never a crash and never an app zero):
@@ -97,6 +98,15 @@ from score_build import (  # noqa: E402
     _free_port, _get, _instant, _ladder, _post, _req, g,
 )
 from score_build import _pe as _pe_raw  # noqa: E402
+
+
+def _write_json_fd(fd: int, result: Dict) -> None:
+    remaining = memoryview(json.dumps(result, indent=2, default=str).encode())
+    while remaining:
+        written = os.write(fd, remaining)
+        if written <= 0:
+            raise OSError("verdict descriptor accepted no bytes")
+        remaining = remaining[written:]
 
 
 def _pe(p):
@@ -4616,7 +4626,15 @@ def main() -> int:
                     help="freeze gate: refuse freeze-marked output unless the reference "
                          "aces every non-CAL check, every critical is exactly 1.0, the "
                          "severity selftest passes, and the coverage ledger is non-vacuous")
-    ap.add_argument("--json-out", type=Path, help="write the verdict JSON here")
+    verdict_output = ap.add_mutually_exclusive_group()
+    verdict_output.add_argument(
+        "--json-out", type=Path, help="write the verdict JSON here"
+    )
+    verdict_output.add_argument(
+        "--json-fd",
+        type=int,
+        help="write the verdict JSON directly to this inherited descriptor",
+    )
     args = ap.parse_args()
     args.tree = args.tree.resolve()
 
@@ -4675,6 +4693,8 @@ def main() -> int:
     print(format_report(result, f"sb-7 {args.tree.name}"))
     if args.json_out:
         args.json_out.write_text(json.dumps(result, indent=2, default=str))
+    elif args.json_fd is not None:
+        _write_json_fd(args.json_fd, result)
 
     if args.reference:
         gate_fails = _reference_gate(result, ctx)
