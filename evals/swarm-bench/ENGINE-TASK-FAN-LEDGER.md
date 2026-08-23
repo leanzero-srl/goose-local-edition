@@ -322,3 +322,92 @@ before the implementation commit.
 
 No LM Studio request, benchmark, scorer, SB7 file, campaign state, running fleet, judge behavior, or repair
 behavior was changed or exercised. Offline tests establish mechanism truth, not a wall-time or quality win.
+
+## Adversarial implementation closure — authoritative DAG, binder, topology, and runtime review
+
+The completed engine series was red-teamed after implementation rather than accepted from its green tests.
+Four P0 contract failures were found and corrected in separate commits:
+
+- `946fc16f8` makes post-binder package-entry injection reparse and revalidate into the exact DAG used by
+  contracts, the integration sink, `plan_loaded`, dispatch, and resume. The advertised plan can no longer omit
+  a scheduled entry-point owner.
+- `798ae2770` makes binder objective, files, requirement quotes, advisory evidence, interfaces, and required
+  acceptance evidence authoritative inputs to the typed detail compiler. Model-authored generic prose can add
+  useful procedure but cannot erase or replace those facts.
+- `8d3617cd3` makes the binder fail closed on incomplete implementation topology and unsafe project paths.
+  Generic role/surface and interface/artifact preservation checks cover missing source/config entry surfaces,
+  disconnected multi-integration graphs, exact root artifacts, extensionless files, and dotfiles without
+  treating runtime databases, API routes, flags, or URLs as delivered source. Absolute, parent, drive-prefixed,
+  empty-segment, and root-escaping owned paths are rejected.
+- `a61c4181a` removes the raw dynamic-replan escape hatch. Runtime additions are now read-only acceptance
+  reviews compiled from an already-completed task and one frozen semantic binder slice. Their objective,
+  requirements, evidence, interfaces, acceptance evidence, source paths, and sole dependency are engine-derived;
+  the model can supply only review procedure and exact citations. The scheduler verifies the compiler receipt,
+  atomically inserts admitted reviews before `integrate-verify`, emits the complete post-splice DAG, and resume
+  restores that same DAG and receipt. Review results are typed, requirement-complete, source-file-bound, and
+  reach the integration sink through an explicit uncapped typed-evidence channel rather than a lossy generic
+  dependency slice.
+
+### Why runtime review remains task-derived, never capacity-derived
+
+Idle capacity may decide **when** the engine asks whether useful evidence work exists; it never decides **what**
+work exists or how many reviews are created. The complete candidate set is the frozen Cartesian identity of an
+already-bound task and one of its semantic acceptance slices. Each pair has one stable engine-generated review
+ID and one exact contract. The selector never receives worker count or idle capacity and cannot author an ID,
+file, dependency, objective, requirement, evidence item, interface, or acceptance condition. A capacity-2 and a
+capacity-8 request compile byte-for-byte equivalent `TaskSpec`s. Extra machines therefore expose scheduling
+opportunity; they do not rewrite architecture, multiply semantic work, or create a bonus tail merely to keep a
+decoder busy.
+
+The same rule applies to judge splitting. Existing semantic judge observation and nudge behavior was not made
+deterministic or changed by this series. Split execution is explicitly guarded off while `ChildSpec` lacks full
+binder metadata. That is an Engine 5 prerequisite, not a permanent ban: a future split may be admitted only when
+each child preserves requirement/evidence/interface/path/acceptance closure through the ordinary typed compiler
+and appears in the exact observable DAG.
+
+### Remaining findings after the P0 fixes
+
+No additional P0 was found in this implementation slice after the adversarial fixtures and full gates. The
+following unresolved risks remain and are deliberately not hidden by this closure:
+
+- **P1 — semantic planner selection:** `score_skeleton`/`select_best_skeleton` validate structure and file
+  overlap but do not measure requirement or interface improvement. An equally shaped but semantically better
+  convergence/backbone candidate can still lose because replacement requires a strictly higher structural
+  score. Planning fan size is also still influenced by the available model pool.
+- **P1 — physical scheduling truth:** one-lane-per-host currently deduplicates model identifiers, not correlated
+  LM Studio host/model-instance occupancy. Distinct aliases on one physical host can be treated as independent
+  lanes, while `physical_idle_lanes` correctly remains unknown. Speed and idle claims need the Engine 1/4 broker
+  telemetry before they are causal evidence.
+- **P1 — staged-fan failure handling:** an error returned from one `fanout_staged` child can still unwind the
+  caller before all other admitted futures are explicitly drained. Provider-terminal accounting and structured
+  collection of every admitted result remain required.
+- **P1 — research value:** fixed scout lenses, `max_research_questions`, and bounded question generation still
+  limit research by configured count rather than unresolved evidence. Markdown normalization also preserves
+  heading provenance in records but flattened evidence quotes can lose the question/referent that made a fact
+  meaningful.
+- **P1 — hardcoded genericity leak:** default-on `WEB_VOCAB` still injects old frontend/vendor terms such as
+  `sync-button` and `payments-table`; it must be replaced with active-spec interfaces before generic campaigns.
+- **P1 — repair correctness and time:** repair retains fixed round ceilings, fixed timeout/kill paths, flat
+  finding-count stall detection, and promotion by finding count rather than identity, severity, invariant
+  preservation, and requirement closure. Historical r1/r2 evidence shows this can spend hours and still prefer a
+  candidate with one critical regression over multiple minor improvements.
+- **P2 — residual trust and slicing limits:** runtime receipts are trusted in-process compiler artifacts rather
+  than cryptographically bound records; ordinary legacy dependency contexts retain byte caps; binder semantic
+  quality still depends on the model after structural checks; project-relative lexical validation does not by
+  itself prove that an existing ancestor is not a symlink. These are explicit trust boundaries, not claims of
+  complete hermeticity.
+
+These findings map to Engines 1, 3, 4, 5, 6, and 8 in the main audit. They were not folded into this P0 series,
+because doing so would destroy causal attribution and exceed the task-compiler/DAG contract boundary.
+
+### Final verification state
+
+On commit `a61c4181a`, `cargo fmt`, all `goose-swarm` unit/integration/doc tests (65 + 6 + 39), the full
+`goose-cli` suite (585 passed, 1 ignored), `cargo clippy --all-targets -- -D warnings`, and `git diff --check`
+passed. The tests include scheduled-vs-advertised DAG identity, package-entry end-to-end dispatch, adversarial
+binder fact erasure, missing source/config surfaces, disconnected interfaces, SB7 runtime-artifact distinction,
+unsafe paths, idle-capacity 2-versus-8 invariance, raw/generic/path-invalid dynamic additions, typed review
+evidence at the sink, exact resume, and the judge-split guard.
+
+This worktree did not start or signal a fleet, call LM Studio, edit SB7 or its scorer, score a run, or touch the
+cloud benchmark worktrees.
