@@ -279,6 +279,36 @@ impl ProviderLifecycleDispatcher for FailedTerminalDispatcher {
     }
 }
 
+struct RecoveredTerminalDispatcher;
+
+#[async_trait]
+impl ProviderLifecycleDispatcher for RecoveredTerminalDispatcher {
+    async fn run_admitted(
+        &self,
+        _req: DispatchRequest,
+        _admission: AdmissionReceipt,
+        lifecycle: ProviderLifecycle,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        let failed = lifecycle
+            .provider_request_started("provider:failed")
+            .await
+            .unwrap();
+        lifecycle
+            .provider_terminal(failed, ProviderTerminalKind::Failed)
+            .await
+            .unwrap();
+        let recovered = lifecycle
+            .provider_request_started("provider:recovered")
+            .await
+            .unwrap();
+        lifecycle
+            .provider_terminal(recovered, ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        Ok("recovered-success".to_string().into())
+    }
+}
+
 struct LateStartDispatcher {
     gate: Arc<Notify>,
     result: Mutex<Option<oneshot::Sender<Result<(), String>>>>,
@@ -1076,6 +1106,29 @@ async fn provider_failure_cannot_be_reported_as_a_successful_scheduler_task() {
         .unwrap();
     assert!(report.done.is_empty());
     assert_eq!(report.failed, vec!["task".to_string()]);
+}
+
+#[tokio::test]
+async fn later_correlated_provider_success_recovers_the_scheduler_task() {
+    let sink = Arc::new(RecordingSink::default());
+    let control = control(
+        "provider-recovery",
+        vec![lane("lane-a", "model-a", "host-a", "instance-a", 1)],
+        sink.clone(),
+    );
+    let report = Scheduler::new(vec![device("lane-a", "model-a", 1)], 1)
+        .with_sink(sink)
+        .run_with_physical_admission(
+            Dag::from_specs(vec![spec("task", &[])]).unwrap(),
+            Arc::new(RecoveredTerminalDispatcher),
+            control,
+            String::new(),
+            String::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.done, vec!["task".to_string()]);
+    assert!(report.failed.is_empty());
 }
 
 #[tokio::test]
