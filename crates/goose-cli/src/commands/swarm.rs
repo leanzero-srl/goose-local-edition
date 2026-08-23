@@ -13,7 +13,7 @@ use super::swarm_semantic::{activity_digest_key, ReasoningRecurrenceMeter};
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use console::style;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use goose::agents::{
     large_text_threshold, Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform,
     SessionConfig,
@@ -25003,6 +25003,49 @@ mod fan_order_tests {
         assert_eq!(tail.in_flight_auxiliary, 2);
         assert_eq!(tail.logically_free_lanes, 0);
     }
+
+    #[tokio::test]
+    async fn staged_fan_drains_admitted_work_before_reporting_a_panicked_detail() {
+        let tail_started = Arc::new(tokio::sync::Notify::new());
+        let release_tail = Arc::new(tokio::sync::Notify::new());
+        let run = tokio::spawn(fanout_staged(
+            vec!["host-a".into(), "host-b".into()],
+            vec!["panic".to_string(), "tail".to_string()],
+            {
+                let tail_started = tail_started.clone();
+                let release_tail = release_tail.clone();
+                move |id: String, _device| {
+                    let tail_started = tail_started.clone();
+                    let release_tail = release_tail.clone();
+                    async move {
+                        if id == "panic" {
+                            panic!("captured detail failure");
+                        }
+                        tail_started.notify_one();
+                        release_tail.notified().await;
+                        id
+                    }
+                }
+            },
+            |detail: String, _device| async move { format!("contract-{detail}") },
+            |_detail| false,
+            String::clone,
+            |_| {},
+        ));
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), tail_started.notified())
+            .await
+            .expect("the second detail was admitted before the first failed");
+        tokio::task::yield_now().await;
+        assert!(
+            !run.is_finished(),
+            "the fan must keep awaiting an admitted request after a sibling panics"
+        );
+        release_tail.notify_waiters();
+        let error = run.await.unwrap().unwrap_err().to_string();
+        assert!(error.contains("captured detail failure"), "{error}");
+        assert!(error.contains("draining every admitted request"), "{error}");
+    }
 }
 
 async fn fanout_over_fleet<T, R, F, Fut>(devices: Vec<String>, items: Vec<T>, f: F) -> Vec<R>
@@ -25082,13 +25125,23 @@ enum StagedFanCompletion<D, A> {
     Detail {
         index: usize,
         device: String,
-        output: D,
+        output: std::result::Result<D, String>,
     },
     Auxiliary {
         index: usize,
         device: String,
-        output: A,
+        output: std::result::Result<A, String>,
     },
+}
+
+fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        return (*message).to_string();
+    }
+    "non-string panic payload".to_string()
 }
 
 /// Run a required two-stage fan without a global barrier between its stages. New detail work always has
@@ -25138,14 +25191,21 @@ where
     let mut completed_auxiliary = 0usize;
     let mut detail_tail_reported = false;
     let mut auxiliary_drained_reported = false;
+    let mut failures = Vec::new();
 
     loop {
-        while let Some(device) = free_devices.pop_front() {
+        while failures.is_empty() {
+            let Some(device) = free_devices.pop_front() else {
+                break;
+            };
             if let Some((index, item)) = pending_details.pop_front() {
                 let detail_fn = detail_fn.clone();
                 in_flight_details += 1;
                 completions.spawn(async move {
-                    let output = detail_fn(item, device.clone()).await;
+                    let output = std::panic::AssertUnwindSafe(detail_fn(item, device.clone()))
+                        .catch_unwind()
+                        .await
+                        .map_err(panic_payload_message);
                     StagedFanCompletion::Detail {
                         index,
                         device,
@@ -25156,7 +25216,10 @@ where
                 let auxiliary_fn = auxiliary_fn.clone();
                 in_flight_auxiliary += 1;
                 completions.spawn(async move {
-                    let output = auxiliary_fn(detail, device.clone()).await;
+                    let output = std::panic::AssertUnwindSafe(auxiliary_fn(detail, device.clone()))
+                        .catch_unwind()
+                        .await
+                        .map_err(panic_payload_message);
                     StagedFanCompletion::Auxiliary {
                         index,
                         device,
@@ -25211,17 +25274,28 @@ where
         }
 
         if completions.is_empty() {
+            if !failures.is_empty() {
+                bail!(
+                    "staged fan failed after draining every admitted request: {}",
+                    failures.join(" | ")
+                );
+            }
             if pending_details.is_empty() && pending_auxiliary.is_empty() {
                 break;
             }
             bail!("staged fan has queued work but no admitted request");
         }
 
-        let completion = completions
-            .join_next()
-            .await
-            .ok_or_else(|| anyhow!("staged fan ended before its admitted requests"))?
-            .map_err(|e| anyhow!("staged fan request panicked: {e}"))?;
+        let Some(joined) = completions.join_next().await else {
+            bail!("staged fan ended before its admitted requests");
+        };
+        let completion = match joined {
+            Ok(completion) => completion,
+            Err(error) => {
+                failures.push(format!("admitted request task failed: {error}"));
+                continue;
+            }
+        };
         match completion {
             StagedFanCompletion::Detail {
                 index,
@@ -25229,11 +25303,19 @@ where
                 output,
             } => {
                 in_flight_details = in_flight_details.saturating_sub(1);
-                completed_details += 1;
-                if needs_auxiliary(&output) {
-                    pending_auxiliary.push_back((index, output.clone()));
+                match output {
+                    Ok(output) => {
+                        completed_details += 1;
+                        if needs_auxiliary(&output) {
+                            pending_auxiliary.push_back((index, output.clone()));
+                        }
+                        details[index] = Some(output);
+                    }
+                    Err(reason) => failures.push(format!(
+                        "detail `{}` panicked: {reason}",
+                        labels.get(index).map(String::as_str).unwrap_or("unknown")
+                    )),
                 }
-                details[index] = Some(output);
                 free_devices.push_back(device);
             }
             StagedFanCompletion::Auxiliary {
@@ -25242,8 +25324,16 @@ where
                 output,
             } => {
                 in_flight_auxiliary = in_flight_auxiliary.saturating_sub(1);
-                completed_auxiliary += 1;
-                auxiliary[index] = Some(output);
+                match output {
+                    Ok(output) => {
+                        completed_auxiliary += 1;
+                        auxiliary[index] = Some(output);
+                    }
+                    Err(reason) => failures.push(format!(
+                        "auxiliary for `{}` panicked: {reason}",
+                        labels.get(index).map(String::as_str).unwrap_or("unknown")
+                    )),
+                }
                 free_devices.push_back(device);
             }
         }
