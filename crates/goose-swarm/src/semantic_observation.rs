@@ -87,6 +87,9 @@ impl SemanticObservationSnapshotDraft {
         require_text("artifact_version", &self.artifact_version)?;
         require_text("goal", &self.goal)?;
         require_text("task_contract", &self.task_contract)?;
+        if self.source_revision == 0 {
+            bail!("semantic observation source revision must be non-zero");
+        }
         if self.trace.sequence != self.source_revision {
             bail!(
                 "trace sequence {} does not match source revision {}",
@@ -785,7 +788,6 @@ pub enum SemanticObservationSubmission {
 
 #[derive(Clone)]
 pub struct SemanticObservationPlane {
-    reviewer: Arc<dyn SemanticObservationReviewer>,
     events: Arc<dyn EventSink>,
     state: Arc<Mutex<SemanticObservationState>>,
 }
@@ -805,16 +807,15 @@ struct CurrentSnapshot {
 }
 
 impl SemanticObservationPlane {
-    pub fn new(reviewer: Arc<dyn SemanticObservationReviewer>, events: Arc<dyn EventSink>) -> Self {
+    pub fn new(events: Arc<dyn EventSink>) -> Self {
         Self {
-            reviewer,
             events,
             state: Arc::new(Mutex::new(SemanticObservationState::default())),
         }
     }
 
-    pub fn without_events(reviewer: Arc<dyn SemanticObservationReviewer>) -> Self {
-        Self::new(reviewer, Arc::new(NullSink))
+    pub fn without_events() -> Self {
+        Self::new(Arc::new(NullSink))
     }
 
     /// Submits an already-admitted review and returns before the reviewer finishes.
@@ -824,6 +825,7 @@ impl SemanticObservationPlane {
     pub fn submit(
         &self,
         snapshot: SealedSemanticObservationSnapshot,
+        reviewer: Arc<dyn SemanticObservationReviewer>,
     ) -> SemanticObservationSubmission {
         let task_id = snapshot.task_id().to_string();
         let snapshot_hash = snapshot.snapshot_hash().to_string();
@@ -895,7 +897,6 @@ impl SemanticObservationPlane {
         }));
 
         let (sender, completion) = oneshot::channel();
-        let reviewer = self.reviewer.clone();
         let events = self.events.clone();
         let state = self.state.clone();
         let task_id_for_task = task_id.clone();
@@ -1420,8 +1421,8 @@ mod tests {
             release: Notify::new(),
             response: Mutex::new(Some(response)),
         });
-        let plane = SemanticObservationPlane::without_events(reviewer.clone());
-        let handle = match plane.submit(old.clone()) {
+        let plane = SemanticObservationPlane::without_events();
+        let handle = match plane.submit(old.clone(), reviewer.clone()) {
             SemanticObservationSubmission::Started(handle) => handle,
             SemanticObservationSubmission::Rejected(reason) => {
                 panic!("unexpected rejection: {reason:?}")
@@ -1430,7 +1431,7 @@ mod tests {
         reviewer.started.notified().await;
         assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
         assert!(matches!(
-            plane.submit(old.clone()),
+            plane.submit(old.clone(), reviewer.clone()),
             SemanticObservationSubmission::Rejected(
                 SemanticObservationRejection::DuplicateInFlight
             )
@@ -1445,7 +1446,7 @@ mod tests {
         assert!(!receipt.has_intervention_authority());
         assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
         assert!(matches!(
-            plane.submit(old),
+            plane.submit(old, reviewer),
             SemanticObservationSubmission::Rejected(
                 SemanticObservationRejection::OlderThanCurrent { .. }
             )
@@ -1454,9 +1455,10 @@ mod tests {
 
     #[tokio::test]
     async fn reviewer_panic_becomes_an_abstention_and_releases_one_flight_state() {
-        let plane = SemanticObservationPlane::without_events(Arc::new(PanickingReviewer));
+        let plane = SemanticObservationPlane::without_events();
+        let reviewer = Arc::new(PanickingReviewer);
         let first = draft(7, "first").seal().unwrap();
-        let handle = match plane.submit(first) {
+        let handle = match plane.submit(first, reviewer.clone()) {
             SemanticObservationSubmission::Started(handle) => handle,
             SemanticObservationSubmission::Rejected(reason) => {
                 panic!("unexpected rejection: {reason:?}")
@@ -1471,7 +1473,7 @@ mod tests {
 
         let next = draft(8, "next").seal().unwrap();
         assert!(matches!(
-            plane.submit(next),
+            plane.submit(next, reviewer),
             SemanticObservationSubmission::Started(_)
         ));
     }
