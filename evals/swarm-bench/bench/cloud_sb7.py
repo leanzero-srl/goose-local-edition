@@ -12197,6 +12197,146 @@ def manager_restart_mismatch(root: Path) -> str | None:
     return None
 
 
+def normalize_interrupted_builds(
+    root: Path, campaign: Mapping[str, Any]
+) -> list[str]:
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
+    refused: list[str] = []
+    for row in entrants(manifest):
+        entrant_id = str(row["id"])
+        state = read_state(root, entrant_id)
+        interrupted_status = str(state.get("status"))
+        if interrupted_status not in {"WAITING_PROVIDER_LANE", "BUILD_RUNNING"}:
+            continue
+
+        topology_clean = True
+        for pid_key, pgid_key, identity_key in (
+            ("supervisor_pid", "supervisor_pgid", "supervisor_identity"),
+            ("goose_pid", "process_group", "goose_identity"),
+        ):
+            pid = state.get(pid_key)
+            pgid = int(state.get(pgid_key) or 0)
+            record_clean = stop_recorded_group(
+                pid,
+                pgid,
+                state.get(identity_key),
+            )
+            if process_alive(pid, state.get(identity_key)):
+                record_clean = False
+            if pgid and process_group_members(pgid):
+                record_clean = False
+            topology_clean = topology_clean and record_clean
+        lifecycle = lifecycle_summary(
+            Path(str(state.get("provider_lifecycle", ""))),
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        outstanding, budget_error = current_full_episode_outstanding_reservations(
+            root, campaign, row
+        )
+        accounting_error = generation_two_entrant_accounting_failure(
+            root, campaign, row
+        )
+        request_states = lifecycle.get("request_states")
+        explicit_pre_admission_terminal = (
+            interrupted_status == "BUILD_RUNNING"
+            and isinstance(request_states, dict)
+            and bool(request_states)
+            and all(
+                isinstance(states, list) and states and states[-1] == "error"
+                for states in request_states.values()
+            )
+        )
+        waiting_before_current_admission = (
+            interrupted_status == "WAITING_PROVIDER_LANE"
+        )
+        safe_pre_admission = bool(
+            topology_clean
+            and int(lifecycle.get("admitted", 0)) == 0
+            and lifecycle_failure(lifecycle) is None
+            and not outstanding
+            and budget_error is None
+            and accounting_error is None
+            and (waiting_before_current_admission or explicit_pre_admission_terminal)
+        )
+        attempts = int(state.get("provider_episode_attempts", 0))
+        if safe_pre_admission and attempts < max_episodes:
+            update_state(
+                root,
+                entrant_id,
+                status="PLANNED",
+                failure=None,
+                resume_normalized_from=interrupted_status,
+                resume_normalized_at=utc_now(),
+                admitted_requests=0,
+                provider_terminal_requests=int(lifecycle.get("terminal", 0)),
+                lifecycle_events=int(lifecycle.get("events", 0)),
+                lifecycle_transition_errors=lifecycle.get("transition_errors", []),
+                lifecycle_ambiguous_request_ids=lifecycle.get(
+                    "ambiguous_request_ids", []
+                ),
+                budget_outstanding_request_ids=[],
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+                goose_pid=None,
+                process_group=None,
+                goose_identity=None,
+            )
+            continue
+
+        reasons = [f"resume reconstructed interrupted {interrupted_status}"]
+        if int(lifecycle.get("admitted", 0)):
+            reasons.append(
+                f"{int(lifecycle['admitted'])} provider request(s) were admitted"
+            )
+        lifecycle_problem = lifecycle_failure(lifecycle)
+        if lifecycle_problem:
+            reasons.append(f"lifecycle is ambiguous: {lifecycle_problem}")
+        if not waiting_before_current_admission and not explicit_pre_admission_terminal:
+            reasons.append("pre-admission termination is not explicitly proven")
+        if outstanding:
+            reasons.append(
+                f"outstanding full-budget reserves: {', '.join(outstanding)}"
+            )
+        if budget_error:
+            reasons.append(budget_error)
+        if accounting_error:
+            reasons.append(accounting_error)
+        if not topology_clean:
+            reasons.append("owned provider process topology survived cleanup")
+        if safe_pre_admission and attempts >= max_episodes:
+            reasons.append("provider episode allowance is exhausted")
+        failure = "; ".join(reasons)
+        changes: Dict[str, Any] = {
+            "status": "INCOMPLETE",
+            "failure": failure,
+            "resume_normalized_from": interrupted_status,
+            "resume_normalized_at": utc_now(),
+            "admitted_requests": int(lifecycle.get("admitted", 0)),
+            "provider_terminal_requests": int(lifecycle.get("terminal", 0)),
+            "lifecycle_events": int(lifecycle.get("events", 0)),
+            "lifecycle_transition_errors": lifecycle.get("transition_errors", []),
+            "lifecycle_ambiguous_request_ids": lifecycle.get(
+                "ambiguous_request_ids", []
+            ),
+            "budget_outstanding_request_ids": outstanding,
+        }
+        if topology_clean:
+            changes.update(
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+                goose_pid=None,
+                process_group=None,
+                goose_identity=None,
+            )
+        update_state(root, entrant_id, **changes)
+        refused.append(f"{entrant_id}: {failure}")
+    return refused
+
+
 def resume_campaign(root: Path) -> int:
     with exclusive_claim(root / "locks/resume.claim", blocking=True) as claimed:
         if not claimed:
@@ -12205,6 +12345,14 @@ def resume_campaign(root: Path) -> int:
         recover_dead_manager(root)
         recover_interrupted_publication(root)
         campaign = load_json(campaign_file(root))
+        interrupted = normalize_interrupted_builds(root, campaign)
+        if interrupted:
+            failure = "resume refused interrupted build evidence: " + "; ".join(
+                interrupted
+            )
+            manager_state(root, status="ATTENTION", failure=failure[:4000])
+            update_campaign(root, status="ATTENTION", failure=failure[:4000])
+            raise SystemExit(failure)
         for state in status_rows(root):
             if state["status"] == "PRE_ADMISSION_FAILURE":
                 row = manifest_row(root, str(state["entrant"]))

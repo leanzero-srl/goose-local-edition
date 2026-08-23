@@ -250,6 +250,40 @@ class CloudSb7HarnessTest(unittest.TestCase):
             {"type": "complete", "total_tokens": 10},
         ]
 
+    def provider_lifecycle_events(
+        self,
+        row: dict[str, object],
+        states: list[str],
+        *,
+        request_id: str = "fixture-provider-request",
+    ) -> list[dict[str, object]]:
+        usage = {
+            "reported_model": row["model"],
+            "input_tokens": 2,
+            "output_tokens": 3,
+            "total_tokens": 5,
+        }
+        base = {
+            "schema_version": 1,
+            "timestamp": "now",
+            "request_id": request_id,
+            "provider": row["provider"],
+            "model": row["model"],
+            "session": "fixture-session",
+        }
+        return [
+            {
+                **base,
+                "state": state,
+                **(
+                    {"usage": usage}
+                    if state in {"usage_reported", "provider_terminal"}
+                    else {}
+                ),
+            }
+            for state in states
+        ]
+
     def progress_observation(
         self,
         text: str,
@@ -6451,6 +6485,200 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
             self.assertEqual(
                 cloud_sb7.load_json(root / "manager.json")["status"], "IDLE"
+            )
+
+    def test_resume_normalizes_explicit_pre_admission_build_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            lifecycle = root / "entrants" / entrant_id / "provider-lifecycle.jsonl"
+            lifecycle.write_text(
+                "\n".join(
+                    map(
+                        json.dumps,
+                        self.provider_lifecycle_events(row, ["queued", "error"]),
+                    )
+                )
+                + "\n"
+            )
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_RUNNING",
+                provider=row["provider"],
+                model=row["model"],
+                provider_lifecycle=str(lifecycle),
+                provider_episode_attempts=1,
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+                goose_pid=None,
+                process_group=None,
+                goose_identity=None,
+            )
+            cloud_sb7.update_campaign(root, status="ATTENTION", failure="fixture")
+            cloud_sb7.manager_state(
+                root, status="ATTENTION", pid=None, pgid=None, identity=None
+            )
+            cloud_sb7.monitor_state(
+                root, status="ATTENTION", pid=None, pgid=None, identity=None
+            )
+
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "recover_dead_manager"),
+                mock.patch.object(cloud_sb7, "recover_interrupted_publication"),
+                mock.patch.object(cloud_sb7, "monitor_start", return_value=0) as start,
+            ):
+                self.assertEqual(cloud_sb7.resume_campaign(root), 0)
+
+            start.assert_called_once_with(root)
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "PLANNED")
+            self.assertEqual(state["resume_normalized_from"], "BUILD_RUNNING")
+            self.assertEqual(state["provider_episode_attempts"], 1)
+
+    def test_resume_refuses_build_without_pre_admission_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            lifecycle = root / "entrants" / entrant_id / "provider-lifecycle.jsonl"
+            lifecycle.write_text("")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_RUNNING",
+                provider=row["provider"],
+                model=row["model"],
+                provider_lifecycle=str(lifecycle),
+                provider_episode_attempts=1,
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+                goose_pid=None,
+                process_group=None,
+                goose_identity=None,
+            )
+
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "recover_dead_manager"),
+                mock.patch.object(cloud_sb7, "recover_interrupted_publication"),
+                mock.patch.object(cloud_sb7, "monitor_start") as start,
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit,
+                    "pre-admission termination is not explicitly proven",
+                ):
+                    cloud_sb7.resume_campaign(root)
+
+            start.assert_not_called()
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertEqual(state["resume_normalized_from"], "BUILD_RUNNING")
+            self.assertEqual(
+                cloud_sb7.load_json(cloud_sb7.campaign_file(root))["status"],
+                "ATTENTION",
+            )
+
+    def test_resume_refuses_admitted_interrupted_build(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            lifecycle = root / "entrants" / entrant_id / "provider-lifecycle.jsonl"
+            lifecycle.write_text(
+                "\n".join(
+                    map(
+                        json.dumps,
+                        self.provider_lifecycle_events(
+                            row,
+                            [
+                                "queued",
+                                "admitted",
+                                "usage_reported",
+                                "provider_terminal",
+                            ],
+                        ),
+                    )
+                )
+                + "\n"
+            )
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_RUNNING",
+                provider=row["provider"],
+                model=row["model"],
+                provider_lifecycle=str(lifecycle),
+                provider_episode_attempts=1,
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+                goose_pid=None,
+                process_group=None,
+                goose_identity=None,
+            )
+
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "recover_dead_manager"),
+                mock.patch.object(cloud_sb7, "recover_interrupted_publication"),
+                mock.patch.object(cloud_sb7, "monitor_start") as start,
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit, "provider request\\(s\\) were admitted"
+                ):
+                    cloud_sb7.resume_campaign(root)
+
+            start.assert_not_called()
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertEqual(state["admitted_requests"], 1)
+            self.assertEqual(state["provider_terminal_requests"], 1)
+
+    def test_resume_normalizes_waiting_row_before_current_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            lifecycle = root / "entrants" / entrant_id / "provider-lifecycle.jsonl"
+            lifecycle.write_text(
+                "\n".join(
+                    map(
+                        json.dumps,
+                        self.provider_lifecycle_events(row, ["queued", "error"]),
+                    )
+                )
+                + "\n"
+            )
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="WAITING_PROVIDER_LANE",
+                provider=row["provider"],
+                model=row["model"],
+                provider_lifecycle=str(lifecycle),
+                provider_episode_attempts=1,
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+                goose_pid=None,
+                process_group=None,
+                goose_identity=None,
+            )
+
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            self.assertEqual(
+                cloud_sb7.normalize_interrupted_builds(root, campaign), []
+            )
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "PLANNED")
+            self.assertEqual(
+                state["resume_normalized_from"], "WAITING_PROVIDER_LANE"
             )
 
     def test_gated_child_never_execs_before_parent_receipt(self) -> None:
