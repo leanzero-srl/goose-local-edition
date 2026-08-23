@@ -106,7 +106,7 @@ delta. `null→X` records a nullable source default whose current resolver suppl
 | `judge_nudge` | `false` | Legacy same-session nudge, capped twice, then abort. | **OFF/MODIFY** until typed observation, cooperative delivery, and terminal-safe state machine. |
 | `fix_sched` | `false` | Routes a subset of repair through legacy scheduler. | **MODIFY**, then ON as the only brokered repair route. |
 | `ask_max_q` | `3` | Caps questions per ask. | **MODIFY**: prioritize unresolved critical facts; no semantic count cap. |
-| `split` | `true` | Splits plan modules. | **MODIFY**, then ON through requirement compiler; semantic boundaries, not fleet/file count. |
+| `split` | `true` (requested but hard-disabled) | Splits plan modules. Current judge passes literal `false` for child contract completeness, so execution cannot split. | **MODIFY**, then ON through requirement compiler; semantic boundaries, not fleet/file count. |
 | `contracts` | `true` | Generates task contracts. | **MODIFY**, then bake ON: typed compiler currently improves structure but live quality is unmeasured (`FAN`). |
 | `complete` | `true` | Runs iterative COMPLETE repair. | **MODIFY**: causal defect ledger, shadow candidates, judge adjudication, atomic promotion (`REP`). |
 | `backbone` | `true` | Builds/revises a whole-plan backbone. | **MODIFY/MERGE** into canonical plan; avoid another full-plan generation. |
@@ -133,7 +133,7 @@ delta. `null→X` records a nullable source default whose current resolver suppl
 | `read_on_fix` | `false` | Repair prompt mode requiring reads. | **REMOVE/MERGE** into evidence-bearing repair contract. |
 | `force_write_tool` | `null→false` | Forces a write tool call. | **REMOVE**; tool occurrence is not correctness. |
 | `scoped_contracts` | `null→false` | Alternate scoped contract mode. | **REMOVE/MERGE** into the single typed contract compiler. |
-| `split_secs` | `300` | Split-phase wall. | **REMOVE**; no semantic duration cap. |
+| `split_secs` | `300` (currently inert) | Split-phase wall; child splitting is hard-disabled. | **REMOVE**; no semantic duration cap. |
 
 ## Persisted controls — runtime profile, never causal arms
 
@@ -196,7 +196,7 @@ the schema-2 campaign correctly refuses to pretend their ambient environment val
 | `salvage_require_critical` / `GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL` | OFF | Requires critical acceptance before salvage. | **MODIFY**, then ON; explicit `Salvaged/Provisional` status plus critical evidence (`REP`). |
 | `scout_doc_urls` / `GOOSE_SWARM_SCOUT_DOC_URLS` | ON | Fetches URLs found in spec for research. | **ON/MODIFY**: preserve provenance, remove fixed three-URL/24k-byte truth ceilings. |
 | `skeleton_first` / `GOOSE_SWARM_SKELETON_FIRST` | ON | Builds a plan skeleton before details. | **MODIFY/MERGE** into canonical requirement graph; avoid another whole-plan pass. |
-| `split_inherit_spec` / `GOOSE_SWARM_SPLIT_INHERIT_SPEC` | ON | Propagates spec context into split tasks. | **ON**, typed requirement slices rather than copied prompt text. |
+| `split_inherit_spec` / `GOOSE_SWARM_SPLIT_INHERIT_SPEC` | ON (currently inert) | Propagates spec context into split tasks, but contract-bound child splitting is hard-disabled. | **MODIFY**, then ON with typed requirement slices rather than copied prompt text. |
 | `doc_examples` / `GOOSE_SWARM_DOC_EXAMPLES` | OFF | Adds documentation examples to prompts. | **OFF** until cited, version-matched retrieval proves value without prompt bloat. |
 | `physical_broker` / `GOOSE_SWARM_PHYSICAL_BROKER` | OFF | Enforces verified physical admission (`PHY`). Current entry rejects default-on judge, prereview and dynamic replan, so simply enabling it fails before execution. | **OFF/MODIFY**, then foundational ON after all work roles use its common queue. |
 | `speculate` / `GOOSE_SWARM_SPECULATE` | OFF | Races duplicate writer and aborts loser. | **OFF** until shadow transaction, provider terminal, and semantic promotion exist; likely remove if supervision is superior. |
@@ -223,7 +223,7 @@ the schema-2 campaign correctly refuses to pretend their ambient environment val
 
 | Control / environment | Current default | Intended profile role / dependency | Disposition |
 |---|---:|---|---|
-| `ai_name` / `GOOSE_SWARM_AI_NAME` | ON | Detached model-generated session title. | **PROFILE/OFF for benchmark**; unrelated provider work must not contend with measured fleet. |
+| `ai_name` / `GOOSE_SWARM_AI_NAME` | ON | Detached model-generated session title. Its fallback `swarm.ai_session_name` YAML key is outside `SwarmConfig` and the registry. | **PROFILE/OFF for benchmark**; remove the unregistered fallback or register one canonical input. |
 | `ask_file` / `GOOSE_SWARM_ASK_FILE` | unset | Operator-answer transport. | **PROFILE**; isolated path, hashed initial state, no ambient mutation. |
 | `ask_wait_secs` / `GOOSE_SWARM_ASK_WAIT_SECS` | `1800` | Human wait wall. | **PROFILE**; timeout yields blocked/inconclusive, never guessed answer. |
 | `fix_cap_secs` / `GOOSE_SWARM_FIX_CAP_SECS` | `1200` (clamp 120–3600) | Repair-attempt wall; uncapped substitutes one week. | **PROFILE/MODIFY**: no semantic duration cap. |
@@ -247,7 +247,7 @@ The nine accepted aliases are `act_now→act_now_nudge`, `ask_maxq→ask_max_q`,
 `stream_retry→stream_decode_retry`, `temp→temperature`, and
 `think_off→think_off_test_authors`. They must never become arm names or independent deltas.
 
-There are no registered controls with no production reader: source tests compare the 141 literal
+There are no registered controls with no production reader: source tests compare the 142 literal
 `GOOSE_SWARM_*` readers bidirectionally with the registry and aliases. There are, however, **39 real
 environment-only controls without a run-level effective echo**. Those are settable but not provable from
 `levers_resolved`; their mechanism-specific events are the only present evidence. A future campaign may not
@@ -262,11 +262,29 @@ default OFF). The older engine/campaign ledgers also report 49/165 because they 
 `physical_broker`; current source is 50/166. These drifts require generated truth, never another
 hand-maintained campaign list.
 
+Five registry-boundary defects remain despite exact name coverage:
+
+1. Environment-only manifest rows expose neither value type/default nor phase/event contract. The 39 values
+   without an effective echo cannot be reconstructed from `goose swarm controls`.
+2. `split=true` is echoed as executed while `contract_bound_child_split_enabled(judge_split_requested(),
+   false)` hard-disables it. `split_secs` and `split_inherit_spec` are consequently inert. The registry test
+   proves a reader exists, not that the requested mechanism can fire.
+3. `straggler_grace_secs=null` is emitted even though execution derives a concrete grace inside the fan. It is
+   a serialized input echo, not an effective execution value.
+4. Provider code reads raw `swarm.ai_session_name` as a fallback outside `SwarmConfig` and the registry. The
+   control-environment digest covers only `GOOSE_SWARM_*`, excluding runtime-affecting inputs such as
+   `GOOSE_LOCAL_CONTEXT_CAP`, `GOOSE_MAX_TOOL_RESPONSE_SIZE`, `GOOSE_COMPACT_KEEP_TAIL`,
+   `CONTEXT_FILE_NAMES`, `GOOSE_DEFAULT_EXTENSION_TIMEOUT`, `SWARM_COMMAND`, and `SWARM_LMS_PATH`.
+5. Schema-2 reference generation uses serialized nullable defaults. It can stage `null` for behavior controls
+   that execute as booleans (`spec_sized_plan null→true`; `straggler_stop_degrade`, `goals`, `ask_replan`, and
+   `think_off_test_authors null→false`) and then compare the requested null with the effective boolean. A
+   reference or arm can therefore fail verification or become a misleading no-op before any benchmark.
+
 ## Source anchors
 
 - Persisted registry: `crates/goose-cli/src/commands/swarm_control_registry.rs:108`; environment-only
   registry: `:240`; effective environment echoes: `:493`; aliases: `:508`; literal reader inventory and
-  bidirectional tests: `:550` and `:1039`.
+  bidirectional tests: `:550` and `:1039`. Current source contains 142 unique literal readers.
 - Serialized source defaults: `crates/goose-cli/src/commands/swarm.rs:1245`; merged config resolution:
   `:1412`; provider/profile/effective `levers_resolved` projection: `:38317`.
 - Typed task-detail compiler and staged fan: `crates/goose-cli/src/commands/swarm.rs:19988`, `:20088`,
@@ -379,20 +397,25 @@ The smallest acceptable permanent gate is:
 
 1. Rust derives the complete `SwarmConfig` field set and literal production environment-reader set, then
    fails on missing, duplicate, alias-as-control, inert, or stale rows; it asserts the exact disposition/type/
-   campaign-role coverage and the serialized source default for every persisted control.
+   campaign-role coverage and both serialized and effective source defaults for every persisted control.
 2. `goose swarm controls` exports schema, canonical build identity, registry digest, accepted aliases,
-   environment-input digest, default, type, campaign role, and effective-echo capability without probing a
-   provider. A golden/schema test round-trips that export.
-3. Campaign planning accepts only a source-exported behavior control, materializes explicit values (including
+   environment-input digest, default, type, phase/mechanism-event contract, campaign role, and effective-echo
+   capability for config and environment-only rows without probing a provider. The digest includes every
+   runtime-affecting environment/config fallback, not only `GOOSE_SWARM_*`; a golden/schema test round-trips it.
+3. Campaign planning accepts only a source-exported behavior control, materializes effective explicit values (including
    `false` for default-on ablation), and requires exactly one full-projection delta or zero for a declared
-   replicate. Runtime, removal, telemetry, env-only-unobservable, alias, implicit, and multi-delta plans fail.
+   replicate. A nullable-default fixture must prove reference/arm values equal execution. Runtime, removal,
+   telemetry, env-only-unobservable, alias, implicit, and multi-delta plans fail.
 4. Launch rechecks the binary, registry, environment, staged config, reference profile, candidate profile,
    spec, scorer, and queue/plan digests. Post-run verification compares the complete executed projection and
    rejects a missing or mismatched `levers_resolved` event.
 5. Each behavior control has a registered mechanism-event predicate. A run with the requested value but no
    causal event is `UNFIRED`, never evidence; registry/event coverage is bidirectional. Provider lifecycle,
-   tree epoch, semantic observation/intervention, and repair promotion each have replay fixtures.
+   tree epoch, semantic observation/intervention, split admission, and repair promotion each have replay
+   fixtures. An enabled-but-hard-disabled branch fails this gate.
 
-Existing source coverage supplies parts 1–4 for persisted controls and the schema-2 campaign seam, but part 5
-is not complete, 39 environment-only values lack a run-level echo, the live launcher has not adopted schema 2,
-and the new semantic observation plane has no production reviewer. Those are blockers, not paperwork.
+Existing coverage proves exact persisted names/readers, a source registry digest, staged-file locks, and a
+full persisted projection. It does **not** yet satisfy the effective-default, all-runtime-input,
+environment-metadata, nullable-reference, or mechanism-event parts above. In addition, 39 environment-only
+values lack a run-level echo, the live launcher has not adopted schema 2, and the new semantic observation
+plane has no production reviewer. Those are blockers, not paperwork.
