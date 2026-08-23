@@ -1,5 +1,7 @@
 use crate::base::{
-    SingleAttemptStreamOutcome, SingleAttemptTerminalProof, SingleAttemptTerminalReporter,
+    complete_current_provider_structured_output, record_current_provider_stream_chunk,
+    ProviderStreamChunkKind, SingleAttemptStreamOutcome, SingleAttemptTerminalProof,
+    SingleAttemptTerminalReporter,
 };
 use crate::conversation::message::{Message, MessageContent};
 use crate::conversation::token_usage::{ProviderUsage, Usage};
@@ -851,6 +853,7 @@ where
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
+            let decoded_bytes = response_str.len();
 
             // Skip empty lines
             if response_str.trim().is_empty() {
@@ -883,6 +886,23 @@ where
             let Some(event) = parse_responses_stream_event(data_line)? else {
                 continue;
             };
+            let (chunk_kind, structured_complete) = match &event {
+                ResponsesStreamEvent::FunctionCallArgumentsDelta { .. }
+                | ResponsesStreamEvent::OutputItemAdded {
+                    item: ResponseOutputItemInfo::FunctionCall { .. },
+                    ..
+                } => (ProviderStreamChunkKind::StructuredOutput, false),
+                ResponsesStreamEvent::FunctionCallArgumentsDone { .. }
+                | ResponsesStreamEvent::OutputItemDone {
+                    item: ResponseOutputItemInfo::FunctionCall { .. },
+                    ..
+                } => (ProviderStreamChunkKind::StructuredOutput, true),
+                _ => (ProviderStreamChunkKind::Content, false),
+            };
+            record_current_provider_stream_chunk(decoded_bytes, chunk_kind);
+            if structured_complete {
+                complete_current_provider_structured_output();
+            }
 
             match event {
                 ResponsesStreamEvent::ResponseCreated { response, .. } |

@@ -4,6 +4,8 @@
 //! action-delivery API: a parsed `NUDGE`, split, acceptance candidate, or other semantic action remains
 //! an observation receipt owned by `goose-swarm`.
 
+use super::swarm_provider_lifecycle::ProviderStreamProgressSnapshot;
+
 use async_trait::async_trait;
 use base64::Engine;
 use goose::conversation::message::{Message, MessageContent};
@@ -470,6 +472,8 @@ struct WorkerActivityDigest {
     model: String,
     reasoning_recurrence: ReasoningRecurrenceSnapshot,
     #[serde(default)]
+    provider_stream: ProviderStreamProgressSnapshot,
+    #[serde(default)]
     phase: Option<String>,
 }
 
@@ -502,6 +506,19 @@ impl WorkerActivityDigest {
         if (recurrence.repeat_share - expected_share).abs() > f64::EPSILON * 8.0 {
             return Err("recurrence repeat share does not match its typed counts".to_string());
         }
+        let provider = self.provider_stream;
+        if provider.structured_output_chunks > provider.chunks {
+            return Err("structured provider chunks exceed all provider chunks".to_string());
+        }
+        if provider.structured_output_bytes > provider.bytes {
+            return Err("structured provider bytes exceed all provider bytes".to_string());
+        }
+        if provider.revision < provider.chunks {
+            return Err("provider stream revision trails decoded chunks".to_string());
+        }
+        if provider.structured_output_active && provider.structured_output_chunks == 0 {
+            return Err("structured provider output is active without a decoded chunk".to_string());
+        }
         Ok(())
     }
 
@@ -519,6 +536,7 @@ impl WorkerActivityDigest {
             || !self.full_reasoning.trim().is_empty()
             || !self.last_thinking.trim().is_empty()
             || !self.calls.is_empty()
+            || self.provider_stream.revision > 0
     }
 }
 
@@ -798,6 +816,25 @@ impl SemanticObservationSnapshotProducer for GooseSemanticObservationSnapshotPro
             recurrence_observed_windows: material.digest.reasoning_recurrence.observed_windows,
             recurrence_repeated_windows: material.digest.reasoning_recurrence.repeated_windows,
             recurrence_repeat_share: material.digest.reasoning_recurrence.repeat_share,
+            provider_stream_revision: material.digest.provider_stream.revision,
+            provider_stream_chunks: material.digest.provider_stream.chunks,
+            provider_stream_bytes: material.digest.provider_stream.bytes,
+            provider_structured_output_chunks: material
+                .digest
+                .provider_stream
+                .structured_output_chunks,
+            provider_structured_output_bytes: material
+                .digest
+                .provider_stream
+                .structured_output_bytes,
+            provider_last_progress_elapsed_ms: material
+                .digest
+                .provider_stream
+                .last_progress_elapsed_ms,
+            provider_structured_output_active: material
+                .digest
+                .provider_stream
+                .structured_output_active,
             artifact_version: artifact_version.clone(),
         };
         let summons = SemanticObservationSummonsSignal::TraceStateAdvanced {
@@ -1025,22 +1062,32 @@ fn trace_reasoning(digest: &WorkerActivityDigest) -> String {
 }
 
 fn trace_actions(digest: &WorkerActivityDigest) -> Vec<String> {
-    digest
-        .calls
-        .iter()
-        .map(|call| {
-            format!(
-                "{} | {} | status={} | mcp={} | {}",
-                call.name,
-                call.summary,
-                call.ok
-                    .map(|ok| if ok { "ok" } else { "error" })
-                    .unwrap_or("pending"),
-                call.is_mcp,
-                call.result
-            )
-        })
-        .collect()
+    let mut actions = Vec::new();
+    if digest.provider_stream.revision > 0 {
+        actions.push(format!(
+            "provider stream | revision={} chunks={} bytes={} structured_chunks={} structured_bytes={} structured_active={} last_progress_elapsed_ms={} payload_logged=false",
+            digest.provider_stream.revision,
+            digest.provider_stream.chunks,
+            digest.provider_stream.bytes,
+            digest.provider_stream.structured_output_chunks,
+            digest.provider_stream.structured_output_bytes,
+            digest.provider_stream.structured_output_active,
+            digest.provider_stream.last_progress_elapsed_ms,
+        ));
+    }
+    actions.extend(digest.calls.iter().map(|call| {
+        format!(
+            "{} | {} | status={} | mcp={} | {}",
+            call.name,
+            call.summary,
+            call.ok
+                .map(|ok| if ok { "ok" } else { "error" })
+                .unwrap_or("pending"),
+            call.is_mcp,
+            call.result
+        )
+    }));
+    actions
 }
 
 #[derive(Clone)]
@@ -1684,6 +1731,38 @@ mod tests {
         })
     }
 
+    fn provider_only_digest(revision: u64, bytes: u64) -> serde_json::Value {
+        serde_json::json!({
+            "tool_calls": 0,
+            "errors": 0,
+            "malformed": 0,
+            "recent": [],
+            "last_text": "",
+            "calls": [],
+            "reasoning": "",
+            "full_reasoning": "",
+            "thinking_chars": 0,
+            "last_thinking": "",
+            "model": "worker-model",
+            "reasoning_recurrence": {
+                "window_chars": 48,
+                "observed_windows": 0,
+                "repeated_windows": 0,
+                "repeat_share": 0.0,
+                "earlier_reasoning": ""
+            },
+            "provider_stream": {
+                "revision": revision,
+                "chunks": revision,
+                "bytes": bytes,
+                "structured_output_chunks": revision,
+                "structured_output_bytes": bytes,
+                "last_progress_elapsed_ms": revision * 100,
+                "structured_output_active": true
+            }
+        })
+    }
+
     fn write_activity(root: &Path, task_id: &str, value: serde_json::Value) {
         let activity = root.join(".swarm/activity");
         std::fs::create_dir_all(&activity).unwrap();
@@ -2032,6 +2111,44 @@ mod tests {
         assert_ne!(
             advanced.snapshot().snapshot_hash(),
             left.snapshot().snapshot_hash()
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_progress_alone_advances_a_payload_free_semantic_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let request = capture_request();
+        let producer = GooseSemanticObservationSnapshotProducer::new(root.path()).unwrap();
+
+        write_activity(
+            root.path(),
+            request.task_id(),
+            provider_only_digest(4, 16_384),
+        );
+        let first = producer.capture(request.clone()).await.unwrap().unwrap();
+        let SemanticObservationSummonsSignal::TraceStateAdvanced { measurement, .. } =
+            first.summons();
+        assert_eq!(measurement.provider_stream_revision, 4);
+        assert_eq!(measurement.provider_structured_output_bytes, 16_384);
+        assert!(measurement.provider_structured_output_active);
+        assert!(first
+            .snapshot()
+            .payload()
+            .trace
+            .recent_actions
+            .iter()
+            .any(|action| action.contains("payload_logged=false")));
+
+        write_activity(
+            root.path(),
+            request.task_id(),
+            provider_only_digest(5, 20_480),
+        );
+        let advanced = producer.capture(request).await.unwrap().unwrap();
+        assert_eq!(advanced.snapshot().source_revision(), 2);
+        assert_ne!(
+            advanced.snapshot().snapshot_hash(),
+            first.snapshot().snapshot_hash()
         );
     }
 
