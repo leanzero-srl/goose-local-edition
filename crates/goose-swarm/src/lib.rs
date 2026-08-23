@@ -15,6 +15,7 @@ pub mod event;
 pub mod judge;
 pub mod memory_classify;
 pub mod provider_lease;
+pub mod repair;
 pub mod replan;
 pub mod scheduler;
 pub mod semantic_control;
@@ -60,6 +61,15 @@ pub use provider_lease::{
     ProviderLeaseReleaseReceipt, ProviderLeaseStatus, ProviderLeaseTransitionError,
     ProviderLeaseTry, ProviderLeaseWaitPolicy, ReservedProviderLease,
     RunScopedProviderLeaseAuthority, SealedProviderLeaseAuthority, VerifiedProviderProtocolRoute,
+};
+pub use repair::{
+    build_defect_ledger, observe_finding, repair_tree_snapshot, ArtifactEvidence, CandidateDelta,
+    DefectId, DefectKind, DefectLedger, DefectObservation, EvidenceRef, FileMutation, FindingBatch,
+    FindingInput, FindingProvenance, GateId, ImpactEvidence, ImpactFact, MechanicalSeverity,
+    PromotionDecision, ProvisionalTaskReceipt, RepairCandidatePatch, RepairEpoch,
+    RepairTransaction, RepairTreeSnapshot, RequiredVerification, RequirementId, RulerIdentity,
+    RulerLegId, SalvageReason, SemanticAcceptanceReceipt, SemanticRepairReview,
+    SemanticReviewRequest, SemanticReviewVerdict, SubjectRef, TaskCompletionDisposition,
 };
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{
