@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::{Component, Path};
+use std::io::Write;
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
@@ -204,12 +205,36 @@ impl DefectLedger {
         observations: impl IntoIterator<Item = DefectObservation>,
         established: bool,
     ) -> Self {
-        let observations = observations
-            .into_iter()
-            .map(|observation| (observation.id.clone(), observation))
-            .collect();
+        let mut merged: BTreeMap<DefectId, DefectObservation> = BTreeMap::new();
+        for mut observation in observations {
+            observation
+                .evidence
+                .sort_by(|left, right| left.sha256.cmp(&right.sha256));
+            observation
+                .evidence
+                .dedup_by(|left, right| left.sha256 == right.sha256);
+            match merged.get_mut(&observation.id) {
+                Some(existing) => {
+                    existing
+                        .requirement_ids
+                        .append(&mut observation.requirement_ids);
+                    existing.subjects.append(&mut observation.subjects);
+                    existing.evidence.append(&mut observation.evidence);
+                    existing
+                        .evidence
+                        .sort_by(|left, right| left.sha256.cmp(&right.sha256));
+                    existing
+                        .evidence
+                        .dedup_by(|left, right| left.sha256 == right.sha256);
+                    existing.last_seen_tree = observation.last_seen_tree;
+                }
+                None => {
+                    merged.insert(observation.id.clone(), observation);
+                }
+            }
+        }
         let mut ledger = Self {
-            observations,
+            observations: merged,
             established,
             hash: String::new(),
         };
@@ -221,6 +246,13 @@ impl DefectLedger {
         for (id, observation) in &mut self.observations {
             if let Some(prior) = previous.observations.get(id) {
                 observation.first_seen_tree = prior.first_seen_tree.clone();
+                observation.evidence.extend(prior.evidence.iter().cloned());
+                observation
+                    .evidence
+                    .sort_by(|left, right| left.sha256.cmp(&right.sha256));
+                observation
+                    .evidence
+                    .dedup_by(|left, right| left.sha256 == right.sha256);
             }
         }
         self.hash = self.content_hash();
@@ -359,6 +391,7 @@ impl CandidateDelta {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SemanticReviewVerdict {
@@ -367,6 +400,7 @@ pub(crate) enum SemanticReviewVerdict {
     Abstain,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct SemanticRepairReview {
     pub(crate) candidate: String,
@@ -376,6 +410,7 @@ pub(crate) struct SemanticRepairReview {
     pub(crate) rationale: String,
 }
 
+#[allow(dead_code)]
 impl SemanticRepairReview {
     pub(crate) fn validate(
         &self,
@@ -669,29 +704,37 @@ fn persist_evidence(root: &Path, gate: GateId, rendered: &str) -> Result<Evidenc
     let sha256 = sha256_hex(rendered.as_bytes());
     let relative_path = format!(".swarm/repair/evidence/{sha256}.txt");
     let path = root.join(&relative_path);
-    if path.exists() {
-        if std::fs::read(&path)? != rendered.as_bytes() {
-            bail!("repair evidence digest collision at {relative_path}");
-        }
-    } else {
-        let parent = path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("repair evidence path has no parent"))?;
-        std::fs::create_dir_all(parent)?;
-        let canonical_root = root.canonicalize()?;
-        if !parent.canonicalize()?.starts_with(canonical_root) {
-            bail!("repair evidence path escaped the application root");
-        }
-        let sequence = EVIDENCE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let temp = parent.join(format!(".{sha256}.{}.{}.tmp", std::process::id(), sequence));
-        std::fs::write(&temp, rendered)?;
-        match std::fs::rename(&temp, &path) {
-            Ok(()) => {}
-            Err(_error) if path.exists() && std::fs::read(&path)? == rendered.as_bytes() => {
-                let _ = std::fs::remove_file(temp);
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("repair evidence path has no parent"))?;
+    let canonical_root = root.canonicalize()?;
+    create_contained_directory(&canonical_root, parent)?;
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            if std::fs::read(&path)? != rendered.as_bytes() {
+                bail!("repair evidence digest collision at {relative_path}");
             }
-            Err(error) => return Err(error.into()),
         }
+        Ok(_) => bail!("repair evidence path is not a regular contained file"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let sequence = EVIDENCE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let temp = parent.join(format!(".{sha256}.{}.{}.tmp", std::process::id(), sequence));
+            write_new_file(&temp, rendered.as_bytes())?;
+            match std::fs::rename(&temp, &path) {
+                Ok(()) => {}
+                Err(error) => {
+                    let destination_is_same =
+                        std::fs::symlink_metadata(&path).is_ok_and(|metadata| {
+                            metadata.is_file() && !metadata.file_type().is_symlink()
+                        }) && std::fs::read(&path)? == rendered.as_bytes();
+                    let _ = std::fs::remove_file(&temp);
+                    if !destination_is_same {
+                        return Err(error.into());
+                    }
+                }
+            }
+        }
+        Err(error) => return Err(error.into()),
     }
     Ok(EvidenceRef {
         sha256,
@@ -713,11 +756,18 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 pub(crate) fn safe_relative_path(path: &str) -> bool {
-    let path = Path::new(path);
-    !path.is_absolute()
-        && !path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir))
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        return false;
+    }
+    let mut normalized = PathBuf::new();
+    for component in candidate.components() {
+        let Component::Normal(name) = component else {
+            return false;
+        };
+        normalized.push(name);
+    }
+    !normalized.as_os_str().is_empty() && normalized.as_os_str() == candidate.as_os_str()
 }
 
 #[allow(dead_code)]
@@ -728,14 +778,14 @@ pub(crate) struct RepairEpoch {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) enum FileMutation {
     Write { bytes: Vec<u8>, mode: u32 },
     Delete,
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct RepairCandidatePatch {
     pub(crate) id: String,
     pub(crate) base: RepairEpoch,
@@ -774,17 +824,17 @@ pub(crate) struct RepairTransaction {
     candidates: Vec<RepairCandidatePatch>,
 }
 
-#[derive(Clone)]
-struct OriginalFile {
-    path: String,
-    bytes: Option<Vec<u8>>,
-    mode: Option<u32>,
-}
-
 #[allow(dead_code)]
 impl RepairTransaction {
     pub(crate) fn open(root: &Path, base_ledger: DefectLedger) -> Result<Self> {
         let base_snapshot = super::repair_tree_snapshot(root)?;
+        if base_ledger
+            .observations
+            .values()
+            .any(|observation| observation.last_seen_tree != base_snapshot.sha256)
+        {
+            bail!("repair ledger does not describe the tree opening this transaction");
+        }
         Ok(Self {
             root: root.to_path_buf(),
             base_snapshot,
@@ -813,6 +863,13 @@ impl RepairTransaction {
         if candidate.changes.is_empty() {
             bail!("repair candidate is a byte-identical no-op");
         }
+        if self
+            .candidates
+            .iter()
+            .any(|existing| existing.id == candidate.id)
+        {
+            bail!("repair candidate identity `{}` is duplicated", candidate.id);
+        }
         for path in candidate.changes.keys() {
             if !safe_relative_path(path) {
                 bail!("repair candidate contains unsafe path `{path}`");
@@ -829,19 +886,21 @@ impl RepairTransaction {
         Ok(())
     }
 
-    pub(crate) fn preview_and_promote<F>(
+    pub(crate) async fn preview_and_promote<F, Fut>(
         &self,
         review: &SemanticRepairReview,
         known_requirements: &BTreeSet<RequirementId>,
         ruler: F,
     ) -> Result<PromotionDecision>
     where
-        F: FnMut(&Path) -> Result<DefectLedger>,
+        F: FnMut(PathBuf) -> Fut,
+        Fut: std::future::Future<Output = Result<DefectLedger>>,
     {
         self.preview_and_promote_with_apply(review, known_requirements, ruler, apply_mutations)
+            .await
     }
 
-    fn preview_and_promote_with_apply<F, A>(
+    async fn preview_and_promote_with_apply<F, Fut, A>(
         &self,
         review: &SemanticRepairReview,
         known_requirements: &BTreeSet<RequirementId>,
@@ -849,7 +908,8 @@ impl RepairTransaction {
         mut real_apply: A,
     ) -> Result<PromotionDecision>
     where
-        F: FnMut(&Path) -> Result<DefectLedger>,
+        F: FnMut(PathBuf) -> Fut,
+        Fut: std::future::Future<Output = Result<DefectLedger>>,
         A: FnMut(&Path, &BTreeMap<String, FileMutation>) -> Result<()>,
     {
         if self.candidates.is_empty() {
@@ -874,11 +934,11 @@ impl RepairTransaction {
         let preview = tempfile::TempDir::new()?;
         copy_ruled_tree(&self.root, preview.path())?;
         apply_mutations(preview.path(), &changes)?;
-        let preview_snapshot = super::repair_tree_snapshot(preview.path())?;
-        if preview_snapshot.sha256 == self.base_snapshot.sha256 {
+        let composed_snapshot = super::repair_tree_snapshot(preview.path())?;
+        if composed_snapshot.sha256 == self.base_snapshot.sha256 {
             return Ok(PromotionDecision::Rejected {
                 reason: "composed candidate is a byte-identical no-op".to_string(),
-                preview_tree_hash: Some(preview_snapshot.sha256),
+                preview_tree_hash: Some(composed_snapshot.sha256),
                 preview_ledger_hash: None,
                 delta: None,
             });
@@ -886,7 +946,8 @@ impl RepairTransaction {
 
         // This closure is the one hermetic ruler. It is called once on the exact composed preview and,
         // only after every promotion predicate passes, once on the exact landed real tree.
-        let preview_ledger = ruler(preview.path())?;
+        let preview_ledger = ruler(preview.path().to_path_buf()).await?;
+        let preview_snapshot = super::repair_tree_snapshot(preview.path())?;
         let delta = CandidateDelta::between(&self.base_ledger, &preview_ledger);
         let targets: BTreeSet<DefectId> = self
             .candidates
@@ -925,6 +986,25 @@ impl RepairTransaction {
             .chain(preview_ledger.evidence_ids())
             .collect();
         review.validate(known_requirements, &known_evidence)?;
+        let has_uncited_target = targets.iter().any(|target| {
+            self.base_ledger
+                .observations
+                .get(target)
+                .is_none_or(|observation| {
+                    observation
+                        .evidence
+                        .iter()
+                        .all(|evidence| !review.cited_evidence.contains(&evidence.sha256))
+                })
+        });
+        if has_uncited_target {
+            return Ok(rejected_preview(
+                "semantic review omitted evidence for one or more targeted causal defects",
+                &preview_snapshot,
+                &preview_ledger,
+                delta,
+            ));
+        }
         let composition_id = composition_id(&self.candidates);
         if review.candidate != composition_id {
             return Ok(rejected_preview(
@@ -954,19 +1034,37 @@ impl RepairTransaction {
                 delta,
             ));
         }
-        let originals = capture_originals(&self.root, changes.keys())?;
+        let rollback_tree = tempfile::TempDir::new()?;
+        copy_ruled_tree(&self.root, rollback_tree.path())?;
+        let rollback_snapshot = super::repair_tree_snapshot(rollback_tree.path())?;
+        if rollback_snapshot.sha256 != self.base_snapshot.sha256 {
+            return Ok(rejected_preview(
+                "rollback snapshot does not match the transaction parent epoch",
+                &preview_snapshot,
+                &preview_ledger,
+                delta,
+            ));
+        }
+        if super::repair_tree_snapshot(&self.root)?.sha256 != self.base_snapshot.sha256 {
+            return Ok(rejected_preview(
+                "real tree changed while its rollback snapshot was being frozen",
+                &preview_snapshot,
+                &preview_ledger,
+                delta,
+            ));
+        }
         if let Err(error) = real_apply(&self.root, &changes) {
-            restore_originals(&self.root, &self.base_snapshot, &originals)?;
+            restore_ruled_tree(&self.root, rollback_tree.path(), &self.base_snapshot)?;
             return Ok(PromotionDecision::RolledBack {
                 reason: format!("atomic land failed: {error}"),
                 restored_tree_hash: super::repair_tree_snapshot(&self.root)?.sha256,
             });
         }
 
-        let real_ledger = match ruler(&self.root) {
+        let real_ledger = match ruler(self.root.clone()).await {
             Ok(ledger) => ledger,
             Err(error) => {
-                restore_originals(&self.root, &self.base_snapshot, &originals)?;
+                restore_ruled_tree(&self.root, rollback_tree.path(), &self.base_snapshot)?;
                 return Ok(PromotionDecision::RolledBack {
                     reason: format!("post-promotion ruler failed: {error}"),
                     restored_tree_hash: super::repair_tree_snapshot(&self.root)?.sha256,
@@ -977,7 +1075,7 @@ impl RepairTransaction {
         if landed_snapshot.sha256 != preview_snapshot.sha256
             || real_ledger.hash != preview_ledger.hash
         {
-            restore_originals(&self.root, &self.base_snapshot, &originals)?;
+            restore_ruled_tree(&self.root, rollback_tree.path(), &self.base_snapshot)?;
             return Ok(PromotionDecision::RolledBack {
                 reason: format!(
                     "post-promotion tree/ledger differs from preview (preview tree {}, real tree {}, preview ledger {}, real ledger {})",
@@ -1029,39 +1127,11 @@ fn rejected_preview(
 }
 
 fn composition_id(candidates: &[RepairCandidatePatch]) -> String {
-    let mut ids: Vec<&str> = candidates
-        .iter()
-        .map(|candidate| candidate.id.as_str())
-        .collect();
-    ids.sort_unstable();
-    format!("composition:{}", sha256_hex(ids.join("\0").as_bytes()))
-}
-
-fn capture_originals<'a>(
-    root: &Path,
-    paths: impl Iterator<Item = &'a String>,
-) -> Result<Vec<OriginalFile>> {
-    paths
-        .map(|path| {
-            let absolute = root.join(path);
-            match std::fs::symlink_metadata(&absolute) {
-                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-                    Ok(OriginalFile {
-                        path: path.clone(),
-                        bytes: Some(std::fs::read(absolute)?),
-                        mode: Some(super::repair_entry_mode(&metadata)),
-                    })
-                }
-                Ok(_) => bail!("repair transaction refuses non-regular target `{path}`"),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(OriginalFile {
-                    path: path.clone(),
-                    bytes: None,
-                    mode: None,
-                }),
-                Err(error) => Err(error.into()),
-            }
-        })
-        .collect()
+    let mut candidates = candidates.to_vec();
+    candidates.sort_by(|left, right| left.id.cmp(&right.id));
+    let bytes = serde_json::to_vec(&("goose-repair-composition-v2", candidates))
+        .expect("repair candidates contain only serializable engine values");
+    format!("composition:{}", sha256_hex(&bytes))
 }
 
 fn apply_mutations(root: &Path, changes: &BTreeMap<String, FileMutation>) -> Result<()> {
@@ -1116,11 +1186,34 @@ fn guarded_path(root: &Path, relative: &str) -> Result<std::path::PathBuf> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("repair path has no parent"))?;
-    std::fs::create_dir_all(parent)?;
-    if !parent.canonicalize()?.starts_with(&root) {
-        bail!("repair path escaped the application root");
-    }
+    create_contained_directory(&root, parent)?;
     Ok(path)
+}
+
+fn create_contained_directory(canonical_root: &Path, directory: &Path) -> Result<()> {
+    let mut existing = directory;
+    while !existing.exists() {
+        existing = existing
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("directory has no existing ancestor"))?;
+    }
+    if !existing.canonicalize()?.starts_with(canonical_root) {
+        bail!("repair directory escaped the application root");
+    }
+    std::fs::create_dir_all(directory)?;
+    if !directory.canonicalize()?.starts_with(canonical_root) {
+        bail!("repair directory escaped the application root");
+    }
+    Ok(())
+}
+
+fn write_new_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(bytes)?;
+    Ok(())
 }
 
 fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
@@ -1134,9 +1227,16 @@ fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
         std::process::id(),
         sequence
     ));
-    std::fs::write(&temp, bytes)?;
-    set_mode(&temp, mode)?;
-    std::fs::rename(temp, path)?;
+    let result = (|| -> Result<()> {
+        write_new_file(&temp, bytes)?;
+        set_mode(&temp, mode)?;
+        std::fs::rename(&temp, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result?;
     Ok(())
 }
 
@@ -1155,27 +1255,41 @@ fn set_mode(path: &Path, mode: u32) -> Result<()> {
     Ok(())
 }
 
-fn restore_originals(
+fn restore_ruled_tree(
     root: &Path,
+    rollback_tree: &Path,
     base: &super::RepairTreeSnapshot,
-    originals: &[OriginalFile],
 ) -> Result<()> {
-    for original in originals.iter().rev() {
-        let absolute = guarded_path(root, &original.path)?;
-        match (&original.bytes, original.mode) {
-            (Some(bytes), Some(mode)) => atomic_write(&absolute, bytes, mode)?,
-            (None, None) => match std::fs::symlink_metadata(&absolute) {
-                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-                    std::fs::remove_file(&absolute)?;
+    fn clear(root: &Path, directory: &Path) -> Result<()> {
+        let mut entries = std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let relative = path.strip_prefix(root)?;
+            if super::excluded_from_repair_tree(relative) {
+                continue;
+            }
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                clear(root, &path)?;
+                match std::fs::remove_dir(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {}
+                    Err(error) => return Err(error.into()),
                 }
-                Ok(_) => bail!("rollback found non-regular creation `{}`", original.path),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            },
-            _ => bail!("invalid repair rollback snapshot"),
+            } else {
+                std::fs::remove_file(&path)?;
+            }
         }
+        Ok(())
     }
-    remove_created_directories(root, base)?;
+
+    let rollback_snapshot = super::repair_tree_snapshot(rollback_tree)?;
+    if rollback_snapshot.sha256 != base.sha256 {
+        bail!("repair rollback source no longer matches the parent epoch");
+    }
+    clear(root, root)?;
+    copy_ruled_tree(rollback_tree, root)?;
     let restored = super::repair_tree_snapshot(root)?;
     if restored.sha256 != base.sha256 {
         bail!(
@@ -1183,41 +1297,6 @@ fn restore_originals(
             base.sha256,
             restored.sha256
         );
-    }
-    Ok(())
-}
-
-fn remove_created_directories(root: &Path, base: &super::RepairTreeSnapshot) -> Result<()> {
-    fn collect(root: &Path, dir: &Path, paths: &mut Vec<std::path::PathBuf>) -> Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if entry.file_type()?.is_dir() {
-                let relative = path.strip_prefix(root)?;
-                if super::excluded_from_repair_tree(relative) {
-                    continue;
-                }
-                collect(root, &path, paths)?;
-                paths.push(path);
-            }
-        }
-        Ok(())
-    }
-    let mut directories = Vec::new();
-    collect(root, root, &mut directories)?;
-    directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
-    for directory in directories {
-        let relative = directory
-            .strip_prefix(root)?
-            .to_string_lossy()
-            .replace('\\', "/");
-        if !base.entries.contains_key(&relative) {
-            match std::fs::remove_dir(&directory) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
     }
     Ok(())
 }
@@ -1259,10 +1338,16 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
-    fn finding(root: &Path, gate: GateId, rendered: &str, files: &[String]) -> DefectObservation {
+    fn finding_at_tree(
+        root: &Path,
+        tree_hash: &str,
+        gate: GateId,
+        rendered: &str,
+        files: &[String],
+    ) -> DefectObservation {
         observe_finding(
             root,
-            "tree-a",
+            tree_hash,
             FindingInput {
                 gate,
                 rendered,
@@ -1273,6 +1358,10 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    fn finding(root: &Path, gate: GateId, rendered: &str, files: &[String]) -> DefectObservation {
+        finding_at_tree(root, "tree-a", gate, rendered, files)
     }
 
     #[test]
@@ -1300,6 +1389,63 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn duplicate_causal_findings_keep_all_evidence_with_order_stable_hash() {
+        let root = tempfile::TempDir::new().unwrap();
+        let first = finding(
+            root.path(),
+            GateId::Smoke,
+            "webhook failed on localhost:53129 after 12 seconds",
+            &[],
+        );
+        let second = finding(
+            root.path(),
+            GateId::Smoke,
+            "webhook failed on 127.0.0.1:61200 after 38 seconds",
+            &[],
+        );
+        assert_eq!(first.id, second.id);
+        assert_ne!(first.evidence, second.evidence);
+
+        let forward = DefectLedger::from_observations([first.clone(), second.clone()], true);
+        let reverse = DefectLedger::from_observations([second, first], true);
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.observations.len(), 1);
+        assert_eq!(
+            forward.observations.values().next().unwrap().evidence.len(),
+            2,
+            "normalization may merge identity, but must never discard raw evidence"
+        );
+    }
+
+    #[test]
+    fn reconciliation_retains_causal_evidence_history() {
+        let root = tempfile::TempDir::new().unwrap();
+        let before = finding_at_tree(
+            root.path(),
+            "tree-a",
+            GateId::Smoke,
+            "webhook failed on localhost:53129",
+            &[],
+        );
+        let after = finding_at_tree(
+            root.path(),
+            "tree-b",
+            GateId::Smoke,
+            "webhook failed on 127.0.0.1:61200",
+            &[],
+        );
+        assert_eq!(before.id, after.id);
+        let previous = DefectLedger::from_observations([before], true);
+        let mut current = DefectLedger::from_observations([after], true);
+        current.reconcile(&previous);
+
+        let observation = current.observations.values().next().unwrap();
+        assert_eq!(observation.first_seen_tree, "tree-a");
+        assert_eq!(observation.last_seen_tree, "tree-b");
+        assert_eq!(observation.evidence.len(), 2);
     }
 
     #[test]
@@ -1362,6 +1508,48 @@ mod tests {
     }
 
     #[test]
+    fn partial_gate_keeps_real_causal_kind_and_adds_unestablished_blocker() {
+        let root = tempfile::TempDir::new().unwrap();
+        let findings = vec![
+            "app/consumer.py reads Payment.parent but app/producer.py defines parent_hash"
+                .to_string(),
+        ];
+        let incomplete = vec!["cross-module gate did not establish a complete verdict".to_string()];
+        let files = vec!["app/consumer.py".to_string(), "app/producer.py".to_string()];
+        let ledger = build_defect_ledger(
+            root.path(),
+            "tree-a",
+            &files,
+            &[
+                FindingBatch {
+                    gate: GateId::CrossModule,
+                    findings: &findings,
+                    established: true,
+                },
+                FindingBatch {
+                    gate: GateId::CrossModule,
+                    findings: &incomplete,
+                    established: false,
+                },
+            ],
+            false,
+        );
+        let kinds: BTreeSet<DefectKind> = ledger
+            .observations
+            .values()
+            .map(|observation| observation.kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            BTreeSet::from([
+                DefectKind::CrossModuleContract,
+                DefectKind::GateUnestablished,
+            ])
+        );
+        assert!(!ledger.established);
+    }
+
+    #[test]
     fn semantic_review_rejects_unknown_or_missing_citations() {
         let requirements = BTreeSet::from([RequirementId("spec:boot".to_string())]);
         let evidence = BTreeSet::from(["evidence-a".to_string()]);
@@ -1379,6 +1567,53 @@ mod tests {
             ..valid
         };
         assert!(malformed.validate(&requirements, &evidence).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn evidence_store_refuses_an_existing_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::TempDir::new().unwrap();
+        let outside = tempfile::TempDir::new().unwrap();
+        let rendered = "advertised entry failed to boot";
+        let sha256 = sha256_hex(rendered.as_bytes());
+        let outside_evidence = outside.path().join("repair/evidence");
+        std::fs::create_dir_all(&outside_evidence).unwrap();
+        std::fs::write(outside_evidence.join(format!("{sha256}.txt")), rendered).unwrap();
+        symlink(outside.path(), root.path().join(".swarm")).unwrap();
+
+        let result = observe_finding(
+            root.path(),
+            "tree-a",
+            FindingInput {
+                gate: GateId::Smoke,
+                rendered,
+                established: true,
+                known_files: &[],
+                explicit_subjects: BTreeSet::new(),
+                requirement_ids: BTreeSet::new(),
+            },
+        );
+        assert!(result.is_err(), "external evidence must never be trusted");
+    }
+
+    #[test]
+    fn mutation_paths_are_unique_canonical_relative_names() {
+        assert!(safe_relative_path("src/lib.rs"));
+        for unsafe_path in [
+            "",
+            ".",
+            "./src/lib.rs",
+            "src//lib.rs",
+            "src/../lib.rs",
+            "/tmp/x",
+        ] {
+            assert!(
+                !safe_relative_path(unsafe_path),
+                "path aliases and escapes must be rejected: {unsafe_path:?}"
+            );
+        }
     }
 
     #[test]
@@ -1406,7 +1641,16 @@ mod tests {
         let root = tempfile::TempDir::new().unwrap();
         std::fs::write(root.path().join("a.txt"), "old-a\n").unwrap();
         std::fs::write(root.path().join("b.txt"), "old-b\n").unwrap();
-        let target = finding(root.path(), GateId::DomId, "missing #target", &[]);
+        let tree_hash = super::super::repair_tree_snapshot(root.path())
+            .unwrap()
+            .sha256;
+        let target = finding_at_tree(
+            root.path(),
+            &tree_hash,
+            GateId::DomId,
+            "missing #target",
+            &[],
+        );
         let ledger = DefectLedger::from_observations([target.clone()], true);
         (root, ledger, target)
     }
@@ -1447,7 +1691,41 @@ mod tests {
     }
 
     #[test]
-    fn independently_good_candidates_with_bad_composition_never_touch_real_tree() {
+    fn composition_identity_binds_exact_bytes_targets_and_base_epoch() {
+        let (root, ledger, target) = transaction_fixture();
+        let transaction = RepairTransaction::open(root.path(), ledger).unwrap();
+        let first = patch(
+            "same-name",
+            transaction.epoch(),
+            target.id.clone(),
+            "a.txt",
+            "first\n",
+        );
+        let different_bytes = patch(
+            "same-name",
+            transaction.epoch(),
+            target.id,
+            "a.txt",
+            "second\n",
+        );
+        assert_ne!(
+            composition_id(&[first]),
+            composition_id(&[different_bytes]),
+            "a semantic receipt must not replay onto different bytes sharing a display id"
+        );
+    }
+
+    #[test]
+    fn transaction_refuses_a_ledger_from_another_tree() {
+        let root = tempfile::TempDir::new().unwrap();
+        std::fs::write(root.path().join("a.txt"), "current\n").unwrap();
+        let stale = finding(root.path(), GateId::DomId, "missing #target", &[]);
+        let ledger = DefectLedger::from_observations([stale], true);
+        assert!(RepairTransaction::open(root.path(), ledger).is_err());
+    }
+
+    #[tokio::test]
+    async fn independently_good_candidates_with_bad_composition_never_touch_real_tree() {
         let (root, ledger, target) = transaction_fixture();
         let original = super::super::repair_tree_snapshot(root.path()).unwrap();
         let mut transaction = RepairTransaction::open(root.path(), ledger).unwrap();
@@ -1486,12 +1764,12 @@ mod tests {
 
         let review = review_for(&transaction, &target.evidence[0]);
         let decision = transaction
-            .preview_and_promote(&review, &requirements(), |candidate_root| {
+            .preview_and_promote(&review, &requirements(), |candidate_root| async move {
                 let a = std::fs::read_to_string(candidate_root.join("a.txt"))?;
                 let b = std::fs::read_to_string(candidate_root.join("b.txt"))?;
                 if a == "good-a\n" && b == "good-b\n" {
                     let blocker = finding(
-                        candidate_root,
+                        &candidate_root,
                         GateId::Smoke,
                         "advertised entry failed to boot after composition",
                         &[],
@@ -1501,6 +1779,7 @@ mod tests {
                     Ok(DefectLedger::from_observations(Vec::new(), true))
                 }
             })
+            .await
             .unwrap();
         assert!(matches!(
             decision,
@@ -1513,8 +1792,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn stale_base_and_no_op_are_refused_before_real_mutation() {
+    #[tokio::test]
+    async fn stale_base_and_no_op_are_refused_before_real_mutation() {
         let (root, ledger, target) = transaction_fixture();
         let mut stale = RepairTransaction::open(root.path(), ledger.clone()).unwrap();
         stale
@@ -1529,9 +1808,10 @@ mod tests {
         std::fs::write(root.path().join("b.txt"), "outside-change\n").unwrap();
         let review = review_for(&stale, &target.evidence[0]);
         let decision = stale
-            .preview_and_promote(&review, &requirements(), |_| {
+            .preview_and_promote(&review, &requirements(), |_| async {
                 Ok(DefectLedger::from_observations(Vec::new(), true))
             })
+            .await
             .unwrap();
         assert!(matches!(
             decision,
@@ -1556,9 +1836,10 @@ mod tests {
             .unwrap();
         let review = review_for(&no_op, &target.evidence[0]);
         let decision = no_op
-            .preview_and_promote(&review, &requirements(), |_| {
+            .preview_and_promote(&review, &requirements(), |_| async {
                 Ok(DefectLedger::from_observations(Vec::new(), true))
             })
+            .await
             .unwrap();
         assert!(matches!(
             decision,
@@ -1567,8 +1848,57 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn post_land_ledger_mismatch_restores_parent_epoch() {
+    #[tokio::test]
+    async fn unrelated_valid_evidence_cannot_authorize_a_targeted_promotion() {
+        let (root, _, target) = transaction_fixture();
+        let tree_hash = super::super::repair_tree_snapshot(root.path())
+            .unwrap()
+            .sha256;
+        let unrelated = finding_at_tree(
+            root.path(),
+            &tree_hash,
+            GateId::CssCoherence,
+            "unrelated style vocabulary mismatch",
+            &[],
+        );
+        let ledger = DefectLedger::from_observations([target.clone(), unrelated.clone()], true);
+        let original = super::super::repair_tree_snapshot(root.path()).unwrap();
+        let mut transaction = RepairTransaction::open(root.path(), ledger).unwrap();
+        transaction
+            .add_candidate(patch(
+                "candidate",
+                transaction.epoch(),
+                target.id,
+                "a.txt",
+                "fixed\n",
+            ))
+            .unwrap();
+        let review = SemanticRepairReview {
+            candidate: composition_id(&transaction.candidates),
+            verdict: SemanticReviewVerdict::Accept,
+            cited_requirements: requirements(),
+            cited_evidence: BTreeSet::from([unrelated.evidence[0].sha256.clone()]),
+            rationale: "cites real evidence, but not evidence for the target".to_string(),
+        };
+        let decision = transaction
+            .preview_and_promote(&review, &requirements(), |_| async {
+                Ok(DefectLedger::from_observations(Vec::new(), true))
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            decision,
+            PromotionDecision::Rejected { reason, .. }
+                if reason.contains("omitted evidence for one or more targeted causal defects")
+        ));
+        assert_eq!(
+            super::super::repair_tree_snapshot(root.path()).unwrap(),
+            original
+        );
+    }
+
+    #[tokio::test]
+    async fn post_land_ledger_mismatch_restores_parent_epoch() {
         let (root, ledger, target) = transaction_fixture();
         let original = super::super::repair_tree_snapshot(root.path()).unwrap();
         let mut transaction = RepairTransaction::open(root.path(), ledger).unwrap();
@@ -1586,18 +1916,19 @@ mod tests {
         let decision = transaction
             .preview_and_promote(&review, &requirements(), |candidate_root| {
                 calls.set(calls.get() + 1);
-                if calls.get() == 1 {
+                std::future::ready(if calls.get() == 1 {
                     Ok(DefectLedger::from_observations(Vec::new(), true))
                 } else {
                     let mismatch = finding(
-                        candidate_root,
+                        &candidate_root,
                         GateId::Smoke,
                         "advertised entry failed to boot only after landing",
                         &[],
                     );
                     Ok(DefectLedger::from_observations([mismatch], true))
-                }
+                })
             })
+            .await
             .unwrap();
         assert!(matches!(decision, PromotionDecision::RolledBack { .. }));
         assert_eq!(
@@ -1610,8 +1941,46 @@ mod tests {
         );
     }
 
-    #[test]
-    fn partial_real_write_failure_rolls_back_every_file() {
+    #[tokio::test]
+    async fn post_land_ruler_tree_mutation_restores_the_whole_parent_epoch() {
+        let (root, ledger, target) = transaction_fixture();
+        let original = super::super::repair_tree_snapshot(root.path()).unwrap();
+        let mut transaction = RepairTransaction::open(root.path(), ledger).unwrap();
+        transaction
+            .add_candidate(patch(
+                "candidate",
+                transaction.epoch(),
+                target.id.clone(),
+                "a.txt",
+                "fixed\n",
+            ))
+            .unwrap();
+        let review = review_for(&transaction, &target.evidence[0]);
+        let calls = Cell::new(0);
+        let decision = transaction
+            .preview_and_promote(&review, &requirements(), |candidate_root| {
+                calls.set(calls.get() + 1);
+                let result: Result<DefectLedger> = if calls.get() == 2 {
+                    std::fs::write(candidate_root.join("ruler-side-effect.txt"), "unexpected\n")
+                        .map_err(anyhow::Error::from)
+                        .map(|()| DefectLedger::from_observations(Vec::new(), true))
+                } else {
+                    Ok(DefectLedger::from_observations(Vec::new(), true))
+                };
+                std::future::ready(result)
+            })
+            .await
+            .unwrap();
+        assert!(matches!(decision, PromotionDecision::RolledBack { .. }));
+        assert_eq!(
+            super::super::repair_tree_snapshot(root.path()).unwrap(),
+            original
+        );
+        assert!(!root.path().join("ruler-side-effect.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn partial_real_write_failure_rolls_back_every_file() {
         let (root, ledger, target) = transaction_fixture();
         let original = super::super::repair_tree_snapshot(root.path()).unwrap();
         let mut transaction = RepairTransaction::open(root.path(), ledger).unwrap();
@@ -1638,7 +2007,7 @@ mod tests {
             .preview_and_promote_with_apply(
                 &review,
                 &requirements(),
-                |_| Ok(DefectLedger::from_observations(Vec::new(), true)),
+                |_| async { Ok(DefectLedger::from_observations(Vec::new(), true)) },
                 |real_root, changes| {
                     let first = changes.iter().next().unwrap();
                     apply_mutations(
@@ -1648,6 +2017,7 @@ mod tests {
                     bail!("injected second-file write failure")
                 },
             )
+            .await
             .unwrap();
         assert!(matches!(decision, PromotionDecision::RolledBack { .. }));
         assert_eq!(
@@ -1656,8 +2026,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn accepted_composition_lands_once_and_matches_preview_epoch() {
+    #[tokio::test]
+    async fn accepted_composition_lands_once_and_matches_preview_epoch() {
         let (root, ledger, target) = transaction_fixture();
         let mut transaction = RepairTransaction::open(root.path(), ledger).unwrap();
         transaction
@@ -1674,8 +2044,9 @@ mod tests {
         let decision = transaction
             .preview_and_promote(&review, &requirements(), |_| {
                 calls.set(calls.get() + 1);
-                Ok(DefectLedger::from_observations(Vec::new(), true))
+                std::future::ready(Ok(DefectLedger::from_observations(Vec::new(), true)))
             })
+            .await
             .unwrap();
         let PromotionDecision::Promoted {
             epoch_after,
