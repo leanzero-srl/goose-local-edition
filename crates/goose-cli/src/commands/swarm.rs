@@ -5642,6 +5642,104 @@ mod tests {
         .is_err());
     }
 
+    #[tokio::test]
+    async fn planning_audit_fan_recovers_two_v4_typed_failures_on_distinct_devices() {
+        let calls = Arc::new(Mutex::new(HashMap::<String, Vec<String>>::new()));
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let requirement_ids = Arc::new(HashSet::new());
+        let task_ids = Arc::new(HashSet::new());
+        let evidence_ids = Arc::new(HashSet::new());
+        let output = fanout_retrying_over_fleet(
+            vec![
+                "mihai".to_string(),
+                "workhorse".to_string(),
+                "gabee".to_string(),
+            ],
+            planning_pod_audit_roles(),
+            {
+                let calls = calls.clone();
+                let requirement_ids = requirement_ids.clone();
+                let task_ids = task_ids.clone();
+                let evidence_ids = evidence_ids.clone();
+                move |role: PlanningAuditRole, device: String| {
+                    let calls = calls.clone();
+                    let requirement_ids = requirement_ids.clone();
+                    let task_ids = task_ids.clone();
+                    let evidence_ids = evidence_ids.clone();
+                    async move {
+                        let attempt = {
+                            let mut calls = calls.lock().unwrap();
+                            let role_calls = calls.entry(role.as_str().to_string()).or_default();
+                            role_calls.push(device.clone());
+                            role_calls.len()
+                        };
+                        let emitted_role =
+                            if role != PlanningAuditRole::DagInterfaces && attempt == 1 {
+                                "dag-interfaces"
+                            } else {
+                                role.as_str()
+                            };
+                        let raw = serde_json::json!({
+                            "role": emitted_role,
+                            "complete": true,
+                            "findings": [],
+                        })
+                        .to_string();
+                        compile_planning_audit(
+                            &raw,
+                            role,
+                            device,
+                            requirement_ids.as_ref(),
+                            task_ids.as_ref(),
+                            evidence_ids.as_ref(),
+                        )
+                        .map_err(|error| format!("schema-or-semantic-compile: {error}"))
+                    }
+                }
+            },
+            |_| 1,
+            |role| role.as_str().to_string(),
+            {
+                let observations = observations.clone();
+                move |observation| observations.lock().unwrap().push(observation)
+            },
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            output
+                .iter()
+                .map(|audit| audit.role.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "requirements-coverage",
+                "dag-interfaces",
+                "acceptance-evidence"
+            ],
+            "successful retries must return in semantic role source order"
+        );
+        let calls = calls.lock().unwrap();
+        for role in ["requirements-coverage", "acceptance-evidence"] {
+            let devices = calls.get(role).unwrap();
+            assert_eq!(devices.len(), 2, "{role} should retry exactly once");
+            assert_ne!(
+                devices[0], devices[1],
+                "{role} must move to a distinct roster device"
+            );
+        }
+        let observations = observations.lock().unwrap();
+        for role in ["requirements-coverage", "acceptance-evidence"] {
+            let retry = observations
+                .iter()
+                .find(|observation| observation.packet == role && observation.attempt == 2)
+                .expect("each captured v4 failure emits a reassignment attempt");
+            assert_eq!(retry.failed_devices.len(), 1);
+            assert_ne!(retry.failed_devices[0], retry.device);
+        }
+    }
+
     #[test]
     fn research_saturation_accepts_semantic_queue_larger_than_legacy_question_cap() {
         let requirements = (0..12)
@@ -23496,8 +23594,11 @@ impl GooseAgentDispatcher {
             "advisory_evidence": evidence,
             "canonical_skeleton": serde_json::from_str::<serde_json::Value>(canonical_skeleton)?,
         }));
+        let audit_input_cost = serde_json::to_string(input.as_ref())?.len();
         let dispatcher = self.clone();
-        let results = fanout_over_fleet(
+        let attempt_events = self.events.clone();
+        let tail_events = self.events.clone();
+        let results = fanout_retrying_over_fleet(
             one_lane_per_host(models),
             roles,
             move |role, model| {
@@ -23527,7 +23628,7 @@ impl GooseAgentDispatcher {
                         role.brief(),
                     );
                     let key = format!("plan-pod-audit-{}", role.as_str());
-                    let compiled = dispatcher
+                    let compiled = match dispatcher
                         .run_response_only_agent(
                             &model,
                             system,
@@ -23539,23 +23640,24 @@ impl GooseAgentDispatcher {
                             Some(key.as_str()),
                         )
                         .await
-                        .map_err(|error| anyhow!("planning pod audit `{}` failed: {error}", role.as_str()))
-                        .and_then(|output| {
-                            output
-                                .final_output
-                                .filter(|raw| !raw.trim().is_empty())
-                                .or_else(|| {
-                                    (!output.text.trim().is_empty()).then_some(output.text)
-                                })
-                                .ok_or_else(|| {
-                                    anyhow!(
-                                        "planning pod audit `{}` produced no typed output",
-                                        role.as_str()
-                                    )
-                                })
-                        })
-                        .and_then(|raw| {
-                            compile_planning_audit(
+                    {
+                        Err(error) => Err((
+                            "transport-or-agent",
+                            format!("planning pod audit `{}` failed: {error}", role.as_str()),
+                        )),
+                        Ok(output) => match output
+                            .final_output
+                            .filter(|raw| !raw.trim().is_empty())
+                            .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+                        {
+                            None => Err((
+                                "missing-typed-output",
+                                format!(
+                                    "planning pod audit `{}` produced no typed output",
+                                    role.as_str()
+                                ),
+                            )),
+                            Some(raw) => compile_planning_audit(
                                 &raw,
                                 role,
                                 model.clone(),
@@ -23563,7 +23665,17 @@ impl GooseAgentDispatcher {
                                 task_ids.as_ref(),
                                 evidence_ids.as_ref(),
                             )
-                        });
+                            .map_err(|error| {
+                                (
+                                    "schema-or-semantic-compile",
+                                    format!(
+                                        "planning pod audit `{}` failed typed compilation: {error}",
+                                        role.as_str()
+                                    ),
+                                )
+                            }),
+                        },
+                    };
                     dispatcher.events.write_value(serde_json::json!({
                         "event": "planning_pod_role_completed",
                         "role": role.as_str(),
@@ -23571,36 +23683,70 @@ impl GooseAgentDispatcher {
                         "authority": "peer-audit-only",
                         "accepted": compiled.is_ok(),
                         "findings": compiled.as_ref().map(|audit| audit.findings.len()).ok(),
+                        "failure_class": compiled.as_ref().err().map(|(class, _)| class),
+                        "failure": compiled.as_ref().err().map(|(_, detail)| detail),
                         "secs": started.elapsed().as_secs_f64(),
                     }));
-                    compiled
+                    compiled.map_err(|(class, detail)| format!("{class}: {detail}"))
+                }
+            },
+            move |role| audit_input_cost.saturating_add(role.brief().len()),
+            |role| role.as_str().to_string(),
+            move |attempt| {
+                attempt_events.write_value(serde_json::json!({
+                    "event": "planning_pod_audit_attempt_started",
+                    "role": &attempt.packet,
+                    "source_ordinal": attempt.source_index,
+                    "model": &attempt.device,
+                    "attempt": attempt.attempt,
+                    "estimated_prompt_cost": attempt.priority,
+                    "prior_failed_devices": &attempt.failed_devices,
+                    "admission_basis": "estimated-prompt-cost-descending-stable-source-ordinal",
+                    "authority": "peer-audit-only",
+                    "may_emit_full_plan": false,
+                }));
+                if attempt.attempt > 1 {
+                    attempt_events.write_value(serde_json::json!({
+                        "event": "planning_pod_audit_reassigned",
+                        "role": &attempt.packet,
+                        "source_ordinal": attempt.source_index,
+                        "model": &attempt.device,
+                        "attempt": attempt.attempt,
+                        "prior_failed_devices": &attempt.failed_devices,
+                        "retry_basis": "previous-device-failed-packet-distinct-roster-alias-remained",
+                    }));
+                }
+            },
+            move |observation| {
+                if observation.kind == StagedFanObservationKind::DetailTailStarted {
+                    tail_events.write_value(serde_json::json!({
+                        "event": "planning_pod_audit_tail_started",
+                        "outstanding_role": observation.outstanding_detail,
+                        "completed_roles": observation.completed_details,
+                        "in_flight_roles": observation.in_flight_details,
+                        "logically_free_nodes": observation.logically_free_lanes,
+                        "straggler_abort": false,
+                    }));
                 }
             },
         )
         .await;
-        let mut audits = Vec::with_capacity(results.len());
-        let mut failures = Vec::new();
-        for result in results {
-            match result {
-                Ok(audit) => audits.push(audit),
-                Err(error) => failures.push(error.to_string()),
-            }
-        }
-        if !failures.is_empty() || audits.len() != planning_pod_audit_roles().len() {
-            bail!(
-                "planning pod peer audit incomplete; no unreviewed plan accepted: {}",
-                if failures.is_empty() {
-                    format!(
-                        "returned {} of {} audit roles",
-                        audits.len(),
-                        planning_pod_audit_roles().len()
-                    )
-                } else {
-                    failures.join(" | ")
-                }
-            );
-        }
-        Ok(audits)
+        self.events.write_value(serde_json::json!({
+            "event": "planning_pod_audits_drained",
+            "accepted": results.is_ok(),
+            "all_admitted_attempts_drained": true,
+            "roles_returned": results.as_ref().map(|audits| audits.len()).unwrap_or(0),
+            "roles_required": planning_pod_audit_roles().len(),
+            "source_order_restored": results.is_ok(),
+            "retry_authority": "finite-distinct-roster-device-aliases",
+            "attempt_cap": null,
+            "elapsed_cap_secs": null,
+        }));
+        results.map_err(|error| {
+            anyhow!(
+                "planning pod peer audit incomplete after distinct-roster-device retry and drain: {error}"
+            )
+        })
     }
 
     async fn adjudicate_canonical_plan(
