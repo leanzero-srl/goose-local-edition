@@ -21005,15 +21005,16 @@ impl GooseAgentDispatcher {
                     one narrow interrogative bound to that one requirement and name the exact evidence needed. \
                     `blocked` means evidence is necessary but none of the listed routes can obtain it. Observations \
                     must be requirement-specific and preserve exact literals, interfaces, values, and constraints. \
-                    You may inspect available sources, but this seed ledger is conservatively advisory: a later \
-                    one-question call establishes per-record tool provenance. Do not create or modify files. There \
+                    Do not inspect sources or the codebase in this seed pass: this ledger is conservatively advisory, \
+                    and a later one-question evidence worker owns every real lookup with per-record tool provenance. \
+                    Classify a lookup need instead of trying to answer it. Do not create or modify files. There \
                     is no token, turn, lookup, or elapsed-time cap; complete every assigned requirement, then call \
                     final_output."
                     .to_string();
                 let user = serde_json::to_string_pretty(&serde_json::json!({
                     "partition_id": assignment.partition_id,
                     "authoritative_requirements": assignment.requirements,
-                    "available_lookup_routes": routes,
+                    "downstream_lookup_routes": routes,
                     "field_rules": {
                         "spec-sufficient": "kind=none and question_id/question/evidence_needed are empty",
                         "needs-evidence": "kind is library_docs/web/codebase and question_id/question/evidence_needed are specific",
@@ -21030,8 +21031,8 @@ impl GooseAgentDispatcher {
                             json_schema: Some(research_seed_schema()),
                         }),
                         Some(UNBOUNDED_AGENT_TURNS),
-                        &extensions,
-                        AgentToolSurface::Developer,
+                        &[],
+                        AgentToolSurface::ResponseOnly,
                         0,
                         Some(&activity_key),
                         None,
