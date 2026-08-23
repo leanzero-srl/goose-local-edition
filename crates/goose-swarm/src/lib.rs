@@ -37,7 +37,10 @@ pub use dag::{
     expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag, Difficulty,
     Node, ReplanAuthorityFact, ReplanAuthorityReceipt, TaskId, TaskSpec, TaskState,
 };
-pub use dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord};
+pub use dispatch::{
+    DispatchError, DispatchRequest, ProviderDispatchClass, TaskDispatcher, TaskRunOutput,
+    ToolCallRecord,
+};
 pub use event::{EventSink, NullSink, SwarmEvent};
 pub use judge::{
     deterministic_verdict, is_split_candidate, ChildSpec, Judge, JudgeConfig, JudgeInput,

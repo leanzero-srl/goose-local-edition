@@ -3,9 +3,9 @@ use goose_swarm::{
     AdmissionReceipt, AdmittedWork, BrokerError, Dag, DeviceCfg, Difficulty, DispatchError,
     DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig, JudgeOutcome,
     JudgeRequest, LocalCompletionKind, PhysicalAdmissionControl, PhysicalFleetSnapshot,
-    ProviderLifecycle, ProviderLifecycleDispatcher, ProviderRequestKey, ProviderTerminalKind,
-    Scheduler, SourceRevisionKind, SwarmEvent, TaskRunOutput, TaskSpec, TaskVersion,
-    VerifiedPhysicalLane, WorkOpportunity, WorkPriority, WorkRole,
+    ProviderDispatchClass, ProviderLifecycle, ProviderLifecycleDispatcher, ProviderRequestKey,
+    ProviderTerminalKind, Scheduler, SourceRevisionKind, SwarmEvent, TaskRunOutput, TaskSpec,
+    TaskVersion, VerifiedPhysicalLane, WorkOpportunity, WorkPriority, WorkRole,
 };
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -197,6 +197,49 @@ struct LifecycleMock {
     recorder: Arc<LifecycleRecorder>,
     delay: Duration,
     withhold_terminal_for: Option<String>,
+}
+
+#[derive(Default)]
+struct ProviderClassMock {
+    provider_free_calls: AtomicUsize,
+    admitted_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl ProviderLifecycleDispatcher for ProviderClassMock {
+    fn provider_dispatch_class(&self, req: &DispatchRequest) -> ProviderDispatchClass {
+        if req.task_id.starts_with("skeleton::") || req.task_id.starts_with("join::") {
+            ProviderDispatchClass::DeterministicProviderFree
+        } else {
+            ProviderDispatchClass::ProviderRequired
+        }
+    }
+
+    async fn run_provider_free(
+        &self,
+        req: DispatchRequest,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        self.provider_free_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(format!("local:{}", req.task_id).into())
+    }
+
+    async fn run_admitted(
+        &self,
+        req: DispatchRequest,
+        _admission: AdmissionReceipt,
+        lifecycle: ProviderLifecycle,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        self.admitted_calls.fetch_add(1, Ordering::SeqCst);
+        let key = lifecycle
+            .provider_request_started(format!("provider:{}", req.task_id))
+            .await
+            .unwrap();
+        lifecycle
+            .provider_terminal(key, ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        Ok(format!("provider:{}", req.task_id).into())
+    }
 }
 
 struct ToolGapSignals {
@@ -493,6 +536,61 @@ async fn scheduled_dag_and_provider_calls_are_identical_on_one_physical_host() {
             .count(),
         3
     );
+}
+
+#[tokio::test]
+async fn typed_provider_free_work_bypasses_admission_while_default_work_stays_brokered() {
+    let sink = Arc::new(RecordingSink::default());
+    let control = control(
+        "provider-free",
+        vec![lane("lane-a", "model-a", "host-a", "instance-a", 1)],
+        sink.clone(),
+    );
+    let dispatcher = Arc::new(ProviderClassMock::default());
+    let dag = Dag::from_specs(vec![spec("skeleton::manifest", &[]), spec("build", &[])]).unwrap();
+
+    let report = Scheduler::new(vec![device("lane-a", "model-a", 2)], 2)
+        .with_sink(sink.clone())
+        .run_with_physical_admission(
+            dag,
+            dispatcher.clone(),
+            control.clone(),
+            String::new(),
+            String::new(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(dispatcher.provider_free_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(dispatcher.admitted_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(control.occupancy().await, (0, 0));
+    assert_eq!(report.done.len(), 2);
+
+    let events = sink.events.lock().unwrap();
+    let provider_free: Vec<_> = events
+        .iter()
+        .filter(|event| event["event"] == "provider_free_dispatch_started")
+        .collect();
+    assert_eq!(provider_free.len(), 1);
+    assert_eq!(provider_free[0]["task_id"], "skeleton::manifest");
+    assert_eq!(provider_free[0]["class"], "deterministic_provider_free");
+    let admissions: Vec<_> = events
+        .iter()
+        .filter(|event| event["event"] == "broker_admission_granted")
+        .collect();
+    assert_eq!(admissions.len(), 1);
+    assert_eq!(admissions[0]["receipt"]["source"]["task_id"], "build");
+    assert!(events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event["event"].as_str(),
+                Some("broker_provider_request_permitted")
+                    | Some("broker_provider_terminal_observed")
+                    | Some("broker_provider_not_started")
+            )
+        })
+        .all(|event| event["admission"]["source"]["task_id"] == "build"));
 }
 
 #[tokio::test]
