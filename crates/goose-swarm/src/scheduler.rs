@@ -16,7 +16,8 @@ use crate::control_plane::{
 };
 use crate::dag::{Dag, Difficulty, TaskId, TaskSpec, TaskState};
 use crate::dispatch::{
-    DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord,
+    artifact_hashes_at, salvage_artifact_hashes, DispatchError, DispatchRequest, SalvageReason,
+    TaskCompletionDisposition, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
 use crate::event::{EventSink, NullSink, SwarmEvent};
 use crate::judge::{
@@ -162,7 +163,7 @@ fn child_description(
 }
 
 /// GOOSE_SWARM_SALVAGE_SPIN (default ON): when a NON-TEST task terminal-fails via finalize-spin (Verdict::
-/// Looping), salvage it as Done instead of Failed. Looping only fires once the owned file was written, so the
+/// Looping), preserve its complete artifacts as Salvaged instead of Failed. Looping only fires once the owned file was written, so the
 /// worker DID produce output — discarding it also fails its dependents (esp. the integrate-verify sink), which
 /// reports a WORKING app as FAILED (observed UNIQ9: the entry spun on its final fix -> integrate-verify blocked
 /// -> run FAILED though the app runs). Salvaging lets integrate-verify be the real gate. Off with 0/off/false/no.
@@ -177,68 +178,12 @@ pub fn salvage_spin_enabled() -> bool {
         .unwrap_or(true)
 }
 
-fn looks_like_test_file(f: &str) -> bool {
-    let lower = f.to_lowercase();
-    let base = lower.rsplit('/').next().unwrap_or(lower.as_str());
-    base.starts_with("test_")
-        || base.ends_with("_test.py")
-        || base.ends_with("_test.rs")
-        || base.ends_with(".test.ts")
-        || base.ends_with(".test.js")
-        || base == "conftest.py"
-        || lower.contains("/tests/")
-        || lower.contains("/test/")
-}
-
-/// A test subtask: id mentions "test", or every owned file looks like a test file. Test tasks are never
-/// salvaged (a spinning test is not "done", and tests do not block integrate-verify).
-fn is_test_task(id: &str, owned_files: &[String]) -> bool {
-    id.to_lowercase().contains("test")
-        || (!owned_files.is_empty() && owned_files.iter().all(|f| looks_like_test_file(f)))
-}
-
-/// A build-system manifest / package descriptor — a task that wrote ONLY one of these has not delivered its
-/// actual code. Used to keep the salvage gate from marking a task Done on a trivial go.mod.
-fn looks_like_manifest_file(f: &str) -> bool {
-    let base = f.rsplit('/').next().unwrap_or(f).to_lowercase();
-    matches!(
-        base.as_str(),
-        "go.mod"
-            | "go.sum"
-            | "package.json"
-            | "package-lock.json"
-            | "cargo.toml"
-            | "cargo.lock"
-            | "requirements.txt"
-            | "setup.py"
-            | "setup.cfg"
-            | "pyproject.toml"
-            | "__init__.py"
-            | "tsconfig.json"
-            | "gemfile"
-    )
-}
-
-/// GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL (#134, default OFF = byte-identical `.any()`): when a stalled/spinning
-/// task is salvaged to Done, require its CRITICAL owned files to be present, not just ANY file.
+/// Compatibility readback for the retired salvage looseness. Complete artifact evidence is now a
+/// fail-closed invariant, not an optional tuning lever.
 pub fn salvage_require_critical() -> bool {
-    std::env::var("GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL")
-        .map(|v| {
-            matches!(
-                v.trim().to_lowercase().as_str(),
-                "1" | "on" | "true" | "yes"
-            )
-        })
-        .unwrap_or(false)
+    true
 }
 
-/// Whether a salvage is justified by what is on disk. DEFAULT: at least one owned file is non-empty (the
-/// finalize-spin gate only fires once SOMETHING was written; a custom/LLM judge could emit Looping with
-/// nothing on disk — never salvage then). STRICT (salvage_require_critical): EVERY *critical* owned file —
-/// non-manifest, non-test source — must exist and be non-empty; a go.mod-only tree is not a done app. Measured
-/// on mustsolve-test4: cli-entry owns cmd/logfold/main.go but stalled after writing only a 24-byte go.mod, and
-/// the old `.any()` salvaged it to Done → the app shipped with NO entrypoint. Falls back to `.any()` when the
-/// task owns only manifest/test files. Paths resolve against the run cwd (where workers write).
 /// Content fingerprint of a task's owned files, for the progress-gated kill rule. Absent
 /// files hash as a marker so created-vs-missing is itself movement.
 fn owned_files_fingerprint(owned_files: &[String]) -> u64 {
@@ -254,45 +199,8 @@ fn owned_files_fingerprint(owned_files: &[String]) -> u64 {
     h.finish()
 }
 
-fn owned_file_written(owned_files: &[String]) -> bool {
-    let nonempty = |f: &str| std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false);
-    if salvage_require_critical() {
-        let critical: Vec<&String> = owned_files
-            .iter()
-            .filter(|f| !looks_like_manifest_file(f) && !looks_like_test_file(f))
-            .collect();
-        if !critical.is_empty() {
-            return critical.iter().all(|f| nonempty(f));
-        }
-    }
-    owned_files.iter().any(|f| nonempty(f))
-}
-
-/// STRICT variant used by degrade-on-stall (#134/#132): require EVERY *critical* owned file (non-manifest,
-/// non-test source) to be present and non-empty; fall back to `.any()` only when the task owns no critical
-/// files. Unconditionally strict — the degrade path must NEVER promote a task that wrote only a go.mod. Kept
-/// separate from `owned_file_written` so the degrade decision does not depend on the salvage_require_critical
-/// env. The evidence (a366f2b3, mustsolve-test4): a stalled worker EMITS events for hundreds of seconds and
-/// WRITES its owned file before the model hangs mid-generation — so at exhaustion the file is usually on disk.
-fn critical_owned_files_written(owned_files: &[String]) -> bool {
-    let nonempty = |f: &str| std::fs::metadata(f).map(|m| m.len() > 0).unwrap_or(false);
-    let critical: Vec<&String> = owned_files
-        .iter()
-        .filter(|f| !looks_like_manifest_file(f) && !looks_like_test_file(f))
-        .collect();
-    if !critical.is_empty() {
-        return critical.iter().all(|f| nonempty(f));
-    }
-    owned_files.iter().any(|f| nonempty(f))
-}
-
-/// The degrade-on-stall decision (#134/#132), extracted so it is unit-testable without a live scheduler run.
-/// Degrade a stall-exhausted task to Done only when ALL hold: the lever is on; it is NOT a content/syntax-gate
-/// failure (that means a written-but-broken file — never promote it); it is not a test task; and its critical
-/// owned files are present non-empty on disk. `enabled == false` => always false => the exhausted arm is
-/// byte-identical.
 /// The corrective note an INFRA transient earns, if any. Extracted so it is unit-testable without a
-/// live scheduler run, like `should_degrade_on_stall`.
+/// live scheduler run.
 ///
 /// Infra transients deliberately carry no hint: a "model unloaded" retry means nothing happened, and
 /// a stale note would mislead the worker. A MID-STREAM BODY DROP is the exception, and it is the one
@@ -573,34 +481,17 @@ fn dispatch_prefers_fastest_node(is_hard: bool, attempts: u32) -> bool {
     is_hard || attempts >= 2
 }
 
-fn should_degrade_on_stall(
+fn stall_salvage_artifacts(
+    root: &std::path::Path,
     enabled: bool,
     is_content: bool,
     id: &str,
     owned_files: &[String],
-) -> bool {
-    if !enabled || is_content || is_test_task(id, owned_files) {
-        return false;
+) -> Option<BTreeMap<String, String>> {
+    if !enabled || is_content {
+        return None;
     }
-    // A task that OWNS NOTHING produces no artifact, so there is no half-written file to promote and
-    // nothing for `critical_owned_files_written` to find — its trailing `any()` over an empty slice is
-    // false, which silently excluded the ONE task that most needs this.
-    //
-    // `integrate-verify` owns nothing. It is the sole join, and MEASURED it holds the entire fleet
-    // alone for 88-98% of the solo time in a 3-node run — half the wall. Its exhaustion re-dispatched
-    // the WHOLE join to another node and restarted it from zero, discarding every command already run
-    // and every fix already written: two of three sink retries in the campaign were `stream decode
-    // error (mid-stream body drop)`, costing 15.3 min on one cell and 44.3 min (29.5% of its wall) on
-    // another, on two DIFFERENT devices. A transient LAN fault is not a verdict on the work, and
-    // killing the longest task in the run because a socket hiccuped buys nothing.
-    //
-    // Degrading one cannot manufacture a false green: `green_blocking_failed` already filters
-    // owns-nothing tasks out of the green veto, so a verification task that could not finish is
-    // recorded as unfinished and gates nothing either way.
-    if owned_files.is_empty() {
-        return true;
-    }
-    critical_owned_files_written(owned_files)
+    crate::dispatch::salvage_artifact_hashes_at(root, id, owned_files)
 }
 
 /// A pool device = one LM Link model id with a capacity weight.
@@ -626,6 +517,9 @@ pub struct DeviceCfg {
 #[derive(Debug, Serialize)]
 pub struct RunReport {
     pub done: Vec<TaskId>,
+    /// Dependency-releasing but not accepted task results. These remain provisional until the
+    /// complete repair ruler verifies their artifact hashes and closes the corresponding defects.
+    pub salvaged: Vec<TaskId>,
     pub failed: Vec<TaskId>,
     /// Ids of opportunistic/replanner-added (bonus) tasks — their failure must NOT fail the run.
     pub bonus: Vec<TaskId>,
@@ -647,7 +541,7 @@ pub struct RunReport {
 #[derive(Debug, Serialize, Clone)]
 pub struct TaskOutcome {
     pub task_id: TaskId,
-    /// `done` | `failed` | `incomplete`.
+    /// `done` | `salvaged` | `failed` | `incomplete`.
     pub status: String,
     /// Device of the final attempt.
     pub device: Option<String>,
@@ -659,6 +553,10 @@ pub struct TaskOutcome {
     pub session_id: Option<String>,
     pub tool_calls: Vec<ToolCallRecord>,
     pub output: Option<String>,
+    /// Typed completion truth. `None` means this task never produced a dependency-releasing result.
+    pub completion: Option<TaskCompletionDisposition>,
+    /// Compatibility projection of `completion`, retained for older run readers.
+    pub salvaged: bool,
     /// True when this task owns NO files (e.g. the injected `integrate-verify` model-judge sink). Such a
     /// task's failure is a MODEL self-report, never a deterministic engine event — the hard completion gate
     /// must exclude it from the green-blocking set so a judge's dissent can never veto a good app (C1).
@@ -1108,7 +1006,7 @@ struct State {
     /// match exactly (103/103, 72/72, 64/64, 43/43) across every archived run, and they never
     /// interleave. If that invariant is ever relaxed this must become a per-task map.
     judge_node: Option<String>,
-    task_salvaged: std::collections::HashMap<String, bool>,
+    task_completion: HashMap<String, TaskCompletionDisposition>,
     idle_jobs: u32,
     /// SINK IDLE-FILL (GOOSE_SWARM_SINK_REVIEW): rotating review-dimension index for idle nodes during the
     /// sink, so successive idle reviews cover different angles.
@@ -1280,10 +1178,7 @@ impl PhysicalDispatchAuthority for SchedulerPhysicalAuthority {
 
 impl State {
     fn all_terminal(&self) -> bool {
-        self.dag
-            .tasks
-            .values()
-            .all(|n| matches!(n.state, TaskState::Done | TaskState::Failed))
+        self.dag.tasks.values().all(|n| n.state.is_terminal())
     }
 
     /// Tasks not yet terminal. The replan re-arm keys off this: a decline is only stale once the DAG
@@ -1292,7 +1187,7 @@ impl State {
         self.dag
             .tasks
             .values()
-            .filter(|n| !matches!(n.state, TaskState::Done | TaskState::Failed))
+            .filter(|n| !n.state.is_terminal())
             .count()
     }
 
@@ -1378,10 +1273,7 @@ impl State {
         self.dag
             .tasks
             .iter()
-            .filter(|(id, n)| {
-                !self.bonus_ids.contains(*id)
-                    && !matches!(n.state, TaskState::Done | TaskState::Failed)
-            })
+            .filter(|(id, n)| !self.bonus_ids.contains(*id) && !n.state.is_terminal())
             .count()
     }
 
@@ -1408,7 +1300,7 @@ impl State {
             self.dag
                 .tasks
                 .get(id)
-                .is_some_and(|n| !matches!(n.state, TaskState::Done | TaskState::Failed))
+                .is_some_and(|n| !n.state.is_terminal())
         })
     }
 
@@ -1427,6 +1319,7 @@ impl State {
                         .take(400)
                         .collect(),
                 )),
+                TaskState::Salvaged => failed.push(id.clone()),
                 TaskState::Failed => failed.push(id.clone()),
                 _ => incomplete.push(id.clone()),
             }
@@ -1878,7 +1771,7 @@ impl State {
     }
 
     /// Relax every dependent of a just-finished task: drop its indegree and promote it to Ready at zero.
-    /// MUST run for BOTH a normal success AND a finalize-spin salvage (both leave the task Done) — otherwise
+    /// MUST run for BOTH a normal success AND a finalize-spin salvage (both release dependents) — otherwise
     /// a salvaged task leaves its dependents Pending forever, so the CLI/integrate-verify sink never
     /// dispatches and the run ends `scheduler_stuck`. Observed on expense/tmpl: a working library or a
     /// spun-but-written CLI shipped with the entry/verify tasks never run.
@@ -1938,6 +1831,45 @@ impl State {
 
         match res {
             Ok(run) => {
+                if let TaskCompletionDisposition::Salvaged {
+                    artifact_hashes, ..
+                } = &run.completion
+                {
+                    let expected = self.dag.tasks.get(tid).and_then(|node| {
+                        salvage_artifact_hashes(&node.spec.id, &node.spec.owned_files)
+                    });
+                    if expected.as_ref() != Some(artifact_hashes) {
+                        let error =
+                            "salvage receipt does not match complete eligible owned artifacts"
+                                .to_string();
+                        self.attempt_log
+                            .entry(tid.to_string())
+                            .or_default()
+                            .push(AttemptRecord {
+                                device: dev_id.clone(),
+                                model: model_id.clone(),
+                                outcome: "invalid_salvage".to_string(),
+                                error: Some(error),
+                                elapsed_ms,
+                            });
+                        self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
+                        self.fail_descendants(tid);
+                        self.sink.emit(&SwarmEvent::TaskCompleted {
+                            task_id: tid.to_string(),
+                            salvaged: false,
+                            completion: None,
+                            status: "failed".to_string(),
+                            device: dev_id,
+                            model: model_id,
+                            attempts: self.attempt_log[tid].len() as u32,
+                            elapsed_ms,
+                            session_id: run.session_id,
+                            error: self.last_attempt_error(tid),
+                            tool_calls: run.tool_calls,
+                        });
+                        return;
+                    }
+                }
                 // Record this device's throughput (successful completions only) for speed-aware routing.
                 if let Some(dev) = released_dev {
                     let e = self.device_speed.entry(dev).or_insert((0, 0));
@@ -1948,11 +1880,11 @@ impl State {
                     output,
                     session_id,
                     tool_calls,
-                    salvaged,
+                    completion,
                 } = run;
-                // Remembered per task, because the completion event is emitted from six sites and only
-                // one of them is on the path that produced this value.
-                self.task_salvaged.insert(tid.to_string(), salvaged);
+                let salvaged = completion.is_salvaged();
+                self.task_completion
+                    .insert(tid.to_string(), completion.clone());
                 self.task_session
                     .insert(tid.to_string(), session_id.clone());
                 self.task_tool_calls
@@ -1970,7 +1902,11 @@ impl State {
                 let attempts = self.attempt_log[tid].len() as u32;
                 {
                     let n = self.dag.tasks.get_mut(tid).unwrap();
-                    n.state = TaskState::Done;
+                    n.state = if salvaged {
+                        TaskState::Salvaged
+                    } else {
+                        TaskState::Done
+                    };
                     n.result = Some(output.clone());
                     n.avoid_device = None;
                 }
@@ -1978,8 +1914,9 @@ impl State {
                 let ended_because = self.last_attempt_error(tid);
                 self.sink.emit(&SwarmEvent::TaskCompleted {
                     task_id: tid.to_string(),
-                    salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
-                    status: "done".to_string(),
+                    salvaged,
+                    completion: Some(completion),
+                    status: if salvaged { "salvaged" } else { "done" }.to_string(),
                     device: dev_id,
                     model: model_id,
                     attempts,
@@ -2066,8 +2003,9 @@ impl State {
                     // hung core task does not kill the capstone; integrate-verify + R1 gate the file honestly.
                     // NEVER a CONTENT failure (a syntax-gate reject is a broken file), never a test task, and
                     // only when the critical files are actually present. OFF by default => byte-identical.
-                    let degrade = self.dag.tasks.get(tid).is_some_and(|n| {
-                        should_degrade_on_stall(
+                    let salvage_artifacts = self.dag.tasks.get(tid).and_then(|n| {
+                        stall_salvage_artifacts(
+                            std::path::Path::new("."),
                             self.degrade_on_stall,
                             is_content,
                             &n.spec.id,
@@ -2075,8 +2013,14 @@ impl State {
                         )
                     });
                     let attempts = self.attempt_log[tid].len() as u32;
-                    if degrade {
-                        self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Done;
+                    if let Some(artifact_hashes) = salvage_artifacts {
+                        let completion = TaskCompletionDisposition::salvaged(
+                            SalvageReason::StallExhausted,
+                            artifact_hashes,
+                        );
+                        self.task_completion
+                            .insert(tid.to_string(), completion.clone());
+                        self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Salvaged;
                         self.sink.emit(&SwarmEvent::JudgeVerdict {
                             task_id: tid.to_string(),
                             device: dev_id.clone().unwrap_or_default(),
@@ -2104,8 +2048,9 @@ impl State {
                         let ended_because = self.last_attempt_error(tid);
                         self.sink.emit(&SwarmEvent::TaskCompleted {
                             task_id: tid.to_string(),
-                            salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
-                            status: "done".to_string(),
+                            salvaged: true,
+                            completion: Some(completion),
+                            status: "salvaged".to_string(),
                             device: dev_id,
                             model: model_id,
                             attempts,
@@ -2120,7 +2065,8 @@ impl State {
                         let ended_because = self.last_attempt_error(tid);
                         self.sink.emit(&SwarmEvent::TaskCompleted {
                             task_id: tid.to_string(),
-                            salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
+                            salvaged: false,
+                            completion: None,
                             status: "failed".to_string(),
                             device: dev_id,
                             model: model_id,
@@ -2177,7 +2123,8 @@ impl State {
                 let ended_because = self.last_attempt_error(tid);
                 self.sink.emit(&SwarmEvent::TaskCompleted {
                     task_id: tid.to_string(),
-                    salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
+                    salvaged: false,
+                    completion: None,
                     status: "failed".to_string(),
                     device: dev_id,
                     model: model_id,
@@ -2314,6 +2261,7 @@ impl State {
                         .take(200)
                         .collect(),
                 )),
+                TaskState::Salvaged => failed.push(format!("{id} (salvaged)")),
                 TaskState::Failed => failed.push(id.clone()),
                 _ => remaining.push(id.clone()),
             }
@@ -2452,6 +2400,7 @@ impl State {
             match n.state {
                 TaskState::Done => done.push(id),
                 TaskState::Claimed => running.push(id),
+                TaskState::Salvaged => failed.push(id),
                 TaskState::Failed => failed.push(id),
                 _ => pending += 1,
             }
@@ -2713,18 +2662,18 @@ impl State {
             .get(tid)
             .map(|t| t.elapsed().as_secs())
             .unwrap_or(0);
-        // ACCEPT — the deliverable is COMPLETE (every owned file exists and none fails its compile
-        // check). Finish the task instead of spending an attempt killing a worker that has already
-        // produced what it owed. This is the judge's only non-stopping lever; without it "looks done"
-        // and "looks stuck" both resolved to kill, and the third kill is terminal. MEASURED (F165):
-        // test-meridian was recorded a TERMINAL FAILURE with 8 passing test functions on disk that the
-        // crunched app still runs.
-        //
-        // Deliberately NOT gated the way `salvage_spin` is. That mechanism marks a spinning task Done —
-        // but excludes test tasks (`!is_test_task`), and test-authors are 93% of every failure this
-        // campaign has recorded (14 of 15). Excluding them excludes the entire population the salvage
-        // would help. Requires `deterministic` so a weak model can never hand itself a completion.
-        if still_live && outcome.verdict == Verdict::Accept && outcome.deterministic {
+        // A deterministic accept can release dependents without throwing away already-written work, but
+        // it is not agent completion. Preserve it as Salvaged until the full repair ruler closes the
+        // provisional defect. Owns-nothing work has no artifact receipt and cannot take this path.
+        let deterministic_accept_artifacts =
+            (still_live && outcome.verdict == Verdict::Accept && outcome.deterministic)
+                .then(|| {
+                    self.dag.tasks.get(tid).and_then(|node| {
+                        artifact_hashes_at(std::path::Path::new("."), &node.spec.owned_files)
+                    })
+                })
+                .flatten();
+        if let Some(artifact_hashes) = deterministic_accept_artifacts {
             if let Some(h) = self.abort_handles.remove(tid) {
                 h.abort();
             }
@@ -2759,14 +2708,21 @@ impl State {
                     error: None,
                     elapsed_ms,
                 });
-            self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Done;
+            let completion = TaskCompletionDisposition::salvaged(
+                SalvageReason::DeterministicAccept,
+                artifact_hashes,
+            );
+            self.task_completion
+                .insert(tid.to_string(), completion.clone());
+            self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Salvaged;
             self.relax_dependents(tid);
             let attempts = self.attempt_log[tid].len() as u32;
             let ended_because = self.last_attempt_error(tid);
             self.sink.emit(&SwarmEvent::TaskCompleted {
                 task_id: tid.to_string(),
-                salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
-                status: "done".to_string(),
+                salvaged: true,
+                completion: Some(completion),
+                status: "salvaged".to_string(),
                 device,
                 model,
                 attempts,
@@ -2910,21 +2866,24 @@ impl State {
             // FINALIZE-SPIN SALVAGE: a Looping terminal-fail means the owned file WAS written (the judge only
             // emits Looping once any_owned_written); the worker produced output but kept spinning after. For a
             // non-test task, discard also fails its dependents (the integrate-verify sink), so a working app is
-            // reported FAILED. Mark it Done and let integrate-verify gate it honestly. Only Looping; never a
+            // reported FAILED. Keep it Salvaged and let integrate-verify gate it honestly. Only Looping; never a
             // test task.
-            let salvage = salvage_spin_enabled()
-                && matches!(outcome.verdict, Verdict::Looping)
-                && self.dag.tasks.get(tid).is_some_and(|n| {
-                    !is_test_task(&n.spec.id, &n.spec.owned_files)
-                        && owned_file_written(&n.spec.owned_files)
-                });
+            let salvage_artifacts =
+                (salvage_spin_enabled() && matches!(outcome.verdict, Verdict::Looping))
+                    .then(|| {
+                        self.dag.tasks.get(tid).and_then(|node| {
+                            salvage_artifact_hashes(&node.spec.id, &node.spec.owned_files)
+                        })
+                    })
+                    .flatten();
+            let salvage = salvage_artifacts.is_some();
             let (outcome_label, error_text, state, status) = if salvage {
                 (
                     "salvaged_spin",
                     "finalize-spin salvaged: owned file written; integrate-verify gates it"
                         .to_string(),
-                    TaskState::Done,
-                    "done",
+                    TaskState::Salvaged,
+                    "salvaged",
                 )
             } else {
                 (
@@ -2959,8 +2918,11 @@ impl State {
                 });
             self.dag.tasks.get_mut(tid).unwrap().state = state;
             if salvage {
-                // A salvaged task is Done: relax its dependents exactly like a success, or the CLI/verify
-                // sink stays Pending forever and the run ends scheduler_stuck (backlog #7: expense/tmpl).
+                let completion = TaskCompletionDisposition::salvaged(
+                    SalvageReason::FinalizeSpin,
+                    salvage_artifacts.expect("salvage checked above"),
+                );
+                self.task_completion.insert(tid.to_string(), completion);
                 self.relax_dependents(tid);
             } else {
                 self.fail_descendants(tid);
@@ -2969,7 +2931,8 @@ impl State {
             let ended_because = self.last_attempt_error(tid);
             self.sink.emit(&SwarmEvent::TaskCompleted {
                 task_id: tid.to_string(),
-                salvaged: self.task_salvaged.get(tid).copied().unwrap_or(false),
+                salvaged: salvage,
+                completion: self.task_completion.get(tid).cloned(),
                 status: status.to_string(),
                 device,
                 model,
@@ -3214,6 +3177,8 @@ impl State {
             // (M5) never picks this phantom (Done + owns the union files) and reviews a partial file set.
             n.pre_reviewed = true;
         }
+        self.task_completion
+            .insert(tid.to_string(), TaskCompletionDisposition::Complete);
         // ---- enqueue the children that are immediately ready ----
         for id in newly_ready {
             let fan_out = self.dag.tasks[&id].fan_out;
@@ -3247,7 +3212,7 @@ impl State {
             .collect();
         while let Some((parent, d)) = q.pop_front() {
             let n = self.dag.tasks.get_mut(&d).unwrap();
-            if matches!(n.state, TaskState::Done | TaskState::Failed) {
+            if n.state.is_terminal() {
                 continue;
             }
             // RELAX-THROUGH-FAILURE for verification-shaped dependents (wall-time hunt,
@@ -3303,6 +3268,7 @@ impl State {
 
     fn build_report(&self) -> RunReport {
         let mut done = Vec::new();
+        let mut salvaged = Vec::new();
         let mut failed = Vec::new();
         let mut results = HashMap::new();
         let mut tasks = Vec::new();
@@ -3315,6 +3281,10 @@ impl State {
                         results.insert(id.clone(), r.clone());
                     }
                     "done"
+                }
+                TaskState::Salvaged => {
+                    salvaged.push(id.clone());
+                    "salvaged"
                 }
                 TaskState::Failed => {
                     failed.push(id.clone());
@@ -3357,6 +3327,11 @@ impl State {
                 session_id,
                 tool_calls,
                 output: n.result.clone(),
+                completion: self.task_completion.get(id).cloned(),
+                salvaged: self
+                    .task_completion
+                    .get(id)
+                    .is_some_and(TaskCompletionDisposition::is_salvaged),
                 owns_nothing: n.spec.owned_files.is_empty(),
             });
         }
@@ -3364,6 +3339,7 @@ impl State {
             per_device.entry(d.clone()).or_default().dispatched = *c;
         }
         done.sort();
+        salvaged.sort();
         failed.sort();
         tasks.sort_by(|a, b| a.task_id.cmp(&b.task_id));
         let mut bonus: Vec<TaskId> = self.bonus_ids.iter().cloned().collect();
@@ -3371,7 +3347,7 @@ impl State {
         let mut planned_files: Vec<String> = {
             let mut set = std::collections::BTreeSet::new();
             for n in self.dag.tasks.values() {
-                if matches!(n.state, TaskState::Done) {
+                if n.state.releases_dependents() {
                     for f in &n.spec.owned_files {
                         set.insert(f.clone());
                     }
@@ -3382,6 +3358,7 @@ impl State {
         planned_files.sort();
         RunReport {
             done,
+            salvaged,
             failed,
             bonus,
             results,
@@ -3458,7 +3435,7 @@ pub struct Scheduler {
     /// byte-identical. Set via `with_doc_facts` so `run_with_decisions`' signature is unchanged.
     doc_facts: String,
     /// GOOSE_SWARM_DEGRADE_ON_STALL (#134/#132, default OFF): when a task exhausts its transient-retry budget
-    /// (a mid-generation model hang) but its CRITICAL owned file is already on disk, mark it Done(degraded) +
+    /// (a mid-generation model hang) but every eligible owned file is already on disk, mark it Salvaged +
     /// relax dependents instead of fail_descendants — so a single hung core task does not kill the capstone.
     /// integrate-verify then gates the degraded file honestly (build + R1 missing-deliverable). false =>
     /// the exhausted arm is byte-identical (fail_descendants).
@@ -3562,7 +3539,7 @@ impl Scheduler {
     }
 
     /// Enable DEGRADE-ON-STALL (GOOSE_SWARM_DEGRADE_ON_STALL, #134/#132): at transient-retry exhaustion, if the
-    /// stalled task already wrote its critical owned file, mark it Done(degraded) + relax dependents instead of
+    /// stalled task already wrote every eligible owned file, mark it Salvaged + relax dependents instead of
     /// failing the whole subtree. OFF by default — with it off the exhausted arm is byte-identical
     /// (fail_descendants). integrate-verify gates the degraded file honestly downstream.
     pub fn with_degrade_on_stall(mut self) -> Self {
@@ -3792,7 +3769,7 @@ impl Scheduler {
             split_generation: HashMap::new(),
             judge_running: false,
             judge_node: None,
-            task_salvaged: std::collections::HashMap::new(),
+            task_completion: HashMap::new(),
             idle_jobs: 0,
             sink_review_dim: 0,
             last_judged: HashMap::new(),
@@ -3944,7 +3921,7 @@ impl Scheduler {
                         .dag
                         .tasks
                         .values()
-                        .filter(|n| !matches!(n.state, TaskState::Done | TaskState::Failed))
+                        .filter(|n| !n.state.is_terminal())
                         .count();
                     s.sink.emit(&SwarmEvent::SchedulerStuck { remaining });
                     bail!(
@@ -4556,28 +4533,37 @@ mod salvage_tests {
     }
 
     #[test]
-    fn test_files_and_tasks_are_recognized() {
-        assert!(looks_like_test_file("tests/test_core.py"));
-        assert!(looks_like_test_file("test_utils.py"));
-        assert!(looks_like_test_file("habits/foo_test.py"));
-        assert!(looks_like_test_file("tests/conftest.py"));
-        assert!(!looks_like_test_file("habits/__main__.py"));
-        assert!(!looks_like_test_file("habits/commands.py"));
-        // A non-test entry task is salvageable; test tasks and empty-owned tasks are not.
-        assert!(!is_test_task(
+    fn salvage_evidence_refuses_tests_manifests_and_partial_multi_file_owners() {
+        let dir = degrade_fixture("salvage-evidence");
+        write_file(&dir, "src/main.rs", "fn main() {}\n");
+        write_file(&dir, "tests/main_test.rs", "#[test] fn works() {}\n");
+        write_file(&dir, "Cargo.toml", "[package]\nname='x'\n");
+
+        assert!(crate::dispatch::salvage_artifact_hashes_at(
+            &dir,
             "cli-app",
-            &["habits/commands.py".into(), "habits/__main__.py".into()]
-        ));
-        assert!(is_test_task(
-            "tests-advanced",
-            &["tests/test_advanced.py".into()]
-        ));
-        assert!(is_test_task(
-            "unit",
-            &["tests/test_a.py".into(), "tests/test_b.py".into()]
-        ));
-        // id mentions test even if a file does not look like one.
-        assert!(is_test_task("integration-test", &["run_it.py".into()]));
+            &["src/main.rs".into()]
+        )
+        .is_some());
+        assert!(crate::dispatch::salvage_artifact_hashes_at(
+            &dir,
+            "unit-tests",
+            &["tests/main_test.rs".into()]
+        )
+        .is_none());
+        assert!(crate::dispatch::salvage_artifact_hashes_at(
+            &dir,
+            "manifest",
+            &["Cargo.toml".into()]
+        )
+        .is_none());
+        assert!(crate::dispatch::salvage_artifact_hashes_at(
+            &dir,
+            "cli-app",
+            &["src/main.rs".into(), "src/missing.rs".into()]
+        )
+        .is_none());
+        assert!(crate::dispatch::salvage_artifact_hashes_at(&dir, "verify", &[]).is_none());
     }
 
     #[test]
@@ -4593,8 +4579,8 @@ mod salvage_tests {
         assert!(!off("1") && !off("true") && !off("anything"));
     }
 
-    // A fresh temp dir + a helper to write/skip owned files, so the on-disk degrade predicate is exercised for
-    // real (not mocked). Returns absolute paths, since critical_owned_files_written stats the raw path.
+    // A fresh temp dir + a helper to write/skip owned files, so the on-disk provisional predicate is
+    // exercised for real (not mocked).
     fn degrade_fixture(tag: &str) -> std::path::PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -4606,8 +4592,11 @@ mod salvage_tests {
     }
     fn write_file(dir: &std::path::Path, name: &str, bytes: &str) -> String {
         let p = dir.join(name);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         std::fs::write(&p, bytes).unwrap();
-        p.to_string_lossy().into_owned()
+        name.to_string()
     }
 
     /// A dropped body and a stall are the ONLY infra transients that earn a hint, and the distinction
@@ -4670,7 +4659,7 @@ mod salvage_tests {
         // With the lever OFF, no on-disk state can flip the decision -> exhausted arm stays fail_descendants.
         let dir = degrade_fixture("off");
         let main = write_file(&dir, "main.go", "package main\nfunc main(){}\n");
-        assert!(!should_degrade_on_stall(false, false, "cli-entry", &[main]));
+        assert!(stall_salvage_artifacts(&dir, false, false, "cli-entry", &[main]).is_none());
     }
 
     /// THE SINK IS THE TASK THIS EXISTS FOR, AND IT WAS THE ONE TASK EXCLUDED.
@@ -4764,28 +4753,14 @@ mod salvage_tests {
     }
 
     #[test]
-    fn a_task_that_owns_nothing_is_recorded_unfinished_rather_than_restarted() {
-        // The sink, the per-module verifies and the e2e shards all own nothing.
+    fn a_task_that_owns_nothing_cannot_be_salvaged_without_artifact_evidence() {
+        let dir = degrade_fixture("owns-nothing");
         for id in ["integrate-verify", "verify::store", "verify-e2e::2"] {
             assert!(
-                should_degrade_on_stall(true, false, id, &[]),
-                "{id} owns nothing: a transient stall must record it unfinished, not restart it"
+                stall_salvage_artifacts(&dir, true, false, id, &[]).is_none(),
+                "{id} owns nothing and cannot mint an artifact receipt"
             );
         }
-        // The lever still gates it, and a CONTENT failure still refuses — an owns-nothing task whose
-        // syntax gate rejected something is a real defect, not a dropped socket.
-        assert!(!should_degrade_on_stall(
-            false,
-            false,
-            "integrate-verify",
-            &[]
-        ));
-        assert!(!should_degrade_on_stall(
-            true,
-            true,
-            "integrate-verify",
-            &[]
-        ));
     }
 
     #[test]
@@ -4793,23 +4768,20 @@ mod salvage_tests {
         let dir = degrade_fixture("crit");
         let main = write_file(&dir, "main.go", "package main\nfunc main(){}\n");
         // ON + non-content + non-test + critical file present -> degrade.
-        assert!(should_degrade_on_stall(
+        assert!(stall_salvage_artifacts(
+            &dir,
             true,
             false,
             "cli-entry",
             std::slice::from_ref(&main)
-        ));
+        )
+        .is_some());
         // A missing critical file must NOT degrade (the test4 failure: shipping with no entrypoint).
-        let missing = dir.join("gone.go").to_string_lossy().into_owned();
-        assert!(!should_degrade_on_stall(
-            true,
-            false,
-            "cli-entry",
-            &[missing]
-        ));
+        let missing = "gone.go".to_string();
+        assert!(stall_salvage_artifacts(&dir, true, false, "cli-entry", &[missing]).is_none());
         // An empty critical file is not "written".
         let empty = write_file(&dir, "empty.go", "");
-        assert!(!should_degrade_on_stall(true, false, "cli-entry", &[empty]));
+        assert!(stall_salvage_artifacts(&dir, true, false, "cli-entry", &[empty]).is_none());
     }
 
     #[test]
@@ -4817,33 +4789,24 @@ mod salvage_tests {
         let dir = degrade_fixture("refuse");
         let main = write_file(&dir, "main.go", "package main\n");
         // A CONTENT (syntax-gate) failure means the file is broken -> never degrade even if it exists.
-        assert!(!should_degrade_on_stall(
+        assert!(stall_salvage_artifacts(
+            &dir,
             true,
             true,
             "cli-entry",
             std::slice::from_ref(&main)
-        ));
+        )
+        .is_none());
         // A test task is never salvaged/degraded, even with its file on disk.
         let tf = write_file(&dir, "miner_test.go", "package miner\n");
-        assert!(!should_degrade_on_stall(true, false, "miner-tests", &[tf]));
+        assert!(stall_salvage_artifacts(&dir, true, false, "miner-tests", &[tf]).is_none());
     }
 
     #[test]
-    fn degrade_on_stall_manifest_only_falls_back_to_any() {
-        // A task owning ONLY a manifest (no critical source) degrades on any-nonempty (there's nothing else to
-        // gate on); it is not a source task, so this cannot ship a broken entrypoint.
+    fn degrade_on_stall_refuses_manifest_only_work() {
         let dir = degrade_fixture("manifest");
         let gomod = write_file(&dir, "go.mod", "module x\n");
-        assert!(should_degrade_on_stall(true, false, "manifest", &[gomod]));
-        // But a manifest-only task with an EMPTY manifest still fails (nothing on disk).
-        let dir2 = degrade_fixture("manifest2");
-        let empty_mod = write_file(&dir2, "go.mod", "");
-        assert!(!should_degrade_on_stall(
-            true,
-            false,
-            "manifest",
-            &[empty_mod]
-        ));
+        assert!(stall_salvage_artifacts(&dir, true, false, "manifest", &[gomod]).is_none());
     }
 
     #[test]

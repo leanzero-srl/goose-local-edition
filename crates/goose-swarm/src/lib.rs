@@ -40,8 +40,9 @@ pub use dag::{
     Node, ReplanAuthorityFact, ReplanAuthorityReceipt, TaskId, TaskSpec, TaskState,
 };
 pub use dispatch::{
-    DispatchError, DispatchRequest, ProviderDispatchClass, TaskDispatcher, TaskRunOutput,
-    ToolCallRecord,
+    artifact_hashes_at, salvage_artifact_hashes, salvage_artifact_hashes_at, DispatchError,
+    DispatchRequest, ProviderDispatchClass, RequiredVerification, SalvageReason,
+    TaskCompletionDisposition, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
 pub use event::{EventSink, NullSink, SwarmEvent};
 pub use judge::{

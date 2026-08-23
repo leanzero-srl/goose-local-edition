@@ -1,0 +1,34 @@
+{
+  "source": {
+    "run_log_path": "evals/swarm-bench/runs/sb7-fleet38/swarm-3node-r1/runs/sb7-fleet38/swarm-3node-r1/run.jsonl",
+    "run_log_sha256": "6402923479726a0a1533493955c0b5625caa59661db630e7b903d274dfcdd5b6"
+  },
+  "transient_completion": {
+    "event": "task_completed",
+    "task_id": "test-webhook",
+    "status": "done",
+    "salvaged": true,
+    "attempts": 2,
+    "elapsed_ms": 1885796,
+    "session_id": null,
+    "tool_calls": [],
+    "ts": "2026-08-22T07:38:19.836535+00:00",
+    "seq": 1257
+  },
+  "final_report": {
+    "event": "run_finished",
+    "task_id": "test-webhook",
+    "status": "done",
+    "salvaged": null,
+    "completion": null,
+    "listed_in_done": true,
+    "attempts": 2,
+    "elapsed_ms": 1885796,
+    "session_id": null,
+    "tool_calls": [],
+    "owns_nothing": false,
+    "ts": "2026-08-22T13:12:07.386998+00:00",
+    "seq": 1458
+  },
+  "engine_fact": "The transient event called the task salvaged, while the final report erased that fact and counted it as ordinary done."
+}
