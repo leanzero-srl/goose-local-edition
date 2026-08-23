@@ -45075,7 +45075,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "legacy_prereview_substituted": legacy_prereview_requested,
             "legacy_replanner_substituted": replan_on && cfg.max_replans > 0,
             "nested_omni_judge": false,
-            "semantic_nudge_delivery": false,
+            "semantic_nudge_delivery": true,
             "activity_authority": "engine_memory",
             "activity_ui_mirror": "best_effort_atomic",
         }));
