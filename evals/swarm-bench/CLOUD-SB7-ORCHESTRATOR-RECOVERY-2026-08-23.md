@@ -76,6 +76,10 @@ seeds and `provider_episode_attempts=1`; its only full run therefore becomes
 episode 2. The cumulative ledger is copied byte-for-byte, including all five
 ambiguous reservations. The source receipt makes the stopped root permanently
 non-runnable. The generation-2 target cannot be superseded or recovered again.
+Those five exact request IDs form an immutable carried-reservation baseline.
+Only those IDs are excluded from the target episode's current outstanding set;
+another reservation for the same provider/model remains current and blocks
+finalization. A missing or changed baseline also fails closed.
 
 ## Evidence schema and commands
 
@@ -87,7 +91,12 @@ The evidence JSON has an exact, closed schema: `schema_version`,
 `source_manager_sha256`, `source_monitor_sha256`, `manager_log_sha256`,
 `monitor_log_sha256`, `entrants`, `fix_source_commit`, and `artifacts`.
 `classification` must be `orchestrator_monitor_defect`; `artifacts` must contain
-one non-empty, secret-free `root_cause` file and one `regression_test` file.
+exactly one non-empty, secret-free `root_cause` file and one `regression_test`
+file. The roles and canonical paths must be distinct. A symbolic-link artifact
+is refused before the remaining paths are canonicalized. Both evidence
+generation and the mutating recovery require a clean source worktree, so
+`fix_source_commit` identifies the exact reviewed bytes rather than a commit
+beside uncommitted fixes.
 The read-only generator calculates every state, lifecycle, exact-tree, log,
 ledger, source-root, target-root, instrument, artifact, and commit binding. It
 makes no provider request and mutates no campaign:
@@ -112,27 +121,49 @@ python3 evals/swarm-bench/bench/cloud_sb7.py orchestrator-recovery \
 ```
 
 The transition itself makes no provider request. The target must then pass a
-fresh all-model smoke. Launch order is atomic and monitor-owned:
+fresh all-model smoke. `smoke` is a durable detached stage: its parent persists
+its identity before release, survives the invoking terminal, re-adopts a dead
+smoke manager, and hands a successful smoke directly to the detached monitor.
+The operator runs only:
 
 ```bash
 python3 evals/swarm-bench/bench/cloud_sb7.py smoke \
   --root /Users/mihaiperdum/goose-builds/NEW-RECOVERY-ROOT
-python3 evals/swarm-bench/bench/cloud_sb7.py monitor-start \
-  --root /Users/mihaiperdum/goose-builds/NEW-RECOVERY-ROOT
 ```
 
-Do not run `start` first. `monitor-start` validates lineage synchronously before
-detaching. The detached child proves parent PID 1 and matching PID/process
-group/session identity, commits `RUNNING`, and only then starts the manager from
-its monitor tick. Direct manager launch fails closed unless that exact monitor
-state is already live and bound to the current smoke contract.
+Do not run `start` or a second `monitor-start`. The smoke manager starts the
+monitor only after all five proofs pass. The detached monitor proves parent PID
+1 and matching PID/process-group/session identity, creates a renewable lease,
+and only then starts the manager from its monitor tick. Direct manager,
+supervisor, scorer, and live-publication entry points fail closed unless that
+exact lease is live and bound to the current smoke contract. Detached managers,
+monitors, supervisors, scorers, publishers, and smoke managers wait behind an
+on-disk parent receipt before executing, eliminating the spawn-before-state
+crash window.
+
+There is no build-duration or silence cap. While a manager is alive, the
+monitor hash-chains observations of lifecycle counts, provider and process
+generation, assistant stream, telemetry, raw tree, and logs. Silence is
+persisted and surfaced but never kills work. Automatic `ATTENTION` requires a
+second observation in the same process and provider-request generation with
+continued assistant-stream growth and matching exact repeated windows and
+sentences. The ledger is replayed on monitor startup; gaps, tamper, foreign
+entries, or an invalid crash-orphan tail fail closed. If the monitor lease dies
+or expires, the manager stops every recorded supervisor group before another
+provider admission can occur. Resuming `ATTENTION` resets only retry-safe state
+and restores the monitor before the manager.
 
 ## Regression coverage
 
-The warning-as-error cloud harness suite passes all 111 tests. Recovery tests
+The warning-as-error cloud harness suite passes all 125 tests. Recovery tests
 cover exact attempt/ambiguity/budget conservation, reset detection, idempotent
 resume, fork refusal, build-outcome refusal, accounting drift, evidence tamper,
 crashes after the source receipt and final root rename, a failure midway through
 evidence copying, refusal of a structurally valid source lookalike,
 monitor-first manager gating, and synchronous lineage refusal before monitor
-detachment.
+detachment. Unattended tests additionally exercise direct-entry refusal,
+pre-exec receipt loss, stale scorer/publication leases, smoke-manager death and
+handoff, real monitor death stopping a real supervisor group, generation-2
+reservation discrimination, provider-spawn rollback, measured growth and
+silence, exact recurrence across observations, crash-orphan ledger adoption,
+and ledger corruption.
