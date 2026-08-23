@@ -40,7 +40,7 @@ a compatibility wrapper around the old parser.
 
 ## Implemented protocol and snapshot rules
 
-Commits `e2855e6ef`, `fafe85c66`, and `94f6ec36f` add:
+Commits `e2855e6ef`, `fafe85c66`, `94f6ec36f`, and `2183e3b32` add:
 
 1. Exact actions `CONTINUE|NUDGE|SPLIT_PROPOSAL|ROUTE_FINDING|ACCEPT_CANDIDATE|REQUEST_EVIDENCE|ABSTAIN|INCOMPLETE`
    in a strict JSON envelope. Unknown actions, unknown fields, prose, Markdown fences, missing fields,
@@ -67,6 +67,12 @@ Commits `e2855e6ef`, `fafe85c66`, and `94f6ec36f` add:
 7. Structured `semantic_observation_requested`, `semantic_observation_deduplicated`,
    `semantic_observation_rejected`, and `semantic_observation_completed` events. They carry snapshot
    identity and `authority: observation_only`, never raw model output.
+8. An exact JSON catalog of every permitted evidence source in the model request. Derived contract,
+   acceptance, trace, dependency, and sibling IDs are visible rather than requiring a model to infer a
+   naming convention. Snapshot strings are explicitly untrusted data, not instructions.
+9. One retained current receipt per task for deduplication. Superseded receipts leave the in-memory plane;
+   their structured completion events remain the durable history. This removes revision-count memory growth
+   without a numeric cap.
 
 No duration, token, character, recurrence, review-count, or retry cap was added.
 
@@ -107,8 +113,23 @@ cargo fmt --all -- --check
 git diff --check
 ```
 
-The first focused pass completed 9/9 unit tests and 3/3 corpus tests. The final full-crate and strict
-lint results are recorded in the closing commit once rerun on the complete branch.
+The final focused pass completed 12/12 semantic-observation unit tests and 3/3 corpus tests. Full
+`cargo test -p goose-swarm` passed 77 library tests, 6 historical judge replays, 39 scheduler mocks,
+and 3 semantic corpus tests (125 total). Strict all-target clippy passed with warnings denied.
+
+## Adversarial quarantine decision
+
+The safe quarantine is to leave this plane unwired on the pre-broker base and make the physical broker's
+existing rejection of legacy judge work the integration gate. Deprecating, weakening, or partially adapting
+`parse_judge_reply` here would change the ordinary scheduler while still leaving its intervention call sites
+alive. Running the typed observer beside it would be worse: two reviewers could consume capacity and the old
+one could still abort, accept, split, or redispatch.
+
+The new module has no scheduler dependency, no `JudgeOutcome` conversion, no provider client, and no action
+delivery API. That is the Engine 4 code boundary. It is not a claim that a public Rust value is impossible for
+future code to misuse. The production integration must retain the broker's legacy-path rejection and add a
+replay proving that one trace snapshot yields at most one broker-admitted typed observation and zero legacy
+judge calls.
 
 ## Broker integration still required before any live observation
 
@@ -131,14 +152,19 @@ The reviewed broker head is `c60b309b1`. The exact mapping is:
 - provider start/terminal -> the admitted lifecycle's correlated request methods; and
 - parsed/stale/error receipt -> `AdmittedWork::complete_local` after the observation handle resolves.
 
+If the observer rejects after physical admission because the same task/revision is already in flight or
+complete, the adapter must record provider-not-started and close the admission as an error; it must not call
+the provider. If provider start fails, the same rule applies. If a provider call starts, every success, error,
+or cancellation must record its exact terminal before local completion. These races need broker/observer
+integration tests; neither plane may infer the other plane's receipt.
+
 The observer accepts its reviewer per submission rather than storing one global reviewer. That is
 load-bearing: it lets the adapter bind one exact broker admission, physical route, and provider lifecycle
 to one snapshot. A global reviewer would make it possible to use the right semantic prompt on the wrong
 physical admission.
 
-`git merge-tree --write-tree c60b309b1 94f6ec36f` produced a conflict-free combined tree
-(`7f6bf15f936403f1ce547783d3e03c0e8d397531`). This is a structural merge check only; it is not a compiled
-integration or permission to launch a provider call.
+The final branch is checked with `git merge-tree --write-tree c60b309b1 <observer-head>`. A conflict-free
+tree is only a structural result; it is not a compiled integration or permission to launch a provider call.
 
 Until that adapter and its provider lifecycle tests land, the new plane stays unwired. That is a
 correctness boundary, not a feature flag or a request cap.
