@@ -28,8 +28,12 @@ into duplicate spend or a falsely successful unattended run:
 - a foreground smoke caller could disappear without leaving an owner;
 - provider `Popen` failure could consume the only remaining episode ordinal;
 - `ATTENTION` had no monitor-first autonomous resume;
-- a live manager was treated as progress even when one provider was producing a
-  recurring assistant stream indefinitely;
+- exact assistant-text recurrence was incorrectly allowed to become a
+  deterministic runtime stop decision;
+- deleting the progress ledger could discard that history and restart the
+  recurrence classifier from a clean baseline;
+- the publisher concealed a raw provisional `sb-7.0-rc` verdict as stable
+  `sb-7.0` and removed its calibration disclosure;
 - recovery evidence was not bound to clean committed source and allowed weak
   artifact identity.
 
@@ -50,6 +54,13 @@ Smoke has its own durable manager. It can re-adopt a dead smoke manager and,
 after all five proofs pass, hands ownership directly to a detached monitor.
 `ATTENTION` resume restores monitor ownership before manager ownership.
 
+Assistant-text recurrence is now observation only. The meter still persists
+its measured windows, sentences, fingerprints, and earlier matching sequence,
+but it has no fail-stop field and no return channel into `ATTENTION`. Content,
+duration, token volume, and silence therefore have no deterministic stop
+authority. Goose's existing judge/nudge path remains the semantic supervisor.
+Only closed instrument or orchestrator defects can stop the cloud runtime.
+
 ## Evidence-based progress supervision
 
 There is deliberately no elapsed-duration, token-volume, or silence kill cap.
@@ -58,33 +69,41 @@ entrant. The observation binds campaign and smoke identity, process and provider
 request generation, lifecycle counts, exact log and telemetry evidence, raw
 tree evidence, and assistant-only semantic recurrence. Provider silence and
 local-process silence are visible classifications but never automatic failure.
+Tool-only output advances artifact evidence without being misclassified as
+assistant recurrence. Repeated sentences followed by novel productive output
+remain ordinary measured progress.
 
-An automatic fail-stop requires all of the following in the same supervisor,
-goose, episode, and active provider-request generation:
+The ledger now has an independent random identity and identity-file hash
+committed into monitor state with the last complete per-entrant head set. On
+monitor restart and again at each append boundary, the complete ledger replays
+against that commitment. Deleting a ledger or committed entrant record,
+replacing the ledger identity bytes, missing sequences, foreign records, schema
+drift, hash-chain tamper, invalid orphan tails, and evidence paths outside the
+entrant unit all fail closed as instrument defects.
 
-1. the assistant stream crosses both the exact-window and exact-sentence
-   recurrence floors;
-2. a later observation independently crosses them again;
-3. semantic output continued growing between those observations;
-4. the two observations share exact recurrence fingerprints.
-
-Lifecycle changes, tool/user JSON noise, a restarted process, a new provider
-request, a static duplicate snapshot, or silence alone cannot corroborate the
-failure. On monitor restart the complete ledger replays. Missing sequences,
-foreign records, schema drift, hash-chain tamper, invalid orphan tails, and
-evidence paths outside the entrant unit fail closed.
+Publication now preserves the hermetic identity exactly:
+`scorer_version`, the complete calibration string, and derived provisional
+status. A dry-run publisher must emit one machine-readable identity receipt
+that matches those values byte-for-value. The live publisher process cannot
+start unless that receipt and its log hash remain sealed. The currently pinned
+website publisher emits no such receipt and maps `sb-7.0-rc` to `sb-7.0`, so it
+is deliberately refused before any live write. Remote and rendered verification
+also require the exact RC/calibration/provisional identity; a future website
+schema and publisher must represent all three before publication can resume.
 
 ## Verification and launch boundary
 
-The combined warning-as-error suite currently passes 125 tests, including real
+The combined warning-as-error suite currently passes 128 tests, including real
 detached-process exercises for monitor death, receipt loss, measured growth and
-silence, recurrence fail-stop, crash-before-head recovery, and smoke-manager
-relaunch. The clean commit still requires a separate adversarial GO verdict and
+silence, recurrence neutrality, ledger deletion/tamper refusal,
+crash-before-head recovery, exact RC publication identity refusal, and
+smoke-manager relaunch. The clean commit still requires a separate adversarial GO verdict and
 freshly generated recovery evidence whose `fix_source_commit` equals that clean
 HEAD.
 
 Only after those checks and the operator's fresh permission may the one-time
 recovery transition be materialized and `smoke` invoked. `smoke` owns the
 monitor handoff; `monitor-start` and `start` are not separate operator steps.
-Hermetic scoring stays serial and publication remains contingent on an exact
-valid verdict plus live and rendered stable-`sb-7.0` receipts.
+Hermetic scoring stays serial. Publication remains blocked until the public
+schema and pinned publisher preserve the exact hermetic scorer, calibration,
+and provisional identity.

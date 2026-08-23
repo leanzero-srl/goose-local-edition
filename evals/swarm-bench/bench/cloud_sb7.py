@@ -190,8 +190,6 @@ QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION = {
         "scripts/seed-baseline-sb7.mjs",
         "scripts/lib/sb7-cloud-publisher.mjs",
     },
-    "raw_scorer_version": "sb-7.0-rc",
-    "public_scorer_version": "sb-7.0",
 }
 REQUIRED_BINARY_MARKERS = (
     "GOOSE_PROVIDER_LIFECYCLE_FILE",
@@ -217,6 +215,8 @@ PUBLISHER_FILES = (
 )
 PUBLISHER_RUNTIME_PACKAGES = ("@sanity/client", "dotenv")
 PUBLISHER_REQUIRED_ENV = ("SANITY_WRITE_TOKEN", "NEXT_PUBLIC_SANITY_PROJECT_ID")
+PUBLISHER_PUBLIC_IDENTITY_PREFIX = "GOOSE_SB7_PUBLIC_IDENTITY "
+PUBLISHER_PUBLIC_IDENTITY_RECEIPT_SCHEMA = 1
 DEFAULT_WEBSITE_BASE_URL = "https://leanzero.net"
 DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS = 900.0
 DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS = 15.0
@@ -239,8 +239,10 @@ MONITOR_HEARTBEAT_INTERVAL_SECONDS = 10.0
 MONITOR_LEASE_TIMEOUT_SECONDS = 35.0
 MANAGER_WATCH_POLL_SECONDS = 1.0
 GATED_EXEC_RECEIPT_TIMEOUT_SECONDS = 10.0
-MONITOR_PROGRESS_SCHEMA = 1
+MONITOR_PROGRESS_SCHEMA = 2
 MONITOR_PROGRESS_ROOT = "monitor-progress"
+MONITOR_PROGRESS_LEDGER_SCHEMA = 1
+MONITOR_PROGRESS_LEDGER_FILE = "ledger.json"
 MONITOR_PROGRESS_WINDOW_CHARS = 48
 MONITOR_PROGRESS_MARKER_COUNT = 8
 MONITOR_PROGRESS_MIN_SEMANTIC_WINDOWS = 64
@@ -9944,7 +9946,7 @@ def evaluate_monitor_progress(
     )
 
     repetition = record["evidence"]["repetition"]
-    corroborated_by = None
+    recurrence_prior_sequence = None
     if repetition["detected"]:
         for candidate in history:
             if (
@@ -9953,7 +9955,7 @@ def evaluate_monitor_progress(
                 == record["provider_generation"]
                 and monitor_progress_repetition_matches(candidate, record)
             ):
-                corroborated_by = candidate.get("sequence")
+                recurrence_prior_sequence = candidate.get("sequence")
                 break
 
     status = str(record.get("status"))
@@ -9962,29 +9964,12 @@ def evaluate_monitor_progress(
         "active_provider_request_ids"
     ]
     evidence_problems = monitor_progress_evidence_problems(record)
-    fail_stop = False
     if status not in {"WAITING_PROVIDER_LANE", "BUILD_RUNNING"}:
         classification = "STATE_OBSERVED"
         reason = f"entrant state is {status}"
     elif evidence_problems:
         classification = "EVIDENCE_UNSTABLE"
         reason = "progress evidence was not stable: " + ", ".join(evidence_problems)
-    elif corroborated_by is not None:
-        classification = "REPETITION_CORROBORATED"
-        fail_stop = True
-        reason = (
-            "exact assistant-stream repetition was independently measured again in "
-            f"the same process generation (earlier observation {corroborated_by}; "
-            f"windows {repetition['repeated_windows']}/{repetition['window_count']}; "
-            f"duplicate sentences {repetition['duplicate_sentences']}/"
-            f"{repetition['sentence_count']})"
-        )
-    elif repetition["detected"]:
-        classification = "REPETITION_SUSPECTED"
-        reason = (
-            "exact window and sentence recurrence crossed the evidence floor once; "
-            "continued semantic growth with the same pattern is required"
-        )
     elif previous is None or not same_process_generation:
         classification = "PROCESS_BASELINE"
         reason = "new process generation baseline recorded"
@@ -10026,8 +10011,7 @@ def evaluate_monitor_progress(
             },
             "classification": classification,
             "stagnant_observations": stagnant_observations,
-            "corroborated_by_sequence": corroborated_by,
-            "fail_stop": fail_stop,
+            "recurrence_prior_sequence": recurrence_prior_sequence,
             "reason": reason,
         }
     )
@@ -10121,8 +10105,7 @@ def monitor_progress_observation_from_record(
         "delta",
         "classification",
         "stagnant_observations",
-        "corroborated_by_sequence",
-        "fail_stop",
+        "recurrence_prior_sequence",
         "reason",
         "record_sha256",
     }
@@ -10158,8 +10141,7 @@ def monitor_progress_record_failure(
         "delta",
         "classification",
         "stagnant_observations",
-        "corroborated_by_sequence",
-        "fail_stop",
+        "recurrence_prior_sequence",
         "reason",
         "record_sha256",
     }
@@ -10413,8 +10395,6 @@ def monitor_progress_record_failure(
     classifications = {
         "STATE_OBSERVED",
         "EVIDENCE_UNSTABLE",
-        "REPETITION_CORROBORATED",
-        "REPETITION_SUSPECTED",
         "PROCESS_BASELINE",
         "PROGRESSING",
         "WAITING_PROVIDER_LANE",
@@ -10422,26 +10402,177 @@ def monitor_progress_record_failure(
         "LOCAL_SILENCE_OBSERVED",
         "SUPERVISION_SILENCE_OBSERVED",
     }
-    corroborated = record.get("corroborated_by_sequence")
+    recurrence_prior = record.get("recurrence_prior_sequence")
     if (
         record.get("classification") not in classifications
         or not monitor_progress_nonnegative_integer(
             record.get("stagnant_observations")
         )
         or (
-            corroborated is not None
+            recurrence_prior is not None
             and (
-                isinstance(corroborated, bool)
-                or not isinstance(corroborated, int)
-                or corroborated <= 0
-                or corroborated >= sequence
+                isinstance(recurrence_prior, bool)
+                or not isinstance(recurrence_prior, int)
+                or recurrence_prior <= 0
+                or recurrence_prior >= sequence
             )
         )
-        or not isinstance(record.get("fail_stop"), bool)
-        or record.get("fail_stop")
-        != (record.get("classification") == "REPETITION_CORROBORATED")
     ):
         return "classification evidence differs"
+    return None
+
+
+def monitor_progress_ledger_path(root: Path) -> Path:
+    return root / MONITOR_PROGRESS_ROOT / MONITOR_PROGRESS_LEDGER_FILE
+
+
+def monitor_progress_ledger_digest(root: Path) -> str:
+    path = monitor_progress_ledger_path(root)
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit("monitor progress ledger identity is missing or linked")
+    try:
+        return sha256_file(path)
+    except OSError as error:
+        raise SystemExit(
+            f"monitor progress ledger identity is unreadable: {type(error).__name__}"
+        ) from None
+
+
+def monitor_progress_ledger_failure(
+    ledger: Any, campaign: Mapping[str, Any]
+) -> str | None:
+    if not isinstance(ledger, dict) or set(ledger) != {
+        "schema_version",
+        "ledger_id",
+        "campaign_id",
+        "smoke_contract_sha256",
+        "created_at",
+    }:
+        return "identity schema differs"
+    if (
+        ledger.get("schema_version") != MONITOR_PROGRESS_LEDGER_SCHEMA
+        or not isinstance(ledger.get("ledger_id"), str)
+        or re.fullmatch(r"[0-9a-f]{32}", str(ledger.get("ledger_id"))) is None
+        or ledger.get("campaign_id") != campaign.get("campaign_id")
+        or ledger.get("smoke_contract_sha256")
+        != campaign.get("smoke_contract_sha256")
+        or not isinstance(ledger.get("created_at"), str)
+        or not ledger.get("created_at")
+    ):
+        return "identity values differ"
+    return None
+
+
+def ensure_monitor_progress_ledger(
+    root: Path, *, create: bool
+) -> Dict[str, Any] | None:
+    progress_root = root / MONITOR_PROGRESS_ROOT
+    monitor = read_monitor_state(root)
+    anchored = (
+        monitor.get("progress_ledger_id") is not None
+        or monitor.get("progress_ledger_sha256") is not None
+        or bool(monitor.get("entrant_progress"))
+    )
+    if not progress_root.exists():
+        if anchored:
+            raise SystemExit("monitor progress ledger was deleted after commitment")
+        if not create:
+            return None
+        progress_root.mkdir(parents=True)
+        campaign = load_json(campaign_file(root))
+        ledger = {
+            "schema_version": MONITOR_PROGRESS_LEDGER_SCHEMA,
+            "ledger_id": secrets.token_hex(16),
+            "campaign_id": campaign.get("campaign_id"),
+            "smoke_contract_sha256": campaign.get("smoke_contract_sha256"),
+            "created_at": utc_now(),
+        }
+        write_exclusive_json(monitor_progress_ledger_path(root), ledger)
+        return ledger
+    if progress_root.is_symlink() or not progress_root.is_dir():
+        raise SystemExit("monitor progress ledger root is missing or linked")
+    ledger_path = monitor_progress_ledger_path(root)
+    if ledger_path.is_symlink() or not ledger_path.is_file():
+        raise SystemExit("monitor progress ledger identity is missing or linked")
+    campaign = load_json(campaign_file(root))
+    try:
+        ledger = load_json(ledger_path)
+    except OSError as error:
+        raise SystemExit(
+            f"monitor progress ledger identity is unreadable: {type(error).__name__}"
+        ) from None
+    failure = monitor_progress_ledger_failure(ledger, campaign)
+    if failure:
+        raise SystemExit(f"monitor progress ledger {failure}")
+    anchor_id = monitor.get("progress_ledger_id")
+    if anchor_id is not None and anchor_id != ledger.get("ledger_id"):
+        raise SystemExit("monitor progress ledger identity changed after commitment")
+    anchor_sha256 = monitor.get("progress_ledger_sha256")
+    actual_sha256 = monitor_progress_ledger_digest(root)
+    if anchor_sha256 is not None and anchor_sha256 != actual_sha256:
+        raise SystemExit("monitor progress ledger bytes changed after commitment")
+    return ledger
+
+
+def monitor_progress_anchor_failure(
+    root: Path, ledger: Mapping[str, Any]
+) -> str | None:
+    monitor = read_monitor_state(root)
+    anchor_id = monitor.get("progress_ledger_id")
+    anchor_sha256 = monitor.get("progress_ledger_sha256")
+    summaries = monitor.get("entrant_progress")
+    if anchor_id is None and anchor_sha256 is None and summaries is None:
+        return None
+    if anchor_id != ledger.get("ledger_id"):
+        return "committed ledger identity differs"
+    if not monitor_progress_sha256(anchor_sha256):
+        return "committed ledger hash is malformed"
+    if anchor_sha256 != monitor_progress_ledger_digest(root):
+        return "committed ledger bytes differ"
+    if not isinstance(summaries, list):
+        return "committed entrant heads are malformed"
+    if not summaries:
+        return None
+    campaign = load_json(campaign_file(root))
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    expected_entrants = {str(row["id"]) for row in entrants(manifest)}
+    found_entrants: set[str] = set()
+    for summary in summaries:
+        if not isinstance(summary, dict) or set(summary) != {
+            "entrant",
+            "sequence",
+            "classification",
+            "stagnant_observations",
+            "recurrence",
+            "reason",
+            "record_sha256",
+        }:
+            return "committed entrant head schema differs"
+        entrant_id = summary.get("entrant")
+        sequence = summary.get("sequence")
+        digest = summary.get("record_sha256")
+        if (
+            not isinstance(entrant_id, str)
+            or entrant_id not in expected_entrants
+            or entrant_id in found_entrants
+            or isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or sequence <= 0
+            or not monitor_progress_sha256(digest)
+        ):
+            return "committed entrant head values differ"
+        record_path = monitor_progress_record_path(root, entrant_id, sequence)
+        if record_path.is_symlink() or not record_path.is_file():
+            return f"committed record was deleted: {entrant_id}/{sequence}"
+        try:
+            record = load_json(record_path)
+        except (OSError, json.JSONDecodeError, SystemExit):
+            return f"committed record is unreadable: {entrant_id}/{sequence}"
+        if record.get("record_sha256") != digest:
+            return f"committed record hash differs: {entrant_id}/{sequence}"
+        found_entrants.add(entrant_id)
+    if found_entrants != expected_entrants:
+        return "committed entrant heads do not cover the frozen roster"
     return None
 
 
@@ -10560,6 +10691,12 @@ def monitor_progress_history(root: Path, entrant_id: str) -> list[Dict[str, Any]
 def recover_monitor_progress_tail(
     root: Path, entrant_id: str
 ) -> Dict[str, Any] | None:
+    ledger = ensure_monitor_progress_ledger(root, create=True)
+    if ledger is None:
+        raise SystemExit("monitor progress ledger is missing before append")
+    anchor_failure = monitor_progress_anchor_failure(root, ledger)
+    if anchor_failure:
+        raise SystemExit(f"monitor progress commitment failed: {anchor_failure}")
     unit = monitor_progress_unit(root, entrant_id)
     unit.mkdir(parents=True, exist_ok=True)
     if unit.is_symlink() or not unit.is_dir():
@@ -10748,15 +10885,18 @@ def append_monitor_progress_observation(
 
 
 def validate_monitor_progress_ledger(root: Path) -> None:
-    progress_root = root / MONITOR_PROGRESS_ROOT
-    if not progress_root.exists():
+    ledger = ensure_monitor_progress_ledger(root, create=False)
+    if ledger is None:
         return
-    if progress_root.is_symlink() or not progress_root.is_dir():
-        raise SystemExit("monitor progress ledger root is missing or linked")
+    progress_root = root / MONITOR_PROGRESS_ROOT
     campaign = load_json(campaign_file(root))
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
     entrant_ids = {str(row["id"]) for row in entrants(manifest)}
-    found = {path.name for path in progress_root.iterdir()}
+    found = {
+        path.name
+        for path in progress_root.iterdir()
+        if path.name != MONITOR_PROGRESS_LEDGER_FILE
+    }
     unexpected = sorted(found - entrant_ids)
     if unexpected:
         raise SystemExit(
@@ -10764,13 +10904,16 @@ def validate_monitor_progress_ledger(root: Path) -> None:
         )
     for entrant_id in sorted(found):
         monitor_progress_history(root, entrant_id)
+    anchor_failure = monitor_progress_anchor_failure(root, ledger)
+    if anchor_failure:
+        raise SystemExit(f"monitor progress commitment failed: {anchor_failure}")
 
 
-def monitor_progress_tick(root: Path) -> tuple[list[Dict[str, Any]], str | None]:
+def monitor_progress_tick(root: Path) -> list[Dict[str, Any]]:
+    validate_monitor_progress_ledger(root)
     campaign = load_json(campaign_file(root))
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
     summaries: list[Dict[str, Any]] = []
-    failure = None
     for row in entrants(manifest):
         entrant_id = str(row["id"])
         record = append_monitor_progress_observation(
@@ -10782,17 +10925,30 @@ def monitor_progress_tick(root: Path) -> tuple[list[Dict[str, Any]], str | None]
                 "sequence": record["sequence"],
                 "classification": record["classification"],
                 "stagnant_observations": record["stagnant_observations"],
-                "fail_stop": record["fail_stop"],
+                "recurrence": {
+                    "detected": record["evidence"]["repetition"]["detected"],
+                    "prior_sequence": record["recurrence_prior_sequence"],
+                    "semantic_chars": record["evidence"]["repetition"][
+                        "semantic_chars"
+                    ],
+                    "repeated_windows": record["evidence"]["repetition"][
+                        "repeated_windows"
+                    ],
+                    "window_count": record["evidence"]["repetition"][
+                        "window_count"
+                    ],
+                    "duplicate_sentences": record["evidence"]["repetition"][
+                        "duplicate_sentences"
+                    ],
+                    "sentence_count": record["evidence"]["repetition"][
+                        "sentence_count"
+                    ],
+                },
                 "reason": record["reason"],
                 "record_sha256": record["record_sha256"],
             }
         )
-        if record["fail_stop"] and failure is None:
-            failure = (
-                f"{entrant_id} monitor progress fail-stop: {record['reason']} "
-                f"(ledger observation {record['sequence']})"
-            )
-    return summaries, failure
+    return summaries
 
 
 def process_group_members(pgid: int) -> list[tuple[int, str]]:
@@ -11879,6 +12035,19 @@ def run_publisher(
     publisher = campaign["publisher"]
     repo = Path(str(publisher["repo"]))
     frozen_repo = Path(str(publisher["frozen"]["root"]))
+    state = read_state(root, entrant_id)
+    if live:
+        verdict = load_json(runs / f"{entrant_id}.json")
+        identity_failure = publisher_public_identity_receipt_failure(
+            state.get("publisher_identity_receipt"),
+            verdict,
+            campaign,
+            state.get("publisher_dry_run"),
+        )
+        if identity_failure:
+            raise PublicationError(
+                f"live publication refused: {identity_failure}"
+            )
     node = str(publisher["node"]["path"])
     cmd = [
         node,
@@ -11894,7 +12063,6 @@ def run_publisher(
     if live:
         cmd.append("--live")
     env, redactions = publisher_environment(campaign, include_credentials=live)
-    state = read_state(root, entrant_id)
     attempt = int(state["score_attempts"])
     log_path = (
         root / "publish" / entrant_id / f"attempt-{attempt}" / f"publisher-{phase}.log"
@@ -12046,46 +12214,141 @@ def same_number(left: Any, right: Any) -> bool:
         return False
 
 
+def same_json_scalar(left: Any, right: Any) -> bool:
+    return type(left) is type(right) and left == right
+
+
+def same_public_identity(left: Any, right: Mapping[str, Any]) -> bool:
+    return bool(
+        isinstance(left, dict)
+        and set(left) == set(right)
+        and all(same_json_scalar(left[key], value) for key, value in right.items())
+    )
+
+
 def public_publication_identity(
     campaign: Mapping[str, Any], verdict: Mapping[str, Any]
 ) -> Dict[str, Any]:
-    publisher = campaign.get("publisher")
-    target = QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION["target"]
-    if not isinstance(publisher, dict) or any(
-        publisher.get(field) != target[field]
-        for field in ("commit", "instrument_set_sha256", "tracked_hashes")
-    ):
-        raise PublicationError(
-            "publisher is not the exact frozen stable-board correction"
-        )
     raw_scorer = verdict.get("scorer_version")
     raw_calibration = verdict.get("calibration")
+    provisional = isinstance(raw_scorer, str) and raw_scorer.endswith("-rc")
+    calibration_discloses_provisional = isinstance(
+        raw_calibration, str
+    ) and re.search(r"uncalibrated|rc-grade", raw_calibration, re.IGNORECASE)
     if (
-        raw_scorer
-        != QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION["raw_scorer_version"]
+        not isinstance(raw_scorer, str)
+        or not raw_scorer
         or campaign.get("scorer_version") != raw_scorer
         or not isinstance(raw_calibration, str)
-        or not re.search(r"uncalibrated|rc-grade", raw_calibration, re.IGNORECASE)
+        or not raw_calibration.strip()
+        or campaign.get("calibration") != raw_calibration
+        or provisional != bool(calibration_discloses_provisional)
     ):
         raise PublicationError(
-            "raw hermetic verdict does not match the frozen RC publication mapping"
+            "raw hermetic scorer, calibration, and provisional identity are inconsistent"
         )
     return {
-        "scorer_version": QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION[
-            "public_scorer_version"
-        ],
-        "calibration_absent": True,
+        "scorer_version": raw_scorer,
+        "calibration": raw_calibration,
+        "provisional": provisional,
     }
 
 
 def raw_publication_identity_sha256(verdict: Mapping[str, Any]) -> str:
+    raw_scorer = verdict.get("scorer_version")
     identity = {
-        "scorer_version": verdict.get("scorer_version"),
+        "scorer_version": raw_scorer,
         "calibration": verdict.get("calibration"),
+        "provisional": isinstance(raw_scorer, str) and raw_scorer.endswith("-rc"),
     }
     return sha256_bytes(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     )
+
+
+def publisher_public_identity_receipt_from_log(
+    log_path: Path, verdict: Mapping[str, Any], campaign: Mapping[str, Any]
+) -> Dict[str, Any]:
+    if log_path.is_symlink() or not log_path.is_file():
+        raise PublicationError("publisher dry-run identity log is missing or linked")
+    expected = public_publication_identity(campaign, verdict)
+    markers = [
+        raw[len(PUBLISHER_PUBLIC_IDENTITY_PREFIX) :]
+        for raw in log_path.read_text(errors="replace").splitlines()
+        if raw.startswith(PUBLISHER_PUBLIC_IDENTITY_PREFIX)
+    ]
+    if len(markers) != 1:
+        raise PublicationError(
+            "publisher dry-run cannot prove one exact public scorer/calibration identity"
+        )
+    try:
+        observed = json.loads(markers[0])
+    except json.JSONDecodeError:
+        raise PublicationError(
+            "publisher dry-run public identity receipt is invalid JSON"
+        ) from None
+    if not isinstance(observed, dict) or set(observed) != set(expected):
+        raise PublicationError(
+            "publisher public schema cannot represent the exact scorer identity"
+        )
+    if not same_public_identity(observed, expected):
+        raise PublicationError(
+            "publisher would conceal or alter scorer, calibration, or provisional truth"
+        )
+    return {
+        "schema_version": PUBLISHER_PUBLIC_IDENTITY_RECEIPT_SCHEMA,
+        "identity": expected,
+        "publisher_dry_run_log_sha256": sha256_file(log_path),
+        "verified_at": utc_now(),
+    }
+
+
+def publisher_public_identity_receipt_failure(
+    receipt: Any,
+    verdict: Mapping[str, Any],
+    campaign: Mapping[str, Any],
+    dry_run: Any,
+) -> str | None:
+    if not isinstance(receipt, dict) or set(receipt) != {
+        "schema_version",
+        "identity",
+        "publisher_dry_run_log_sha256",
+        "verified_at",
+    }:
+        return "publisher has no closed exact-identity receipt"
+    try:
+        expected = public_publication_identity(campaign, verdict)
+    except PublicationError as error:
+        return str(error)
+    log_path = (
+        Path(str(dry_run.get("log", "")))
+        if isinstance(dry_run, dict)
+        else Path("")
+    )
+    log_hash = None
+    if log_path.is_file() and not log_path.is_symlink():
+        try:
+            log_hash = sha256_file(log_path)
+        except OSError:
+            log_hash = None
+    if (
+        receipt.get("schema_version")
+        != PUBLISHER_PUBLIC_IDENTITY_RECEIPT_SCHEMA
+        or not same_public_identity(receipt.get("identity"), expected)
+        or not isinstance(receipt.get("verified_at"), str)
+        or not receipt.get("verified_at")
+        or not monitor_progress_sha256(
+            receipt.get("publisher_dry_run_log_sha256")
+        )
+        or not isinstance(dry_run, dict)
+        or dry_run.get("exit_code") != 0
+        or dry_run.get("timed_out") is not False
+        or receipt.get("publisher_dry_run_log_sha256")
+        != dry_run.get("log_sha256")
+        or receipt.get("publisher_dry_run_log_sha256") != log_hash
+    ):
+        return "publisher exact-identity receipt differs from sealed dry-run evidence"
+    return None
 
 
 def rendered_publication_expected(
@@ -12130,21 +12393,13 @@ def remote_publication_receipt(
         "model": entry["model"],
         "baseline": True,
         "scorerVersion": public["scorer_version"],
+        "calibration": public["calibration"],
+        "provisional": public["provisional"],
         "excellent": bool(verdict.get("excellent")),
     }
     for field, expected in exact_fields.items():
-        if document.get(field) != expected:
+        if not same_json_scalar(document.get(field), expected):
             reasons.append(f"document field {field} differs")
-    if "calibration" in document:
-        reasons.append("document field calibration must be absent")
-    notes = document.get("notes")
-    if isinstance(notes, str) and re.search(
-        r"sb-7\.0-rc|\bcalibration\b|\buncalibrated\b|\brc-grade\b",
-        notes,
-        re.IGNORECASE,
-    ):
-        reasons.append("document notes retain forbidden RC/calibration residue")
-
     numeric_fields = {
         "score": verdict.get("score"),
         "tierA": verdict_tier_mean(verdict, "A"),
@@ -12438,20 +12693,14 @@ def rendered_publication_matches(
         f"{entry['label']} — {score_text} on {scorer}",
         entry["model"],
         f"scorer {scorer}",
+        str(public["calibration"]),
+        f"provisional {str(public['provisional']).lower()}",
     ]
+    expected_visible = [" ".join(value.split()) for value in expected_visible]
     missing_visible = [value for value in expected_visible if value not in run_text]
-    forbidden_residue = []
-    raw_scorer = str(verdict["scorer_version"])
-    if raw_scorer != scorer and re.search(re.escape(raw_scorer), run_html, re.IGNORECASE):
-        forbidden_residue.append(raw_scorer)
-    if re.search(
-        r"\bcalibration\b|\buncalibrated\b|\brc-grade\b",
-        run_html,
-        re.IGNORECASE,
-    ):
-        forbidden_residue.append("calibration disclosure")
 
     dataset = False
+    dataset_identity = False
     for item in json_ld_objects(run_parser):
         if item.get("@type") != "Dataset" or item.get("url") != run_url:
             continue
@@ -12459,13 +12708,19 @@ def rendered_publication_matches(
         if not isinstance(measured, list):
             continue
         values = [row.get("value") for row in measured if isinstance(row, dict)]
-        try:
-            score_present = any(abs(float(value) - score) < 1e-12 for value in values)
-        except (TypeError, ValueError):
-            score_present = False
+        score_present = any(same_number(value, score) for value in values)
         if scorer in str(item.get("name", "")) and score_present:
             dataset = True
-            break
+            dataset_identity = all(
+                any(same_json_scalar(value, expected) for value in values)
+                for expected in (
+                    scorer,
+                    public["calibration"],
+                    public["provisional"],
+                )
+            )
+            if dataset_identity:
+                break
 
     reasons = []
     if not board_item:
@@ -12474,18 +12729,17 @@ def rendered_publication_matches(
         reasons.append(
             f"run page lacks exact visible fields: {', '.join(missing_visible)}"
         )
-    if forbidden_residue:
-        reasons.append(
-            "run page retains forbidden RC/calibration residue: "
-            + ", ".join(forbidden_residue)
-        )
     if not dataset:
         reasons.append("run Dataset JSON-LD lacks the exact URL, scorer and score")
+    elif not dataset_identity:
+        reasons.append(
+            "run Dataset JSON-LD lacks exact scorer, calibration, or provisional truth"
+        )
     return not reasons, {
         "board_item_exact": board_item,
         "run_visible_exact": not missing_visible,
-        "run_dataset_exact": dataset,
-        "run_public_identity_exact": not forbidden_residue,
+        "run_dataset_exact": dataset and dataset_identity,
+        "run_public_identity_exact": not missing_visible and dataset_identity,
         "reasons": reasons,
     }
 
@@ -12668,17 +12922,36 @@ def publish_one(root: Path, entrant_id: str) -> bool:
                     "pinned publisher dry-run validation did not complete successfully"
                 )
             screenshot_plan = publisher_plan_from_log(Path(dry_run["log"]), runs)
+            identity_receipt = publisher_public_identity_receipt_from_log(
+                Path(dry_run["log"]),
+                load_json(runs / f"{entrant_id}.json"),
+                campaign,
+            )
             update_state(
                 root,
                 entrant_id,
                 status="PUBLISH_VALIDATED",
                 publisher_dry_run=dry_run,
                 publisher_plan=screenshot_plan,
+                publisher_identity_receipt=identity_receipt,
+            )
+
+        state = read_state(root, entrant_id)
+        verdict = load_json(runs / f"{entrant_id}.json")
+        identity_failure = publisher_public_identity_receipt_failure(
+            state.get("publisher_identity_receipt"),
+            verdict,
+            campaign,
+            state.get("publisher_dry_run"),
+        )
+        if identity_failure:
+            raise PublicationError(
+                f"public identity contract failed closed: {identity_failure}"
             )
 
         stage = "pre-write-receipt"
         pre_write_receipt = remote_publication_receipt(
-            campaign, entry, load_json(runs / f"{entrant_id}.json"), screenshot_plan
+            campaign, entry, verdict, screenshot_plan
         )
         update_state(
             root,
@@ -13352,7 +13625,9 @@ def published_campaign_mismatch(root: Path) -> str | None:
         if (
             not isinstance(receipt, dict)
             or receipt.get("matched") is not True
-            or receipt.get("expected_public_identity") != public_identity
+            or not same_public_identity(
+                receipt.get("expected_public_identity"), public_identity
+            )
             or receipt.get("raw_verdict_identity_sha256")
             != raw_publication_identity_sha256(verdict)
         ):
@@ -13380,7 +13655,12 @@ def published_campaign_mismatch(root: Path) -> str | None:
             or rendered.get("run_visible_exact") is not True
             or rendered.get("run_dataset_exact") is not True
             or rendered.get("run_public_identity_exact") is not True
-            or rendered.get("expected") != expected_rendered
+            or not isinstance(rendered.get("expected"), dict)
+            or set(rendered["expected"]) != set(expected_rendered)
+            or any(
+                not same_json_scalar(rendered["expected"].get(key), value)
+                for key, value in expected_rendered.items()
+            )
             or rendered.get("raw_verdict_identity_sha256")
             != raw_publication_identity_sha256(verdict)
             or state.get("published_url") != rendered.get("run_url")
@@ -13444,13 +13724,16 @@ def monitor_tick(root: Path) -> tuple[bool, int]:
         return monitor_attention(root, f"smoke proof gate failed: {error}")
     if process_alive(manager.get("pid"), manager.get("identity")):
         try:
-            progress, progress_failure = monitor_progress_tick(root)
+            progress = monitor_progress_tick(root)
         except (OSError, ValueError, TypeError, SystemExit) as error:
             return monitor_attention(
                 root, f"monitor progress supervision failed closed: {error}"
             )
-        if progress_failure:
-            return monitor_attention(root, progress_failure)
+        ledger = ensure_monitor_progress_ledger(root, create=False)
+        if ledger is None:
+            return monitor_attention(
+                root, "monitor progress supervision failed closed: ledger missing"
+            )
         monitor_state(
             root,
             status="RUNNING",
@@ -13458,6 +13741,8 @@ def monitor_tick(root: Path) -> tuple[bool, int]:
             manager_identity=manager.get("identity"),
             manager_alive=True,
             progress_ledger=str(root / MONITOR_PROGRESS_ROOT),
+            progress_ledger_id=ledger["ledger_id"],
+            progress_ledger_sha256=monitor_progress_ledger_digest(root),
             entrant_progress=progress,
             failure=None,
         )
@@ -13521,6 +13806,18 @@ def monitor_campaign(
         except SystemExit as error:
             monitor_attention(root, f"monitor detachment proof failed: {error}")
             return 1
+        try:
+            progress_ledger = ensure_monitor_progress_ledger(root, create=True)
+        except SystemExit as error:
+            monitor_attention(root, f"monitor startup evidence failed: {error}")
+            return 1
+        if progress_ledger is None:
+            monitor_attention(root, "monitor startup evidence failed: ledger missing")
+            return 1
+        previous_monitor = read_monitor_state(root)
+        anchored_progress = previous_monitor.get("entrant_progress")
+        if not isinstance(anchored_progress, list):
+            anchored_progress = []
         monitor_state(
             root,
             status="RUNNING",
@@ -13532,6 +13829,10 @@ def monitor_campaign(
             detached_session=os.getsid(0) == os.getpid(),
             smoke_contract_sha256=contract,
             lease_id=secrets.token_hex(16),
+            progress_ledger=str(root / MONITOR_PROGRESS_ROOT),
+            progress_ledger_id=progress_ledger["ledger_id"],
+            progress_ledger_sha256=monitor_progress_ledger_digest(root),
+            entrant_progress=anchored_progress,
             started_at=utc_now(),
             failure=None,
         )
