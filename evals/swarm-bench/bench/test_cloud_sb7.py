@@ -9177,7 +9177,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 if child and cloud_sb7.process_alive(child):
                     cloud_sb7.stop_group(child, grace_seconds=0.1)
 
-    def test_post_exec_launch_capability_is_role_bound_and_consumed_once(self) -> None:
+    def test_post_exec_launch_capability_accepts_model_ids_and_is_consumed_once(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             marker = root / "capability.txt"
@@ -9185,7 +9185,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             command = (
                 "import os,sys; from pathlib import Path; "
                 f"sys.path.insert(0, {str(bench)!r}); import cloud_sb7; "
-                "cloud_sb7.consume_child_launch_capability('fixture-child'); "
+                "cloud_sb7.consume_child_launch_capability('smoke-supervisor:fixture.model'); "
                 f"Path({str(marker)!r}).write_text(str(any(name in os.environ for name in "
                 "(cloud_sb7.CHILD_GATE_PATH_ENV, cloud_sb7.CHILD_GATE_TOKEN_ENV, "
                 "cloud_sb7.CHILD_GATE_ROLE_ENV))))"
@@ -9199,13 +9199,13 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 stderr=subprocess.STDOUT,
                 gate_dir=root / "gates",
                 on_started=lambda _proc: None,
-                child_role="fixture-child",
+                child_role="smoke-supervisor:fixture.model",
             )
             self.assertEqual(proc.wait(timeout=5), 0)
             self.assertEqual(marker.read_text(), "False")
             self.assertEqual(list((root / "gates").iterdir()), [])
             with self.assertRaisesRegex(SystemExit, "one-shot parent launch"):
-                cloud_sb7.consume_child_launch_capability("fixture-child")
+                cloud_sb7.consume_child_launch_capability("smoke-supervisor:fixture.model")
 
     def test_hidden_cli_entrypoints_reject_direct_invocation_before_state_access(
         self,
