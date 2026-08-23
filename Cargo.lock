@@ -5014,6 +5014,7 @@ version = "1.41.0"
 dependencies = [
  "anstream",
  "anyhow",
+ "async-stream",
  "async-trait",
  "axum",
  "axum-server",
