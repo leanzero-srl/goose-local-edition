@@ -56,6 +56,20 @@ impl SharedContext {
         parts.join("\n\n")
     }
 
+    /// Full dependency outputs for engine-compiled evidence tasks. These tasks are already bounded by
+    /// semantic acceptance slices rather than by fleet size; truncating their structured verdict before
+    /// the integration sink reads it would erase the very value runtime replanning produced.
+    pub fn slice_for_unbounded(&self, deps: &[TaskId]) -> String {
+        deps.iter()
+            .filter_map(|id| {
+                self.summaries
+                    .get(id)
+                    .map(|summary| format!("### Output of dependency `{id}`\n{summary}"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
     pub fn completed(&self) -> &[TaskId] {
         &self.order
     }
@@ -65,5 +79,22 @@ impl SharedContext {
             "completed_order": self.order,
             "summaries": self.summaries,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_runtime_evidence_reaches_the_sink_without_legacy_truncation() {
+        let mut context = SharedContext::new();
+        let evidence = "e".repeat(9000);
+        context.merge("replan-review::slice", evidence.clone());
+        let deps = vec!["replan-review::slice".to_string()];
+        assert!(context.slice_for(&deps).len() < evidence.len());
+        let exact = context.slice_for_unbounded(&deps);
+        assert!(exact.ends_with(&evidence));
+        assert!(!exact.contains("[truncated"));
     }
 }

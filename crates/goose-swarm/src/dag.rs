@@ -2,34 +2,65 @@
 //! (unknown deps, cycles) and computes fan-out + initial ready set.
 
 use anyhow::{bail, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
 pub type TaskId = String;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Difficulty {
     Easy,
     Hard,
 }
 
-#[derive(Clone, Debug)]
+/// One authoritative binder fact carried by a runtime acceptance review. The scheduler does not
+/// infer these facts from prose: goose-cli compiles them from the frozen requirement/evidence/interface
+/// registries, and the scheduler checks that the exact id and text survived into the worker payload.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ReplanAuthorityFact {
+    pub id: String,
+    pub text: String,
+}
+
+/// Proof that a dynamically admitted task is a read-only review of an already-bound acceptance slice.
+/// Raw planner `TaskSpec`s have no receipt and are rejected by the runtime-replan admission gate.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ReplanAuthorityReceipt {
+    pub source_task_id: TaskId,
+    pub binding_task_id: TaskId,
+    pub slice_id: String,
+    pub source_files: Vec<String>,
+    pub objective: String,
+    pub requirements: Vec<ReplanAuthorityFact>,
+    pub evidence: Vec<ReplanAuthorityFact>,
+    pub interfaces: Vec<ReplanAuthorityFact>,
+    pub acceptance_evidence: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct TaskSpec {
     pub id: TaskId,
     pub description: String,
     pub difficulty: Difficulty,
     /// Preferred LM Link model id (the device the planner suggests); the scheduler steers here
     /// first but may work-steal to another free device.
+    #[serde(rename = "model", skip_serializing_if = "Option::is_none")]
     pub preferred_model: Option<String>,
     /// Files this task owns/edits; two tasks holding the same file never run concurrently.
+    #[serde(rename = "files")]
     pub owned_files: Vec<String>,
+    #[serde(rename = "depends_on")]
     pub deps: Vec<TaskId>,
     /// S3 i2 (LATENT): 2-4 top-level function/class names the detailer marked as independently
     /// implementable — parsed from the spec's trailing `SUBSPLIT:` line, re-anchored against the
     /// module's frozen stub at consumption. Nothing dispatches differently until a fill fan
     /// consumes it; empty for every task whose spec carries no such line.
     pub subsplit: Vec<String>,
+    /// Present only on binder-compiled runtime acceptance reviews. Initial plan tasks and all legacy
+    /// planner output carry `None`; that is deliberately insufficient for dynamic admission.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replan_authority: Option<ReplanAuthorityReceipt>,
 }
 
 /// The detailer's optional latent decomposition: the LAST `SUBSPLIT:` line of a spec,
@@ -227,7 +258,35 @@ impl Dag {
     /// error the dag is left UNCHANGED (validation runs before mutation). Returns the ids that became
     /// Ready (deps already Done) so the caller can enqueue them; Pending ones unlock via `complete`.
     pub fn splice_specs(&mut self, specs: Vec<TaskSpec>) -> Result<Vec<TaskId>> {
+        self.splice_specs_inner(specs, None)
+    }
+
+    /// Atomically splice specs and make `before_task` depend on every added task. Runtime acceptance
+    /// reviews use this to put their evidence in the integration sink's ordinary dependency context.
+    /// Validation includes those reverse edges, so a bad proposal cannot leave a half-mutated DAG.
+    pub fn splice_specs_before(
+        &mut self,
+        specs: Vec<TaskSpec>,
+        before_task: &str,
+    ) -> Result<Vec<TaskId>> {
+        self.splice_specs_inner(specs, Some(before_task))
+    }
+
+    fn splice_specs_inner(
+        &mut self,
+        specs: Vec<TaskSpec>,
+        before_task: Option<&str>,
+    ) -> Result<Vec<TaskId>> {
         // --- validate, mutate nothing ---
+        if let Some(target) = before_task {
+            let node = self
+                .tasks
+                .get(target)
+                .ok_or_else(|| anyhow::anyhow!("replan sink `{target}` is not in the live DAG"))?;
+            if !matches!(node.state, TaskState::Pending | TaskState::Ready) {
+                bail!("replan sink `{target}` is no longer dependency-mutable");
+            }
+        }
         let mut batch_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for s in &specs {
             if !batch_ids.insert(s.id.as_str()) {
@@ -271,6 +330,15 @@ impl Dag {
                     deps_of.entry(d.clone()).or_default().push(s.id.clone());
                 }
             }
+            if let Some(target) = before_task {
+                for s in &specs {
+                    *indeg.get_mut(target).expect("target validated above") += 1;
+                    deps_of
+                        .entry(s.id.clone())
+                        .or_default()
+                        .push(target.to_string());
+                }
+            }
             let mut q: VecDeque<String> = indeg
                 .iter()
                 .filter(|(_, d)| **d == 0)
@@ -297,6 +365,7 @@ impl Dag {
         // --- commit (insert nodes, then wire reverse edges so all targets exist) ---
         let mut newly_ready = Vec::new();
         let mut wiring: Vec<(String, Vec<String>)> = Vec::new();
+        let added_ids: Vec<String> = specs.iter().map(|spec| spec.id.clone()).collect();
         for s in specs {
             // a dep already Done does not count toward indegree (it will never re-fire `complete`).
             let indeg_remaining = s
@@ -341,6 +410,33 @@ impl Dag {
                 }
             }
         }
+        if let Some(target) = before_task {
+            let target_node = self
+                .tasks
+                .get_mut(target)
+                .expect("target validated before mutation");
+            // Runtime review results are the evidence this edge exists to deliver. Put them first so
+            // SharedContext's legacy high-fan-in backstop cannot truncate them behind every original
+            // implementation dependency before the sink sees a byte.
+            target_node
+                .spec
+                .deps
+                .splice(0..0, added_ids.iter().cloned());
+            target_node.indegree_remaining += added_ids.len();
+            if target_node.indegree_remaining > 0 {
+                target_node.state = TaskState::Pending;
+            }
+            for id in &added_ids {
+                self.dependents
+                    .entry(id.clone())
+                    .or_default()
+                    .push(target.to_string());
+                self.tasks
+                    .get_mut(id)
+                    .expect("new task inserted above")
+                    .fan_out += 1;
+            }
+        }
         Ok(newly_ready)
     }
 }
@@ -364,13 +460,21 @@ pub fn specs_from_plan_json(json: &str) -> Result<Vec<TaskSpec>> {
         depends_on: Vec<String>,
         #[serde(default)]
         files: Vec<String>,
+        #[serde(default)]
+        subsplit: Vec<String>,
+        #[serde(default)]
+        replan_authority: Option<ReplanAuthorityReceipt>,
     }
     let plan: PlanJson = serde_json::from_str(json)?;
     Ok(plan
         .subtasks
         .into_iter()
         .map(|t| {
-            let subsplit = extract_subsplit(&t.description);
+            let subsplit = if t.subsplit.is_empty() {
+                extract_subsplit(&t.description)
+            } else {
+                t.subsplit
+            };
             TaskSpec {
                 id: t.id,
                 description: t.description,
@@ -382,6 +486,7 @@ pub fn specs_from_plan_json(json: &str) -> Result<Vec<TaskSpec>> {
                 owned_files: t.files,
                 deps: t.depends_on,
                 subsplit,
+                replan_authority: t.replan_authority,
             }
         })
         .collect())
@@ -465,6 +570,7 @@ fn expand_subsplits_inner(specs: Vec<TaskSpec>) -> Vec<TaskSpec> {
             owned_files: vec![file.clone()],
             deps: t.deps.clone(),
             subsplit: Vec::new(),
+            replan_authority: None,
         });
         let mut fill_ids = Vec::new();
         for slot in &t.subsplit {
@@ -483,6 +589,7 @@ fn expand_subsplits_inner(specs: Vec<TaskSpec>) -> Vec<TaskSpec> {
                 owned_files: vec![format!("{file}#{slot}")],
                 deps: vec![skeleton_id.clone()],
                 subsplit: Vec::new(),
+                replan_authority: None,
             });
         }
         out.push(TaskSpec {
@@ -498,6 +605,7 @@ fn expand_subsplits_inner(specs: Vec<TaskSpec>) -> Vec<TaskSpec> {
             owned_files: vec![file],
             deps: fill_ids,
             subsplit: Vec::new(),
+            replan_authority: None,
         });
     }
     out
@@ -516,6 +624,7 @@ mod expand_tests {
             owned_files: files.iter().map(|s| s.to_string()).collect(),
             deps: deps.iter().map(|s| s.to_string()).collect(),
             subsplit: sub.iter().map(|s| s.to_string()).collect(),
+            replan_authority: None,
         }
     }
 
