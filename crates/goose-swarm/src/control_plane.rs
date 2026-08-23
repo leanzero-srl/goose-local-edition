@@ -18,7 +18,7 @@ use crate::dispatch::{
 use crate::event::{EventSink, SwarmEvent};
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex, Notify};
 
@@ -140,6 +140,7 @@ struct ControlInner {
     state: Mutex<ControlState>,
     sink: Arc<dyn EventSink>,
     changed: Notify,
+    semantic_observation_plane_claimed: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -164,6 +165,7 @@ impl PhysicalAdmissionControl {
                 }),
                 sink,
                 changed: Notify::new(),
+                semantic_observation_plane_claimed: AtomicBool::new(false),
             }),
         })
     }
@@ -188,6 +190,13 @@ impl PhysicalAdmissionControl {
 
     pub(crate) fn uses_sink(&self, sink: &Arc<dyn EventSink>) -> bool {
         Arc::ptr_eq(&self.inner.sink, sink)
+    }
+
+    pub(crate) fn claim_semantic_observation_plane(&self) -> bool {
+        self.inner
+            .semantic_observation_plane_claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
     }
 
     pub async fn snapshot(&self) -> PhysicalFleetSnapshot {

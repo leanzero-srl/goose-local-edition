@@ -7,7 +7,7 @@ use crate::{
         AdmissionReceipt, CapacityUpdateReceipt, LocalCompletionReceipt, PhysicalFleetSnapshot,
         ProviderNotStartedReceipt, ProviderRequestKey, ProviderRequestQueueReceipt,
         ProviderRequestReceipt, ProviderTerminalReceipt, QueueReceipt, ReleasedAdmissionReceipt,
-        RevokedAdmissionReceipt, StaleWorkReceipt, UnresolvedAdmissionReceipt,
+        RevokedAdmissionReceipt, StaleWorkReceipt, TaskVersion, UnresolvedAdmissionReceipt,
         WithdrawnWorkReceipt,
     },
     dag::TaskSpec,
@@ -87,6 +87,9 @@ pub enum SwarmEvent {
         task_id: String,
         attempt: u32,
         class: ProviderDispatchClass,
+    },
+    SemanticObservationSourcePublished {
+        source: TaskVersion,
     },
     BrokerWorkQueued {
         receipt: QueueReceipt,
