@@ -36,7 +36,8 @@ pub use coherence::{extract_signatures, scope_contract_bundle, SigLang};
 pub use context::SharedContext;
 pub use control_plane::{
     AdmittedWork, PhysicalAdmissionControl, ProviderLifecycle, ProviderLifecycleDispatcher,
-    ProviderLifecycleJournal,
+    ProviderLifecycleJournal, ProviderLifecycleOperationError, ProviderLifecycleStartError,
+    ProviderLifecycleTransitionError, StartedProviderRequest,
 };
 pub use dag::{
     expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag, Difficulty,
@@ -54,10 +55,11 @@ pub use judge::{
 pub use provider_lease::{
     ActiveProviderLeaseSnapshot, ExposedProviderLease, GlobalProviderLeaseAuthority,
     LeaseHostCapacityEvidence, LeaseWorkPriority, LeaseWorkRole, PhysicalProviderLeaseAuthority,
-    ProviderLeaseAuthoritySnapshot, ProviderLeaseBusy, ProviderLeaseBusyKind, ProviderLeaseClaim,
-    ProviderLeaseError, ProviderLeaseReleaseReceipt, ProviderLeaseStatus,
-    ProviderLeaseTransitionError, ProviderLeaseTry, ReservedProviderLease,
-    SealedProviderLeaseAuthority,
+    ProviderLeaseAuthoritySnapshot, ProviderLeaseBoundaryStatus, ProviderLeaseBusy,
+    ProviderLeaseBusyKind, ProviderLeaseClaim, ProviderLeaseError, ProviderLeaseHttpBoundary,
+    ProviderLeaseReleaseReceipt, ProviderLeaseStatus, ProviderLeaseTransitionError,
+    ProviderLeaseTry, ProviderLeaseWaitPolicy, ReservedProviderLease,
+    RunScopedProviderLeaseAuthority, SealedProviderLeaseAuthority, VerifiedProviderProtocolRoute,
 };
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{

@@ -3,24 +3,21 @@ use futures::StreamExt;
 use goose::config::GooseMode;
 use goose::conversation::message::Message;
 use goose::providers::base::{
-    MessageStream, ModelInfo, PermissionRouting, Provider, SingleAttemptFailureProvenance,
-    SingleAttemptStreamOutcome,
+    MessageStream, ModelInfo, PermissionRouting, Provider, ProviderHttpProtocol,
+    SingleAttemptFailureProvenance, SingleAttemptStreamOutcome,
 };
 use goose_provider_types::errors::ProviderError;
 use goose_provider_types::model::ModelConfig;
 use goose_provider_types::permission::PermissionConfirmation;
 use goose_provider_types::retry::RetryConfig;
-use goose_swarm::{ProviderLifecycle, ProviderRequestKey, ProviderTerminalKind};
+use goose_swarm::{ProviderLifecycle, ProviderTerminalKind, StartedProviderRequest};
 use rmcp::model::Tool;
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 tokio::task_local! {
     static ACTIVE_PROVIDER_LIFECYCLE: ProviderLifecycle;
 }
-
-static PROVIDER_REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) async fn scope_provider_lifecycle<F>(
     lifecycle: ProviderLifecycle,
@@ -52,36 +49,27 @@ struct LifecycleProvider {
     lifecycle: ProviderLifecycle,
 }
 
-impl LifecycleProvider {
-    fn next_request_id(&self) -> String {
-        let sequence = PROVIDER_REQUEST_SEQUENCE.fetch_add(1, Ordering::SeqCst);
-        format!(
-            "{}:provider-turn:{sequence}",
-            self.lifecycle.admission().admission_id
-        )
-    }
-}
-
 struct ProviderTerminalGuard {
-    lifecycle: ProviderLifecycle,
-    key: Option<ProviderRequestKey>,
+    request: Option<StartedProviderRequest>,
 }
 
 impl ProviderTerminalGuard {
-    fn new(lifecycle: ProviderLifecycle, key: ProviderRequestKey) -> Self {
+    fn new(request: StartedProviderRequest) -> Self {
         Self {
-            lifecycle,
-            key: Some(key),
+            request: Some(request),
         }
     }
 
     async fn finish(&mut self, kind: ProviderTerminalKind) -> Result<(), ProviderError> {
-        let Some(key) = self.key.take() else {
+        let Some(request) = self.request.take() else {
             return Ok(());
         };
-        if let Err(error) = self.lifecycle.provider_terminal(key.clone(), kind).await {
-            self.key = Some(key);
-            return Err(lifecycle_error("terminal receipt", error));
+        if let Err(error) = request.provider_terminal(kind).await {
+            let detail = error.to_string();
+            if let Some(request) = error.into_retryable_request() {
+                self.request = Some(request);
+            }
+            return Err(lifecycle_error("terminal receipt", detail));
         }
         Ok(())
     }
@@ -101,6 +89,10 @@ impl Provider for LifecycleProvider {
 
     fn transport_identity(&self, model_name: &str) -> Option<String> {
         self.inner.transport_identity(model_name)
+    }
+
+    fn provider_http_protocol(&self, model_name: &str) -> Option<ProviderHttpProtocol> {
+        self.inner.provider_http_protocol(model_name)
     }
 
     fn supports_single_attempt_streaming(&self) -> bool {
@@ -161,17 +153,37 @@ impl Provider for LifecycleProvider {
                 .map_err(|error| lifecycle_error("provider-not-started receipt", error))?;
             return Err(ProviderError::NotImplemented(detail));
         }
-        let key = self
+        let started = self
             .lifecycle
-            .provider_request_started(self.next_request_id())
+            .start_provider_request()
             .await
             .map_err(|error| lifecycle_error("start receipt", error))?;
-        let mut terminal = ProviderTerminalGuard::new(self.lifecycle.clone(), key);
-        let single_attempt = match self
-            .inner
-            .stream_once_with_terminal_proof(model_config, system, messages, tools)
-            .await
-        {
+        if let Some(expected_protocol) = started.http_protocol() {
+            if self.inner.provider_http_protocol(&model_config.model_name)
+                != Some(expected_protocol)
+            {
+                let detail = format!(
+                    "provider `{}` HTTP protocol does not match its sealed physical route",
+                    self.inner.get_name()
+                );
+                return match started.abandon_before_exposure(&detail).await {
+                    Ok(()) => Err(ProviderError::ExecutionError(detail)),
+                    Err(error) => Err(ProviderError::ExecutionError(format!(
+                        "{detail}; physical provider lifecycle abandon failed: {error}"
+                    ))),
+                };
+            }
+        }
+        let single_attempt_result = started
+            .scope_http(self.inner.stream_once_with_terminal_proof(
+                model_config,
+                system,
+                messages,
+                tools,
+            ))
+            .await;
+        let mut terminal = ProviderTerminalGuard::new(started);
+        let single_attempt = match single_attempt_result {
             Ok(stream) => stream,
             Err(provider_error) => {
                 if self

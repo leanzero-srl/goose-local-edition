@@ -5279,6 +5279,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "fs2",
+ "goose-provider-types",
  "libc",
  "rand 0.10.1",
  "serde",

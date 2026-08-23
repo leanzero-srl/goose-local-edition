@@ -15,6 +15,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::base::{
+    expose_current_provider_http_request, provider_http_exposure_active, ProviderHttpProtocol,
+};
+
 const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 600;
 
 pub fn canonical_transport_identity(host: &str, path: &str) -> Option<String> {
@@ -517,7 +521,24 @@ impl<'a> ApiRequestBuilder<'a> {
 
     pub async fn response_post(self, payload: &Value) -> Result<Response> {
         let request = self.send_request(|url, client| client.post(url)).await?;
-        Ok(request.json(payload).send().await?)
+        let request = request.json(payload);
+        if provider_http_exposure_active() {
+            let protocol = ProviderHttpProtocol::from_openai_path(self.path).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "provider HTTP exposure refuses unrecognized POST path `{}`",
+                    self.path
+                )
+            })?;
+            let transport_identity =
+                self.client.transport_identity(self.path).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "provider HTTP exposure cannot prove the final transport identity"
+                    )
+                })?;
+            expose_current_provider_http_request(protocol, &transport_identity)
+                .map_err(anyhow::Error::msg)?;
+        }
+        Ok(request.send().await?)
     }
 
     pub async fn multipart_post(self, form: reqwest::multipart::Form) -> Result<Response> {
@@ -699,6 +720,33 @@ ShGoCNbfNS+COlPMRAujyDlATZcLs9p4tA==
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::base::{scope_provider_http_exposure, ProviderHttpExposureBoundary};
+    use std::sync::Mutex;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    struct RecordingExposure {
+        records: Mutex<Vec<(ProviderHttpProtocol, String)>>,
+        reject: bool,
+    }
+
+    impl ProviderHttpExposureBoundary for RecordingExposure {
+        fn expose(
+            &self,
+            protocol: ProviderHttpProtocol,
+            transport_identity: &str,
+        ) -> Result<(), String> {
+            self.records
+                .lock()
+                .unwrap()
+                .push((protocol, transport_identity.to_string()));
+            if self.reject {
+                Err("durable exposure rejected".to_string())
+            } else {
+                Ok(())
+            }
+        }
+    }
 
     #[test]
     fn test_request_builder_decorator() {
@@ -785,5 +833,128 @@ mod tests {
         assert!(!queried_identity.contains("secret"));
         assert_eq!(queried_identity.len(), 71);
         assert_eq!(decorated.transport_identity("v1/chat/completions"), None);
+    }
+
+    #[tokio::test]
+    async fn rejected_exposure_prevents_the_post_from_becoming_visible() {
+        let server = MockServer::start().await;
+        let client = ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        let boundary = Arc::new(RecordingExposure {
+            records: Mutex::new(Vec::new()),
+            reject: true,
+        });
+
+        let result = scope_provider_http_exposure(
+            boundary.clone(),
+            client.response_post(
+                "v1/chat/completions",
+                &serde_json::json!({"model": "local"}),
+            ),
+        )
+        .await;
+
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("durable exposure rejected"));
+        assert!(server.received_requests().await.unwrap().is_empty());
+        let records = boundary.records.lock().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, ProviderHttpProtocol::OpenAiChatCompletions);
+        assert_eq!(
+            records[0].1,
+            client.transport_identity("v1/chat/completions").unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn actual_post_path_distinguishes_chat_completions_from_responses() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/responses"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        let boundary = Arc::new(RecordingExposure {
+            records: Mutex::new(Vec::new()),
+            reject: false,
+        });
+
+        scope_provider_http_exposure(boundary.clone(), async {
+            client
+                .response_post("v1/chat/completions", &serde_json::json!({}))
+                .await
+                .unwrap();
+            client
+                .response_post("v1/responses", &serde_json::json!({}))
+                .await
+                .unwrap();
+        })
+        .await;
+
+        let records = boundary.records.lock().unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].0, ProviderHttpProtocol::OpenAiChatCompletions);
+        assert_eq!(records[1].0, ProviderHttpProtocol::OpenAiResponses);
+        assert_ne!(records[0].1, records[1].1);
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_post_visibility_retains_the_exposure_record() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client =
+            Arc::new(ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap());
+        let boundary = Arc::new(RecordingExposure {
+            records: Mutex::new(Vec::new()),
+            reject: false,
+        });
+        let request = tokio::spawn({
+            let client = client.clone();
+            let boundary = boundary.clone();
+            async move {
+                scope_provider_http_exposure(
+                    boundary,
+                    client.response_post(
+                        "v1/chat/completions",
+                        &serde_json::json!({"model": "local"}),
+                    ),
+                )
+                .await
+            }
+        });
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if !server.received_requests().await.unwrap().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the local test server must observe the POST");
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        let records = boundary.records.lock().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, ProviderHttpProtocol::OpenAiChatCompletions);
+        assert_eq!(
+            records[0].1,
+            client.transport_identity("v1/chat/completions").unwrap()
+        );
     }
 }

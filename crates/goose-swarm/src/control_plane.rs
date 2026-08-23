@@ -16,6 +16,10 @@ use crate::dispatch::{
     DispatchError, DispatchRequest, ProviderDispatchClass, TaskDispatcher, TaskRunOutput,
 };
 use crate::event::{EventSink, SwarmEvent};
+use crate::provider_lease::{
+    ProviderLeaseBoundaryStatus, ProviderLeaseError, ProviderLeaseHttpBoundary,
+    RunScopedProviderLeaseAuthority,
+};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -193,6 +197,7 @@ struct ControlInner {
     journal_failure: StdMutex<Option<String>>,
     changed: Notify,
     semantic_observation_plane_claimed: AtomicBool,
+    provider_leases: Option<RunScopedProviderLeaseAuthority>,
 }
 
 #[derive(Clone)]
@@ -220,6 +225,16 @@ impl PhysicalAdmissionControl {
         sink: Arc<dyn EventSink>,
         journal: Arc<dyn ProviderLifecycleJournal>,
     ) -> Result<Self, BrokerError> {
+        Self::new_with_journal_and_provider_leases(correlation_scope, snapshot, sink, journal, None)
+    }
+
+    pub fn new_with_journal_and_provider_leases(
+        correlation_scope: impl Into<String>,
+        snapshot: PhysicalFleetSnapshot,
+        sink: Arc<dyn EventSink>,
+        journal: Arc<dyn ProviderLifecycleJournal>,
+        provider_leases: Option<RunScopedProviderLeaseAuthority>,
+    ) -> Result<Self, BrokerError> {
         let broker = PhysicalBroker::new(correlation_scope, snapshot)?;
         Ok(Self {
             inner: Arc::new(ControlInner {
@@ -234,6 +249,7 @@ impl PhysicalAdmissionControl {
                 journal_failure: StdMutex::new(None),
                 changed: Notify::new(),
                 semantic_observation_plane_claimed: AtomicBool::new(false),
+                provider_leases,
             }),
         })
     }
@@ -436,6 +452,7 @@ impl PhysicalAdmissionControl {
                 control: self.clone(),
                 admission: receipt.clone(),
                 next_ordinal: Arc::new(AtomicU32::new(0)),
+                outstanding: Arc::new(StdMutex::new(None)),
             },
             receipt,
         }))
@@ -950,6 +967,7 @@ impl PendingAdmission {
                 control: self.control,
                 admission: receipt.clone(),
                 next_ordinal: Arc::new(AtomicU32::new(0)),
+                outstanding: Arc::new(StdMutex::new(None)),
             },
             receipt,
         })
@@ -1073,11 +1091,404 @@ impl AdmittedWork {
     }
 }
 
+struct RecoverableProviderRequest {
+    receipt: ProviderRequestReceipt,
+    boundary: Option<ProviderLeaseHttpBoundary>,
+    issued_to_provider: bool,
+    pending_terminal: Option<ProviderTerminalKind>,
+}
+
+enum OutstandingProviderRequest {
+    Starting,
+    Claimed,
+    Recoverable(RecoverableProviderRequest),
+    Failed(String),
+}
+
+#[derive(Debug)]
+pub enum ProviderLifecycleOperationError {
+    Broker(BrokerError),
+    Lease(ProviderLeaseError),
+    Unresolved(String),
+}
+
+impl std::fmt::Display for ProviderLifecycleOperationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Broker(error) => write!(formatter, "{error}"),
+            Self::Lease(error) => write!(formatter, "{error}"),
+            Self::Unresolved(reason) => write!(formatter, "{reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ProviderLifecycleOperationError {}
+
+impl From<BrokerError> for ProviderLifecycleOperationError {
+    fn from(error: BrokerError) -> Self {
+        Self::Broker(error)
+    }
+}
+
+impl From<ProviderLeaseError> for ProviderLifecycleOperationError {
+    fn from(error: ProviderLeaseError) -> Self {
+        Self::Lease(error)
+    }
+}
+
+#[derive(Debug)]
+pub enum ProviderLifecycleTransitionError {
+    Retryable {
+        error: ProviderLifecycleOperationError,
+        request: Box<StartedProviderRequest>,
+    },
+    Fatal(ProviderLifecycleOperationError),
+}
+
+impl ProviderLifecycleTransitionError {
+    pub fn error(&self) -> &ProviderLifecycleOperationError {
+        match self {
+            Self::Retryable { error, .. } | Self::Fatal(error) => error,
+        }
+    }
+
+    pub fn into_retryable_request(self) -> Option<StartedProviderRequest> {
+        match self {
+            Self::Retryable { request, .. } => Some(*request),
+            Self::Fatal(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ProviderLifecycleTransitionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error().fmt(formatter)
+    }
+}
+
+impl std::error::Error for ProviderLifecycleTransitionError {}
+
+#[derive(Debug)]
+pub enum ProviderLifecycleStartError {
+    Operation(ProviderLifecycleOperationError),
+    TerminalReconciliation(ProviderLifecycleTransitionError),
+}
+
+impl std::fmt::Display for ProviderLifecycleStartError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Operation(error) => error.fmt(formatter),
+            Self::TerminalReconciliation(error) => {
+                write!(
+                    formatter,
+                    "prior provider terminal reconciliation failed: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ProviderLifecycleStartError {}
+
+impl From<BrokerError> for ProviderLifecycleStartError {
+    fn from(error: BrokerError) -> Self {
+        Self::Operation(error.into())
+    }
+}
+
+impl From<ProviderLeaseError> for ProviderLifecycleStartError {
+    fn from(error: ProviderLeaseError) -> Self {
+        Self::Operation(error.into())
+    }
+}
+
+pub struct StartedProviderRequest {
+    lifecycle: ProviderLifecycle,
+    receipt: Option<ProviderRequestReceipt>,
+    boundary: Option<ProviderLeaseHttpBoundary>,
+    pending_terminal: Option<ProviderTerminalKind>,
+    armed: bool,
+}
+
+impl std::fmt::Debug for StartedProviderRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StartedProviderRequest")
+            .field("receipt", &self.receipt)
+            .field("boundary", &self.boundary)
+            .field("pending_terminal", &self.pending_terminal)
+            .field("armed", &self.armed)
+            .finish_non_exhaustive()
+    }
+}
+
+impl StartedProviderRequest {
+    pub fn receipt(&self) -> &ProviderRequestReceipt {
+        self.receipt
+            .as_ref()
+            .expect("live started provider request retains its engine receipt")
+    }
+
+    pub fn http_protocol(&self) -> Option<goose_provider_types::base::ProviderHttpProtocol> {
+        self.boundary
+            .as_ref()
+            .map(ProviderLeaseHttpBoundary::protocol)
+    }
+
+    pub fn transport_identity(&self) -> Option<&str> {
+        self.boundary
+            .as_ref()
+            .map(ProviderLeaseHttpBoundary::transport_identity)
+    }
+
+    pub async fn scope_http<F>(&self, future: F) -> F::Output
+    where
+        F: std::future::Future,
+    {
+        match &self.boundary {
+            Some(boundary) => boundary.scope_http(future).await,
+            None => future.await,
+        }
+    }
+
+    pub async fn provider_terminal(
+        mut self,
+        kind: ProviderTerminalKind,
+    ) -> Result<(), ProviderLifecycleTransitionError> {
+        if self.pending_terminal.is_some_and(|pending| pending != kind) {
+            let error = ProviderLifecycleOperationError::Unresolved(
+                "provider request has a different pending terminal kind".to_string(),
+            );
+            self.latch_failure(error.to_string());
+            return Err(ProviderLifecycleTransitionError::Fatal(error));
+        }
+        self.pending_terminal = Some(kind);
+        let terminal = self.terminal_receipt(kind);
+        if let Some(boundary) = &self.boundary {
+            let already_abandoned = matches!(
+                boundary.status(),
+                Ok(ProviderLeaseBoundaryStatus::Abandoned)
+            );
+            if !already_abandoned {
+                if let Err(error) = boundary.provider_terminal(&terminal) {
+                    if error == ProviderLeaseError::AuthorityContended {
+                        return Err(ProviderLifecycleTransitionError::Retryable {
+                            error: error.into(),
+                            request: Box::new(self),
+                        });
+                    }
+                    let error = ProviderLifecycleOperationError::Lease(error);
+                    self.latch_failure(error.to_string());
+                    return Err(ProviderLifecycleTransitionError::Fatal(error));
+                }
+            } else if kind != ProviderTerminalKind::Cancelled {
+                let error = ProviderLifecycleOperationError::Unresolved(
+                    "an abandoned reservation can reconcile only a cancelled terminal".to_string(),
+                );
+                self.latch_failure(error.to_string());
+                return Err(ProviderLifecycleTransitionError::Fatal(error));
+            }
+        }
+        if let Err(error) = self
+            .lifecycle
+            .control
+            .observe_provider_terminal(terminal)
+            .await
+        {
+            return Err(ProviderLifecycleTransitionError::Retryable {
+                error: error.into(),
+                request: Box::new(self),
+            });
+        }
+        self.complete();
+        Ok(())
+    }
+
+    pub async fn abandon_before_exposure(
+        mut self,
+        reason: &str,
+    ) -> Result<(), ProviderLifecycleTransitionError> {
+        self.pending_terminal = Some(ProviderTerminalKind::Cancelled);
+        if let Some(boundary) = &self.boundary {
+            if let Err(error) = boundary.abandon_reserved(reason) {
+                if error == ProviderLeaseError::AuthorityContended {
+                    return Err(ProviderLifecycleTransitionError::Retryable {
+                        error: error.into(),
+                        request: Box::new(self),
+                    });
+                }
+                let error = ProviderLifecycleOperationError::Lease(error);
+                self.latch_failure(error.to_string());
+                return Err(ProviderLifecycleTransitionError::Fatal(error));
+            }
+        }
+        let terminal = self.terminal_receipt(ProviderTerminalKind::Cancelled);
+        if let Err(error) = self
+            .lifecycle
+            .control
+            .observe_provider_terminal(terminal)
+            .await
+        {
+            return Err(ProviderLifecycleTransitionError::Retryable {
+                error: error.into(),
+                request: Box::new(self),
+            });
+        }
+        self.complete();
+        Ok(())
+    }
+
+    fn terminal_receipt(&self, kind: ProviderTerminalKind) -> ProviderTerminalReceipt {
+        let receipt = self.receipt();
+        ProviderTerminalReceipt {
+            admission_id: receipt.admission_id.clone(),
+            key: receipt.key.clone(),
+            physical_host_id: receipt.physical_host_id.clone(),
+            model_instance_id: receipt.model_instance_id.clone(),
+            kind,
+        }
+    }
+
+    fn complete(&mut self) {
+        let mut outstanding = self
+            .lifecycle
+            .outstanding
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if matches!(
+            outstanding.as_ref(),
+            Some(OutstandingProviderRequest::Claimed)
+        ) {
+            *outstanding = None;
+        }
+        self.armed = false;
+        self.receipt.take();
+        self.boundary.take();
+    }
+
+    fn latch_failure(&mut self, reason: String) {
+        let mut outstanding = self
+            .lifecycle
+            .outstanding
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *outstanding = Some(OutstandingProviderRequest::Failed(reason));
+        self.armed = false;
+        self.receipt.take();
+        self.boundary.take();
+    }
+}
+
+impl Drop for StartedProviderRequest {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Some(receipt) = self.receipt.take() else {
+            return;
+        };
+        let mut outstanding = self
+            .lifecycle
+            .outstanding
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if matches!(
+            outstanding.as_ref(),
+            Some(OutstandingProviderRequest::Claimed)
+        ) {
+            *outstanding = Some(OutstandingProviderRequest::Recoverable(
+                RecoverableProviderRequest {
+                    receipt,
+                    boundary: self.boundary.take(),
+                    issued_to_provider: true,
+                    pending_terminal: self.pending_terminal,
+                },
+            ));
+        }
+    }
+}
+
+struct StartingProviderRequestGuard {
+    outstanding: Arc<StdMutex<Option<OutstandingProviderRequest>>>,
+    armed: bool,
+}
+
+impl Drop for StartingProviderRequestGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut outstanding = self
+            .outstanding
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if matches!(
+            outstanding.as_ref(),
+            Some(OutstandingProviderRequest::Starting)
+        ) {
+            *outstanding = None;
+        }
+    }
+}
+
+struct ClaimedProviderRequestGuard {
+    lifecycle: ProviderLifecycle,
+    request: Option<RecoverableProviderRequest>,
+    armed: bool,
+}
+
+impl ClaimedProviderRequestGuard {
+    fn into_started(mut self) -> StartedProviderRequest {
+        let request = self
+            .request
+            .take()
+            .expect("claimed provider request is present");
+        self.armed = false;
+        StartedProviderRequest {
+            lifecycle: self.lifecycle.clone(),
+            receipt: Some(request.receipt),
+            boundary: request.boundary,
+            pending_terminal: request.pending_terminal,
+            armed: true,
+        }
+    }
+}
+
+impl Drop for ClaimedProviderRequestGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Some(request) = self.request.take() else {
+            return;
+        };
+        let mut outstanding = self
+            .lifecycle
+            .outstanding
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if matches!(
+            outstanding.as_ref(),
+            Some(OutstandingProviderRequest::Claimed)
+        ) {
+            *outstanding = Some(OutstandingProviderRequest::Recoverable(request));
+        }
+    }
+}
+
+enum ProviderStartAction {
+    Start,
+    Claim(RecoverableProviderRequest),
+    Wait,
+    Failed(String),
+}
+
 #[derive(Clone)]
 pub struct ProviderLifecycle {
     control: PhysicalAdmissionControl,
     admission: AdmissionReceipt,
     next_ordinal: Arc<AtomicU32>,
+    outstanding: Arc<StdMutex<Option<OutstandingProviderRequest>>>,
 }
 
 impl ProviderLifecycle {
@@ -1085,10 +1496,161 @@ impl ProviderLifecycle {
         &self.admission
     }
 
+    pub async fn start_provider_request(
+        &self,
+    ) -> Result<StartedProviderRequest, ProviderLifecycleStartError> {
+        loop {
+            let action = {
+                let mut outstanding = self
+                    .outstanding
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                match outstanding.take() {
+                    None => {
+                        *outstanding = Some(OutstandingProviderRequest::Starting);
+                        ProviderStartAction::Start
+                    }
+                    Some(OutstandingProviderRequest::Recoverable(request)) => {
+                        *outstanding = Some(OutstandingProviderRequest::Claimed);
+                        ProviderStartAction::Claim(request)
+                    }
+                    Some(OutstandingProviderRequest::Starting) => {
+                        *outstanding = Some(OutstandingProviderRequest::Starting);
+                        ProviderStartAction::Wait
+                    }
+                    Some(OutstandingProviderRequest::Claimed) => {
+                        *outstanding = Some(OutstandingProviderRequest::Claimed);
+                        ProviderStartAction::Wait
+                    }
+                    Some(OutstandingProviderRequest::Failed(reason)) => {
+                        *outstanding = Some(OutstandingProviderRequest::Failed(reason.clone()));
+                        ProviderStartAction::Failed(reason)
+                    }
+                }
+            };
+
+            match action {
+                ProviderStartAction::Wait => tokio::task::yield_now().await,
+                ProviderStartAction::Failed(reason) => {
+                    return Err(ProviderLifecycleStartError::Operation(
+                        ProviderLifecycleOperationError::Unresolved(reason),
+                    ));
+                }
+                ProviderStartAction::Start => {
+                    let mut guard = StartingProviderRequestGuard {
+                        outstanding: self.outstanding.clone(),
+                        armed: true,
+                    };
+                    let ordinal = self.next_ordinal.fetch_add(1, Ordering::SeqCst);
+                    let request = ProviderRequestReceipt {
+                        admission_id: self.admission.admission_id.clone(),
+                        key: ProviderRequestKey {
+                            ordinal,
+                            provider_request_id: format!(
+                                "engine-provider-request:{:032x}",
+                                rand::random::<u128>()
+                            ),
+                        },
+                        physical_host_id: self.admission.physical_host_id.clone(),
+                        model_instance_id: self.admission.model_instance_id.clone(),
+                    };
+                    let receipt = self.control.request_provider_turn(request).await?;
+                    let mut outstanding = self
+                        .outstanding
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    if !matches!(
+                        outstanding.as_ref(),
+                        Some(OutstandingProviderRequest::Starting)
+                    ) {
+                        return Err(ProviderLifecycleStartError::Operation(
+                            ProviderLifecycleOperationError::Unresolved(
+                                "provider request start ownership changed before sealing"
+                                    .to_string(),
+                            ),
+                        ));
+                    }
+                    *outstanding = Some(OutstandingProviderRequest::Recoverable(
+                        RecoverableProviderRequest {
+                            receipt,
+                            boundary: None,
+                            issued_to_provider: false,
+                            pending_terminal: None,
+                        },
+                    ));
+                    guard.armed = false;
+                }
+                ProviderStartAction::Claim(request) => {
+                    let mut guard = ClaimedProviderRequestGuard {
+                        lifecycle: self.clone(),
+                        request: Some(request),
+                        armed: true,
+                    };
+                    let recoverable = guard
+                        .request
+                        .as_mut()
+                        .expect("claimed provider request is present");
+                    if recoverable.issued_to_provider {
+                        let may_resume = match &recoverable.boundary {
+                            Some(boundary) if recoverable.pending_terminal.is_some() => matches!(
+                                boundary.status(),
+                                Ok(ProviderLeaseBoundaryStatus::Exposed)
+                                    | Ok(ProviderLeaseBoundaryStatus::Terminal)
+                                    | Ok(ProviderLeaseBoundaryStatus::Abandoned)
+                            ),
+                            Some(boundary) => matches!(
+                                boundary.status(),
+                                Ok(ProviderLeaseBoundaryStatus::Reserved)
+                            ),
+                            None => recoverable.pending_terminal.is_some(),
+                        };
+                        if !may_resume {
+                            return Err(ProviderLifecycleStartError::Operation(
+                                ProviderLifecycleOperationError::Unresolved(
+                                    "prior provider request may already be externally visible and has no exact terminal proof"
+                                        .to_string(),
+                                ),
+                            ));
+                        }
+                    }
+                    if recoverable.boundary.is_none() {
+                        if let Some(authority) = &self.control.inner.provider_leases {
+                            recoverable.boundary = Some(
+                                authority
+                                    .reserve_provider_request(&self.admission, &recoverable.receipt)
+                                    .await?,
+                            );
+                        }
+                    }
+                    let pending_terminal = recoverable.pending_terminal;
+                    let started = guard.into_started();
+                    if let Some(kind) = pending_terminal {
+                        match started.provider_terminal(kind).await {
+                            Ok(()) => continue,
+                            Err(error) => {
+                                return Err(ProviderLifecycleStartError::TerminalReconciliation(
+                                    error,
+                                ));
+                            }
+                        }
+                    }
+                    return Ok(started);
+                }
+            }
+        }
+    }
+
     pub async fn provider_request_started(
         &self,
         provider_request_id: impl Into<String>,
     ) -> Result<ProviderRequestKey, BrokerError> {
+        if self.control.inner.provider_leases.is_some() {
+            return Err(BrokerError::InvalidProviderRequest {
+                admission_id: self.admission.admission_id.clone(),
+                reason: "caller-supplied provider request identities are disabled by the sealed lease authority"
+                    .to_string(),
+            });
+        }
         let key = ProviderRequestKey {
             ordinal: self.next_ordinal.fetch_add(1, Ordering::SeqCst),
             provider_request_id: provider_request_id.into(),
@@ -1109,6 +1671,13 @@ impl ProviderLifecycle {
         key: ProviderRequestKey,
         kind: ProviderTerminalKind,
     ) -> Result<(), BrokerError> {
+        if self.control.inner.provider_leases.is_some() {
+            return Err(BrokerError::InvalidProviderRequest {
+                admission_id: self.admission.admission_id.clone(),
+                reason: "caller-constructed provider terminals are disabled by the sealed lease authority"
+                    .to_string(),
+            });
+        }
         self.control
             .observe_provider_terminal(ProviderTerminalReceipt {
                 admission_id: self.admission.admission_id.clone(),
