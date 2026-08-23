@@ -23,13 +23,23 @@ use crate::judge::{
     Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewRequest, PreReviewer, Verdict,
 };
 use crate::replan::{ReplanContext, Replanner};
+use crate::semantic_control::{
+    semantic_observation_task_version, AdmittedSemanticObservationReviewer,
+    BrokeredSemanticObservationPlane, SemanticObservationAdmissionPolicy,
+    SemanticObservationAdmissionSubmission,
+};
+use crate::semantic_observation::AcceptanceCriterionSnapshot;
+use crate::semantic_runtime::{
+    SemanticObservationCaptureRequest, SemanticObservationSnapshotProducer, SemanticTraceRevision,
+};
 use anyhow::{bail, Result};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{mpsc, Mutex, Notify};
 
 /// GOOSE_SWARM_SPLIT_INHERIT_SPEC (default ON): give a split CHILD the parent's full implementation spec,
 /// scoped to the child's own files — instead of the ~40-char label it gets today.
@@ -776,6 +786,206 @@ enum SchedulerDispatcher {
     },
 }
 
+#[derive(Clone)]
+struct SemanticObservationConfig {
+    producer: Arc<dyn SemanticObservationSnapshotProducer>,
+    reviewer: Arc<dyn AdmittedSemanticObservationReviewer>,
+}
+
+#[derive(Clone)]
+struct SchedulerSemanticObservationRuntime {
+    control: PhysicalAdmissionControl,
+    plane: BrokeredSemanticObservationPlane,
+    producer: Arc<dyn SemanticObservationSnapshotProducer>,
+    reviewer: Arc<dyn AdmittedSemanticObservationReviewer>,
+    sink: Arc<dyn EventSink>,
+}
+
+enum SemanticObservationAttemptDisposition {
+    NoCapture,
+    Deferred,
+    Consumed,
+}
+
+struct SemanticObservationAttemptResult {
+    task_id: TaskId,
+    revision: Option<SemanticTraceRevision>,
+    disposition: SemanticObservationAttemptDisposition,
+}
+
+impl SchedulerSemanticObservationRuntime {
+    async fn available_provider_slots(&self) -> usize {
+        self.control
+            .physical_occupancy()
+            .await
+            .into_iter()
+            .map(|host| {
+                host.capacity
+                    .saturating_sub(host.provider_turn_permits_held) as usize
+            })
+            .sum()
+    }
+
+    async fn observe(
+        &self,
+        request: SemanticObservationCaptureRequest,
+        last_consumed: Option<SemanticTraceRevision>,
+        last_summoned: Option<SemanticTraceRevision>,
+    ) -> SemanticObservationAttemptResult {
+        let task_id = request.task_id.clone();
+        let attempt = request.attempt;
+        let capture = match self.producer.capture(request.clone()).await {
+            Ok(Some(capture)) => capture,
+            Ok(None) => {
+                return SemanticObservationAttemptResult {
+                    task_id,
+                    revision: None,
+                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                }
+            }
+            Err(reason) => {
+                self.capture_failed(&task_id, attempt, reason);
+                return SemanticObservationAttemptResult {
+                    task_id,
+                    revision: None,
+                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                };
+            }
+        };
+        let revision = capture.revision();
+        if revision.task_id != request.task_id || revision.attempt != request.attempt {
+            self.capture_failed(
+                &request.task_id,
+                request.attempt,
+                format!(
+                    "snapshot identity `{}` attempt {} does not match capture request attempt {}",
+                    revision.task_id, revision.attempt, request.attempt
+                ),
+            );
+            return SemanticObservationAttemptResult {
+                task_id,
+                revision: None,
+                disposition: SemanticObservationAttemptDisposition::NoCapture,
+            };
+        }
+        if let Some(last) = &last_consumed {
+            if revision.source_revision < last.source_revision
+                || (revision.source_revision == last.source_revision
+                    && revision.snapshot_hash == last.snapshot_hash
+                    && revision.attempt == last.attempt)
+            {
+                return SemanticObservationAttemptResult {
+                    task_id,
+                    revision: Some(revision),
+                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                };
+            }
+            if revision.source_revision == last.source_revision {
+                self.capture_failed(
+                    &request.task_id,
+                    request.attempt,
+                    format!(
+                        "trace revision {} changed immutable identity from `{}` to `{}`",
+                        revision.source_revision, last.snapshot_hash, revision.snapshot_hash
+                    ),
+                );
+                return SemanticObservationAttemptResult {
+                    task_id,
+                    revision: Some(revision),
+                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                };
+            }
+        }
+
+        if last_summoned.as_ref() != Some(&revision) {
+            self.sink.emit(&SwarmEvent::SemanticObservationSummoned {
+                source: semantic_observation_task_version(capture.snapshot()),
+                signal: capture.summons().neutral_signal(),
+            });
+        }
+
+        let mut eligible_logical_device_ids: Vec<String> = self
+            .control
+            .verified_lanes()
+            .await
+            .into_iter()
+            .filter(|lane| lane.logical_device_id != request.running_logical_device_id)
+            .map(|lane| lane.logical_device_id)
+            .collect();
+        eligible_logical_device_ids.sort();
+        eligible_logical_device_ids.dedup();
+        if eligible_logical_device_ids.is_empty() {
+            self.sink.emit(&SwarmEvent::SemanticObservationDeferred {
+                task_id: revision.task_id.clone(),
+                attempt: revision.attempt,
+                source_revision: revision.source_revision,
+                snapshot_hash: revision.snapshot_hash.clone(),
+                reason: "no_verified_alternate_provider_route".to_string(),
+            });
+            return SemanticObservationAttemptResult {
+                task_id,
+                revision: Some(revision),
+                disposition: SemanticObservationAttemptDisposition::Deferred,
+            };
+        }
+
+        let submission = self
+            .plane
+            .submit_if_idle(
+                capture.into_snapshot(),
+                SemanticObservationAdmissionPolicy {
+                    task_rank: request.task_rank,
+                    eligible_logical_device_ids,
+                    preferred_model_id: None,
+                    excluded_logical_device_id: Some(request.running_logical_device_id),
+                },
+                self.reviewer.clone(),
+            )
+            .await;
+        match submission {
+            Ok(None) => SemanticObservationAttemptResult {
+                task_id,
+                revision: Some(revision),
+                disposition: SemanticObservationAttemptDisposition::Deferred,
+            },
+            Ok(Some(SemanticObservationAdmissionSubmission::Rejected(_))) => {
+                SemanticObservationAttemptResult {
+                    task_id,
+                    revision: Some(revision),
+                    disposition: SemanticObservationAttemptDisposition::Consumed,
+                }
+            }
+            Ok(Some(SemanticObservationAdmissionSubmission::Started(handle))) => {
+                if let Err(error) = handle.wait().await {
+                    self.capture_failed(&request.task_id, request.attempt, error.to_string());
+                }
+                SemanticObservationAttemptResult {
+                    task_id,
+                    revision: Some(revision),
+                    disposition: SemanticObservationAttemptDisposition::Consumed,
+                }
+            }
+            Err(error) => {
+                self.capture_failed(&request.task_id, request.attempt, error.to_string());
+                SemanticObservationAttemptResult {
+                    task_id,
+                    revision: Some(revision),
+                    disposition: SemanticObservationAttemptDisposition::Consumed,
+                }
+            }
+        }
+    }
+
+    fn capture_failed(&self, task_id: &str, attempt: u32, reason: String) {
+        self.sink
+            .emit(&SwarmEvent::SemanticObservationCaptureFailed {
+                task_id: task_id.to_string(),
+                attempt,
+                reason,
+            });
+    }
+}
+
 /// Global cap on SPECULATIVE twins per run (GOOSE_SWARM_SPECULATE) — a long serial chokepoint cannot burn
 /// unbounded compute racing twins. Generous: it is a last-resort idle-fill, not a hot path.
 const SPECULATION_CAP: u32 = 8;
@@ -1234,6 +1444,108 @@ impl State {
             .collect();
         specs.sort_by(|left, right| left.id.cmp(&right.id));
         specs
+    }
+
+    fn semantic_observation_capture_requests(
+        &self,
+        already_capturing: &HashSet<TaskId>,
+        available_provider_slots: usize,
+    ) -> Vec<SemanticObservationCaptureRequest> {
+        if available_provider_slots == 0 {
+            return Vec::new();
+        }
+        let mut task_ids: Vec<TaskId> = self
+            .dag
+            .tasks
+            .iter()
+            .filter(|(task_id, node)| {
+                node.state == TaskState::Claimed
+                    && self.claimed_device.contains_key(*task_id)
+                    && !already_capturing.contains(*task_id)
+            })
+            .map(|(task_id, _)| task_id.clone())
+            .collect();
+        task_ids.sort_by(|left, right| {
+            self.attempt_started_at
+                .get(left)
+                .cmp(&self.attempt_started_at.get(right))
+                .then_with(|| left.cmp(right))
+        });
+        task_ids
+            .into_iter()
+            .take(available_provider_slots)
+            .filter_map(|task_id| self.semantic_observation_capture_request(&task_id))
+            .collect()
+    }
+
+    fn semantic_observation_capture_request(
+        &self,
+        task_id: &str,
+    ) -> Option<SemanticObservationCaptureRequest> {
+        let node = self.dag.tasks.get(task_id)?;
+        let device_index = *self.claimed_device.get(task_id)?;
+        let running_device = self.devices.get(device_index)?;
+        let contract_version = task_contract_version(&node.spec);
+
+        let dependency_contract_versions = node
+            .spec
+            .deps
+            .iter()
+            .filter_map(|dependency_id| {
+                self.dag.tasks.get(dependency_id).map(|dependency| {
+                    (
+                        dependency_id.clone(),
+                        task_contract_version(&dependency.spec),
+                    )
+                })
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        let mut sibling_ids = BTreeSet::new();
+        for dependency_id in &node.spec.deps {
+            if let Some(dependents) = self.dag.dependents.get(dependency_id) {
+                sibling_ids.extend(
+                    dependents
+                        .iter()
+                        .filter(|sibling_id| sibling_id.as_str() != task_id)
+                        .cloned(),
+                );
+            }
+        }
+        let sibling_contract_versions = sibling_ids
+            .into_iter()
+            .filter_map(|sibling_id| {
+                self.dag
+                    .tasks
+                    .get(&sibling_id)
+                    .map(|sibling| (sibling_id, task_contract_version(&sibling.spec)))
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        let mut allowed_finding_routes = self
+            .dag
+            .dependents
+            .get(task_id)
+            .cloned()
+            .unwrap_or_default();
+        allowed_finding_routes.sort();
+        allowed_finding_routes.dedup();
+
+        Some(SemanticObservationCaptureRequest {
+            task_id: task_id.to_string(),
+            attempt: node.attempts,
+            task_rank: node.fan_out as u64,
+            goal: self.goal.clone(),
+            task_contract: node.spec.description.clone(),
+            owned_files: node.spec.owned_files.clone(),
+            contract_version,
+            acceptance_oracle: task_acceptance_oracle(&node.spec),
+            dependency_contract_versions,
+            sibling_contract_versions,
+            allowed_finding_routes,
+            running_logical_device_id: running_device.cfg.id.clone(),
+            running_model_id: running_device.cfg.model_id.clone(),
+        })
     }
 
     fn files_conflict(&self, tid: &str) -> bool {
@@ -3075,6 +3387,52 @@ impl State {
     }
 }
 
+fn task_contract_version(spec: &TaskSpec) -> String {
+    let canonical = serde_json::to_vec(spec).expect("task specs are JSON serializable");
+    let digest = Sha256::digest(canonical);
+    let mut version = String::with_capacity(digest.len() * 2 + 7);
+    version.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write;
+        let _ = write!(version, "{byte:02x}");
+    }
+    version
+}
+
+fn task_acceptance_oracle(spec: &TaskSpec) -> Vec<AcceptanceCriterionSnapshot> {
+    if let Some(authority) = &spec.replan_authority {
+        if !authority.requirements.is_empty() {
+            return authority
+                .requirements
+                .iter()
+                .map(|requirement| AcceptanceCriterionSnapshot {
+                    id: requirement.id.clone(),
+                    text: requirement.text.clone(),
+                })
+                .collect();
+        }
+        if !authority.acceptance_evidence.is_empty() {
+            return authority
+                .acceptance_evidence
+                .iter()
+                .enumerate()
+                .map(|(index, evidence)| AcceptanceCriterionSnapshot {
+                    id: format!("acceptance-evidence-{index}"),
+                    text: evidence.clone(),
+                })
+                .collect();
+        }
+    }
+    if spec.description.trim().is_empty() {
+        Vec::new()
+    } else {
+        vec![AcceptanceCriterionSnapshot {
+            id: "task-contract".to_string(),
+            text: spec.description.clone(),
+        }]
+    }
+}
+
 pub struct Scheduler {
     devices: Vec<DeviceCfg>,
     max_attempts: u32,
@@ -3100,6 +3458,9 @@ pub struct Scheduler {
     degrade_on_stall: bool,
     /// F883/E8: marks this scheduler as a repair-round run — testgen idle-fill is disabled there.
     fix_round: bool,
+    /// Typed, immutable, observation-only semantic review. It is consulted only by the physical
+    /// scheduler because the ordinary dispatcher cannot produce provider lifecycle receipts.
+    semantic_observation: Option<SemanticObservationConfig>,
 }
 
 impl Scheduler {
@@ -3118,6 +3479,7 @@ impl Scheduler {
             doc_facts: String::new(),
             degrade_on_stall: false,
             fix_round: false,
+            semantic_observation: None,
         }
     }
 
@@ -3150,6 +3512,18 @@ impl Scheduler {
     pub fn with_judge(mut self, judge: Arc<dyn Judge>, cfg: JudgeConfig) -> Self {
         self.judge = Some(judge);
         self.judge_cfg = cfg;
+        self
+    }
+
+    /// Attach the Engine 5 observation-only semantic path. A measured trace snapshot can consume a
+    /// genuinely idle verified provider route, but its result cannot mutate, stop, accept, split, or
+    /// reschedule build work. This path is available only through `run_with_physical_admission`.
+    pub fn with_semantic_observation(
+        mut self,
+        producer: Arc<dyn SemanticObservationSnapshotProducer>,
+        reviewer: Arc<dyn AdmittedSemanticObservationReviewer>,
+    ) -> Self {
+        self.semantic_observation = Some(SemanticObservationConfig { producer, reviewer });
         self
     }
 
@@ -3324,6 +3698,11 @@ impl Scheduler {
         goal: String,
         user_decisions: String,
     ) -> Result<RunReport> {
+        if self.semantic_observation.is_some() {
+            bail!(
+                "semantic observation requires physical admission and exact provider lifecycle receipts"
+            );
+        }
         self.run_internal(
             dag,
             SchedulerDispatcher::Legacy(dispatcher),
@@ -3422,6 +3801,7 @@ impl Scheduler {
             physical_admission,
         }));
         let notify = Arc::new(Notify::new());
+        let mut semantic_runtime = None;
         let (dispatcher, physical_dispatcher): (
             Arc<dyn TaskDispatcher>,
             Option<Arc<BrokeredTaskDispatcher>>,
@@ -3431,6 +3811,18 @@ impl Scheduler {
                 control,
                 dispatcher,
             } => {
+                if let Some(config) = &self.semantic_observation {
+                    semantic_runtime = Some(SchedulerSemanticObservationRuntime {
+                        control: control.clone(),
+                        plane: BrokeredSemanticObservationPlane::new(
+                            control.clone(),
+                            self.sink.clone(),
+                        )?,
+                        producer: config.producer.clone(),
+                        reviewer: config.reviewer.clone(),
+                        sink: self.sink.clone(),
+                    });
+                }
                 let brokered = Arc::new(BrokeredTaskDispatcher::new(
                     control,
                     dispatcher,
@@ -3442,10 +3834,27 @@ impl Scheduler {
                 (brokered.clone(), Some(brokered))
             }
         };
+        let (semantic_completion_tx, mut semantic_completion_rx) =
+            mpsc::unbounded_channel::<SemanticObservationAttemptResult>();
+        let mut semantic_captures_in_flight = HashSet::new();
+        let mut semantic_last_consumed: HashMap<TaskId, SemanticTraceRevision> = HashMap::new();
+        let mut semantic_last_summoned: HashMap<TaskId, SemanticTraceRevision> = HashMap::new();
         // Edge-detect pause transitions so run_paused/run_unpaused is emitted once per transition, not per tick.
         let mut was_paused = false;
 
         loop {
+            while let Ok(result) = semantic_completion_rx.try_recv() {
+                semantic_captures_in_flight.remove(&result.task_id);
+                if let Some(revision) = result.revision {
+                    semantic_last_summoned.insert(result.task_id.clone(), revision.clone());
+                    if matches!(
+                        result.disposition,
+                        SemanticObservationAttemptDisposition::Consumed
+                    ) {
+                        semantic_last_consumed.insert(result.task_id, revision);
+                    }
+                }
+            }
             // In-process PAUSE hold: while the sentinel exists, claim NO new ready task. Already-spawned
             // in-flight futures (below) run to completion — the hold is BETWEEN tasks, so it can never
             // corrupt a half-written file. Cheap Path::exists per wake; inert when pause_file is None.
@@ -3499,11 +3908,12 @@ impl Scheduler {
 
             {
                 let s = state.lock().await;
-                if s.all_terminal() {
+                if s.all_terminal() && semantic_captures_in_flight.is_empty() {
                     return Ok(s.build_report());
                 }
                 if !paused
                     && !dispatched_now
+                    && !s.all_terminal()
                     && s.build_in_flight() == 0
                     && !s.physical_dispatch_pending()
                 {
@@ -3533,6 +3943,64 @@ impl Scheduler {
                     bail!(
                         "scheduler stuck: {remaining} task(s) cannot proceed (blocked by failed deps or file holds)"
                     );
+                }
+            }
+            if let Some(runtime) = semantic_runtime.as_ref().filter(|_| !paused) {
+                let available_provider_slots = runtime.available_provider_slots().await;
+                let requests = {
+                    let s = state.lock().await;
+                    if s.all_terminal() {
+                        Vec::new()
+                    } else {
+                        s.semantic_observation_capture_requests(
+                            &semantic_captures_in_flight,
+                            available_provider_slots,
+                        )
+                    }
+                };
+                for request in requests {
+                    let task_id = request.task_id.clone();
+                    if !semantic_captures_in_flight.insert(task_id.clone()) {
+                        continue;
+                    }
+                    let observation_runtime = runtime.clone();
+                    let panic_runtime = runtime.clone();
+                    let last_consumed = semantic_last_consumed.get(&task_id).cloned();
+                    let last_summoned = semantic_last_summoned.get(&task_id).cloned();
+                    let completion = semantic_completion_tx.clone();
+                    let semantic_notify = notify.clone();
+                    tokio::spawn(async move {
+                        let attempt = request.attempt;
+                        let observed = tokio::spawn(async move {
+                            observation_runtime
+                                .observe(request, last_consumed, last_summoned)
+                                .await
+                        })
+                        .await;
+                        let result = match observed {
+                            Ok(result) => result,
+                            Err(error) => {
+                                panic_runtime.capture_failed(
+                                    &task_id,
+                                    attempt,
+                                    format!("snapshot producer task ended unexpectedly: {error}"),
+                                );
+                                SemanticObservationAttemptResult {
+                                    task_id,
+                                    revision: None,
+                                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                                }
+                            }
+                        };
+                        let consumed = matches!(
+                            &result.disposition,
+                            SemanticObservationAttemptDisposition::Consumed
+                        );
+                        let _ = completion.send(result);
+                        if consumed {
+                            semantic_notify.notify_one();
+                        }
+                    });
                 }
             }
             // Dynamic replan: workers idle while a task is still in flight (e.g. a slow tail) — ask the
@@ -3976,6 +4444,7 @@ impl Scheduler {
             } else if self.judge.is_some()
                 || self.pre_reviewer.is_some()
                 || self.speculation_enabled
+                || semantic_runtime.is_some()
                 // The REPLANNER is an idle-node mechanism too, and it was missing from this list. Its
                 // trigger is "nodes idle while a task is still in flight", which by construction produces
                 // NO completion to wake on — so without a tick the one window it exists for is never
