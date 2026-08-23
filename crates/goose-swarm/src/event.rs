@@ -11,7 +11,7 @@ use crate::{
         WithdrawnWorkReceipt,
     },
     dag::TaskSpec,
-    dispatch::ToolCallRecord,
+    dispatch::{ProviderDispatchClass, ToolCallRecord},
 };
 use serde::Serialize;
 
@@ -82,6 +82,11 @@ pub enum SwarmEvent {
         reason: String,
         enforcement: String,
         provider_lifecycle_available: bool,
+    },
+    ProviderFreeDispatchStarted {
+        task_id: String,
+        attempt: u32,
+        class: ProviderDispatchClass,
     },
     BrokerWorkQueued {
         receipt: QueueReceipt,
