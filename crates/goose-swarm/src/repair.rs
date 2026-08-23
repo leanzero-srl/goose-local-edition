@@ -2042,27 +2042,33 @@ impl RepairTransaction {
         review: AdmittedSemanticObservationReceipt,
     ) -> Result<SemanticAcceptanceReceipt> {
         let expected_source = semantic_observation_task_version(expected_snapshot);
+        let admission = review.admission().clone();
+        let observation = review.observation();
         if handle_snapshot_hash != expected_snapshot.snapshot_hash()
-            || handle_admission != &review.admission
-            || review.admission.role != WorkRole::SemanticJudgeObservation
-            || review.admission.source != expected_source
-            || review.local_completion != LocalCompletionKind::Success
-            || review.observation.stale
-            || review.observation.snapshot_hash != expected_snapshot.snapshot_hash()
+            || handle_admission != &admission
+            || admission.role != WorkRole::SemanticJudgeObservation
+            || admission.source != expected_source
+            || review.local_completion() != LocalCompletionKind::Success
+            || observation.stale
+            || observation.snapshot_hash != expected_snapshot.snapshot_hash()
         {
             bail!("semantic review was not a finished broker admission for this exact preview");
         }
-        let reviewer_reply_hash = review
-            .observation
+        let reviewer_reply_hash = observation
             .reviewer_reply_hash
+            .clone()
             .ok_or_else(|| anyhow!("semantic review has no provider reply identity"))?;
-        let (rationale, citations, covered_requirements) = match review.observation.decision {
-            ParsedSemanticObservation::Parsed { reply } => match reply.observation {
+        let (rationale, citations, covered_requirements) = match &observation.decision {
+            ParsedSemanticObservation::Parsed { reply } => match &reply.observation {
                 SemanticObservationBody::AcceptCandidate {
                     summary,
                     evidence,
                     covered_requirements,
-                } => (summary, evidence, covered_requirements),
+                } => (
+                    summary.clone(),
+                    evidence.clone(),
+                    covered_requirements.clone(),
+                ),
                 _ => bail!("semantic review did not accept this exact preview"),
             },
             ParsedSemanticObservation::Abstained { .. } => {
@@ -2104,7 +2110,7 @@ impl RepairTransaction {
             SEMANTIC_REVIEW_PROTOCOL,
             &request.identity,
             &request.composition_id,
-            &review.admission,
+            &admission,
             ProviderTerminalKind::Finished,
             &reviewer_reply_hash,
             &cited_requirements,
@@ -2115,7 +2121,7 @@ impl RepairTransaction {
             receipt_id: format!("repair-acceptance:{}", sha256_hex(&bytes)),
             review_identity: request.identity.clone(),
             composition_id: request.composition_id.clone(),
-            admission: review.admission,
+            admission,
             provider_terminal: ProviderTerminalKind::Finished,
             reviewer_reply_hash,
             cited_requirements,
