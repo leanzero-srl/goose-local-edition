@@ -194,8 +194,10 @@ def recover(args: argparse.Namespace) -> None:
     log("running the successor's fresh strict five-provider smoke gate")
     if cloud_sb7.durable_smoke(target_root) != 0:
         raise SystemExit("successor smoke gate failed")
-    log("starting detached monitor and manager; only the affected full arm is planned")
-    cloud_sb7.monitor_start(target_root)
+    log(
+        "starting the manager on the monitor handed off by durable smoke; "
+        "only affected full arms are planned"
+    )
     cloud_sb7.start(target_root)
     for entrant_id in sorted(affected_entrants):
         state = cloud_sb7.read_state(target_root, entrant_id)
