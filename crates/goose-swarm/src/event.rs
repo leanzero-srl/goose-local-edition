@@ -6,9 +6,9 @@ use crate::{
     broker::{
         AdmissionReceipt, CapacityUpdateReceipt, LocalCompletionReceipt, PhysicalFleetSnapshot,
         ProviderNotStartedReceipt, ProviderRequestKey, ProviderRequestQueueReceipt,
-        ProviderRequestReceipt, ProviderTerminalReceipt, QueueReceipt, ReleasedAdmissionReceipt,
-        RevokedAdmissionReceipt, StaleWorkReceipt, TaskVersion, UnresolvedAdmissionReceipt,
-        WithdrawnWorkReceipt,
+        ProviderRequestReceipt, ProviderTerminalReceipt, QuarantinedAdmissionReceipt, QueueReceipt,
+        ReleasedAdmissionReceipt, RevokedAdmissionReceipt, StaleWorkReceipt, TaskVersion,
+        UnresolvedAdmissionReceipt, WithdrawnWorkReceipt,
     },
     dag::TaskSpec,
     dispatch::{ProviderDispatchClass, ToolCallRecord},
@@ -160,6 +160,9 @@ pub enum SwarmEvent {
     },
     BrokerAdmissionReleased {
         receipt: ReleasedAdmissionReceipt,
+    },
+    BrokerAdmissionQuarantined {
+        receipt: QuarantinedAdmissionReceipt,
     },
     BrokerReceiptRejected {
         admission: Option<AdmissionReceipt>,

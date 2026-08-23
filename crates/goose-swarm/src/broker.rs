@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -633,6 +633,19 @@ pub struct UnresolvedAdmissionReceipt {
     pub local_completion: Option<LocalCompletionKind>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct QuarantinedAdmissionReceipt {
+    pub admission: AdmissionReceipt,
+    pub unresolved: UnresolvedAdmissionReceipt,
+    pub reason: String,
+}
+
+pub(crate) struct QuarantinedAdmissionOutcome {
+    pub receipt: QuarantinedAdmissionReceipt,
+    pub withdrawn_work: Vec<WithdrawnWorkReceipt>,
+    pub withdrawn_provider_requests: Vec<ProviderRequestReceipt>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderRequestDisposition {
     Granted(ProviderRequestReceipt),
@@ -976,6 +989,8 @@ pub struct PhysicalBroker {
     pending: BTreeMap<String, QueuedWork>,
     pending_provider_requests: BTreeMap<String, QueuedProviderRequest>,
     active: BTreeMap<String, ActiveAdmission>,
+    quarantined_hosts: HashMap<String, String>,
+    quarantined_admissions: HashSet<String>,
     queue_sequence: u64,
     admission_sequence: u64,
 }
@@ -1014,6 +1029,8 @@ impl PhysicalBroker {
             pending: BTreeMap::new(),
             pending_provider_requests: BTreeMap::new(),
             active: BTreeMap::new(),
+            quarantined_hosts: HashMap::new(),
+            quarantined_admissions: HashSet::new(),
             queue_sequence: 0,
             admission_sequence: 0,
         })
@@ -1160,18 +1177,25 @@ impl PhysicalBroker {
                 });
             }
         }
-        let has_route = self.lanes.iter().any(|lane| {
-            (opportunity.eligible_logical_device_ids.is_empty()
-                || opportunity
-                    .eligible_logical_device_ids
-                    .contains(&lane.logical_device_id))
-                && opportunity.excluded_logical_device_id.as_deref()
-                    != Some(lane.logical_device_id.as_str())
-        });
+        let has_route = self
+            .lanes
+            .iter()
+            .any(|lane| opportunity_allows_lane(opportunity, lane));
         if !has_route {
             return Err(BrokerError::InvalidOpportunity {
                 work_id: opportunity.work_id.clone(),
                 reason: "route constraints exclude every verified lane".to_string(),
+            });
+        }
+        if !self.lanes.iter().any(|lane| {
+            opportunity_allows_lane(opportunity, lane)
+                && !self.quarantined_hosts.contains_key(&lane.host_id)
+        }) {
+            return Err(BrokerError::InvalidOpportunity {
+                work_id: opportunity.work_id.clone(),
+                reason:
+                    "every eligible physical host is quarantined by an unresolved provider request"
+                        .to_string(),
             });
         }
         Ok(())
@@ -1293,6 +1317,9 @@ impl PhysicalBroker {
         host_occupancy: &HashMap<String, u32>,
         instance_occupancy: &HashMap<(String, String), u32>,
     ) -> bool {
+        if self.quarantined_hosts.contains_key(host_id) {
+            return false;
+        }
         let instance_key = (host_id.to_string(), instance_id.to_string());
         host_occupancy.get(host_id).copied().unwrap_or(0) < self.host_capacities[host_id]
             && instance_occupancy.get(&instance_key).copied().unwrap_or(0)
@@ -1309,6 +1336,9 @@ impl PhysicalBroker {
             .iter()
             .enumerate()
             .filter(|(_, lane)| {
+                if self.quarantined_hosts.contains_key(&lane.host_id) {
+                    return false;
+                }
                 if !opportunity.eligible_logical_device_ids.is_empty()
                     && !opportunity
                         .eligible_logical_device_ids
@@ -1378,6 +1408,16 @@ impl PhysicalBroker {
             .active
             .get_mut(&receipt.admission_id)
             .ok_or_else(|| BrokerError::UnknownAdmission(receipt.admission_id.clone()))?;
+        if self
+            .quarantined_hosts
+            .contains_key(&active.receipt.physical_host_id)
+        {
+            return Err(BrokerError::InvalidProviderRequest {
+                admission_id: receipt.admission_id,
+                reason: "physical host is quarantined by an unresolved provider request"
+                    .to_string(),
+            });
+        }
         validate_physical_receipt(
             &active.receipt,
             &receipt.admission_id,
@@ -1820,24 +1860,101 @@ impl PhysicalBroker {
         Ok(turn.start)
     }
 
-    pub fn unresolved_admissions(&self) -> Vec<UnresolvedAdmissionReceipt> {
-        self.active
-            .values()
-            .map(|active| UnresolvedAdmissionReceipt {
-                admission: active.receipt.clone(),
-                provider_requests_started: active.provider_requests.len(),
-                provider_requests_terminal: active
-                    .provider_requests
-                    .values()
-                    .filter(|turn| turn.terminal.is_some())
-                    .count(),
-                provider_request_pending: active.pending_provider_request.is_some(),
-                provider_turn_permit_held: active.provider_turn_permit_reserved
-                    || active.live_provider_ordinal.is_some(),
-                provider_starts_closed: active.provider_starts_closed,
-                local_completion: active.local_completion,
+    pub(crate) fn quarantine_unresolved_admission(
+        &mut self,
+        admission_id: &str,
+        reason: String,
+    ) -> Result<QuarantinedAdmissionOutcome, BrokerError> {
+        if reason.trim().is_empty() {
+            return Err(BrokerError::InvalidProviderRequest {
+                admission_id: admission_id.to_string(),
+                reason: "quarantine reason is empty".to_string(),
+            });
+        }
+        let active = self
+            .active
+            .get(admission_id)
+            .ok_or_else(|| BrokerError::UnknownAdmission(admission_id.to_string()))?;
+        let unresolved = unresolved_receipt(active);
+        let has_unproven_live_request = active.live_provider_ordinal.is_some()
+            && unresolved.provider_requests_started > unresolved.provider_requests_terminal;
+        if !active.provider_starts_closed
+            || active.local_completion != Some(LocalCompletionKind::Error)
+            || !has_unproven_live_request
+        {
+            return Err(BrokerError::InvalidProviderRequest {
+                admission_id: admission_id.to_string(),
+                reason: "quarantine requires a locally failed, closed admission with an unproven live provider request"
+                    .to_string(),
+            });
+        }
+        let admission = active.receipt.clone();
+        let host_id = admission.physical_host_id.clone();
+        self.quarantined_hosts
+            .entry(host_id.clone())
+            .or_insert_with(|| reason.clone());
+        self.quarantined_admissions.insert(admission_id.to_string());
+
+        let withdrawn_work_ids = self
+            .pending
+            .iter()
+            .filter(|(_, queued)| {
+                !self.lanes.iter().any(|lane| {
+                    opportunity_allows_lane(&queued.opportunity, lane)
+                        && !self.quarantined_hosts.contains_key(&lane.host_id)
+                })
             })
+            .map(|(work_id, _)| work_id.clone())
+            .collect::<Vec<_>>();
+        let withdrawn_work = withdrawn_work_ids
+            .into_iter()
+            .filter_map(|work_id| self.withdraw_pending_work(&work_id))
+            .collect();
+
+        let withdrawn_provider_ids = self
+            .pending_provider_requests
+            .iter()
+            .filter(|(_, queued)| queued.receipt.physical_host_id == host_id)
+            .map(|(queued_admission_id, queued)| {
+                (queued_admission_id.clone(), queued.receipt.key.clone())
+            })
+            .collect::<Vec<_>>();
+        let withdrawn_provider_requests = withdrawn_provider_ids
+            .into_iter()
+            .filter_map(|(queued_admission_id, key)| {
+                self.withdraw_pending_provider_request(&queued_admission_id, &key)
+                    .ok()
+            })
+            .collect();
+
+        Ok(QuarantinedAdmissionOutcome {
+            receipt: QuarantinedAdmissionReceipt {
+                admission,
+                unresolved,
+                reason,
+            },
+            withdrawn_work,
+            withdrawn_provider_requests,
+        })
+    }
+
+    pub fn unresolved_admissions(&self) -> Vec<UnresolvedAdmissionReceipt> {
+        self.active.values().map(unresolved_receipt).collect()
+    }
+
+    pub(crate) fn unresolved_admissions_for_drain(&self) -> Vec<UnresolvedAdmissionReceipt> {
+        self.active
+            .iter()
+            .filter(|(admission_id, _)| !self.quarantined_admissions.contains(*admission_id))
+            .map(|(_, active)| unresolved_receipt(active))
             .collect()
+    }
+
+    pub(crate) fn active_len_for_drain(&self) -> usize {
+        self.active
+            .keys()
+            .filter(|admission_id| !self.quarantined_admissions.contains(*admission_id))
+            .count()
     }
 
     pub fn snapshot(&self) -> PhysicalFleetSnapshot {
@@ -1927,6 +2044,32 @@ impl PhysicalBroker {
         }
         occupancy
     }
+}
+
+fn unresolved_receipt(active: &ActiveAdmission) -> UnresolvedAdmissionReceipt {
+    UnresolvedAdmissionReceipt {
+        admission: active.receipt.clone(),
+        provider_requests_started: active.provider_requests.len(),
+        provider_requests_terminal: active
+            .provider_requests
+            .values()
+            .filter(|turn| turn.terminal.is_some())
+            .count(),
+        provider_request_pending: active.pending_provider_request.is_some(),
+        provider_turn_permit_held: active.provider_turn_permit_reserved
+            || active.live_provider_ordinal.is_some(),
+        provider_starts_closed: active.provider_starts_closed,
+        local_completion: active.local_completion,
+    }
+}
+
+fn opportunity_allows_lane(opportunity: &WorkOpportunity, lane: &VerifiedPhysicalLane) -> bool {
+    (opportunity.eligible_logical_device_ids.is_empty()
+        || opportunity
+            .eligible_logical_device_ids
+            .contains(&lane.logical_device_id))
+        && opportunity.excluded_logical_device_id.as_deref()
+            != Some(lane.logical_device_id.as_str())
 }
 
 fn validate_opportunity(opportunity: &WorkOpportunity) -> Result<(), BrokerError> {

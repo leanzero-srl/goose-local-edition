@@ -10,7 +10,8 @@ use crate::broker::{
     LocalCompletionKind, PhysicalBroker, PhysicalFleetSnapshot, PhysicalHostOccupancy,
     ProviderNotStartedReceipt, ProviderRequestDisposition, ProviderRequestKey,
     ProviderRequestReceipt, ProviderTerminalKind, ProviderTerminalReceipt,
-    ReleasedAdmissionReceipt, StaleWorkReceipt, TaskVersion, VerifiedPhysicalLane, WorkOpportunity,
+    QuarantinedAdmissionReceipt, ReleasedAdmissionReceipt, StaleWorkReceipt, TaskVersion,
+    VerifiedPhysicalLane, WorkOpportunity,
 };
 use crate::dispatch::{
     DispatchError, DispatchRequest, ProviderDispatchClass, TaskDispatcher, TaskRunOutput,
@@ -85,6 +86,10 @@ pub enum ProviderStartLookupError {
     Concurrent {
         admission_id: String,
     },
+    RuntimeBinding {
+        admission_id: String,
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for ProviderStartLookupError {
@@ -117,6 +122,13 @@ impl std::fmt::Display for ProviderStartLookupError {
                 formatter,
                 "provider start `{admission_id}` already has a different live request"
             ),
+            Self::RuntimeBinding {
+                admission_id,
+                reason,
+            } => write!(
+                formatter,
+                "provider start `{admission_id}` runtime binding failed: {reason}"
+            ),
         }
     }
 }
@@ -129,9 +141,27 @@ impl std::error::Error for ProviderStartLookupError {}
 /// dispatcher queues the steer into its exact Agent/session and only then wakes `cancelled`.
 #[async_trait]
 pub trait ProviderNudgeDelivery: Send + Sync {
+    fn bind_request(&self, request: &ProviderRequestReceipt) -> Result<(), String>;
     fn try_enqueue(&self, guidance: String) -> Result<(), String>;
     fn natural_terminal_allowed(&self) -> bool;
+    fn cancellation_terminal_confirmation_required(&self) -> bool;
     async fn cancelled(&self);
+
+    /// Accept the non-forgeable proof that the exact request reserved by this delivery reached
+    /// the broker, journal, and provider-boundary `Cancelled` terminal.
+    fn confirm_cancelled_terminal(&self, terminal: CompletedProviderRequest) -> Result<(), String>;
+
+    /// Wait for the accepted cancellation terminal, not merely for a queued steer.
+    async fn confirmed_cancelled_terminal(&self) -> Result<ProviderTerminalReceipt, String>;
+}
+
+/// Serializes a semantic nudge's final safety check with its delivery reservation.
+///
+/// Implementations hold the same authority lock used by the changing safety signal while they
+/// invoke `reserve`. This makes progress-before-reservation observable and progress-after-
+/// reservation ordered after cancellation without exposing provider payloads here.
+pub trait ProviderNudgeSafetyGate: Send + Sync {
+    fn reserve(&self, reserve: &mut dyn FnMut() -> Result<(), String>) -> Result<(), String>;
 }
 
 struct ProviderStartRegistryEntry {
@@ -734,7 +764,7 @@ impl PhysicalAdmissionControl {
             let state = self.inner.state.lock().await;
             (
                 state.broker.pending_work_ids(),
-                state.broker.unresolved_admissions(),
+                state.broker.unresolved_admissions_for_drain(),
             )
         };
         if !pending_work_ids.is_empty() || !unresolved.is_empty() {
@@ -747,7 +777,11 @@ impl PhysicalAdmissionControl {
             let changed = self.inner.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            if self.occupancy().await == (0, 0) {
+            let drained = {
+                let state = self.inner.state.lock().await;
+                state.broker.pending_len() == 0 && state.broker.active_len_for_drain() == 0
+            };
+            if drained {
                 return Ok(());
             }
             changed.await;
@@ -966,6 +1000,103 @@ impl PhysicalAdmissionControl {
         drop(state);
         self.inner.changed.notify_waiters();
         Ok(())
+    }
+
+    async fn quarantine_unproven_admission(
+        &self,
+        admission_id: &str,
+        reason: String,
+    ) -> Result<QuarantinedAdmissionReceipt, BrokerError> {
+        self.ensure_journal_healthy()?;
+        let mut state = self.inner.state.lock().await;
+        let closed = state.broker.close_provider_starts(admission_id)?;
+        if let Some(admission) = closed.admission {
+            self.inner
+                .sink
+                .emit(&SwarmEvent::BrokerProviderStartsClosed {
+                    admission: admission.clone(),
+                });
+            if let Some(receipt) = closed.provider_not_started {
+                self.inner.sink.emit(&SwarmEvent::BrokerProviderNotStarted {
+                    admission: admission.clone(),
+                    receipt,
+                });
+            }
+            if let Some(receipt) = closed.pending_provider_request {
+                if let Some(waiter) = state
+                    .provider_waiters
+                    .remove(&(admission_id.to_string(), receipt.key.clone()))
+                {
+                    let _ = waiter.send(Err(BrokerError::ProviderStartsClosed(
+                        admission_id.to_string(),
+                    )));
+                }
+                self.inner
+                    .sink
+                    .emit(&SwarmEvent::BrokerProviderRequestWithdrawn {
+                        admission,
+                        receipt,
+                        reason: "provider lifecycle closed before quarantine adjudication"
+                            .to_string(),
+                    });
+            }
+        }
+
+        let admission = state.broker.active_receipt(admission_id).cloned();
+        let local = state
+            .broker
+            .record_local_completion(admission_id, LocalCompletionKind::Error)?;
+        self.inner.sink.emit(&SwarmEvent::BrokerWorkLocalCompleted {
+            admission: admission.expect("quarantined completion belongs to active admission"),
+            receipt: local,
+        });
+        let outcome = state
+            .broker
+            .quarantine_unresolved_admission(admission_id, reason)?;
+        self.inner
+            .sink
+            .emit(&SwarmEvent::BrokerAdmissionQuarantined {
+                receipt: outcome.receipt.clone(),
+            });
+        for receipt in outcome.withdrawn_work {
+            if let Some(waiter) = state.admission_waiters.remove(&receipt.work_id) {
+                let _ = waiter.send(Err(BrokerError::InvalidOpportunity {
+                    work_id: receipt.work_id.clone(),
+                    reason: "every eligible physical host is quarantined by an unresolved provider request"
+                        .to_string(),
+                }));
+            }
+            self.inner
+                .sink
+                .emit(&SwarmEvent::BrokerWorkWithdrawn { receipt });
+        }
+        for receipt in outcome.withdrawn_provider_requests {
+            let admission = state.broker.active_receipt(&receipt.admission_id).cloned();
+            if let Some(waiter) = state
+                .provider_waiters
+                .remove(&(receipt.admission_id.clone(), receipt.key.clone()))
+            {
+                let _ = waiter.send(Err(BrokerError::InvalidProviderRequest {
+                    admission_id: receipt.admission_id.clone(),
+                    reason: "physical host is quarantined by an unresolved provider request"
+                        .to_string(),
+                }));
+            }
+            if let Some(admission) = admission {
+                self.inner
+                    .sink
+                    .emit(&SwarmEvent::BrokerProviderRequestWithdrawn {
+                        admission,
+                        receipt,
+                        reason: "physical host quarantined after an unproven provider outcome"
+                            .to_string(),
+                    });
+            }
+        }
+        self.pump_if_journal_healthy(&mut state)?;
+        drop(state);
+        self.inner.changed.notify_waiters();
+        Ok(outcome.receipt)
     }
 
     async fn wait_for_release(
@@ -1287,6 +1418,21 @@ impl AdmittedWork {
         self.lifecycle.clone()
     }
 
+    /// Adjudicate a locally failed call whose exposed provider request has no terminal proof.
+    ///
+    /// The admission and its physical permit remain unresolved and the whole physical host is
+    /// excluded from later admission. Phase drain may continue on other hosts, but no release or
+    /// provider terminal receipt is fabricated for the quarantined request.
+    pub async fn quarantine_unproven(
+        self,
+        reason: String,
+    ) -> Result<QuarantinedAdmissionReceipt, BrokerError> {
+        self.lifecycle
+            .control
+            .quarantine_unproven_admission(&self.receipt.admission_id, reason)
+            .await
+    }
+
     pub async fn complete_local(&self, kind: LocalCompletionKind) -> Result<(), BrokerError> {
         self.lifecycle
             .control
@@ -1360,14 +1506,15 @@ impl CompletedAdmission {
 
 /// Payload-free proof that one exact live provider request accepted a semantic redirect.
 ///
-/// The receipt is minted only after the dispatcher-owned delivery channel confirms that the steer
-/// was queued into the source Agent/session. It does not claim that a new provider turn started;
-/// the lifecycle wrapper still records the cancelled terminal before that continuation can run.
+/// The receipt is minted only after the dispatcher-owned delivery channel returns the accepted
+/// `Cancelled` terminal for the exact captured request. A queued steer alone is not delivery proof.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProviderNudgeDeliveryReceipt {
     pub delivery_id: String,
+    pub observation_snapshot_hash: String,
     pub source_admission_id: String,
     pub source_provider_request: ProviderRequestKey,
+    pub source_cancel_terminal: ProviderTerminalReceipt,
     pub source_physical_host_id: String,
     pub source_model_instance_id: String,
     pub judge_admission_id: String,
@@ -1383,6 +1530,7 @@ struct ProviderRequestExposureState {
 struct ProviderRequestAuthority {
     receipt: Arc<ProviderRequestReceipt>,
     exposure: StdMutex<ProviderRequestExposureState>,
+    closed: Notify,
     boundary: StdMutex<Option<ProviderLeaseHttpBoundary>>,
     nudge_delivery: StdMutex<Option<Arc<dyn ProviderNudgeDelivery>>>,
 }
@@ -1392,17 +1540,24 @@ impl ProviderRequestAuthority {
         Arc::new(Self {
             receipt: Arc::new(receipt),
             exposure: StdMutex::new(ProviderRequestExposureState::default()),
+            closed: Notify::new(),
             boundary: StdMutex::new(None),
             nudge_delivery: StdMutex::new(None),
         })
     }
 
     fn resume(previous: &Self) -> Arc<Self> {
+        let nudge_delivery = previous
+            .nudge_delivery
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         Arc::new(Self {
             receipt: previous.receipt.clone(),
             exposure: StdMutex::new(ProviderRequestExposureState::default()),
+            closed: Notify::new(),
             boundary: StdMutex::new(None),
-            nudge_delivery: StdMutex::new(None),
+            nudge_delivery: StdMutex::new(nudge_delivery),
         })
     }
 
@@ -1425,10 +1580,18 @@ impl ProviderRequestAuthority {
     }
 
     fn close_live_use(&self) {
-        self.exposure
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .live_use_closed = true;
+        let changed = {
+            let mut state = self
+                .exposure
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let changed = !state.live_use_closed;
+            state.live_use_closed = true;
+            changed
+        };
+        if changed {
+            self.closed.notify_waiters();
+        }
     }
 
     fn bind_scheduler_runtime(
@@ -1437,6 +1600,14 @@ impl ProviderRequestAuthority {
         nudge_delivery: Option<Arc<dyn ProviderNudgeDelivery>>,
     ) -> Result<(), ProviderStartLookupError> {
         self.ensure_started_live()?;
+        if let Some(delivery) = &nudge_delivery {
+            delivery.bind_request(&self.receipt).map_err(|reason| {
+                ProviderStartLookupError::RuntimeBinding {
+                    admission_id: self.receipt.admission_id.clone(),
+                    reason,
+                }
+            })?;
+        }
         *self
             .boundary
             .lock()
@@ -1495,6 +1666,54 @@ pub(crate) struct LiveProviderRequestSession {
     request: Arc<ProviderRequestAuthority>,
 }
 
+/// Exact, non-rebindable request capability captured when semantic evidence was observed.
+///
+/// Holding this value does not keep a terminal request live. Delivery rechecks the shared request
+/// authority, so a later Agent turn cannot be nudged with evidence captured from an earlier turn.
+pub struct CapturedProviderRequest {
+    session: LiveProviderRequestSession,
+    observation_snapshot_hash: String,
+}
+
+impl std::fmt::Debug for CapturedProviderRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CapturedProviderRequest")
+            .field("request", &self.session.request.receipt.key)
+            .field("observation_snapshot_hash", &self.observation_snapshot_hash)
+            .finish_non_exhaustive()
+    }
+}
+
+impl CapturedProviderRequest {
+    pub fn request(&self) -> &ProviderRequestReceipt {
+        &self.session.request.receipt
+    }
+
+    pub fn observation_snapshot_hash(&self) -> &str {
+        &self.observation_snapshot_hash
+    }
+
+    pub fn is_live(&self) -> bool {
+        self.session.request.is_started_live()
+    }
+
+    pub fn closed(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let request = self.session.request.clone();
+        async move {
+            loop {
+                let notified = request.closed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if !request.is_started_live() {
+                    return;
+                }
+                notified.await;
+            }
+        }
+    }
+}
+
 impl std::fmt::Debug for LiveProviderRequestSession {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -1520,7 +1739,7 @@ pub(crate) struct LiveProviderRequestPin<'a> {
 /// The request/terminal pair cannot be reconstructed from public receipts: this value is
 /// non-cloneable and is minted only after the lease, journal, and physical broker all accept the
 /// terminal transition.
-pub(crate) struct CompletedProviderRequest {
+pub struct CompletedProviderRequest {
     admission: AdmissionReceipt,
     request: ProviderRequestReceipt,
     terminal: ProviderTerminalReceipt,
@@ -1538,15 +1757,15 @@ impl std::fmt::Debug for CompletedProviderRequest {
 }
 
 impl CompletedProviderRequest {
-    pub(crate) fn admission(&self) -> &AdmissionReceipt {
+    pub fn admission(&self) -> &AdmissionReceipt {
         &self.admission
     }
 
-    pub(crate) fn request(&self) -> &ProviderRequestReceipt {
+    pub fn request(&self) -> &ProviderRequestReceipt {
         &self.request
     }
 
-    pub(crate) fn terminal(&self) -> &ProviderTerminalReceipt {
+    pub fn terminal(&self) -> &ProviderTerminalReceipt {
         &self.terminal
     }
 
@@ -1613,7 +1832,11 @@ impl LiveProviderRequestSession {
         Ok(())
     }
 
-    async fn enqueue_nudge_and_wait(&self, guidance: String) -> Result<(), String> {
+    async fn enqueue_nudge_and_wait(
+        &self,
+        guidance: String,
+        safety: &dyn ProviderNudgeSafetyGate,
+    ) -> Result<ProviderTerminalReceipt, String> {
         let delivery = {
             let state = self
                 .request
@@ -1632,9 +1855,28 @@ impl LiveProviderRequestSession {
                     "provider request has no dispatcher-owned nudge delivery".to_string()
                 })?
         };
-        delivery.try_enqueue(guidance)?;
+        let mut guidance = Some(guidance);
+        safety.reserve(&mut || {
+            let guidance = guidance.take().ok_or_else(|| {
+                "provider nudge reservation was invoked more than once".to_string()
+            })?;
+            delivery.try_enqueue(guidance)
+        })?;
         delivery.cancelled().await;
-        Ok(())
+        let terminal = delivery.confirmed_cancelled_terminal().await?;
+        let expected = &self.request.receipt;
+        if terminal.kind != ProviderTerminalKind::Cancelled
+            || terminal.admission_id != expected.admission_id
+            || terminal.key != expected.key
+            || terminal.physical_host_id != expected.physical_host_id
+            || terminal.model_instance_id != expected.model_instance_id
+        {
+            return Err(
+                "nudge delivery returned a cancellation terminal for a different provider request"
+                    .to_string(),
+            );
+        }
+        Ok(terminal)
     }
 }
 
@@ -1862,6 +2104,14 @@ impl StartedProviderRequest {
         }
     }
 
+    /// Mark a request whose owning provider future is about to be dropped for exact cancelled
+    /// terminal reconciliation. The actual terminal remains broker/journal/lease mediated.
+    pub fn arm_cancelled_reconciliation_on_drop(&mut self) {
+        if self.pending_terminal.is_none() {
+            self.pending_terminal = Some(ProviderTerminalKind::Cancelled);
+        }
+    }
+
     pub async fn provider_terminal(
         self,
         kind: ProviderTerminalKind,
@@ -1869,7 +2119,7 @@ impl StartedProviderRequest {
         self.provider_terminal_with_completion(kind).await.map(drop)
     }
 
-    pub(crate) async fn provider_terminal_with_completion(
+    pub async fn provider_terminal_with_completion(
         mut self,
         kind: ProviderTerminalKind,
     ) -> Result<CompletedProviderRequest, ProviderLifecycleTransitionError> {
@@ -2118,6 +2368,14 @@ enum ProviderStartAction {
     Failed(String),
 }
 
+enum ProviderDropReconcileAction {
+    None,
+    Claim(RecoverableProviderRequest),
+    Wait,
+    Unproven,
+    Failed(String),
+}
+
 #[derive(Clone)]
 pub struct ProviderLifecycle {
     control: PhysicalAdmissionControl,
@@ -2135,12 +2393,165 @@ impl ProviderLifecycle {
         Arc::ptr_eq(&self.control.inner, &other.control.inner)
     }
 
+    /// Capture the exact provider turn that was live when semantic evidence was observed.
+    pub fn capture_live_provider_request(
+        &self,
+        observation_snapshot_hash: String,
+    ) -> Result<CapturedProviderRequest, ProviderLifecycleOperationError> {
+        if observation_snapshot_hash.is_empty() {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "semantic observation snapshot hash is empty".to_string(),
+            ));
+        }
+        let source_key = ProviderStartKey::from_admission(&self.admission);
+        let started = self
+            .control
+            .inner
+            .provider_starts
+            .query(&source_key)
+            .map_err(|error| ProviderLifecycleOperationError::Unresolved(error.to_string()))?;
+        let session = LiveProviderRequestSession {
+            request: started.request,
+        };
+        Ok(CapturedProviderRequest {
+            session,
+            observation_snapshot_hash,
+        })
+    }
+
+    pub fn current_live_provider_request_receipt(
+        &self,
+    ) -> Result<ProviderRequestReceipt, ProviderLifecycleOperationError> {
+        let source_key = ProviderStartKey::from_admission(&self.admission);
+        self.control
+            .inner
+            .provider_starts
+            .query(&source_key)
+            .map(|started| started.request.receipt.as_ref().clone())
+            .map_err(|error| ProviderLifecycleOperationError::Unresolved(error.to_string()))
+    }
+
+    /// Reconcile a provider future that was explicitly dropped by its owner.
+    ///
+    /// A missing pending terminal is never upgraded to cancellation here: unproven transport
+    /// failure remains unresolved. Retryable journal/lease contention is retried without an
+    /// attempt or elapsed-time cap because the exact request authority is retained.
+    pub async fn reconcile_cancelled_after_drop(
+        &self,
+    ) -> Result<Option<CompletedProviderRequest>, ProviderLifecycleStartError> {
+        loop {
+            let action = {
+                let mut outstanding = self
+                    .outstanding
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                match outstanding.take() {
+                    None => ProviderDropReconcileAction::None,
+                    Some(OutstandingProviderRequest::Recoverable(request))
+                        if request.pending_terminal == Some(ProviderTerminalKind::Cancelled) =>
+                    {
+                        *outstanding = Some(OutstandingProviderRequest::Claimed);
+                        ProviderDropReconcileAction::Claim(request)
+                    }
+                    Some(OutstandingProviderRequest::Recoverable(request)) => {
+                        *outstanding = Some(OutstandingProviderRequest::Recoverable(request));
+                        ProviderDropReconcileAction::Unproven
+                    }
+                    Some(OutstandingProviderRequest::Starting) => {
+                        *outstanding = Some(OutstandingProviderRequest::Starting);
+                        ProviderDropReconcileAction::Wait
+                    }
+                    Some(OutstandingProviderRequest::Claimed) => {
+                        *outstanding = Some(OutstandingProviderRequest::Claimed);
+                        ProviderDropReconcileAction::Wait
+                    }
+                    Some(OutstandingProviderRequest::Failed(reason)) => {
+                        *outstanding = Some(OutstandingProviderRequest::Failed(reason.clone()));
+                        ProviderDropReconcileAction::Failed(reason)
+                    }
+                }
+            };
+            let request = match action {
+                ProviderDropReconcileAction::None => return Ok(None),
+                ProviderDropReconcileAction::Claim(request) => request,
+                ProviderDropReconcileAction::Wait => {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                ProviderDropReconcileAction::Unproven => {
+                    return Err(ProviderLifecycleStartError::Operation(
+                        ProviderLifecycleOperationError::Unresolved(
+                            "outstanding provider request has no proven cancelled terminal"
+                                .to_string(),
+                        ),
+                    ));
+                }
+                ProviderDropReconcileAction::Failed(reason) => {
+                    return Err(ProviderLifecycleStartError::Operation(
+                        ProviderLifecycleOperationError::Unresolved(reason),
+                    ));
+                }
+            };
+            let mut guard = ClaimedProviderRequestGuard {
+                lifecycle: self.clone(),
+                request: Some(request),
+                armed: true,
+            };
+            let recoverable = guard
+                .request
+                .as_mut()
+                .expect("claimed provider request is present");
+            if recoverable.boundary.is_none() {
+                if let Some(authority) = &self.control.inner.provider_leases {
+                    recoverable.boundary = Some(
+                        authority
+                            .reserve_provider_request(&self.admission, &recoverable.request.receipt)
+                            .await?,
+                    );
+                }
+            }
+            let started = guard.into_started();
+            let delivery = started
+                .request_authority()
+                .nudge_delivery
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            let confirmation_required = delivery
+                .as_ref()
+                .is_some_and(|delivery| !delivery.natural_terminal_allowed());
+            match started
+                .provider_terminal_with_completion(ProviderTerminalKind::Cancelled)
+                .await
+            {
+                Ok(completed) => {
+                    if confirmation_required {
+                        let _ = delivery
+                            .expect("confirmation-required delivery exists")
+                            .confirm_cancelled_terminal(completed);
+                        return Ok(None);
+                    }
+                    return Ok(Some(completed));
+                }
+                Err(ProviderLifecycleTransitionError::Retryable { request, .. }) => {
+                    drop(request);
+                    tokio::task::yield_now().await;
+                }
+                Err(error) => {
+                    return Err(ProviderLifecycleStartError::TerminalReconciliation(error));
+                }
+            }
+        }
+    }
+
     /// Deliver one semantic redirect to this exact live provider request after an independently
     /// admitted judge has completed successfully on a distinct physical host.
     pub async fn deliver_nudge_after_judge(
         &self,
+        captured: CapturedProviderRequest,
         judge: CompletedAdmission,
         guidance: String,
+        safety: &dyn ProviderNudgeSafetyGate,
     ) -> Result<ProviderNudgeDeliveryReceipt, ProviderLifecycleOperationError> {
         if !Arc::ptr_eq(&self.control.inner, &judge.control.inner) {
             return Err(ProviderLifecycleOperationError::Unresolved(
@@ -2159,30 +2570,46 @@ impl ProviderLifecycle {
                 "semantic judge has no successful released provider-terminal receipt".to_string(),
             ));
         }
+        match &judge_admission.source.kind {
+            crate::broker::SourceRevisionKind::Trace { snapshot_hash, .. }
+                if snapshot_hash == captured.observation_snapshot_hash() => {}
+            crate::broker::SourceRevisionKind::Trace { .. } => {
+                return Err(ProviderLifecycleOperationError::Unresolved(
+                    "semantic judge trace does not match the captured observation snapshot"
+                        .to_string(),
+                ));
+            }
+            _ => {
+                return Err(ProviderLifecycleOperationError::Unresolved(
+                    "semantic judge admission is not bound to a trace snapshot".to_string(),
+                ));
+            }
+        }
         if judge_admission.physical_host_id == self.admission.physical_host_id {
             return Err(ProviderLifecycleOperationError::Unresolved(
                 "semantic judge did not run on a distinct physical host".to_string(),
             ));
         }
-        let source_key = ProviderStartKey::from_admission(&self.admission);
-        let started = self
-            .control
-            .inner
-            .provider_starts
-            .query(&source_key)
-            .map_err(|error| ProviderLifecycleOperationError::Unresolved(error.to_string()))?;
-        let source_request = started.request.receipt.clone();
-        let session = LiveProviderRequestSession {
-            request: started.request,
-        };
-        session
-            .enqueue_nudge_and_wait(guidance)
+        let source_request = captured.session.request.receipt.clone();
+        if source_request.admission_id != self.admission.admission_id
+            || source_request.physical_host_id != self.admission.physical_host_id
+            || source_request.model_instance_id != self.admission.model_instance_id
+        {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "captured provider request does not belong to the source admission".to_string(),
+            ));
+        }
+        let source_cancel_terminal = captured
+            .session
+            .enqueue_nudge_and_wait(guidance, safety)
             .await
             .map_err(ProviderLifecycleOperationError::Unresolved)?;
         Ok(ProviderNudgeDeliveryReceipt {
             delivery_id: format!("provider-nudge-delivery:{:032x}", rand::random::<u128>()),
+            observation_snapshot_hash: captured.observation_snapshot_hash,
             source_admission_id: self.admission.admission_id.clone(),
             source_provider_request: source_request.key.clone(),
+            source_cancel_terminal,
             source_physical_host_id: self.admission.physical_host_id.clone(),
             source_model_instance_id: self.admission.model_instance_id.clone(),
             judge_admission_id: judge_admission.admission_id.clone(),
@@ -2619,14 +3046,31 @@ mod provider_start_registry_tests {
 
     #[derive(Default)]
     struct DeferredNudgeDelivery {
+        bound: StdMutex<Option<ProviderRequestReceipt>>,
         reserved: AtomicBool,
         released: AtomicBool,
         queued: Notify,
         release: Notify,
+        confirmation: StdMutex<Option<Result<ProviderTerminalReceipt, String>>>,
+        confirmed: Notify,
     }
 
     #[async_trait]
     impl ProviderNudgeDelivery for DeferredNudgeDelivery {
+        fn bind_request(&self, request: &ProviderRequestReceipt) -> Result<(), String> {
+            let mut bound = self.bound.lock().unwrap();
+            match bound.as_ref() {
+                Some(existing) if existing != request => {
+                    Err("delivery already bound to another request".to_string())
+                }
+                Some(_) => Ok(()),
+                None => {
+                    *bound = Some(request.clone());
+                    Ok(())
+                }
+            }
+        }
+
         fn try_enqueue(&self, _guidance: String) -> Result<(), String> {
             if self.reserved.swap(true, Ordering::SeqCst) {
                 return Err("delivery already reserved".to_string());
@@ -2639,10 +3083,54 @@ mod provider_start_registry_tests {
             !self.reserved.load(Ordering::SeqCst)
         }
 
+        fn cancellation_terminal_confirmation_required(&self) -> bool {
+            self.reserved.load(Ordering::SeqCst)
+        }
+
         async fn cancelled(&self) {
             while !self.released.load(Ordering::SeqCst) {
                 self.release.notified().await;
             }
+        }
+
+        fn confirm_cancelled_terminal(
+            &self,
+            completed: CompletedProviderRequest,
+        ) -> Result<(), String> {
+            let bound = self.bound.lock().unwrap();
+            let result = match bound.as_ref() {
+                Some(request)
+                    if completed.request() == request
+                        && completed.terminal().kind == ProviderTerminalKind::Cancelled
+                        && completed.terminal().admission_id == request.admission_id
+                        && completed.terminal().key == request.key =>
+                {
+                    Ok(completed.terminal().clone())
+                }
+                _ => Err("cancel terminal does not match bound request".to_string()),
+            };
+            drop(bound);
+            *self.confirmation.lock().unwrap() = Some(result.clone());
+            self.confirmed.notify_waiters();
+            result.map(drop)
+        }
+
+        async fn confirmed_cancelled_terminal(&self) -> Result<ProviderTerminalReceipt, String> {
+            loop {
+                let notified = self.confirmed.notified();
+                if let Some(result) = self.confirmation.lock().unwrap().clone() {
+                    return result;
+                }
+                notified.await;
+            }
+        }
+    }
+
+    struct AllowNudge;
+
+    impl ProviderNudgeSafetyGate for AllowNudge {
+        fn reserve(&self, reserve: &mut dyn FnMut() -> Result<(), String>) -> Result<(), String> {
+            reserve()
         }
     }
 
@@ -2793,6 +3281,9 @@ mod provider_start_registry_tests {
         source_request
             .publish_for_scheduler_with_nudge_delivery(delivery.clone())
             .unwrap();
+        let captured = source_lifecycle
+            .capture_live_provider_request("snapshot-judge-task".to_string())
+            .unwrap();
         let judge_request = judge.lifecycle().start_provider_request().await.unwrap();
         judge_request
             .provider_terminal(ProviderTerminalKind::Finished)
@@ -2808,7 +3299,12 @@ mod provider_start_registry_tests {
             let source_lifecycle = source_lifecycle.clone();
             async move {
                 source_lifecycle
-                    .deliver_nudge_after_judge(completed_judge, "redirect".to_string())
+                    .deliver_nudge_after_judge(
+                        captured,
+                        completed_judge,
+                        "redirect".to_string(),
+                        &AllowNudge,
+                    )
                     .await
             }
         });
@@ -2821,9 +3317,78 @@ mod provider_start_registry_tests {
         );
         delivery.released.store(true, Ordering::SeqCst);
         delivery.release.notify_waiters();
+        let source_terminal = source_request
+            .provider_terminal_with_completion(ProviderTerminalKind::Cancelled)
+            .await
+            .unwrap();
+        delivery
+            .confirm_cancelled_terminal(source_terminal)
+            .unwrap();
         let receipt = deliver.await.unwrap().unwrap();
         assert_eq!(receipt.source_admission_id, source.receipt().admission_id);
         assert_eq!(receipt.judge_admission_id, judge_admission_id);
+        assert_eq!(
+            receipt.source_cancel_terminal.kind,
+            ProviderTerminalKind::Cancelled
+        );
+        assert_eq!(receipt.observation_snapshot_hash, "snapshot-judge-task");
+
+        source
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn judge_completion_from_another_snapshot_cannot_authorize_delivery() {
+        let control = nudge_control(false);
+        let source = admit_role(
+            &control,
+            "snapshot-source",
+            WorkRole::ResearchEvidence,
+            "source-device",
+        )
+        .await;
+        let judge = admit_role(
+            &control,
+            "snapshot-judge",
+            WorkRole::SemanticJudgeObservation,
+            "judge-device",
+        )
+        .await;
+        let source_lifecycle = source.lifecycle();
+        let source_request = source_lifecycle.start_provider_request().await.unwrap();
+        let delivery = Arc::new(DeferredNudgeDelivery::default());
+        source_request
+            .publish_for_scheduler_with_nudge_delivery(delivery.clone())
+            .unwrap();
+        let captured = source_lifecycle
+            .capture_live_provider_request("different-snapshot".to_string())
+            .unwrap();
+        judge
+            .lifecycle()
+            .start_provider_request()
+            .await
+            .unwrap()
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        let completed_judge = judge
+            .complete_local_with_completion(LocalCompletionKind::Success)
+            .await
+            .unwrap();
+
+        let error = source_lifecycle
+            .deliver_nudge_after_judge(
+                captured,
+                completed_judge,
+                "stale judge".to_string(),
+                &AllowNudge,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("does not match"));
+        assert!(!delivery.reserved.load(Ordering::SeqCst));
 
         source_request
             .provider_terminal(ProviderTerminalKind::Cancelled)
@@ -2831,6 +3396,127 @@ mod provider_start_registry_tests {
             .unwrap();
         source
             .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancellation_confirmation_rejects_wrong_request_without_waiting_forever() {
+        let control = nudge_control(false);
+        let source = admit_role(
+            &control,
+            "confirmation-source",
+            WorkRole::ResearchEvidence,
+            "source-device",
+        )
+        .await;
+        let other = admit_role(
+            &control,
+            "confirmation-other",
+            WorkRole::SemanticJudgeObservation,
+            "judge-device",
+        )
+        .await;
+        let source_request = source.lifecycle().start_provider_request().await.unwrap();
+        let delivery = Arc::new(DeferredNudgeDelivery::default());
+        source_request
+            .publish_for_scheduler_with_nudge_delivery(delivery.clone())
+            .unwrap();
+        delivery.try_enqueue("redirect".to_string()).unwrap();
+        let wrong = other
+            .lifecycle()
+            .start_provider_request()
+            .await
+            .unwrap()
+            .provider_terminal_with_completion(ProviderTerminalKind::Cancelled)
+            .await
+            .unwrap();
+        assert!(delivery.confirm_cancelled_terminal(wrong).is_err());
+        let confirmation = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            delivery.confirmed_cancelled_terminal(),
+        )
+        .await
+        .expect("mismatched proof must finalize the confirmation channel");
+        assert!(confirmation.is_err());
+
+        source_request
+            .provider_terminal(ProviderTerminalKind::Cancelled)
+            .await
+            .unwrap();
+        source
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        other
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn stale_capture_cannot_nudge_a_later_provider_turn() {
+        let control = nudge_control(false);
+        let source = admit_role(
+            &control,
+            "two-turn-source",
+            WorkRole::PlanningAuthority,
+            "source-device",
+        )
+        .await;
+        let judge = admit_role(
+            &control,
+            "two-turn-judge",
+            WorkRole::SemanticJudgeObservation,
+            "judge-device",
+        )
+        .await;
+        let lifecycle = source.lifecycle();
+        let first_delivery = Arc::new(DeferredNudgeDelivery::default());
+        let first = lifecycle.start_provider_request().await.unwrap();
+        first
+            .publish_for_scheduler_with_nudge_delivery(first_delivery)
+            .unwrap();
+        let captured = lifecycle
+            .capture_live_provider_request("snapshot-two-turn-judge".to_string())
+            .unwrap();
+        first
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+
+        let second_delivery = Arc::new(DeferredNudgeDelivery::default());
+        let second = lifecycle.start_provider_request().await.unwrap();
+        second
+            .publish_for_scheduler_with_nudge_delivery(second_delivery.clone())
+            .unwrap();
+        let judge_request = judge.lifecycle().start_provider_request().await.unwrap();
+        judge_request
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        let completed_judge = judge
+            .complete_local_with_completion(LocalCompletionKind::Success)
+            .await
+            .unwrap();
+        let error = lifecycle
+            .deliver_nudge_after_judge(
+                captured,
+                completed_judge,
+                "stale redirect".to_string(),
+                &AllowNudge,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("no longer live"));
+        assert!(!second_delivery.reserved.load(Ordering::SeqCst));
+
+        second
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        source
+            .complete_local(LocalCompletionKind::Success)
             .await
             .unwrap();
     }
@@ -2857,6 +3543,9 @@ mod provider_start_registry_tests {
         source_request
             .publish_for_scheduler_with_nudge_delivery(Arc::new(DeferredNudgeDelivery::default()))
             .unwrap();
+        let captured = source_lifecycle
+            .capture_live_provider_request("snapshot-same-judge".to_string())
+            .unwrap();
         let judge_request = judge.lifecycle().start_provider_request().await.unwrap();
         judge_request
             .provider_terminal(ProviderTerminalKind::Finished)
@@ -2867,7 +3556,12 @@ mod provider_start_registry_tests {
             .await
             .unwrap();
         let error = source_lifecycle
-            .deliver_nudge_after_judge(completed_judge, "redirect".to_string())
+            .deliver_nudge_after_judge(
+                captured,
+                completed_judge,
+                "redirect".to_string(),
+                &AllowNudge,
+            )
             .await
             .unwrap_err();
         assert!(error.to_string().contains("distinct physical host"));
