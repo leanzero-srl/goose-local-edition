@@ -236,9 +236,12 @@ SMOKE_RETRYABLE_STATES = {"PLANNED", "PRE_ADMISSION_FAILURE"}
 SMOKE_PREPARABLE_STATES = SMOKE_RETRYABLE_STATES | {"WAITING_PROVIDER_LANE"}
 MONITOR_TERMINAL_STATES = {"PUBLISHED", "ATTENTION", "STOPPED"}
 MONITOR_DETACH_TIMEOUT_SECONDS = 5.0
+MONITOR_LAUNCHER_TIMEOUT_SECONDS = 15.0
 MONITOR_HEARTBEAT_INTERVAL_SECONDS = 10.0
 MONITOR_LEASE_TIMEOUT_SECONDS = 35.0
 MONITOR_LEASE_RENEWAL_SECONDS = 5.0
+SCORER_OWNERSHIP_ENV = "GOOSE_SB7_SCORER_OWNERSHIP"
+SCORER_INVENTORY_POLL_SECONDS = 2.0
 MONITOR_NETWORK_TIMEOUT_SECONDS = 10.0
 MANAGER_WATCH_POLL_SECONDS = 1.0
 GATED_EXEC_RECEIPT_TIMEOUT_SECONDS = 10.0
@@ -251,8 +254,12 @@ MONITOR_PROGRESS_WINDOW_REPEAT_NUMERATOR = 2
 MONITOR_PROGRESS_WINDOW_REPEAT_DENOMINATOR = 3
 MONITOR_PROGRESS_SENTENCE_REPEAT_NUMERATOR = 1
 MONITOR_PROGRESS_SENTENCE_REPEAT_DENOMINATOR = 4
-BUDGET_HISTORY_SCHEMA = 1
+BUDGET_HISTORY_SCHEMA = 2
 BUDGET_HISTORY_ROOT = "budget-history"
+
+
+class BudgetReleasePending(RuntimeError):
+    pass
 
 
 def utc_now() -> str:
@@ -2746,6 +2753,26 @@ def classify_build_exit(
     )
 
 
+def interrupted_build_pre_admission_proven(
+    status: str, lifecycle: Mapping[str, Any]
+) -> bool:
+    if int(lifecycle.get("admitted", 0)) != 0 or lifecycle_failure(lifecycle):
+        return False
+    if status in {"PLANNED", "WAITING_PROVIDER_LANE"}:
+        return True
+    if status != "BUILD_RUNNING":
+        return False
+    request_states = lifecycle.get("request_states")
+    return bool(
+        isinstance(request_states, dict)
+        and request_states
+        and all(
+            isinstance(states, list) and states and states[-1] == "error"
+            for states in request_states.values()
+        )
+    )
+
+
 def lifecycle_summary(
     path: Path, *, expected_provider: str, expected_model: str
 ) -> Dict[str, Any]:
@@ -2759,10 +2786,21 @@ def lifecycle_summary(
         "ambiguous_request_ids": [],
         "request_states": {},
         "terminal_usage": {},
+        "snapshot_sha256": sha256_bytes(b""),
         "valid": True,
     }
     if not path.is_file():
         return summary
+    try:
+        with path.open("rb") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
+            try:
+                payload = stream.read()
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    except FileNotFoundError:
+        return summary
+    summary["snapshot_sha256"] = sha256_bytes(payload)
     requests: Dict[str, Dict[str, Any]] = {}
     terminal_states = {"provider_terminal", "stream_ambiguous", "error"}
     known_states = {
@@ -2773,7 +2811,7 @@ def lifecycle_summary(
         *terminal_states,
     }
     for line_number, raw in enumerate(
-        path.read_text(errors="replace").splitlines(), start=1
+        payload.decode(errors="replace").splitlines(), start=1
     ):
         try:
             event = json.loads(raw)
@@ -3337,7 +3375,10 @@ def budget_ledger_monotonic_failure(
     current: Mapping[str, Any],
     config: Mapping[str, Any],
     immutable_outstanding_ids: set[str],
+    release_evidence: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> str | None:
+    releases = release_evidence or {}
+    released_ids = set(releases)
     for ledger in (previous, current):
         failure = budget_ledger_failure(ledger, config)
         if failure:
@@ -3359,15 +3400,33 @@ def budget_ledger_monotonic_failure(
     for row in previous["settled"]:
         if current_settled.get(str(row["request_id"])) != row:
             return f"anchored settlement changed or disappeared: {row['request_id']}"
+    observed_releases: set[str] = set()
     for request_id, reservation in previous["outstanding"].items():
         current_reservation = current["outstanding"].get(request_id)
         if current_reservation == reservation:
             continue
+        if current_reservation is not None:
+            return f"anchored reservation changed while still outstanding: {request_id}"
         if request_id in immutable_outstanding_ids:
             return f"carried reservation changed or disappeared: {request_id}"
         settlement = current_settled.get(request_id)
         if not isinstance(settlement, dict):
-            return f"anchored reservation disappeared without settlement: {request_id}"
+            if request_id not in released_ids:
+                return (
+                    "anchored reservation disappeared without settlement or "
+                    f"proven pre-admission release: {request_id}"
+                )
+            release = releases[request_id]
+            if (
+                release.get("provider") != reservation.get("provider")
+                or release.get("model") != reservation.get("model")
+            ):
+                return (
+                    "pre-admission release identity differs from anchored reservation: "
+                    f"{request_id}"
+                )
+            observed_releases.add(request_id)
+            continue
         if (
             settlement.get("provider") != reservation.get("provider")
             or settlement.get("model") != reservation.get("model")
@@ -3377,6 +3436,8 @@ def budget_ledger_monotonic_failure(
             )
         ):
             return f"anchored reservation settled under different terms: {request_id}"
+    if released_ids != observed_releases:
+        return "anchored pre-admission release evidence differs from ledger transition"
     return None
 
 
@@ -3394,6 +3455,7 @@ def budget_history_entry_payload(
     sequence: int,
     previous_record_sha256: str | None,
     ledger_sha256: str,
+    release_evidence_sha256: str,
 ) -> Dict[str, Any]:
     return {
         "schema_version": BUDGET_HISTORY_SCHEMA,
@@ -3402,6 +3464,7 @@ def budget_history_entry_payload(
         "sequence": sequence,
         "previous_record_sha256": previous_record_sha256,
         "ledger_sha256": ledger_sha256,
+        "release_evidence_sha256": release_evidence_sha256,
         "created_at": utc_now(),
     }
 
@@ -3413,6 +3476,7 @@ def write_budget_history_entry(
     sequence: int,
     previous_record_sha256: str | None,
     ledger: Mapping[str, Any],
+    release_evidence: Mapping[str, Mapping[str, Any]],
 ) -> Dict[str, Any]:
     entries = budget_history_root(root) / "entries"
     entries.mkdir(parents=True, exist_ok=True)
@@ -3423,12 +3487,24 @@ def write_budget_history_entry(
     try:
         ledger_path = temporary / "ledger.json"
         atomic_json(ledger_path, dict(ledger))
+        release_path = temporary / "releases.json"
+        atomic_json(
+            release_path,
+            {
+                "schema_version": BUDGET_HISTORY_SCHEMA,
+                "releases": [
+                    dict(release_evidence[request_id])
+                    for request_id in sorted(release_evidence)
+                ],
+            },
+        )
         record = budget_history_entry_payload(
             campaign,
             transition_id,
             sequence,
             previous_record_sha256,
             sha256_file(ledger_path),
+            sha256_file(release_path),
         )
         atomic_json(temporary / "record.json", record)
         fsync_directory(temporary)
@@ -3463,6 +3539,7 @@ def initialize_budget_history(
         0,
         None,
         ledger,
+        {},
     )
     atomic_json(history / "head.json", head)
     return head
@@ -3489,7 +3566,136 @@ def generation_two_carried_reservation_ids(
     return values
 
 
-def budget_history_failure(
+def generation_two_release_evidence(
+    root: Path, campaign: Mapping[str, Any]
+) -> tuple[
+    Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], str | None
+]:
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    evidence: Dict[str, Dict[str, Any]] = {}
+    pending: Dict[str, Dict[str, Any]] = {}
+    seen_request_ids: set[str] = set()
+    for row in entrants(manifest):
+        entrant_id = str(row["id"])
+        lifecycle_paths: list[Path] = []
+        attempts_root = root / "smoke" / entrant_id / "attempts"
+        if attempts_root.is_dir() and not attempts_root.is_symlink():
+            lifecycle_paths.extend(
+                path / "provider-lifecycle.jsonl"
+                for path in sorted(attempts_root.glob("attempt-*"))
+                if path.is_dir() and not path.is_symlink()
+            )
+        state = read_state(root, entrant_id)
+        full_path_value = state.get("provider_lifecycle")
+        if isinstance(full_path_value, str) and full_path_value:
+            lifecycle_paths.append(Path(full_path_value))
+        for lifecycle_path in lifecycle_paths:
+            summary = lifecycle_summary(
+                lifecycle_path,
+                expected_provider=str(row["provider"]),
+                expected_model=str(row["model"]),
+            )
+            if summary["malformed_lines"] or summary["transition_errors"]:
+                return {}, {}, (
+                    f"{entrant_id} release lifecycle contains malformed or invalid "
+                    "transitions"
+                )
+            request_states = summary.get("request_states")
+            if not isinstance(request_states, dict):
+                return {}, {}, (
+                    f"{entrant_id} release lifecycle has no request states"
+                )
+            duplicate = seen_request_ids & set(request_states)
+            if duplicate:
+                return {}, {}, (
+                    "generation-two release lifecycle reused request IDs: "
+                    + ", ".join(sorted(duplicate))
+                )
+            seen_request_ids.update(request_states)
+            for request_id, states in request_states.items():
+                if states == ["queued"] and state.get("status") == "BUILD_RUNNING":
+                    goose_live = process_alive(
+                        state.get("goose_pid"), state.get("goose_identity")
+                    )
+                    supervisor_live = process_alive(
+                        state.get("supervisor_pid"),
+                        state.get("supervisor_identity"),
+                    )
+                    if goose_live or supervisor_live:
+                        pending[str(request_id)] = {
+                            "request_id": str(request_id),
+                            "entrant": entrant_id,
+                            "provider": str(row["provider"]),
+                            "model": str(row["model"]),
+                            "states": ["queued"],
+                            "lifecycle_sha256": str(summary["snapshot_sha256"]),
+                        }
+                if states != ["queued", "error"]:
+                    continue
+                evidence[str(request_id)] = {
+                    "request_id": str(request_id),
+                    "entrant": entrant_id,
+                    "provider": str(row["provider"]),
+                    "model": str(row["model"]),
+                    "states": ["queued", "error"],
+                    "lifecycle_sha256": str(summary["snapshot_sha256"]),
+                }
+    return evidence, pending, None
+
+
+def budget_transition_release_ids(
+    previous: Mapping[str, Any], current: Mapping[str, Any]
+) -> set[str]:
+    current_settled = {
+        str(row["request_id"])
+        for row in current["settled"]
+        if isinstance(row, dict) and isinstance(row.get("request_id"), str)
+    }
+    return {
+        str(request_id)
+        for request_id in previous["outstanding"]
+        if request_id not in current["outstanding"]
+        and request_id not in current_settled
+    }
+
+
+def budget_release_payload_failure(value: Any) -> str | None:
+    if not isinstance(value, dict) or set(value) != {"schema_version", "releases"}:
+        return "budget release evidence payload is malformed"
+    releases = value.get("releases")
+    if value.get("schema_version") != BUDGET_HISTORY_SCHEMA or not isinstance(
+        releases, list
+    ):
+        return "budget release evidence payload is malformed"
+    request_ids: list[str] = []
+    for release in releases:
+        if (
+            not isinstance(release, dict)
+            or set(release)
+            != {
+                "request_id",
+                "entrant",
+                "provider",
+                "model",
+                "states",
+                "lifecycle_sha256",
+            }
+            or not all(
+                isinstance(release.get(key), str) and release.get(key)
+                for key in ("request_id", "entrant", "provider", "model")
+            )
+            or release.get("states") != ["queued", "error"]
+            or not isinstance(release.get("lifecycle_sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", release["lifecycle_sha256"]) is None
+        ):
+            return "budget release evidence record is malformed"
+        request_ids.append(str(release["request_id"]))
+    if request_ids != sorted(set(request_ids)):
+        return "budget release evidence request IDs are not exact and unique"
+    return None
+
+
+def _budget_history_failure_unlocked(
     root: Path,
     campaign: Mapping[str, Any],
     *,
@@ -3517,6 +3723,17 @@ def budget_history_failure(
         config = load_json(Path(str(campaign["budget_config"])))
         source_ledger = load_json(root / "recovery/source-budget-ledger.json")
         carried_ids = generation_two_carried_reservation_ids(root, campaign)
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        entrant_identities = {
+            str(row["id"]): (str(row["provider"]), str(row["model"]))
+            for row in entrants(manifest)
+        }
+        live_release_evidence, pending_release_evidence, release_problem = (
+            generation_two_release_evidence(root, campaign)
+        )
+        if release_problem:
+            return release_problem
+        anchored_release_evidence: Dict[str, Dict[str, Any]] = {}
         previous_record_sha: str | None = None
         previous_ledger: Dict[str, Any] | None = None
         latest_head: Dict[str, Any] | None = None
@@ -3525,9 +3742,10 @@ def budget_history_failure(
                 return f"budget history entry is not a regular directory: {entry.name}"
             record_path = entry / "record.json"
             ledger_path = entry / "ledger.json"
+            release_path = entry / "releases.json"
             if any(
                 path.is_symlink() or not path.is_file()
-                for path in (record_path, ledger_path)
+                for path in (record_path, ledger_path, release_path)
             ):
                 return f"budget history entry is incomplete: {entry.name}"
             record = load_json(record_path)
@@ -3538,6 +3756,7 @@ def budget_history_failure(
                 "sequence",
                 "previous_record_sha256",
                 "ledger_sha256",
+                "release_evidence_sha256",
                 "created_at",
             }
             if (
@@ -3548,6 +3767,8 @@ def budget_history_failure(
                 or record.get("sequence") != sequence
                 or record.get("previous_record_sha256") != previous_record_sha
                 or record.get("ledger_sha256") != sha256_file(ledger_path)
+                or record.get("release_evidence_sha256")
+                != sha256_file(release_path)
                 or not isinstance(record.get("created_at"), str)
                 or not record.get("created_at")
             ):
@@ -3556,17 +3777,49 @@ def budget_history_failure(
             ledger_problem = budget_ledger_failure(ledger, config)
             if ledger_problem:
                 return f"budget history {entry.name} {ledger_problem}"
+            release_payload = load_json(release_path)
+            release_payload_problem = budget_release_payload_failure(release_payload)
+            if release_payload_problem:
+                return f"budget history {entry.name} {release_payload_problem}"
+            entry_release_evidence = {
+                str(value["request_id"]): value
+                for value in release_payload["releases"]
+            }
+            for release in entry_release_evidence.values():
+                if entrant_identities.get(str(release["entrant"])) != (
+                    str(release["provider"]),
+                    str(release["model"]),
+                ):
+                    return (
+                        f"budget history {entry.name} release evidence has a false "
+                        "entrant identity"
+                    )
+            duplicate_releases = set(anchored_release_evidence) & set(
+                entry_release_evidence
+            )
+            if duplicate_releases:
+                return (
+                    "budget history repeats pre-admission release evidence: "
+                    + ", ".join(sorted(duplicate_releases))
+                )
             if sequence == 0:
                 if ledger != source_ledger:
                     return "budget history initial ledger differs from recovery source"
                 if sha256_file(record_path) != expected_initial:
                     return "budget history initial record differs from lineage"
+                if entry_release_evidence:
+                    return "budget history initial entry has release evidence"
             elif previous_ledger is not None:
                 monotonic_problem = budget_ledger_monotonic_failure(
-                    previous_ledger, ledger, config, carried_ids
+                    previous_ledger,
+                    ledger,
+                    config,
+                    carried_ids,
+                    entry_release_evidence,
                 )
                 if monotonic_problem:
                     return f"budget history {entry.name} is not monotonic: {monotonic_problem}"
+            anchored_release_evidence.update(entry_release_evidence)
             previous_record_sha = sha256_file(record_path)
             previous_ledger = ledger
             latest_head = {
@@ -3582,8 +3835,25 @@ def budget_history_failure(
             return "budget history head does not name the latest committed entry"
         current = load_json(Path(str(campaign["budget_ledger"])))
         assert previous_ledger is not None
+        current_release_ids = budget_transition_release_ids(
+            previous_ledger, current
+        )
+        unproven_release_ids = current_release_ids - set(live_release_evidence)
+        if unproven_release_ids - set(pending_release_evidence):
+            return "current budget ledger has an unproven pre-admission release"
+        current_release_evidence = {
+            request_id: (
+                live_release_evidence.get(request_id)
+                or pending_release_evidence[request_id]
+            )
+            for request_id in current_release_ids
+        }
         current_problem = budget_ledger_monotonic_failure(
-            previous_ledger, current, config, carried_ids
+            previous_ledger,
+            current,
+            config,
+            carried_ids,
+            current_release_evidence,
         )
         if current_problem:
             return f"current budget ledger rolled back behind its durable head: {current_problem}"
@@ -3594,37 +3864,83 @@ def budget_history_failure(
     return None
 
 
-def anchor_budget_ledger(root: Path) -> Dict[str, Any] | None:
+def budget_history_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    *,
+    require_current_head: bool = False,
+) -> str | None:
+    with exclusive_claim(
+        root / "locks/budget-history.claim", blocking=True
+    ) as claimed:
+        if not claimed:
+            return "cannot claim generation-two budget history validation"
+        return _budget_history_failure_unlocked(
+            root,
+            campaign,
+            require_current_head=require_current_head,
+        )
+
+
+def anchor_budget_ledger(
+    root: Path, *, require_current: bool = False
+) -> Dict[str, Any] | None:
     campaign = load_json(campaign_file(root))
     if validated_campaign_lineage(campaign)["generation"] != 2:
         return None
     with exclusive_claim(root / "locks/budget-history.claim", blocking=True) as claimed:
         if not claimed:
             raise SystemExit("cannot claim generation-two budget history")
-        problem = budget_history_failure(root, campaign)
-        if problem:
-            raise SystemExit(problem)
-        history = budget_history_root(root)
-        head = load_json(history / "head.json")
-        last_ledger = load_json(
-            budget_history_entry(root, int(head["sequence"])) / "ledger.json"
-        )
-        current = load_json(Path(str(campaign["budget_ledger"])))
-        if current == last_ledger:
-            return head
-        next_head = write_budget_history_entry(
-            root,
-            campaign,
-            str(load_json(root / ORCHESTRATOR_RECOVERY_PATH)["transition_id"]),
-            int(head["sequence"]) + 1,
-            str(head["record_sha256"]),
-            current,
-        )
-        atomic_json(history / "head.json", next_head)
-        problem = budget_history_failure(root, campaign, require_current_head=True)
-        if problem:
-            raise SystemExit(problem)
-        return next_head
+        ledger_path = Path(str(campaign["budget_ledger"]))
+        with exclusive_claim(ledger_path.with_suffix(".lock"), blocking=True) as locked:
+            if not locked:
+                raise SystemExit("cannot claim generation-two budget ledger snapshot")
+            problem = _budget_history_failure_unlocked(root, campaign)
+            if problem:
+                raise SystemExit(problem)
+            history = budget_history_root(root)
+            head = load_json(history / "head.json")
+            last_ledger = load_json(
+                budget_history_entry(root, int(head["sequence"])) / "ledger.json"
+            )
+            current = load_json(ledger_path)
+            if current == last_ledger:
+                return head
+            release_ids = budget_transition_release_ids(last_ledger, current)
+            release_evidence, pending_release_evidence, release_problem = (
+                generation_two_release_evidence(root, campaign)
+            )
+            if release_problem:
+                raise SystemExit(release_problem)
+            pending_ids = release_ids & set(pending_release_evidence)
+            if pending_ids:
+                if require_current:
+                    raise BudgetReleasePending(
+                        "budget release lifecycle is pending: "
+                        + ", ".join(sorted(pending_ids))
+                    )
+                return head
+            transition_release_evidence = {
+                request_id: release_evidence[request_id]
+                for request_id in release_ids
+                if request_id in release_evidence
+            }
+            next_head = write_budget_history_entry(
+                root,
+                campaign,
+                str(load_json(root / ORCHESTRATOR_RECOVERY_PATH)["transition_id"]),
+                int(head["sequence"]) + 1,
+                str(head["record_sha256"]),
+                current,
+                transition_release_evidence,
+            )
+            atomic_json(history / "head.json", next_head)
+            problem = _budget_history_failure_unlocked(
+                root, campaign, require_current_head=True
+            )
+            if problem:
+                raise SystemExit(problem)
+            return next_head
 
 
 def generation_two_entrant_accounting_failure(
@@ -3699,6 +4015,16 @@ def generation_two_entrant_accounting_failure(
                 return f"{entrant_id} reused request IDs: {', '.join(sorted(duplicate))}"
             request_states.update(summary["request_states"])
             terminal_usage.update(summary["terminal_usage"])
+
+        predecessor_request_ids = {
+            str(value["request_id"]) for value in initial["settled"]
+        } | {str(request_id) for request_id in initial["outstanding"]}
+        reused_predecessor_ids = predecessor_request_ids & set(request_states)
+        if reused_predecessor_ids:
+            return (
+                f"{entrant_id} reused predecessor request IDs: "
+                + ", ".join(sorted(reused_predecessor_ids))
+            )
 
         terminal_ids = {
             request_id
@@ -8662,8 +8988,8 @@ def smoke_attempt_evidence(
         reasons.append(generation_two_accounting)
     else:
         try:
-            anchor_budget_ledger(root)
-        except SystemExit as error:
+            anchor_budget_ledger(root, require_current=True)
+        except (SystemExit, BudgetReleasePending) as error:
             reasons.append(f"generation-two budget anchoring failed: {error}")
 
     try:
@@ -9788,8 +10114,8 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
             completed = False
         if not budget_error and not generation_two_accounting:
             try:
-                anchor_budget_ledger(root)
-            except SystemExit as error:
+                anchor_budget_ledger(root, require_current=True)
+            except (SystemExit, BudgetReleasePending) as error:
                 status = "INCOMPLETE"
                 failure = f"generation-two budget anchoring failed: {error}"
                 completed = False
@@ -11328,10 +11654,18 @@ def process_group_members(pgid: int) -> list[tuple[int, str]]:
     return members
 
 
-def process_descendant_records(parent_pid: Any) -> list[Dict[str, Any]]:
-    try:
-        root_pid = int(parent_pid)
-    except (TypeError, ValueError):
+def process_descendant_records_from_roots(
+    parent_pids: Iterable[Any],
+) -> list[Dict[str, Any]]:
+    root_pids: set[int] = set()
+    for value in parent_pids:
+        try:
+            pid = int(value)
+        except (TypeError, ValueError):
+            continue
+        if pid > 1:
+            root_pids.add(pid)
+    if not root_pids:
         return []
     proc = subprocess.run(
         ["ps", "-axo", "pid=,ppid=,pgid=,stat="],
@@ -11353,12 +11687,12 @@ def process_descendant_records(parent_pid: Any) -> list[Dict[str, Any]]:
             continue
         rows[pid] = (ppid, pgid, fields[3])
     descendants: set[int] = set()
-    frontier = {root_pid}
+    frontier = set(root_pids)
     while frontier:
         children = {
             pid
             for pid, (ppid, _, _) in rows.items()
-            if ppid in frontier and pid not in descendants and pid != root_pid
+            if ppid in frontier and pid not in descendants and pid not in root_pids
         }
         if not children:
             break
@@ -11384,6 +11718,53 @@ def process_descendant_records(parent_pid: Any) -> list[Dict[str, Any]]:
             }
         )
     return records
+
+
+def process_descendant_records(parent_pid: Any) -> list[Dict[str, Any]]:
+    return process_descendant_records_from_roots([parent_pid])
+
+
+def scorer_marker_process_records(
+    marker: Any,
+) -> tuple[list[Dict[str, Any]], bool]:
+    if not isinstance(marker, str) or len(marker) < 32:
+        return [], False
+    proc = subprocess.run(
+        ["ps", "eww", "-axo", "pid=,ppid=,pgid=,stat=,command="],
+        text=True,
+        capture_output=True,
+        check=False,
+        start_new_session=True,
+    )
+    if proc.returncode != 0:
+        return [], False
+    needle = f"{SCORER_OWNERSHIP_ENV}={marker}"
+    records: list[Dict[str, Any]] = []
+    for raw in proc.stdout.splitlines():
+        fields = raw.split(maxsplit=4)
+        if len(fields) < 5 or needle not in fields[4] or fields[3].startswith("Z"):
+            continue
+        try:
+            pid, ppid, pgid = map(int, fields[:3])
+        except ValueError:
+            continue
+        identity = process_identity(pid)
+        if identity is None:
+            continue
+        try:
+            session_id = os.getsid(pid)
+        except (OSError, ProcessLookupError):
+            continue
+        records.append(
+            {
+                "pid": pid,
+                "ppid": ppid,
+                "pgid": pgid,
+                "session_id": session_id,
+                "identity": identity,
+            }
+        )
+    return normalized_process_inventory(records), True
 
 
 def normalized_process_inventory(value: Any) -> list[Dict[str, Any]]:
@@ -11420,13 +11801,52 @@ def normalized_process_inventory(value: Any) -> list[Dict[str, Any]]:
     return [records[key] for key in sorted(records)]
 
 
+def cleared_scorer_ownership_changes(
+    state: Mapping[str, Any],
+) -> Dict[str, Any]:
+    closed_at = utc_now()
+    inventory = normalized_process_inventory(state.get("score_process_inventory"))
+    raw_history = state.get("score_process_inventory_history")
+    history = list(raw_history) if isinstance(raw_history, list) else []
+    if inventory:
+        history.append(
+            {
+                "score_attempt": int(state.get("score_attempts", 0)),
+                "closed_at": closed_at,
+                "processes": inventory,
+            }
+        )
+    return {
+        "score_pid": None,
+        "score_pgid": None,
+        "score_identity": None,
+        "score_ownership_marker": None,
+        "score_process_inventory": [],
+        "score_process_inventory_updated_at": closed_at,
+        "score_process_inventory_history": history,
+    }
+
+
 def record_scorer_process_inventory(
     root: Path, entrant_id: str, scorer_pid: Any
 ) -> list[Dict[str, Any]]:
     state = read_state(root, entrant_id)
     existing = normalized_process_inventory(state.get("score_process_inventory"))
+    roots = {
+        int(record["pid"])
+        for record in existing
+        if process_alive(record["pid"], record["identity"])
+    }
+    score_identity = state.get("score_identity")
+    if (
+        isinstance(score_identity, str)
+        and score_identity
+        and process_alive(scorer_pid, score_identity)
+    ):
+        roots.add(int(scorer_pid))
+    marked, _ = scorer_marker_process_records(state.get("score_ownership_marker"))
     combined = normalized_process_inventory(
-        [*existing, *process_descendant_records(scorer_pid)]
+        [*existing, *process_descendant_records_from_roots(roots), *marked]
     )
     if combined != existing:
         update_state(
@@ -11443,9 +11863,23 @@ def scorer_runtime_survivors(
 ) -> list[Dict[str, Any]]:
     inventory = normalized_process_inventory(state.get("score_process_inventory"))
     if include_current_descendants:
+        roots = {
+            int(record["pid"])
+            for record in inventory
+            if process_alive(record["pid"], record["identity"])
+        }
+        score_identity = state.get("score_identity")
+        if (
+            isinstance(score_identity, str)
+            and score_identity
+            and process_alive(state.get("score_pid"), score_identity)
+        ):
+            roots.add(int(state["score_pid"]))
         inventory = normalized_process_inventory(
-            [*inventory, *process_descendant_records(state.get("score_pid"))]
+            [*inventory, *process_descendant_records_from_roots(roots)]
         )
+    marked, _ = scorer_marker_process_records(state.get("score_ownership_marker"))
+    inventory = normalized_process_inventory([*inventory, *marked])
     survivors = [
         record
         for record in inventory
@@ -11455,10 +11889,7 @@ def scorer_runtime_survivors(
     score_pgid = int(state.get("score_pgid") or 0)
     if (
         score_pgid > 1
-        and (
-            process_alive(score_pid, state.get("score_identity"))
-            or process_group_members(score_pgid)
-        )
+        and process_alive(score_pid, state.get("score_identity"))
     ):
         identity = state.get("score_identity")
         survivors.append(
@@ -11479,14 +11910,33 @@ def stop_scorer_runtime(root: Path, entrant_id: str) -> tuple[bool, bool]:
         root, entrant_id, state.get("score_pid")
     )
     state = read_state(root, entrant_id)
+    marker = state.get("score_ownership_marker")
+    marker_required = isinstance(marker, str) and len(marker) >= 32
+    _, marker_scan_proven = scorer_marker_process_records(marker)
+    score_pgid = int(state.get("score_pgid") or 0)
+    external_session_observed = any(
+        int(record["pgid"]) != score_pgid
+        or int(record["session_id"]) != score_pgid
+        for record in inventory
+    )
     survivors_before = scorer_runtime_survivors(state)
+    score_group_members = process_group_members(score_pgid) if score_pgid > 1 else []
+    score_group_attributed = any(
+        int(record["pgid"]) == score_pgid for record in survivors_before
+    )
+    unattributed_score_group = bool(
+        score_group_members and not score_group_attributed
+    )
     groups = {
         int(record["pgid"])
         for record in survivors_before
         if int(record["pgid"]) > 1 and int(record["pgid"]) != os.getpgrp()
     }
-    score_pgid = int(state.get("score_pgid") or 0)
-    if score_pgid > 1 and score_pgid != os.getpgrp():
+    if (
+        score_pgid > 1
+        and score_pgid != os.getpgrp()
+        and score_group_attributed
+    ):
         groups.add(score_pgid)
     for pgid in sorted(groups):
         stop_group(pgid, grace_seconds=5.0)
@@ -11498,13 +11948,30 @@ def stop_scorer_runtime(root: Path, entrant_id: str) -> tuple[bool, bool]:
                 os.kill(record["pid"], signal.SIGKILL)
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
-        if not scorer_runtime_survivors(read_state(root, entrant_id)):
-            return True, bool(survivors_before)
+        current = read_state(root, entrant_id)
+        record_scorer_process_inventory(root, entrant_id, current.get("score_pid"))
+        current = read_state(root, entrant_id)
+        _, marker_scan_proven = scorer_marker_process_records(marker)
+        if not scorer_runtime_survivors(current):
+            attribution_proven = (
+                marker_scan_proven
+                if marker_required
+                else not external_session_observed
+            )
+            cleanup_proven = not unattributed_score_group and attribution_proven
+            return cleanup_proven, bool(survivors_before)
         time.sleep(0.2)
-    return (
-        not scorer_runtime_survivors(read_state(root, entrant_id)),
-        bool(survivors_before),
+    current = read_state(root, entrant_id)
+    record_scorer_process_inventory(root, entrant_id, current.get("score_pid"))
+    _, marker_scan_proven = scorer_marker_process_records(marker)
+    clean = not scorer_runtime_survivors(read_state(root, entrant_id))
+    attribution_proven = (
+        marker_scan_proven if marker_required else not external_session_observed
     )
+    cleanup_proven = bool(
+        clean and not unattributed_score_group and attribution_proven
+    )
+    return cleanup_proven, bool(survivors_before)
 
 
 def wait_for_scorer(
@@ -11513,9 +11980,13 @@ def wait_for_scorer(
     campaign: Mapping[str, Any],
     proc: subprocess.Popen[Any],
     poll_seconds: float = 0.25,
-) -> tuple[int, bool]:
+) -> tuple[int, bool, bool]:
+    next_inventory_at = 0.0
     while proc.poll() is None:
-        record_scorer_process_inventory(root, entrant_id, proc.pid)
+        now = time.monotonic()
+        if now >= next_inventory_at:
+            record_scorer_process_inventory(root, entrant_id, proc.pid)
+            next_inventory_at = now + SCORER_INVENTORY_POLL_SECONDS
         lease_problem = active_manager_monitor_lease_failure(root, campaign)
         if lease_problem:
             clean, _ = stop_scorer_runtime(root, entrant_id)
@@ -11527,7 +11998,13 @@ def wait_for_scorer(
     record_scorer_process_inventory(root, entrant_id, proc.pid)
     exit_code = proc.wait()
     clean, had_survivors = stop_scorer_runtime(root, entrant_id)
-    return exit_code, clean and not had_survivors
+    lease_problem = active_manager_monitor_lease_failure(root, campaign)
+    if lease_problem:
+        raise RuntimeError(
+            "monitor lease failed after scorer cleanup: "
+            f"{lease_problem}; descendants_clean={clean}"
+        )
+    return exit_code, clean, had_survivors
 
 
 def stop_group_members(
@@ -11581,6 +12058,12 @@ def manager_monitor_attention(root: Path, lease_failure: str) -> None:
             )
         if not group_clean:
             cleanup_failures.append(f"{entrant_id}:supervisor-pgid={pgid}")
+        state = read_state(root, entrant_id)
+        if (
+            state.get("status") in TERMINAL_BUILD_STATES | POST_BUILD_STATES
+            and group_clean
+        ):
+            continue
         row = manifest_row(root, entrant_id)
         lifecycle = lifecycle_summary(
             Path(str(state["provider_lifecycle"])),
@@ -11590,11 +12073,19 @@ def manager_monitor_attention(root: Path, lease_failure: str) -> None:
         outstanding, budget_error = current_full_episode_outstanding_reservations(
             root, campaign, row
         )
+        accounting_error = generation_two_entrant_accounting_failure(
+            root, campaign, row
+        )
+        pre_admission_proven = interrupted_build_pre_admission_proven(
+            str(state.get("status")), lifecycle
+        )
         ambiguous = bool(
             lifecycle["admitted"]
             or lifecycle_failure(lifecycle)
             or outstanding
             or budget_error
+            or accounting_error
+            or not pre_admission_proven
             or not group_clean
         )
         reasons = [f"monitor lease lost: {lease_failure}"]
@@ -11606,6 +12097,10 @@ def manager_monitor_attention(root: Path, lease_failure: str) -> None:
             )
         if budget_error:
             reasons.append(budget_error)
+        if accounting_error:
+            reasons.append(accounting_error)
+        if not pre_admission_proven:
+            reasons.append("pre-admission termination is not explicitly proven")
         if not group_clean:
             reasons.append("owned supervisor group survived cleanup")
         update_state(
@@ -11662,6 +12157,13 @@ def wait_for_builds(
                 ):
                     pgid = int(state.get("supervisor_pgid") or 0)
                     group_clean = not process_group_members(pgid) or stop_group(pgid)
+                    state = read_state(root, str(state["entrant"]))
+                    if (
+                        state.get("status")
+                        in TERMINAL_BUILD_STATES | POST_BUILD_STATES
+                        and group_clean
+                    ):
+                        continue
                     row = manifest_row(root, str(state["entrant"]))
                     lifecycle = lifecycle_summary(
                         Path(str(state["provider_lifecycle"])),
@@ -11673,11 +12175,19 @@ def wait_for_builds(
                             root, campaign, row
                         )
                     )
+                    accounting_error = generation_two_entrant_accounting_failure(
+                        root, campaign, row
+                    )
+                    pre_admission_proven = interrupted_build_pre_admission_proven(
+                        str(state.get("status")), lifecycle
+                    )
                     ambiguous = bool(
                         lifecycle["admitted"]
                         or lifecycle_failure(lifecycle)
                         or outstanding_ids
                         or budget_error
+                        or accounting_error
+                        or not pre_admission_proven
                         or not group_clean
                     )
                     reasons = ["supervisor disappeared; silence is not success"]
@@ -11691,6 +12201,12 @@ def wait_for_builds(
                         )
                     if budget_error:
                         reasons.append(budget_error)
+                    if accounting_error:
+                        reasons.append(accounting_error)
+                    if not pre_admission_proven:
+                        reasons.append(
+                            "pre-admission termination is not explicitly proven"
+                        )
                     if not group_clean:
                         reasons.append("owned process group survived cleanup")
                     update_state(
@@ -11972,9 +12488,17 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
             if campaign.get("smoke_status") == "PASS":
                 require_smoke_proofs(root)
                 monitor = read_monitor_state(root)
-                if monitor_lease_snapshot_failure(root, monitor, campaign):
+                monitor_alive = process_alive(
+                    monitor.get("pid"), monitor.get("identity")
+                )
+                launcher_alive = process_alive(
+                    monitor.get("launcher_pid"), monitor.get("launcher_identity")
+                )
+                if not monitor_alive and not launcher_alive:
                     monitor_start(root)
-                    monitor = wait_for_authenticated_monitor(root, campaign)
+                elif launcher_alive:
+                    monitor_start(root)
+                monitor = wait_for_authenticated_monitor(root, campaign)
                 commit_smoke_monitor_handoff(root, campaign, monitor)
                 handoff_problem = smoke_monitor_handoff_failure(root)
                 if handoff_problem:
@@ -12111,6 +12635,7 @@ def recover_interrupted_scoring(root: Path) -> None:
                 score_pid=None,
                 score_pgid=None,
                 score_identity=None,
+                score_ownership_marker=None,
             )
         update_state(root, entrant_id, **changes)
 
@@ -12176,6 +12701,9 @@ def manager_restart_mismatch(root: Path) -> str | None:
         outstanding, budget_error = current_full_episode_outstanding_reservations(
             root, campaign, row
         )
+        accounting_error = generation_two_entrant_accounting_failure(
+            root, campaign, row
+        )
         reasons = []
         if lifecycle.get("admitted"):
             reasons.append(f"{lifecycle['admitted']} provider request(s) admitted")
@@ -12187,6 +12715,8 @@ def manager_restart_mismatch(root: Path) -> str | None:
             )
         if budget_error:
             reasons.append(budget_error)
+        if accounting_error:
+            reasons.append(accounting_error)
         attempts = int(state.get("provider_episode_attempts", 0))
         if could_relaunch and attempts >= max_episodes:
             reasons.append("provider episode allowance is exhausted")
@@ -12195,6 +12725,27 @@ def manager_restart_mismatch(root: Path) -> str | None:
                 reasons
             )
     return None
+
+
+def stop_build_runtime_topology(state: Mapping[str, Any]) -> bool:
+    topology_clean = True
+    for pid_key, pgid_key, identity_key in (
+        ("supervisor_pid", "supervisor_pgid", "supervisor_identity"),
+        ("goose_pid", "process_group", "goose_identity"),
+    ):
+        pid = state.get(pid_key)
+        pgid = int(state.get(pgid_key) or 0)
+        record_clean = stop_recorded_group(
+            pid,
+            pgid,
+            state.get(identity_key),
+        )
+        if process_alive(pid, state.get(identity_key)):
+            record_clean = False
+        if pgid and process_group_members(pgid):
+            record_clean = False
+        topology_clean = topology_clean and record_clean
+    return topology_clean
 
 
 def normalize_interrupted_builds(
@@ -12210,23 +12761,14 @@ def normalize_interrupted_builds(
         if interrupted_status not in {"WAITING_PROVIDER_LANE", "BUILD_RUNNING"}:
             continue
 
-        topology_clean = True
-        for pid_key, pgid_key, identity_key in (
-            ("supervisor_pid", "supervisor_pgid", "supervisor_identity"),
-            ("goose_pid", "process_group", "goose_identity"),
+        topology_clean = stop_build_runtime_topology(state)
+        state = read_state(root, entrant_id)
+        interrupted_status = str(state.get("status"))
+        if (
+            interrupted_status not in {"WAITING_PROVIDER_LANE", "BUILD_RUNNING"}
+            and topology_clean
         ):
-            pid = state.get(pid_key)
-            pgid = int(state.get(pgid_key) or 0)
-            record_clean = stop_recorded_group(
-                pid,
-                pgid,
-                state.get(identity_key),
-            )
-            if process_alive(pid, state.get(identity_key)):
-                record_clean = False
-            if pgid and process_group_members(pgid):
-                record_clean = False
-            topology_clean = topology_clean and record_clean
+            continue
         lifecycle = lifecycle_summary(
             Path(str(state.get("provider_lifecycle", ""))),
             expected_provider=str(row["provider"]),
@@ -12238,27 +12780,15 @@ def normalize_interrupted_builds(
         accounting_error = generation_two_entrant_accounting_failure(
             root, campaign, row
         )
-        request_states = lifecycle.get("request_states")
-        explicit_pre_admission_terminal = (
-            interrupted_status == "BUILD_RUNNING"
-            and isinstance(request_states, dict)
-            and bool(request_states)
-            and all(
-                isinstance(states, list) and states and states[-1] == "error"
-                for states in request_states.values()
-            )
-        )
-        waiting_before_current_admission = (
-            interrupted_status == "WAITING_PROVIDER_LANE"
+        pre_admission_proven = interrupted_build_pre_admission_proven(
+            interrupted_status, lifecycle
         )
         safe_pre_admission = bool(
             topology_clean
-            and int(lifecycle.get("admitted", 0)) == 0
-            and lifecycle_failure(lifecycle) is None
             and not outstanding
             and budget_error is None
             and accounting_error is None
-            and (waiting_before_current_admission or explicit_pre_admission_terminal)
+            and pre_admission_proven
         )
         attempts = int(state.get("provider_episode_attempts", 0))
         if safe_pre_admission and attempts < max_episodes:
@@ -12294,7 +12824,7 @@ def normalize_interrupted_builds(
         lifecycle_problem = lifecycle_failure(lifecycle)
         if lifecycle_problem:
             reasons.append(f"lifecycle is ambiguous: {lifecycle_problem}")
-        if not waiting_before_current_admission and not explicit_pre_admission_terminal:
+        if not pre_admission_proven:
             reasons.append("pre-admission termination is not explicitly proven")
         if outstanding:
             reasons.append(
@@ -12342,7 +12872,13 @@ def resume_campaign(root: Path) -> int:
         if not claimed:
             raise SystemExit("cannot claim cloud campaign resume transition")
         require_lineage(root)
-        recover_dead_manager(root)
+        campaign = load_json(campaign_file(root))
+        if campaign.get("status") != "ATTENTION":
+            raise SystemExit(
+                "resume is permitted only for a campaign already in ATTENTION"
+            )
+        if not recover_dead_manager(root):
+            raise SystemExit("resume refused because the recorded manager is still alive")
         recover_interrupted_publication(root)
         campaign = load_json(campaign_file(root))
         interrupted = normalize_interrupted_builds(root, campaign)
@@ -12353,9 +12889,13 @@ def resume_campaign(root: Path) -> int:
             manager_state(root, status="ATTENTION", failure=failure[:4000])
             update_campaign(root, status="ATTENTION", failure=failure[:4000])
             raise SystemExit(failure)
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
         for state in status_rows(root):
             if state["status"] == "PRE_ADMISSION_FAILURE":
                 row = manifest_row(root, str(state["entrant"]))
+                topology_clean = stop_build_runtime_topology(state)
+                state = read_state(root, str(state["entrant"]))
                 lifecycle = lifecycle_summary(
                     Path(str(state["provider_lifecycle"])),
                     expected_provider=str(row["provider"]),
@@ -12366,35 +12906,76 @@ def resume_campaign(root: Path) -> int:
                         root, campaign, row
                     )
                 )
-                pgid = int(state.get("supervisor_pgid") or 0)
-                members = process_group_members(pgid) if pgid else []
-                if (
-                    lifecycle["admitted"]
-                    or lifecycle_failure(lifecycle)
-                    or outstanding_ids
-                    or budget_error
-                    or members
-                ):
+                accounting_error = generation_two_entrant_accounting_failure(
+                    root, campaign, row
+                )
+                attempts = int(state.get("provider_episode_attempts", 0))
+                reasons = []
+                if lifecycle["admitted"]:
+                    reasons.append(
+                        f"{lifecycle['admitted']} provider request(s) admitted"
+                    )
+                lifecycle_problem = lifecycle_failure(lifecycle)
+                if lifecycle_problem:
+                    reasons.append(f"lifecycle is ambiguous: {lifecycle_problem}")
+                if outstanding_ids:
+                    reasons.append(
+                        "outstanding full-budget reserves: "
+                        + ", ".join(outstanding_ids)
+                    )
+                if budget_error:
+                    reasons.append(budget_error)
+                if accounting_error:
+                    reasons.append(accounting_error)
+                if not topology_clean:
+                    reasons.append("owned provider process topology survived cleanup")
+                if attempts >= max_episodes:
+                    reasons.append("provider episode allowance is exhausted")
+                if reasons:
+                    failure = (
+                        "resume denied: reconstructed pre-admission evidence is unsafe: "
+                        + "; ".join(reasons)
+                    )
+                    changes: Dict[str, Any] = {
+                        "status": "INCOMPLETE",
+                        "failure": failure,
+                        "admitted_requests": lifecycle["admitted"],
+                        "provider_terminal_requests": lifecycle["terminal"],
+                        "lifecycle_transition_errors": lifecycle[
+                            "transition_errors"
+                        ],
+                        "lifecycle_ambiguous_request_ids": lifecycle[
+                            "ambiguous_request_ids"
+                        ],
+                        "budget_outstanding_request_ids": outstanding_ids,
+                    }
+                    if topology_clean:
+                        changes.update(
+                            supervisor_pid=None,
+                            supervisor_pgid=None,
+                            supervisor_identity=None,
+                            goose_pid=None,
+                            process_group=None,
+                            goose_identity=None,
+                        )
                     update_state(
                         root,
                         state["entrant"],
-                        status="INCOMPLETE",
-                        failure=(
-                            "resume denied: reconstructed provider/process evidence "
-                            "is ambiguous"
-                        ),
-                        admitted_requests=lifecycle["admitted"],
-                        provider_terminal_requests=lifecycle["terminal"],
-                        lifecycle_transition_errors=lifecycle["transition_errors"],
-                        lifecycle_ambiguous_request_ids=lifecycle[
-                            "ambiguous_request_ids"
-                        ],
-                        budget_outstanding_request_ids=outstanding_ids,
+                        **changes,
                     )
-                    raise SystemExit(
-                        f"{state['entrant']} has ambiguous evidence and cannot be retried"
-                    )
-                update_state(root, state["entrant"], status="PLANNED", failure=None)
+                    raise SystemExit(failure)
+                update_state(
+                    root,
+                    state["entrant"],
+                    status="PLANNED",
+                    failure=None,
+                    supervisor_pid=None,
+                    supervisor_pgid=None,
+                    supervisor_identity=None,
+                    goose_pid=None,
+                    process_group=None,
+                    goose_identity=None,
+                )
             elif state["status"] in {"INCOMPLETE", "STOPPED"}:
                 raise SystemExit(
                     f"{state['entrant']} is {state['status']}; admitted or "
@@ -12409,6 +12990,21 @@ def resume_campaign(root: Path) -> int:
                 )
 
         monitor = read_monitor_state(root)
+        if (
+            monitor.get("launcher_pid")
+            and (
+                process_alive(
+                    monitor.get("launcher_pid"), monitor.get("launcher_identity")
+                )
+                or process_group_members(int(monitor.get("launcher_pgid") or 0))
+            )
+            and not stop_recorded_group(
+                monitor.get("launcher_pid"),
+                monitor.get("launcher_pgid"),
+                monitor.get("launcher_identity"),
+            )
+        ):
+            raise SystemExit("attention monitor launcher survived resume")
         if (
             monitor.get("pid")
             and (
@@ -12436,6 +13032,11 @@ def resume_campaign(root: Path) -> int:
             pid=None,
             pgid=None,
             identity=None,
+            launcher_pid=None,
+            launcher_pgid=None,
+            launcher_identity=None,
+            launcher_committed_monitor_pid=None,
+            launcher_committed_at=None,
             lease_id=None,
             failure=None,
         )
@@ -12558,8 +13159,6 @@ def gated_exec(gate_path: Path, token: str, command: list[str]) -> int:
     deadline = time.monotonic() + GATED_EXEC_RECEIPT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         parent_pid = os.getppid()
-        if parent_pid == 1:
-            return 125
         if gate_path.is_file() and not gate_path.is_symlink():
             try:
                 receipt = load_json(gate_path)
@@ -12578,11 +13177,19 @@ def gated_exec(gate_path: Path, token: str, command: list[str]) -> int:
                 receipt.get("schema_version") != 1
                 or receipt.get("token") != token
                 or receipt.get("pid") != os.getpid()
-                or receipt.get("parent_pid") != parent_pid
+                or isinstance(receipt.get("parent_pid"), bool)
+                or not isinstance(receipt.get("parent_pid"), int)
+                or int(receipt["parent_pid"]) <= 1
+                or (
+                    parent_pid != receipt.get("parent_pid")
+                    and parent_pid != 1
+                )
                 or receipt.get("identity") != process_identity(os.getpid())
             ):
                 return 126
             os.execvpe(command[0], command, os.environ)
+        if parent_pid == 1:
+            return 125
         time.sleep(0.01)
     return 124
 
@@ -13579,6 +14186,9 @@ def verify_rendered_publication(
                 **checks,
             }
             if board_status == 200 and run_status == 200 and matched:
+                publication_lease_checkpoint(
+                    lease_probe, "rendered verification match"
+                )
                 return {
                     **last,
                     "verified_at": utc_now(),
@@ -13833,6 +14443,9 @@ def publish_one(root: Path, entrant_id: str) -> bool:
         rendered = verify_rendered_publication(
             campaign, entry, verdict, lease_probe=lease_probe
         )
+        publication_lease_checkpoint(
+            lease_probe, "rendered publication commit"
+        )
         update_state(
             root,
             entrant_id,
@@ -13962,12 +14575,14 @@ def score_one(root: Path, entrant_id: str) -> bool:
         "--json-out",
         str(verdict),
     ]
+    score_ownership_marker = secrets.token_hex(32)
     update_state(
         root,
         entrant_id,
         status="SCORING",
         score_started_at=utc_now(),
         score_attempts=score_attempt,
+        score_ownership_marker=score_ownership_marker,
     )
     proc: subprocess.Popen[Any] | None = None
     monitor_problem = active_manager_monitor_lease_failure(root, campaign)
@@ -13977,38 +14592,52 @@ def score_one(root: Path, entrant_id: str) -> bool:
             entrant_id,
             status="SCORE_FAILED",
             failure=f"monitor lease expired before scorer launch: {monitor_problem}",
+            score_ownership_marker=None,
         )
         return False
 
     def scorer_started(started: subprocess.Popen[Any]) -> None:
+        identity = process_identity(started.pid)
+        if identity is None:
+            raise RuntimeError("hermetic scorer has no process identity")
         update_state(
             root,
             entrant_id,
             score_pid=started.pid,
             score_pgid=started.pid,
-            score_identity=process_identity(started.pid),
+            score_identity=identity,
             score_process_inventory=[],
         )
 
-    descendants_clean = False
+    scorer_cleanup_proven = False
+    scorer_had_survivors = False
     try:
+        scorer_env = dict(os.environ)
+        scorer_env[SCORER_OWNERSHIP_ENV] = score_ownership_marker
         with log_path.open("w") as log:
             proc = launch_after_receipt(
                 cmd,
                 cwd=Path(str(campaign["instrument_root"])),
-                env=None,
+                env=scorer_env,
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 gate_dir=score_dir,
                 on_started=scorer_started,
             )
-            exit_code, descendants_clean = wait_for_scorer(
+            exit_code, scorer_cleanup_proven, scorer_had_survivors = wait_for_scorer(
                 root, entrant_id, campaign, proc
             )
     except BaseException:
-        clean = proc is None
-        if proc is not None:
+        persisted = read_state(root, entrant_id)
+        scorer_owned = bool(
+            persisted.get("score_pid")
+            or persisted.get("score_pgid")
+            or persisted.get("score_process_inventory")
+            or persisted.get("score_ownership_marker")
+        )
+        clean = not scorer_owned and proc is None
+        if proc is not None or scorer_owned:
             clean, _ = stop_scorer_runtime(root, entrant_id)
         changes: Dict[str, Any] = {
             "status": "SCORE_FAILED" if clean else "INCOMPLETE",
@@ -14023,10 +14652,22 @@ def score_one(root: Path, entrant_id: str) -> bool:
                 score_pid=None,
                 score_pgid=None,
                 score_identity=None,
+                score_ownership_marker=None,
             )
         update_state(root, entrant_id, **changes)
         raise
-    if not descendants_clean:
+    if not scorer_cleanup_proven:
+        update_state(
+            root,
+            entrant_id,
+            status="INCOMPLETE",
+            score_exit_code=exit_code,
+            failure=(
+                "hermetic scorer descendants survived cleanup; ownership is retained"
+            ),
+        )
+        return False
+    if scorer_had_survivors:
         update_state(
             root,
             entrant_id,
@@ -14036,6 +14677,7 @@ def score_one(root: Path, entrant_id: str) -> bool:
             score_pid=None,
             score_pgid=None,
             score_identity=None,
+            score_ownership_marker=None,
         )
         return False
     if exit_code != 0 or not verdict.is_file():
@@ -14048,6 +14690,7 @@ def score_one(root: Path, entrant_id: str) -> bool:
             score_pid=None,
             score_pgid=None,
             score_identity=None,
+            score_ownership_marker=None,
         )
         return False
     try:
@@ -14059,6 +14702,10 @@ def score_one(root: Path, entrant_id: str) -> bool:
             status="SCORE_FAILED",
             score_exit_code=exit_code,
             failure=f"hermetic scorer emitted an unreadable verdict: {error}",
+            score_pid=None,
+            score_pgid=None,
+            score_identity=None,
+            score_ownership_marker=None,
         )
         return False
     invalid = verdict_failure(result, campaign)
@@ -14069,6 +14716,24 @@ def score_one(root: Path, entrant_id: str) -> bool:
             status="SCORE_FAILED",
             score_exit_code=exit_code,
             failure=invalid,
+            score_pid=None,
+            score_pgid=None,
+            score_identity=None,
+            score_ownership_marker=None,
+        )
+        return False
+    monitor_problem = active_manager_monitor_lease_failure(root, campaign)
+    if monitor_problem:
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            score_exit_code=exit_code,
+            failure=f"monitor lease expired before score commit: {monitor_problem}",
+            score_pid=None,
+            score_pgid=None,
+            score_identity=None,
+            score_ownership_marker=None,
         )
         return False
     update_state(
@@ -14085,6 +14750,7 @@ def score_one(root: Path, entrant_id: str) -> bool:
         score_pid=None,
         score_pgid=None,
         score_identity=None,
+        score_ownership_marker=None,
     )
     return True
 
@@ -14346,10 +15012,20 @@ def provider_admission_gate_failure(
         return "campaign identity changed before provider admission"
     if current.get("status") != "RUNNING":
         return f"campaign status is {current.get('status')}, not RUNNING"
-    try:
-        anchor_budget_ledger(root)
-    except SystemExit as error:
-        return f"generation-two budget history refused admission: {error}"
+    while True:
+        try:
+            anchor_budget_ledger(root, require_current=True)
+            break
+        except BudgetReleasePending:
+            lease_problem = active_manager_monitor_lease_failure(root, current)
+            if lease_problem:
+                return lease_problem
+            latest = load_json(campaign_file(root))
+            if latest.get("status") != "RUNNING":
+                return f"campaign status is {latest.get('status')}, not RUNNING"
+            time.sleep(0.01)
+        except SystemExit as error:
+            return f"generation-two budget history refused admission: {error}"
     return active_manager_monitor_lease_failure(root, current)
 
 
@@ -14737,6 +15413,84 @@ def monitor_campaign(
             heartbeat.join(timeout=MONITOR_LEASE_RENEWAL_SECONDS + 1)
 
 
+def monitor_launch(root: Path) -> int:
+    require_lineage(root)
+    require_smoke_proofs(root)
+    campaign = load_json(campaign_file(root))
+    state = read_monitor_state(root)
+    launcher_pid = os.getpid()
+    launcher_identity = process_identity(launcher_pid)
+    if (
+        state.get("status") != "LAUNCHING"
+        or state.get("launcher_pid") != launcher_pid
+        or launcher_identity is None
+        or state.get("launcher_identity") != launcher_identity
+        or state.get("launcher_pgid") != os.getpgrp()
+    ):
+        raise SystemExit("monitor launcher does not own the persisted launch receipt")
+
+    def monitor_started(proc: subprocess.Popen[Any]) -> None:
+        identity = process_identity(proc.pid)
+        if identity is None:
+            raise RuntimeError("detached monitor has no process identity")
+        monitor_state(
+            root,
+            status="STARTING",
+            pid=proc.pid,
+            pgid=proc.pid,
+            identity=identity,
+            smoke_contract_sha256=campaign["smoke_contract_sha256"],
+            launched_at=utc_now(),
+            failure=None,
+        )
+
+    proc = launch_detached(
+        [
+            sys.executable,
+            str(campaign["coordinator"]),
+            "_monitor",
+            "--root",
+            str(root),
+        ],
+        root / "monitor.log",
+        on_started=monitor_started,
+    )
+    monitor_state(
+        root,
+        launcher_committed_monitor_pid=proc.pid,
+        launcher_committed_at=utc_now(),
+    )
+    return 0
+
+
+def wait_for_recorded_process_exit(
+    pid: Any,
+    identity: Any,
+    timeout_seconds: float = MONITOR_LAUNCHER_TIMEOUT_SECONDS,
+) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while process_alive(pid, identity):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def monitor_launcher_receipt_failure(state: Mapping[str, Any]) -> str | None:
+    pid = state.get("pid")
+    identity = state.get("identity")
+    if not isinstance(pid, int) or pid <= 1:
+        return "monitor launcher has no child PID receipt"
+    if not isinstance(identity, str) or not identity:
+        return "monitor launcher has no child identity receipt"
+    if state.get("launcher_committed_monitor_pid") != pid:
+        return "monitor launcher child PID was not durably committed"
+    committed_at = state.get("launcher_committed_at")
+    if not isinstance(committed_at, str) or not committed_at:
+        return "monitor launcher child receipt has no commit timestamp"
+    return None
+
+
 def monitor_start(root: Path) -> int:
     with exclusive_claim(root / "locks/monitor-launch.claim", blocking=True) as claimed:
         if not claimed:
@@ -14749,28 +15503,59 @@ def monitor_start(root: Path) -> int:
         require_lineage(root)
         require_smoke_proofs(root)
         current = read_monitor_state(root)
+        if process_alive(
+            current.get("launcher_pid"), current.get("launcher_identity")
+        ):
+            if not wait_for_recorded_process_exit(
+                current.get("launcher_pid"), current.get("launcher_identity")
+            ):
+                raise SystemExit("monitor launcher did not finish after adoption")
+            adopted = read_monitor_state(root)
+            receipt_problem = monitor_launcher_receipt_failure(adopted)
+            if receipt_problem:
+                raise SystemExit(receipt_problem)
+            return 0
         if process_alive(current.get("pid"), current.get("identity")):
-            raise SystemExit(f"monitor is already running as pid {current.get('pid')}")
+            if current.get("status") in {"STARTING", "RUNNING"}:
+                return 0
+            raise SystemExit(
+                f"monitor has live ownership in state {current.get('status')}"
+            )
         if current.get("pid") and not stop_recorded_group(
             current.get("pid"), current.get("pgid"), current.get("identity")
         ):
             raise SystemExit("dead monitor's owned process group survived recovery")
+        if current.get("launcher_pid") and not stop_recorded_group(
+            current.get("launcher_pid"),
+            current.get("launcher_pgid"),
+            current.get("launcher_identity"),
+        ):
+            raise SystemExit("dead monitor launcher's process group survived recovery")
         monitor_state(
             root,
             status="RECOVERED" if current.get("pid") else "IDLE",
             pid=None,
             pgid=None,
             identity=None,
+            launcher_pid=None,
+            launcher_pgid=None,
+            launcher_identity=None,
             lease_id=None,
             recovered_at=utc_now() if current.get("pid") else None,
         )
-        def monitor_started(proc: subprocess.Popen[Any]) -> None:
+        def launcher_started(proc: subprocess.Popen[Any]) -> None:
+            identity = process_identity(proc.pid)
+            if identity is None:
+                raise RuntimeError("monitor launcher has no process identity")
             monitor_state(
                 root,
-                status="STARTING",
-                pid=proc.pid,
-                pgid=proc.pid,
-                identity=process_identity(proc.pid),
+                status="LAUNCHING",
+                pid=None,
+                pgid=None,
+                identity=None,
+                launcher_pid=proc.pid,
+                launcher_pgid=proc.pid,
+                launcher_identity=identity,
                 smoke_contract_sha256=campaign["smoke_contract_sha256"],
                 launched_at=utc_now(),
                 failure=None,
@@ -14780,14 +15565,29 @@ def monitor_start(root: Path) -> int:
             [
                 sys.executable,
                 str(campaign["coordinator"]),
-                "_monitor",
+                "_monitor_launch",
                 "--root",
                 str(root),
             ],
-            root / "monitor.log",
-            on_started=monitor_started,
+            root / "monitor-launcher.log",
+            on_started=launcher_started,
         )
-    print(f"started cloud SB7 monitor pid={proc.pid} root={root}")
+        try:
+            exit_code = proc.wait(timeout=MONITOR_LAUNCHER_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            stop_recorded_group(
+                proc.pid,
+                proc.pid,
+                process_identity(proc.pid),
+            )
+            raise SystemExit("monitor launcher timed out") from None
+        if exit_code != 0:
+            raise SystemExit(f"monitor launcher exited {exit_code}")
+        launched = read_monitor_state(root)
+        receipt_problem = monitor_launcher_receipt_failure(launched)
+        if receipt_problem:
+            raise SystemExit(receipt_problem)
+    print(f"started cloud SB7 monitor pid={launched['pid']} root={root}")
     return 0
 
 
@@ -14884,10 +15684,24 @@ def stop_claimed(root: Path) -> int:
             )
         ):
             failures.append(f"{entrant_id}:publisher-pgid={publisher_pgid}")
-        if state.get("score_pgid") or state.get("score_process_inventory"):
+        if (
+            state.get("score_pgid")
+            or state.get("score_process_inventory")
+            or state.get("score_ownership_marker")
+        ):
             scorer_clean, _ = stop_scorer_runtime(root, entrant_id)
             if not scorer_clean:
                 failures.append(f"{entrant_id}:scorer-topology")
+            else:
+                update_state(
+                    root,
+                    entrant_id,
+                    score_pid=None,
+                    score_pgid=None,
+                    score_identity=None,
+                    score_ownership_marker=None,
+                )
+                state = read_state(root, entrant_id)
         pgid = state.get("supervisor_pgid")
         if (
             state["status"] not in TERMINAL_BUILD_STATES | POST_BUILD_STATES
@@ -14909,6 +15723,22 @@ def stop_claimed(root: Path) -> int:
         failures.append(f"manager:pgid={pgid}")
     manager_state(root, status="STOPPED", stop_failures=failures)
     monitor = read_monitor_state(root)
+    launcher_pgid = monitor.get("launcher_pgid")
+    if (
+        launcher_pgid
+        and (
+            process_alive(
+                monitor.get("launcher_pid"), monitor.get("launcher_identity")
+            )
+            or process_group_members(int(launcher_pgid))
+        )
+        and not stop_recorded_group(
+            monitor.get("launcher_pid"),
+            launcher_pgid,
+            monitor.get("launcher_identity"),
+        )
+    ):
+        failures.append(f"monitor-launcher:pgid={launcher_pgid}")
     monitor_pgid = monitor.get("pgid")
     if (
         monitor.get("status") not in MONITOR_TERMINAL_STATES
@@ -15145,6 +15975,7 @@ def main() -> int:
     root_arg(p_smoke_supervise)
     p_smoke_supervise.add_argument("--entrant", required=True)
     root_arg(sub.add_parser("_smoke_manage"))
+    root_arg(sub.add_parser("_monitor_launch"))
     root_arg(sub.add_parser("_monitor"))
     p_supervise = sub.add_parser("_supervise")
     root_arg(p_supervise)
@@ -15245,6 +16076,8 @@ def main() -> int:
         return smoke_manage(root)
     if args.command == "monitor-start":
         return monitor_start(root)
+    if args.command == "_monitor_launch":
+        return monitor_launch(root)
     if args.command == "_monitor":
         return monitor_campaign(root)
     if args.command == "start":
