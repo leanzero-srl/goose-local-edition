@@ -11,7 +11,7 @@ use super::swarm_control_registry::{
 use super::swarm_provider_journal::DurableProviderLifecycleJournal;
 use super::swarm_provider_lifecycle::{
     bind_current_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
-    ProviderNudgeDeliveryFactory,
+    ProviderNudgeDeliveryFactory, ProviderStreamProgressMeter, ProviderStreamProgressSnapshot,
 };
 use super::swarm_semantic::{
     activity_digest_key, ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
@@ -16032,6 +16032,7 @@ fn build_worker_digest(
     last_thinking: &str,
     reasoning_recurrence: &ReasoningRecurrenceMeter,
     model_id: &str,
+    provider_stream: ProviderStreamProgressSnapshot,
 ) -> serde_json::Value {
     let errors = tool_calls.iter().filter(|t| t.ok == Some(false)).count();
     let recent: Vec<String> = tool_calls
@@ -16090,8 +16091,10 @@ fn build_worker_digest(
         // Carry a generous tail of the live reasoning so the desktop's expandable per-node box shows a real
         // run of thinking, not a sliver. The compact line still clamps it; the expand shows the whole thing.
         "last_thinking": tail_chars(last_thinking, 2000),
-        // Neutral telemetry only: these counts cannot nudge, stop, accept, split, or schedule work.
+        // Recurrence is neutral telemetry only; provider-stream progress is separately validated by
+        // the decoder and may disprove a stale observation without exposing structured payloads.
         "reasoning_recurrence": reasoning_recurrence.snapshot(),
+        "provider_stream": provider_stream,
         "model": model_id,
     })
 }
@@ -19102,6 +19105,10 @@ pub struct GooseAgentDispatcher {
     /// delta says only "acted since I last looked", and the judge only looks when a device is idle, so
     /// under load "last looked" can be 21 minutes ago (measured).
     judge_prev_calls: Mutex<HashMap<String, (u32, u64)>>,
+    /// Per-task structured-output byte count and observation time. Unlike thinking, growth here is
+    /// validated provider-decoder work toward a complete tool request, so it can disprove a stale read
+    /// without exposing the buffered payload.
+    judge_prev_structured_output: Mutex<HashMap<String, (u64, u64)>>,
     /// #121: when set, a task whose accumulated output carries the deterministic mid-stream body-drop
     /// signature (`is_stream_decode_interrupt`) is re-dispatched as Transient instead of being accepted as
     /// done — so the swallowed decode error can no longer produce a silent false-green. Resolved once at
@@ -19276,6 +19283,7 @@ impl GooseAgentDispatcher {
             owner_snapshots: Mutex::new(HashMap::new()),
             judge_prev_thinking: Mutex::new(HashMap::new()),
             judge_prev_calls: Mutex::new(HashMap::new()),
+            judge_prev_structured_output: Mutex::new(HashMap::new()),
             stream_decode_retry,
             straggler_stop,
             straggler_grace_secs,
@@ -19828,9 +19836,11 @@ impl GooseAgentDispatcher {
                 agent: agent.clone(),
                 session_id: session_id.clone(),
             });
+        let provider_stream_progress = Arc::new(ProviderStreamProgressMeter::new());
         let provider = bind_current_provider_lifecycle(
             self.provider_for(model_id).await?,
             Some(nudge_factory),
+            Some(provider_stream_progress.clone()),
         );
         agent
             .update_provider(provider, model_config, &session_id)
@@ -19928,15 +19938,22 @@ impl GooseAgentDispatcher {
                 Some(directory.join(format!("{}.json", activity_digest_key(key))))
             });
         if activity_file.is_some() {
-            let seed = serde_json::json!({
-                "tool_calls": 0,
-                "errors": 0,
-                "recent": [],
-                "last_text": "",
-                "model": model_id,
-                "phase": "processing",
-            })
-            .to_string();
+            let mut seed = build_worker_digest(
+                &[],
+                &[],
+                &std::collections::HashMap::new(),
+                &[],
+                0,
+                0,
+                "",
+                &ReasoningRecurrenceMeter::default(),
+                model_id,
+                provider_stream_progress.snapshot(),
+            );
+            if let Some(object) = seed.as_object_mut() {
+                object.insert("phase".to_string(), serde_json::Value::from("processing"));
+            }
+            let seed = seed.to_string();
             self.persist_activity_digest(
                 activity_file.as_deref(),
                 activity_mirror.as_deref(),
@@ -20149,6 +20166,10 @@ impl GooseAgentDispatcher {
         let mut repeat_run: usize = 0usize;
         let mut repeat_run_started = tokio::time::Instant::now();
         let mut repeat_what = String::new();
+        let mut observed_provider_revision = 0u64;
+        let mut observed_structured_output_bytes = 0u64;
+        let mut observed_structured_output_active = false;
+        let mut last_provider_progress_event_at: Option<tokio::time::Instant> = None;
         loop {
             // #136: cut a REPEATED-IDENTICAL-CALL loop — the same tool call returning the same result N times
             // in a row over at least the time floor. This is the ONLY guard that sees it: each repeat is a
@@ -20413,22 +20434,110 @@ impl GooseAgentDispatcher {
                     idle + prefill_grace
                 }
             });
-            let wait = match (quiet_budget, sink_deadline) {
-                (Some(quiet), Some(deadline)) => {
-                    Some(quiet.min(deadline.saturating_duration_since(tokio::time::Instant::now())))
+            let mut quiet_deadline =
+                quiet_budget.map(|budget| tokio::time::Instant::now() + budget);
+            let mut next_agent_event = Box::pin(stream.next());
+            let (next_event, timed_out) = loop {
+                let deadline = match (quiet_deadline, sink_deadline) {
+                    (Some(quiet), Some(sink)) => Some(quiet.min(sink)),
+                    (Some(quiet), None) => Some(quiet),
+                    (None, Some(sink)) => Some(sink),
+                    (None, None) => None,
+                };
+                let progress = provider_stream_progress.changed_since(observed_provider_revision);
+                let wait_result = match deadline {
+                    Some(deadline) => tokio::select! {
+                        event = &mut next_agent_event => Some(Ok(event)),
+                        snapshot = progress => Some(Err(snapshot)),
+                        _ = tokio::time::sleep_until(deadline) => None,
+                    },
+                    None => tokio::select! {
+                        event = &mut next_agent_event => Some(Ok(event)),
+                        snapshot = progress => Some(Err(snapshot)),
+                    },
+                };
+                let Some(wait_result) = wait_result else {
+                    break (None, true);
+                };
+                let snapshot = match wait_result {
+                    Ok(event) => break (event, false),
+                    Err(snapshot) => snapshot,
+                };
+
+                observed_provider_revision = snapshot.revision;
+                first_event_seen = true;
+                let structured_growth =
+                    snapshot.structured_output_bytes > observed_structured_output_bytes;
+                let structured_state_changed =
+                    snapshot.structured_output_active != observed_structured_output_active;
+                observed_structured_output_bytes = snapshot.structured_output_bytes;
+                observed_structured_output_active = snapshot.structured_output_active;
+
+                if structured_growth {
+                    last_productive_at = tokio::time::Instant::now();
+                    let post_first_event_budget = idle.map(|idle| {
+                        if uncapped() {
+                            idle + prefill_grace
+                        } else {
+                            idle
+                        }
+                    });
+                    quiet_deadline =
+                        post_first_event_budget.map(|budget| tokio::time::Instant::now() + budget);
                 }
-                (Some(quiet), None) => Some(quiet),
-                (None, Some(deadline)) => {
-                    Some(deadline.saturating_duration_since(tokio::time::Instant::now()))
+
+                if activity_file.is_some()
+                    && (!physical_activity_required || activity_failure.is_none())
+                    && last_digest_at
+                        .is_none_or(|time| time.elapsed() >= std::time::Duration::from_millis(400))
+                {
+                    let digest = build_worker_digest(
+                        &tool_calls,
+                        &call_records,
+                        &pending,
+                        &texts,
+                        malformed,
+                        thinking_chars,
+                        &last_thinking,
+                        &reasoning_recurrence,
+                        model_id,
+                        snapshot,
+                    );
+                    let encoded = digest.to_string();
+                    if let Err(error) = self.persist_activity_digest(
+                        activity_file.as_deref(),
+                        activity_mirror.as_deref(),
+                        encoded.as_bytes(),
+                        activity_key,
+                        validated_activity_publisher,
+                        "provider_stream",
+                    ) {
+                        activity_failure = Some(error.to_string());
+                    }
+                    last_digest_at = Some(tokio::time::Instant::now());
                 }
-                (None, None) => None,
-            };
-            let (next_event, timed_out) = match wait {
-                Some(wait) => match tokio::time::timeout(wait, stream.next()).await {
-                    Ok(event) => (event, false),
-                    Err(_) => (None, true),
-                },
-                None => (stream.next().await, false),
+
+                let progress_event_due = snapshot.structured_output_chunks > 0
+                    && (structured_state_changed
+                        || last_provider_progress_event_at.is_none_or(|time| {
+                            time.elapsed() >= std::time::Duration::from_secs(5)
+                        }));
+                if progress_event_due {
+                    self.events.write_value(serde_json::json!({
+                        "event": "provider_stream_progress",
+                        "task_id": activity_key,
+                        "model": model_id,
+                        "revision": snapshot.revision,
+                        "chunks": snapshot.chunks,
+                        "bytes": snapshot.bytes,
+                        "structured_output_chunks": snapshot.structured_output_chunks,
+                        "structured_output_bytes": snapshot.structured_output_bytes,
+                        "structured_output_active": snapshot.structured_output_active,
+                        "last_progress_elapsed_ms": snapshot.last_progress_elapsed_ms,
+                        "payload_logged": false,
+                    }));
+                    last_provider_progress_event_at = Some(tokio::time::Instant::now());
+                }
             };
             if timed_out {
                 // Distinguish the sink wall-clock cap from a genuine idle stall: on the cap, finalize
@@ -20611,6 +20720,7 @@ impl GooseAgentDispatcher {
                         &last_thinking,
                         &reasoning_recurrence,
                         model_id,
+                        provider_stream_progress.snapshot(),
                     );
                     let encoded = digest.to_string();
                     if let Err(error) = self.persist_activity_digest(
@@ -20650,6 +20760,7 @@ impl GooseAgentDispatcher {
                 &last_thinking,
                 &reasoning_recurrence,
                 model_id,
+                provider_stream_progress.snapshot(),
             );
             // Mark the terminal digest phase="done" so the panel drops this node out of "working" the instant
             // ITS call ends — not when the whole phase ends. Without it a finished/capped scout kept reading as
@@ -30389,6 +30500,18 @@ impl Judge for GooseAgentDispatcher {
         let worker_thinking_chars = digest
             .as_ref()
             .and_then(|v| v.get("thinking_chars").and_then(|n| n.as_u64()));
+        let worker_structured_output_bytes = digest.as_ref().and_then(|value| {
+            value
+                .get("provider_stream")
+                .and_then(|stream| stream.get("structured_output_bytes"))
+                .and_then(serde_json::Value::as_u64)
+        });
+        let worker_structured_output_active = digest
+            .as_ref()
+            .and_then(|value| value.get("provider_stream"))
+            .and_then(|stream| stream.get("structured_output_active"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         // Read the PREVIOUS action count AND when it was taken, then record this one, so the judge can
         // read the delta as a rate. Both halves must come from the SAME lock acquisition or a concurrent
         // observation could pair this count with a different observation's timestamp.
@@ -30397,6 +30520,14 @@ impl Judge for GooseAgentDispatcher {
             let was = g.get(&req.task_id).copied();
             if let Some(now) = worker_tool_calls {
                 g.insert(req.task_id.clone(), (now, req.elapsed_secs));
+            }
+            was
+        };
+        let prev_structured_output = {
+            let mut previous = self.judge_prev_structured_output.lock().unwrap();
+            let was = previous.get(&req.task_id).copied();
+            if let Some(now) = worker_structured_output_bytes {
+                previous.insert(req.task_id.clone(), (now, req.elapsed_secs));
             }
             was
         };
@@ -30411,6 +30542,8 @@ impl Judge for GooseAgentDispatcher {
             secs_since_last_write,
             worker_tool_calls,
             worker_thinking_chars,
+            worker_structured_output_bytes,
+            worker_structured_output_active,
             // Read the PREVIOUS observation, then record this one — so the judge sees the delta.
             prev_thinking_chars: {
                 let mut g = self.judge_prev_thinking.lock().unwrap();
@@ -30422,6 +30555,8 @@ impl Judge for GooseAgentDispatcher {
             },
             prev_tool_calls: prev_calls.map(|(n, _)| n),
             prev_observed_secs: prev_calls.map(|(_, at)| at),
+            prev_structured_output_bytes: prev_structured_output.map(|(bytes, _)| bytes),
+            prev_structured_observed_secs: prev_structured_output.map(|(_, at)| at),
             // Threaded from the scheduler's per-task split generation so the split cap holds (a child of a
             // split carries split_count >= 1 and is never re-split).
             split_count: req.split_count,
@@ -30457,6 +30592,9 @@ impl Judge for GooseAgentDispatcher {
             "elapsed_secs": req.elapsed_secs,
             "tool_calls": worker_tool_calls,
             "thinking_chars": worker_thinking_chars,
+            "structured_output_bytes": worker_structured_output_bytes,
+            "structured_output_active": worker_structured_output_active,
+            "structured_payload_logged": false,
             "any_owned_written": any_owned_written,
             "owns_files": !req.owned_files.is_empty(),
             "secs_since_last_write": secs_since_last_write,
@@ -30500,6 +30638,7 @@ impl Judge for GooseAgentDispatcher {
         // its live activity log, AND the high-level run state, then passes or returns a correction.
         let acts = input.worker_tool_calls.unwrap_or(0);
         let thinking = input.worker_thinking_chars.unwrap_or(0);
+        let structured = input.worker_structured_output_bytes.unwrap_or(0);
         // "NOTHING TO ASSESS" MUST MEAN NOTHING PRODUCED — not "produced only thinking".
         //
         // MEASURED across 851 judge verdicts on 9 runs: 814 of them (95.7%) came back
@@ -30517,7 +30656,7 @@ impl Judge for GooseAgentDispatcher {
         // thing being removed, and `min_age_secs`/`rejudge_cooldown_secs` already stop a
         // just-launched worker from being reviewed. A worker that is 90s old and has emitted
         // reasoning while writing nothing and calling nothing is exactly what a supervisor is for.
-        if input.file_contents.is_empty() && acts < 4 && thinking == 0 {
+        if input.file_contents.is_empty() && acts < 4 && thinking == 0 && structured == 0 {
             me_events_skip(&self.events, &req.task_id, "nothing_produced_yet");
             return JudgeOutcome::ok(); // genuinely nothing produced yet
         }
@@ -30566,13 +30705,16 @@ impl Judge for GooseAgentDispatcher {
                 let last = d.get("last_text").and_then(|t| t.as_str()).unwrap_or("");
                 format!(
                     "actions taken: {acts} ({errors} errored)\nreasoning emitted: {thinking} chars\
+                     \nprovider structured decode: {structured} bytes (active={structured_active}, payload hidden)\
                      \nrecent actions: {}\nworker's last reasoning: {}",
                     if recent.is_empty() {
                         "(none)".to_string()
                     } else {
                         recent.join(", ")
                     },
-                    if last.is_empty() { "(none)" } else { last }
+                    if last.is_empty() { "(none)" } else { last },
+                    structured = structured,
+                    structured_active = input.worker_structured_output_active,
                 )
             })
             .unwrap_or_else(|| format!("actions taken: {acts}"));
