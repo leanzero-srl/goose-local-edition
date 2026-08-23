@@ -341,9 +341,9 @@ mod tests {
     use goose::conversation::message::Message;
     use goose::providers::base::{ProviderUsage, Usage};
     use goose_swarm::{
-        HostCapacityEvidence, LocalCompletionKind, NullSink, PhysicalAdmissionControl,
-        PhysicalFleetSnapshot, SourceRevisionKind, TaskVersion, VerifiedPhysicalIdentity,
-        WorkOpportunity, WorkRole,
+        AuthorityScope, HostCapacityEvidence, LocalCompletionKind, NullSink,
+        PhysicalAdmissionControl, PhysicalFleetSnapshot, SourceRevisionKind, TaskVersion,
+        VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
     };
     use std::time::Duration;
 
@@ -553,6 +553,8 @@ mod tests {
         .unwrap();
         let control = PhysicalAdmissionControl::new("test", snapshot, Arc::new(NullSink)).unwrap();
         let source = TaskVersion {
+            authority_scope: AuthorityScope::new("provider-lifecycle-replay", "build"),
+            phase_epoch: 0,
             task_id: "task-a".to_string(),
             attempt: 0,
             revision: 1,

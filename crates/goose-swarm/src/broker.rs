@@ -5,7 +5,7 @@
 //! provider turn separately owns physical capacity until its exact terminal receipt arrives. It
 //! deliberately has no API for cancelling admitted work.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 
@@ -38,7 +38,7 @@ impl HostCapacityEvidence {
         }
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         if self.identity().trim().is_empty() {
             return Err("capacity evidence id is empty".to_string());
         }
@@ -245,8 +245,8 @@ fn is_canonical_transport_identity(identity: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SourceRevisionKind {
     TaskAttempt,
     Artifact {
@@ -263,9 +263,43 @@ pub enum SourceRevisionKind {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityScope {
+    pub run_id: String,
+    pub phase_lineage_id: String,
+}
+
+impl AuthorityScope {
+    pub fn new(run_id: impl Into<String>, phase_lineage_id: impl Into<String>) -> Self {
+        Self {
+            run_id: run_id.into(),
+            phase_lineage_id: phase_lineage_id.into(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("run id", self.run_id.as_str()),
+            ("phase lineage id", self.phase_lineage_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("authority {name} is empty"));
+            }
+            if value.trim() != value {
+                return Err(format!("authority {name} has surrounding whitespace"));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Immutable authority for one queued opportunity.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaskVersion {
+    pub authority_scope: AuthorityScope,
+    pub phase_epoch: u64,
     pub task_id: String,
     pub attempt: u32,
     pub revision: u64,
@@ -273,22 +307,37 @@ pub struct TaskVersion {
 }
 
 impl TaskVersion {
-    fn authority_key(&self) -> String {
-        match &self.kind {
-            SourceRevisionKind::TaskAttempt => format!("{}:attempt", self.task_id),
-            SourceRevisionKind::Artifact { .. } => format!("{}:artifact", self.task_id),
-            SourceRevisionKind::Trace { .. } => format!("{}:trace", self.task_id),
+    pub fn authority_key(&self) -> String {
+        let kind = match &self.kind {
+            SourceRevisionKind::TaskAttempt => serde_json::json!(["task_attempt"]),
+            SourceRevisionKind::Artifact { .. } => serde_json::json!(["artifact"]),
+            SourceRevisionKind::Trace { .. } => serde_json::json!(["trace"]),
             SourceRevisionKind::Contract {
                 binding_task_id,
                 slice_id,
                 ..
-            } => format!("{}:contract:{binding_task_id}:{slice_id}", self.task_id),
-        }
+            } => serde_json::json!(["contract", binding_task_id, slice_id]),
+        };
+        serde_json::to_string(&serde_json::json!({
+            "run_id": self.authority_scope.run_id,
+            "phase_lineage_id": self.authority_scope.phase_lineage_id,
+            "task_id": self.task_id,
+            "kind": kind,
+        }))
+        .expect("task authority key is JSON serializable")
     }
 
-    fn validate(&self) -> Result<(), String> {
+    fn ordering_version(&self) -> (u64, u64, u32) {
+        (self.phase_epoch, self.revision, self.attempt)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        self.authority_scope.validate()?;
         if self.task_id.trim().is_empty() {
             return Err("source task id is empty".to_string());
+        }
+        if self.task_id.trim() != self.task_id {
+            return Err("source task id has surrounding whitespace".to_string());
         }
         match &self.kind {
             SourceRevisionKind::TaskAttempt => {
@@ -304,6 +353,8 @@ impl TaskVersion {
                     Err("artifact/trace source revision is zero".to_string())
                 } else if snapshot_hash.trim().is_empty() {
                     Err("snapshot hash is empty".to_string())
+                } else if snapshot_hash.trim() != snapshot_hash {
+                    Err("snapshot hash has surrounding whitespace".to_string())
                 } else {
                     Ok(())
                 }
@@ -323,6 +374,14 @@ impl TaskVersion {
                     return Err(
                         "contract source requires binding task, slice, and snapshot hash"
                             .to_string(),
+                    );
+                }
+                if binding_task_id.trim() != binding_task_id
+                    || slice_id.trim() != slice_id
+                    || snapshot_hash.trim() != snapshot_hash
+                {
+                    return Err(
+                        "contract source fields cannot have surrounding whitespace".to_string()
                     );
                 }
                 Ok(())
@@ -349,6 +408,34 @@ pub enum WorkRole {
     SemanticJudgeObservation,
     ContractReview,
     AcceptanceOracle,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PhysicalExecutionAuthority {
+    pub scope: AuthorityScope,
+    pub phase_epoch: u64,
+    pub role: WorkRole,
+}
+
+impl PhysicalExecutionAuthority {
+    pub fn new(scope: AuthorityScope, phase_epoch: u64, role: WorkRole) -> Self {
+        Self {
+            scope,
+            phase_epoch,
+            role,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        self.scope.validate()?;
+        if !matches!(self.role, WorkRole::Build | WorkRole::Repair) {
+            return Err(format!(
+                "scheduler execution authority cannot use auxiliary role {:?}",
+                self.role
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl WorkRole {
@@ -943,16 +1030,14 @@ impl PhysicalBroker {
             if current == &source {
                 return Ok(Vec::new());
             }
-            if source.revision < current.revision
-                || (source.revision == current.revision && source.attempt < current.attempt)
-            {
+            if source.ordering_version() < current.ordering_version() {
                 return Err(BrokerError::SourceRevisionRollback {
                     authority,
                     current: Box::new(current.clone()),
                     proposed: Box::new(source),
                 });
             }
-            if source.revision == current.revision {
+            if source.ordering_version() == current.ordering_version() {
                 return Err(BrokerError::ConflictingSourceRevision {
                     authority,
                     current: Box::new(current.clone()),
@@ -1877,13 +1962,8 @@ fn validate_opportunity(opportunity: &WorkOpportunity) -> Result<(), BrokerError
         });
     }
     let valid_authority = match opportunity.role {
-        WorkRole::Build => {
-            opportunity.source.attempt == 0
-                && matches!(opportunity.source.kind, SourceRevisionKind::TaskAttempt)
-        }
-        WorkRole::Repair => {
-            opportunity.source.attempt > 0
-                && matches!(opportunity.source.kind, SourceRevisionKind::TaskAttempt)
+        WorkRole::Build | WorkRole::Repair => {
+            matches!(opportunity.source.kind, SourceRevisionKind::TaskAttempt)
         }
         WorkRole::RuntimeAcceptanceReview | WorkRole::ContractReview => {
             matches!(opportunity.source.kind, SourceRevisionKind::Contract { .. })

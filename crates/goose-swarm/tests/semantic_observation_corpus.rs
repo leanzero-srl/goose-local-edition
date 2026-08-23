@@ -1,6 +1,6 @@
 use goose_swarm::{
     parse_semantic_observation_reply, AcceptanceCriterionSnapshot, ArtifactExcerptSnapshot,
-    NeutralJudgeSignal, SemanticJudgeAction, SemanticObservationSnapshotDraft,
+    AuthorityScope, NeutralJudgeSignal, SemanticJudgeAction, SemanticObservationSnapshotDraft,
     SemanticTraceSnapshot, SEMANTIC_OBSERVATION_PROTOCOL, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
 use serde::Deserialize;
@@ -51,6 +51,8 @@ fn load_corpus() -> Corpus {
 fn snapshot(case: &CorpusCase) -> goose_swarm::SealedSemanticObservationSnapshot {
     SemanticObservationSnapshotDraft {
         schema_version: SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+        authority_scope: AuthorityScope::new("semantic-observation-corpus", "judge"),
+        phase_epoch: 0,
         task_id: case.task_id.clone(),
         attempt: 0,
         source_revision: case.source_revision,

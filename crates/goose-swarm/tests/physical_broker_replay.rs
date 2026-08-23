@@ -1,8 +1,8 @@
 use goose_swarm::{
-    AdmissionReceipt, BrokerGrant, HostCapacityEvidence, LocalCompletionKind, PhysicalBroker,
-    PhysicalFleetSnapshot, ProviderRequestDisposition, ProviderRequestKey, ProviderRequestReceipt,
-    ProviderTerminalKind, ProviderTerminalReceipt, SourceRevisionKind, TaskVersion,
-    VerifiedPhysicalLane, WorkOpportunity, WorkPriority, WorkRole,
+    AdmissionReceipt, AuthorityScope, BrokerGrant, HostCapacityEvidence, LocalCompletionKind,
+    PhysicalBroker, PhysicalFleetSnapshot, ProviderRequestDisposition, ProviderRequestKey,
+    ProviderRequestReceipt, ProviderTerminalKind, ProviderTerminalReceipt, SourceRevisionKind,
+    TaskVersion, VerifiedPhysicalLane, WorkOpportunity, WorkPriority, WorkRole,
 };
 
 const TRANSPORT_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -32,6 +32,8 @@ fn snapshot(id: &str, lanes: Vec<VerifiedPhysicalLane>) -> PhysicalFleetSnapshot
 
 fn attempt(task: &str, attempt: u32, revision: u64) -> TaskVersion {
     TaskVersion {
+        authority_scope: AuthorityScope::new("broker-replay", "main"),
+        phase_epoch: 0,
         task_id: task.to_string(),
         attempt,
         revision,
@@ -41,6 +43,8 @@ fn attempt(task: &str, attempt: u32, revision: u64) -> TaskVersion {
 
 fn artifact(task: &str, attempt: u32, revision: u64) -> TaskVersion {
     TaskVersion {
+        authority_scope: AuthorityScope::new("broker-replay", "main"),
+        phase_epoch: 0,
         task_id: task.to_string(),
         attempt,
         revision,

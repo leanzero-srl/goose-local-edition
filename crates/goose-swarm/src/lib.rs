@@ -21,10 +21,11 @@ pub mod semantic_observation;
 pub mod semantic_runtime;
 
 pub use broker::{
-    AdmissionReceipt, BrokerError, BrokerGrant, CapacityUpdateReceipt, HostCapacityEvidence,
-    LocalCompletionKind, LocalCompletionReceipt, PhysicalBroker, PhysicalFleetSnapshot,
-    PhysicalHostOccupancy, ProviderNotStartedReceipt, ProviderRequestDisposition,
-    ProviderRequestKey, ProviderRequestQueueReceipt, ProviderRequestReceipt, ProviderStartsClosure,
+    AdmissionReceipt, AuthorityScope, BrokerError, BrokerGrant, CapacityUpdateReceipt,
+    HostCapacityEvidence, LocalCompletionKind, LocalCompletionReceipt, PhysicalBroker,
+    PhysicalExecutionAuthority, PhysicalFleetSnapshot, PhysicalHostOccupancy,
+    ProviderNotStartedReceipt, ProviderRequestDisposition, ProviderRequestKey,
+    ProviderRequestQueueReceipt, ProviderRequestReceipt, ProviderStartsClosure,
     ProviderTerminalKind, ProviderTerminalReceipt, QueueReceipt, ReleasedAdmissionReceipt,
     RevokedAdmissionReceipt, SourceRevisionKind, StaleWorkReceipt, TaskVersion,
     UnresolvedAdmissionReceipt, VerifiedPhysicalIdentity, VerifiedPhysicalLane,

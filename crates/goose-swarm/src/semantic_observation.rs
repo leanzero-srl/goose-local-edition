@@ -4,6 +4,7 @@
 //! [`crate::judge::JudgeOutcome`]. A parsed action is evidence for a later control-plane decision; it
 //! is not permission to interrupt, nudge, accept, split, route, or schedule work.
 
+use crate::broker::AuthorityScope;
 use crate::event::EventSink;
 #[cfg(test)]
 use crate::event::NullSink;
@@ -17,7 +18,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::oneshot;
 
 pub const SEMANTIC_OBSERVATION_PROTOCOL: &str = "semantic-judge-observation/v1";
-pub const SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA: u16 = 1;
+pub const SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA: u16 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,6 +59,8 @@ pub struct SemanticTraceSnapshot {
 #[serde(deny_unknown_fields)]
 pub struct SemanticObservationSnapshotDraft {
     pub schema_version: u16,
+    pub authority_scope: AuthorityScope,
+    pub phase_epoch: u64,
     pub task_id: String,
     pub attempt: u32,
     /// Monotonic authority supplied by the task/trace producer. It is not elapsed time.
@@ -84,6 +87,9 @@ impl SemanticObservationSnapshotDraft {
                 self.schema_version
             );
         }
+        self.authority_scope
+            .validate()
+            .map_err(anyhow::Error::msg)?;
         require_text("task_id", &self.task_id)?;
         require_text("contract_version", &self.contract_version)?;
         require_text("artifact_version", &self.artifact_version)?;
@@ -191,6 +197,8 @@ impl fmt::Debug for SealedSemanticObservationSnapshot {
         formatter
             .debug_struct("SealedSemanticObservationSnapshot")
             .field("snapshot_hash", &self.snapshot_hash)
+            .field("authority_scope", &self.payload.authority_scope)
+            .field("phase_epoch", &self.payload.phase_epoch)
             .field("task_id", &self.payload.task_id)
             .field("attempt", &self.payload.attempt)
             .field("source_revision", &self.payload.source_revision)
@@ -205,6 +213,14 @@ impl SealedSemanticObservationSnapshot {
 
     pub fn task_id(&self) -> &str {
         &self.payload.task_id
+    }
+
+    pub fn authority_scope(&self) -> &AuthorityScope {
+        &self.payload.authority_scope
+    }
+
+    pub fn phase_epoch(&self) -> u64 {
+        self.payload.phase_epoch
     }
 
     pub fn attempt(&self) -> u32 {
@@ -761,6 +777,8 @@ pub(crate) trait SemanticObservationReviewer: Send + Sync {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticObservationReceipt {
+    pub authority_scope: AuthorityScope,
+    pub phase_epoch: u64,
     pub task_id: String,
     pub attempt: u32,
     pub source_revision: u64,
@@ -820,13 +838,29 @@ pub(crate) struct SemanticObservationPlane {
 
 #[derive(Default)]
 struct SemanticObservationState {
-    current: HashMap<String, CurrentSnapshot>,
-    in_flight: HashMap<String, String>,
-    completed_by_task: HashMap<String, SemanticObservationReceipt>,
+    current: HashMap<SemanticTaskAuthority, CurrentSnapshot>,
+    in_flight: HashMap<SemanticTaskAuthority, String>,
+    completed_by_task: HashMap<SemanticTaskAuthority, SemanticObservationReceipt>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct SemanticTaskAuthority {
+    scope: AuthorityScope,
+    task_id: String,
+}
+
+impl SemanticTaskAuthority {
+    fn from_snapshot(snapshot: &SealedSemanticObservationSnapshot) -> Self {
+        Self {
+            scope: snapshot.authority_scope().clone(),
+            task_id: snapshot.task_id().to_string(),
+        }
+    }
 }
 
 #[derive(Clone)]
 struct CurrentSnapshot {
+    phase_epoch: u64,
     attempt: u32,
     source_revision: u64,
     snapshot_hash: String,
@@ -855,6 +889,7 @@ impl SemanticObservationPlane {
         reviewer: Arc<dyn SemanticObservationReviewer>,
     ) -> SemanticObservationSubmission {
         let task_id = snapshot.task_id().to_string();
+        let task_authority = SemanticTaskAuthority::from_snapshot(&snapshot);
         let snapshot_hash = snapshot.snapshot_hash().to_string();
         let rejection = {
             let mut state = lock_state(&self.state);
@@ -862,24 +897,24 @@ impl SemanticObservationPlane {
                 Ok(()) => {
                     if state
                         .completed_by_task
-                        .get(&task_id)
+                        .get(&task_authority)
                         .is_some_and(|receipt| receipt.snapshot_hash == snapshot_hash)
                     {
                         Some(SemanticObservationRejection::DuplicateCompleted)
                     } else if state
                         .in_flight
-                        .get(&task_id)
+                        .get(&task_authority)
                         .is_some_and(|current| current == &snapshot_hash)
                     {
                         Some(SemanticObservationRejection::DuplicateInFlight)
-                    } else if let Some(current) = state.in_flight.get(&task_id) {
+                    } else if let Some(current) = state.in_flight.get(&task_authority) {
                         Some(SemanticObservationRejection::ReviewerBusy {
                             in_flight_snapshot: current.clone(),
                         })
                     } else {
                         state
                             .in_flight
-                            .insert(task_id.clone(), snapshot_hash.clone());
+                            .insert(task_authority.clone(), snapshot_hash.clone());
                         None
                     }
                 }
@@ -899,6 +934,9 @@ impl SemanticObservationPlane {
             self.events.write_value(serde_json::json!({
                 "event": event,
                 "task_id": task_id,
+                "run_id": snapshot.authority_scope().run_id,
+                "phase_lineage_id": snapshot.authority_scope().phase_lineage_id,
+                "phase_epoch": snapshot.phase_epoch(),
                 "snapshot_hash": snapshot_hash,
                 "reason": format!("{rejection:?}"),
                 "authority": "observation_only",
@@ -910,6 +948,9 @@ impl SemanticObservationPlane {
         self.events.write_value(serde_json::json!({
             "event": "semantic_observation_requested",
             "task_id": task_id,
+            "run_id": snapshot.authority_scope().run_id,
+            "phase_lineage_id": snapshot.authority_scope().phase_lineage_id,
+            "phase_epoch": snapshot.phase_epoch(),
             "attempt": snapshot.attempt(),
             "source_revision": snapshot.source_revision(),
             "snapshot_hash": snapshot_hash,
@@ -920,11 +961,12 @@ impl SemanticObservationPlane {
         let events = self.events.clone();
         let state = self.state.clone();
         let task_id_for_task = task_id.clone();
+        let task_authority_for_task = task_authority.clone();
         let snapshot_hash_for_task = snapshot_hash.clone();
         tokio::spawn(async move {
             let mut guard = InFlightObservationGuard::new(
                 state.clone(),
-                task_id_for_task.clone(),
+                task_authority_for_task.clone(),
                 snapshot_hash_for_task.clone(),
             );
             let reviewed = match tokio::spawn(async move { reviewer.review(request).await }).await {
@@ -939,7 +981,7 @@ impl SemanticObservationPlane {
                 let state = lock_state(&state);
                 state
                     .current
-                    .get(&task_id_for_task)
+                    .get(&task_authority_for_task)
                     .is_none_or(|current| current.snapshot_hash != snapshot_hash_for_task)
             };
             let decision = if stale {
@@ -957,6 +999,8 @@ impl SemanticObservationPlane {
                 }
             };
             let receipt = SemanticObservationReceipt {
+                authority_scope: snapshot.authority_scope().clone(),
+                phase_epoch: snapshot.phase_epoch(),
                 task_id: task_id_for_task.clone(),
                 attempt: snapshot.attempt(),
                 source_revision: snapshot.source_revision(),
@@ -969,13 +1013,13 @@ impl SemanticObservationPlane {
                 let mut state = lock_state(&state);
                 state
                     .completed_by_task
-                    .insert(task_id_for_task.clone(), receipt.clone());
+                    .insert(task_authority_for_task.clone(), receipt.clone());
                 if state
                     .in_flight
-                    .get(&task_id_for_task)
+                    .get(&task_authority_for_task)
                     .is_some_and(|hash| hash == &snapshot_hash_for_task)
                 {
-                    state.in_flight.remove(&task_id_for_task);
+                    state.in_flight.remove(&task_authority_for_task);
                 }
             }
             guard.disarm();
@@ -983,6 +1027,9 @@ impl SemanticObservationPlane {
             events.write_value(serde_json::json!({
                 "event": "semantic_observation_completed",
                 "task_id": receipt.task_id,
+                "run_id": receipt.authority_scope.run_id,
+                "phase_lineage_id": receipt.authority_scope.phase_lineage_id,
+                "phase_epoch": receipt.phase_epoch,
                 "attempt": receipt.attempt,
                 "source_revision": receipt.source_revision,
                 "snapshot_hash": receipt.snapshot_hash,
@@ -1023,11 +1070,12 @@ fn register_current(
     state: &mut SemanticObservationState,
     snapshot: &SealedSemanticObservationSnapshot,
 ) -> std::result::Result<(), SemanticObservationRejection> {
-    let task_id = snapshot.task_id();
-    let Some(current) = state.current.get(task_id) else {
+    let task_authority = SemanticTaskAuthority::from_snapshot(snapshot);
+    let Some(current) = state.current.get(&task_authority) else {
         state.current.insert(
-            task_id.to_string(),
+            task_authority,
             CurrentSnapshot {
+                phase_epoch: snapshot.phase_epoch(),
                 attempt: snapshot.attempt(),
                 source_revision: snapshot.source_revision(),
                 snapshot_hash: snapshot.snapshot_hash().to_string(),
@@ -1035,8 +1083,16 @@ fn register_current(
         );
         return Ok(());
     };
-    let incoming_version = (snapshot.source_revision(), snapshot.attempt());
-    let current_version = (current.source_revision, current.attempt);
+    let incoming_version = (
+        snapshot.phase_epoch(),
+        snapshot.source_revision(),
+        snapshot.attempt(),
+    );
+    let current_version = (
+        current.phase_epoch,
+        current.source_revision,
+        current.attempt,
+    );
     if incoming_version < current_version {
         return Err(SemanticObservationRejection::OlderThanCurrent {
             current_snapshot: current.snapshot_hash.clone(),
@@ -1051,8 +1107,9 @@ fn register_current(
         });
     }
     state.current.insert(
-        task_id.to_string(),
+        task_authority,
         CurrentSnapshot {
+            phase_epoch: snapshot.phase_epoch(),
             attempt: snapshot.attempt(),
             source_revision: snapshot.source_revision(),
             snapshot_hash: snapshot.snapshot_hash().to_string(),
@@ -1063,7 +1120,7 @@ fn register_current(
 
 struct InFlightObservationGuard {
     state: Arc<Mutex<SemanticObservationState>>,
-    task_id: String,
+    task_authority: SemanticTaskAuthority,
     snapshot_hash: String,
     armed: bool,
 }
@@ -1071,12 +1128,12 @@ struct InFlightObservationGuard {
 impl InFlightObservationGuard {
     fn new(
         state: Arc<Mutex<SemanticObservationState>>,
-        task_id: String,
+        task_authority: SemanticTaskAuthority,
         snapshot_hash: String,
     ) -> Self {
         Self {
             state,
-            task_id,
+            task_authority,
             snapshot_hash,
             armed: true,
         }
@@ -1095,10 +1152,10 @@ impl Drop for InFlightObservationGuard {
         let mut state = lock_state(&self.state);
         if state
             .in_flight
-            .get(&self.task_id)
+            .get(&self.task_authority)
             .is_some_and(|hash| hash == &self.snapshot_hash)
         {
-            state.in_flight.remove(&self.task_id);
+            state.in_flight.remove(&self.task_authority);
         }
     }
 }
@@ -1188,6 +1245,8 @@ mod tests {
     fn draft(revision: u64, reasoning: &str) -> SemanticObservationSnapshotDraft {
         SemanticObservationSnapshotDraft {
             schema_version: SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+            authority_scope: AuthorityScope::new("semantic-observation-unit", "verification"),
+            phase_epoch: 0,
             task_id: "verify-e2e::1".into(),
             attempt: 1,
             source_revision: revision,

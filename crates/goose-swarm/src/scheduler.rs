@@ -8,7 +8,9 @@
 //! and two tasks owning the same file never run concurrently. Completions relax dependents
 //! (unlocking the DAG), merge output into the shared context, and free device capacity.
 
-use crate::broker::{AdmissionReceipt, SourceRevisionKind, TaskVersion, WorkOpportunity, WorkRole};
+use crate::broker::{
+    AdmissionReceipt, PhysicalExecutionAuthority, SourceRevisionKind, TaskVersion, WorkOpportunity,
+};
 use crate::context::SharedContext;
 use crate::control_plane::{
     BrokeredTaskDispatcher, PhysicalAdmissionControl, PhysicalDispatchAuthority,
@@ -784,6 +786,7 @@ enum SchedulerDispatcher {
     Physical {
         control: PhysicalAdmissionControl,
         dispatcher: Arc<dyn ProviderLifecycleDispatcher>,
+        execution: PhysicalExecutionAuthority,
     },
 }
 
@@ -835,6 +838,33 @@ impl SchedulerSemanticObservationRuntime {
     ) -> SemanticObservationAttemptResult {
         let task_id = request.task_id.clone();
         let attempt = request.attempt;
+        if let Err(reason) = request.activity_publisher.validate() {
+            self.capture_failed(
+                &task_id,
+                attempt,
+                format!("semantic capture request has invalid activity authority: {reason}"),
+            );
+            return SemanticObservationAttemptResult {
+                task_id,
+                revision: None,
+                disposition: SemanticObservationAttemptDisposition::NoCapture,
+            };
+        }
+        let admitted_source = &request.activity_publisher.source;
+        if request.task_id != admitted_source.task_id || request.attempt != admitted_source.attempt
+        {
+            self.capture_failed(
+                &task_id,
+                attempt,
+                "semantic capture request task/attempt diverges from its admitted source authority"
+                    .to_string(),
+            );
+            return SemanticObservationAttemptResult {
+                task_id,
+                revision: None,
+                disposition: SemanticObservationAttemptDisposition::NoCapture,
+            };
+        }
         let capture = match self.producer.capture(request.clone()).await {
             Ok(Some(capture)) => capture,
             Ok(None) => {
@@ -854,13 +884,24 @@ impl SchedulerSemanticObservationRuntime {
             }
         };
         let revision = capture.revision();
-        if revision.task_id != request.task_id || revision.attempt != request.attempt {
+        if revision.authority_scope != admitted_source.authority_scope
+            || revision.phase_epoch != admitted_source.phase_epoch
+            || revision.task_id != request.task_id
+            || revision.attempt != request.attempt
+        {
             self.capture_failed(
                 &request.task_id,
                 request.attempt,
                 format!(
-                    "snapshot identity `{}` attempt {} does not match capture request attempt {}",
-                    revision.task_id, revision.attempt, request.attempt
+                    "snapshot authority {:?}/epoch {} task `{}` attempt {} does not match admitted authority {:?}/epoch {} task `{}` attempt {}",
+                    revision.authority_scope,
+                    revision.phase_epoch,
+                    revision.task_id,
+                    revision.attempt,
+                    admitted_source.authority_scope,
+                    admitted_source.phase_epoch,
+                    admitted_source.task_id,
+                    admitted_source.attempt,
                 ),
             );
             return SemanticObservationAttemptResult {
@@ -1141,6 +1182,7 @@ struct State {
     /// Physical mode queues every task-derived opportunity centrally; logical device weights do
     /// not admit work or emit route/timing facts before the broker selects a verified lane.
     physical_admission: bool,
+    physical_execution: Option<PhysicalExecutionAuthority>,
 }
 
 struct SchedulerPhysicalAuthority {
@@ -1177,22 +1219,31 @@ impl PhysicalDispatchAuthority for SchedulerPhysicalAuthority {
                     .iter()
                     .any(|device| device.as_str() != avoid.as_str())
         });
-        let role = if req.attempt == 0 {
-            WorkRole::Build
-        } else {
-            WorkRole::Repair
+        let execution = state.physical_execution.as_ref().ok_or_else(|| {
+            DispatchError::Terminal(
+                "physical dispatch has no explicit run/phase execution authority".to_string(),
+            )
+        })?;
+        let role = execution.role;
+        let source = TaskVersion {
+            authority_scope: execution.scope.clone(),
+            phase_epoch: execution.phase_epoch,
+            task_id: req.task_id.clone(),
+            attempt: req.attempt,
+            revision: u64::from(req.attempt) + 1,
+            kind: SourceRevisionKind::TaskAttempt,
         };
         Ok(WorkOpportunity {
-            work_id: format!("task:{}:attempt:{}", req.task_id, req.attempt),
+            work_id: format!(
+                "{}:epoch:{}:attempt:{}",
+                source.authority_key(),
+                source.phase_epoch,
+                source.attempt
+            ),
             role,
             priority: role.priority(),
             task_rank: node.fan_out as u64,
-            source: TaskVersion {
-                task_id: req.task_id.clone(),
-                attempt: req.attempt,
-                revision: u64::from(req.attempt) + 1,
-                kind: SourceRevisionKind::TaskAttempt,
-            },
+            source,
             eligible_logical_device_ids: eligible,
             preferred_model_id: node.spec.preferred_model.clone(),
             excluded_logical_device_id: excluded.cloned(),
@@ -3628,9 +3679,11 @@ impl Scheduler {
         dag: Dag,
         dispatcher: Arc<dyn ProviderLifecycleDispatcher>,
         control: PhysicalAdmissionControl,
+        execution: PhysicalExecutionAuthority,
         goal: String,
         user_decisions: String,
     ) -> Result<RunReport> {
+        execution.validate().map_err(anyhow::Error::msg)?;
         if self.judge.is_some() {
             bail!(
                 "physical admission cannot enable the legacy judge path: it bypasses provider lifecycle and can abort admitted work; Engine 5 must submit trace-bound observation-only judge work"
@@ -3700,6 +3753,7 @@ impl Scheduler {
                 SchedulerDispatcher::Physical {
                     control: control.clone(),
                     dispatcher,
+                    execution,
                 },
                 goal,
                 user_decisions,
@@ -3758,7 +3812,11 @@ impl Scheduler {
             }
         }
 
-        let physical_admission = matches!(&dispatcher, SchedulerDispatcher::Physical { .. });
+        let physical_execution = match &dispatcher {
+            SchedulerDispatcher::Legacy(_) => None,
+            SchedulerDispatcher::Physical { execution, .. } => Some(execution.clone()),
+        };
+        let physical_admission = physical_execution.is_some();
         let mut ready = BinaryHeap::new();
         for (id, n) in &dag.tasks {
             if n.state == TaskState::Ready {
@@ -3822,6 +3880,7 @@ impl Scheduler {
             tail_review_count: 0,
             tail_review_dim: 0,
             physical_admission,
+            physical_execution,
         }));
         let notify = Arc::new(Notify::new());
         let mut semantic_runtime = None;
@@ -3833,6 +3892,7 @@ impl Scheduler {
             SchedulerDispatcher::Physical {
                 control,
                 dispatcher,
+                execution: _,
             } => {
                 if let Some(config) = &self.semantic_observation {
                     semantic_runtime = Some(SchedulerSemanticObservationRuntime {

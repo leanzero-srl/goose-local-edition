@@ -802,13 +802,15 @@ impl SemanticObservationSnapshotProducer for GooseSemanticObservationSnapshotPro
             source_id: format!("signal:trace-measurement:{measurement_hash}"),
             measurement,
             provenance: format!(
-                "engine publisher {} mirrored at .swarm/activity/{}.json plus two identical full owned-artifact reads; deterministic measurements are neutral and grant no intervention authority",
+                "engine publisher {} plus two identical full owned-artifact reads; .swarm/activity/{}.json is an optional UI mirror only, and deterministic measurements grant no intervention authority",
                 publisher_id,
                 activity_digest_key(&request.task_id)
             ),
         };
         let snapshot = SemanticObservationSnapshotDraft {
             schema_version: SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+            authority_scope: request.activity_publisher.source.authority_scope.clone(),
+            phase_epoch: request.activity_publisher.source.phase_epoch,
             task_id: request.task_id.clone(),
             attempt: request.attempt,
             source_revision,
@@ -1402,7 +1404,7 @@ mod tests {
     use goose_provider_types::errors::ProviderError;
     use goose_provider_types::model::ModelConfig;
     use goose_swarm::{
-        AcceptanceCriterionSnapshot, BrokeredSemanticObservationPlane, EventSink,
+        AcceptanceCriterionSnapshot, AuthorityScope, BrokeredSemanticObservationPlane, EventSink,
         HostCapacityEvidence, PhysicalAdmissionControl, SemanticObservationAdmissionPolicy,
         SemanticObservationAdmissionSubmission, SwarmEvent,
     };
@@ -1591,9 +1593,11 @@ mod tests {
                 priority: goose_swarm::WorkPriority::Implementation,
                 task_rank: 7,
                 source: goose_swarm::TaskVersion {
+                    authority_scope: AuthorityScope::new("semantic-cli-replay", "build"),
+                    phase_epoch: 0,
                     task_id: "build-api".to_string(),
                     attempt,
-                    revision: 1,
+                    revision: u64::from(attempt) + 1,
                     kind: SourceRevisionKind::TaskAttempt,
                 },
                 fleet_snapshot_id: "fleet-a".to_string(),

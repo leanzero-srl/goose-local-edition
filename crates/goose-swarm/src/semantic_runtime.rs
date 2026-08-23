@@ -6,7 +6,7 @@
 use crate::semantic_observation::{
     AcceptanceCriterionSnapshot, NeutralJudgeSignal, SealedSemanticObservationSnapshot,
 };
-use crate::AdmissionReceipt;
+use crate::{AdmissionReceipt, TaskVersion};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,6 +21,7 @@ pub struct SemanticActivityPublisher {
     pub admission_id: String,
     pub work_role: String,
     pub source_id: String,
+    pub source: TaskVersion,
     pub fleet_snapshot_id: String,
     pub logical_device_id: String,
     pub model_id: String,
@@ -45,6 +46,7 @@ impl SemanticActivityPublisher {
             admission_id: admission.admission_id.clone(),
             work_role,
             source_id,
+            source: admission.source.clone(),
             fleet_snapshot_id: admission.fleet_snapshot_id.clone(),
             logical_device_id: admission.logical_device_id.clone(),
             model_id: admission.model_id.clone(),
@@ -58,6 +60,7 @@ impl SemanticActivityPublisher {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.source.validate()?;
         let required = [
             ("publisher id", self.publisher_id.as_str()),
             ("task id", self.task_id.as_str()),
@@ -79,6 +82,17 @@ impl SemanticActivityPublisher {
             return Err(format!("semantic activity publisher {name} is empty"));
         }
         let expected = canonical_digest(&self.identity_fields());
+        if self.task_id != self.source.task_id || self.attempt != self.source.attempt {
+            return Err(
+                "semantic activity publisher task/attempt does not match its source authority"
+                    .into(),
+            );
+        }
+        if self.source_id != canonical_digest(&self.source) {
+            return Err(
+                "semantic activity publisher source id does not match its source authority".into(),
+            );
+        }
         if self.publisher_id != expected {
             return Err("semantic activity publisher id does not match its sealed identity".into());
         }
@@ -92,6 +106,7 @@ impl SemanticActivityPublisher {
             admission_id: &self.admission_id,
             work_role: &self.work_role,
             source_id: &self.source_id,
+            source: &self.source,
             fleet_snapshot_id: &self.fleet_snapshot_id,
             logical_device_id: &self.logical_device_id,
             model_id: &self.model_id,
@@ -110,6 +125,7 @@ struct SemanticActivityPublisherIdentity<'a> {
     admission_id: &'a str,
     work_role: &'a str,
     source_id: &'a str,
+    source: &'a TaskVersion,
     fleet_snapshot_id: &'a str,
     logical_device_id: &'a str,
     model_id: &'a str,
@@ -202,6 +218,8 @@ impl SemanticObservationSummonsSignal {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SemanticTraceRevision {
+    pub authority_scope: crate::AuthorityScope,
+    pub phase_epoch: u64,
     pub task_id: String,
     pub attempt: u32,
     pub source_revision: u64,
@@ -245,6 +263,8 @@ impl SemanticObservationCapture {
 
     pub fn revision(&self) -> SemanticTraceRevision {
         SemanticTraceRevision {
+            authority_scope: self.snapshot.authority_scope().clone(),
+            phase_epoch: self.snapshot.phase_epoch(),
             task_id: self.snapshot.task_id().to_string(),
             attempt: self.snapshot.attempt(),
             source_revision: self.snapshot.source_revision(),
