@@ -49,7 +49,7 @@ class TerminalDefectRecoveryTest(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "sealed descendant-cleanup incident"):
             require_sealed_failure("some other infrastructure failure")
 
-    def test_refuses_ambiguous_or_unpublished_siblings(self) -> None:
+    def test_refuses_ambiguous_or_uncarryable_siblings(self) -> None:
         campaign = {"status": "ATTENTION"}
         manager = {"status": "ATTENTION"}
         states = self.states()
@@ -76,8 +76,19 @@ class TerminalDefectRecoveryTest(unittest.TestCase):
                 "fixture failure",
                 manager_alive=False,
             )[0],
-            "REFUSE",
+            "READY",
         )
+        states["carried"]["status"] = "BUILD_RUNNING"
+        disposition, reason, _ = readiness_failure(
+            campaign,
+            manager,
+            states,
+            {"affected"},
+            "fixture failure",
+            manager_alive=False,
+        )
+        self.assertEqual(disposition, "REFUSE")
+        self.assertIn("no carryable build outcome", reason)
 
     def test_discovers_every_exact_terminal_defect_beyond_seed_set(self) -> None:
         campaign = {"status": "ATTENTION"}

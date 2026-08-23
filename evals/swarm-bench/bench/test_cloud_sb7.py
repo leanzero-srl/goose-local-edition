@@ -6570,6 +6570,25 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(
             cloud_sb7.public_publication_identity(campaign, verdict), expected
         )
+        summarized_campaign = dict(campaign, calibration="uncalibrated")
+        self.assertEqual(
+            cloud_sb7.public_publication_identity(summarized_campaign, verdict),
+            expected,
+        )
+        with self.assertRaisesRegex(
+            cloud_sb7.PublicationError,
+            "raw hermetic scorer, calibration, and provisional identity",
+        ):
+            cloud_sb7.public_publication_identity(
+                dict(campaign, calibration="frozen"), verdict
+            )
+        with self.assertRaisesRegex(
+            cloud_sb7.PublicationError,
+            "raw hermetic scorer, calibration, and provisional identity",
+        ):
+            cloud_sb7.public_publication_identity(
+                campaign, dict(verdict, calibration="frozen")
+            )
         with tempfile.TemporaryDirectory() as raw:
             log = Path(raw) / "publisher.log"
             log.write_text(

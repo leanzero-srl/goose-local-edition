@@ -16082,6 +16082,16 @@ def same_public_identity(left: Any, right: Mapping[str, Any]) -> bool:
     )
 
 
+def calibration_identity_class(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    if re.search(r"uncalibrated|rc-grade", value, re.IGNORECASE):
+        return "provisional"
+    if value.strip().casefold() == "frozen":
+        return "frozen"
+    return None
+
+
 def public_publication_identity(
     campaign: Mapping[str, Any], verdict: Mapping[str, Any]
 ) -> Dict[str, Any]:
@@ -16091,14 +16101,20 @@ def public_publication_identity(
     calibration_discloses_provisional = isinstance(
         raw_calibration, str
     ) and re.search(r"uncalibrated|rc-grade", raw_calibration, re.IGNORECASE)
+    campaign_calibration_class = calibration_identity_class(
+        campaign.get("calibration")
+    )
+    raw_calibration_class = calibration_identity_class(raw_calibration)
     if (
         not isinstance(raw_scorer, str)
         or not raw_scorer
         or campaign.get("scorer_version") != raw_scorer
         or not isinstance(raw_calibration, str)
         or not raw_calibration.strip()
-        or campaign.get("calibration") != raw_calibration
+        or campaign_calibration_class is None
+        or campaign_calibration_class != raw_calibration_class
         or provisional != bool(calibration_discloses_provisional)
+        or provisional != (raw_calibration_class == "provisional")
     ):
         raise PublicationError(
             "raw hermetic scorer, calibration, and provisional identity are inconsistent"
