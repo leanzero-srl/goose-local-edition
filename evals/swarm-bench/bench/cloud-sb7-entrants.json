@@ -3,6 +3,7 @@
   "suite": "sb-7.0-rc",
   "calibration": "uncalibrated",
   "spec": "../spec-build-sb7.md",
+  "smoke_max_turns": 3,
   "spend_policy": {
     "currency": "USD",
     "total_cap": 400.0,

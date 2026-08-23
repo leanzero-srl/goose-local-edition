@@ -14,13 +14,265 @@ from unittest import mock
 
 import cloud_sb7
 
-
 PNG_1X1 = b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 
 
 class CloudSb7HarnessTest(unittest.TestCase):
+    def make_smoke_campaign(
+        self, root: Path, *, entrant_count: int = 5
+    ) -> list[dict[str, object]]:
+        source_manifest = cloud_sb7.load_json(cloud_sb7.DEFAULT_ENTRANTS)
+        rows = cloud_sb7.entrants(source_manifest)[:entrant_count]
+        (root / "instrument/source/fixture").mkdir(parents=True)
+        frozen_file = root / "instrument/source/fixture/instrument.txt"
+        frozen_file.write_text("frozen instrument\n")
+        instrument_hashes = {
+            "fixture/instrument.txt": cloud_sb7.sha256_file(frozen_file)
+        }
+        manifest = root / "instrument/cloud-sb7-entrants.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "suite": source_manifest["suite"],
+                    "smoke_max_turns": cloud_sb7.SMOKE_MAX_TURNS,
+                    "spend_policy": source_manifest["spend_policy"],
+                    "entrants": rows,
+                }
+            )
+        )
+        binary = root / "instrument/goose"
+        binary.write_bytes(b"fixture binary")
+        binary.chmod(0o700)
+        budget_config = root / "instrument/budget-config.json"
+        budget_config.write_text('{"schema_version":1}\n')
+        ledger = root / "budget-ledger.json"
+        cloud_sb7.atomic_json(
+            ledger,
+            {
+                "schema_version": 1,
+                "outstanding": {},
+                "settled": [],
+                "spent_upper_bound": 0,
+            },
+        )
+        secret_file = root / "cloud.env"
+        secret_file.write_text(
+            "\n".join(
+                f"{row['secret_env']}=fixture-secret-{index}"
+                for index, row in enumerate(rows)
+            )
+            + "\n"
+        )
+        secret_file.chmod(0o600)
+        campaign: dict[str, object] = {
+            "schema_version": cloud_sb7.CAMPAIGN_SCHEMA,
+            "campaign_id": root.name,
+            "status": "INITIALIZED",
+            "smoke_status": "PLANNED",
+            "binary": str(binary),
+            "binary_sha256": cloud_sb7.sha256_file(binary),
+            "entrant_manifest": str(manifest),
+            "entrant_manifest_sha256": cloud_sb7.sha256_file(manifest),
+            "budget_config": str(budget_config),
+            "budget_config_sha256": cloud_sb7.sha256_file(budget_config),
+            "budget_ledger": str(ledger),
+            "instrument_root": str(root / "instrument/source"),
+            "instrument_hashes": instrument_hashes,
+            "instrument_set_sha256": cloud_sb7.sha256_bytes(
+                json.dumps(instrument_hashes, sort_keys=True).encode()
+            ),
+            "coordinator": str(root / "instrument/source/cloud_sb7.py"),
+            "secret_file": str(secret_file),
+            "smoke_max_turns": cloud_sb7.SMOKE_MAX_TURNS,
+            "lineage": {
+                "generation": 0,
+                "predecessor_campaign_id": None,
+                "predecessor_contract_sha256": None,
+            },
+        }
+        campaign = cloud_sb7.bind_smoke_contract(campaign, rows)
+        cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
+        (root / "locks").mkdir()
+        (root / "smoke").mkdir()
+        (root / "entrants").mkdir()
+        cloud_sb7.atomic_json(root / "manager.json", {"status": "IDLE"})
+        for row in rows:
+            entrant_id = str(row["id"])
+            (root / "entrants" / entrant_id / "tree").mkdir(parents=True)
+            (root / "smoke" / entrant_id / "attempts").mkdir(parents=True)
+            cloud_sb7.atomic_json(
+                cloud_sb7.state_file(root, entrant_id),
+                {
+                    "entrant": entrant_id,
+                    "status": "PLANNED",
+                    "provider_episode_attempts": 0,
+                    "admitted_requests": 0,
+                    "tree": str(root / "entrants" / entrant_id / "tree"),
+                },
+            )
+            cloud_sb7.atomic_json(
+                cloud_sb7.smoke_state_file(root, entrant_id),
+                {
+                    "schema_version": cloud_sb7.CAMPAIGN_SCHEMA,
+                    "entrant": entrant_id,
+                    "provider": row["provider"],
+                    "model": row["model"],
+                    "provider_lane": row["provider_lane"],
+                    "status": "PLANNED",
+                    "launch_attempts": 0,
+                    "admitted_episodes": 0,
+                    "active_attempt": False,
+                    "attempt_evidence_sha256": {},
+                    "smoke_contract_sha256": campaign["smoke_contract_sha256"],
+                    "budget_settled_baseline_request_ids": campaign[
+                        "smoke_budget_settled_baselines"
+                    ][entrant_id],
+                    "budget_outstanding_baseline_request_ids": campaign[
+                        "smoke_budget_outstanding_baselines"
+                    ][entrant_id],
+                    "budget_config_sha256": campaign["budget_config_sha256"],
+                    "thinking_effort": row["thinking_effort"],
+                    "context_limit": row["context_limit"],
+                    "max_output_tokens": row["max_output_tokens"],
+                    "endpoint_family": row["endpoint_family"],
+                },
+            )
+        return rows
+
+    def smoke_stream_events(self, state: dict[str, object]) -> list[dict[str, object]]:
+        request_id = "tool-request-1"
+        return [
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolRequest",
+                            "id": request_id,
+                            "toolCall": {
+                                "status": "success",
+                                "value": {
+                                    "name": "developer__shell",
+                                    "arguments": {"command": state["expected_command"]},
+                                },
+                            },
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "message",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "toolResponse",
+                            "id": request_id,
+                            "toolResult": {
+                                "status": "success",
+                                "value": {
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": state["expected_tool_output"],
+                                        }
+                                    ],
+                                    "isError": False,
+                                },
+                            },
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": state["final_marker"]}],
+                },
+            },
+            {"type": "complete", "total_tokens": 10},
+        ]
+
+    def complete_smoke_attempt(
+        self,
+        root: Path,
+        row: dict[str, object],
+        *,
+        finalize: bool = True,
+    ) -> dict[str, object]:
+        entrant_id = str(row["id"])
+        state = cloud_sb7.prepare_smoke_attempt(root, entrant_id, row)
+        Path(str(state["log"])).write_text(
+            "\n".join(map(json.dumps, self.smoke_stream_events(state))) + "\n"
+        )
+        Path(str(state["nonce_file"])).write_bytes(
+            bytes.fromhex(str(state["nonce_hex"]))
+        )
+        lifecycle_events = []
+        request_ids = [f"{entrant_id}-request-1", f"{entrant_id}-request-2"]
+        for request_id in request_ids:
+            base = {
+                "schema_version": 1,
+                "timestamp": "now",
+                "request_id": request_id,
+                "provider": row["provider"],
+                "model": row["model"],
+                "session": f"{entrant_id}-session",
+            }
+            lifecycle_events.extend(
+                [
+                    {**base, "state": "queued"},
+                    {**base, "state": "admitted"},
+                    {**base, "state": "first_item"},
+                    {
+                        **base,
+                        "state": "usage_reported",
+                        "usage": {
+                            "reported_model": row["model"],
+                            "input_tokens": 2,
+                            "output_tokens": 3,
+                            "total_tokens": 5,
+                        },
+                    },
+                    {
+                        **base,
+                        "state": "provider_terminal",
+                        "usage": {
+                            "reported_model": row["model"],
+                            "input_tokens": 2,
+                            "output_tokens": 3,
+                            "total_tokens": 5,
+                        },
+                    },
+                ]
+            )
+        Path(str(state["provider_lifecycle"])).write_text(
+            "\n".join(map(json.dumps, lifecycle_events)) + "\n"
+        )
+        campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+        ledger_path = Path(str(campaign["budget_ledger"]))
+        ledger = cloud_sb7.load_json(ledger_path)
+        ledger["settled"].extend(
+            {
+                "request_id": request_id,
+                "provider": row["provider"],
+                "model": row["model"],
+            }
+            for request_id in request_ids
+        )
+        cloud_sb7.atomic_json(ledger_path, ledger)
+        if finalize:
+            self.assertTrue(
+                cloud_sb7.finalize_smoke_attempt(
+                    root, entrant_id, exit_code=0, descendants_clean=True
+                )
+            )
+        return cloud_sb7.read_smoke_state(root, entrant_id)
+
     def make_recovery_campaign(self, root: Path, status: str) -> None:
         (root / "entrants/model/tree").mkdir(parents=True)
         (root / "scores/model").mkdir(parents=True)
@@ -59,6 +311,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     "status": status,
                     "entrant_manifest": str(manifest),
                     "coordinator": str(root / "instrument/cloud_sb7.py"),
+                    "lineage": {
+                        "generation": 0,
+                        "predecessor_campaign_id": None,
+                        "predecessor_contract_sha256": None,
+                    },
                 }
             )
         )
@@ -151,6 +408,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "schema_version": cloud_sb7.CAMPAIGN_SCHEMA,
             "campaign_id": "fixture-campaign",
             "status": "SCORED",
+            "lineage": {
+                "generation": 0,
+                "predecessor_campaign_id": None,
+                "predecessor_contract_sha256": None,
+            },
             "binary_sha256": "binary",
             "instrument_set_sha256": "instrument",
             "secret_file": str(secret_file),
@@ -207,7 +469,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     "model": "fixture-model",
                     "docId": "brun-baseline-fixture-model-sb70",
                 }
-            ]
+            ],
         }
         (repo / cloud_sb7.PUBLISHER_SCRIPT).write_text("console.log('fixture')\n")
         (repo / "scripts/lib/sb7-cloud-publisher.mjs").write_text(
@@ -240,9 +502,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             cwd=repo,
             check=True,
         )
-        subprocess.run(
-            ["git", "config", "user.name", "Fixture"], cwd=repo, check=True
-        )
+        subprocess.run(["git", "config", "user.name", "Fixture"], cwd=repo, check=True)
         subprocess.run(["git", "add", "."], cwd=repo, check=True)
         subprocess.run(
             ["git", "commit", "-qm", "fixture publisher"], cwd=repo, check=True
@@ -297,6 +557,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     "schema_version": 1,
                     "suite": "sb-7.0-rc",
                     "calibration": "uncalibrated fixture",
+                    "smoke_max_turns": cloud_sb7.SMOKE_MAX_TURNS,
                     "spend_policy": {
                         "currency": "USD",
                         "total_cap": 20,
@@ -451,6 +712,12 @@ class CloudSb7HarnessTest(unittest.TestCase):
             pgid=None,
             identity=None,
         )
+        for row in (failed_row, carried_row):
+            cloud_sb7.update_smoke_state(
+                predecessor_root,
+                str(row["id"]),
+                status="STOPPED",
+            )
         cloud_sb7.update_campaign(predecessor_root, status="STOPPED")
 
         root_cause = root / "root-cause.txt"
@@ -568,7 +835,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "preserve me\n",
             )
             self.assertIn(
-                "strict all-entrant cloud-smoke proof",
+                "fresh strict all-entrant smoke proof",
                 cloud_sb7.supersession_smoke_gate_failure(
                     Path(str(fixture["successor"]))
                 )
@@ -706,6 +973,120 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.lineage_failure(successor_root) or "",
             )
 
+    def test_smoke_stage_supersession_preserves_terminal_reserve_and_full_attempts(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+            predecessor = Path(str(fixture["predecessor"]))
+            failed_id = str(fixture["failed_id"])
+            unstarted_id = str(fixture["carried_id"])
+            failed_row = cloud_sb7.manifest_row(predecessor, failed_id)
+
+            for entrant_id in (failed_id, unstarted_id):
+                state = cloud_sb7.read_state(predecessor, entrant_id)
+                Path(str(state["provider_lifecycle"])).unlink(missing_ok=True)
+                cloud_sb7.update_state(
+                    predecessor,
+                    entrant_id,
+                    status="STOPPED",
+                    provider_episode_attempts=0,
+                    admitted_requests=0,
+                    provider_terminal_requests=0,
+                    score=None,
+                    verdict=None,
+                    failure=None,
+                )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(predecessor))
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["spent_upper_bound"] = 0
+            ledger["provider_spent_upper_bound"] = {"fixture": 0}
+            ledger["settled"] = []
+            ledger["outstanding"] = {}
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            cloud_sb7.update_smoke_state(predecessor, failed_id, status="PLANNED")
+            smoke = cloud_sb7.prepare_smoke_attempt(
+                predecessor, failed_id, failed_row
+            )
+            request_id = "smoke-terminal-before-settlement"
+            usage = {
+                "reported_model": failed_row["model"],
+                "input_tokens": 10,
+                "output_tokens": 10,
+                "total_tokens": 20,
+            }
+            base = {
+                "schema_version": 1,
+                "timestamp": "now",
+                "request_id": request_id,
+                "provider": failed_row["provider"],
+                "model": failed_row["model"],
+                "session": "smoke-crash-session",
+            }
+            events = [
+                {**base, "state": "queued"},
+                {**base, "state": "admitted"},
+                {**base, "state": "first_item"},
+                {**base, "state": "usage_reported", "usage": usage},
+                {**base, "state": "provider_terminal", "usage": usage},
+            ]
+            Path(str(smoke["provider_lifecycle"])).write_text(
+                "\n".join(map(json.dumps, events)) + "\n"
+            )
+            cloud_sb7.update_smoke_state(
+                predecessor,
+                failed_id,
+                status="STOPPED",
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+            )
+
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["spent_upper_bound"] = 0
+            ledger["provider_spent_upper_bound"] = {"fixture": 0}
+            ledger["settled"] = []
+            ledger["outstanding"] = {
+                request_id: {
+                    "request_id": request_id,
+                    "provider": failed_row["provider"],
+                    "model": failed_row["model"],
+                    "reserved_usd": 0.00012,
+                    "input_reserve_tokens": 100,
+                    "output_reserve_tokens": 20,
+                    "created_at_unix_ms": 2,
+                }
+            }
+            cloud_sb7.atomic_json(ledger_path, ledger)
+
+            successor = self.supersede_fixture(fixture)
+            successor_root = Path(str(fixture["successor"]))
+            lineage = cloud_sb7.load_json(successor_root / "lineage/lineage.json")
+            self.assertEqual(lineage["affected_entrants"], [failed_id])
+            self.assertEqual(lineage["unstarted_entrants"], [unstarted_id])
+            self.assertEqual(
+                lineage["predecessor_terminal_outstanding"][failed_id],
+                [request_id],
+            )
+            self.assertEqual(
+                successor["smoke_budget_outstanding_baselines"][failed_id],
+                [request_id],
+            )
+            failed = cloud_sb7.read_state(successor_root, failed_id)
+            unstarted = cloud_sb7.read_state(successor_root, unstarted_id)
+            self.assertEqual(failed["provider_episode_attempts"], 0)
+            self.assertEqual(unstarted["provider_episode_attempts"], 0)
+            self.assertEqual(
+                unstarted["lineage_role"],
+                "unstarted_after_infrastructure_defect",
+            )
+            for entrant_id in (failed_id, unstarted_id):
+                smoke_state = cloud_sb7.read_smoke_state(successor_root, entrant_id)
+                self.assertEqual(smoke_state["status"], "PLANNED")
+                self.assertEqual(smoke_state["launch_attempts"], 0)
+            self.assertIsNone(cloud_sb7.lineage_failure(successor_root))
+
     def test_supersession_rejects_uncorrelated_outstanding_reserve(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_supersession_fixture(Path(raw))
@@ -778,6 +1159,710 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(policy["total_cap"], 400.0)
         self.assertEqual(policy["provider_caps"]["google"], 250.0)
         self.assertIs(policy["launch_all_entrants_concurrently"], True)
+        self.assertEqual(cloud_sb7.smoke_max_turns(manifest), cloud_sb7.SMOKE_MAX_TURNS)
+
+    def test_only_smoke_command_has_safety_turn_limit(self) -> None:
+        row = cloud_sb7.entrants(cloud_sb7.load_json(cloud_sb7.DEFAULT_ENTRANTS))[0]
+        binary = Path("/frozen/goose")
+        build = cloud_sb7.build_goose_command(binary, row, "build prompt")
+        smoke = cloud_sb7.smoke_goose_command(
+            binary, row, "smoke prompt", cloud_sb7.SMOKE_MAX_TURNS
+        )
+        self.assertNotIn("--max-turns", build)
+        self.assertEqual(
+            smoke[smoke.index("--max-turns") + 1], str(cloud_sb7.SMOKE_MAX_TURNS)
+        )
+        self.assertEqual(smoke[smoke.index("--provider") + 1], row["provider"])
+        self.assertEqual(smoke[smoke.index("--model") + 1], row["model"])
+
+    def test_smoke_environment_uses_shared_budget_and_isolated_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            state = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+            with mock.patch.dict(os.environ, {"PATH": "/bin"}, clear=True):
+                env = cloud_sb7.child_env(row, state, "active-secret")
+            self.assertEqual(env["GOOSE_BENCH_CAMPAIGN"], str(root))
+            self.assertEqual(
+                env["GOOSE_BENCH_BUDGET_LEDGER"], str(root / "budget-ledger.json")
+            )
+            self.assertEqual(env["GOOSE_TOOL_SANDBOX_ROOT"], state["tree"])
+            self.assertEqual(env["GOOSE_PATH_ROOT"], state["profile"])
+            self.assertEqual(env["GOOSE_BENCH_TOOL_ALLOWLIST"], "developer")
+            self.assertEqual(env["GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES"], "true")
+
+    def test_smoke_stream_requires_exact_structural_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            state = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+            log = Path(str(state["log"]))
+
+            def parse(events: list[dict[str, object]]) -> dict[str, object]:
+                log.write_text("\n".join(map(json.dumps, events)) + "\n")
+                return cloud_sb7.parse_smoke_stream(
+                    log,
+                    expected_command=str(state["expected_command"]),
+                    expected_marker=str(state["final_marker"]),
+                    expected_tool_output=str(state["expected_tool_output"]),
+                )
+
+            valid = self.smoke_stream_events(state)
+            self.assertIs(parse(valid)["valid"], True)
+
+            cases: dict[str, list[dict[str, object]]] = {}
+            mismatched = json.loads(json.dumps(valid))
+            mismatched[1]["message"]["content"][0]["id"] = "wrong-id"
+            cases["matching tool IDs"] = mismatched
+            failed = json.loads(json.dumps(valid))
+            failed[1]["message"]["content"][0]["toolResult"]["status"] = "error"
+            cases["successful tool response"] = failed
+            missing_complete = json.loads(json.dumps(valid[:-1]))
+            cases["complete event"] = missing_complete
+            truncated = json.loads(json.dumps(valid))
+            truncated[-1]["outputTokenLimitReached"] = True
+            cases["output truncation"] = truncated
+            prompt_echo = json.loads(json.dumps(valid))
+            prompt_echo.insert(
+                0,
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": state["final_marker"]}],
+                    },
+                },
+            )
+            cases["prompt echo"] = prompt_echo
+            assistant_preface = json.loads(json.dumps(valid))
+            assistant_preface[0]["message"]["content"].insert(
+                0, {"type": "text", "text": "I will do that"}
+            )
+            cases["assistant preface"] = assistant_preface
+            for label, events in cases.items():
+                with self.subTest(label=label):
+                    result = parse(events)
+                    self.assertIs(result["valid"], False)
+                    self.assertTrue(result["errors"])
+
+    def test_smoke_proof_seals_tool_nonce_lifecycle_and_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            state = self.complete_smoke_attempt(root, row)
+            self.assertEqual(state["status"], "PASS")
+            self.assertEqual(state["admitted_episodes"], 1)
+            self.assertIsNone(cloud_sb7.smoke_proof_mismatch(root, str(row["id"]), row))
+            proof = cloud_sb7.load_json(Path(str(state["proof"])))
+            self.assertEqual(
+                proof["smoke_contract_sha256"],
+                cloud_sb7.load_json(cloud_sb7.campaign_file(root))[
+                    "smoke_contract_sha256"
+                ],
+            )
+            self.assertEqual(proof["admission_history"]["episodes_admitted"], 1)
+            self.assertEqual(len(proof["evidence"]["terminal_request_ids"]), 2)
+
+    def test_smoke_nonce_wrong_bytes_and_symlink_fail_closed(self) -> None:
+        for mode in ("wrong-bytes", "symlink"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                row = self.make_smoke_campaign(root, entrant_count=1)[0]
+                state = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+                Path(str(state["log"])).write_text(
+                    "\n".join(map(json.dumps, self.smoke_stream_events(state))) + "\n"
+                )
+                nonce = Path(str(state["nonce_file"]))
+                if mode == "wrong-bytes":
+                    nonce.write_bytes(b"wrong")
+                else:
+                    outside = root / "outside-nonce"
+                    outside.write_bytes(bytes.fromhex(str(state["nonce_hex"])))
+                    nonce.symlink_to(outside)
+                evidence = cloud_sb7.smoke_attempt_evidence(
+                    root,
+                    str(row["id"]),
+                    exit_code=0,
+                    descendants_clean=True,
+                )
+                self.assertIs(evidence["passed"], False)
+                self.assertTrue(
+                    any("nonce" in reason for reason in evidence["reasons"])
+                )
+
+    def test_smoke_lifecycle_ambiguity_and_outstanding_reserve_block_retry(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            state = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+            lifecycle = Path(str(state["provider_lifecycle"]))
+            lifecycle.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "timestamp": "now",
+                        "request_id": "ambiguous-request",
+                        "provider": row["provider"],
+                        "model": row["model"],
+                        "session": "session",
+                        "state": "queued",
+                    }
+                )
+                + "\n"
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["outstanding"] = {
+                "ambiguous-request": {
+                    "provider": row["provider"],
+                    "model": row["model"],
+                }
+            }
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            self.assertFalse(
+                cloud_sb7.finalize_smoke_attempt(
+                    root,
+                    str(row["id"]),
+                    exit_code=None,
+                    descendants_clean=True,
+                )
+            )
+            final = cloud_sb7.read_smoke_state(root, str(row["id"]))
+            self.assertEqual(final["status"], "FAILED")
+            self.assertIn("ambiguous", final["failure"])
+            self.assertIn("budget reserves", final["failure"])
+
+    def test_only_proven_pre_admission_failure_can_create_another_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            state = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+            Path(str(state["log"])).write_text(
+                json.dumps({"type": "error", "error": "local launch failure"}) + "\n"
+            )
+            self.assertFalse(
+                cloud_sb7.finalize_smoke_attempt(
+                    root,
+                    str(row["id"]),
+                    exit_code=2,
+                    descendants_clean=True,
+                )
+            )
+            self.assertEqual(
+                cloud_sb7.read_smoke_state(root, str(row["id"]))["status"],
+                "PRE_ADMISSION_FAILURE",
+            )
+            second = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+            self.assertEqual(second["attempt"], 2)
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            self.complete_smoke_attempt(root, row)
+            cloud_sb7.update_smoke_state(
+                root, str(row["id"]), status="PRE_ADMISSION_FAILURE"
+            )
+            with self.assertRaisesRegex(SystemExit, "prior smoke episode"):
+                cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+
+    def test_tampered_and_predecessor_smoke_proofs_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            state = self.complete_smoke_attempt(root, row)
+            Path(str(state["log"])).write_text("{}\n")
+            self.assertIn(
+                "changed after PASS",
+                cloud_sb7.smoke_proof_mismatch(root, str(row["id"]), row) or "",
+            )
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            state = self.complete_smoke_attempt(root, row)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            predecessor_contract = campaign["smoke_contract_sha256"]
+            campaign["campaign_id"] = "successor"
+            campaign["lineage"] = {
+                "generation": 1,
+                "predecessor_campaign_id": root.name,
+                "predecessor_contract_sha256": predecessor_contract,
+            }
+            campaign = cloud_sb7.bind_smoke_contract(campaign, [row])
+            cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
+            mismatch = cloud_sb7.smoke_proof_mismatch(root, str(row["id"]), row)
+            self.assertIn("different campaign contract", mismatch or "")
+            self.assertNotEqual(predecessor_contract, campaign["smoke_contract_sha256"])
+            self.assertEqual(state["status"], "PASS")
+
+    def test_smoke_launches_all_five_before_wait_and_never_scores_or_publishes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            rows = self.make_smoke_campaign(root)
+            events: list[str] = []
+
+            def launch(_root: Path, entrant_id: str) -> mock.Mock:
+                events.append(f"launch:{entrant_id}")
+                return mock.Mock()
+
+            def wait(
+                _root: Path,
+                row_ids: list[str],
+                supervisors: dict[str, mock.Mock],
+            ) -> bool:
+                events.append("wait")
+                self.assertEqual(set(supervisors), set(row_ids))
+                self.assertEqual(len(events), 6)
+                for entrant_id in row_ids:
+                    cloud_sb7.update_smoke_state(
+                        root,
+                        entrant_id,
+                        status="PASS",
+                        proof_sha256=f"proof-{entrant_id}",
+                    )
+                return True
+
+            with (
+                mock.patch.object(
+                    cloud_sb7, "recover_smoke_entrant", return_value=False
+                ),
+                mock.patch.object(
+                    cloud_sb7, "launch_smoke_supervisor", side_effect=launch
+                ),
+                mock.patch.object(cloud_sb7, "wait_for_smokes", side_effect=wait),
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "score_all") as score,
+                mock.patch.object(cloud_sb7, "publish_one") as publish,
+            ):
+                self.assertEqual(cloud_sb7.smoke(root), 0)
+            self.assertEqual(events[:-1], [f"launch:{row['id']}" for row in rows])
+            self.assertEqual(events[-1], "wait")
+            score.assert_not_called()
+            publish.assert_not_called()
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            self.assertEqual(campaign["smoke_status"], "PASS")
+            self.assertEqual(
+                campaign["smoke_raw_tree_sha256_before"],
+                campaign["smoke_raw_tree_sha256_after"],
+            )
+
+    def test_smoke_attempt_never_mutates_raw_benchmark_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            raw_tree = root / "entrants" / str(row["id"]) / "tree"
+            (raw_tree / "sentinel.bin").write_bytes(b"raw benchmark bytes")
+            before = cloud_sb7.sha256_tree_exact(raw_tree)
+            state = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+            Path(str(state["tree"]), "smoke-only.txt").write_text("isolated\n")
+            self.assertEqual(cloud_sb7.sha256_tree_exact(raw_tree), before)
+            self.assertNotEqual(Path(str(state["tree"])), raw_tree)
+
+    def test_dead_smoke_supervisor_recovers_completed_proof_without_new_episode(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            self.complete_smoke_attempt(root, row, finalize=False)
+            cloud_sb7.update_smoke_state(
+                root,
+                str(row["id"]),
+                status="RUNNING",
+                supervisor_pid=765432,
+                supervisor_pgid=765432,
+                supervisor_identity="old-process",
+                active_attempt=True,
+            )
+            with (
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(cloud_sb7, "stop_recorded_group", return_value=True),
+            ):
+                self.assertTrue(cloud_sb7.recover_smoke_entrant(root, str(row["id"])))
+            final = cloud_sb7.read_smoke_state(root, str(row["id"]))
+            self.assertEqual(final["status"], "PASS")
+            self.assertEqual(final["launch_attempts"], 1)
+            self.assertEqual(final["admitted_episodes"], 1)
+
+    def test_secret_scan_detects_value_split_across_read_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            artifact = root / "artifact.log"
+            secret = "split-boundary-provider-secret"
+            prefix = b"x" * (1024 * 1024 - 7)
+            artifact.write_bytes(prefix + secret.encode() + b"tail")
+            self.assertEqual(
+                cloud_sb7.secret_occurrences([root], [secret]), [str(artifact)]
+            )
+
+    def test_build_gate_requires_all_five_current_untampered_smoke_proofs(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            rows = self.make_smoke_campaign(root)
+            proof_hashes = {}
+            for row in rows:
+                state = self.complete_smoke_attempt(root, row)
+                proof_hashes[str(row["id"])] = state["proof_sha256"]
+            raw_hashes = {
+                str(row["id"]): cloud_sb7.sha256_tree_exact(
+                    root / "entrants" / str(row["id"]) / "tree"
+                )
+                for row in rows
+            }
+            cloud_sb7.update_campaign(
+                root,
+                smoke_status="PASS",
+                smoke_proof_sha256=proof_hashes,
+                smoke_raw_tree_sha256_before=raw_hashes,
+                smoke_raw_tree_sha256_after=raw_hashes,
+            )
+            cloud_sb7.require_smoke_proofs(root)
+            first = cloud_sb7.read_smoke_state(root, str(rows[0]["id"]))
+            Path(str(first["proof"])).write_text("{}\n")
+            with self.assertRaisesRegex(SystemExit, "untampered smoke PASS"):
+                cloud_sb7.require_smoke_proofs(root)
+
+    def test_successor_contract_carries_terminal_crash_reserve_conservatively(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            predecessor = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            ledger_path = Path(str(predecessor["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["outstanding"] = {
+                "terminal-before-settlement": {
+                    "provider": row["provider"],
+                    "model": row["model"],
+                    "reserved_usd": 12.5,
+                }
+            }
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            successor = {
+                **predecessor,
+                "campaign_id": "successor-campaign",
+                "lineage": {
+                    "generation": 1,
+                    "predecessor_campaign_id": predecessor["campaign_id"],
+                    "predecessor_contract_sha256": predecessor["smoke_contract_sha256"],
+                },
+            }
+            successor = cloud_sb7.bind_smoke_contract(successor, [row])
+            self.assertEqual(
+                successor["smoke_budget_outstanding_baselines"][str(row["id"])],
+                ["terminal-before-settlement"],
+            )
+            outstanding, settled, error = cloud_sb7.current_smoke_budget_requests(
+                successor, row
+            )
+            self.assertEqual((outstanding, settled, error), ([], [], None))
+            self.assertNotEqual(
+                predecessor["smoke_contract_sha256"],
+                successor["smoke_contract_sha256"],
+            )
+
+    def test_monitor_restarts_only_dead_restart_safe_manager(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            cloud_sb7.manager_state(
+                root,
+                status="RUNNING",
+                pid=999999,
+                pgid=999999,
+                identity="dead-manager",
+            )
+
+            def fake_start(_root: Path) -> int:
+                cloud_sb7.manager_state(
+                    root,
+                    status="STARTING",
+                    pid=12345,
+                    pgid=12345,
+                    identity="new-manager",
+                )
+                return 0
+
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(cloud_sb7, "recover_dead_manager") as recover,
+                mock.patch.object(cloud_sb7, "start", side_effect=fake_start) as start,
+            ):
+                self.assertEqual(cloud_sb7.monitor_tick(root), (False, 0))
+            recover.assert_called_once_with(root)
+            start.assert_called_once_with(root)
+            monitor = cloud_sb7.read_monitor_state(root)
+            self.assertEqual(monitor["status"], "RUNNING")
+            self.assertEqual(monitor["restarts"], 1)
+
+    def test_monitor_attention_and_published_are_terminal_not_success_proxies(
+        self,
+    ) -> None:
+        for status, expected in (("ATTENTION", 1), ("PUBLISHED", 0)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                self.make_smoke_campaign(root, entrant_count=1)
+                cloud_sb7.update_campaign(
+                    root, status=status, failure="fixture failure"
+                )
+                cloud_sb7.manager_state(root, status=status, failure="fixture failure")
+                with (
+                    mock.patch.object(
+                        cloud_sb7, "stop_runtime_groups_for_attention", return_value=[]
+                    ),
+                    mock.patch.object(
+                        cloud_sb7, "published_campaign_mismatch", return_value=None
+                    ),
+                ):
+                    terminal, exit_code = cloud_sb7.monitor_tick(root)
+                self.assertTrue(terminal)
+                self.assertEqual(exit_code, expected)
+                self.assertEqual(cloud_sb7.read_monitor_state(root)["status"], status)
+
+    def test_monitor_refuses_manager_relaunch_with_ambiguous_admitted_work(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            state = cloud_sb7.read_state(root, str(row["id"]))
+            lifecycle = root / "entrants" / str(row["id"]) / "provider-lifecycle.jsonl"
+            lifecycle.write_text(
+                "\n".join(
+                    map(
+                        json.dumps,
+                        [
+                            {
+                                "schema_version": 1,
+                                "timestamp": "now",
+                                "request_id": "admitted-request",
+                                "provider": row["provider"],
+                                "model": row["model"],
+                                "session": "session",
+                                "state": lifecycle_state,
+                            }
+                            for lifecycle_state in ("queued", "admitted")
+                        ],
+                    )
+                )
+                + "\n"
+            )
+            cloud_sb7.update_state(
+                root,
+                str(row["id"]),
+                status="BUILD_RUNNING",
+                provider_lifecycle=str(lifecycle),
+                supervisor_pid=999999,
+                supervisor_identity="dead-supervisor",
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["outstanding"] = {
+                "admitted-request": {
+                    "provider": row["provider"],
+                    "model": row["model"],
+                }
+            }
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+            ):
+                mismatch = cloud_sb7.manager_restart_mismatch(root)
+            self.assertIn("not pre-admission restart-safe", mismatch or "")
+            self.assertIn("admitted", mismatch or "")
+            self.assertIn("outstanding", mismatch or "")
+            self.assertEqual(state["status"], "PLANNED")
+
+    def test_monitor_start_recovers_stale_pid_without_signaling_reused_process(
+        self,
+    ) -> None:
+        class Launched:
+            pid = 24680
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            cloud_sb7.monitor_state(
+                root,
+                status="RUNNING",
+                pid=13579,
+                pgid=13579,
+                identity="old-process",
+            )
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(
+                    cloud_sb7, "process_identity", return_value="reused-process"
+                ),
+                mock.patch.object(cloud_sb7, "stop_group") as stop_group,
+                mock.patch.object(
+                    cloud_sb7, "launch_detached", return_value=Launched()
+                ),
+            ):
+                self.assertEqual(cloud_sb7.monitor_start(root), 0)
+            stop_group.assert_not_called()
+            monitor = cloud_sb7.read_monitor_state(root)
+            self.assertEqual(monitor["status"], "STARTING")
+            self.assertEqual(monitor["pid"], Launched.pid)
+
+    def test_monitor_waits_for_ppid_one_before_reporting_running(self) -> None:
+        with (
+            mock.patch.object(cloud_sb7.os, "getppid", side_effect=[24680, 1]),
+            mock.patch.object(cloud_sb7.time, "monotonic", side_effect=[10.0, 10.1]),
+            mock.patch.object(cloud_sb7.time, "sleep") as sleep,
+        ):
+            self.assertEqual(cloud_sb7.wait_for_monitor_detachment(), 1)
+        sleep.assert_called_once_with(0.05)
+
+    def test_monitor_refuses_running_state_without_ppid_one(self) -> None:
+        with (
+            mock.patch.object(cloud_sb7.os, "getppid", return_value=24680),
+            mock.patch.object(cloud_sb7.time, "monotonic", side_effect=[10.0, 15.0]),
+            mock.patch.object(cloud_sb7.time, "sleep") as sleep,
+        ):
+            with self.assertRaisesRegex(SystemExit, "still has parent pid 24680"):
+                cloud_sb7.wait_for_monitor_detachment()
+        sleep.assert_not_called()
+
+    def test_dead_manager_stops_and_recovers_every_interrupted_publication_state(
+        self,
+    ) -> None:
+        for status in cloud_sb7.INTERRUPTED_PUBLICATION_STATES:
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                self.make_recovery_campaign(root, "RUNNING")
+                cloud_sb7.update_state(
+                    root,
+                    "model",
+                    status=status,
+                    publisher_pid=2222,
+                    publisher_pgid=2222,
+                    publisher_identity="publisher-process",
+                )
+                cloud_sb7.manager_state(
+                    root,
+                    status="RUNNING",
+                    pid=1111,
+                    pgid=1111,
+                    identity="dead-manager",
+                )
+                with (
+                    mock.patch.object(cloud_sb7, "process_identity", return_value=None),
+                    mock.patch.object(
+                        cloud_sb7, "stop_recorded_group", return_value=True
+                    ) as stop,
+                ):
+                    self.assertTrue(cloud_sb7.recover_dead_manager(root))
+                self.assertIn(
+                    mock.call(2222, 2222, "publisher-process"), stop.call_args_list
+                )
+                final = cloud_sb7.read_state(root, "model")
+                self.assertEqual(final["status"], "PUBLISH_FAILED")
+                self.assertIsNone(final["publisher_pid"])
+
+    def test_dead_manager_stops_active_scorer_before_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            cloud_sb7.update_state(
+                root,
+                "model",
+                status="SCORING",
+                score_pid=3333,
+                score_pgid=3333,
+                score_identity="scorer-process",
+            )
+            cloud_sb7.manager_state(
+                root,
+                status="SCORING",
+                pid=1111,
+                pgid=1111,
+                identity="dead-manager",
+            )
+            with (
+                mock.patch.object(cloud_sb7, "process_identity", return_value=None),
+                mock.patch.object(
+                    cloud_sb7, "stop_recorded_group", return_value=True
+                ) as stop,
+            ):
+                self.assertTrue(cloud_sb7.recover_dead_manager(root))
+            self.assertIn(mock.call(3333, 3333, "scorer-process"), stop.call_args_list)
+            self.assertEqual(
+                cloud_sb7.read_state(root, "model")["status"], "SCORE_FAILED"
+            )
+
+    def test_split_published_commit_is_recovered_not_reported_as_success(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            cloud_sb7.update_campaign(root, status="SCORING")
+            cloud_sb7.manager_state(
+                root,
+                status="PUBLISHED",
+                pid=999999,
+                pgid=999999,
+                identity="dead-manager",
+            )
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(
+                    cloud_sb7, "manager_restart_mismatch", return_value=None
+                ),
+                mock.patch.object(cloud_sb7, "recover_dead_manager") as recover,
+                mock.patch.object(cloud_sb7, "start", return_value=0) as start,
+            ):
+                terminal, exit_code = cloud_sb7.monitor_tick(root)
+            self.assertFalse(terminal)
+            self.assertEqual(exit_code, 0)
+            recover.assert_called_once_with(root)
+            start.assert_called_once_with(root)
+
+    def test_monitor_stopped_is_intentional_non_success(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            cloud_sb7.update_campaign(root, status="STOPPED")
+            self.assertEqual(cloud_sb7.monitor_tick(root), (True, 2))
+            self.assertEqual(cloud_sb7.read_monitor_state(root)["status"], "STOPPED")
+
+    def test_stop_owns_live_smoke_supervisor_group(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            cloud_sb7.update_smoke_state(
+                root,
+                str(row["id"]),
+                status="RUNNING",
+                supervisor_pid=4444,
+                supervisor_pgid=4444,
+                supervisor_identity="smoke-supervisor",
+            )
+            with (
+                mock.patch.object(cloud_sb7, "process_alive", return_value=True),
+                mock.patch.object(
+                    cloud_sb7, "stop_recorded_group", return_value=True
+                ) as stop,
+                mock.patch.object(cloud_sb7, "port_is_free", return_value=True),
+            ):
+                self.assertEqual(cloud_sb7.stop(root), 0)
+            self.assertIn(
+                mock.call(4444, 4444, "smoke-supervisor"), stop.call_args_list
+            )
+            self.assertEqual(
+                cloud_sb7.read_smoke_state(root, str(row["id"]))["status"],
+                "STOPPED",
+            )
 
     def test_reported_model_aliases_must_match_authenticated_roster(self) -> None:
         row = {
@@ -1446,16 +2531,21 @@ class CloudSb7HarnessTest(unittest.TestCase):
             with self.subTest(status=status), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 self.make_recovery_campaign(root, status)
-                with mock.patch.object(
-                    cloud_sb7, "launch_detached", return_value=Launched()
-                ) as launch:
+                with (
+                    mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                    mock.patch.object(
+                        cloud_sb7, "launch_detached", return_value=Launched()
+                    ) as launch,
+                ):
                     self.assertEqual(cloud_sb7.start(root), 0)
                 launch.assert_called_once()
                 self.assertEqual(
                     cloud_sb7.load_json(root / "manager.json")["status"], "STARTING"
                 )
 
-    def test_publisher_snapshot_pins_commit_inputs_runtime_without_secrets(self) -> None:
+    def test_publisher_snapshot_pins_commit_inputs_runtime_without_secrets(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as raw:
             repo, row = self.make_publisher_repo(Path(raw))
             snapshot = cloud_sb7.publisher_snapshot(repo, [row])
@@ -1794,7 +2884,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
         }
         self.assertIsNone(cloud_sb7.verdict_failure(verdict, campaign))
         wrong = dict(verdict, scorer_version="sb-7.0")
-        self.assertIn("scorer version", cloud_sb7.verdict_failure(wrong, campaign) or "")
+        self.assertIn(
+            "scorer version", cloud_sb7.verdict_failure(wrong, campaign) or ""
+        )
         wrong = dict(verdict, checks=[])
         self.assertIn("check count", cloud_sb7.verdict_failure(wrong, campaign) or "")
 
@@ -1852,7 +2944,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertTrue(final["publisher_write_adopted"])
             self.assertEqual(final["score_attempts"], 1)
 
-    def test_ambiguous_publisher_exit_is_accepted_only_with_matching_receipt(self) -> None:
+    def test_ambiguous_publisher_exit_is_accepted_only_with_matching_receipt(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             self.make_scored_campaign(root)
@@ -1907,7 +3001,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(final["status"], "PUBLISHED")
             self.assertTrue(final["publisher_write_adopted"])
 
-    def test_successful_live_process_with_remote_mismatch_is_not_rewritten(self) -> None:
+    def test_successful_live_process_with_remote_mismatch_is_not_rewritten(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             self.make_scored_campaign(root)
@@ -1987,7 +3083,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "PUBLISHED",
             )
 
-    def test_manage_publishes_completed_builds_before_reporting_failed_builds(self) -> None:
+    def test_manage_publishes_completed_builds_before_reporting_failed_builds(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             manifest = root / "manifest.json"
@@ -1998,6 +3096,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     "status": "RUNNING",
                     "campaign_id": "fixture",
                     "entrant_manifest": str(manifest),
+                    "lineage": {
+                        "generation": 0,
+                        "predecessor_campaign_id": None,
+                        "predecessor_contract_sha256": None,
+                    },
                 },
             )
             cloud_sb7.atomic_json(root / "manager.json", {"status": "RUNNING"})
@@ -2010,6 +3113,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     {"entrant": entrant_id, "status": status},
                 )
             with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
                 mock.patch.object(
                     cloud_sb7,
                     "entrants",
@@ -2019,9 +3123,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 mock.patch.object(cloud_sb7, "score_all", return_value=True) as score,
             ):
                 self.assertEqual(cloud_sb7.manage(root), 1)
-            score.assert_called_once_with(
-                root, ["complete"], finalize_campaign=False
-            )
+            score.assert_called_once_with(root, ["complete"], finalize_campaign=False)
             self.assertEqual(
                 cloud_sb7.load_json(cloud_sb7.campaign_file(root))["status"],
                 "ATTENTION",
