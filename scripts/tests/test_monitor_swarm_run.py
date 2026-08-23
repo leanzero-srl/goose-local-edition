@@ -284,6 +284,9 @@ class EndToEndMonitorTests(unittest.TestCase):
                 self.assertTrue((incident / "CAPTURE_COMPLETE").is_file())
                 self.assertTrue((incident / "manifest.sha256").is_file())
                 self.assertTrue((incident / "SIGNAL_SENT.json").is_file())
+                self.assertTrue(
+                    (run_dir / ".swarm-monitor" / "expected-stop.json").is_file()
+                )
                 self.assertLessEqual(
                     (incident / "CAPTURE_COMPLETE").stat().st_mtime_ns,
                     (incident / "SIGNAL_SENT.json").stat().st_mtime_ns,
@@ -294,6 +297,93 @@ class EndToEndMonitorTests(unittest.TestCase):
                     "full-stream-reasoning-recurrence-meter",
                 )
                 self.assertFalse(payload["evidence"]["tail_reasoning_used"])
+            finally:
+                if watcher.poll() is None:
+                    watcher.terminate()
+                    watcher.wait(timeout=5)
+                if sleeper.poll() is None:
+                    sleeper.terminate()
+                    sleeper.wait(timeout=5)
+
+    def test_external_expected_stop_does_not_create_a_second_exit_incident(self):
+        sleep = pathlib.Path(shutil.which("sleep")).resolve()
+        binary_sha = hashlib.sha256(sleep.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = pathlib.Path(temporary) / "run"
+            run_dir.mkdir(parents=True)
+            pid_file = run_dir / "goose.pid"
+            sleeper = subprocess.Popen([str(sleep), "30"])
+            pid_file.write_text(str(sleeper.pid) + "\n", encoding="utf-8")
+            watcher = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "watch",
+                    "--run-dir",
+                    str(run_dir),
+                    "--pid-file",
+                    str(pid_file),
+                    "--binary",
+                    str(sleep),
+                    "--sha256",
+                    binary_sha,
+                    "--poll-secs",
+                    "0.05",
+                    "--lms-poll-secs",
+                    "1000",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                heartbeat = run_dir / ".swarm-monitor" / "heartbeat"
+                deadline = time.monotonic() + 5
+                while not heartbeat.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(heartbeat.exists(), "monitor did not establish its baseline")
+
+                identity = MONITOR.process_identity(sleeper.pid)
+                self.assertIsNotNone(identity)
+                incident = MONITOR.capture_incident(
+                    run_dir,
+                    run_dir / ".swarm-monitor",
+                    sleeper.pid,
+                    identity,
+                    sleep,
+                    binary_sha,
+                    "operator-requested stop",
+                    {"classification": "expected"},
+                    run_dir / "run.jsonl",
+                    run_dir / "engine-console.log",
+                )
+                self.assertTrue(
+                    MONITOR.stop_after_capture(
+                        sleeper.pid,
+                        identity,
+                        incident,
+                        initiator="operator",
+                    )
+                )
+                sleeper.wait(timeout=5)
+                stdout, stderr = watcher.communicate(timeout=10)
+                self.assertEqual(
+                    watcher.returncode,
+                    0,
+                    (stdout.decode("utf-8", "replace"), stderr.decode("utf-8", "replace")),
+                )
+                incidents = list((run_dir / ".swarm-monitor" / "incidents").iterdir())
+                self.assertEqual(incidents, [incident])
+                events = [
+                    json.loads(line)
+                    for line in (run_dir / ".swarm-monitor" / "watch.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                ]
+                self.assertEqual(events[-1]["event"], "monitor_completed")
+                self.assertEqual(events[-1]["outcome"], "expected_stop")
+                self.assertEqual(
+                    events[-1]["expected_stop"]["initiator"], "operator"
+                )
             finally:
                 if watcher.poll() is None:
                     watcher.terminate()

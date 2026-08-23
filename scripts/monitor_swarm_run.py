@@ -39,6 +39,11 @@ def atomic_write(path: pathlib.Path, payload: bytes) -> None:
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
+    directory_fd = os.open(str(path.parent), os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def write_json(path: pathlib.Path, value: Any) -> None:
@@ -750,6 +755,8 @@ def stop_after_capture(
     pid: int,
     launch_identity: Dict[str, str],
     incident_dir: pathlib.Path,
+    expected_stop_path: Optional[pathlib.Path] = None,
+    initiator: str = "monitor",
 ) -> bool:
     current = process_identity(pid)
     if current != launch_identity:
@@ -763,12 +770,52 @@ def stop_after_capture(
             },
         )
         return False
+    if not (incident_dir / "CAPTURE_COMPLETE").is_file():
+        write_json(
+            incident_dir / "STOP_REFUSED.json",
+            {
+                "at": utc_now(),
+                "reason": "incident capture is not durably complete",
+                "launch_identity": launch_identity,
+            },
+        )
+        return False
+    marker_path = expected_stop_path or incident_dir.parent.parent / "expected-stop.json"
+    write_json(
+        marker_path,
+        {
+            "armed_at": utc_now(),
+            "pid": pid,
+            "launch_identity": launch_identity,
+            "incident_dir": str(incident_dir),
+            "initiator": initiator,
+            "signal": "SIGTERM",
+        },
+    )
     os.kill(pid, signal.SIGTERM)
     write_json(
         incident_dir / "SIGNAL_SENT.json",
         {"at": utc_now(), "pid": pid, "signal": "SIGTERM"},
     )
     return True
+
+
+def matching_expected_stop(
+    path: pathlib.Path,
+    pid: int,
+    launch_identity: Dict[str, str],
+) -> Optional[Dict[str, Any]]:
+    try:
+        marker = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    if (
+        marker.get("pid") != pid
+        or marker.get("launch_identity") != launch_identity
+        or marker.get("signal") != "SIGTERM"
+    ):
+        return None
+    return marker
 
 
 def watch(args: argparse.Namespace) -> int:
@@ -797,6 +844,7 @@ def watch(args: argparse.Namespace) -> int:
     monitor_dir = run_dir / ".swarm-monitor"
     monitor_dir.mkdir(parents=True, exist_ok=True)
     lock_path = monitor_dir / "monitor.pid"
+    expected_stop_path = monitor_dir / "expected-stop.json"
     acquire_monitor_lock(lock_path)
 
     durable = DurableLog(monitor_dir / "watch.jsonl")
@@ -911,6 +959,16 @@ def watch(args: argparse.Namespace) -> int:
             if identity is None:
                 if event_gate.run_finished:
                     durable.emit("monitor_completed", outcome="run_finished")
+                    return 0
+                expected_stop = matching_expected_stop(
+                    expected_stop_path, pid, launch_identity
+                )
+                if expected_stop is not None:
+                    durable.emit(
+                        "monitor_completed",
+                        outcome="expected_stop",
+                        expected_stop=expected_stop,
+                    )
                     return 0
                 reason = "Goose process exited without a run_finished event"
                 incident_dir = capture_incident(
