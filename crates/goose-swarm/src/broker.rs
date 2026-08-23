@@ -1,9 +1,9 @@
 //! Physical-host admission for model work.
 //!
 //! A logical scheduler lane is not a physical decoder. This opt-in broker admits model work only
-//! through a same-run physical fleet snapshot, keeps the physical claim across local completion,
-//! and releases it only after every provider turn has an exact terminal receipt. It deliberately
-//! has no API for cancelling admitted work.
+//! through a same-run physical fleet snapshot. A task admission is a correlation envelope; each
+//! provider turn separately owns physical capacity until its exact terminal receipt arrives. It
+//! deliberately has no API for cancelling admitted work.
 
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -21,19 +21,13 @@ pub enum HostCapacityEvidence {
         profile_key: String,
         max_concurrent: u32,
     },
-    /// Deterministic tests only.
-    ReplayFixture {
-        fixture_id: String,
-        max_concurrent: u32,
-    },
 }
 
 impl HostCapacityEvidence {
     pub fn max_concurrent(&self) -> u32 {
         match self {
             Self::ProbeSingleStream { .. } => 1,
-            Self::MeasuredProfile { max_concurrent, .. }
-            | Self::ReplayFixture { max_concurrent, .. } => *max_concurrent,
+            Self::MeasuredProfile { max_concurrent, .. } => *max_concurrent,
         }
     }
 
@@ -41,7 +35,6 @@ impl HostCapacityEvidence {
         match self {
             Self::ProbeSingleStream { probe_epoch } => probe_epoch,
             Self::MeasuredProfile { profile_hash, .. } => profile_hash,
-            Self::ReplayFixture { fixture_id, .. } => fixture_id,
         }
     }
 
@@ -136,8 +129,9 @@ impl PhysicalFleetSnapshot {
         }
         let mut logical_devices = HashMap::new();
         let mut routes_by_model = HashMap::new();
-        let mut host_capacities = HashMap::new();
+        let mut host_capacities: HashMap<&str, &HostCapacityEvidence> = HashMap::new();
         let mut instance_capacities = HashMap::new();
+        let mut route_evidence: HashMap<(&str, &str), &str> = HashMap::new();
         for lane in &self.lanes {
             validate_lane(lane)?;
             if logical_devices
@@ -157,13 +151,12 @@ impl PhysicalFleetSnapshot {
                     });
                 }
             }
-            let host_capacity = lane.capacity_evidence.max_concurrent();
-            if let Some(first) = host_capacities.insert(&lane.host_id, host_capacity) {
-                if first != host_capacity {
+            if let Some(first) = host_capacities.insert(&lane.host_id, &lane.capacity_evidence) {
+                if first != &lane.capacity_evidence {
                     return Err(BrokerError::ConflictingHostCapacity {
                         host_id: lane.host_id.clone(),
-                        first,
-                        second: host_capacity,
+                        first: first.max_concurrent(),
+                        second: lane.capacity_evidence.max_concurrent(),
                     });
                 }
             }
@@ -177,6 +170,17 @@ impl PhysicalFleetSnapshot {
                         model_instance_id: lane.model_instance_id.clone(),
                         first,
                         second: lane.advertised_instance_capacity,
+                    });
+                }
+            }
+            let route_key = (lane.host_id.as_str(), lane.model_instance_id.as_str());
+            if let Some(first) = route_evidence.insert(route_key, lane.route_evidence_id.as_str()) {
+                if first != lane.route_evidence_id {
+                    return Err(BrokerError::ConflictingRouteEvidence {
+                        host_id: lane.host_id.clone(),
+                        model_instance_id: lane.model_instance_id.clone(),
+                        first: first.to_string(),
+                        second: lane.route_evidence_id.clone(),
                     });
                 }
             }
@@ -256,7 +260,13 @@ impl TaskVersion {
             return Err("source task id is empty".to_string());
         }
         match &self.kind {
-            SourceRevisionKind::TaskAttempt => Ok(()),
+            SourceRevisionKind::TaskAttempt => {
+                if self.revision != u64::from(self.attempt) + 1 {
+                    Err("task-attempt revision must equal attempt + 1".to_string())
+                } else {
+                    Ok(())
+                }
+            }
             SourceRevisionKind::Artifact { snapshot_hash }
             | SourceRevisionKind::Trace { snapshot_hash, .. } => {
                 if self.revision == 0 {
@@ -310,12 +320,28 @@ pub enum WorkRole {
     AcceptanceOracle,
 }
 
+impl WorkRole {
+    pub fn priority(self) -> WorkPriority {
+        match self {
+            Self::Repair | Self::AcceptanceOracle => WorkPriority::CriticalPath,
+            Self::Build => WorkPriority::Implementation,
+            Self::RuntimeAcceptanceReview
+            | Self::CompletedArtifactReview
+            | Self::SemanticJudgeObservation
+            | Self::ContractReview => WorkPriority::AuxiliaryEvidence,
+        }
+    }
+}
+
 /// One task-derived, version-current candidate for the common queue.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorkOpportunity {
     pub work_id: String,
     pub role: WorkRole,
     pub priority: WorkPriority,
+    /// Task-derived scheduler rank. A larger value wins among work of the same semantic priority.
+    /// Physical capacity never participates in its construction.
+    pub task_rank: u64,
     pub source: TaskVersion,
     /// Empty means any verified route. This is a contract constraint, not a roster-shaped task fan.
     pub eligible_logical_device_ids: Vec<String>,
@@ -328,6 +354,7 @@ pub struct QueueReceipt {
     pub work_id: String,
     pub role: WorkRole,
     pub priority: WorkPriority,
+    pub task_rank: u64,
     pub source: TaskVersion,
     pub queue_sequence: u64,
 }
@@ -346,6 +373,7 @@ pub struct AdmissionReceipt {
     pub work_id: String,
     pub role: WorkRole,
     pub priority: WorkPriority,
+    pub task_rank: u64,
     pub source: TaskVersion,
     pub fleet_snapshot_id: String,
     pub logical_device_id: String,
@@ -370,6 +398,14 @@ pub struct ProviderRequestReceipt {
     pub key: ProviderRequestKey,
     pub physical_host_id: String,
     pub model_instance_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProviderRequestQueueReceipt {
+    pub request: ProviderRequestReceipt,
+    pub priority: WorkPriority,
+    pub task_rank: u64,
+    pub queue_sequence: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -417,6 +453,13 @@ pub struct ProviderNotStartedReceipt {
     pub reason: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderStartsClosure {
+    pub admission: Option<AdmissionReceipt>,
+    pub provider_not_started: Option<ProviderNotStartedReceipt>,
+    pub pending_provider_request: Option<ProviderRequestReceipt>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ReleasedAdmissionReceipt {
     pub admission: AdmissionReceipt,
@@ -428,9 +471,58 @@ pub struct ReleasedAdmissionReceipt {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CapacityUpdateReceipt {
     pub physical_host_id: String,
+    pub previous_fleet_snapshot_id: String,
+    pub new_fleet_snapshot_id: String,
     pub previous_capacity: u32,
     pub new_capacity: u32,
     pub capacity_evidence: HostCapacityEvidence,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PhysicalHostOccupancy {
+    pub physical_host_id: String,
+    pub provider_turn_permits_held: u32,
+    pub capacity: u32,
+    pub capacity_evidence: HostCapacityEvidence,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct WithdrawnWorkReceipt {
+    pub work_id: String,
+    pub role: WorkRole,
+    pub source: TaskVersion,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RevokedAdmissionReceipt {
+    pub admission: AdmissionReceipt,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct UnresolvedAdmissionReceipt {
+    pub admission: AdmissionReceipt,
+    pub provider_requests_started: usize,
+    pub provider_requests_terminal: usize,
+    pub provider_request_pending: bool,
+    pub provider_turn_permit_held: bool,
+    pub provider_starts_closed: bool,
+    pub local_completion: Option<LocalCompletionKind>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderRequestDisposition {
+    Granted(ProviderRequestReceipt),
+    Queued(ProviderRequestQueueReceipt),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BrokerGrant {
+    Admission(AdmissionReceipt),
+    ProviderRequest {
+        admission: AdmissionReceipt,
+        receipt: ProviderRequestReceipt,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -456,6 +548,12 @@ pub enum BrokerError {
         first: u32,
         second: u32,
     },
+    ConflictingRouteEvidence {
+        host_id: String,
+        model_instance_id: String,
+        first: String,
+        second: String,
+    },
     InvalidOpportunity {
         work_id: String,
         reason: String,
@@ -468,6 +566,10 @@ pub enum BrokerError {
     DuplicateWork(String),
     UnknownAdmission(String),
     DuplicateProviderRequest(ProviderRequestKey),
+    InvalidProviderRequest {
+        admission_id: String,
+        reason: String,
+    },
     DuplicateProviderTerminal(ProviderRequestKey),
     ProviderRequestMismatch {
         admission_id: String,
@@ -485,6 +587,7 @@ pub enum BrokerError {
         first: LocalCompletionKind,
         second: LocalCompletionKind,
     },
+    DuplicateLocalCompletion(String),
     InvalidProviderNotStarted {
         admission_id: String,
         reason: String,
@@ -492,6 +595,28 @@ pub enum BrokerError {
     UnknownPhysicalHost(String),
     InvalidCapacityEvidence {
         host_id: String,
+        reason: String,
+    },
+    AdmissionWaiterClosed(String),
+    SourceRevisionRollback {
+        authority: String,
+        current: Box<TaskVersion>,
+        proposed: Box<TaskVersion>,
+    },
+    ConflictingSourceRevision {
+        authority: String,
+        current: Box<TaskVersion>,
+        proposed: Box<TaskVersion>,
+    },
+    SourceRevisionMismatch {
+        authority: String,
+        current: Option<Box<TaskVersion>>,
+        requested: Box<TaskVersion>,
+    },
+    ProviderStartsClosed(String),
+    ConcurrentProviderRequest(String),
+    OutcomeConflict {
+        admission_id: String,
         reason: String,
     },
 }
@@ -526,6 +651,15 @@ impl std::fmt::Display for BrokerError {
                 f,
                 "model instance `{model_instance_id}` on `{host_id}` has conflicting capacities {first} and {second}"
             ),
+            Self::ConflictingRouteEvidence {
+                host_id,
+                model_instance_id,
+                first,
+                second,
+            } => write!(
+                f,
+                "model instance `{model_instance_id}` on `{host_id}` has conflicting route evidence `{first}` and `{second}`"
+            ),
             Self::InvalidOpportunity { work_id, reason } => {
                 write!(f, "invalid broker opportunity `{work_id}`: {reason}")
             }
@@ -546,6 +680,13 @@ impl std::fmt::Display for BrokerError {
             Self::DuplicateProviderRequest(key) => {
                 write!(f, "provider request {key:?} is already bound")
             }
+            Self::InvalidProviderRequest {
+                admission_id,
+                reason,
+            } => write!(
+                f,
+                "invalid provider request for admission `{admission_id}`: {reason}"
+            ),
             Self::DuplicateProviderTerminal(key) => {
                 write!(f, "provider request {key:?} already has a terminal receipt")
             }
@@ -574,6 +715,10 @@ impl std::fmt::Display for BrokerError {
                 f,
                 "admission `{admission_id}` has conflicting local completions {first:?} and {second:?}"
             ),
+            Self::DuplicateLocalCompletion(admission_id) => write!(
+                f,
+                "admission `{admission_id}` already has a local completion receipt"
+            ),
             Self::InvalidProviderNotStarted {
                 admission_id,
                 reason,
@@ -587,6 +732,49 @@ impl std::fmt::Display for BrokerError {
             Self::InvalidCapacityEvidence { host_id, reason } => {
                 write!(f, "invalid capacity evidence for `{host_id}`: {reason}")
             }
+            Self::AdmissionWaiterClosed(work_id) => write!(
+                f,
+                "broker admission waiter for `{work_id}` closed before a receipt arrived"
+            ),
+            Self::SourceRevisionRollback {
+                authority,
+                current,
+                proposed,
+            } => write!(
+                f,
+                "source authority `{authority}` cannot roll back from {current:?} to {proposed:?}"
+            ),
+            Self::ConflictingSourceRevision {
+                authority,
+                current,
+                proposed,
+            } => write!(
+                f,
+                "source authority `{authority}` has conflicting equal revision values {current:?} and {proposed:?}"
+            ),
+            Self::SourceRevisionMismatch {
+                authority,
+                current,
+                requested,
+            } => write!(
+                f,
+                "source authority `{authority}` cannot remove {requested:?}; current is {current:?}"
+            ),
+            Self::ProviderStartsClosed(admission_id) => write!(
+                f,
+                "admission `{admission_id}` is closed to new provider requests"
+            ),
+            Self::ConcurrentProviderRequest(admission_id) => write!(
+                f,
+                "admission `{admission_id}` already has a live or queued provider request"
+            ),
+            Self::OutcomeConflict {
+                admission_id,
+                reason,
+            } => write!(
+                f,
+                "admission `{admission_id}` has contradictory local/provider outcomes: {reason}"
+            ),
         }
     }
 }
@@ -600,6 +788,15 @@ struct QueuedWork {
 }
 
 #[derive(Clone, Debug)]
+struct QueuedProviderRequest {
+    receipt: ProviderRequestReceipt,
+    work_id: String,
+    priority: WorkPriority,
+    task_rank: u64,
+    sequence: u64,
+}
+
+#[derive(Clone, Debug)]
 struct ProviderTurn {
     start: ProviderRequestReceipt,
     terminal: Option<ProviderTerminalReceipt>,
@@ -609,6 +806,10 @@ struct ProviderTurn {
 struct ActiveAdmission {
     receipt: AdmissionReceipt,
     provider_requests: BTreeMap<u32, ProviderTurn>,
+    pending_provider_request: Option<ProviderRequestReceipt>,
+    provider_turn_permit_reserved: bool,
+    live_provider_ordinal: Option<u32>,
+    provider_starts_closed: bool,
     local_completion: Option<LocalCompletionKind>,
     provider_not_started: bool,
 }
@@ -616,12 +817,15 @@ struct ActiveAdmission {
 /// Stateful admission controller. There is intentionally no admitted-request cancellation API.
 pub struct PhysicalBroker {
     correlation_scope: String,
+    base_snapshot_id: String,
     snapshot_id: String,
+    snapshot_revision: u64,
     lanes: Vec<VerifiedPhysicalLane>,
     host_capacities: HashMap<String, u32>,
     instance_capacities: HashMap<(String, String), u32>,
     current_versions: HashMap<String, TaskVersion>,
     pending: BTreeMap<String, QueuedWork>,
+    pending_provider_requests: BTreeMap<String, QueuedProviderRequest>,
     active: BTreeMap<String, ActiveAdmission>,
     queue_sequence: u64,
     admission_sequence: u64,
@@ -651,30 +855,77 @@ impl PhysicalBroker {
         }
         Ok(Self {
             correlation_scope,
+            base_snapshot_id: snapshot.snapshot_id.clone(),
             snapshot_id: snapshot.snapshot_id,
+            snapshot_revision: 0,
             lanes: snapshot.lanes,
             host_capacities,
             instance_capacities,
             current_versions: HashMap::new(),
             pending: BTreeMap::new(),
+            pending_provider_requests: BTreeMap::new(),
             active: BTreeMap::new(),
             queue_sequence: 0,
             admission_sequence: 0,
         })
     }
 
-    pub fn set_source_revision(&mut self, source: TaskVersion) -> Vec<StaleWorkReceipt> {
-        self.current_versions.insert(source.authority_key(), source);
-        self.prune_stale()
+    pub fn set_source_revision(
+        &mut self,
+        source: TaskVersion,
+    ) -> Result<Vec<StaleWorkReceipt>, BrokerError> {
+        source
+            .validate()
+            .map_err(|reason| BrokerError::InvalidOpportunity {
+                work_id: format!("source:{}", source.task_id),
+                reason,
+            })?;
+        let authority = source.authority_key();
+        if let Some(current) = self.current_versions.get(&authority) {
+            if current == &source {
+                return Ok(Vec::new());
+            }
+            if source.revision < current.revision
+                || (source.revision == current.revision && source.attempt < current.attempt)
+            {
+                return Err(BrokerError::SourceRevisionRollback {
+                    authority,
+                    current: Box::new(current.clone()),
+                    proposed: Box::new(source),
+                });
+            }
+            if source.revision == current.revision {
+                return Err(BrokerError::ConflictingSourceRevision {
+                    authority,
+                    current: Box::new(current.clone()),
+                    proposed: Box::new(source),
+                });
+            }
+        }
+        self.current_versions.insert(authority, source);
+        Ok(self.prune_stale())
     }
 
-    pub fn remove_source_revision(&mut self, source: &TaskVersion) -> Vec<StaleWorkReceipt> {
-        self.current_versions.remove(&source.authority_key());
-        self.prune_stale()
+    pub fn remove_source_revision(
+        &mut self,
+        source: &TaskVersion,
+    ) -> Result<Vec<StaleWorkReceipt>, BrokerError> {
+        let authority = source.authority_key();
+        let current = self.current_versions.get(&authority).cloned();
+        if current.as_ref() != Some(source) {
+            return Err(BrokerError::SourceRevisionMismatch {
+                authority,
+                current: current.map(Box::new),
+                requested: Box::new(source.clone()),
+            });
+        }
+        self.current_versions.remove(&authority);
+        Ok(self.prune_stale())
     }
 
     pub fn enqueue(&mut self, opportunity: WorkOpportunity) -> Result<QueueReceipt, BrokerError> {
         validate_opportunity(&opportunity)?;
+        self.validate_routes(&opportunity)?;
         if self.pending.contains_key(&opportunity.work_id)
             || self
                 .active
@@ -695,6 +946,7 @@ impl PhysicalBroker {
             work_id: opportunity.work_id.clone(),
             role: opportunity.role,
             priority: opportunity.priority,
+            task_rank: opportunity.task_rank,
             source: opportunity.source.clone(),
             queue_sequence: self.queue_sequence,
         };
@@ -737,11 +989,52 @@ impl PhysicalBroker {
         self.current_source(source).as_ref() == Some(source)
     }
 
-    pub fn admit_next(&mut self) -> Option<AdmissionReceipt> {
+    fn validate_routes(&self, opportunity: &WorkOpportunity) -> Result<(), BrokerError> {
+        let known_ids: std::collections::HashSet<&str> = self
+            .lanes
+            .iter()
+            .map(|lane| lane.logical_device_id.as_str())
+            .collect();
+        if let Some(unknown) = opportunity
+            .eligible_logical_device_ids
+            .iter()
+            .find(|id| !known_ids.contains(id.as_str()))
+        {
+            return Err(BrokerError::InvalidOpportunity {
+                work_id: opportunity.work_id.clone(),
+                reason: format!("eligible route `{unknown}` is not in the verified snapshot"),
+            });
+        }
+        if let Some(excluded) = opportunity.excluded_logical_device_id.as_deref() {
+            if !known_ids.contains(excluded) {
+                return Err(BrokerError::InvalidOpportunity {
+                    work_id: opportunity.work_id.clone(),
+                    reason: format!("excluded route `{excluded}` is not in the verified snapshot"),
+                });
+            }
+        }
+        let has_route = self.lanes.iter().any(|lane| {
+            (opportunity.eligible_logical_device_ids.is_empty()
+                || opportunity
+                    .eligible_logical_device_ids
+                    .contains(&lane.logical_device_id))
+                && opportunity.excluded_logical_device_id.as_deref()
+                    != Some(lane.logical_device_id.as_str())
+        });
+        if !has_route {
+            return Err(BrokerError::InvalidOpportunity {
+                work_id: opportunity.work_id.clone(),
+                reason: "route constraints exclude every verified lane".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn grant_next(&mut self) -> Option<BrokerGrant> {
         self.prune_stale();
         let host_occupancy = self.host_occupancy();
         let instance_occupancy = self.instance_occupancy();
-        let selected = self
+        let selected_work = self
             .pending
             .iter()
             .filter_map(|(work_id, queued)| {
@@ -749,9 +1042,62 @@ impl PhysicalBroker {
                     self.select_lane(&queued.opportunity, &host_occupancy, &instance_occupancy)?;
                 Some((work_id.clone(), queued.clone(), lane))
             })
-            .max_by(|(_, left, _), (_, right, _)| compare_queued(left, right))?;
+            .max_by(|(_, left, _), (_, right, _)| compare_queued(left, right));
+        let selected_provider = self
+            .pending_provider_requests
+            .iter()
+            .filter(|(_, queued)| {
+                self.route_has_capacity(
+                    &queued.receipt.physical_host_id,
+                    &queued.receipt.model_instance_id,
+                    &host_occupancy,
+                    &instance_occupancy,
+                )
+            })
+            .max_by(|(_, left), (_, right)| compare_provider_queued(left, right))
+            .map(|(admission_id, queued)| (admission_id.clone(), queued.clone()));
 
-        let (work_id, queued, lane_index) = selected;
+        let grant_work = match (&selected_work, &selected_provider) {
+            (Some((work_id, queued, _)), Some((_admission_id, provider))) => {
+                compare_queue_values(
+                    queued.opportunity.priority,
+                    queued.opportunity.task_rank,
+                    queued.sequence,
+                    work_id,
+                    provider.priority,
+                    provider.task_rank,
+                    provider.sequence,
+                    &provider.work_id,
+                ) != Ordering::Less
+            }
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => return None,
+        };
+
+        if !grant_work {
+            let (admission_id, queued) = selected_provider.expect("provider grant was selected");
+            self.pending_provider_requests.remove(&admission_id);
+            let active = self
+                .active
+                .get_mut(&admission_id)
+                .expect("queued provider request belongs to an active admission");
+            active.pending_provider_request = None;
+            active.live_provider_ordinal = Some(queued.receipt.key.ordinal);
+            active.provider_requests.insert(
+                queued.receipt.key.ordinal,
+                ProviderTurn {
+                    start: queued.receipt.clone(),
+                    terminal: None,
+                },
+            );
+            return Some(BrokerGrant::ProviderRequest {
+                admission: active.receipt.clone(),
+                receipt: queued.receipt,
+            });
+        }
+
+        let (work_id, queued, lane_index) = selected_work.expect("work grant was selected");
         self.pending.remove(&work_id);
         self.admission_sequence += 1;
         let lane = &self.lanes[lane_index];
@@ -764,6 +1110,7 @@ impl PhysicalBroker {
             work_id,
             role: queued.opportunity.role,
             priority: queued.opportunity.priority,
+            task_rank: queued.opportunity.task_rank,
             source: queued.opportunity.source,
             fleet_snapshot_id: self.snapshot_id.clone(),
             logical_device_id: lane.logical_device_id.clone(),
@@ -780,11 +1127,28 @@ impl PhysicalBroker {
             ActiveAdmission {
                 receipt: receipt.clone(),
                 provider_requests: BTreeMap::new(),
+                pending_provider_request: None,
+                provider_turn_permit_reserved: true,
+                live_provider_ordinal: None,
+                provider_starts_closed: false,
                 local_completion: None,
                 provider_not_started: false,
             },
         );
-        Some(receipt)
+        Some(BrokerGrant::Admission(receipt))
+    }
+
+    fn route_has_capacity(
+        &self,
+        host_id: &str,
+        instance_id: &str,
+        host_occupancy: &HashMap<String, u32>,
+        instance_occupancy: &HashMap<(String, String), u32>,
+    ) -> bool {
+        let instance_key = (host_id.to_string(), instance_id.to_string());
+        host_occupancy.get(host_id).copied().unwrap_or(0) < self.host_capacities[host_id]
+            && instance_occupancy.get(&instance_key).copied().unwrap_or(0)
+                < self.instance_capacities[&instance_key]
     }
 
     fn select_lane(
@@ -836,17 +1200,31 @@ impl PhysicalBroker {
             .map(|(index, _)| index)
     }
 
-    pub fn bind_provider_request(
+    pub fn request_provider_turn(
         &mut self,
         receipt: ProviderRequestReceipt,
-    ) -> Result<(), BrokerError> {
-        if self.active.values().any(|active| {
-            active.provider_requests.values().any(|turn| {
-                turn.start.key.provider_request_id == receipt.key.provider_request_id
-                    && active.receipt.admission_id != receipt.admission_id
-            })
-        }) {
-            return Err(BrokerError::DuplicateProviderRequest(receipt.key));
+    ) -> Result<ProviderRequestDisposition, BrokerError> {
+        if receipt.key.provider_request_id.trim().is_empty() {
+            return Err(BrokerError::InvalidProviderRequest {
+                admission_id: receipt.admission_id,
+                reason: "provider request id is empty".to_string(),
+            });
+        }
+        for active in self.active.values() {
+            for turn in active.provider_requests.values() {
+                if turn.start.key.provider_request_id == receipt.key.provider_request_id {
+                    return Err(BrokerError::DuplicateProviderRequest(receipt.key));
+                }
+            }
+            if active
+                .pending_provider_request
+                .as_ref()
+                .is_some_and(|pending| {
+                    pending.key.provider_request_id == receipt.key.provider_request_id
+                })
+            {
+                return Err(BrokerError::DuplicateProviderRequest(receipt.key));
+            }
         }
         let active = self
             .active
@@ -865,20 +1243,88 @@ impl PhysicalBroker {
                     .to_string(),
             });
         }
-        if let Some(existing) = active.provider_requests.get(&receipt.key.ordinal) {
-            if existing.start == receipt {
-                return Ok(());
-            }
+        if active.provider_starts_closed {
+            return Err(BrokerError::ProviderStartsClosed(receipt.admission_id));
+        }
+        if active.live_provider_ordinal.is_some() || active.pending_provider_request.is_some() {
+            return Err(BrokerError::ConcurrentProviderRequest(receipt.admission_id));
+        }
+        if active.provider_requests.contains_key(&receipt.key.ordinal) {
             return Err(BrokerError::DuplicateProviderRequest(receipt.key));
         }
-        active.provider_requests.insert(
-            receipt.key.ordinal,
-            ProviderTurn {
-                start: receipt,
-                terminal: None,
+        if active.provider_turn_permit_reserved {
+            active.provider_turn_permit_reserved = false;
+            active.live_provider_ordinal = Some(receipt.key.ordinal);
+            active.provider_requests.insert(
+                receipt.key.ordinal,
+                ProviderTurn {
+                    start: receipt.clone(),
+                    terminal: None,
+                },
+            );
+            return Ok(ProviderRequestDisposition::Granted(receipt));
+        }
+        self.queue_sequence += 1;
+        active.pending_provider_request = Some(receipt.clone());
+        let queued = ProviderRequestQueueReceipt {
+            request: receipt.clone(),
+            priority: active.receipt.priority,
+            task_rank: active.receipt.task_rank,
+            queue_sequence: self.queue_sequence,
+        };
+        self.pending_provider_requests.insert(
+            receipt.admission_id.clone(),
+            QueuedProviderRequest {
+                receipt,
+                work_id: active.receipt.work_id.clone(),
+                priority: queued.priority,
+                task_rank: queued.task_rank,
+                sequence: self.queue_sequence,
             },
         );
-        Ok(())
+        Ok(ProviderRequestDisposition::Queued(queued))
+    }
+
+    pub fn close_provider_starts(
+        &mut self,
+        admission_id: &str,
+    ) -> Result<ProviderStartsClosure, BrokerError> {
+        let active = self
+            .active
+            .get_mut(admission_id)
+            .ok_or_else(|| BrokerError::UnknownAdmission(admission_id.to_string()))?;
+        if active.provider_starts_closed {
+            return Ok(ProviderStartsClosure {
+                admission: None,
+                provider_not_started: None,
+                pending_provider_request: None,
+            });
+        }
+        active.provider_starts_closed = true;
+        let pending_provider_request = active.pending_provider_request.take();
+        if pending_provider_request.is_some() {
+            self.pending_provider_requests.remove(admission_id);
+        }
+        let provider_not_started = if active.provider_turn_permit_reserved
+            && active.provider_requests.is_empty()
+            && pending_provider_request.is_none()
+        {
+            active.provider_turn_permit_reserved = false;
+            active.provider_not_started = true;
+            Some(ProviderNotStartedReceipt {
+                admission_id: admission_id.to_string(),
+                physical_host_id: active.receipt.physical_host_id.clone(),
+                model_instance_id: active.receipt.model_instance_id.clone(),
+                reason: "provider lifecycle closed with no provider request".to_string(),
+            })
+        } else {
+            None
+        };
+        Ok(ProviderStartsClosure {
+            admission: Some(active.receipt.clone()),
+            provider_not_started,
+            pending_provider_request,
+        })
     }
 
     pub fn record_local_completion(
@@ -890,6 +1336,12 @@ impl PhysicalBroker {
             .active
             .get_mut(admission_id)
             .ok_or_else(|| BrokerError::UnknownAdmission(admission_id.to_string()))?;
+        if !active.provider_starts_closed {
+            return Err(BrokerError::InvalidProviderRequest {
+                admission_id: admission_id.to_string(),
+                reason: "provider starts must close before local completion".to_string(),
+            });
+        }
         if let Some(first) = active.local_completion {
             if first != kind {
                 return Err(BrokerError::ConflictingLocalCompletion {
@@ -898,9 +1350,11 @@ impl PhysicalBroker {
                     second: kind,
                 });
             }
-        } else {
-            active.local_completion = Some(kind);
+            return Err(BrokerError::DuplicateLocalCompletion(
+                admission_id.to_string(),
+            ));
         }
+        active.local_completion = Some(kind);
         Ok(LocalCompletionReceipt {
             admission_id: admission_id.to_string(),
             work_id: active.receipt.work_id.clone(),
@@ -946,6 +1400,7 @@ impl PhysicalBroker {
             return Err(BrokerError::DuplicateProviderTerminal(terminal.key));
         }
         turn.terminal = Some(terminal);
+        active.live_provider_ordinal = None;
         Ok(())
     }
 
@@ -969,10 +1424,24 @@ impl PhysicalBroker {
                 reason: "reason is empty".to_string(),
             });
         }
-        if !active.provider_requests.is_empty() {
+        if !active.provider_requests.is_empty() || active.pending_provider_request.is_some() {
             return Err(BrokerError::InvalidProviderNotStarted {
                 admission_id: receipt.admission_id,
                 reason: "one or more provider requests already started".to_string(),
+            });
+        }
+        if active.provider_starts_closed {
+            return Err(BrokerError::InvalidProviderNotStarted {
+                admission_id: receipt.admission_id,
+                reason: "provider starts were already closed".to_string(),
+            });
+        }
+        active.provider_turn_permit_reserved = false;
+        active.provider_starts_closed = true;
+        if active.provider_not_started {
+            return Err(BrokerError::InvalidProviderNotStarted {
+                admission_id: receipt.admission_id,
+                reason: "provider-not-started was already certified".to_string(),
             });
         }
         active.provider_not_started = true;
@@ -991,12 +1460,16 @@ impl PhysicalBroker {
         let Some(local_completion) = active.local_completion else {
             return Ok(None);
         };
-        let releasable = active.provider_not_started
-            || (!active.provider_requests.is_empty()
-                && active
-                    .provider_requests
-                    .values()
-                    .all(|turn| turn.terminal.is_some()));
+        let releasable = active.provider_starts_closed
+            && !active.provider_turn_permit_reserved
+            && active.live_provider_ordinal.is_none()
+            && active.pending_provider_request.is_none()
+            && (active.provider_not_started
+                || (!active.provider_requests.is_empty()
+                    && active
+                        .provider_requests
+                        .values()
+                        .all(|turn| turn.terminal.is_some())));
         if !releasable {
             return Ok(None);
         }
@@ -1004,14 +1477,25 @@ impl PhysicalBroker {
             .active
             .remove(admission_id)
             .expect("active admission was checked above");
+        let provider_terminals: Vec<ProviderTerminalReceipt> = active
+            .provider_requests
+            .into_values()
+            .filter_map(|turn| turn.terminal)
+            .collect();
+        let effective_completion = if local_completion == LocalCompletionKind::Success
+            && (active.provider_not_started
+                || provider_terminals
+                    .iter()
+                    .any(|terminal| terminal.kind != ProviderTerminalKind::Finished))
+        {
+            LocalCompletionKind::Error
+        } else {
+            local_completion
+        };
         Ok(Some(ReleasedAdmissionReceipt {
             admission: active.receipt,
-            local_completion,
-            provider_terminals: active
-                .provider_requests
-                .into_values()
-                .filter_map(|turn| turn.terminal)
-                .collect(),
+            local_completion: effective_completion,
+            provider_terminals,
             provider_not_started: active.provider_not_started,
         }))
     }
@@ -1033,6 +1517,12 @@ impl PhysicalBroker {
             .copied()
             .ok_or_else(|| BrokerError::UnknownPhysicalHost(host_id.to_string()))?;
         let new_capacity = evidence.max_concurrent();
+        let previous_fleet_snapshot_id = self.snapshot_id.clone();
+        self.snapshot_revision += 1;
+        self.snapshot_id = format!(
+            "{}:capacity:{:08}",
+            self.base_snapshot_id, self.snapshot_revision
+        );
         self.host_capacities
             .insert(host_id.to_string(), new_capacity);
         for lane in self.lanes.iter_mut().filter(|lane| lane.host_id == host_id) {
@@ -1040,18 +1530,161 @@ impl PhysicalBroker {
         }
         Ok(CapacityUpdateReceipt {
             physical_host_id: host_id.to_string(),
+            previous_fleet_snapshot_id,
+            new_fleet_snapshot_id: self.snapshot_id.clone(),
             previous_capacity,
             new_capacity,
             capacity_evidence: evidence,
         })
     }
 
+    pub(crate) fn withdraw_pending_work(&mut self, work_id: &str) -> Option<WithdrawnWorkReceipt> {
+        self.pending
+            .remove(work_id)
+            .map(|queued| WithdrawnWorkReceipt {
+                work_id: queued.opportunity.work_id,
+                role: queued.opportunity.role,
+                source: queued.opportunity.source,
+            })
+    }
+
+    pub(crate) fn revoke_undelivered_admission(
+        &mut self,
+        admission_id: &str,
+        reason: impl Into<String>,
+    ) -> Result<RevokedAdmissionReceipt, BrokerError> {
+        let active = self
+            .active
+            .get(admission_id)
+            .ok_or_else(|| BrokerError::UnknownAdmission(admission_id.to_string()))?;
+        let untouched = active.provider_turn_permit_reserved
+            && active.provider_requests.is_empty()
+            && active.pending_provider_request.is_none()
+            && active.live_provider_ordinal.is_none()
+            && !active.provider_starts_closed
+            && active.local_completion.is_none()
+            && !active.provider_not_started;
+        if !untouched {
+            return Err(BrokerError::InvalidProviderRequest {
+                admission_id: admission_id.to_string(),
+                reason: "only an undelivered, unstarted admission grant can be revoked".to_string(),
+            });
+        }
+        let active = self
+            .active
+            .remove(admission_id)
+            .expect("untouched admission was checked above");
+        Ok(RevokedAdmissionReceipt {
+            admission: active.receipt,
+            reason: reason.into(),
+        })
+    }
+
+    pub(crate) fn withdraw_pending_provider_request(
+        &mut self,
+        admission_id: &str,
+        key: &ProviderRequestKey,
+    ) -> Result<ProviderRequestReceipt, BrokerError> {
+        let queued = self
+            .pending_provider_requests
+            .get(admission_id)
+            .ok_or_else(|| BrokerError::ProviderRequestMismatch {
+                admission_id: admission_id.to_string(),
+                received: key.clone(),
+            })?;
+        if queued.receipt.key != *key {
+            return Err(BrokerError::ProviderRequestMismatch {
+                admission_id: admission_id.to_string(),
+                received: key.clone(),
+            });
+        }
+        let queued = self
+            .pending_provider_requests
+            .remove(admission_id)
+            .expect("queued provider request was checked above");
+        let active = self
+            .active
+            .get_mut(admission_id)
+            .expect("queued provider request belongs to active admission");
+        active.pending_provider_request = None;
+        Ok(queued.receipt)
+    }
+
+    pub(crate) fn revoke_undelivered_provider_request(
+        &mut self,
+        admission_id: &str,
+        key: &ProviderRequestKey,
+    ) -> Result<ProviderRequestReceipt, BrokerError> {
+        let active = self
+            .active
+            .get_mut(admission_id)
+            .ok_or_else(|| BrokerError::UnknownAdmission(admission_id.to_string()))?;
+        if active.live_provider_ordinal != Some(key.ordinal) {
+            return Err(BrokerError::ProviderRequestMismatch {
+                admission_id: admission_id.to_string(),
+                received: key.clone(),
+            });
+        }
+        let turn = active.provider_requests.get(&key.ordinal).ok_or_else(|| {
+            BrokerError::ProviderRequestMismatch {
+                admission_id: admission_id.to_string(),
+                received: key.clone(),
+            }
+        })?;
+        if turn.start.key != *key || turn.terminal.is_some() {
+            return Err(BrokerError::ProviderRequestMismatch {
+                admission_id: admission_id.to_string(),
+                received: key.clone(),
+            });
+        }
+        let turn = active
+            .provider_requests
+            .remove(&key.ordinal)
+            .expect("undelivered provider grant was checked above");
+        active.live_provider_ordinal = None;
+        Ok(turn.start)
+    }
+
+    pub fn unresolved_admissions(&self) -> Vec<UnresolvedAdmissionReceipt> {
+        self.active
+            .values()
+            .map(|active| UnresolvedAdmissionReceipt {
+                admission: active.receipt.clone(),
+                provider_requests_started: active.provider_requests.len(),
+                provider_requests_terminal: active
+                    .provider_requests
+                    .values()
+                    .filter(|turn| turn.terminal.is_some())
+                    .count(),
+                provider_request_pending: active.pending_provider_request.is_some(),
+                provider_turn_permit_held: active.provider_turn_permit_reserved
+                    || active.live_provider_ordinal.is_some(),
+                provider_starts_closed: active.provider_starts_closed,
+                local_completion: active.local_completion,
+            })
+            .collect()
+    }
+
+    pub fn snapshot(&self) -> PhysicalFleetSnapshot {
+        PhysicalFleetSnapshot {
+            snapshot_id: self.snapshot_id.clone(),
+            lanes: self.lanes.clone(),
+        }
+    }
+
     pub fn active_receipt(&self, admission_id: &str) -> Option<&AdmissionReceipt> {
         self.active.get(admission_id).map(|active| &active.receipt)
     }
 
+    pub(crate) fn active_receipt_for_work(&self, work_id: &str) -> Option<&AdmissionReceipt> {
+        self.active
+            .values()
+            .find(|active| active.receipt.work_id == work_id)
+            .map(|active| &active.receipt)
+    }
+
     pub fn pending_len(&self) -> usize {
-        self.pending.len()
+        self.pending.len() + self.pending_provider_requests.len()
     }
 
     pub fn active_len(&self) -> usize {
@@ -1059,19 +1692,45 @@ impl PhysicalBroker {
     }
 
     pub fn active_on_host(&self, host_id: &str) -> usize {
-        self.active
-            .values()
-            .filter(|active| active.receipt.physical_host_id == host_id)
-            .count()
+        self.host_occupancy().get(host_id).copied().unwrap_or(0) as usize
+    }
+
+    pub fn physical_occupancy(&self) -> Vec<PhysicalHostOccupancy> {
+        let occupancy = self.host_occupancy();
+        let mut hosts: BTreeMap<&str, &HostCapacityEvidence> = BTreeMap::new();
+        for lane in &self.lanes {
+            hosts
+                .entry(lane.host_id.as_str())
+                .or_insert(&lane.capacity_evidence);
+        }
+        hosts
+            .into_iter()
+            .map(|(host_id, evidence)| PhysicalHostOccupancy {
+                physical_host_id: host_id.to_string(),
+                provider_turn_permits_held: occupancy.get(host_id).copied().unwrap_or(0),
+                capacity: self.host_capacities[host_id],
+                capacity_evidence: evidence.clone(),
+            })
+            .collect()
     }
 
     pub fn pending_work_ids(&self) -> Vec<String> {
-        self.pending.keys().cloned().collect()
+        let mut ids: Vec<String> = self.pending.keys().cloned().collect();
+        ids.extend(self.pending_provider_requests.values().map(|queued| {
+            format!(
+                "{}:provider:{}",
+                queued.receipt.admission_id, queued.receipt.key.ordinal
+            )
+        }));
+        ids.sort();
+        ids
     }
 
     fn host_occupancy(&self) -> HashMap<String, u32> {
         let mut occupancy = HashMap::new();
-        for active in self.active.values() {
+        for active in self.active.values().filter(|active| {
+            active.provider_turn_permit_reserved || active.live_provider_ordinal.is_some()
+        }) {
             *occupancy
                 .entry(active.receipt.physical_host_id.clone())
                 .or_default() += 1;
@@ -1081,7 +1740,9 @@ impl PhysicalBroker {
 
     fn instance_occupancy(&self) -> HashMap<(String, String), u32> {
         let mut occupancy = HashMap::new();
-        for active in self.active.values() {
+        for active in self.active.values().filter(|active| {
+            active.provider_turn_permit_reserved || active.live_provider_ordinal.is_some()
+        }) {
             *occupancy
                 .entry((
                     active.receipt.physical_host_id.clone(),
@@ -1107,9 +1768,36 @@ fn validate_opportunity(opportunity: &WorkOpportunity) -> Result<(), BrokerError
             work_id: opportunity.work_id.clone(),
             reason,
         })?;
+    if opportunity.priority != opportunity.role.priority() {
+        return Err(BrokerError::InvalidOpportunity {
+            work_id: opportunity.work_id.clone(),
+            reason: format!(
+                "role {:?} requires priority {:?}, received {:?}",
+                opportunity.role,
+                opportunity.role.priority(),
+                opportunity.priority
+            ),
+        });
+    }
+    let mut eligible = std::collections::HashSet::new();
+    if let Some(duplicate) = opportunity
+        .eligible_logical_device_ids
+        .iter()
+        .find(|id| id.trim().is_empty() || !eligible.insert(id.as_str()))
+    {
+        return Err(BrokerError::InvalidOpportunity {
+            work_id: opportunity.work_id.clone(),
+            reason: format!("eligible route `{duplicate}` is empty or duplicated"),
+        });
+    }
     let valid_authority = match opportunity.role {
-        WorkRole::Build | WorkRole::Repair => {
-            matches!(opportunity.source.kind, SourceRevisionKind::TaskAttempt)
+        WorkRole::Build => {
+            opportunity.source.attempt == 0
+                && matches!(opportunity.source.kind, SourceRevisionKind::TaskAttempt)
+        }
+        WorkRole::Repair => {
+            opportunity.source.attempt > 0
+                && matches!(opportunity.source.kind, SourceRevisionKind::TaskAttempt)
         }
         WorkRole::RuntimeAcceptanceReview | WorkRole::ContractReview => {
             matches!(opportunity.source.kind, SourceRevisionKind::Contract { .. })
@@ -1138,11 +1826,50 @@ fn validate_opportunity(opportunity: &WorkOpportunity) -> Result<(), BrokerError
 }
 
 fn compare_queued(left: &QueuedWork, right: &QueuedWork) -> Ordering {
-    left.opportunity
-        .priority
-        .cmp(&right.opportunity.priority)
-        .then_with(|| right.sequence.cmp(&left.sequence))
-        .then_with(|| right.opportunity.work_id.cmp(&left.opportunity.work_id))
+    compare_queue_values(
+        left.opportunity.priority,
+        left.opportunity.task_rank,
+        left.sequence,
+        &left.opportunity.work_id,
+        right.opportunity.priority,
+        right.opportunity.task_rank,
+        right.sequence,
+        &right.opportunity.work_id,
+    )
+}
+
+fn compare_provider_queued(
+    left: &QueuedProviderRequest,
+    right: &QueuedProviderRequest,
+) -> Ordering {
+    compare_queue_values(
+        left.priority,
+        left.task_rank,
+        left.sequence,
+        &left.work_id,
+        right.priority,
+        right.task_rank,
+        right.sequence,
+        &right.work_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compare_queue_values(
+    left_priority: WorkPriority,
+    left_rank: u64,
+    left_sequence: u64,
+    left_id: &str,
+    right_priority: WorkPriority,
+    right_rank: u64,
+    right_sequence: u64,
+    right_id: &str,
+) -> Ordering {
+    left_priority
+        .cmp(&right_priority)
+        .then_with(|| left_rank.cmp(&right_rank))
+        .then_with(|| right_id.cmp(left_id))
+        .then_with(|| right_sequence.cmp(&left_sequence))
 }
 
 fn validate_physical_receipt(

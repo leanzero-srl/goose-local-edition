@@ -8,7 +8,12 @@
 //! and two tasks owning the same file never run concurrently. Completions relax dependents
 //! (unlocking the DAG), merge output into the shared context, and free device capacity.
 
+use crate::broker::{AdmissionReceipt, SourceRevisionKind, TaskVersion, WorkOpportunity, WorkRole};
 use crate::context::SharedContext;
+use crate::control_plane::{
+    BrokeredTaskDispatcher, PhysicalAdmissionControl, PhysicalDispatchAuthority,
+    ProviderLifecycleDispatcher,
+};
 use crate::dag::{Dag, Difficulty, TaskId, TaskSpec, TaskState};
 use crate::dispatch::{
     DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord,
@@ -763,6 +768,14 @@ struct Assignment {
     request: DispatchRequest,
 }
 
+enum SchedulerDispatcher {
+    Legacy(Arc<dyn TaskDispatcher>),
+    Physical {
+        control: PhysicalAdmissionControl,
+        dispatcher: Arc<dyn ProviderLifecycleDispatcher>,
+    },
+}
+
 /// Global cap on SPECULATIVE twins per run (GOOSE_SWARM_SPECULATE) — a long serial chokepoint cannot burn
 /// unbounded compute racing twins. Generous: it is a last-resort idle-fill, not a hot path.
 const SPECULATION_CAP: u32 = 8;
@@ -906,6 +919,146 @@ struct State {
     /// F779: tail-review jobs fired this run (capped at TAIL_REVIEW_CAP) + its rotating dimension.
     tail_review_count: u32,
     tail_review_dim: usize,
+    /// Physical mode queues every task-derived opportunity centrally; logical device weights do
+    /// not admit work or emit route/timing facts before the broker selects a verified lane.
+    physical_admission: bool,
+}
+
+struct SchedulerPhysicalAuthority {
+    state: Arc<Mutex<State>>,
+    notify: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl PhysicalDispatchAuthority for SchedulerPhysicalAuthority {
+    async fn opportunity(&self, req: &DispatchRequest) -> Result<WorkOpportunity, DispatchError> {
+        let state = self.state.lock().await;
+        let node = state.dag.tasks.get(&req.task_id).ok_or_else(|| {
+            DispatchError::Terminal(format!(
+                "physical dispatch cannot find claimed task `{}`",
+                req.task_id
+            ))
+        })?;
+        if node.state != TaskState::Claimed || node.attempts != req.attempt {
+            return Err(DispatchError::Terminal(format!(
+                "physical dispatch task `{}` is no longer claimed at attempt {}",
+                req.task_id, req.attempt
+            )));
+        }
+        let mut eligible: Vec<String> = state
+            .devices
+            .iter()
+            .filter(|device| device.cfg.enabled && !device.cfg.supervision)
+            .map(|device| device.cfg.id.clone())
+            .collect();
+        eligible.sort();
+        let excluded = node.avoid_device.as_ref().filter(|avoid| {
+            eligible.len() > 1
+                && eligible
+                    .iter()
+                    .any(|device| device.as_str() != avoid.as_str())
+        });
+        let role = if req.attempt == 0 {
+            WorkRole::Build
+        } else {
+            WorkRole::Repair
+        };
+        Ok(WorkOpportunity {
+            work_id: format!("task:{}:attempt:{}", req.task_id, req.attempt),
+            role,
+            priority: role.priority(),
+            task_rank: node.fan_out as u64,
+            source: TaskVersion {
+                task_id: req.task_id.clone(),
+                attempt: req.attempt,
+                revision: u64::from(req.attempt) + 1,
+                kind: SourceRevisionKind::TaskAttempt,
+            },
+            eligible_logical_device_ids: eligible,
+            preferred_model_id: node.spec.preferred_model.clone(),
+            excluded_logical_device_id: excluded.cloned(),
+        })
+    }
+
+    async fn route_admitted(
+        &self,
+        req: &mut DispatchRequest,
+        admission: &AdmissionReceipt,
+    ) -> Result<(), DispatchError> {
+        let mut state = self.state.lock().await;
+        let device_index = state
+            .devices
+            .iter()
+            .position(|device| {
+                device.cfg.enabled
+                    && !device.cfg.supervision
+                    && device.cfg.id == admission.logical_device_id
+                    && device.cfg.model_id == admission.model_id
+            })
+            .ok_or_else(|| {
+                DispatchError::Terminal(format!(
+                    "broker admitted unconfigured route `{}`/`{}`",
+                    admission.logical_device_id, admission.model_id
+                ))
+            })?;
+        let node = state.dag.tasks.get(&req.task_id).ok_or_else(|| {
+            DispatchError::Terminal(format!("broker admitted missing task `{}`", req.task_id))
+        })?;
+        if node.state != TaskState::Claimed || node.attempts != req.attempt {
+            return Err(DispatchError::Terminal(format!(
+                "broker admitted stale task `{}` attempt {}",
+                req.task_id, req.attempt
+            )));
+        }
+        if admission.source.task_id != req.task_id || admission.source.attempt != req.attempt {
+            return Err(DispatchError::Terminal(format!(
+                "broker admission source does not match task `{}` attempt {}",
+                req.task_id, req.attempt
+            )));
+        }
+        if state.claimed_device.contains_key(&req.task_id) {
+            return Err(DispatchError::Terminal(format!(
+                "task `{}` received more than one physical route",
+                req.task_id
+            )));
+        }
+
+        req.device_id = admission.logical_device_id.clone();
+        req.model_id = admission.model_id.clone();
+        state.devices[device_index].in_flight += 1;
+        state
+            .claimed_device
+            .insert(req.task_id.clone(), device_index);
+        *state
+            .dispatched_per_device
+            .entry(req.device_id.clone())
+            .or_default() += 1;
+        state
+            .attempt_started_at
+            .insert(req.task_id.clone(), Instant::now());
+        state.task_final_device.insert(
+            req.task_id.clone(),
+            (req.device_id.clone(), req.model_id.clone()),
+        );
+        let node = &state.dag.tasks[&req.task_id];
+        state.sink.emit(&SwarmEvent::TaskDispatched {
+            task_id: req.task_id.clone(),
+            device: req.device_id.clone(),
+            model: req.model_id.clone(),
+            attempt: req.attempt,
+            deps: node.spec.deps.clone(),
+            owned_files: req.owned_files.clone(),
+            context_slice_len: req.context_slice.len(),
+            description_chars: req.description.len(),
+            difficulty: match node.spec.difficulty {
+                Difficulty::Hard => "hard".to_string(),
+                _ => "easy".to_string(),
+            },
+        });
+        drop(state);
+        self.notify.notify_one();
+        Ok(())
+    }
 }
 
 impl State {
@@ -964,6 +1117,13 @@ impl State {
             .filter(|d| !d.cfg.supervision)
             .map(|d| d.in_flight)
             .sum()
+    }
+
+    fn physical_dispatch_pending(&self) -> bool {
+        self.physical_admission
+            && self.dag.tasks.iter().any(|(task_id, node)| {
+                node.state == TaskState::Claimed && !self.claimed_device.contains_key(task_id)
+            })
     }
 
     /// Any enabled supervision device with a free slot? The A3 last-slot yield protects BUILD
@@ -1094,7 +1254,11 @@ impl State {
             .devices
             .iter()
             .enumerate()
-            .filter(|(_, d)| d.cfg.enabled && !d.cfg.supervision && d.in_flight < d.cfg.weight)
+            .filter(|(_, d)| {
+                d.cfg.enabled
+                    && !d.cfg.supervision
+                    && (self.physical_admission || d.in_flight < d.cfg.weight)
+            })
             .map(|(i, _)| i)
             .collect();
         if free.is_empty() {
@@ -1127,6 +1291,9 @@ impl State {
         } else {
             allowed
         };
+        if self.physical_admission {
+            return pool.into_iter().min();
+        }
         // Spread work across the fleet: the LEAST-LOADED device wins, so idle nodes get work before
         // any node doubles up; ties break toward the planner's preferred model, then by index for
         // determinism. (Honoring preferred_model first would pile every same-model task on one device
@@ -1295,31 +1462,33 @@ impl State {
         for f in &files {
             self.held_files.insert(f.clone());
         }
-        self.devices[dev].in_flight += 1;
-        self.claimed_device.insert(tid.clone(), dev);
         let device_id = self.devices[dev].cfg.id.clone();
         let model_id = self.devices[dev].cfg.model_id.clone();
-        *self
-            .dispatched_per_device
-            .entry(device_id.clone())
-            .or_default() += 1;
-        self.attempt_started_at.insert(tid.clone(), Instant::now());
-        self.task_final_device
-            .insert(tid.clone(), (device_id.clone(), model_id.clone()));
-        self.sink.emit(&SwarmEvent::TaskDispatched {
-            task_id: tid.clone(),
-            device: device_id.clone(),
-            model: model_id.clone(),
-            attempt,
-            deps,
-            owned_files: files.clone(),
-            context_slice_len: slice.len(),
-            description_chars: description.len(),
-            difficulty: match self.dag.tasks[&tid].spec.difficulty {
-                Difficulty::Hard => "hard".to_string(),
-                _ => "easy".to_string(),
-            },
-        });
+        if !self.physical_admission {
+            self.devices[dev].in_flight += 1;
+            self.claimed_device.insert(tid.clone(), dev);
+            *self
+                .dispatched_per_device
+                .entry(device_id.clone())
+                .or_default() += 1;
+            self.attempt_started_at.insert(tid.clone(), Instant::now());
+            self.task_final_device
+                .insert(tid.clone(), (device_id.clone(), model_id.clone()));
+            self.sink.emit(&SwarmEvent::TaskDispatched {
+                task_id: tid.clone(),
+                device: device_id.clone(),
+                model: model_id.clone(),
+                attempt,
+                deps,
+                owned_files: files.clone(),
+                context_slice_len: slice.len(),
+                description_chars: description.len(),
+                difficulty: match self.dag.tasks[&tid].spec.difficulty {
+                    Difficulty::Hard => "hard".to_string(),
+                    _ => "easy".to_string(),
+                },
+            });
+        }
         let owned_files = files.clone();
         let mut all_files: Vec<String> = self
             .dag
@@ -3054,12 +3223,120 @@ impl Scheduler {
             .await
     }
 
+    /// Opt-in physical execution. This is a separate entry point because an ordinary
+    /// `TaskDispatcher` cannot supply provider request/terminal receipts. Legacy auxiliary paths
+    /// are rejected rather than allowed to bypass the common queue; they can be reintroduced only
+    /// as typed lifecycle-capable opportunities. The ordinary `run` path is unchanged.
+    pub async fn run_with_physical_admission(
+        &self,
+        dag: Dag,
+        dispatcher: Arc<dyn ProviderLifecycleDispatcher>,
+        control: PhysicalAdmissionControl,
+        goal: String,
+        user_decisions: String,
+    ) -> Result<RunReport> {
+        if self.judge.is_some() {
+            bail!(
+                "physical admission cannot enable the legacy judge path: it bypasses provider lifecycle and can abort admitted work; Engine 5 must submit trace-bound observation-only judge work"
+            );
+        }
+        if self.pre_reviewer.is_some() {
+            bail!(
+                "physical admission cannot enable the legacy pre-review/QA/tail/testgen paths: they bypass the common lifecycle queue"
+            );
+        }
+        if self.replanner.is_some() {
+            bail!(
+                "physical admission cannot enable the legacy idle-capacity replanner: work must be task-derived and contract-bound before queueing"
+            );
+        }
+        if self.speculation_enabled {
+            bail!(
+                "physical admission cannot enable speculative twins because first-wins requires killing an admitted request"
+            );
+        }
+        if self.devices.iter().any(|device| device.supervision) {
+            bail!(
+                "physical admission has no permanent supervision lane; auxiliary evidence competes in the common queue"
+            );
+        }
+        if dag
+            .tasks
+            .values()
+            .any(|node| node.spec.replan_authority.is_some())
+        {
+            bail!(
+                "physical admission requires runtime reviews to enter as contract-versioned auxiliary opportunities, not build dispatches"
+            );
+        }
+        let physical_snapshot = control.snapshot().await;
+        for device in self.devices.iter().filter(|device| device.enabled) {
+            let lane = physical_snapshot
+                .lanes
+                .iter()
+                .find(|lane| lane.logical_device_id == device.id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "physical admission has no verified lane for enabled device `{}`",
+                        device.id
+                    )
+                })?;
+            if lane.model_id != device.model_id {
+                bail!(
+                    "physical lane `{}` routes model `{}`, but the scheduler routes `{}`",
+                    device.id,
+                    lane.model_id,
+                    device.model_id
+                );
+            }
+        }
+        if !control.uses_sink(&self.sink) {
+            bail!("physical admission and scheduler must share one authoritative event sink");
+        }
+        self.sink.emit(&SwarmEvent::PhysicalFleetSnapshotObserved {
+            snapshot: physical_snapshot,
+            enforcement: "active".to_string(),
+            provider_lifecycle_available: true,
+        });
+        let report = self
+            .run_internal(
+                dag,
+                SchedulerDispatcher::Physical {
+                    control: control.clone(),
+                    dispatcher,
+                },
+                goal,
+                user_decisions,
+            )
+            .await;
+        // Local task completion cannot make a run terminal while a correlated provider terminal is
+        // missing. There is intentionally no elapsed-time escape hatch here.
+        control.wait_until_drained().await;
+        report
+    }
+
     /// `run`, plus the user's verbatim clarify answers to hand to every worker. `run` delegates here with
     /// an empty string, so every existing caller and test is byte-identical.
     pub async fn run_with_decisions(
         &self,
         dag: Dag,
         dispatcher: Arc<dyn TaskDispatcher>,
+        goal: String,
+        user_decisions: String,
+    ) -> Result<RunReport> {
+        self.run_internal(
+            dag,
+            SchedulerDispatcher::Legacy(dispatcher),
+            goal,
+            user_decisions,
+        )
+        .await
+    }
+
+    async fn run_internal(
+        &self,
+        dag: Dag,
+        dispatcher: SchedulerDispatcher,
         goal: String,
         user_decisions: String,
     ) -> Result<RunReport> {
@@ -3080,6 +3357,7 @@ impl Scheduler {
             }
         }
 
+        let physical_admission = matches!(&dispatcher, SchedulerDispatcher::Physical { .. });
         let mut ready = BinaryHeap::new();
         for (id, n) in &dag.tasks {
             if n.state == TaskState::Ready {
@@ -3141,8 +3419,29 @@ impl Scheduler {
             fix_round: self.fix_round,
             tail_review_count: 0,
             tail_review_dim: 0,
+            physical_admission,
         }));
         let notify = Arc::new(Notify::new());
+        let (dispatcher, physical_dispatcher): (
+            Arc<dyn TaskDispatcher>,
+            Option<Arc<BrokeredTaskDispatcher>>,
+        ) = match dispatcher {
+            SchedulerDispatcher::Legacy(dispatcher) => (dispatcher, None),
+            SchedulerDispatcher::Physical {
+                control,
+                dispatcher,
+            } => {
+                let brokered = Arc::new(BrokeredTaskDispatcher::new(
+                    control,
+                    dispatcher,
+                    Arc::new(SchedulerPhysicalAuthority {
+                        state: state.clone(),
+                        notify: notify.clone(),
+                    }),
+                ));
+                (brokered.clone(), Some(brokered))
+            }
+        };
         // Edge-detect pause transitions so run_paused/run_unpaused is emitted once per transition, not per tick.
         let mut was_paused = false;
 
@@ -3167,6 +3466,11 @@ impl Scheduler {
             };
             let dispatched_now = !assignments.is_empty();
             for a in assignments {
+                if let Some(physical) = &physical_dispatcher {
+                    // Preserve the scheduler's exact fan-out/id ranking at the broker boundary.
+                    // Each opportunity is queued before its task future can be polled.
+                    physical.prepare(&a.request).await;
+                }
                 let dispatcher = dispatcher.clone();
                 let task_state = state.clone();
                 let notify = notify.clone();
@@ -3198,7 +3502,22 @@ impl Scheduler {
                 if s.all_terminal() {
                     return Ok(s.build_report());
                 }
-                if !paused && !dispatched_now && s.build_in_flight() == 0 {
+                if !paused
+                    && !dispatched_now
+                    && s.build_in_flight() == 0
+                    && !s.physical_dispatch_pending()
+                {
+                    // A completion can make work Ready after this loop pass picked assignments but
+                    // before it acquires this lock. Retry immediately instead of misreporting that
+                    // ready work as a deadlock. A genuinely blocked Ready set still falls through.
+                    let became_assignable = s.ready.iter().any(|ranked| {
+                        s.dag.tasks[&ranked.id].state == TaskState::Ready
+                            && !s.files_conflict(&ranked.id)
+                            && s.pick_device(&ranked.id).is_some()
+                    });
+                    if became_assignable {
+                        continue;
+                    }
                     // Nothing assignable and nothing running, but not all terminal: the remaining
                     // tasks are permanently blocked (deps failed, or a file deadlock).
                     // The `!paused` guard is LOAD-BEARING: while held we intentionally claim nothing and can

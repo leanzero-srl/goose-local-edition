@@ -67,13 +67,15 @@ benchmark fleet, LM Studio mutation, scorer change, or SB7 change.
 - [x] Carry same-run, unambiguous `lms ps` identity/capacity through goose-cli as a separate
   `PhysicalFleetSnapshot` and expose it in `pool_resolved`. `DeviceCfg` remains a logical lane;
   putting physical truth in it would recreate the alias/capacity bug.
-- [ ] Add request/terminal lifecycle receipts to the dispatcher boundary without pretending an
+- [x] Add request/terminal lifecycle receipts to a separate dispatcher boundary without pretending an
   ordinary future return is provider-terminal.
-- [ ] Integrate build plus task-derived auxiliary opportunities through one admission seam;
+- [x] Integrate build plus task-derived auxiliary opportunities through one admission seam;
   make unsafe legacy auxiliary/intervention paths fail closed while Engine 4 is active.
-- [ ] Scheduler replays for one logical task/one host, two lanes/one host, stale auxiliary,
+- [x] Scheduler replays for one logical task/one host, two lanes/one host, stale auxiliary,
   critical-ready priority, terminal-not-yet-observed occupancy, and DAG identity.
-- [ ] Format, targeted crate tests, goose-cli tests, and clippy with the shared target directory.
+- [x] Format, targeted crate tests, and strict goose-swarm clippy with the shared target directory.
+- [ ] Integrate on the sealed-repair head, then rerun the broker replays, repair-tree seal tests,
+  goose-cli tests, and strict clippy.
 
 ## Gate log
 
@@ -85,16 +87,54 @@ benchmark fleet, LM Studio mutation, scorer change, or SB7 change.
   the shared target. The ordinary dispatcher still exposes no provider request/terminal receipts,
   so requesting enforcement fails closed after emitting the snapshot status; shadow observation is
   the default.
+- Lifecycle/control-plane increment: `cargo test -p goose-swarm` passes 65 unit, 6 historical judge
+  replay, 18 broker replay, 15 physical control-plane replay, and 39 scheduler-mock tests.
+  `cargo clippy -p goose-swarm --all-targets -- -D warnings` passes with the shared target. The
+  scheduled replay compares the exact input DAG ids, provider-dispatch calls, and completed report;
+  all three sets are identical.
 
 Red-team refinement: `PARALLEL` is represented only as a model-instance ceiling. Same-run
 `lms ps` evidence starts at one host-wide admission; a higher host capacity requires an exact
-measured profile. An admission can own multiple provider turns and is releasable only after local
-completion plus exact terminal receipts for every turn (or an explicit provider-not-started
-receipt). The broker accepts typed task-attempt, artifact, trace, or contract revisions; role and
-revision-kind mismatches fail closed.
+measured profile. A task admission is a durable correlation envelope, not a decoder claim. Its
+initial provider-turn permit is reserved at admission; an exact terminal receipt releases that
+permit immediately while the task does local tool work. Every later provider turn re-enters the
+same ranked admission queue. The envelope becomes releasable only after local completion, provider
+starts are closed, and every started turn has an exact terminal receipt (or an explicit
+provider-not-started receipt). Terminal failure/cancellation overrides a contradictory local
+success. The broker exposes host occupancy as exact reserved/live provider-turn permits, separately
+from queued work and active task envelopes.
+
+Source authority is monotonic compare-and-set: rollback, conflicting equal revisions, stale
+removal, generic auxiliary prose, role/priority laundering, unknown routes, and route sets that
+exclude the whole verified snapshot fail closed. Host aliases must share the full capacity evidence,
+not only its numeric value. Cancelled admission and provider-permit futures withdraw queued work;
+an already granted but unconsumed permit may be revoked, but consumed/admitted work has no kill API.
+Closing provider starts atomically rejects even a cloned provider call already waiting in the queue,
+which prevents a late call from outliving the dispatcher boundary.
+
+Every later-turn queue transition carries its own queue-sequence receipt before the permit event;
+equal-rank reacquisition uses the source task's work id rather than the synthetic admission id for
+the DAG's deterministic id tie-break. Capacity updates create a new fleet-snapshot id, so two
+different capacity truths never share one snapshot identity. Active admissions retain the exact
+snapshot and capacity evidence under which they were routed; later admissions cite the new one.
+Aliases of one physical instance must also share exact route evidence.
 
 LM Link routes by model identifier, not by the display host. If one identifier is reported on two
 hosts, goose-cli continues its legacy one-logical-worker reconciliation but does not certify either
 physical route. Persisted `host` configuration and non-LM-Studio providers are likewise never
 promoted to live physical evidence. A run may observe a complete same-run snapshot or an explicit
 unavailable event; it never fills missing physical identity from a logical lane.
+
+The lifecycle seam is intentionally a new `ProviderLifecycleDispatcher`, not a default method on
+`TaskDispatcher`. The broker adaptively selects among verified physical routes; the scheduler's
+placeholder lane does not become a dispatch, timing, or utilization fact. Ready work is queued in
+the DAG's fan-out/id order before Tokio can reorder futures, and physical capacity changes admission
+timing without changing task creation, dependencies, files, contracts, or the advertised DAG.
+
+The brokered scheduler rejects the old judge, pre-review/QA/tail/testgen, idle-capacity replan,
+speculative twin, runtime-review-as-build, and reserved-supervision paths rather than letting any of
+them bypass the queue. Runtime review remains task-derived: physical capacity or observed idleness
+never creates review work. This does not remove or alter the existing semantic judge; the ordinary
+scheduler path remains on its existing behavior. A physical semantic judge is Engine 5 work and
+must enter as a trace-versioned, lifecycle-capable, observation-only opportunity; there is no
+deterministic verdict or blind `idle => judge` substitute in Engine 4.
