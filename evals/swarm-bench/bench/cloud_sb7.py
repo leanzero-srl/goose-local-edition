@@ -36,13 +36,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Mapping
 
-
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 DEFAULT_ENTRANTS = HERE / "cloud-sb7-entrants.json"
 DEFAULT_SECRET_FILE = (
-    Path.home()
-    / ".agents/skills/goose-benchmark-iteration/secrets/cloud-providers.env"
+    Path.home() / ".agents/skills/goose-benchmark-iteration/secrets/cloud-providers.env"
 )
 DEFAULT_ROOT = Path.home() / "goose-builds/cloud-sb7-20260823"
 TERMINAL_BUILD_STATES = {
@@ -108,6 +106,13 @@ INTERRUPTED_PUBLICATION_STATES = {
     "REVALIDATING",
     "VERIFYING_RENDERED",
 }
+SMOKE_MAX_TURNS = 3
+SMOKE_PROOF_SCHEMA = 1
+SMOKE_NONCE_NAME = "contract-smoke-nonce.bin"
+SMOKE_TERMINAL_STATES = {"PASS", "FAILED", "PRE_ADMISSION_FAILURE", "STOPPED"}
+SMOKE_RETRYABLE_STATES = {"PLANNED", "PRE_ADMISSION_FAILURE"}
+MONITOR_TERMINAL_STATES = {"PUBLISHED", "ATTENTION", "STOPPED"}
+MONITOR_DETACH_TIMEOUT_SECONDS = 5.0
 
 
 def utc_now() -> str:
@@ -268,14 +273,18 @@ def entrants(manifest: Mapping[str, Any]) -> list[Dict[str, Any]]:
         if port in seen_ports:
             raise SystemExit(f"duplicate vendor port: {port}")
         if port < 8899:
-            raise SystemExit(f"SB7 vendor ports must be >= 8899: {entrant_id} -> {port}")
+            raise SystemExit(
+                f"SB7 vendor ports must be >= 8899: {entrant_id} -> {port}"
+            )
         seen_ids.add(entrant_id)
         seen_ports.add(port)
         out.append(dict(raw))
     return out
 
 
-def spend_policy(manifest: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+def spend_policy(
+    manifest: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]
+) -> Dict[str, Any]:
     rows = list(rows)
     policy = manifest.get("spend_policy")
     if not isinstance(policy, dict):
@@ -306,10 +315,14 @@ def spend_policy(manifest: Mapping[str, Any], rows: Iterable[Mapping[str, Any]])
             if key not in pricing:
                 raise SystemExit(f"pricing for {row['id']} is missing {key}")
         input_rate = float(
-            pricing.get("input_over_threshold_per_million", pricing["input_per_million"])
+            pricing.get(
+                "input_over_threshold_per_million", pricing["input_per_million"]
+            )
         )
         output_rate = float(
-            pricing.get("output_over_threshold_per_million", pricing["output_per_million"])
+            pricing.get(
+                "output_over_threshold_per_million", pricing["output_per_million"]
+            )
         )
         if input_rate < 0 or output_rate < 0:
             raise SystemExit(f"pricing rates must be non-negative: {row['id']}")
@@ -333,6 +346,100 @@ def spend_policy(manifest: Mapping[str, Any], rows: Iterable[Mapping[str, Any]])
                 f"the {provider} cap"
             )
     return dict(policy)
+
+
+def smoke_max_turns(manifest: Mapping[str, Any]) -> int:
+    value = manifest.get("smoke_max_turns")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SystemExit("entrant manifest smoke_max_turns must be an integer")
+    if value != SMOKE_MAX_TURNS:
+        raise SystemExit(
+            f"cloud contract smoke max turns must be exactly {SMOKE_MAX_TURNS}"
+        )
+    return value
+
+
+def validated_campaign_lineage(campaign: Mapping[str, Any]) -> Dict[str, Any]:
+    lineage = campaign.get("lineage")
+    if not isinstance(lineage, dict):
+        raise SystemExit("campaign has no explicit smoke lineage")
+    generation = lineage.get("generation")
+    predecessor_id = lineage.get("predecessor_campaign_id")
+    predecessor_contract = lineage.get("predecessor_contract_sha256")
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 0
+    ):
+        raise SystemExit("campaign smoke lineage generation is invalid")
+    if generation == 0:
+        if predecessor_id is not None or predecessor_contract is not None:
+            raise SystemExit("root campaign smoke lineage cannot name a predecessor")
+    elif (
+        not isinstance(predecessor_id, str)
+        or not predecessor_id
+        or not isinstance(predecessor_contract, str)
+        or re.fullmatch(r"[0-9a-f]{64}", predecessor_contract) is None
+    ):
+        raise SystemExit("successor campaign smoke lineage is incomplete")
+    return {
+        "generation": generation,
+        "predecessor_campaign_id": predecessor_id,
+        "predecessor_contract_sha256": predecessor_contract,
+    }
+
+
+def smoke_contract_identity(campaign: Mapping[str, Any]) -> str:
+    lineage = validated_campaign_lineage(campaign)
+    normalized: Dict[str, Dict[str, list[str]]] = {}
+    for field in (
+        "smoke_budget_settled_baselines",
+        "smoke_budget_outstanding_baselines",
+    ):
+        baselines = campaign.get(field)
+        if not isinstance(baselines, dict) or not baselines:
+            raise SystemExit(f"campaign has no {field}")
+        normalized_baselines: Dict[str, list[str]] = {}
+        for entrant_id, request_ids in sorted(baselines.items()):
+            if (
+                not isinstance(entrant_id, str)
+                or not entrant_id
+                or not isinstance(request_ids, list)
+                or any(not isinstance(value, str) or not value for value in request_ids)
+                or request_ids != sorted(set(request_ids))
+            ):
+                raise SystemExit(f"campaign {field} is malformed")
+            normalized_baselines[entrant_id] = request_ids
+        normalized[field] = normalized_baselines
+    if set(normalized["smoke_budget_settled_baselines"]) != set(
+        normalized["smoke_budget_outstanding_baselines"]
+    ):
+        raise SystemExit("campaign smoke budget baseline entrant sets differ")
+    payload = {
+        "schema_version": CAMPAIGN_SCHEMA,
+        "campaign_id": campaign.get("campaign_id"),
+        "lineage": lineage,
+        "binary_sha256": campaign.get("binary_sha256"),
+        "instrument_set_sha256": campaign.get("instrument_set_sha256"),
+        "entrant_manifest_sha256": campaign.get("entrant_manifest_sha256"),
+        "budget_config_sha256": campaign.get("budget_config_sha256"),
+        "smoke_max_turns": campaign.get("smoke_max_turns"),
+        **normalized,
+    }
+    for field in (
+        "campaign_id",
+        "binary_sha256",
+        "instrument_set_sha256",
+        "entrant_manifest_sha256",
+        "budget_config_sha256",
+    ):
+        if not isinstance(payload[field], str) or not payload[field]:
+            raise SystemExit(f"campaign smoke contract has no {field}")
+    if payload["smoke_max_turns"] != SMOKE_MAX_TURNS:
+        raise SystemExit("campaign smoke contract has the wrong max-turn limit")
+    return sha256_bytes(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    )
 
 
 def binary_missing_markers(binary: Path) -> list[str]:
@@ -359,12 +466,35 @@ def state_file(root: Path, entrant_id: str) -> Path:
     return root / "entrants" / entrant_id / "state.json"
 
 
+def smoke_state_file(root: Path, entrant_id: str) -> Path:
+    return root / "smoke" / entrant_id / "state.json"
+
+
 def read_state(root: Path, entrant_id: str) -> Dict[str, Any]:
     return load_json(state_file(root, entrant_id))
 
 
 def update_state(root: Path, entrant_id: str, **changes: Any) -> Dict[str, Any]:
     path = state_file(root, entrant_id)
+    lock_path = path.with_suffix(".lock")
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            state = load_json(path)
+            state.update(changes)
+            state["updated_at"] = utc_now()
+            atomic_json(path, state)
+            return state
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def read_smoke_state(root: Path, entrant_id: str) -> Dict[str, Any]:
+    return load_json(smoke_state_file(root, entrant_id))
+
+
+def update_smoke_state(root: Path, entrant_id: str, **changes: Any) -> Dict[str, Any]:
+    path = smoke_state_file(root, entrant_id)
     lock_path = path.with_suffix(".lock")
     with lock_path.open("a+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -391,6 +521,26 @@ def manager_state(root: Path, **changes: Any) -> Dict[str, Any]:
             )
             state.update(changes)
             state["updated_at"] = utc_now()
+            atomic_json(path, state)
+            return state
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def read_monitor_state(root: Path) -> Dict[str, Any]:
+    path = root / "monitor.json"
+    return load_json(path) if path.is_file() else {"schema_version": CAMPAIGN_SCHEMA}
+
+
+def monitor_state(root: Path, **changes: Any) -> Dict[str, Any]:
+    path = root / "monitor.json"
+    lock_path = root / "monitor.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            state = read_monitor_state(root)
+            state.update(changes)
+            state["heartbeat_at"] = utc_now()
             atomic_json(path, state)
             return state
         finally:
@@ -460,7 +610,9 @@ def publisher_entries(
         entrant_id = str(row["id"])
         entry = by_key.get(entrant_id)
         if entry is None:
-            raise SystemExit(f"publisher manifest is missing cloud entrant: {entrant_id}")
+            raise SystemExit(
+                f"publisher manifest is missing cloud entrant: {entrant_id}"
+            )
         model = str(entry.get("model", ""))
         if model != str(row["model"]):
             raise SystemExit(
@@ -530,7 +682,9 @@ def publisher_runtime_hashes(repo: Path) -> Dict[str, str]:
 
         dependencies = manifest.get("dependencies")
         if dependencies is not None and not isinstance(dependencies, dict):
-            raise SystemExit(f"publisher package dependencies are malformed: {relative}")
+            raise SystemExit(
+                f"publisher package dependencies are malformed: {relative}"
+            )
         for dependency in sorted((dependencies or {}).keys()):
             pending.append((str(dependency), package, True))
 
@@ -554,7 +708,9 @@ def publisher_runtime_hashes(repo: Path) -> Dict[str, str]:
             )
         for dependency in sorted((peers or {}).keys()):
             metadata = (peer_meta or {}).get(dependency, {})
-            is_optional = isinstance(metadata, dict) and metadata.get("optional") is True
+            is_optional = (
+                isinstance(metadata, dict) and metadata.get("optional") is True
+            )
             pending.append((str(dependency), package, not is_optional))
     return dict(sorted(packages.items()))
 
@@ -562,7 +718,9 @@ def publisher_runtime_hashes(repo: Path) -> Dict[str, str]:
 def read_publisher_env(repo: Path) -> tuple[Dict[str, Any], Dict[str, str]]:
     env_file = repo / ".env.local"
     if env_file.is_symlink():
-        raise SystemExit(f"publisher environment file cannot be a symbolic link: {env_file}")
+        raise SystemExit(
+            f"publisher environment file cannot be a symbolic link: {env_file}"
+        )
     if not env_file.is_file():
         raise SystemExit(f"environment file is missing: {env_file}")
     mode = env_file.stat().st_mode & 0o777
@@ -575,7 +733,9 @@ def read_publisher_env(repo: Path) -> tuple[Dict[str, Any], Dict[str, str]]:
         raw = env_file.read_bytes()
         values = parse_env_text(raw.decode())
     except UnicodeDecodeError:
-        raise SystemExit(f"publisher environment file is not UTF-8: {env_file}") from None
+        raise SystemExit(
+            f"publisher environment file is not UTF-8: {env_file}"
+        ) from None
     missing_env = [name for name in PUBLISHER_REQUIRED_ENV if not values.get(name)]
     if missing_env:
         raise SystemExit(
@@ -681,9 +841,7 @@ def publisher_mismatch(campaign: Mapping[str, Any]) -> str | None:
         return "campaign has no pinned publisher"
     try:
         manifest = load_json(Path(str(campaign["entrant_manifest"])))
-        current = publisher_snapshot(
-            Path(str(expected["repo"])), entrants(manifest)
-        )
+        current = publisher_snapshot(Path(str(expected["repo"])), entrants(manifest))
     except (OSError, json.JSONDecodeError, SystemExit) as error:
         return f"pinned publisher cannot be verified: {error}"
     compared = (
@@ -728,8 +886,7 @@ def freeze_publisher_runtime(
         shutil.copytree(source, target, dirs_exist_ok=True)
 
     copied_tracked = {
-        str(relative): sha256_file(destination / str(relative))
-        for relative in tracked
+        str(relative): sha256_file(destination / str(relative)) for relative in tracked
     }
     copied_runtime = {
         str(relative): sha256_tree_exact(destination / str(relative))
@@ -742,9 +899,7 @@ def freeze_publisher_runtime(
         "tracked_hashes": copied_tracked,
         "runtime_hashes": copied_runtime,
         "instrument_set_sha256": sha256_bytes(
-            json.dumps(
-                {**copied_tracked, **copied_runtime}, sort_keys=True
-            ).encode()
+            json.dumps({**copied_tracked, **copied_runtime}, sort_keys=True).encode()
         ),
     }
 
@@ -761,8 +916,7 @@ def frozen_publisher_mismatch(campaign: Mapping[str, Any]) -> str | None:
         return "campaign frozen publisher hashes are malformed"
     try:
         current_tracked = {
-            str(relative): sha256_file(root / str(relative))
-            for relative in tracked
+            str(relative): sha256_file(root / str(relative)) for relative in tracked
         }
         current_runtime = {
             str(relative): sha256_tree_exact(root / str(relative))
@@ -841,7 +995,9 @@ def campaign_instrument_path(campaign: Mapping[str, Any], relative: str) -> Path
     try:
         path.resolve().relative_to(Path(str(root)).resolve())
     except ValueError:
-        raise SystemExit(f"instrument path escapes its frozen root: {relative}") from None
+        raise SystemExit(
+            f"instrument path escapes its frozen root: {relative}"
+        ) from None
     return path
 
 
@@ -882,7 +1038,9 @@ def fetch_json(url: str, headers: Mapping[str, str]) -> Dict[str, Any]:
         with urllib.request.urlopen(request, timeout=30) as response:
             value = json.load(response)
     except urllib.error.HTTPError as error:
-        raise SystemExit(f"authenticated roster failed: HTTP {error.code} from {url}") from None
+        raise SystemExit(
+            f"authenticated roster failed: HTTP {error.code} from {url}"
+        ) from None
     except Exception as error:
         raise SystemExit(
             f"authenticated roster failed: {type(error).__name__} from {url}"
@@ -951,7 +1109,9 @@ def authenticated_rosters(secret_values: Mapping[str, str]) -> Dict[str, Any]:
     }
 
 
-def validate_rosters(rows: Iterable[Mapping[str, Any]], rosters: Mapping[str, Any]) -> None:
+def validate_rosters(
+    rows: Iterable[Mapping[str, Any]], rosters: Mapping[str, Any]
+) -> None:
     models = rosters.get("models")
     reported_models = rosters.get("accepted_reported_models")
     evidence = rosters.get("evidence")
@@ -1018,6 +1178,7 @@ def preflight(
     manifest = load_json(manifest_path)
     rows = entrants(manifest)
     spend_policy(manifest, rows)
+    smoke_max_turns(manifest)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise SystemExit(f"goose binary is missing or not executable: {binary}")
     missing_markers = binary_missing_markers(binary)
@@ -1028,11 +1189,17 @@ def preflight(
         )
     dirty = git_value("status", "--porcelain", "--untracked-files=all")
     if dirty:
-        raise SystemExit("cloud benchmark source worktree must be clean before it is frozen")
+        raise SystemExit(
+            "cloud benchmark source worktree must be clean before it is frozen"
+        )
     secret_values = parse_secret_file(secret_path)
     rosters = authenticated_rosters(secret_values)
     validate_rosters(rows, rosters)
-    busy = [str(row["vendor_port"]) for row in rows if not port_is_free(int(row["vendor_port"]))]
+    busy = [
+        str(row["vendor_port"])
+        for row in rows
+        if not port_is_free(int(row["vendor_port"]))
+    ]
     if busy:
         raise SystemExit(f"vendor ports are already occupied: {', '.join(busy)}")
     selected_evidence = {
@@ -1070,9 +1237,16 @@ def init_campaign(
 ) -> Dict[str, Any]:
     if campaign_file(root).exists():
         existing = load_json(campaign_file(root))
-        if existing.get("status") in {"INITIALIZED", "RUNNING", "BUILD_COMPLETE", "SCORING"}:
+        if existing.get("status") in {
+            "INITIALIZED",
+            "RUNNING",
+            "BUILD_COMPLETE",
+            "SCORING",
+        }:
             return existing
-        raise SystemExit(f"campaign already exists with status {existing.get('status')}: {root}")
+        raise SystemExit(
+            f"campaign already exists with status {existing.get('status')}: {root}"
+        )
 
     if not publish_live:
         raise SystemExit(
@@ -1085,17 +1259,21 @@ def init_campaign(
         or publish_verify_interval_seconds <= 0
         or publish_process_timeout_seconds <= 0
     ):
-        raise SystemExit("publisher process and rendered-verification timing must be positive")
+        raise SystemExit(
+            "publisher process and rendered-verification timing must be positive"
+        )
 
     checked = preflight(binary, manifest_path, secret_path, publisher_repo)
     manifest = load_json(manifest_path)
     rows = entrants(manifest)
     policy = spend_policy(manifest, rows)
+    smoke_turn_limit = smoke_max_turns(manifest)
     root.mkdir(parents=True, exist_ok=False)
     (root / "instrument").mkdir()
     instrument_root = root / "instrument/source"
     hashes = freeze_instrument(instrument_root)
     (root / "entrants").mkdir()
+    (root / "smoke").mkdir()
     (root / "locks").mkdir()
     (root / "scores").mkdir()
     (root / "publish").mkdir()
@@ -1176,9 +1354,7 @@ def init_campaign(
         "budget_config_sha256": sha256_file(budget_config_path),
         "budget_ledger": str(budget_ledger_path),
         "instrument_root": str(instrument_root),
-        "coordinator": str(
-            instrument_root / "evals/swarm-bench/bench/cloud_sb7.py"
-        ),
+        "coordinator": str(instrument_root / "evals/swarm-bench/bench/cloud_sb7.py"),
         "scorer": str(instrument_root / "evals/swarm-bench/bench/score_sb7.py"),
         "instrument_hashes": hashes,
         "instrument_set_sha256": sha256_bytes(
@@ -1195,7 +1371,15 @@ def init_campaign(
         "requested_models": checked["requested_models"],
         "scorer_version": manifest.get("suite"),
         "calibration": manifest.get("calibration"),
+        "smoke_max_turns": smoke_turn_limit,
+        "smoke_status": "PLANNED",
+        "lineage": {
+            "generation": 0,
+            "predecessor_campaign_id": None,
+            "predecessor_contract_sha256": None,
+        },
     }
+    campaign = bind_smoke_contract(campaign, rows)
     atomic_json(campaign_file(root), campaign)
 
     for row in rows:
@@ -1233,7 +1417,39 @@ def init_campaign(
             "publish_label": publisher["entries"][entrant_id]["label"],
         }
         atomic_json(state_file(root, entrant_id), state)
+        smoke_unit = root / "smoke" / entrant_id
+        (smoke_unit / "attempts").mkdir(parents=True)
+        atomic_json(
+            smoke_state_file(root, entrant_id),
+            {
+                "schema_version": CAMPAIGN_SCHEMA,
+                "entrant": entrant_id,
+                "provider": row["provider"],
+                "model": row["model"],
+                "provider_lane": row["provider_lane"],
+                "status": "PLANNED",
+                "launch_attempts": 0,
+                "admitted_episodes": 0,
+                "active_attempt": False,
+                "attempt_evidence_sha256": {},
+                "smoke_contract_sha256": campaign["smoke_contract_sha256"],
+                "budget_settled_baseline_request_ids": campaign[
+                    "smoke_budget_settled_baselines"
+                ][entrant_id],
+                "budget_outstanding_baseline_request_ids": campaign[
+                    "smoke_budget_outstanding_baselines"
+                ][entrant_id],
+                "budget_config_sha256": campaign["budget_config_sha256"],
+                "thinking_effort": row["thinking_effort"],
+                "context_limit": int(row["context_limit"]),
+                "max_output_tokens": int(row["max_output_tokens"]),
+                "endpoint_family": row["endpoint_family"],
+                "created_at": utc_now(),
+                "updated_at": utc_now(),
+            },
+        )
     manager_state(root, status="IDLE", pid=None, pgid=None)
+    monitor_state(root, status="IDLE", pid=None, pgid=None, restarts=0)
     return campaign
 
 
@@ -1257,6 +1473,358 @@ def build_prompt(port: int, campaign: Mapping[str, Any]) -> str:
         .replace("{BASE_URL}", f"http://127.0.0.1:{port}")
         .replace("{API_KEY}", API_KEY)
     )
+
+
+def build_goose_command(binary: Path, row: Mapping[str, Any], prompt: str) -> list[str]:
+    return [
+        str(binary),
+        "run",
+        "--provider",
+        str(row["provider"]),
+        "--model",
+        str(row["model"]),
+        "--output-format",
+        "stream-json",
+        "-t",
+        prompt,
+    ]
+
+
+def smoke_shell_command(nonce: bytes) -> tuple[str, str]:
+    nonce_hex = nonce.hex()
+    verified = f"NONCE_VERIFIED:{sha256_bytes(nonce)}"
+    command = (
+        "/usr/bin/python3 -c 'from pathlib import Path; import stat; "
+        f'p=Path("{SMOKE_NONCE_NAME}"); expected=bytes.fromhex("{nonce_hex}"); '
+        "assert not p.exists() and not p.is_symlink(); p.write_bytes(expected); "
+        "actual=p.read_bytes(); assert actual == expected; "
+        "assert stat.S_ISREG(p.lstat().st_mode) and not p.is_symlink(); "
+        f'print("{verified}")'
+        "'"
+    )
+    return command, verified
+
+
+def smoke_prompt(command: str, marker: str) -> str:
+    return (
+        "This is a strict provider/tool contract smoke test. Do not explain or plan. "
+        "Make exactly one developer__shell tool request, with no other tools, and pass "
+        "exactly the command below as its command argument. The command writes a random "
+        "nonce to a regular file, reads and verifies the same bytes within that one tool "
+        "call, and emits its own verification proof.\n\n"
+        f"{command}\n\n"
+        "Only after the successful tool response, return exactly this assistant text "
+        "with no quotes, markdown, prefix, suffix, or extra whitespace:\n"
+        f"{marker}"
+    )
+
+
+def smoke_goose_command(
+    binary: Path,
+    row: Mapping[str, Any],
+    prompt: str,
+    max_turns: int,
+) -> list[str]:
+    return [
+        str(binary),
+        "run",
+        "--provider",
+        str(row["provider"]),
+        "--model",
+        str(row["model"]),
+        "--output-format",
+        "stream-json",
+        "--max-turns",
+        str(max_turns),
+        "-t",
+        prompt,
+    ]
+
+
+def prepare_smoke_attempt(
+    root: Path, entrant_id: str, row: Mapping[str, Any]
+) -> Dict[str, Any]:
+    campaign = load_json(campaign_file(root))
+    state = read_smoke_state(root, entrant_id)
+    if state.get("status") not in SMOKE_RETRYABLE_STATES:
+        raise SystemExit(f"{entrant_id} smoke cannot launch from {state.get('status')}")
+    ambiguity = smoke_attempt_history_failure(root, entrant_id, row)
+    if ambiguity:
+        raise SystemExit(f"{entrant_id} smoke cannot be retried: {ambiguity}")
+    contract = smoke_contract_identity(campaign)
+    if (
+        campaign.get("smoke_contract_sha256") != contract
+        or state.get("smoke_contract_sha256") != contract
+    ):
+        raise SystemExit(f"{entrant_id} smoke contract identity changed before launch")
+    attempt = int(state.get("launch_attempts", 0)) + 1
+    attempt_root = root / "smoke" / entrant_id / "attempts" / f"attempt-{attempt}"
+    attempt_root.mkdir(parents=True, exist_ok=False)
+    tree = attempt_root / "tree"
+    profile = attempt_root / "profile"
+    tree.mkdir()
+    profile.mkdir()
+    (attempt_root / "logs").mkdir()
+    nonce = secrets.token_bytes(32)
+    command, verified = smoke_shell_command(nonce)
+    marker = f"SB7_CONTRACT_SMOKE_PASS_{secrets.token_hex(16)}"
+    prompt = smoke_prompt(command, marker)
+    prompt_path = attempt_root / "prompt.txt"
+    prompt_path.write_text(prompt)
+    return update_smoke_state(
+        root,
+        entrant_id,
+        status="PREPARING",
+        active_attempt=True,
+        launch_attempts=attempt,
+        attempt=attempt,
+        attempt_root=str(attempt_root),
+        tree=str(tree),
+        profile=str(profile),
+        log=str(attempt_root / "logs/smoke.log"),
+        provider_lifecycle=str(attempt_root / "provider-lifecycle.jsonl"),
+        prompt=str(prompt_path),
+        prompt_sha256=sha256_file(prompt_path),
+        expected_command=command,
+        expected_command_sha256=sha256_bytes(command.encode()),
+        expected_tool_output=verified,
+        final_marker=marker,
+        nonce_hex=nonce.hex(),
+        nonce_file=str(tree / SMOKE_NONCE_NAME),
+        campaign_root=str(root),
+        budget_config=str(campaign["budget_config"]),
+        budget_ledger=str(campaign["budget_ledger"]),
+        budget_config_sha256=campaign["budget_config_sha256"],
+        smoke_max_turns=int(campaign["smoke_max_turns"]),
+        admitted_requests=0,
+        provider_terminal_requests=0,
+        failure=None,
+        supervisor_pid=os.getpid(),
+        supervisor_pgid=os.getpgrp(),
+        supervisor_identity=process_identity(os.getpid()),
+    )
+
+
+def _walk_strings(
+    value: Any, path: tuple[Any, ...] = ()
+) -> Iterator[tuple[tuple[Any, ...], str]]:
+    if isinstance(value, str):
+        yield path, value
+    elif isinstance(value, dict):
+        for key, nested in value.items():
+            yield from _walk_strings(nested, (*path, key))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            yield from _walk_strings(nested, (*path, index))
+
+
+def _has_output_limit_metadata(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if (
+                key in {"outputTokenLimitReached", "output_token_limit_reached"}
+                and nested is True
+            ):
+                return True
+            if _has_output_limit_metadata(nested):
+                return True
+    elif isinstance(value, list):
+        return any(_has_output_limit_metadata(item) for item in value)
+    return False
+
+
+def _tool_result_texts(value: Mapping[str, Any]) -> list[str]:
+    content = value.get("content")
+    if not isinstance(content, list):
+        return []
+    return [
+        str(item["text"])
+        for item in content
+        if isinstance(item, dict)
+        and item.get("type") == "text"
+        and isinstance(item.get("text"), str)
+    ]
+
+
+def parse_smoke_stream(
+    path: Path,
+    *,
+    expected_command: str,
+    expected_marker: str,
+    expected_tool_output: str,
+) -> Dict[str, Any]:
+    errors: list[str] = []
+    events: list[Dict[str, Any]] = []
+    if not path.is_file() or path.is_symlink():
+        return {
+            "valid": False,
+            "errors": ["stream log is missing or symbolic"],
+            "events": 0,
+            "complete_events": 0,
+            "tool_requests": 0,
+            "tool_responses": 0,
+        }
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return {
+            "valid": False,
+            "errors": ["stream log is not UTF-8"],
+            "events": 0,
+            "complete_events": 0,
+            "tool_requests": 0,
+            "tool_responses": 0,
+        }
+    for line_number, raw in enumerate(text.splitlines(), start=1):
+        if not raw.strip():
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            errors.append(f"line {line_number}: malformed stream JSON")
+            continue
+        if not isinstance(event, dict):
+            errors.append(f"line {line_number}: stream event is not an object")
+            continue
+        events.append(event)
+
+    requests: list[Dict[str, Any]] = []
+    responses: list[Dict[str, Any]] = []
+    assistant_text: list[tuple[int, str]] = []
+    complete_positions: list[int] = []
+    for position, event in enumerate(events):
+        event_type = event.get("type")
+        if _has_output_limit_metadata(event):
+            errors.append(f"event {position}: output token limit was reached")
+        if event_type == "error":
+            errors.append(f"event {position}: error event")
+        if event_type == "complete":
+            complete_positions.append(position)
+            continue
+        if event_type != "message":
+            if any(expected_marker in value for _, value in _walk_strings(event)):
+                errors.append(
+                    f"event {position}: final marker appeared outside assistant text"
+                )
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict):
+            errors.append(f"event {position}: message payload is malformed")
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        if not isinstance(content, list):
+            errors.append(f"event {position}: message content is malformed")
+            continue
+        allowed_marker_paths: set[tuple[Any, ...]] = set()
+        for index, item in enumerate(content):
+            if not isinstance(item, dict):
+                errors.append(f"event {position}: message content item is malformed")
+                continue
+            item_type = item.get("type")
+            if item_type == "toolRequest":
+                requests.append({"position": position, "role": role, "item": item})
+            elif item_type == "toolResponse":
+                responses.append({"position": position, "role": role, "item": item})
+            elif item_type == "text" and isinstance(item.get("text"), str):
+                value = str(item["text"])
+                if role == "assistant":
+                    assistant_text.append((position, value))
+                    allowed_marker_paths.add(("message", "content", index, "text"))
+        for string_path, value in _walk_strings(event):
+            if expected_marker in value and string_path not in allowed_marker_paths:
+                errors.append(
+                    f"event {position}: final marker appeared outside assistant text"
+                )
+
+    if len(requests) != 1:
+        errors.append(f"expected one tool request, found {len(requests)}")
+    request_id: str | None = None
+    request_position = -1
+    if requests:
+        request = requests[0]
+        item = request["item"]
+        request_position = int(request["position"])
+        request_id = item.get("id") if isinstance(item.get("id"), str) else None
+        tool_call = item.get("toolCall")
+        value = tool_call.get("value") if isinstance(tool_call, dict) else None
+        arguments = value.get("arguments") if isinstance(value, dict) else None
+        if (
+            request_id is None
+            or request.get("role") != "assistant"
+            or not isinstance(tool_call, dict)
+            or tool_call.get("status") != "success"
+            or not isinstance(value, dict)
+            or value.get("name") != "developer__shell"
+            or not isinstance(arguments, dict)
+            or arguments.get("command") != expected_command
+        ):
+            errors.append("developer__shell request did not match the frozen command")
+
+    paired = [
+        response
+        for response in responses
+        if request_id is not None and response["item"].get("id") == request_id
+    ]
+    if len(responses) != 1 or len(paired) != 1:
+        errors.append(
+            "expected one tool response paired to the developer__shell request by ID"
+        )
+    response_position = -1
+    if paired:
+        response = paired[0]
+        response_position = int(response["position"])
+        result = response["item"].get("toolResult")
+        value = result.get("value") if isinstance(result, dict) else None
+        if response_position <= request_position:
+            errors.append("tool response occurred before its request")
+        if (
+            not isinstance(result, dict)
+            or response.get("role") != "user"
+            or result.get("status") != "success"
+            or not isinstance(value, dict)
+            or value.get("isError") is True
+            or expected_tool_output not in _tool_result_texts(value)
+        ):
+            errors.append(
+                "developer__shell response was failed, erroneous, or unproven"
+            )
+
+    final_text = "".join(
+        value for position, value in assistant_text if position > response_position
+    )
+    if response_position < 0 or final_text != expected_marker:
+        errors.append("final assistant text after the tool response was not exact")
+    if any(
+        expected_marker in value and position <= response_position
+        for position, value in assistant_text
+    ):
+        errors.append("final marker appeared before the paired tool response")
+    if any(
+        value for position, value in assistant_text if position <= response_position
+    ):
+        errors.append("assistant emitted text before the paired tool response")
+    if len(complete_positions) != 1:
+        errors.append(f"expected one complete event, found {len(complete_positions)}")
+    elif complete_positions[0] != len(events) - 1:
+        errors.append("complete event was not the final stream event")
+    elif response_position < 0 or complete_positions[0] <= response_position:
+        errors.append("complete event occurred before the paired tool response")
+
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "events": len(events),
+        "complete_events": len(complete_positions),
+        "tool_requests": len(requests),
+        "tool_responses": len(responses),
+        "request_id": request_id,
+        "paired_response": len(paired) == 1,
+        "final_text_exact": final_text == expected_marker,
+        "output_token_limit_reached": any(
+            _has_output_limit_metadata(event) for event in events
+        ),
+    }
 
 
 SAFE_ENV_NAMES = {
@@ -1285,6 +1853,14 @@ def child_env(
     tool_home = profile / "tool-home"
     tool_home.mkdir(parents=True, exist_ok=True)
     (tool_home / "tmp").mkdir(exist_ok=True)
+    tree = Path(str(state["tree"]))
+    campaign_root = Path(str(state.get("campaign_root", tree.parents[2])))
+    budget_config = Path(
+        str(state.get("budget_config", campaign_root / "instrument/budget-config.json"))
+    )
+    budget_ledger = Path(
+        str(state.get("budget_ledger", campaign_root / "budget-ledger.json"))
+    )
     env.update(
         {
             str(row["secret_env"]): secret_value,
@@ -1299,9 +1875,7 @@ def child_env(
             "GOOSE_THINKING_EFFORT": str(row["thinking_effort"]),
             "GOOSE_CONTEXT_LIMIT": str(row["context_limit"]),
             "GOOSE_MAX_TOKENS": str(row["max_output_tokens"]),
-            "GOOSE_SWARM_TELEMETRY_FILE": str(
-                Path(str(state["tree"])) / ".swarm/telemetry.jsonl"
-            ),
+            "GOOSE_SWARM_TELEMETRY_FILE": str(tree / ".swarm/telemetry.jsonl"),
             "GOOSE_PROVIDER_LIFECYCLE_FILE": str(state["provider_lifecycle"]),
             "GOOSE_PROVIDER_LIFECYCLE_STRICT": "true",
             "GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES": "true",
@@ -1312,16 +1886,10 @@ def child_env(
             "GOOSE_TOOL_SANDBOX_ROOT": str(state["tree"]),
             "GOOSE_TOOL_SANDBOX_HOME": str(tool_home),
             "GOOSE_TOOL_SANDBOX_DENY_ROOT": str(Path.home()),
-            "GOOSE_BENCH_BUDGET_CONFIG": str(
-                Path(str(state["tree"])).parents[2] / "instrument/budget-config.json"
-            ),
-            "GOOSE_BENCH_BUDGET_CONFIG_SHA256": str(
-                state["budget_config_sha256"]
-            ),
-            "GOOSE_BENCH_BUDGET_LEDGER": str(
-                Path(str(state["tree"])).parents[2] / "budget-ledger.json"
-            ),
-            "GOOSE_BENCH_CAMPAIGN": str(Path(str(state["tree"])).parents[2]),
+            "GOOSE_BENCH_BUDGET_CONFIG": str(budget_config),
+            "GOOSE_BENCH_BUDGET_CONFIG_SHA256": str(state["budget_config_sha256"]),
+            "GOOSE_BENCH_BUDGET_LEDGER": str(budget_ledger),
+            "GOOSE_BENCH_CAMPAIGN": str(campaign_root),
             "GOOSE_BENCH_ENTRANT": str(row["id"]),
         }
     )
@@ -1341,7 +1909,9 @@ def redacted_copy(
         on_line(line)
 
 
-def secret_occurrences(paths: Iterable[Path], secret_values: Iterable[str]) -> list[str]:
+def secret_occurrences(
+    paths: Iterable[Path], secret_values: Iterable[str]
+) -> list[str]:
     needles = [value.encode() for value in secret_values if value]
     if not needles:
         return []
@@ -1352,7 +1922,9 @@ def secret_occurrences(paths: Iterable[Path], secret_values: Iterable[str]) -> l
         if path.is_file():
             files.append(path)
         elif path.is_dir():
-            files.extend(candidate for candidate in path.rglob("*") if candidate.is_file())
+            files.extend(
+                candidate for candidate in path.rglob("*") if candidate.is_file()
+            )
     for path in files:
         try:
             with path.open("rb") as stream:
@@ -1418,7 +1990,43 @@ def provider_state_observer(root: Path, entrant_id: str):
     return counters, observe
 
 
-def classify_build_exit(exit_code: int, admitted_requests: int) -> tuple[str, str | None]:
+def smoke_state_observer(root: Path, entrant_id: str):
+    counters = {"admitted": 0, "terminal": 0, "first_output_at": None}
+
+    def observe(line: str) -> None:
+        event = event_from_line(line)
+        if not event:
+            return
+        name = str(event.get("event", ""))
+        state = str(event.get("state", ""))
+        if name == "provider_request_admitted" or state == "admitted":
+            counters["admitted"] += 1
+        if name == "provider_request_terminal" or state == "provider_terminal":
+            counters["terminal"] += 1
+        if counters["first_output_at"] is None and (
+            name in {"message", "assistant", "provider_first_item"}
+            or event.get("type") in {"message", "assistant"}
+        ):
+            counters["first_output_at"] = utc_now()
+        if name.startswith("provider_request_") or state in {
+            "admitted",
+            "provider_terminal",
+        }:
+            update_smoke_state(
+                root,
+                entrant_id,
+                admitted_requests=counters["admitted"],
+                provider_terminal_requests=counters["terminal"],
+                first_output_at=counters["first_output_at"],
+                last_provider_event=event,
+            )
+
+    return counters, observe
+
+
+def classify_build_exit(
+    exit_code: int, admitted_requests: int
+) -> tuple[str, str | None]:
     if exit_code == 0:
         return "BUILD_COMPLETE", None
     if admitted_requests == 0:
@@ -1512,9 +2120,7 @@ def lifecycle_summary(
             continue
 
         identity = (provider, model, session)
-        request = requests.setdefault(
-            request_id, {"identity": identity, "states": []}
-        )
+        request = requests.setdefault(request_id, {"identity": identity, "states": []})
         states = request["states"]
         transition_error: str | None = None
         if request["identity"] != identity:
@@ -1572,7 +2178,8 @@ def lifecycle_summary(
         elif states[-1] == "stream_ambiguous":
             ambiguous_request_ids.append(request_id)
     summary["request_states"] = {
-        request_id: request["states"] for request_id, request in sorted(requests.items())
+        request_id: request["states"]
+        for request_id, request in sorted(requests.items())
     }
     summary["ambiguous_request_ids"] = sorted(ambiguous_request_ids)
     summary["valid"] = not (
@@ -1617,12 +2224,1019 @@ def entrant_outstanding_reservations(
     for request_id, reservation in outstanding.items():
         if not isinstance(reservation, dict):
             return [], "budget ledger contains a malformed reservation"
-        if (
-            reservation.get("provider") == row.get("provider")
-            and reservation.get("model") == row.get("model")
-        ):
+        if reservation.get("provider") == row.get("provider") and reservation.get(
+            "model"
+        ) == row.get("model"):
             request_ids.append(str(request_id))
     return sorted(request_ids), None
+
+
+def entrant_budget_requests(
+    campaign: Mapping[str, Any], row: Mapping[str, Any]
+) -> tuple[list[str], list[str], str | None]:
+    ledger_value = campaign.get("budget_ledger")
+    if not ledger_value:
+        return [], [], "campaign has no budget ledger"
+    ledger_path = Path(str(ledger_value))
+    if not ledger_path.is_file() or ledger_path.is_symlink():
+        return [], [], f"budget ledger is missing or symbolic: {ledger_path}"
+    try:
+        ledger = load_json(ledger_path)
+    except (OSError, json.JSONDecodeError, SystemExit) as error:
+        return [], [], f"budget ledger cannot be read: {error}"
+    outstanding = ledger.get("outstanding")
+    settled = ledger.get("settled")
+    if not isinstance(outstanding, dict) or not isinstance(settled, list):
+        return [], [], "budget ledger request collections are malformed"
+    outstanding_ids: list[str] = []
+    settled_ids: list[str] = []
+    for request_id, reservation in outstanding.items():
+        if not isinstance(reservation, dict):
+            return [], [], "budget ledger contains a malformed reservation"
+        if reservation.get("provider") == row.get("provider") and reservation.get(
+            "model"
+        ) == row.get("model"):
+            outstanding_ids.append(str(request_id))
+    seen_settled: set[str] = set()
+    for settlement in settled:
+        if not isinstance(settlement, dict):
+            return [], [], "budget ledger contains a malformed settlement"
+        request_id = settlement.get("request_id")
+        if (
+            not isinstance(request_id, str)
+            or not request_id
+            or request_id in seen_settled
+        ):
+            return (
+                [],
+                [],
+                "budget ledger contains duplicate or malformed settlement IDs",
+            )
+        seen_settled.add(request_id)
+        if settlement.get("provider") == row.get("provider") and settlement.get(
+            "model"
+        ) == row.get("model"):
+            settled_ids.append(request_id)
+    return sorted(outstanding_ids), sorted(settled_ids), None
+
+
+def bind_smoke_contract(
+    campaign: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]
+) -> Dict[str, Any]:
+    bound = dict(campaign)
+    lineage = validated_campaign_lineage(bound)
+    settled_baselines: Dict[str, list[str]] = {}
+    outstanding_baselines: Dict[str, list[str]] = {}
+    for row in rows:
+        entrant_id = str(row["id"])
+        outstanding, settled, error = entrant_budget_requests(bound, row)
+        if error:
+            raise SystemExit(f"cannot bind {entrant_id} smoke budget baseline: {error}")
+        if outstanding and lineage["generation"] == 0:
+            raise SystemExit(
+                f"cannot bind {entrant_id} smoke contract with outstanding requests: "
+                + ", ".join(outstanding)
+            )
+        settled_baselines[entrant_id] = settled
+        outstanding_baselines[entrant_id] = outstanding
+    bound["smoke_budget_settled_baselines"] = settled_baselines
+    bound["smoke_budget_outstanding_baselines"] = outstanding_baselines
+    bound["smoke_contract_sha256"] = smoke_contract_identity(bound)
+    return bound
+
+
+def current_smoke_budget_requests(
+    campaign: Mapping[str, Any], row: Mapping[str, Any]
+) -> tuple[list[str], list[str], str | None]:
+    outstanding, settled, error = entrant_budget_requests(campaign, row)
+    if error:
+        return [], [], error
+    baselines = campaign.get("smoke_budget_settled_baselines")
+    outstanding_baselines = campaign.get("smoke_budget_outstanding_baselines")
+    entrant_id = str(row.get("id", ""))
+    baseline = baselines.get(entrant_id) if isinstance(baselines, dict) else None
+    if (
+        not isinstance(baseline, list)
+        or any(not isinstance(value, str) or not value for value in baseline)
+        or baseline != sorted(set(baseline))
+    ):
+        return [], [], f"{entrant_id} smoke budget baseline is malformed"
+    outstanding_baseline = (
+        outstanding_baselines.get(entrant_id)
+        if isinstance(outstanding_baselines, dict)
+        else None
+    )
+    if (
+        not isinstance(outstanding_baseline, list)
+        or any(
+            not isinstance(value, str) or not value for value in outstanding_baseline
+        )
+        or outstanding_baseline != sorted(set(outstanding_baseline))
+    ):
+        return [], [], f"{entrant_id} smoke outstanding budget baseline is malformed"
+    missing = sorted(set(baseline) - set(settled))
+    if missing:
+        return (
+            [],
+            [],
+            (
+                f"{entrant_id} smoke budget baseline settlements disappeared: "
+                + ", ".join(missing)
+            ),
+        )
+    missing_outstanding = sorted(set(outstanding_baseline) - set(outstanding))
+    if missing_outstanding:
+        return (
+            [],
+            [],
+            (
+                f"{entrant_id} carried smoke budget reservations disappeared: "
+                + ", ".join(missing_outstanding)
+            ),
+        )
+    current_outstanding = sorted(set(outstanding) - set(outstanding_baseline))
+    current = sorted(set(settled) - set(baseline))
+    return current_outstanding, current, None
+
+
+def smoke_admission_history(
+    root: Path, entrant_id: str, row: Mapping[str, Any]
+) -> Dict[str, Any]:
+    campaign = load_json(campaign_file(root))
+    state = read_smoke_state(root, entrant_id)
+    errors: list[str] = []
+    try:
+        contract = smoke_contract_identity(campaign)
+    except SystemExit as error:
+        contract = ""
+        errors.append(str(error))
+    if contract != campaign.get("smoke_contract_sha256"):
+        errors.append("campaign smoke contract hash is stale")
+    if state.get("smoke_contract_sha256") != contract:
+        errors.append("entrant smoke state belongs to a different contract")
+    baselines = campaign.get("smoke_budget_settled_baselines")
+    expected_baseline = (
+        baselines.get(entrant_id) if isinstance(baselines, dict) else None
+    )
+    if state.get("budget_settled_baseline_request_ids") != expected_baseline:
+        errors.append(
+            "entrant smoke budget baseline differs from the campaign contract"
+        )
+    outstanding_baselines = campaign.get("smoke_budget_outstanding_baselines")
+    expected_outstanding_baseline = (
+        outstanding_baselines.get(entrant_id)
+        if isinstance(outstanding_baselines, dict)
+        else None
+    )
+    if (
+        state.get("budget_outstanding_baseline_request_ids")
+        != expected_outstanding_baseline
+    ):
+        errors.append(
+            "entrant smoke outstanding budget baseline differs from the campaign contract"
+        )
+
+    evidence_hashes = state.get("attempt_evidence_sha256")
+    if not isinstance(evidence_hashes, dict):
+        evidence_hashes = {}
+        errors.append("entrant cumulative smoke evidence index is malformed")
+    attempts_root = root / "smoke" / entrant_id / "attempts"
+    attempts: list[Dict[str, Any]] = []
+    seen_names: set[str] = set()
+    if not attempts_root.is_dir() or attempts_root.is_symlink():
+        errors.append("entrant smoke attempts root is missing or symbolic")
+    else:
+        for attempt_root in sorted(attempts_root.iterdir()):
+            if not attempt_root.name.startswith("attempt-"):
+                errors.append(f"unexpected smoke attempt entry: {attempt_root.name}")
+                continue
+            seen_names.add(attempt_root.name)
+            try:
+                attempt_number = int(attempt_root.name.removeprefix("attempt-"))
+            except ValueError:
+                errors.append(f"malformed smoke attempt name: {attempt_root.name}")
+                continue
+            if (
+                attempt_number <= 0
+                or not attempt_root.is_dir()
+                or attempt_root.is_symlink()
+            ):
+                errors.append(f"invalid smoke attempt path: {attempt_root.name}")
+                continue
+            lifecycle_path = attempt_root / "provider-lifecycle.jsonl"
+            lifecycle = lifecycle_summary(
+                lifecycle_path,
+                expected_provider=str(row["provider"]),
+                expected_model=str(row["model"]),
+            )
+            evidence_path = attempt_root / "attempt-evidence.json"
+            evidence: Dict[str, Any] | None = None
+            evidence_sha: str | None = None
+            if evidence_path.is_symlink() or not evidence_path.is_file():
+                errors.append(f"{attempt_root.name} has no sealed attempt evidence")
+            else:
+                try:
+                    evidence_sha = sha256_file(evidence_path)
+                    evidence = load_json(evidence_path)
+                except (OSError, json.JSONDecodeError, SystemExit) as error:
+                    errors.append(
+                        f"{attempt_root.name} evidence cannot be read: {error}"
+                    )
+                if evidence_sha != evidence_hashes.get(attempt_root.name):
+                    errors.append(
+                        f"{attempt_root.name} evidence hash is not sealed in state"
+                    )
+                if evidence is not None:
+                    expected_identity = {
+                        "entrant": entrant_id,
+                        "attempt": attempt_number,
+                        "smoke_contract_sha256": contract,
+                    }
+                    changed = [
+                        key
+                        for key, value in expected_identity.items()
+                        if evidence.get(key) != value
+                    ]
+                    if changed:
+                        errors.append(
+                            f"{attempt_root.name} evidence identity differs: "
+                            + ", ".join(changed)
+                        )
+                    if evidence.get("lifecycle") != lifecycle:
+                        errors.append(
+                            f"{attempt_root.name} lifecycle differs from sealed evidence"
+                        )
+                    lifecycle_hash = (
+                        sha256_file(lifecycle_path)
+                        if lifecycle_path.is_file() and not lifecycle_path.is_symlink()
+                        else None
+                    )
+                    hashes = evidence.get("hashes")
+                    if (
+                        not isinstance(hashes, dict)
+                        or hashes.get("lifecycle") != lifecycle_hash
+                    ):
+                        errors.append(
+                            f"{attempt_root.name} lifecycle hash differs from sealed evidence"
+                        )
+            attempts.append(
+                {
+                    "attempt": attempt_number,
+                    "name": attempt_root.name,
+                    "evidence_sha256": evidence_sha,
+                    "admitted": int(lifecycle.get("admitted", 0)),
+                    "terminal": int(lifecycle.get("terminal", 0)),
+                    "lifecycle_valid": lifecycle_failure(lifecycle) is None,
+                }
+            )
+    extra_indexes = sorted(set(evidence_hashes) - seen_names)
+    if extra_indexes:
+        errors.append(
+            "cumulative smoke evidence index names missing attempts: "
+            + ", ".join(extra_indexes)
+        )
+    outstanding, current_settled, budget_error = current_smoke_budget_requests(
+        campaign, row
+    )
+    if budget_error:
+        errors.append(budget_error)
+    episodes_admitted = sum(1 for attempt in attempts if attempt["admitted"] > 0)
+    if episodes_admitted > 1:
+        errors.append("more than one smoke episode admitted provider work")
+    if state.get("admitted_episodes") != episodes_admitted:
+        errors.append(
+            "persisted smoke admission count differs from cumulative evidence"
+        )
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "contract_sha256": contract,
+        "attempts": attempts,
+        "episodes_admitted": episodes_admitted,
+        "outstanding_request_ids": outstanding,
+        "current_settled_request_ids": current_settled,
+    }
+
+
+def smoke_attempt_history_failure(
+    root: Path, entrant_id: str, row: Mapping[str, Any]
+) -> str | None:
+    history = smoke_admission_history(root, entrant_id, row)
+    reasons = list(history["errors"])
+    if history["episodes_admitted"]:
+        reasons.append("a prior smoke episode admitted provider work")
+    if history["current_settled_request_ids"]:
+        reasons.append(
+            "current-campaign provider work is already settled: "
+            + ", ".join(history["current_settled_request_ids"])
+        )
+    if history["outstanding_request_ids"]:
+        reasons.append(
+            "outstanding budget requests: "
+            + ", ".join(history["outstanding_request_ids"])
+        )
+    return "; ".join(reasons) if reasons else None
+
+
+def sealed_smoke_admission_history(history: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        "contract_sha256": history.get("contract_sha256"),
+        "attempts": history.get("attempts"),
+        "episodes_admitted": history.get("episodes_admitted"),
+    }
+
+
+def _regular_file_bytes(path: Path) -> bytes | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def smoke_attempt_evidence(
+    root: Path,
+    entrant_id: str,
+    *,
+    exit_code: int | None,
+    descendants_clean: bool,
+) -> Dict[str, Any]:
+    campaign = load_json(campaign_file(root))
+    row = manifest_row(root, entrant_id)
+    state = read_smoke_state(root, entrant_id)
+    reasons: list[str] = []
+    try:
+        contract = smoke_contract_identity(campaign)
+    except SystemExit as error:
+        contract = ""
+        reasons.append(str(error))
+    if contract != campaign.get("smoke_contract_sha256"):
+        reasons.append("campaign smoke contract hash is stale")
+    if state.get("smoke_contract_sha256") != contract:
+        reasons.append("smoke attempt belongs to a different campaign contract")
+    baselines = campaign.get("smoke_budget_settled_baselines")
+    expected_baseline = (
+        baselines.get(entrant_id) if isinstance(baselines, dict) else None
+    )
+    if state.get("budget_settled_baseline_request_ids") != expected_baseline:
+        reasons.append(
+            "smoke attempt budget baseline differs from the campaign contract"
+        )
+    outstanding_baselines = campaign.get("smoke_budget_outstanding_baselines")
+    expected_outstanding_baseline = (
+        outstanding_baselines.get(entrant_id)
+        if isinstance(outstanding_baselines, dict)
+        else None
+    )
+    if (
+        state.get("budget_outstanding_baseline_request_ids")
+        != expected_outstanding_baseline
+    ):
+        reasons.append(
+            "smoke attempt outstanding budget baseline differs from the campaign contract"
+        )
+    attempt_root = Path(str(state.get("attempt_root", "")))
+    expected_root = (
+        root
+        / "smoke"
+        / entrant_id
+        / "attempts"
+        / f"attempt-{int(state.get('attempt', 0))}"
+    )
+    if (
+        attempt_root != expected_root
+        or not attempt_root.is_dir()
+        or attempt_root.is_symlink()
+    ):
+        reasons.append(
+            "smoke attempt root is missing, linked, or not the expected immutable path"
+        )
+    paths = {
+        "tree": Path(str(state.get("tree", ""))),
+        "profile": Path(str(state.get("profile", ""))),
+        "log": Path(str(state.get("log", ""))),
+        "lifecycle": Path(str(state.get("provider_lifecycle", ""))),
+        "prompt": Path(str(state.get("prompt", ""))),
+        "nonce": Path(str(state.get("nonce_file", ""))),
+    }
+    for name, path in paths.items():
+        try:
+            path.resolve().relative_to(attempt_root.resolve())
+        except (OSError, ValueError):
+            reasons.append(f"smoke {name} path escapes its immutable attempt")
+    if (
+        paths["tree"] != attempt_root / "tree"
+        or paths["profile"] != attempt_root / "profile"
+    ):
+        reasons.append("smoke tree/profile paths do not match the isolated attempt")
+    if paths["nonce"] != paths["tree"] / SMOKE_NONCE_NAME:
+        reasons.append("smoke nonce path is not the frozen relative target")
+
+    expected_command = str(state.get("expected_command", ""))
+    expected_marker = str(state.get("final_marker", ""))
+    expected_tool_output = str(state.get("expected_tool_output", ""))
+    stream = parse_smoke_stream(
+        paths["log"],
+        expected_command=expected_command,
+        expected_marker=expected_marker,
+        expected_tool_output=expected_tool_output,
+    )
+    if not stream["valid"]:
+        reasons.extend(f"stream: {error}" for error in stream["errors"])
+
+    lifecycle = lifecycle_summary(
+        paths["lifecycle"],
+        expected_provider=str(row["provider"]),
+        expected_model=str(row["model"]),
+    )
+    lifecycle_error = lifecycle_failure(lifecycle)
+    if lifecycle_error:
+        reasons.append(f"lifecycle: {lifecycle_error}")
+    if not lifecycle["admitted"]:
+        reasons.append("lifecycle has no proven provider admission")
+    if lifecycle["admitted"] != lifecycle["terminal"]:
+        reasons.append("not every admitted provider request reached a proven terminal")
+
+    outstanding, settled, budget_error = current_smoke_budget_requests(campaign, row)
+    terminal_ids = sorted(
+        request_id
+        for request_id, states in lifecycle["request_states"].items()
+        if states and states[-1] == "provider_terminal"
+    )
+    if budget_error:
+        reasons.append(budget_error)
+    if outstanding:
+        reasons.append(
+            f"{len(outstanding)} provider request(s) retain full budget reserves"
+        )
+    if not set(terminal_ids).issubset(set(settled)):
+        reasons.append(
+            "terminal lifecycle request IDs are absent from the shared budget ledger"
+        )
+
+    try:
+        expected_nonce = bytes.fromhex(str(state.get("nonce_hex", "")))
+    except ValueError:
+        expected_nonce = b""
+        reasons.append("smoke nonce evidence is malformed")
+    nonce_bytes = _regular_file_bytes(paths["nonce"])
+    if nonce_bytes is None:
+        reasons.append("smoke nonce is missing, non-regular, unreadable, or symbolic")
+    elif nonce_bytes != expected_nonce:
+        reasons.append("smoke nonce bytes differ from the frozen random challenge")
+
+    prompt_bytes = _regular_file_bytes(paths["prompt"])
+    expected_prompt = smoke_prompt(expected_command, expected_marker).encode()
+    if prompt_bytes != expected_prompt:
+        reasons.append("smoke prompt bytes differ from the frozen contract")
+    if state.get("expected_command_sha256") != sha256_bytes(expected_command.encode()):
+        reasons.append("smoke command hash differs from its persisted command")
+    if int(state.get("smoke_max_turns", 0)) != int(campaign.get("smoke_max_turns", 0)):
+        reasons.append("smoke turn limit differs from the frozen campaign")
+    if int(campaign.get("smoke_max_turns", 0)) != SMOKE_MAX_TURNS:
+        reasons.append("frozen campaign smoke turn limit is invalid")
+    binary = Path(str(campaign.get("binary", "")))
+    if (
+        not binary.is_file()
+        or binary.is_symlink()
+        or sha256_file(binary) != campaign.get("binary_sha256")
+    ):
+        reasons.append("frozen binary changed before smoke proof")
+    mismatch = instrument_mismatch(campaign)
+    if mismatch:
+        reasons.append(mismatch)
+    budget_config = Path(str(campaign.get("budget_config", "")))
+    if (
+        not budget_config.is_file()
+        or budget_config.is_symlink()
+        or sha256_file(budget_config) != campaign.get("budget_config_sha256")
+    ):
+        reasons.append("frozen budget config changed before smoke proof")
+
+    secret_hits: list[str] = []
+    try:
+        secret_values = parse_secret_file(Path(str(campaign["secret_file"])))
+        secret_hits = secret_occurrences(
+            [root / "smoke" / entrant_id],
+            secret_values.values(),
+        )
+    except (OSError, KeyError, SystemExit) as error:
+        reasons.append(f"secret scan could not be completed: {error}")
+    if secret_hits:
+        reasons.append("provider credential appeared in smoke-controlled artifacts")
+    if exit_code not in {None, 0}:
+        reasons.append(f"goose smoke process exited {exit_code}")
+    if not descendants_clean:
+        reasons.append("background tool descendants survived the smoke process")
+
+    static_hashes: Dict[str, str | None] = {}
+    for name in ("log", "lifecycle", "prompt", "nonce"):
+        path = paths[name]
+        static_hashes[name] = (
+            sha256_file(path) if path.is_file() and not path.is_symlink() else None
+        )
+    return {
+        "entrant": entrant_id,
+        "attempt": int(state.get("attempt", 0)),
+        "smoke_contract_sha256": contract,
+        "passed": not reasons,
+        "reasons": reasons,
+        "stream": stream,
+        "lifecycle": lifecycle,
+        "outstanding_request_ids": outstanding,
+        "settled_request_ids": settled,
+        "terminal_request_ids": terminal_ids,
+        "secret_scan_hits": secret_hits,
+        "descendants_clean": descendants_clean,
+        "exit_code": exit_code,
+        "hashes": static_hashes,
+        "nonce_sha256": sha256_bytes(nonce_bytes) if nonce_bytes is not None else None,
+        "binary_sha256": sha256_file(binary) if binary.is_file() else None,
+        "instrument_set_sha256": campaign.get("instrument_set_sha256"),
+        "entrant_manifest_sha256": campaign.get("entrant_manifest_sha256"),
+        "budget_config_sha256": campaign.get("budget_config_sha256"),
+    }
+
+
+def finalize_smoke_attempt(
+    root: Path,
+    entrant_id: str,
+    *,
+    exit_code: int | None,
+    descendants_clean: bool,
+) -> bool:
+    state = read_smoke_state(root, entrant_id)
+    evidence = smoke_attempt_evidence(
+        root,
+        entrant_id,
+        exit_code=exit_code,
+        descendants_clean=descendants_clean,
+    )
+    lifecycle = evidence["lifecycle"]
+    admitted = int(lifecycle.get("admitted", 0))
+    settled = list(evidence.get("settled_request_ids", []))
+    admitted_episode = bool(admitted or settled)
+    current_attempt_name = f"attempt-{int(state.get('attempt', 0))}"
+    evidence_indexes = state.get("attempt_evidence_sha256")
+    if not isinstance(evidence_indexes, dict):
+        evidence_indexes = {}
+        evidence["passed"] = False
+        evidence["reasons"].append("cumulative smoke evidence index is malformed")
+    else:
+        evidence_indexes = dict(evidence_indexes)
+    prior_admitted_episodes = 0
+    for prior_attempt_name, expected_hash in evidence_indexes.items():
+        if prior_attempt_name == current_attempt_name:
+            continue
+        evidence_path = (
+            root
+            / "smoke"
+            / entrant_id
+            / "attempts"
+            / prior_attempt_name
+            / "attempt-evidence.json"
+        )
+        if (
+            evidence_path.is_symlink()
+            or not evidence_path.is_file()
+            or sha256_file(evidence_path) != expected_hash
+        ):
+            evidence["passed"] = False
+            evidence["reasons"].append(
+                f"prior cumulative evidence is missing or changed: {prior_attempt_name}"
+            )
+            continue
+        prior = load_json(evidence_path)
+        prior_lifecycle = prior.get("lifecycle")
+        prior_settled = prior.get("settled_request_ids")
+        if (
+            isinstance(prior_lifecycle, dict)
+            and int(prior_lifecycle.get("admitted", 0)) > 0
+        ) or (isinstance(prior_settled, list) and bool(prior_settled)):
+            prior_admitted_episodes += 1
+    admitted_episodes = prior_admitted_episodes + (1 if admitted_episode else 0)
+    if admitted_episodes > 1:
+        evidence["passed"] = False
+        evidence["reasons"].append("more than one smoke episode admitted provider work")
+
+    attempt_evidence_path = Path(str(state["attempt_root"])) / "attempt-evidence.json"
+    if attempt_evidence_path.exists():
+        try:
+            existing_evidence = load_json(attempt_evidence_path)
+        except (OSError, json.JSONDecodeError, SystemExit) as error:
+            update_smoke_state(
+                root,
+                entrant_id,
+                status="FAILED",
+                failure=f"existing smoke attempt evidence cannot be read: {error}",
+            )
+            return False
+        if existing_evidence != evidence:
+            update_smoke_state(
+                root,
+                entrant_id,
+                status="FAILED",
+                failure="existing smoke attempt evidence differs from reconstruction",
+            )
+            return False
+    else:
+        atomic_json(attempt_evidence_path, evidence)
+    evidence_indexes[current_attempt_name] = sha256_file(attempt_evidence_path)
+    common = {
+        "exit_code": exit_code,
+        "finished_at": utc_now(),
+        "admitted_requests": admitted,
+        "provider_terminal_requests": int(lifecycle.get("terminal", 0)),
+        "admitted_episodes": admitted_episodes,
+        "attempt_evidence": str(attempt_evidence_path),
+        "attempt_evidence_sha256": evidence_indexes,
+        "lifecycle_events": lifecycle.get("events", 0),
+        "lifecycle_malformed_lines": lifecycle.get("malformed_lines", 0),
+        "lifecycle_transition_errors": lifecycle.get("transition_errors", []),
+        "lifecycle_ambiguous_request_ids": lifecycle.get("ambiguous_request_ids", []),
+        "budget_outstanding_request_ids": evidence.get("outstanding_request_ids", []),
+        "secret_scan_hits": evidence.get("secret_scan_hits", []),
+        "smoke_evidence": evidence,
+        "active_attempt": False,
+    }
+    update_smoke_state(root, entrant_id, status="FINALIZING", **common)
+    row = manifest_row(root, entrant_id)
+    admission_history = smoke_admission_history(root, entrant_id, row)
+    if not admission_history["valid"]:
+        update_smoke_state(
+            root,
+            entrant_id,
+            status="FAILED",
+            failure="; ".join(admission_history["errors"])[:4000],
+            **common,
+        )
+        return False
+    if evidence["passed"]:
+        proof_path = Path(str(state["attempt_root"])) / "proof.json"
+        proof = {
+            "schema_version": SMOKE_PROOF_SCHEMA,
+            "created_at": utc_now(),
+            "entrant": entrant_id,
+            "provider": state["provider"],
+            "model": state["model"],
+            "attempt": state["attempt"],
+            "passed": True,
+            "smoke_contract_sha256": state["smoke_contract_sha256"],
+            "smoke_max_turns": state["smoke_max_turns"],
+            "expected_command_sha256": state["expected_command_sha256"],
+            "prompt_sha256": state["prompt_sha256"],
+            "admission_history": sealed_smoke_admission_history(admission_history),
+            "evidence": evidence,
+        }
+        if proof_path.exists():
+            existing = load_json(proof_path)
+            comparable = {
+                key: value for key, value in proof.items() if key != "created_at"
+            }
+            existing_comparable = {
+                key: value for key, value in existing.items() if key != "created_at"
+            }
+            if existing_comparable != comparable:
+                update_smoke_state(
+                    root,
+                    entrant_id,
+                    status="FAILED",
+                    failure="existing smoke proof differs from reconstructed evidence",
+                    **common,
+                )
+                return False
+        else:
+            atomic_json(proof_path, proof)
+        try:
+            secret_values = parse_secret_file(
+                Path(str(load_json(campaign_file(root))["secret_file"]))
+            )
+            sealed_secret_hits = secret_occurrences(
+                [root / "smoke" / entrant_id], secret_values.values()
+            )
+        except (OSError, KeyError, SystemExit) as error:
+            sealed_secret_hits = [f"scan-error:{error}"]
+        if sealed_secret_hits:
+            update_smoke_state(
+                root,
+                entrant_id,
+                status="FAILED",
+                failure="provider credential appeared in sealed smoke artifacts",
+                sealed_secret_scan_hits=sealed_secret_hits,
+                **common,
+            )
+            return False
+        update_smoke_state(
+            root,
+            entrant_id,
+            status="PASS",
+            proof=str(proof_path),
+            proof_sha256=sha256_file(proof_path),
+            failure=None,
+            **common,
+        )
+        return True
+
+    unambiguous_pre_admission = (
+        not admitted_episode
+        and not lifecycle_failure(lifecycle)
+        and not evidence.get("outstanding_request_ids")
+        and descendants_clean
+    )
+    status = "PRE_ADMISSION_FAILURE" if unambiguous_pre_admission else "FAILED"
+    update_smoke_state(
+        root,
+        entrant_id,
+        status=status,
+        failure="; ".join(evidence["reasons"])[:4000],
+        **common,
+    )
+    return False
+
+
+def smoke_proof_mismatch(
+    root: Path, entrant_id: str, row: Mapping[str, Any]
+) -> str | None:
+    campaign = load_json(campaign_file(root))
+    try:
+        state = read_smoke_state(root, entrant_id)
+    except (OSError, json.JSONDecodeError, SystemExit) as error:
+        return f"smoke state cannot be read: {error}"
+    try:
+        contract = smoke_contract_identity(campaign)
+    except SystemExit as error:
+        return str(error)
+    if campaign.get("smoke_contract_sha256") != contract:
+        return "campaign smoke contract hash is stale"
+    if state.get("smoke_contract_sha256") != contract:
+        return "smoke state belongs to a different campaign contract"
+    if state.get("status") != "PASS":
+        return f"smoke status is {state.get('status')}, not PASS"
+    proof_path = Path(str(state.get("proof", "")))
+    expected_proof = (
+        root
+        / "smoke"
+        / entrant_id
+        / "attempts"
+        / f"attempt-{int(state.get('attempt', 0))}"
+        / "proof.json"
+    )
+    if (
+        proof_path != expected_proof
+        or proof_path.is_symlink()
+        or not proof_path.is_file()
+    ):
+        return "smoke proof is missing, linked, or outside its immutable attempt"
+    try:
+        proof_sha = sha256_file(proof_path)
+        proof = load_json(proof_path)
+    except (OSError, json.JSONDecodeError, SystemExit) as error:
+        return f"smoke proof cannot be read: {error}"
+    if proof_sha != state.get("proof_sha256"):
+        return "smoke proof hash differs from the sealed state"
+    expected_fields = {
+        "schema_version": SMOKE_PROOF_SCHEMA,
+        "entrant": entrant_id,
+        "provider": row.get("provider"),
+        "model": row.get("model"),
+        "attempt": state.get("attempt"),
+        "passed": True,
+        "smoke_contract_sha256": contract,
+        "smoke_max_turns": campaign.get("smoke_max_turns"),
+        "expected_command_sha256": state.get("expected_command_sha256"),
+        "prompt_sha256": state.get("prompt_sha256"),
+    }
+    changed = [key for key, value in expected_fields.items() if proof.get(key) != value]
+    if changed:
+        return f"smoke proof identity differs: {', '.join(changed)}"
+    if campaign.get("smoke_max_turns") != SMOKE_MAX_TURNS:
+        return "campaign smoke max-turns contract changed"
+    if sha256_bytes(str(state.get("expected_command", "")).encode()) != state.get(
+        "expected_command_sha256"
+    ):
+        return "persisted smoke command differs from its hash"
+
+    evidence = proof.get("evidence")
+    if not isinstance(evidence, dict) or evidence.get("passed") is not True:
+        return "smoke proof has no passing evidence"
+    if (
+        evidence.get("entrant") != entrant_id
+        or evidence.get("attempt") != state.get("attempt")
+        or evidence.get("smoke_contract_sha256") != contract
+    ):
+        return "smoke attempt evidence belongs to a different contract"
+    attempt_evidence = Path(str(state.get("attempt_evidence", "")))
+    expected_attempt_evidence = proof_path.parent / "attempt-evidence.json"
+    indexes = state.get("attempt_evidence_sha256")
+    attempt_name = f"attempt-{int(state.get('attempt', 0))}"
+    try:
+        sealed_attempt_evidence = (
+            load_json(attempt_evidence)
+            if attempt_evidence.is_file() and not attempt_evidence.is_symlink()
+            else None
+        )
+    except (OSError, json.JSONDecodeError, SystemExit):
+        sealed_attempt_evidence = None
+    if (
+        attempt_evidence != expected_attempt_evidence
+        or attempt_evidence.is_symlink()
+        or not attempt_evidence.is_file()
+        or not isinstance(indexes, dict)
+        or sha256_file(attempt_evidence) != indexes.get(attempt_name)
+        or sealed_attempt_evidence != evidence
+    ):
+        return "sealed smoke attempt evidence is missing or changed"
+    paths = {
+        "log": Path(str(state.get("log", ""))),
+        "lifecycle": Path(str(state.get("provider_lifecycle", ""))),
+        "prompt": Path(str(state.get("prompt", ""))),
+        "nonce": Path(str(state.get("nonce_file", ""))),
+    }
+    hashes = evidence.get("hashes")
+    if not isinstance(hashes, dict):
+        return "smoke proof artifact hashes are malformed"
+    for name, path in paths.items():
+        if path.is_symlink() or not path.is_file():
+            return f"smoke {name} evidence is missing or symbolic"
+        if sha256_file(path) != hashes.get(name):
+            return f"smoke {name} evidence changed after PASS"
+
+    stream = parse_smoke_stream(
+        paths["log"],
+        expected_command=str(state.get("expected_command", "")),
+        expected_marker=str(state.get("final_marker", "")),
+        expected_tool_output=str(state.get("expected_tool_output", "")),
+    )
+    if not stream["valid"]:
+        return f"smoke stream no longer validates: {'; '.join(stream['errors'])}"
+    lifecycle = lifecycle_summary(
+        paths["lifecycle"],
+        expected_provider=str(row["provider"]),
+        expected_model=str(row["model"]),
+    )
+    if (
+        lifecycle_failure(lifecycle)
+        or not lifecycle["admitted"]
+        or lifecycle["admitted"] != lifecycle["terminal"]
+    ):
+        return "smoke lifecycle no longer proves admitted terminal requests"
+    if lifecycle != evidence.get("lifecycle"):
+        return "smoke lifecycle evidence differs from the sealed proof"
+
+    nonce = _regular_file_bytes(paths["nonce"])
+    try:
+        expected_nonce = bytes.fromhex(str(state.get("nonce_hex", "")))
+    except ValueError:
+        return "persisted smoke nonce is malformed"
+    if nonce != expected_nonce or sha256_bytes(expected_nonce) != evidence.get(
+        "nonce_sha256"
+    ):
+        return "smoke nonce bytes differ from the sealed proof"
+    expected_prompt = smoke_prompt(
+        str(state.get("expected_command", "")), str(state.get("final_marker", ""))
+    ).encode()
+    if _regular_file_bytes(paths["prompt"]) != expected_prompt:
+        return "smoke prompt differs from the sealed contract"
+
+    binary = Path(str(campaign.get("binary", "")))
+    if (
+        binary.is_symlink()
+        or not binary.is_file()
+        or sha256_file(binary) != campaign.get("binary_sha256")
+        or campaign.get("binary_sha256") != evidence.get("binary_sha256")
+    ):
+        return "frozen binary differs from the smoke proof"
+    mismatch = instrument_mismatch(campaign)
+    if mismatch:
+        return mismatch
+    if campaign.get("instrument_set_sha256") != evidence.get("instrument_set_sha256"):
+        return "frozen instrument identity differs from the smoke proof"
+    budget_config = Path(str(campaign.get("budget_config", "")))
+    if (
+        budget_config.is_symlink()
+        or not budget_config.is_file()
+        or sha256_file(budget_config) != campaign.get("budget_config_sha256")
+        or campaign.get("budget_config_sha256") != evidence.get("budget_config_sha256")
+    ):
+        return "frozen budget config differs from the smoke proof"
+
+    _, settled, budget_error = current_smoke_budget_requests(campaign, row)
+    if budget_error:
+        return budget_error
+    terminal_ids = evidence.get("terminal_request_ids")
+    if not isinstance(terminal_ids, list) or not set(terminal_ids).issubset(
+        set(settled)
+    ):
+        return "shared budget ledger lost the smoke request settlements"
+    history = smoke_admission_history(root, entrant_id, row)
+    if not history["valid"]:
+        return "cumulative smoke admission evidence is invalid: " + "; ".join(
+            history["errors"]
+        )
+    if sealed_smoke_admission_history(history) != proof.get("admission_history"):
+        return "cumulative smoke admission evidence differs from the sealed proof"
+    try:
+        secrets_map = parse_secret_file(Path(str(campaign["secret_file"])))
+    except (OSError, KeyError, SystemExit) as error:
+        return f"smoke proof secret scan cannot be repeated: {error}"
+    secret_hits = secret_occurrences(
+        [root / "smoke" / entrant_id],
+        secrets_map.values(),
+    )
+    if secret_hits:
+        return "provider credential appeared in sealed smoke artifacts"
+    return None
+
+
+def require_smoke_proofs(root: Path, pristine_entrant: str | None = None) -> None:
+    campaign = load_json(campaign_file(root))
+    manifest_path = Path(str(campaign.get("entrant_manifest", "")))
+    if (
+        manifest_path.is_symlink()
+        or not manifest_path.is_file()
+        or sha256_file(manifest_path) != campaign.get("entrant_manifest_sha256")
+    ):
+        raise SystemExit("frozen entrant manifest changed before smoke gate")
+    manifest = load_json(manifest_path)
+    rows = entrants(manifest)
+    if len(rows) != 5:
+        raise SystemExit("cloud builds require exactly five smoke contracts")
+    if smoke_max_turns(manifest) != campaign.get("smoke_max_turns"):
+        raise SystemExit("campaign smoke max-turns differs from the frozen manifest")
+    try:
+        contract = smoke_contract_identity(campaign)
+    except SystemExit as error:
+        raise SystemExit(f"cloud smoke contract is invalid: {error}") from None
+    if campaign.get("smoke_contract_sha256") != contract:
+        raise SystemExit("campaign smoke contract identity is stale")
+    if campaign.get("smoke_status") != "PASS":
+        raise SystemExit(
+            f"campaign smoke status is {campaign.get('smoke_status')}, not PASS"
+        )
+    raw_before = campaign.get("smoke_raw_tree_sha256_before")
+    raw_after = campaign.get("smoke_raw_tree_sha256_after")
+    if not isinstance(raw_before, dict) or raw_before != raw_after:
+        raise SystemExit("smoke did not preserve all five raw benchmark trees")
+    for entrant_id in [pristine_entrant] if pristine_entrant is not None else []:
+        if entrant_id not in raw_before:
+            raise SystemExit(f"smoke raw-tree evidence has no entrant: {entrant_id}")
+        current_hash = sha256_tree_exact(root / "entrants" / entrant_id / "tree")
+        if current_hash != raw_before[entrant_id]:
+            raise SystemExit(f"raw benchmark tree changed before build: {entrant_id}")
+    proof_hashes = campaign.get("smoke_proof_sha256")
+    if not isinstance(proof_hashes, dict):
+        raise SystemExit("campaign has no sealed smoke proof index")
+    failures = []
+    for row in rows:
+        entrant_id = str(row["id"])
+        mismatch = smoke_proof_mismatch(root, entrant_id, row)
+        state = read_smoke_state(root, entrant_id)
+        if proof_hashes.get(entrant_id) != state.get("proof_sha256"):
+            mismatch = (
+                mismatch or "campaign smoke proof index differs from entrant state"
+            )
+        if mismatch:
+            failures.append(f"{entrant_id}: {mismatch}")
+    if failures:
+        raise SystemExit(
+            "cloud builds require five untampered smoke PASS proofs: "
+            + "; ".join(failures)
+        )
+
+
+def recover_smoke_entrant(root: Path, entrant_id: str) -> bool:
+    state = read_smoke_state(root, entrant_id)
+    if state.get("status") in SMOKE_TERMINAL_STATES:
+        return state.get("status") == "PASS"
+    if state.get("status") == "PLANNED":
+        return False
+    if process_alive(state.get("supervisor_pid"), state.get("supervisor_identity")):
+        return False
+    clean = stop_recorded_group(
+        state.get("supervisor_pid"),
+        state.get("supervisor_pgid"),
+        state.get("supervisor_identity"),
+    )
+    if state.get("active_attempt"):
+        return finalize_smoke_attempt(
+            root,
+            entrant_id,
+            exit_code=state.get("exit_code"),
+            descendants_clean=clean,
+        )
+    row = manifest_row(root, entrant_id)
+    ambiguity = smoke_attempt_history_failure(root, entrant_id, row)
+    update_smoke_state(
+        root,
+        entrant_id,
+        status="FAILED" if ambiguity or not clean else "PRE_ADMISSION_FAILURE",
+        failure=ambiguity or "smoke supervisor disappeared before provider admission",
+        supervisor_pid=None,
+        supervisor_pgid=None,
+        supervisor_identity=None,
+    )
+    return False
 
 
 @contextlib.contextmanager
@@ -1652,6 +3266,171 @@ def exclusive_claim(path: Path, blocking: bool = False) -> Iterator[bool]:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
+def smoke_supervise(root: Path, entrant_id: str) -> int:
+    with exclusive_claim(root / "locks" / f"smoke-{entrant_id}.claim") as claimed:
+        if not claimed:
+            return 0
+        return smoke_supervise_claimed(root, entrant_id)
+
+
+def smoke_supervise_claimed(root: Path, entrant_id: str) -> int:
+    campaign = load_json(campaign_file(root))
+    row = manifest_row(root, entrant_id)
+    state = read_smoke_state(root, entrant_id)
+    if state.get("status") not in SMOKE_RETRYABLE_STATES:
+        return 0 if state.get("status") == "PASS" else 1
+    mismatch = instrument_mismatch(campaign)
+    if mismatch:
+        update_smoke_state(
+            root, entrant_id, status="PRE_ADMISSION_FAILURE", failure=mismatch
+        )
+        return 2
+    try:
+        contract = smoke_contract_identity(campaign)
+    except SystemExit as error:
+        update_smoke_state(
+            root, entrant_id, status="PRE_ADMISSION_FAILURE", failure=str(error)
+        )
+        return 2
+    if campaign.get("smoke_contract_sha256") != contract:
+        update_smoke_state(
+            root,
+            entrant_id,
+            status="PRE_ADMISSION_FAILURE",
+            failure="campaign smoke contract hash is stale",
+        )
+        return 2
+    ambiguity = smoke_attempt_history_failure(root, entrant_id, row)
+    if ambiguity:
+        update_smoke_state(root, entrant_id, status="FAILED", failure=ambiguity)
+        return 2
+    try:
+        secret_values = parse_secret_file(Path(str(campaign["secret_file"])))
+    except (OSError, KeyError, SystemExit) as error:
+        update_smoke_state(
+            root,
+            entrant_id,
+            status="PRE_ADMISSION_FAILURE",
+            failure=f"smoke credential preflight failed: {error}",
+        )
+        return 2
+    secret_value = secret_values.get(str(row["secret_env"]), "")
+    if not secret_value:
+        update_smoke_state(
+            root,
+            entrant_id,
+            status="PRE_ADMISSION_FAILURE",
+            failure="missing smoke provider credential",
+        )
+        return 2
+
+    update_smoke_state(
+        root,
+        entrant_id,
+        status="WAITING_PROVIDER_LANE",
+        active_attempt=False,
+        supervisor_pid=os.getpid(),
+        supervisor_pgid=os.getpgrp(),
+        supervisor_identity=process_identity(os.getpid()),
+        queued_at=utc_now(),
+        failure=None,
+    )
+    with provider_lane(root, str(row["provider_lane"])):
+        state = read_smoke_state(root, entrant_id)
+        if (
+            state.get("status") != "WAITING_PROVIDER_LANE"
+            or int(state.get("supervisor_pid", -1)) != os.getpid()
+        ):
+            return 0
+        try:
+            state = prepare_smoke_attempt(root, entrant_id, row)
+        except SystemExit as error:
+            update_smoke_state(root, entrant_id, status="FAILED", failure=str(error))
+            return 2
+        binary = Path(str(campaign["binary"]))
+        if (
+            binary.is_symlink()
+            or not binary.is_file()
+            or not os.access(binary, os.X_OK)
+            or sha256_file(binary) != campaign.get("binary_sha256")
+        ):
+            return (
+                2
+                if not finalize_smoke_attempt(
+                    root, entrant_id, exit_code=None, descendants_clean=True
+                )
+                else 0
+            )
+        mismatch = instrument_mismatch(campaign)
+        if mismatch:
+            update_smoke_state(root, entrant_id, launch_failure=mismatch)
+            finalize_smoke_attempt(
+                root, entrant_id, exit_code=None, descendants_clean=True
+            )
+            return 2
+        env = child_env(row, state, secret_value)
+        command = smoke_goose_command(
+            binary,
+            row,
+            Path(str(state["prompt"])).read_text(),
+            int(state["smoke_max_turns"]),
+        )
+        sanitized_command = [
+            "[PROMPT]" if value == Path(str(state["prompt"])).read_text() else value
+            for value in command
+        ]
+        log_path = Path(str(state["log"]))
+        lifecycle_path = Path(str(state["provider_lifecycle"]))
+        lifecycle_path.unlink(missing_ok=True)
+        _, observe = smoke_state_observer(root, entrant_id)
+        update_smoke_state(
+            root,
+            entrant_id,
+            status="RUNNING",
+            started_at=utc_now(),
+            command=sanitized_command,
+            binary_sha256=campaign["binary_sha256"],
+            instrument_set_sha256=campaign["instrument_set_sha256"],
+            failure=None,
+        )
+        exit_code: int | None = None
+        try:
+            with log_path.open("x", buffering=1) as log:
+                proc = subprocess.Popen(
+                    command,
+                    cwd=Path(str(state["tree"])),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+                update_smoke_state(
+                    root,
+                    entrant_id,
+                    goose_pid=proc.pid,
+                    goose_identity=process_identity(proc.pid),
+                    process_group=os.getpgrp(),
+                )
+                assert proc.stdout is not None
+                redacted_copy(proc.stdout, log, secret_values.values(), observe)
+                exit_code = proc.wait()
+        except OSError as error:
+            update_smoke_state(
+                root,
+                entrant_id,
+                launch_failure=f"{type(error).__name__}: {error}",
+            )
+        descendants_clean = stop_group_members(os.getpgrp(), {os.getpid()})
+        passed = finalize_smoke_attempt(
+            root,
+            entrant_id,
+            exit_code=exit_code,
+            descendants_clean=descendants_clean,
+        )
+        return 0 if passed else 1
+
+
 def supervise(root: Path, entrant_id: str) -> int:
     with exclusive_claim(root / "locks" / f"entrant-{entrant_id}.claim") as claimed:
         if not claimed:
@@ -1660,6 +3439,7 @@ def supervise(root: Path, entrant_id: str) -> int:
 
 
 def supervise_claimed(root: Path, entrant_id: str) -> int:
+    require_smoke_proofs(root, pristine_entrant=entrant_id)
     campaign = load_json(campaign_file(root))
     instrument_bench = campaign_instrument_path(
         campaign, "evals/swarm-bench/bench/cloud_sb7.py"
@@ -1681,7 +3461,12 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
     secret_name = str(row["secret_env"])
     secret_value = secret_values.get(secret_name, "")
     if not secret_value:
-        update_state(root, entrant_id, status="PRE_ADMISSION_FAILURE", failure="missing credential")
+        update_state(
+            root,
+            entrant_id,
+            status="PRE_ADMISSION_FAILURE",
+            failure="missing credential",
+        )
         return 2
 
     update_state(
@@ -1733,18 +3518,7 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         lifecycle_path = Path(str(state["provider_lifecycle"]))
         lifecycle_path.unlink(missing_ok=True)
         env = child_env(row, state, secret_value)
-        cmd = [
-            str(binary),
-            "run",
-            "--provider",
-            str(row["provider"]),
-            "--model",
-            str(row["model"]),
-            "--output-format",
-            "stream-json",
-            "-t",
-            prompt,
-        ]
+        cmd = build_goose_command(binary, row, prompt)
         log_path = Path(str(state["build_log"]))
         counters, observe = provider_state_observer(root, entrant_id)
         started = time.time()
@@ -1767,7 +3541,18 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
             started_at=utc_now(),
             prompt_sha256=prompt_sha,
             provider_episode_attempts=episode_attempt,
-            command=[str(binary), "run", "--provider", row["provider"], "--model", row["model"], "--output-format", "stream-json", "-t", "[PROMPT]"],
+            command=[
+                str(binary),
+                "run",
+                "--provider",
+                row["provider"],
+                "--model",
+                row["model"],
+                "--output-format",
+                "stream-json",
+                "-t",
+                "[PROMPT]",
+            ],
         )
         try:
             with log_path.open("a", buffering=1) as log:
@@ -1780,7 +3565,9 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
                     text=True,
                     bufsize=1,
                 )
-                update_state(root, entrant_id, goose_pid=proc.pid, process_group=os.getpgrp())
+                update_state(
+                    root, entrant_id, goose_pid=proc.pid, process_group=os.getpgrp()
+                )
                 assert proc.stdout is not None
                 redacted_copy(proc.stdout, log, secret_values.values(), observe)
                 exit_code = proc.wait()
@@ -1926,6 +3713,36 @@ def launch_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
     return proc
 
 
+def launch_smoke_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
+    unit = root / "smoke" / entrant_id
+    campaign = load_json(campaign_file(root))
+    state = read_smoke_state(root, entrant_id)
+    launch = int(state.get("supervisor_launches", 0)) + 1
+    proc = launch_detached(
+        [
+            sys.executable,
+            str(campaign["coordinator"]),
+            "_smoke_supervise",
+            "--root",
+            str(root),
+            "--entrant",
+            entrant_id,
+        ],
+        unit / f"supervisor-{launch}.log",
+    )
+    update_smoke_state(
+        root,
+        entrant_id,
+        supervisor_launches=launch,
+        supervisor_pid=proc.pid,
+        supervisor_pgid=proc.pid,
+        supervisor_identity=process_identity(proc.pid),
+        supervisor_log=str(unit / f"supervisor-{launch}.log"),
+        supervisor_launched_at=utc_now(),
+    )
+    return proc
+
+
 def process_identity(pid: Any) -> str | None:
     try:
         value = int(pid)
@@ -2022,9 +3839,10 @@ def wait_for_builds(
         ):
             return all(state["status"] in BUILD_SUCCESS_STATES for state in states)
         for state in states:
-            if (
-                state["status"] not in TERMINAL_BUILD_STATES | POST_BUILD_STATES
-                and state.get("supervisor_pid")
+            if state[
+                "status"
+            ] not in TERMINAL_BUILD_STATES | POST_BUILD_STATES and state.get(
+                "supervisor_pid"
             ):
                 if not process_alive(
                     state["supervisor_pid"], state.get("supervisor_identity")
@@ -2049,7 +3867,9 @@ def wait_for_builds(
                     )
                     reasons = ["supervisor disappeared; silence is not success"]
                     if lifecycle["admitted"]:
-                        reasons.append(f"{lifecycle['admitted']} request(s) were admitted")
+                        reasons.append(
+                            f"{lifecycle['admitted']} request(s) were admitted"
+                        )
                     if outstanding_ids:
                         reasons.append(
                             f"{len(outstanding_ids)} request(s) retain full budget reserves"
@@ -2076,11 +3896,116 @@ def wait_for_builds(
         time.sleep(10)
 
 
+def wait_for_smokes(
+    root: Path,
+    row_ids: list[str],
+    supervisors: Mapping[str, subprocess.Popen[Any]] | None = None,
+    *,
+    poll_seconds: float = 1.0,
+) -> bool:
+    handles = dict(supervisors or {})
+    while True:
+        for entrant_id, proc in list(handles.items()):
+            if proc.poll() is not None:
+                proc.wait()
+                handles.pop(entrant_id, None)
+        states = [read_smoke_state(root, entrant_id) for entrant_id in row_ids]
+        if all(state.get("status") in SMOKE_TERMINAL_STATES for state in states):
+            return all(state.get("status") == "PASS" for state in states)
+        for state in states:
+            if state.get("status") in SMOKE_TERMINAL_STATES:
+                continue
+            if not process_alive(
+                state.get("supervisor_pid"), state.get("supervisor_identity")
+            ):
+                recover_smoke_entrant(root, str(state["entrant"]))
+        time.sleep(poll_seconds)
+
+
+def smoke(root: Path) -> int:
+    with exclusive_claim(root / "locks/smoke-run.claim", blocking=True) as claimed:
+        if not claimed:
+            raise SystemExit("cannot claim cloud contract smoke run")
+        campaign = load_json(campaign_file(root))
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        rows = entrants(manifest)
+        if len(rows) != 5:
+            raise SystemExit("cloud SB7 smoke requires exactly five frozen entrants")
+        build_states = [read_state(root, str(row["id"])) for row in rows]
+        dirty_builds = [
+            str(state["entrant"])
+            for state in build_states
+            if state.get("status") != "PLANNED"
+            or int(state.get("provider_episode_attempts", 0)) != 0
+            or int(state.get("admitted_requests", 0)) != 0
+        ]
+        if dirty_builds:
+            raise SystemExit(
+                "contract smoke must precede every raw benchmark build: "
+                + ", ".join(dirty_builds)
+            )
+        raw_before = {
+            str(row["id"]): sha256_tree_exact(
+                root / "entrants" / str(row["id"]) / "tree"
+            )
+            for row in rows
+        }
+        update_campaign(
+            root,
+            smoke_status="RUNNING",
+            smoke_started_at=utc_now(),
+            smoke_raw_tree_sha256_before=raw_before,
+            smoke_failure=None,
+        )
+        row_ids = [str(row["id"]) for row in rows]
+        for entrant_id in row_ids:
+            recover_smoke_entrant(root, entrant_id)
+        supervisors: Dict[str, subprocess.Popen[Any]] = {}
+        for entrant_id in row_ids:
+            state = read_smoke_state(root, entrant_id)
+            if state.get("status") in SMOKE_RETRYABLE_STATES:
+                supervisors[entrant_id] = launch_smoke_supervisor(root, entrant_id)
+        passed = wait_for_smokes(root, row_ids, supervisors)
+        raw_after = {
+            entrant_id: sha256_tree_exact(root / "entrants" / entrant_id / "tree")
+            for entrant_id in row_ids
+        }
+        if raw_after != raw_before:
+            passed = False
+            for entrant_id in row_ids:
+                if raw_after[entrant_id] != raw_before[entrant_id]:
+                    state = read_smoke_state(root, entrant_id)
+                    if state.get("status") != "FAILED":
+                        update_smoke_state(
+                            root,
+                            entrant_id,
+                            status="FAILED",
+                            failure="raw benchmark tree changed during isolated smoke",
+                        )
+        proof_hashes = {
+            entrant_id: read_smoke_state(root, entrant_id).get("proof_sha256")
+            for entrant_id in row_ids
+        }
+        update_campaign(
+            root,
+            smoke_status="PASS" if passed else "ATTENTION",
+            smoke_finished_at=utc_now(),
+            smoke_raw_tree_sha256_after=raw_after,
+            smoke_proof_sha256=proof_hashes,
+            smoke_failure=None if passed else "one or more contract smokes failed",
+        )
+        if passed:
+            require_smoke_proofs(root)
+        return 0 if passed else 1
+
+
 def clone_for_score(root: Path, entrant_id: str, attempt: int) -> Path:
     raw = root / "entrants" / entrant_id / "tree"
     dest = root / "scores" / entrant_id / f"attempt-{attempt}" / "tree"
     if dest.exists():
-        raise SystemExit(f"score clone already exists; attempts are never overwritten: {dest}")
+        raise SystemExit(
+            f"score clone already exists; attempts are never overwritten: {dest}"
+        )
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(
         raw,
@@ -2170,6 +4095,7 @@ def recover_dead_manager(root: Path) -> bool:
     ):
         raise SystemExit("dead manager's process group survived recovery")
     recover_interrupted_scoring(root)
+    recover_interrupted_publication(root)
     manager_state(
         root,
         status="RECOVERED",
@@ -2179,6 +4105,60 @@ def recover_dead_manager(root: Path) -> bool:
         identity=None,
     )
     return True
+
+
+def manager_restart_mismatch(root: Path) -> str | None:
+    try:
+        require_smoke_proofs(root)
+    except SystemExit as error:
+        return f"smoke gate refused manager recovery: {error}"
+    campaign = load_json(campaign_file(root))
+    if campaign.get("status") not in RESTARTABLE_CAMPAIGN_STATES - {"ATTENTION"}:
+        return f"campaign is not autonomously restart-safe: {campaign.get('status')}"
+    manager = load_json(root / "manager.json")
+    if process_alive(manager.get("pid"), manager.get("identity")):
+        return "manager is still alive"
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
+    for row in entrants(manifest):
+        entrant_id = str(row["id"])
+        state = read_state(root, entrant_id)
+        status = str(state.get("status"))
+        supervisor_alive = process_alive(
+            state.get("supervisor_pid"), state.get("supervisor_identity")
+        )
+        could_relaunch = status in RETRYABLE_BUILD_STATES
+        abandoned_active = (
+            status not in TERMINAL_BUILD_STATES | POST_BUILD_STATES
+            and not supervisor_alive
+        )
+        if not could_relaunch and not abandoned_active:
+            continue
+        lifecycle = lifecycle_summary(
+            Path(str(state.get("provider_lifecycle", ""))),
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        outstanding, budget_error = entrant_outstanding_reservations(campaign, row)
+        reasons = []
+        if lifecycle.get("admitted"):
+            reasons.append(f"{lifecycle['admitted']} provider request(s) admitted")
+        if lifecycle_failure(lifecycle):
+            reasons.append(f"lifecycle is ambiguous: {lifecycle_failure(lifecycle)}")
+        if outstanding:
+            reasons.append(
+                f"outstanding full-budget reserves: {', '.join(outstanding)}"
+            )
+        if budget_error:
+            reasons.append(budget_error)
+        attempts = int(state.get("provider_episode_attempts", 0))
+        if could_relaunch and attempts >= max_episodes:
+            reasons.append("provider episode allowance is exhausted")
+        if reasons:
+            return f"{entrant_id} is not pre-admission restart-safe: " + "; ".join(
+                reasons
+            )
+    return None
 
 
 def recover_interrupted_publication(root: Path) -> None:
@@ -2228,7 +4208,9 @@ def pinned_publisher_env_values(campaign: Mapping[str, Any]) -> Dict[str, str]:
     try:
         current, values = read_publisher_env(Path(str(publisher["repo"])))
     except (OSError, SystemExit) as error:
-        raise PublicationError(f"pinned publisher environment cannot be read: {error}") from None
+        raise PublicationError(
+            f"pinned publisher environment cannot be read: {error}"
+        ) from None
     for field in (
         "env_file",
         "env_file_mode",
@@ -2263,7 +4245,11 @@ def publisher_environment(
             }
         )
     redactions = sorted(
-        {value for value in values.values() if isinstance(value, str) and len(value) >= 8},
+        {
+            value
+            for value in values.values()
+            if isinstance(value, str) and len(value) >= 8
+        },
         key=len,
         reverse=True,
     )
@@ -2312,7 +4298,11 @@ def run_logged_process(
 
         with log_path.open("w", buffering=1) as log:
             while selector.get_map() or proc.poll() is None:
-                if not timed_out and proc.poll() is None and time.monotonic() >= deadline:
+                if (
+                    not timed_out
+                    and proc.poll() is None
+                    and time.monotonic() >= deadline
+                ):
                     timed_out = True
                     stop_group(proc.pid, grace_seconds=5.0)
                 for key, _ in selector.select(timeout=0.25):
@@ -2490,7 +4480,9 @@ def run_publisher(
     env, redactions = publisher_environment(campaign, include_credentials=live)
     state = read_state(root, entrant_id)
     attempt = int(state["score_attempts"])
-    log_path = root / "publish" / entrant_id / f"attempt-{attempt}" / f"publisher-{phase}.log"
+    log_path = (
+        root / "publish" / entrant_id / f"attempt-{attempt}" / f"publisher-{phase}.log"
+    )
 
     def started(proc: subprocess.Popen[Any]) -> None:
         update_state(
@@ -2607,7 +4599,11 @@ def sanity_document(
     documents = result.get("documents") if isinstance(result, dict) else None
     if not isinstance(documents, list):
         raise PublicationError("Sanity receipt read omitted its documents array")
-    matches = [row for row in documents if isinstance(row, dict) and row.get("_id") == document_id]
+    matches = [
+        row
+        for row in documents
+        if isinstance(row, dict) and row.get("_id") == document_id
+    ]
     if len(matches) > 1:
         raise PublicationError(f"Sanity receipt read duplicated document {document_id}")
     return dict(matches[0]) if matches else None
@@ -2703,7 +4699,9 @@ def remote_publication_receipt(
             }
         )
     actual_checks = document.get("checksSummary")
-    if not isinstance(actual_checks, list) or len(actual_checks) != len(expected_checks):
+    if not isinstance(actual_checks, list) or len(actual_checks) != len(
+        expected_checks
+    ):
         reasons.append("document checksSummary count differs")
     else:
         for index, (actual, expected) in enumerate(zip(actual_checks, expected_checks)):
@@ -2733,16 +4731,25 @@ def remote_publication_receipt(
             if isinstance(row, dict)
         ]
         actual_gates = document.get("gateConditions")
-        if not isinstance(actual_gates, list) or len(actual_gates) != len(expected_gates):
+        if not isinstance(actual_gates, list) or len(actual_gates) != len(
+            expected_gates
+        ):
             reasons.append("document gateConditions count differs")
         else:
-            for index, (actual, expected) in enumerate(zip(actual_gates, expected_gates)):
+            for index, (actual, expected) in enumerate(
+                zip(actual_gates, expected_gates)
+            ):
                 if not isinstance(actual, dict):
                     reasons.append(f"document gate condition {index} is malformed")
                     continue
-                if actual.get("name") != expected["name"] or actual.get("ok") != expected["ok"]:
+                if (
+                    actual.get("name") != expected["name"]
+                    or actual.get("ok") != expected["ok"]
+                ):
                     reasons.append(f"document gate condition {index} differs")
-                if "value" in expected and not same_number(actual.get("value"), expected["value"]):
+                if "value" in expected and not same_number(
+                    actual.get("value"), expected["value"]
+                ):
                     reasons.append(f"document gate condition {index} value differs")
 
     if isinstance(critical, dict):
@@ -2757,10 +4764,14 @@ def remote_publication_receipt(
             if isinstance(row, dict)
         ]
         actual_critical = document.get("criticalRows")
-        if not isinstance(actual_critical, list) or len(actual_critical) != len(expected_critical):
+        if not isinstance(actual_critical, list) or len(actual_critical) != len(
+            expected_critical
+        ):
             reasons.append("document criticalRows count differs")
         else:
-            for index, (actual, expected) in enumerate(zip(actual_critical, expected_critical)):
+            for index, (actual, expected) in enumerate(
+                zip(actual_critical, expected_critical)
+            ):
                 if not isinstance(actual, dict):
                     reasons.append(f"document critical row {index} is malformed")
                     continue
@@ -2846,7 +4857,9 @@ def revalidate_publication(
     expected_paths = {"/agentic-benchmarks", run_path}
     returned = result.get("revalidated") if isinstance(result, dict) else None
     if not isinstance(returned, list) or not expected_paths.issubset(set(returned)):
-        raise PublicationError("benchmark revalidation omitted the board or stable run path")
+        raise PublicationError(
+            "benchmark revalidation omitted the board or stable run path"
+        )
     return {
         "at": utc_now(),
         "status": status,
@@ -2865,9 +4878,7 @@ class RenderedEvidenceParser(html.parser.HTMLParser):
         self._json_ld_depth = 0
         self._json_ld_buffer: list[str] = []
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         lowered = tag.lower()
         if lowered in {"script", "style"}:
             self._ignored_depth += 1
@@ -2920,9 +4931,7 @@ def rendered_publication_matches(
     score_text = f"{score:.4f}"
     scorer = str(verdict["scorer_version"])
     calibration = str(verdict["calibration"])
-    run_url = (
-        f"{website_base_url.rstrip('/')}/agentic-benchmarks/run/{entry['doc_id']}"
-    )
+    run_url = f"{website_base_url.rstrip('/')}/agentic-benchmarks/run/{entry['doc_id']}"
 
     board_parser = RenderedEvidenceParser()
     board_parser.feed(board_html)
@@ -2965,7 +4974,9 @@ def rendered_publication_matches(
     if not board_item:
         reasons.append("board JSON-LD lacks the exact stable run URL, label and score")
     if missing_visible:
-        reasons.append(f"run page lacks exact visible fields: {', '.join(missing_visible)}")
+        reasons.append(
+            f"run page lacks exact visible fields: {', '.join(missing_visible)}"
+        )
     if not dataset:
         reasons.append("run Dataset JSON-LD lacks the exact URL, scorer and score")
     return not reasons, {
@@ -3192,9 +5203,7 @@ def publish_one(root: Path, entrant_id: str) -> bool:
                 status="PUBLISHED_UNVERIFIED",
                 publisher_live_succeeded_at=live_succeeded_at or utc_now(),
                 publisher_remote_receipt=post_write_receipt,
-                publisher_write_adopted=(
-                    live["exit_code"] != 0 or live["timed_out"]
-                ),
+                publisher_write_adopted=(live["exit_code"] != 0 or live["timed_out"]),
             )
 
         stage = "revalidation"
@@ -3248,7 +5257,9 @@ def verdict_failure(
     ):
         return "hermetic rc verdict does not disclose uncalibrated/rc-grade status"
     publisher = campaign.get("publisher")
-    expected_checks = publisher.get("expected_checks") if isinstance(publisher, dict) else None
+    expected_checks = (
+        publisher.get("expected_checks") if isinstance(publisher, dict) else None
+    )
     checks = result.get("checks")
     if not isinstance(checks, list) or len(checks) != expected_checks:
         return (
@@ -3272,7 +5283,12 @@ def score_one(root: Path, entrant_id: str) -> bool:
         return False
     raw = Path(str(state["tree"]))
     if hash_tree(raw) != state.get("raw_tree_sha256"):
-        update_state(root, entrant_id, status="INCOMPLETE", failure="raw tree changed before scoring")
+        update_state(
+            root,
+            entrant_id,
+            status="INCOMPLETE",
+            failure="raw tree changed before scoring",
+        )
         return False
     score_attempt = next_score_attempt(root, entrant_id, state)
     score_tree = clone_for_score(root, entrant_id, score_attempt)
@@ -3432,6 +5448,7 @@ def manage(root: Path) -> int:
 
 
 def manage_claimed(root: Path) -> int:
+    require_smoke_proofs(root)
     recover_interrupted_scoring(root)
     campaign = load_json(campaign_file(root))
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
@@ -3485,6 +5502,7 @@ def start(root: Path) -> int:
         campaign = load_json(campaign_file(root))
         if campaign["status"] not in RESTARTABLE_CAMPAIGN_STATES:
             raise SystemExit(f"campaign cannot start from {campaign['status']}")
+        require_smoke_proofs(root)
         current = load_json(root / "manager.json")
         if current.get("pid") and process_alive(
             current["pid"], current.get("identity")
@@ -3510,6 +5528,331 @@ def start(root: Path) -> int:
             launched_at=utc_now(),
         )
     print(f"started cloud SB7 manager pid={proc.pid} root={root}")
+    return 0
+
+
+def stop_runtime_groups_for_attention(root: Path) -> list[str]:
+    failures: list[str] = []
+    manager = load_json(root / "manager.json")
+    if manager.get("pgid") and not stop_recorded_group(
+        manager.get("pid"), manager.get("pgid"), manager.get("identity")
+    ):
+        failures.append(f"manager-pgid={manager.get('pgid')}")
+    for state in status_rows(root):
+        if state.get("supervisor_pgid") and not stop_recorded_group(
+            state.get("supervisor_pid"),
+            state.get("supervisor_pgid"),
+            state.get("supervisor_identity"),
+        ):
+            failures.append(
+                f"{state.get('entrant')}:supervisor-pgid={state.get('supervisor_pgid')}"
+            )
+        if state.get("publisher_pgid") and not stop_recorded_group(
+            state.get("publisher_pid"),
+            state.get("publisher_pgid"),
+            state.get("publisher_identity"),
+        ):
+            failures.append(
+                f"{state.get('entrant')}:publisher-pgid={state.get('publisher_pgid')}"
+            )
+        if state.get("score_pgid") and not stop_recorded_group(
+            state.get("score_pid"),
+            state.get("score_pgid"),
+            state.get("score_identity"),
+        ):
+            failures.append(
+                f"{state.get('entrant')}:score-pgid={state.get('score_pgid')}"
+            )
+    return failures
+
+
+def published_campaign_mismatch(root: Path) -> str | None:
+    campaign = load_json(campaign_file(root))
+    manager = load_json(root / "manager.json")
+    if campaign.get("status") != "PUBLISHED" or manager.get("status") != "PUBLISHED":
+        return "campaign and manager have not both committed PUBLISHED"
+    try:
+        require_smoke_proofs(root)
+    except SystemExit as error:
+        return f"published campaign smoke proof failed: {error}"
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    rows = entrants(manifest)
+    if len(rows) != 5:
+        return "published campaign does not contain exactly five entrants"
+    for row in rows:
+        entrant_id = str(row["id"])
+        state = read_state(root, entrant_id)
+        if state.get("status") != "PUBLISHED":
+            return f"{entrant_id} is {state.get('status')}, not PUBLISHED"
+        attempt = int(state.get("score_attempts", 0))
+        verdict_path = Path(str(state.get("verdict", "")))
+        expected_verdict = (
+            root / "scores" / entrant_id / f"attempt-{attempt}" / "verdict.json"
+        )
+        if (
+            attempt <= 0
+            or verdict_path != expected_verdict
+            or verdict_path.is_symlink()
+            or not verdict_path.is_file()
+        ):
+            return f"{entrant_id} sealed hermetic verdict is missing"
+        try:
+            verdict = load_json(verdict_path)
+        except (OSError, json.JSONDecodeError, SystemExit) as error:
+            return f"{entrant_id} hermetic verdict cannot be read: {error}"
+        invalid = verdict_failure(verdict, campaign)
+        if invalid:
+            return f"{entrant_id} hermetic verdict is invalid: {invalid}"
+        if not same_number(state.get("score"), verdict.get("score")):
+            return f"{entrant_id} persisted score differs from its hermetic verdict"
+        stage = Path(str(state.get("publish_stage", "")))
+        expected_stage = root / "publish" / entrant_id / f"attempt-{attempt}" / "runs"
+        artifact_path = Path(str(state.get("publish_artifact_manifest", "")))
+        if (
+            stage != expected_stage
+            or stage.is_symlink()
+            or not stage.is_dir()
+            or hash_tree(stage) != state.get("publish_stage_sha256")
+            or artifact_path != expected_stage.parent / "artifact-manifest.json"
+            or artifact_path.is_symlink()
+            or not artifact_path.is_file()
+        ):
+            return f"{entrant_id} sealed publication stage is missing or changed"
+        artifact = load_json(artifact_path)
+        if (
+            artifact.get("entrant") != entrant_id
+            or artifact.get("score_attempt") != attempt
+            or artifact.get("source_verdict_sha256") != sha256_file(verdict_path)
+            or artifact.get("runs_sha256") != state.get("publish_stage_sha256")
+        ):
+            return f"{entrant_id} publication artifact manifest differs"
+        receipt = state.get("publisher_remote_receipt")
+        if not isinstance(receipt, dict) or receipt.get("matched") is not True:
+            return f"{entrant_id} has no matching stable-document receipt"
+        revalidation = state.get("revalidation")
+        entry = publish_entry(campaign, entrant_id)
+        expected_run_path = f"/agentic-benchmarks/run/{entry['doc_id']}"
+        if (
+            not isinstance(revalidation, dict)
+            or revalidation.get("status") != 200
+            or not {"/agentic-benchmarks", expected_run_path}.issubset(
+                set(revalidation.get("paths", []))
+            )
+        ):
+            return f"{entrant_id} has no complete revalidation receipt"
+        rendered = state.get("rendered_verification")
+        expected_rendered = {
+            "doc_id": entry["doc_id"],
+            "label": entry["label"],
+            "model": entry["model"],
+            "score": float(verdict["score"]),
+            "scorer_version": str(verdict["scorer_version"]),
+            "calibration": str(verdict["calibration"]),
+        }
+        if (
+            not isinstance(rendered, dict)
+            or rendered.get("board_status") != 200
+            or rendered.get("run_status") != 200
+            or rendered.get("board_item_exact") is not True
+            or rendered.get("run_visible_exact") is not True
+            or rendered.get("run_dataset_exact") is not True
+            or rendered.get("expected") != expected_rendered
+            or state.get("published_url") != rendered.get("run_url")
+        ):
+            return f"{entrant_id} rendered board/run verification is incomplete"
+    return None
+
+
+def monitor_attention(root: Path, failure: str) -> tuple[bool, int]:
+    cleanup_failures = stop_runtime_groups_for_attention(root)
+    if cleanup_failures:
+        failure = failure + "; owned groups survived: " + ", ".join(cleanup_failures)
+    monitor_state(
+        root,
+        status="ATTENTION",
+        failure=failure[:4000],
+        exit_code=1,
+        finished_at=utc_now(),
+    )
+    manager_state(root, status="ATTENTION", failure=failure[:4000])
+    update_campaign(root, status="ATTENTION", failure=failure[:4000])
+    return True, 1
+
+
+def monitor_tick(root: Path) -> tuple[bool, int]:
+    campaign = load_json(campaign_file(root))
+    manager = load_json(root / "manager.json")
+    if campaign.get("status") == "PUBLISHED" and manager.get("status") == "PUBLISHED":
+        mismatch = published_campaign_mismatch(root)
+        if mismatch:
+            return monitor_attention(root, mismatch)
+        monitor_state(
+            root,
+            status="PUBLISHED",
+            failure=None,
+            exit_code=0,
+            finished_at=utc_now(),
+        )
+        return True, 0
+    if campaign.get("status") == "STOPPED" or manager.get("status") == "STOPPED":
+        monitor_state(
+            root,
+            status="STOPPED",
+            failure=None,
+            exit_code=2,
+            finished_at=utc_now(),
+        )
+        return True, 2
+    if campaign.get("status") == "ATTENTION" or manager.get("status") == "ATTENTION":
+        return monitor_attention(
+            root,
+            str(
+                campaign.get("failure")
+                or manager.get("failure")
+                or "campaign needs attention"
+            ),
+        )
+    try:
+        require_smoke_proofs(root)
+    except SystemExit as error:
+        return monitor_attention(root, f"smoke proof gate failed: {error}")
+    if process_alive(manager.get("pid"), manager.get("identity")):
+        monitor_state(
+            root,
+            status="RUNNING",
+            manager_pid=manager.get("pid"),
+            manager_identity=manager.get("identity"),
+            manager_alive=True,
+            failure=None,
+        )
+        return False, 0
+    mismatch = manager_restart_mismatch(root)
+    if mismatch:
+        return monitor_attention(root, mismatch)
+    try:
+        recover_dead_manager(root)
+        start(root)
+    except SystemExit as error:
+        return monitor_attention(root, f"manager recovery failed: {error}")
+    restarted = load_json(root / "manager.json")
+    current_monitor = read_monitor_state(root)
+    monitor_state(
+        root,
+        status="RUNNING",
+        manager_pid=restarted.get("pid"),
+        manager_identity=restarted.get("identity"),
+        manager_alive=True,
+        restarts=int(current_monitor.get("restarts", 0)) + 1,
+        last_restart_at=utc_now(),
+        failure=None,
+    )
+    return False, 0
+
+
+def wait_for_monitor_detachment(
+    timeout_seconds: float = MONITOR_DETACH_TIMEOUT_SECONDS,
+    poll_seconds: float = 0.05,
+) -> int:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        parent_pid = os.getppid()
+        if parent_pid == 1:
+            return parent_pid
+        if time.monotonic() >= deadline:
+            raise SystemExit(
+                f"detached monitor still has parent pid {parent_pid} after "
+                f"{timeout_seconds:.1f}s"
+            )
+        time.sleep(poll_seconds)
+
+
+def monitor_campaign(root: Path, poll_seconds: float = 10.0) -> int:
+    with exclusive_claim(root / "locks/monitor-run.claim") as claimed:
+        if not claimed:
+            return 0
+        campaign = load_json(campaign_file(root))
+        try:
+            contract = smoke_contract_identity(campaign)
+        except SystemExit as error:
+            monitor_attention(root, f"monitor smoke contract failed: {error}")
+            return 1
+        try:
+            parent_pid = wait_for_monitor_detachment()
+        except SystemExit as error:
+            monitor_attention(root, f"monitor detachment proof failed: {error}")
+            return 1
+        monitor_state(
+            root,
+            status="RUNNING",
+            pid=os.getpid(),
+            pgid=os.getpgrp(),
+            identity=process_identity(os.getpid()),
+            parent_pid=parent_pid,
+            session_id=os.getsid(0),
+            detached_session=os.getsid(0) == os.getpid(),
+            smoke_contract_sha256=contract,
+            started_at=utc_now(),
+            failure=None,
+        )
+        while True:
+            try:
+                terminal, exit_code = monitor_tick(root)
+            except (Exception, SystemExit) as error:
+                monitor_attention(
+                    root, f"monitor crashed while evaluating campaign state: {error}"
+                )
+                return 1
+            if terminal:
+                return exit_code
+            time.sleep(poll_seconds)
+
+
+def monitor_start(root: Path) -> int:
+    with exclusive_claim(root / "locks/monitor-launch.claim", blocking=True) as claimed:
+        if not claimed:
+            raise SystemExit("cannot claim cloud benchmark monitor launch")
+        campaign = load_json(campaign_file(root))
+        if campaign.get("status") in {"PUBLISHED", "STOPPED"}:
+            raise SystemExit(
+                f"campaign monitor cannot start from {campaign.get('status')}"
+            )
+        require_smoke_proofs(root)
+        current = read_monitor_state(root)
+        if process_alive(current.get("pid"), current.get("identity")):
+            raise SystemExit(f"monitor is already running as pid {current.get('pid')}")
+        if current.get("pid") and not stop_recorded_group(
+            current.get("pid"), current.get("pgid"), current.get("identity")
+        ):
+            raise SystemExit("dead monitor's owned process group survived recovery")
+        monitor_state(
+            root,
+            status="RECOVERED" if current.get("pid") else "IDLE",
+            pid=None,
+            pgid=None,
+            identity=None,
+            recovered_at=utc_now() if current.get("pid") else None,
+        )
+        proc = launch_detached(
+            [
+                sys.executable,
+                str(campaign["coordinator"]),
+                "_monitor",
+                "--root",
+                str(root),
+            ],
+            root / "monitor.log",
+        )
+        monitor_state(
+            root,
+            status="STARTING",
+            pid=proc.pid,
+            pgid=proc.pid,
+            identity=process_identity(proc.pid),
+            smoke_contract_sha256=campaign["smoke_contract_sha256"],
+            launched_at=utc_now(),
+            failure=None,
+        )
+    print(f"started cloud SB7 monitor pid={proc.pid} root={root}")
     return 0
 
 
@@ -3541,6 +5884,30 @@ def stop(root: Path) -> int:
     failures = []
     for row in entrants(manifest):
         entrant_id = str(row["id"])
+        smoke_path = smoke_state_file(root, entrant_id)
+        if smoke_path.is_file():
+            smoke_state = read_smoke_state(root, entrant_id)
+            smoke_pgid = smoke_state.get("supervisor_pgid")
+            if (
+                smoke_pgid
+                and (
+                    process_alive(
+                        smoke_state.get("supervisor_pid"),
+                        smoke_state.get("supervisor_identity"),
+                    )
+                    or process_group_members(int(smoke_pgid))
+                )
+                and not stop_recorded_group(
+                    smoke_state.get("supervisor_pid"),
+                    smoke_pgid,
+                    smoke_state.get("supervisor_identity"),
+                )
+            ):
+                failures.append(f"{entrant_id}:smoke-pgid={smoke_pgid}")
+            if smoke_state.get("status") not in SMOKE_TERMINAL_STATES:
+                update_smoke_state(
+                    root, entrant_id, status="STOPPED", stopped_at=utc_now()
+                )
         state = read_state(root, entrant_id)
         publisher_pgid = state.get("publisher_pgid")
         if (
@@ -3573,6 +5940,21 @@ def stop(root: Path) -> int:
     ):
         failures.append(f"manager:pgid={pgid}")
     manager_state(root, status="STOPPED", stop_failures=failures)
+    monitor = read_monitor_state(root)
+    monitor_pgid = monitor.get("pgid")
+    if (
+        monitor.get("status") not in MONITOR_TERMINAL_STATES
+        and monitor_pgid
+        and (
+            process_alive(monitor.get("pid"), monitor.get("identity"))
+            or process_group_members(int(monitor_pgid))
+        )
+        and not stop_recorded_group(
+            monitor.get("pid"), monitor_pgid, monitor.get("identity")
+        )
+    ):
+        failures.append(f"monitor:pgid={monitor_pgid}")
+    monitor_state(root, status="STOPPED", stop_failures=failures)
     if failures:
         raise SystemExit(f"owned process groups survived stop: {', '.join(failures)}")
     busy = []
@@ -3594,9 +5976,12 @@ def status_rows(root: Path) -> list[Dict[str, Any]]:
 def print_status(root: Path) -> None:
     campaign = load_json(campaign_file(root))
     manager = load_json(root / "manager.json")
+    monitor = read_monitor_state(root)
     print(
         f"campaign={campaign.get('status')} manager={manager.get('status')} "
-        f"pid={manager.get('pid')} alive={process_alive(manager.get('pid'))}"
+        f"pid={manager.get('pid')} alive={process_alive(manager.get('pid'))} "
+        f"smoke={campaign.get('smoke_status')} monitor={monitor.get('status')} "
+        f"monitor_alive={process_alive(monitor.get('pid'), monitor.get('identity'))}"
     )
     budget_path = campaign.get("budget_ledger")
     if budget_path and Path(str(budget_path)).is_file():
@@ -3648,6 +6033,9 @@ def results(root: Path) -> Dict[str, Any]:
     return {
         "campaign": campaign["campaign_id"],
         "status": campaign["status"],
+        "smoke_status": campaign.get("smoke_status"),
+        "smoke_contract_sha256": campaign.get("smoke_contract_sha256"),
+        "smoke_proof_sha256": campaign.get("smoke_proof_sha256"),
         "binary_sha256": campaign["binary_sha256"],
         "instrument_set_sha256": campaign["instrument_set_sha256"],
         "budget": budget,
@@ -3692,9 +6080,23 @@ def main() -> int:
         default=DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
     )
 
-    for name in ("start", "status", "watch", "results", "stop", "score", "resume"):
+    for name in (
+        "smoke",
+        "monitor-start",
+        "start",
+        "status",
+        "watch",
+        "results",
+        "stop",
+        "score",
+        "resume",
+    ):
         root_arg(sub.add_parser(name))
 
+    p_smoke_supervise = sub.add_parser("_smoke_supervise")
+    root_arg(p_smoke_supervise)
+    p_smoke_supervise.add_argument("--entrant", required=True)
+    root_arg(sub.add_parser("_monitor"))
     p_supervise = sub.add_parser("_supervise")
     root_arg(p_supervise)
     p_supervise.add_argument("--entrant", required=True)
@@ -3726,6 +6128,14 @@ def main() -> int:
         print(f"initialized {value['campaign_id']} at {args.root.resolve()}")
         return 0
     root = args.root.resolve()
+    if args.command == "smoke":
+        return smoke(root)
+    if args.command == "_smoke_supervise":
+        return smoke_supervise(root, args.entrant)
+    if args.command == "monitor-start":
+        return monitor_start(root)
+    if args.command == "_monitor":
+        return monitor_campaign(root)
     if args.command == "start":
         return start(root)
     if args.command == "_manage":
