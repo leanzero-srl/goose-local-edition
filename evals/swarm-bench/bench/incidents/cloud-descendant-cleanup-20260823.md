@@ -28,5 +28,18 @@ is still ineligible for retry.
 The detached recovery controller treats its explicitly named entrants as the
 minimum incident anchors, then discovers every additional terminal `INCOMPLETE`
 entrant carrying this exact sealed failure before supersession. It waits while the
-campaign or manager is active, carries only `PUBLISHED` siblings, and refuses an
-active or differently failed sibling rather than silently rerunning it.
+campaign or manager is active, carries siblings only when the coordinator can
+prove a completed build outcome, and refuses an active or failed-build sibling
+rather than silently rerunning it. A carried `PUBLISH_FAILED` score is retried
+from its sealed verdict and screenshots; its provider episode is never rerun.
+
+The first terminal campaign also exposed a separate publication-identity defect.
+The frozen campaign manifest records the calibration class as `uncalibrated`,
+while the hermetic scorer verdict records the complete disclosure string. The
+publisher incorrectly required those two strings to be byte-identical after the
+score had already passed every hermetic seal. Publication now requires the two
+values to resolve to the same calibration class and still seals the verdict's
+complete raw string in the publication receipt. An RC scorer paired with a
+`frozen` campaign, or a stable scorer paired with provisional calibration, is
+still refused. The SB7 scorer, verdict, public `sb-7.0` mapping, and existing
+website documents are unchanged.

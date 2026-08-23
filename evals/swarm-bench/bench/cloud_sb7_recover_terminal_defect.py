@@ -66,11 +66,13 @@ def recovery_partition_failure(
     unsuccessful = sorted(
         entrant_id
         for entrant_id, state in states.items()
-        if entrant_id not in affected_entrants and state.get("status") != "PUBLISHED"
+        if entrant_id not in affected_entrants
+        and state.get("status") not in cloud_sb7.BUILD_SUCCESS_STATES
     )
     if unsuccessful:
         return affected_entrants, (
-            "unaffected entrants are not published: " + ", ".join(unsuccessful)
+            "unaffected entrants have no carryable build outcome: "
+            + ", ".join(unsuccessful)
         )
     return affected_entrants, None
 
@@ -283,8 +285,8 @@ def recover(args: argparse.Namespace) -> None:
         for entrant_id, candidate in load_states(target_root).items()
         if entrant_id not in affected_entrants
     }
-    if any(status != "PUBLISHED" for status in carried.values()):
-        raise SystemExit("successor did not preserve all unaffected published entrants")
+    if any(status not in cloud_sb7.BUILD_SUCCESS_STATES for status in carried.values()):
+        raise SystemExit("successor did not preserve all unaffected build outcomes")
     log(
         f"RECOVERY_STARTED target={target_root} "
         f"affected={','.join(sorted(affected_entrants))}"
