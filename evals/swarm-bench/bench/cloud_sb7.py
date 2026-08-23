@@ -4218,6 +4218,8 @@ def validate_stopped_predecessor(
             pgid = int(state.get(pgid_key) or 0)
             if pgid and process_group_members(pgid):
                 raise SystemExit(f"predecessor {entrant_id} still owns process group {pgid}")
+        if scorer_runtime_survivors(state):
+            raise SystemExit(f"predecessor {entrant_id} retains scorer descendants")
         smoke_state = read_smoke_state(root, entrant_id)
         if process_alive(
             smoke_state.get("supervisor_pid"), smoke_state.get("supervisor_identity")
@@ -4870,6 +4872,10 @@ def validate_stopped_qualification_source(
                 raise SystemExit(
                     f"qualification source {entrant_id} still owns process group {pgid}"
                 )
+        if scorer_runtime_survivors(state):
+            raise SystemExit(
+                f"qualification source {entrant_id} retains scorer descendants"
+            )
         lifecycle = lifecycle_summary(
             Path(str(state["provider_lifecycle"])),
             expected_provider=str(row["provider"]),
@@ -6832,6 +6838,10 @@ def stopped_orchestrator_recovery_source(
                 raise SystemExit(
                     f"orchestrator recovery source {entrant_id} still owns group {pgid}"
                 )
+        if scorer_runtime_survivors(state):
+            raise SystemExit(
+                f"orchestrator recovery source {entrant_id} retains scorer descendants"
+            )
         smoke_state = read_smoke_state(root, entrant_id)
         if process_alive(
             smoke_state.get("supervisor_pid"), smoke_state.get("supervisor_identity")
@@ -11276,6 +11286,208 @@ def process_group_members(pgid: int) -> list[tuple[int, str]]:
     return members
 
 
+def process_descendant_records(parent_pid: Any) -> list[Dict[str, Any]]:
+    try:
+        root_pid = int(parent_pid)
+    except (TypeError, ValueError):
+        return []
+    proc = subprocess.run(
+        ["ps", "-axo", "pid=,ppid=,pgid=,stat="],
+        text=True,
+        capture_output=True,
+        check=False,
+        start_new_session=True,
+    )
+    rows: Dict[int, tuple[int, int, str]] = {}
+    for raw in proc.stdout.splitlines():
+        fields = raw.split()
+        if len(fields) < 4:
+            continue
+        try:
+            pid, ppid, pgid = map(int, fields[:3])
+        except ValueError:
+            continue
+        if fields[3].startswith("Z"):
+            continue
+        rows[pid] = (ppid, pgid, fields[3])
+    descendants: set[int] = set()
+    frontier = {root_pid}
+    while frontier:
+        children = {
+            pid
+            for pid, (ppid, _, _) in rows.items()
+            if ppid in frontier and pid not in descendants and pid != root_pid
+        }
+        if not children:
+            break
+        descendants.update(children)
+        frontier = children
+    records: list[Dict[str, Any]] = []
+    for pid in sorted(descendants):
+        ppid, pgid, _ = rows[pid]
+        identity = process_identity(pid)
+        if identity is None:
+            continue
+        try:
+            session_id = os.getsid(pid)
+        except (OSError, ProcessLookupError):
+            continue
+        records.append(
+            {
+                "pid": pid,
+                "ppid": ppid,
+                "pgid": pgid,
+                "session_id": session_id,
+                "identity": identity,
+            }
+        )
+    return records
+
+
+def normalized_process_inventory(value: Any) -> list[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    records: Dict[tuple[int, str], Dict[str, Any]] = {}
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            pid = int(raw.get("pid"))
+            ppid = int(raw.get("ppid"))
+            pgid = int(raw.get("pgid"))
+            session_id = int(raw.get("session_id"))
+        except (TypeError, ValueError):
+            continue
+        identity = raw.get("identity")
+        if (
+            pid <= 1
+            or ppid < 0
+            or pgid <= 1
+            or session_id <= 0
+            or not isinstance(identity, str)
+            or not identity
+        ):
+            continue
+        records[(pid, identity)] = {
+            "pid": pid,
+            "ppid": ppid,
+            "pgid": pgid,
+            "session_id": session_id,
+            "identity": identity,
+        }
+    return [records[key] for key in sorted(records)]
+
+
+def record_scorer_process_inventory(
+    root: Path, entrant_id: str, scorer_pid: Any
+) -> list[Dict[str, Any]]:
+    state = read_state(root, entrant_id)
+    existing = normalized_process_inventory(state.get("score_process_inventory"))
+    combined = normalized_process_inventory(
+        [*existing, *process_descendant_records(scorer_pid)]
+    )
+    if combined != existing:
+        update_state(
+            root,
+            entrant_id,
+            score_process_inventory=combined,
+            score_process_inventory_updated_at=utc_now(),
+        )
+    return combined
+
+
+def scorer_runtime_survivors(
+    state: Mapping[str, Any], *, include_current_descendants: bool = True
+) -> list[Dict[str, Any]]:
+    inventory = normalized_process_inventory(state.get("score_process_inventory"))
+    if include_current_descendants:
+        inventory = normalized_process_inventory(
+            [*inventory, *process_descendant_records(state.get("score_pid"))]
+        )
+    survivors = [
+        record
+        for record in inventory
+        if process_alive(record["pid"], record["identity"])
+    ]
+    score_pid = state.get("score_pid")
+    score_pgid = int(state.get("score_pgid") or 0)
+    if (
+        score_pgid > 1
+        and (
+            process_alive(score_pid, state.get("score_identity"))
+            or process_group_members(score_pgid)
+        )
+    ):
+        identity = state.get("score_identity")
+        survivors.append(
+            {
+                "pid": int(score_pid or score_pgid),
+                "ppid": 0,
+                "pgid": score_pgid,
+                "session_id": score_pgid,
+                "identity": str(identity or "unknown"),
+            }
+        )
+    return normalized_process_inventory(survivors)
+
+
+def stop_scorer_runtime(root: Path, entrant_id: str) -> tuple[bool, bool]:
+    state = read_state(root, entrant_id)
+    inventory = record_scorer_process_inventory(
+        root, entrant_id, state.get("score_pid")
+    )
+    state = read_state(root, entrant_id)
+    survivors_before = scorer_runtime_survivors(state)
+    groups = {
+        int(record["pgid"])
+        for record in survivors_before
+        if int(record["pgid"]) > 1 and int(record["pgid"]) != os.getpgrp()
+    }
+    score_pgid = int(state.get("score_pgid") or 0)
+    if score_pgid > 1 and score_pgid != os.getpgrp():
+        groups.add(score_pgid)
+    for pgid in sorted(groups):
+        stop_group(pgid, grace_seconds=5.0)
+    for record in normalized_process_inventory(
+        [*inventory, *survivors_before]
+    ):
+        if process_alive(record["pid"], record["identity"]):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(record["pid"], signal.SIGKILL)
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if not scorer_runtime_survivors(read_state(root, entrant_id)):
+            return True, bool(survivors_before)
+        time.sleep(0.2)
+    return (
+        not scorer_runtime_survivors(read_state(root, entrant_id)),
+        bool(survivors_before),
+    )
+
+
+def wait_for_scorer(
+    root: Path,
+    entrant_id: str,
+    campaign: Mapping[str, Any],
+    proc: subprocess.Popen[Any],
+    poll_seconds: float = 0.25,
+) -> tuple[int, bool]:
+    while proc.poll() is None:
+        record_scorer_process_inventory(root, entrant_id, proc.pid)
+        lease_problem = active_manager_monitor_lease_failure(root, campaign)
+        if lease_problem:
+            clean, _ = stop_scorer_runtime(root, entrant_id)
+            raise RuntimeError(
+                "monitor lease failed during scorer execution: "
+                f"{lease_problem}; descendants_clean={clean}"
+            )
+        time.sleep(poll_seconds)
+    record_scorer_process_inventory(root, entrant_id, proc.pid)
+    exit_code = proc.wait()
+    clean, had_survivors = stop_scorer_runtime(root, entrant_id)
+    return exit_code, clean and not had_survivors
+
+
 def stop_group_members(
     pgid: int, excluded_pids: set[int] | None = None, grace_seconds: float = 5.0
 ) -> bool:
@@ -11742,26 +11954,25 @@ def recover_interrupted_scoring(root: Path) -> None:
     for state in status_rows(root):
         if state["status"] != "SCORING":
             continue
-        clean = stop_recorded_group(
-            state.get("score_pid"),
-            state.get("score_pgid"),
-            state.get("score_identity"),
-        )
-        update_state(
-            root,
-            str(state["entrant"]),
-            status="SCORE_FAILED" if clean else "INCOMPLETE",
-            failure=(
+        entrant_id = str(state["entrant"])
+        clean, _ = stop_scorer_runtime(root, entrant_id)
+        changes: Dict[str, Any] = {
+            "status": "SCORE_FAILED" if clean else "INCOMPLETE",
+            "failure": (
                 "scorer supervision disappeared; the immutable attempt is retained and "
                 "a fresh attempt is required"
                 if clean
-                else "interrupted scorer process group survived recovery"
+                else "interrupted scorer topology survived recovery"
             ),
-            score_recovered_at=utc_now(),
-            score_pid=None,
-            score_pgid=None,
-            score_identity=None,
-        )
+            "score_recovered_at": utc_now(),
+        }
+        if clean:
+            changes.update(
+                score_pid=None,
+                score_pgid=None,
+                score_identity=None,
+            )
+        update_state(root, entrant_id, **changes)
 
 
 def recover_dead_manager(root: Path) -> bool:
@@ -13387,8 +13598,10 @@ def score_one(root: Path, entrant_id: str) -> bool:
             score_pid=started.pid,
             score_pgid=started.pid,
             score_identity=process_identity(started.pid),
+            score_process_inventory=[],
         )
 
+    descendants_clean = False
     try:
         with log_path.open("w") as log:
             proc = launch_after_receipt(
@@ -13401,20 +13614,41 @@ def score_one(root: Path, entrant_id: str) -> bool:
                 gate_dir=score_dir,
                 on_started=scorer_started,
             )
-            exit_code = proc.wait()
+            exit_code, descendants_clean = wait_for_scorer(
+                root, entrant_id, campaign, proc
+            )
     except BaseException:
+        clean = proc is None
         if proc is not None:
-            stop_recorded_group(proc.pid, proc.pid, process_identity(proc.pid))
+            clean, _ = stop_scorer_runtime(root, entrant_id)
+        changes: Dict[str, Any] = {
+            "status": "SCORE_FAILED" if clean else "INCOMPLETE",
+            "failure": (
+                "hermetic scorer supervision failed; immutable attempt retained"
+                if clean
+                else "hermetic scorer supervision failed and descendants survived"
+            ),
+        }
+        if clean:
+            changes.update(
+                score_pid=None,
+                score_pgid=None,
+                score_identity=None,
+            )
+        update_state(root, entrant_id, **changes)
+        raise
+    if not descendants_clean:
         update_state(
             root,
             entrant_id,
             status="SCORE_FAILED",
-            failure="hermetic scorer supervision failed; immutable attempt retained",
+            score_exit_code=exit_code,
+            failure="hermetic scorer left descendant processes; attempt rejected",
             score_pid=None,
             score_pgid=None,
             score_identity=None,
         )
-        raise
+        return False
     if exit_code != 0 or not verdict.is_file():
         update_state(
             root,
@@ -13736,13 +13970,11 @@ def stop_runtime_groups_for_attention(root: Path) -> list[str]:
             failures.append(
                 f"{state.get('entrant')}:publisher-pgid={state.get('publisher_pgid')}"
             )
-        if state.get("score_pgid") and not stop_recorded_group(
-            state.get("score_pid"),
-            state.get("score_pgid"),
-            state.get("score_identity"),
-        ):
+        if (
+            state.get("score_pgid") or state.get("score_process_inventory")
+        ) and not stop_scorer_runtime(root, str(state.get("entrant")))[0]:
             failures.append(
-                f"{state.get('entrant')}:score-pgid={state.get('score_pgid')}"
+                f"{state.get('entrant')}:scorer-topology"
             )
     return failures
 
@@ -14164,6 +14396,10 @@ def stop_claimed(root: Path) -> int:
             )
         ):
             failures.append(f"{entrant_id}:publisher-pgid={publisher_pgid}")
+        if state.get("score_pgid") or state.get("score_process_inventory"):
+            scorer_clean, _ = stop_scorer_runtime(root, entrant_id)
+            if not scorer_clean:
+                failures.append(f"{entrant_id}:scorer-topology")
         pgid = state.get("supervisor_pgid")
         if (
             state["status"] not in TERMINAL_BUILD_STATES | POST_BUILD_STATES
