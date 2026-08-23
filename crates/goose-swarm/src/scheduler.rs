@@ -523,10 +523,11 @@ pub struct RunReport {
     pub failed: Vec<TaskId>,
     /// Ids of opportunistic/replanner-added (bonus) tasks — their failure must NOT fail the run.
     pub bonus: Vec<TaskId>,
-    /// Owned files of every DONE task in the FINAL dag — including files added by replan/split
-    /// after the caller's pre-run snapshot. Post-run scopes that read only the snapshot were
-    /// structurally blind to replan-added files (every one flagged as an orphan). DONE-only, so a
-    /// failed bonus task's never-written file cannot enter a missing-deliverables gate.
+    /// Owned files of every dependency-releasing task in the FINAL dag — accepted `Done` and explicit
+    /// provisional `Salvaged`, including files added by replan/split after the caller's pre-run snapshot.
+    /// Post-run scopes that read only the snapshot were structurally blind to replan-added files (every
+    /// one flagged as an orphan). Failed-task files remain excluded; salvaged files enter the full ruler
+    /// precisely so provisional dependency release cannot bypass final verification.
     pub planned_files: Vec<String>,
     pub results: HashMap<TaskId, String>,
     pub context_json: serde_json::Value,

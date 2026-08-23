@@ -6158,6 +6158,34 @@ mod tests {
         assert!(new_demote_survivors(&never_ran, &before).is_empty());
     }
 
+    #[test]
+    fn applicable_ruler_leg_must_run_check_something_and_finish_completely() {
+        let complete = DriftResult {
+            ran: true,
+            checked: 3,
+            findings: vec![],
+            partial: false,
+        };
+        assert!(drift_gate_established(true, &complete));
+        assert!(drift_gate_established(false, &DriftResult::default()));
+        assert!(!drift_gate_established(true, &DriftResult::default()));
+        assert!(!drift_gate_established(
+            true,
+            &DriftResult {
+                ran: true,
+                checked: 0,
+                ..complete.clone()
+            }
+        ));
+        assert!(!drift_gate_established(
+            true,
+            &DriftResult {
+                partial: true,
+                ..complete
+            }
+        ));
+    }
+
     // ---- APP ROOT GUARD ---------------------------------------------------------------------
     /// The desktop passes the session working directory, which with no project chosen is $HOME. A run
     /// treats its root as the app: it DELETES source files that appear under it (contracts cleanup),
@@ -27594,6 +27622,10 @@ struct DriftResult {
     partial: bool,
 }
 
+fn drift_gate_established(applicable: bool, result: &DriftResult) -> bool {
+    !applicable || (result.ran && result.checked > 0 && !result.partial)
+}
+
 /// Run the cross-module drift check over THE APP THIS RUN BUILT (see AppScope). Python-only today: the
 /// script is an `ast` pass, and Python is also the one stack with a real smoke oracle, so it is where a
 /// false green is provable.
@@ -28061,27 +28093,40 @@ async fn dom_id_scan(root: &std::path::Path, all_files: &[String]) -> DriftResul
     if !swarm_gate_cfg("GOOSE_SWARM_DOM_ID_SCAN", true) {
         return DriftResult::default();
     }
-    let scope: Vec<String> = all_files
-        .iter()
-        .filter(|f| {
-            f.ends_with(".html") || f.ends_with(".htm") || f.ends_with(".js") || f.ends_with(".mjs")
-        })
-        .filter(|f| root.join(f.as_str()).is_file())
-        .cloned()
-        .collect();
-    let has_html = scope
-        .iter()
-        .any(|f| f.ends_with(".html") || f.ends_with(".htm"));
-    let has_js = scope
-        .iter()
-        .any(|f| f.ends_with(".js") || f.ends_with(".mjs"));
-    if !(has_html && has_js) {
+    let scope = dom_id_scope(root, all_files);
+    if !dom_id_scope_applicable(&scope) {
         return DriftResult::default();
     }
     let Some(out) = run_scoped_py_check(DOM_ID_SCRIPT, root, &scope).await else {
         return DriftResult::default();
     };
     parse_dom_id_scan(&out)
+}
+
+fn dom_id_scope(root: &Path, all_files: &[String]) -> Vec<String> {
+    all_files
+        .iter()
+        .filter(|f| {
+            f.ends_with(".html") || f.ends_with(".htm") || f.ends_with(".js") || f.ends_with(".mjs")
+        })
+        .filter(|f| root.join(f.as_str()).is_file())
+        .cloned()
+        .collect()
+}
+
+fn dom_id_scope_applicable(scope: &[String]) -> bool {
+    let has_html = scope
+        .iter()
+        .any(|f| f.ends_with(".html") || f.ends_with(".htm"));
+    let has_js = scope
+        .iter()
+        .any(|f| f.ends_with(".js") || f.ends_with(".mjs"));
+    has_html && has_js
+}
+
+fn dom_id_gate_applicable(root: &Path, all_files: &[String]) -> bool {
+    swarm_gate_cfg("GOOSE_SWARM_DOM_ID_SCAN", true)
+        && dom_id_scope_applicable(&dom_id_scope(root, all_files))
 }
 
 /// CSS-CLASS COHERENCE SCAN (F871). swarm-3node-r0 shipped a page that rendered as bare
@@ -28288,7 +28333,18 @@ async fn css_coherence_scan(root: &std::path::Path, all_files: &[String]) -> Dri
     // script but filtered out here, so TS/React frontends read as 0-matched and false-fired
     // on two real archived apps). html alone is enough to run: the missing-stylesheet clause
     // must fire even when the css file no longer exists in the tree (the deletion escape).
-    let scope: Vec<String> = all_files
+    let scope = css_coherence_scope(root, all_files);
+    if !css_coherence_scope_applicable(&scope) {
+        return DriftResult::default();
+    }
+    let Some(out) = run_scoped_py_check(CSS_COHERENCE_SCRIPT, root, &scope).await else {
+        return DriftResult::default();
+    };
+    parse_css_coherence(&out)
+}
+
+fn css_coherence_scope(root: &Path, all_files: &[String]) -> Vec<String> {
+    all_files
         .iter()
         .filter(|f| {
             f.ends_with(".css")
@@ -28302,17 +28358,18 @@ async fn css_coherence_scan(root: &std::path::Path, all_files: &[String]) -> Dri
         })
         .filter(|f| root.join(f.as_str()).is_file())
         .cloned()
-        .collect();
-    let has_html = scope
+        .collect()
+}
+
+fn css_coherence_scope_applicable(scope: &[String]) -> bool {
+    scope
         .iter()
-        .any(|f| f.ends_with(".html") || f.ends_with(".htm"));
-    if !has_html {
-        return DriftResult::default();
-    }
-    let Some(out) = run_scoped_py_check(CSS_COHERENCE_SCRIPT, root, &scope).await else {
-        return DriftResult::default();
-    };
-    parse_css_coherence(&out)
+        .any(|f| f.ends_with(".html") || f.ends_with(".htm"))
+}
+
+fn css_coherence_gate_applicable(root: &Path, all_files: &[String]) -> bool {
+    swarm_gate_cfg("GOOSE_SWARM_CSS_COHERENCE", true)
+        && css_coherence_scope_applicable(&css_coherence_scope(root, all_files))
 }
 
 async fn cross_module_drift(
@@ -36015,8 +36072,12 @@ async fn run_complete_ruler(
         "GOOSE_SWARM_CROSS_MODULE_CHECK",
         load_config().cross_module_check,
     );
+    let cross_module_scope = app_scope_py(root, all_files);
+    let cross_module_applicable = cross_module_enabled
+        && matches!(lang, TargetLang::Python)
+        && !cross_module_scope.files.is_empty();
     let drift = if cross_module_enabled {
-        cross_module_drift(root, lang, &app_scope_py(root, all_files)).await
+        cross_module_drift(root, lang, &cross_module_scope).await
     } else {
         DriftResult::default()
     };
@@ -36028,12 +36089,17 @@ async fn run_complete_ruler(
         .cloned()
         .collect();
     let skipped_tests = all_files.len().saturating_sub(app_only.len());
-    let no_timeout = http_timeout_scan(root, lang, &app_scope_py(root, &app_only)).await;
+    let http_timeout_scope = app_scope_py(root, &app_only);
+    let http_timeout_applicable =
+        matches!(lang, TargetLang::Python) && !http_timeout_scope.files.is_empty();
+    let no_timeout = http_timeout_scan(root, lang, &http_timeout_scope).await;
     verdict.findings.extend(no_timeout.findings.iter().cloned());
 
+    let dom_applicable = dom_id_gate_applicable(root, all_files);
     let dom = dom_id_scan(root, all_files).await;
     verdict.findings.extend(dom.findings.iter().cloned());
 
+    let css_applicable = css_coherence_gate_applicable(root, all_files);
     let css = css_coherence_scan(root, all_files).await;
     verdict.findings.extend(css.findings.iter().cloned());
 
@@ -36052,6 +36118,15 @@ async fn run_complete_ruler(
     // complete ruler established every applicable leg and found no other defect on the exact tree.
     // Task completion remains `salvaged` in RunReport forever; this ledger transition is the sole
     // authority that lets its artifacts contribute to a green tree.
+    let cross_module_established = drift_gate_established(cross_module_applicable, &drift);
+    let http_timeout_established = drift_gate_established(http_timeout_applicable, &no_timeout);
+    let dom_established = drift_gate_established(dom_applicable, &dom);
+    let css_established = drift_gate_established(css_applicable, &css);
+    let ruler_legs_established = verdict.established()
+        && cross_module_established
+        && http_timeout_established
+        && dom_established
+        && css_established;
     let provisional_receipts: Vec<(String, bool)> = provisional_tasks
         .iter()
         .map(|receipt| {
@@ -36064,7 +36139,7 @@ async fn run_complete_ruler(
     let provisional_findings: Vec<String> = provisional_receipts
         .iter()
         .filter(|(_, still_exact)| {
-            !*still_exact || !verdict.established() || !verdict.findings.is_empty()
+            !*still_exact || !ruler_legs_established || !verdict.findings.is_empty()
         })
         .map(|(task_id, still_exact)| {
             if *still_exact {
@@ -36087,6 +36162,22 @@ async fn run_complete_ruler(
         .as_ref()
         .map(|snapshot| snapshot.sha256.as_str())
         .unwrap_or("tree-snapshot-unavailable");
+    let cross_module_inconclusive = (!cross_module_established)
+        .then(|| "cross-module gate did not establish a complete verdict".to_string())
+        .into_iter()
+        .collect::<Vec<_>>();
+    let http_timeout_inconclusive = (!http_timeout_established)
+        .then(|| "http-timeout gate did not establish a complete verdict".to_string())
+        .into_iter()
+        .collect::<Vec<_>>();
+    let dom_inconclusive = (!dom_established)
+        .then(|| "DOM-id gate did not establish a complete verdict".to_string())
+        .into_iter()
+        .collect::<Vec<_>>();
+    let css_inconclusive = (!css_established)
+        .then(|| "CSS-coherence gate did not establish a complete verdict".to_string())
+        .into_iter()
+        .collect::<Vec<_>>();
     let mut batches = vec![
         FindingBatch {
             gate: GateId::Smoke,
@@ -36114,39 +36205,59 @@ async fn run_complete_ruler(
             established: true,
         },
     ];
-    if cross_module_enabled && matches!(lang, TargetLang::Python) {
+    if cross_module_applicable || !drift.findings.is_empty() {
         batches.push(FindingBatch {
             gate: GateId::CrossModule,
             findings: &drift.findings,
-            established: drift.ran && !drift.partial,
+            established: true,
+        });
+        batches.push(FindingBatch {
+            gate: GateId::CrossModule,
+            findings: &cross_module_inconclusive,
+            established: cross_module_inconclusive.is_empty(),
         });
     }
-    if matches!(lang, TargetLang::Python) {
+    if http_timeout_applicable || !no_timeout.findings.is_empty() {
         batches.push(FindingBatch {
             gate: GateId::HttpTimeout,
             findings: &no_timeout.findings,
-            established: no_timeout.ran && !no_timeout.partial,
+            established: true,
+        });
+        batches.push(FindingBatch {
+            gate: GateId::HttpTimeout,
+            findings: &http_timeout_inconclusive,
+            established: http_timeout_inconclusive.is_empty(),
         });
     }
-    if dom.ran || !dom.findings.is_empty() {
+    if dom_applicable || !dom.findings.is_empty() {
         batches.push(FindingBatch {
             gate: GateId::DomId,
             findings: &dom.findings,
-            established: dom.ran && !dom.partial,
+            established: true,
+        });
+        batches.push(FindingBatch {
+            gate: GateId::DomId,
+            findings: &dom_inconclusive,
+            established: dom_inconclusive.is_empty(),
         });
     }
-    if css.ran || !css.findings.is_empty() {
+    if css_applicable || !css.findings.is_empty() {
         batches.push(FindingBatch {
             gate: GateId::CssCoherence,
             findings: &css.findings,
-            established: css.ran && !css.partial,
+            established: true,
+        });
+        batches.push(FindingBatch {
+            gate: GateId::CssCoherence,
+            findings: &css_inconclusive,
+            established: css_inconclusive.is_empty(),
         });
     }
     if let Some(contract) = &spec_contract {
         batches.push(FindingBatch {
             gate: GateId::SpecContract,
             findings: &contract.findings,
-            established: contract.inconclusive.is_empty(),
+            established: true,
         });
         batches.push(FindingBatch {
             gate: GateId::SpecContract,
@@ -36159,7 +36270,7 @@ async fn run_complete_ruler(
         tree_hash,
         all_files,
         &batches,
-        tree_snapshot.is_ok() && verdict.established(),
+        tree_snapshot.is_ok() && ruler_legs_established,
     );
 
     CompleteRulerResult {
