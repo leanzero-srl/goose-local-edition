@@ -11,8 +11,8 @@ use goose_swarm::{
     SEMANTIC_OBSERVATION_PROTOCOL, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
 
@@ -27,6 +27,82 @@ impl EventSink for RecordingSink {
             .lock()
             .unwrap()
             .push(serde_json::to_value(event).unwrap());
+    }
+
+    fn write_value(&self, value: serde_json::Value) {
+        self.events.lock().unwrap().push(value);
+    }
+}
+
+#[derive(Default)]
+struct BlockingGate {
+    enabled: AtomicBool,
+    reached: AtomicBool,
+    released: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl BlockingGate {
+    fn arm(&self) {
+        self.enabled.store(true, Ordering::SeqCst);
+    }
+
+    fn block_if_armed(&self) {
+        if !self.enabled.load(Ordering::SeqCst) {
+            return;
+        }
+        self.reached.store(true, Ordering::SeqCst);
+        self.changed.notify_all();
+        let mut released = self.released.lock().unwrap();
+        while !*released {
+            released = self.changed.wait(released).unwrap();
+        }
+    }
+
+    async fn wait_until_reached(&self) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !self.reached.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("blocking event was never reached");
+    }
+
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.changed.notify_all();
+    }
+}
+
+#[derive(Default)]
+struct CleanupRaceSink {
+    events: Mutex<Vec<serde_json::Value>>,
+    provider_starts_closed: BlockingGate,
+    capacity_updated: BlockingGate,
+}
+
+impl CleanupRaceSink {
+    fn event_count(&self, name: &str) -> usize {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event["event"] == name)
+            .count()
+    }
+}
+
+impl EventSink for CleanupRaceSink {
+    fn emit(&self, event: &SwarmEvent) {
+        let value = serde_json::to_value(event).unwrap();
+        let name = value["event"].as_str().unwrap().to_string();
+        self.events.lock().unwrap().push(value);
+        match name.as_str() {
+            "broker_provider_starts_closed" => self.provider_starts_closed.block_if_armed(),
+            "broker_capacity_updated" => self.capacity_updated.block_if_armed(),
+            _ => {}
+        }
     }
 
     fn write_value(&self, value: serde_json::Value) {
@@ -293,6 +369,83 @@ async fn one_trace_revision_calls_the_provider_once_and_rejects_replays_before_t
         })
     ));
     assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_a_pre_call_rejection_cannot_cancel_its_admission_cleanup() {
+    let sink = Arc::new(CleanupRaceSink::default());
+    let event_sink: Arc<dyn EventSink> = sink.clone();
+    let control = control("semantic-rejection-cancel", event_sink.clone());
+    let plane = BrokeredSemanticObservationPlane::new(control.clone(), event_sink).unwrap();
+    let reviewer = Arc::new(ContinueReviewer::default());
+    let sealed = snapshot("detail-rejection-cancel", 8, "deduplicated trace");
+
+    let first = match plane
+        .submit(
+            sealed.clone(),
+            SemanticObservationAdmissionPolicy::default(),
+            reviewer.clone(),
+        )
+        .await
+        .unwrap()
+    {
+        SemanticObservationAdmissionSubmission::Started(handle) => handle,
+        SemanticObservationAdmissionSubmission::Rejected(_) => panic!("first review rejected"),
+    };
+    first.wait().await.unwrap();
+    let expected_snapshot_id = control.snapshot().await.snapshot_id;
+
+    sink.provider_starts_closed.arm();
+    sink.capacity_updated.arm();
+    let replay = tokio::spawn({
+        let plane = plane.clone();
+        let reviewer = reviewer.clone();
+        async move {
+            plane
+                .submit(
+                    sealed,
+                    SemanticObservationAdmissionPolicy::default(),
+                    reviewer,
+                )
+                .await
+        }
+    });
+    sink.provider_starts_closed.wait_until_reached().await;
+
+    let capacity_update_started = Arc::new(Notify::new());
+    let capacity_update = tokio::spawn({
+        let control = control.clone();
+        let started = capacity_update_started.clone();
+        async move {
+            started.notify_one();
+            control
+                .update_host_capacity(
+                    "host-a",
+                    &expected_snapshot_id,
+                    HostCapacityEvidence::MeasuredProfile {
+                        profile_hash: "profile:semantic-rejection-cancel:capacity-two".into(),
+                        profile_key: "test-runtime:model:context:semantic-observation".into(),
+                        max_concurrent: 2,
+                    },
+                )
+                .await
+        }
+    });
+    capacity_update_started.notified().await;
+    tokio::task::yield_now().await;
+    replay.abort();
+    sink.provider_starts_closed.release();
+    sink.capacity_updated.wait_until_reached().await;
+    assert!(matches!(replay.await, Err(error) if error.is_cancelled()));
+    sink.capacity_updated.release();
+    capacity_update.await.unwrap().unwrap();
+
+    tokio::time::timeout(Duration::from_secs(2), control.wait_until_drained())
+        .await
+        .expect("detached rejection cleanup must release its admission");
+    assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sink.event_count("broker_provider_not_started"), 1);
+    assert_eq!(sink.event_count("broker_admission_released"), 2);
 }
 
 #[tokio::test]

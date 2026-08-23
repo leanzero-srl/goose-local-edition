@@ -258,23 +258,17 @@ impl BrokeredSemanticObservationPlane {
         let observation = match self.observations.submit(snapshot, lifecycle_reviewer) {
             SemanticObservationSubmission::Started(handle) => handle,
             SemanticObservationSubmission::Rejected(rejection) => {
-                admitted
-                    .lifecycle()
-                    .provider_not_started(format!(
-                        "semantic observation rejected before provider call: {rejection:?}"
-                    ))
-                    .await
-                    .map_err(|error| SemanticObservationAdmissionError::Broker {
-                        stage: SemanticObservationAdmissionStage::ProviderNotStarted,
-                        error,
-                    })?;
-                admitted
-                    .complete_local(LocalCompletionKind::Error)
-                    .await
-                    .map_err(|error| SemanticObservationAdmissionError::Broker {
-                        stage: SemanticObservationAdmissionStage::LocalCompletion,
-                        error,
-                    })?;
+                let admission_id = admission.admission_id.clone();
+                let cleanup = tokio::spawn(close_rejected_admission(
+                    admitted,
+                    format!("semantic observation rejected before provider call: {rejection:?}"),
+                ));
+                cleanup.await.map_err(|error| {
+                    SemanticObservationAdmissionError::ProviderLifecycleUnresolved {
+                        admission_id,
+                        reason: format!("pre-call rejection cleanup task failed: {error}"),
+                    }
+                })??;
                 return Ok(SemanticObservationAdmissionSubmission::Rejected(
                     RejectedSemanticObservationAdmission {
                         admission: Some(admission),
@@ -312,6 +306,27 @@ impl BrokeredSemanticObservationPlane {
         };
         lane.lock_owned().await
     }
+}
+
+async fn close_rejected_admission(
+    admitted: AdmittedWork,
+    reason: String,
+) -> std::result::Result<(), SemanticObservationAdmissionError> {
+    admitted
+        .lifecycle()
+        .provider_not_started(reason)
+        .await
+        .map_err(|error| SemanticObservationAdmissionError::Broker {
+            stage: SemanticObservationAdmissionStage::ProviderNotStarted,
+            error,
+        })?;
+    admitted
+        .complete_local(LocalCompletionKind::Error)
+        .await
+        .map_err(|error| SemanticObservationAdmissionError::Broker {
+            stage: SemanticObservationAdmissionStage::LocalCompletion,
+            error,
+        })
 }
 
 pub fn semantic_observation_task_version(
