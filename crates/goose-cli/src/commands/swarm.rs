@@ -5,7 +5,7 @@
 //! pool (devices, weights, enable/disable) via an interactive menu, persisted in the Goose config.
 
 use super::swarm_control_registry::{
-    apply_uncapped_effective_values, control_registry_manifest, merge_effective_config_controls,
+    apply_uncapped_effective_values, control_registry_export, merge_effective_config_controls,
     resolve_control_precedence,
 };
 use anyhow::{anyhow, bail, Result};
@@ -1436,6 +1436,12 @@ fn save_config(cfg: &SwarmConfig) -> Result<()> {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum SwarmCommand {
+    /// Export the engine's authoritative control manifest without starting or probing a fleet.
+    Controls {
+        /// Pretty-print the JSON manifest.
+        #[arg(long)]
+        pretty: bool,
+    },
     /// Plan a task and run it across the swarm device pool.
     Run {
         /// The task to plan and run.
@@ -2148,6 +2154,15 @@ async fn handle_cloud(def: &'static CloudDef, cmd: Option<CloudCommand>) -> Resu
 
 pub async fn handle_swarm(cmd: SwarmCommand) -> Result<()> {
     match cmd {
+        SwarmCommand::Controls { pretty } => {
+            let manifest = control_registry_export();
+            if pretty {
+                println!("{}", serde_json::to_string_pretty(&manifest)?);
+            } else {
+                println!("{}", serde_json::to_string(&manifest)?);
+            }
+            Ok(())
+        }
         SwarmCommand::Run {
             prompt,
             output_format,
@@ -37031,6 +37046,10 @@ fn suppress_inherited_hints() {
 }
 
 pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
+    // Capture operator inputs before the run bridges config into environment readers. The campaign seal is
+    // about the process environment at entry; telemetry paths and compatibility bridges are resolved outputs,
+    // and hashing those later would make an unchanged run look like ambient control drift.
+    let control_export = control_registry_export();
     // The goal is the spec the user wrote — not the desktop's per-turn scaffolding in front of it. Strip it
     // ONCE, at the entry, so every downstream consumer (the research question's short_goal, spec_clarity's
     // probe, the architect, the overview excerpt) sees the real thing.
@@ -38151,10 +38170,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // the commit — neither of which the engine can see unless the build tells it. GOOSE_BUILD_VERSION /
         // GOOSE_BUILD_SHA are stamped by `just release-fork`; absent (a plain `cargo build`) they read
         // "dev", which is itself the honest answer.
-        "version": option_env!("GOOSE_BUILD_VERSION").unwrap_or("dev"),
-        "build_sha": option_env!("GOOSE_BUILD_SHA").unwrap_or("dev"),
-        "crate_version": env!("CARGO_PKG_VERSION"),
-        "control_registry": control_registry_manifest(),
+        "version": control_export["engine"]["version"].clone(),
+        "build_sha": control_export["engine"]["build_sha"].clone(),
+        "crate_version": control_export["engine"]["crate_version"].clone(),
+        "control_registry_sha256": control_export["registry_sha256"].clone(),
+        "control_environment_sha256": control_export["control_environment_sha256"].clone(),
+        "control_registry": control_export["control_registry"].clone(),
         "levers": {
             "ask_floor": ask_floor,
             "ask_max_q": ask_max_q,

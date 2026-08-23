@@ -24,7 +24,13 @@ sets rather than preserving the former counts as inert compatibility names.
 - The obsolete comment-only `GOOSE_SWARM_REVIEW_FANOUT` and `GOOSE_SWARM_REVIEW_REPRO` names are absent from
   production source and pinned by a regression test.
 - Ordinary resolution uses one tested precedence primitive: environment, config, runtime profile, default.
-- `levers_resolved.control_registry` exports the machine-readable registry on every run.
+- `goose swarm controls` exports the same machine-readable registry without loading, probing, or calling a
+  model. The export binds the build identity and a canonical SHA-256 digest to registry schema 2, plus a
+  digest of every registered `GOOSE_SWARM_*` input so ambient overrides cannot change between arms unseen.
+- Registry rows now carry `campaign_role` (`behavior`, `runtime_profile`, `removal`, or `telemetry`), source,
+  and the value type accepted by the real `SwarmConfig` deserializer. No second type catalogue exists.
+- `levers_resolved.control_registry` exports the machine-readable registry on every run and includes the same
+  registry digest as the pre-run command.
 - `levers_resolved.levers` starts from all 116 config fields and overlays the expressions execution uses;
   absent optional fields therefore appear as `null` rather than disappearing.
 - CLI- and runtime-shaped values are echoed after resolution: actual worker devices and speed weights,
@@ -44,14 +50,20 @@ sets rather than preserving the former counts as inert compatibility names.
 - `dynamic_replan` is canonical. The former `dynamic_replan_cfg` event spelling remains only as a declared
   compatibility alias.
 
-## Integration boundary
+## Campaign integration boundary
 
-The external campaign script at `~/goose-builds/loop-state/arm_config.py` remains a hand-maintained live
-operator tool and is deliberately not edited from this isolated engine branch. Its stale `APP_FORCED`,
-`ENV_ONLY`, and inert names must not be treated as engine truth. The campaign integration commit must consume
-the emitted `control_registry` manifest (or a checked export derived from it) and refuse a run when its local
-allowlist differs. Until that lands, Rust plus each run's own event is authoritative; the Python catalog is
-not.
+`evals/swarm-bench/bench/campaign_controls.py` is the versioned campaign consumer. It seals the exact binary,
+build identity, registry digest, runtime-baseline bytes, reference profile, candidate profile, and one-control
+delta before an arm may launch. It stages a config instead of touching a live config, and verifies the run's
+own `levers_resolved` event afterwards. Unknown, missing, environment-only, runtime-profile, removal,
+telemetry, alias collision, default-on no-op, implicit ablation, multi-control, ambient-environment drift, and
+stale-binary cases fail closed. Post-run verification compares the complete executed-control projection with
+a verified reference and accepts only the declared single delta (or no delta for a replicate).
+
+The stopped external state at `~/goose-builds/loop-state` was read but deliberately not edited. Its old
+`arm_config.py` remains unsafe as an authority until the isolated integration commit is merged and its
+launcher adopts the staged config plus receipts. The exact migration evidence is in
+`CAMPAIGN-CONTROL-HANDSHAKE-LEDGER.md`.
 
 ## Verification gate
 
@@ -63,6 +75,8 @@ cargo fmt -p goose-cli
 cargo fmt -p goose-swarm
 cargo fmt -p goose
 cargo test -p goose-cli swarm_control_registry
+PYTHONPATH=evals/swarm-bench PYTHONWARNINGS=error \
+  python3 -m unittest -v bench.test_campaign_controls
 cargo test -p goose-cli config_backed_gate_sits_between_env_and_the_assured_default
 cargo test -p goose-swarm tail_review_gate_defaults_on_and_respects_the_env
 cargo test -p goose large_response_handler
