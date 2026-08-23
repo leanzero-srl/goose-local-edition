@@ -1,4 +1,5 @@
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 
 use super::swarm::SwarmConfig;
 
@@ -24,9 +25,39 @@ impl ControlDisposition {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CampaignRole {
+    Behavior,
+    RuntimeProfile,
+    Removal,
+    Telemetry,
+}
+
+impl CampaignRole {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Behavior => "behavior",
+            Self::RuntimeProfile => "runtime_profile",
+            Self::Removal => "removal",
+            Self::Telemetry => "telemetry",
+        }
+    }
+}
+
+const fn campaign_role(disposition: ControlDisposition) -> CampaignRole {
+    match disposition {
+        ControlDisposition::RetainEnabled
+        | ControlDisposition::RetainDisabled
+        | ControlDisposition::Modify => CampaignRole::Behavior,
+        ControlDisposition::RemoveMerge => CampaignRole::Removal,
+        ControlDisposition::RuntimeProfile => CampaignRole::RuntimeProfile,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ConfigControlSpec {
     pub canonical: &'static str,
     pub disposition: ControlDisposition,
+    campaign_role: CampaignRole,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,6 +77,15 @@ const fn config(canonical: &'static str, disposition: ControlDisposition) -> Con
     ConfigControlSpec {
         canonical,
         disposition,
+        campaign_role: campaign_role(disposition),
+    }
+}
+
+const fn telemetry(canonical: &'static str, disposition: ControlDisposition) -> ConfigControlSpec {
+    ConfigControlSpec {
+        canonical,
+        disposition,
+        campaign_role: CampaignRole::Telemetry,
     }
 }
 
@@ -95,7 +135,7 @@ pub(crate) const CONFIG_CONTROLS: &[ConfigControlSpec] = &[
     config("user_notes", ControlDisposition::RetainEnabled),
     config("contract_validate", ControlDisposition::RetainEnabled),
     config("kind_prompt", ControlDisposition::RetainEnabled),
-    config("occupancy", ControlDisposition::RetainEnabled),
+    telemetry("occupancy", ControlDisposition::RetainEnabled),
     config("doc_prefetch", ControlDisposition::RetainEnabled),
     config("dep_signatures", ControlDisposition::RetainEnabled),
     config("act_now_nudge", ControlDisposition::RetainEnabled),
@@ -678,13 +718,53 @@ pub(crate) fn canonical_control_name(environment: &str) -> Option<&'static str> 
         .map(|spec| spec.canonical)
 }
 
+fn value_type(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Null => None,
+        Value::Bool(_) => Some("boolean"),
+        Value::Number(number) if number.is_i64() || number.is_u64() => Some("integer"),
+        Value::Number(_) => Some("number"),
+        Value::String(_) => Some("string"),
+        Value::Array(_) => Some("array"),
+        Value::Object(_) => Some("object"),
+    }
+}
+
+fn config_control_value_type(canonical: &str, defaults: &Map<String, Value>) -> &'static str {
+    if let Some(kind) = defaults.get(canonical).and_then(value_type) {
+        return kind;
+    }
+
+    // Serde is the authority for optional fields whose serialized default is null. Probe the real
+    // `SwarmConfig` decoder instead of maintaining a second hand-written type catalogue beside the field
+    // registry. Fractional numbers precede integers because a float accepts 0 while an integer rejects 0.5.
+    for (kind, candidate) in [
+        ("boolean", Value::Bool(false)),
+        ("number", serde_json::json!(0.5)),
+        ("integer", Value::from(0)),
+        ("string", Value::String(String::new())),
+        ("array", Value::Array(Vec::new())),
+        ("object", Value::Object(Map::new())),
+    ] {
+        let mut object = defaults.clone();
+        object.insert(canonical.to_string(), candidate);
+        if serde_json::from_value::<SwarmConfig>(Value::Object(object)).is_ok() {
+            return kind;
+        }
+    }
+    "unknown"
+}
+
 pub(crate) fn control_registry_manifest() -> Value {
     let defaults = serialized_config_controls(&SwarmConfig::default());
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "config": CONFIG_CONTROLS.iter().map(|spec| serde_json::json!({
             "canonical": spec.canonical,
             "disposition": spec.disposition.as_str(),
+            "campaign_role": spec.campaign_role.as_str(),
+            "source": "config",
+            "value_type": config_control_value_type(spec.canonical, &defaults),
             "default": defaults.get(spec.canonical).cloned().unwrap_or(Value::Null),
             "effective_echo": true,
         })).collect::<Vec<_>>(),
@@ -692,6 +772,8 @@ pub(crate) fn control_registry_manifest() -> Value {
             "canonical": spec.canonical,
             "environment": spec.environment,
             "disposition": spec.disposition.as_str(),
+            "campaign_role": campaign_role(spec.disposition).as_str(),
+            "source": "environment",
             "effective_echo": EFFECTIVE_ENVIRONMENT_ONLY_ECHOES.contains(&spec.canonical),
         })).collect::<Vec<_>>(),
         "aliases": CONTROL_ALIASES.iter().map(|alias| serde_json::json!({
@@ -703,6 +785,64 @@ pub(crate) fn control_registry_manifest() -> Value {
             "canonical": canonical_control_name(environment)
                 .expect("the compile-time registry test requires every reader to resolve"),
         })).collect::<Vec<_>>(),
+    })
+}
+
+fn lowercase_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn canonical_json(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let mut keys = object.keys().collect::<Vec<_>>();
+            keys.sort_unstable();
+            let mut canonical = Map::new();
+            for key in keys {
+                canonical.insert(key.clone(), canonical_json(&object[key]));
+            }
+            Value::Object(canonical)
+        }
+        Value::Array(values) => Value::Array(values.iter().map(canonical_json).collect()),
+        other => other.clone(),
+    }
+}
+
+fn json_sha256(value: &Value) -> String {
+    let encoded = serde_json::to_vec(&canonical_json(value))
+        .expect("the control evidence always serializes as JSON");
+    let digest = Sha256::digest(encoded);
+    lowercase_hex(&digest)
+}
+
+fn control_environment_sha256() -> String {
+    let inputs = SWARM_ENV_READERS
+        .iter()
+        .map(|environment| {
+            (
+                (*environment).to_string(),
+                std::env::var(environment)
+                    .ok()
+                    .map_or(Value::Null, Value::String),
+            )
+        })
+        .collect::<Map<_, _>>();
+    json_sha256(&Value::Object(inputs))
+}
+
+pub(crate) fn control_registry_export() -> Value {
+    let control_registry = control_registry_manifest();
+    let registry_sha256 = json_sha256(&control_registry);
+    serde_json::json!({
+        "schema_version": 1,
+        "engine": {
+            "version": option_env!("GOOSE_BUILD_VERSION").unwrap_or("dev"),
+            "build_sha": option_env!("GOOSE_BUILD_SHA").unwrap_or("dev"),
+            "crate_version": env!("CARGO_PKG_VERSION"),
+        },
+        "registry_sha256": registry_sha256,
+        "control_environment_sha256": control_environment_sha256(),
+        "control_registry": control_registry,
     })
 }
 
@@ -1040,6 +1180,11 @@ mod tests {
     #[test]
     fn aliases_are_unique_and_resolve_to_real_canonical_controls() {
         let mut aliases = BTreeSet::new();
+        let canonical: BTreeSet<_> = CONFIG_CONTROLS
+            .iter()
+            .map(|spec| spec.canonical)
+            .chain(ENVIRONMENT_ONLY_CONTROLS.iter().map(|spec| spec.canonical))
+            .collect();
         for alias in CONTROL_ALIASES {
             assert!(
                 aliases.insert(alias.alias),
@@ -1053,6 +1198,11 @@ mod tests {
                 "alias {} points at missing {}",
                 alias.alias,
                 alias.canonical
+            );
+            assert!(
+                !canonical.contains(alias.alias) || alias.alias == alias.canonical,
+                "alias {} shadows a different canonical control",
+                alias.alias
             );
         }
     }
@@ -1068,16 +1218,17 @@ mod tests {
     #[test]
     fn manifest_is_the_machine_export_of_the_rust_registry() {
         let manifest = control_registry_manifest();
-        assert_eq!(manifest["schema_version"], 1);
+        assert_eq!(manifest["schema_version"], 2);
         assert_eq!(
             manifest["config"].as_array().unwrap().len(),
             CONFIG_CONTROLS.len()
         );
-        assert!(manifest["config"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|row| row.get("default").is_some()));
+        assert!(manifest["config"].as_array().unwrap().iter().all(|row| row
+            .get("default")
+            .is_some()
+            && row["source"] == "config"
+            && row.get("value_type").is_some()
+            && row.get("campaign_role").is_some()));
         assert_eq!(
             manifest["environment_only"].as_array().unwrap().len(),
             ENVIRONMENT_ONLY_CONTROLS.len()
@@ -1090,6 +1241,83 @@ mod tests {
             manifest["environment_readers"].as_array().unwrap().len(),
             SWARM_ENV_READERS.len()
         );
+    }
+
+    #[test]
+    fn campaign_roles_separate_behavior_profile_removal_and_telemetry() {
+        let manifest = control_registry_manifest();
+        for section in ["config", "environment_only"] {
+            assert!(manifest[section].as_array().unwrap().iter().all(|row| {
+                matches!(
+                    row["campaign_role"].as_str(),
+                    Some("behavior" | "runtime_profile" | "removal" | "telemetry")
+                )
+            }));
+        }
+        let occupancy = manifest["config"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["canonical"] == "occupancy")
+            .unwrap();
+        assert_eq!(occupancy["campaign_role"], "telemetry");
+    }
+
+    #[test]
+    fn manifest_types_come_from_the_real_swarm_config_decoder() {
+        let manifest = control_registry_manifest();
+        let rows = manifest["config"].as_array().unwrap();
+        let kind = |canonical: &str| {
+            rows.iter()
+                .find(|row| row["canonical"] == canonical)
+                .unwrap()["value_type"]
+                .as_str()
+                .unwrap()
+        };
+        assert_eq!(kind("split"), "boolean");
+        assert_eq!(kind("ask_max_q"), "integer");
+        assert_eq!(kind("temperature"), "number");
+        assert_eq!(kind("lm_extra_body"), "object");
+        assert_eq!(kind("devices"), "array");
+        assert_eq!(kind("research_planning"), "string");
+        assert!(rows.iter().all(|row| row["value_type"] != "unknown"));
+    }
+
+    #[test]
+    fn export_binds_build_identity_to_the_exact_registry() {
+        let export = control_registry_export();
+        assert_eq!(export["schema_version"], 1);
+        assert!(export["engine"]["version"].is_string());
+        assert!(export["engine"]["build_sha"].is_string());
+        assert!(export["engine"]["crate_version"].is_string());
+        assert_eq!(
+            export["registry_sha256"],
+            json_sha256(&export["control_registry"])
+        );
+        assert_eq!(
+            export["control_environment_sha256"],
+            control_environment_sha256()
+        );
+    }
+
+    #[test]
+    fn run_environment_seal_precedes_internal_environment_bridges() {
+        let run = include_str!("swarm.rs")
+            .split_once("pub async fn run_swarm")
+            .unwrap()
+            .1;
+        let seal = run
+            .find("let control_export = control_registry_export();")
+            .unwrap();
+        for bridge in [
+            "std::env::set_var(\"GOOSE_SWARM_SINK_CAP_SECS\"",
+            "std::env::set_var(\"GOOSE_SWARM_TELEMETRY_FILE\"",
+        ] {
+            assert!(
+                seal < run.find(bridge).unwrap(),
+                "operator-input seal must precede internal bridge {bridge}"
+            );
+        }
     }
 
     #[test]
