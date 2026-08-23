@@ -40,7 +40,7 @@ a compatibility wrapper around the old parser.
 
 ## Implemented protocol and snapshot rules
 
-Commits `e2855e6ef` and `fafe85c66` add:
+Commits `e2855e6ef`, `fafe85c66`, and `94f6ec36f` add:
 
 1. Exact actions `CONTINUE|NUDGE|SPLIT_PROPOSAL|ROUTE_FINDING|ACCEPT_CANDIDATE|REQUEST_EVIDENCE|ABSTAIN|INCOMPLETE`
    in a strict JSON envelope. Unknown actions, unknown fields, prose, Markdown fences, missing fields,
@@ -118,6 +118,27 @@ observer—owns role priority, physical eligibility, request admission, provider
 provider-terminal proof, and local completion. A broker rejection or source supersession must prevent
 the provider call. No caller may invoke this plane from the old inline stream loop or legacy idle-judge
 queue.
+
+The reviewed broker head is `c60b309b1`. The exact mapping is:
+
+- snapshot task/attempt/revision/hash -> `TaskVersion { kind: SourceRevisionKind::Trace {
+  trace_sequence, snapshot_hash } }`;
+- role -> `WorkRole::SemanticJudgeObservation`, with the role-derived
+  `WorkPriority::AuxiliaryEvidence` rather than a caller-authored priority;
+- source publication -> `PhysicalAdmissionControl::set_source_revision` before queue/admission;
+- one admitted physical reviewer -> `AdmittedWork`, passed into the per-submission
+  `SemanticObservationReviewer` adapter;
+- provider start/terminal -> the admitted lifecycle's correlated request methods; and
+- parsed/stale/error receipt -> `AdmittedWork::complete_local` after the observation handle resolves.
+
+The observer accepts its reviewer per submission rather than storing one global reviewer. That is
+load-bearing: it lets the adapter bind one exact broker admission, physical route, and provider lifecycle
+to one snapshot. A global reviewer would make it possible to use the right semantic prompt on the wrong
+physical admission.
+
+`git merge-tree --write-tree c60b309b1 94f6ec36f` produced a conflict-free combined tree
+(`7f6bf15f936403f1ce547783d3e03c0e8d397531`). This is a structural merge check only; it is not a compiled
+integration or permission to launch a provider call.
 
 Until that adapter and its provider lifecycle tests land, the new plane stays unwired. That is a
 correctness boundary, not a feature flag or a request cap.
