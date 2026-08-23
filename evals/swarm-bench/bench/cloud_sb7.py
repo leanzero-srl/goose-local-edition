@@ -89,6 +89,7 @@ REQUIRED_BINARY_MARKERS = (
     "GOOSE_BENCH_SECRET_ENV_NAME",
     "GOOSE_BENCH_TOOL_ALLOWLIST",
     "GOOSE_TOOL_SANDBOX_ROOT",
+    "GOOSE_TOOL_SANDBOX_DENY_LOCAL_PORTS",
 )
 PUBLISHER_SCRIPT = Path("scripts/seed-baseline-sb7.mjs")
 PUBLISHER_MANIFEST = Path("scripts/data/sb7-cloud-entrants.json")
@@ -1955,6 +1956,187 @@ SAFE_ENV_NAMES = {
 }
 
 
+def canonical_listener_ports(values: Iterable[Any]) -> list[int]:
+    ports = list(values)
+    if any(
+        isinstance(port, bool)
+        or not isinstance(port, int)
+        or port <= 0
+        or port > 65535
+        for port in ports
+    ):
+        raise SystemExit("listener snapshot contains an invalid TCP port")
+    if ports != sorted(set(ports)):
+        raise SystemExit("listener snapshot ports are not unique and ascending")
+    return ports
+
+
+def parse_lsof_listener_ports(output: str) -> list[int]:
+    ports: set[int] = set()
+    for line in output.splitlines():
+        if not line.startswith("n"):
+            continue
+        endpoint = line[1:]
+        _, separator, raw_port = endpoint.rpartition(":")
+        if not separator or not raw_port.isascii() or not raw_port.isdigit():
+            raise SystemExit(f"lsof returned an unparseable TCP listener: {endpoint}")
+        port = int(raw_port)
+        if port <= 0 or port > 65535:
+            raise SystemExit(f"lsof returned an invalid TCP listener: {endpoint}")
+        ports.add(port)
+    return sorted(ports)
+
+
+def snapshot_listening_tcp_ports() -> list[int]:
+    try:
+        result = subprocess.run(
+            [
+                "/usr/sbin/lsof",
+                "-nP",
+                "-iTCP",
+                "-sTCP:LISTEN",
+                "-F",
+                "pn",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SystemExit(f"cannot snapshot pre-existing TCP listeners: {error}") from None
+    if result.returncode not in {0, 1} or (result.returncode == 1 and result.stderr):
+        raise SystemExit(
+            f"lsof TCP listener snapshot failed with exit {result.returncode}"
+        )
+    return parse_lsof_listener_ports(result.stdout)
+
+
+def persist_listener_isolation(
+    root: Path,
+    row: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    smoke: bool,
+) -> Dict[str, Any]:
+    entrant_id = str(row.get("id", row.get("entrant", "")))
+    if not entrant_id:
+        raise SystemExit("sandbox listener snapshot has no entrant identity")
+    campaign = load_json(campaign_file(root))
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    manifest_ports = sorted(int(value["vendor_port"]) for value in entrants(manifest))
+    canonical_listener_ports(manifest_ports)
+    preexisting_ports = snapshot_listening_tcp_ports()
+    own_vendor_port = None if smoke else int(row["vendor_port"])
+    denied_ports = sorted(
+        (set(preexisting_ports) | set(manifest_ports))
+        - ({own_vendor_port} if own_vendor_port is not None else set())
+    )
+    canonical_listener_ports(denied_ports)
+    snapshot = {
+        "schema_version": 1,
+        "captured_at": utc_now(),
+        "entrant": entrant_id,
+        "phase": "smoke" if smoke else "full",
+        "entrant_manifest_sha256": campaign["entrant_manifest_sha256"],
+        "preexisting_listener_ports": preexisting_ports,
+        "manifest_vendor_ports": manifest_ports,
+        "own_vendor_port": own_vendor_port,
+        "denied_local_ports": denied_ports,
+    }
+    base = Path(str(state["attempt_root"])) if smoke else Path(str(state["tree"])).parent
+    snapshot_path = base / "sandbox-listeners.json"
+    atomic_json(snapshot_path, snapshot)
+    changes = {
+        "sandbox_listener_snapshot": str(snapshot_path),
+        "sandbox_listener_snapshot_sha256": sha256_file(snapshot_path),
+        "sandbox_preexisting_listener_ports": preexisting_ports,
+        "sandbox_manifest_vendor_ports": manifest_ports,
+        "sandbox_denied_local_ports": denied_ports,
+        "sandbox_denied_local_ports_sha256": sha256_bytes(
+            ",".join(map(str, denied_ports)).encode()
+        ),
+    }
+    if smoke:
+        return update_smoke_state(root, entrant_id, **changes)
+    return update_state(root, entrant_id, **changes)
+
+
+def listener_isolation_failure(
+    campaign: Mapping[str, Any],
+    row: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    smoke: bool,
+) -> str | None:
+    try:
+        entrant_id = str(row.get("id", row.get("entrant", "")))
+        if not entrant_id:
+            return "sandbox listener snapshot has no entrant identity"
+        snapshot_path = Path(str(state["sandbox_listener_snapshot"]))
+        expected_path = (
+            Path(str(state["attempt_root"])) / "sandbox-listeners.json"
+            if smoke
+            else Path(str(state["tree"])).parent / "sandbox-listeners.json"
+        )
+        if (
+            snapshot_path.resolve() != expected_path.resolve()
+            or snapshot_path.is_symlink()
+            or not snapshot_path.is_file()
+        ):
+            return "sandbox listener snapshot is missing, linked, or misplaced"
+        if sha256_file(snapshot_path) != state.get("sandbox_listener_snapshot_sha256"):
+            return "sandbox listener snapshot hash changed"
+        snapshot = load_json(snapshot_path)
+        expected_keys = {
+            "schema_version",
+            "captured_at",
+            "entrant",
+            "phase",
+            "entrant_manifest_sha256",
+            "preexisting_listener_ports",
+            "manifest_vendor_ports",
+            "own_vendor_port",
+            "denied_local_ports",
+        }
+        if set(snapshot) != expected_keys:
+            return "sandbox listener snapshot schema is malformed"
+        preexisting = canonical_listener_ports(snapshot["preexisting_listener_ports"])
+        manifest_ports = canonical_listener_ports(snapshot["manifest_vendor_ports"])
+        denied = canonical_listener_ports(snapshot["denied_local_ports"])
+        current_manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        expected_manifest_ports = sorted(
+            int(value["vendor_port"]) for value in entrants(current_manifest)
+        )
+        own_vendor_port = None if smoke else int(row["vendor_port"])
+        expected_denied = sorted(
+            (set(preexisting) | set(expected_manifest_ports))
+            - ({own_vendor_port} if own_vendor_port is not None else set())
+        )
+        if (
+            snapshot["schema_version"] != 1
+            or not isinstance(snapshot["captured_at"], str)
+            or not snapshot["captured_at"]
+            or snapshot["entrant"] != entrant_id
+            or snapshot["phase"] != ("smoke" if smoke else "full")
+            or snapshot["entrant_manifest_sha256"]
+            != campaign["entrant_manifest_sha256"]
+            or manifest_ports != expected_manifest_ports
+            or snapshot["own_vendor_port"] != own_vendor_port
+            or denied != expected_denied
+            or state.get("sandbox_preexisting_listener_ports") != preexisting
+            or state.get("sandbox_manifest_vendor_ports") != manifest_ports
+            or state.get("sandbox_denied_local_ports") != denied
+            or state.get("sandbox_denied_local_ports_sha256")
+            != sha256_bytes(",".join(map(str, denied)).encode())
+        ):
+            return "sandbox listener isolation differs from its frozen campaign"
+    except (OSError, KeyError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"sandbox listener isolation cannot be verified: {error}"
+    return None
+
+
 def child_env(
     row: Mapping[str, Any], state: Mapping[str, Any], secret_value: str
 ) -> Dict[str, str]:
@@ -1971,6 +2153,9 @@ def child_env(
     budget_ledger = Path(
         str(state.get("budget_ledger", campaign_root / "budget-ledger.json"))
     )
+    if "sandbox_denied_local_ports" not in state:
+        raise SystemExit("sandbox listener isolation is required before agent launch")
+    denied_local_ports = canonical_listener_ports(state["sandbox_denied_local_ports"])
     env.update(
         {
             str(row["secret_env"]): secret_value,
@@ -1996,6 +2181,9 @@ def child_env(
             "GOOSE_TOOL_SANDBOX_ROOT": str(state["tree"]),
             "GOOSE_TOOL_SANDBOX_HOME": str(tool_home),
             "GOOSE_TOOL_SANDBOX_DENY_ROOT": str(Path.home()),
+            "GOOSE_TOOL_SANDBOX_DENY_LOCAL_PORTS": ",".join(
+                map(str, denied_local_ports)
+            ),
             "GOOSE_BENCH_BUDGET_CONFIG": str(budget_config),
             "GOOSE_BENCH_BUDGET_CONFIG_SHA256": str(state["budget_config_sha256"]),
             "GOOSE_BENCH_BUDGET_LEDGER": str(budget_ledger),
@@ -3016,6 +3204,7 @@ def supersession_fault(_stage: str) -> None:
 def predecessor_smoke_terminal_usage(
     root: Path, entrant_id: str, row: Mapping[str, Any]
 ) -> tuple[Dict[str, Dict[str, Any]], bool, str | None]:
+    campaign = load_json(campaign_file(root))
     try:
         state = read_smoke_state(root, entrant_id)
     except (OSError, json.JSONDecodeError, SystemExit) as error:
@@ -3078,6 +3267,18 @@ def predecessor_smoke_terminal_usage(
                 return {}, True, f"{attempt_name} evidence cannot be read: {error}"
             if evidence.get("lifecycle") != lifecycle:
                 return {}, True, f"{attempt_name} lifecycle differs from sealed evidence"
+            isolation = evidence.get("listener_isolation")
+            if not isinstance(isolation, dict):
+                return {}, True, f"{attempt_name} has no listener isolation evidence"
+            isolation_state = {
+                **isolation,
+                "attempt_root": str(attempt_root),
+            }
+            isolation_problem = listener_isolation_failure(
+                campaign, row, isolation_state, smoke=True
+            )
+            if isolation_problem:
+                return {}, True, f"{attempt_name} {isolation_problem}"
         elif not (
             attempt == launch_attempts
             and state.get("status") == "STOPPED"
@@ -3090,6 +3291,12 @@ def predecessor_smoke_terminal_usage(
             and indexed_hash is None
         ):
             return {}, True, f"{attempt_name} has no sealed or stopped crash evidence"
+        else:
+            isolation_problem = listener_isolation_failure(
+                campaign, row, state, smoke=True
+            )
+            if isolation_problem:
+                return {}, True, f"{attempt_name} {isolation_problem}"
 
         attempt_usage = lifecycle.get("terminal_usage")
         if not isinstance(attempt_usage, dict):
@@ -4517,6 +4724,7 @@ def smoke_attempt_evidence(
         "lifecycle": Path(str(state.get("provider_lifecycle", ""))),
         "prompt": Path(str(state.get("prompt", ""))),
         "nonce": Path(str(state.get("nonce_file", ""))),
+        "listeners": Path(str(state.get("sandbox_listener_snapshot", ""))),
     }
     for name, path in paths.items():
         try:
@@ -4530,6 +4738,11 @@ def smoke_attempt_evidence(
         reasons.append("smoke tree/profile paths do not match the isolated attempt")
     if paths["nonce"] != paths["tree"] / SMOKE_NONCE_NAME:
         reasons.append("smoke nonce path is not the frozen relative target")
+    listener_problem = listener_isolation_failure(
+        campaign, row, state, smoke=True
+    )
+    if listener_problem:
+        reasons.append(listener_problem)
 
     expected_command = str(state.get("expected_command", ""))
     expected_marker = str(state.get("final_marker", ""))
@@ -4629,7 +4842,7 @@ def smoke_attempt_evidence(
         reasons.append("background tool descendants survived the smoke process")
 
     static_hashes: Dict[str, str | None] = {}
-    for name in ("log", "lifecycle", "prompt", "nonce"):
+    for name in ("log", "lifecycle", "prompt", "nonce", "listeners"):
         path = paths[name]
         static_hashes[name] = (
             sha256_file(path) if path.is_file() and not path.is_symlink() else None
@@ -4645,6 +4858,17 @@ def smoke_attempt_evidence(
         "outstanding_request_ids": outstanding,
         "settled_request_ids": settled,
         "terminal_request_ids": terminal_ids,
+        "listener_isolation": {
+            key: state.get(key)
+            for key in (
+                "sandbox_listener_snapshot",
+                "sandbox_listener_snapshot_sha256",
+                "sandbox_preexisting_listener_ports",
+                "sandbox_manifest_vendor_ports",
+                "sandbox_denied_local_ports",
+                "sandbox_denied_local_ports_sha256",
+            )
+        },
         "secret_scan_hits": secret_hits,
         "descendants_clean": descendants_clean,
         "exit_code": exit_code,
@@ -4950,6 +5174,7 @@ def smoke_proof_mismatch(
         "lifecycle": Path(str(state.get("provider_lifecycle", ""))),
         "prompt": Path(str(state.get("prompt", ""))),
         "nonce": Path(str(state.get("nonce_file", ""))),
+        "listeners": Path(str(state.get("sandbox_listener_snapshot", ""))),
     }
     hashes = evidence.get("hashes")
     if not isinstance(hashes, dict):
@@ -4959,6 +5184,9 @@ def smoke_proof_mismatch(
             return f"smoke {name} evidence is missing or symbolic"
         if sha256_file(path) != hashes.get(name):
             return f"smoke {name} evidence changed after PASS"
+    listener_problem = listener_isolation_failure(campaign, row, state, smoke=True)
+    if listener_problem:
+        return listener_problem
 
     stream = parse_smoke_stream(
         paths["log"],
@@ -5266,6 +5494,16 @@ def smoke_supervise_claimed(root: Path, entrant_id: str) -> int:
                 root, entrant_id, exit_code=None, descendants_clean=True
             )
             return 2
+        try:
+            state = persist_listener_isolation(
+                root, row, state, smoke=True
+            )
+        except SystemExit as error:
+            update_smoke_state(root, entrant_id, launch_failure=str(error))
+            finalize_smoke_attempt(
+                root, entrant_id, exit_code=None, descendants_clean=True
+            )
+            return 2
         env = child_env(row, state, secret_value)
         command = smoke_goose_command(
             binary,
@@ -5430,6 +5668,20 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
             )
             return 2
 
+        try:
+            state = persist_listener_isolation(
+                root, row, state, smoke=False
+            )
+        except SystemExit as error:
+            server.shutdown()
+            update_state(
+                root,
+                entrant_id,
+                status="PRE_ADMISSION_FAILURE",
+                failure=str(error),
+            )
+            return 2
+
         telemetry = Path(str(state["tree"])) / ".swarm/telemetry.jsonl"
         telemetry.parent.mkdir(parents=True, exist_ok=True)
         telemetry.write_text("")
@@ -5505,6 +5757,9 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         counters["first_output_at"] = lifecycle["first_output_at"]
         completed = exit_code == 0
         status, failure = classify_build_exit(exit_code, counters["admitted"])
+        isolation_problem = listener_isolation_failure(
+            campaign, row, read_state(root, entrant_id), smoke=False
+        )
         outstanding_ids, budget_error = entrant_outstanding_reservations(campaign, row)
         if budget_error:
             status = "INCOMPLETE"
@@ -5520,6 +5775,10 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         elif lifecycle_failure(lifecycle) is not None:
             status = "INCOMPLETE"
             failure = f"provider lifecycle evidence is invalid: {lifecycle_failure(lifecycle)}"
+            completed = False
+        elif isolation_problem:
+            status = "INCOMPLETE"
+            failure = isolation_problem
             completed = False
         elif completed and counters["admitted"] == 0:
             status = "INCOMPLETE"
@@ -7029,6 +7288,14 @@ def publish_one(root: Path, entrant_id: str) -> bool:
     if smoke_problem:
         update_state(root, entrant_id, status="PUBLISH_FAILED", failure=smoke_problem)
         return False
+    isolation_problem = listener_isolation_failure(
+        campaign, state, state, smoke=False
+    )
+    if isolation_problem:
+        update_state(
+            root, entrant_id, status="INCOMPLETE", failure=isolation_problem
+        )
+        return False
     secret_hits = persisted_entrant_secret_hits(root, campaign, entrant_id)
     if secret_hits:
         update_state(
@@ -7237,6 +7504,14 @@ def score_one(root: Path, entrant_id: str) -> bool:
     smoke_problem = supersession_smoke_gate_failure(root)
     if smoke_problem:
         update_state(root, entrant_id, status="SCORE_FAILED", failure=smoke_problem)
+        return False
+    isolation_problem = listener_isolation_failure(
+        campaign, state, state, smoke=False
+    )
+    if isolation_problem:
+        update_state(
+            root, entrant_id, status="INCOMPLETE", failure=isolation_problem
+        )
         return False
     secret_hits = persisted_entrant_secret_hits(root, campaign, entrant_id)
     if secret_hits:
