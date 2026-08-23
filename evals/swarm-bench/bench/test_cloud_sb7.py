@@ -151,13 +151,24 @@ class CloudSb7HarnessTest(unittest.TestCase):
     def make_smoke_campaign(
         self, root: Path, *, entrant_count: int = 5
     ) -> list[dict[str, object]]:
+        root = root.resolve()
         source_manifest = cloud_sb7.load_json(cloud_sb7.DEFAULT_ENTRANTS)
         rows = cloud_sb7.entrants(source_manifest)[:entrant_count]
         (root / "instrument/source/fixture").mkdir(parents=True)
         frozen_file = root / "instrument/source/fixture/instrument.txt"
         frozen_file.write_text("frozen instrument\n")
+        frozen_coordinator = (
+            root
+            / "instrument/source"
+            / cloud_sb7.COORDINATOR_INSTRUMENT_PATH
+        )
+        frozen_coordinator.parent.mkdir(parents=True)
+        shutil.copy2(Path(cloud_sb7.__file__).resolve(), frozen_coordinator)
         instrument_hashes = {
-            "fixture/instrument.txt": cloud_sb7.sha256_file(frozen_file)
+            "fixture/instrument.txt": cloud_sb7.sha256_file(frozen_file),
+            cloud_sb7.COORDINATOR_INSTRUMENT_PATH: cloud_sb7.sha256_file(
+                frozen_coordinator
+            ),
         }
         manifest = root / "instrument/cloud-sb7-entrants.json"
         manifest.write_text(
@@ -220,7 +231,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "instrument_set_sha256": cloud_sb7.sha256_bytes(
                 json.dumps(instrument_hashes, sort_keys=True).encode()
             ),
-            "coordinator": str(root / "instrument/source/cloud_sb7.py"),
+            "coordinator": str(frozen_coordinator),
             "secret_file": str(secret_file),
             "scorer_runtime": scorer_runtime,
             "smoke_max_turns": cloud_sb7.SMOKE_MAX_TURNS,
@@ -1057,6 +1068,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             yield
 
     def make_recovery_campaign(self, root: Path, status: str) -> None:
+        root = root.resolve()
         (root / "entrants/model/tree").mkdir(parents=True)
         (root / "scores/model").mkdir(parents=True)
         (root / "locks").mkdir()
@@ -1088,12 +1100,24 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 }
             )
         )
+        frozen_coordinator = (
+            root
+            / "instrument/source"
+            / cloud_sb7.COORDINATOR_INSTRUMENT_PATH
+        )
+        frozen_coordinator.parent.mkdir(parents=True)
+        shutil.copy2(Path(cloud_sb7.__file__).resolve(), frozen_coordinator)
+        coordinator_sha = cloud_sb7.sha256_file(frozen_coordinator)
         (root / "campaign.json").write_text(
             json.dumps(
                 {
                     "status": status,
                     "entrant_manifest": str(manifest),
-                    "coordinator": str(root / "instrument/cloud_sb7.py"),
+                    "instrument_root": str(root / "instrument/source"),
+                    "instrument_hashes": {
+                        cloud_sb7.COORDINATOR_INSTRUMENT_PATH: coordinator_sha
+                    },
+                    "coordinator": str(frozen_coordinator),
                     "lineage": {
                         "generation": 0,
                         "predecessor_campaign_id": None,
@@ -5992,7 +6016,6 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 smoke_proof_sha256=proof_hashes,
                 smoke_raw_tree_sha256_before=raw_hashes,
                 smoke_raw_tree_sha256_after=raw_hashes,
-                coordinator=str(Path(cloud_sb7.__file__).resolve()),
             )
             cloud_sb7.manager_state(
                 root,
@@ -8713,12 +8736,23 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
     def test_supervisor_launches_the_frozen_coordinator_not_live_source(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
+            root = Path(raw).resolve()
             entrant_id = "fixture-model"
             (root / "entrants" / entrant_id / "logs").mkdir(parents=True)
             frozen = root / "instrument/source/evals/swarm-bench/bench/cloud_sb7.py"
+            frozen.parent.mkdir(parents=True)
+            shutil.copy2(Path(cloud_sb7.__file__).resolve(), frozen)
             cloud_sb7.atomic_json(
-                cloud_sb7.campaign_file(root), {"coordinator": str(frozen)}
+                cloud_sb7.campaign_file(root),
+                {
+                    "coordinator": str(frozen),
+                    "instrument_root": str(root / "instrument/source"),
+                    "instrument_hashes": {
+                        cloud_sb7.COORDINATOR_INSTRUMENT_PATH: (
+                            cloud_sb7.sha256_file(frozen)
+                        )
+                    },
+                },
             )
             cloud_sb7.atomic_json(
                 cloud_sb7.state_file(root, entrant_id),

@@ -4074,6 +4074,29 @@ def dead_pre_admission_reconciliation_plan(
         raise SystemExit(
             f"{entrant_id} pre-admission reconciliation requires a clean runtime topology"
         )
+    probe_lifecycle_path = Path(str(state.get("provider_lifecycle", "")))
+    probe_lifecycle = lifecycle_summary(
+        probe_lifecycle_path,
+        expected_provider=str(row["provider"]),
+        expected_model=str(row["model"]),
+    )
+    probe_request_states = probe_lifecycle.get("request_states")
+    probe_request_digests = probe_lifecycle.get("request_event_sha256")
+    if (
+        probe_lifecycle.get("malformed_lines")
+        or probe_lifecycle.get("transition_errors")
+        or int(probe_lifecycle.get("admitted", 0)) != 0
+        or int(probe_lifecycle.get("terminal", 0)) != 0
+        or not isinstance(probe_request_states, dict)
+        or any(
+            states != ["queued"] for states in probe_request_states.values()
+        )
+        or not isinstance(probe_request_digests, dict)
+        or set(probe_request_digests) != set(probe_request_states)
+        or sorted(probe_lifecycle.get("ambiguous_request_ids") or [])
+        != sorted(probe_request_states)
+    ):
+        return None
     attempt = state.get("provider_attempt")
     launch_attempts = state.get("provider_launch_attempts")
     episode_attempts = state.get("provider_episode_attempts")
@@ -4081,6 +4104,8 @@ def dead_pre_admission_reconciliation_plan(
         isinstance(value, bool) or not isinstance(value, int) or value <= 0
         for value in (attempt, launch_attempts, episode_attempts)
     ) or attempt != launch_attempts:
+        if not probe_request_states:
+            return None
         raise SystemExit(
             f"{entrant_id} pre-admission reconciliation attempt identity is malformed"
         )
