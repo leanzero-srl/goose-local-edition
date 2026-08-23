@@ -371,7 +371,7 @@ else:
 
 try:
     probe = subprocess.run(
-        ["/bin/ps", "eww", "-p", parent_pid], capture_output=True, text=True
+        ["/bin/ps", "eww", "-p", str(parent_pid)], capture_output=True, text=True
     )
 except OSError:
     pass
