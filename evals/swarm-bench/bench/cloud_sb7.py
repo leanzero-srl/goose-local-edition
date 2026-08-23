@@ -15445,7 +15445,7 @@ def launch_after_receipt(
     child_role: str | None = None,
     pass_fds: tuple[int, ...] = (),
 ) -> subprocess.Popen[Any]:
-    if child_role is not None and not re.fullmatch(r"[a-z0-9][a-z0-9:-]*", child_role):
+    if child_role is not None and not re.fullmatch(r"[a-z0-9][a-z0-9:.-]*", child_role):
         raise ValueError(f"invalid child launch role: {child_role}")
     gate_dir.mkdir(parents=True, exist_ok=True)
     token = secrets.token_hex(16)
