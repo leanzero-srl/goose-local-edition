@@ -657,6 +657,7 @@ pub enum BrokerError {
     },
     ProviderStartsClosed(String),
     ConcurrentProviderRequest(String),
+    ProviderLifecycleJournal(String),
     OutcomeConflict {
         admission_id: String,
         reason: String,
@@ -822,6 +823,9 @@ impl std::fmt::Display for BrokerError {
                 f,
                 "admission `{admission_id}` already has a live or queued provider request"
             ),
+            Self::ProviderLifecycleJournal(reason) => {
+                write!(f, "physical provider lifecycle journal failed: {reason}")
+            }
             Self::OutcomeConflict {
                 admission_id,
                 reason,
@@ -1429,9 +1433,27 @@ impl PhysicalBroker {
         &mut self,
         terminal: ProviderTerminalReceipt,
     ) -> Result<(), BrokerError> {
+        self.validate_provider_terminal(&terminal)?;
         let active = self
             .active
             .get_mut(&terminal.admission_id)
+            .expect("validated provider terminal belongs to an active admission");
+        let turn = active
+            .provider_requests
+            .get_mut(&terminal.key.ordinal)
+            .expect("validated provider terminal belongs to a started request");
+        turn.terminal = Some(terminal);
+        active.live_provider_ordinal = None;
+        Ok(())
+    }
+
+    pub fn validate_provider_terminal(
+        &self,
+        terminal: &ProviderTerminalReceipt,
+    ) -> Result<(), BrokerError> {
+        let active = self
+            .active
+            .get(&terminal.admission_id)
             .ok_or_else(|| BrokerError::UnknownAdmission(terminal.admission_id.clone()))?;
         validate_physical_receipt(
             &active.receipt,
@@ -1439,23 +1461,21 @@ impl PhysicalBroker {
             &terminal.physical_host_id,
             &terminal.model_instance_id,
         )?;
-        let Some(turn) = active.provider_requests.get_mut(&terminal.key.ordinal) else {
+        let Some(turn) = active.provider_requests.get(&terminal.key.ordinal) else {
             return Err(BrokerError::ProviderRequestMismatch {
-                admission_id: terminal.admission_id,
-                received: terminal.key,
+                admission_id: terminal.admission_id.clone(),
+                received: terminal.key.clone(),
             });
         };
         if turn.start.key != terminal.key {
             return Err(BrokerError::ProviderRequestMismatch {
-                admission_id: terminal.admission_id,
-                received: terminal.key,
+                admission_id: terminal.admission_id.clone(),
+                received: terminal.key.clone(),
             });
         }
         if turn.terminal.is_some() {
-            return Err(BrokerError::DuplicateProviderTerminal(terminal.key));
+            return Err(BrokerError::DuplicateProviderTerminal(terminal.key.clone()));
         }
-        turn.terminal = Some(terminal);
-        active.live_provider_ordinal = None;
         Ok(())
     }
 

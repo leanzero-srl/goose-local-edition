@@ -34,6 +34,7 @@ pub use coherence::{extract_signatures, scope_contract_bundle, SigLang};
 pub use context::SharedContext;
 pub use control_plane::{
     AdmittedWork, PhysicalAdmissionControl, ProviderLifecycle, ProviderLifecycleDispatcher,
+    ProviderLifecycleJournal,
 };
 pub use dag::{
     expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag, Difficulty,
@@ -57,11 +58,10 @@ pub use scheduler::{
 pub use semantic_control::{
     semantic_observation_task_version, AdmittedSemanticObservationHandle,
     AdmittedSemanticObservationReceipt, AdmittedSemanticObservationRequest,
-    AdmittedSemanticReviewError,
-    AdmittedSemanticObservationReviewer, BrokeredSemanticObservationPlane,
-    RejectedSemanticObservationAdmission, SemanticObservationAdmissionError,
-    SemanticObservationAdmissionPolicy, SemanticObservationAdmissionStage,
-    SemanticObservationAdmissionSubmission,
+    AdmittedSemanticObservationReviewer, AdmittedSemanticReviewError,
+    BrokeredSemanticObservationPlane, RejectedSemanticObservationAdmission,
+    SemanticObservationAdmissionError, SemanticObservationAdmissionPolicy,
+    SemanticObservationAdmissionStage, SemanticObservationAdmissionSubmission,
 };
 pub use semantic_observation::{
     parse_semantic_observation_reply, semantic_observation_response_schema,
@@ -74,7 +74,7 @@ pub use semantic_observation::{
     SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
 pub use semantic_runtime::{
-    SemanticObservationCapture, SemanticObservationCaptureRequest,
+    SemanticActivityPublisher, SemanticObservationCapture, SemanticObservationCaptureRequest,
     SemanticObservationSnapshotProducer, SemanticObservationSummonsSignal, SemanticTraceRevision,
     TraceStateMeasurement,
 };

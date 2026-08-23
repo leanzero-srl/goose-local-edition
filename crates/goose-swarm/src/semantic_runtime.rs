@@ -6,9 +6,130 @@
 use crate::semantic_observation::{
     AcceptanceCriterionSnapshot, NeutralJudgeSignal, SealedSemanticObservationSnapshot,
 };
+use crate::AdmissionReceipt;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SemanticActivityPublisher {
+    pub publisher_id: String,
+    pub task_id: String,
+    pub attempt: u32,
+    pub admission_id: String,
+    pub work_role: String,
+    pub source_id: String,
+    pub fleet_snapshot_id: String,
+    pub logical_device_id: String,
+    pub model_id: String,
+    pub physical_host_id: String,
+    pub model_instance_id: String,
+    pub provider_transport_id: String,
+    pub capacity_evidence_id: String,
+}
+
+impl SemanticActivityPublisher {
+    pub fn from_admission(admission: &AdmissionReceipt) -> Self {
+        let work_role = serde_json::to_value(admission.role)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| "unknown".to_string());
+        let source_id = canonical_digest(&admission.source);
+        let capacity_evidence_id = canonical_digest(&admission.capacity_evidence);
+        let mut publisher = Self {
+            publisher_id: String::new(),
+            task_id: admission.source.task_id.clone(),
+            attempt: admission.source.attempt,
+            admission_id: admission.admission_id.clone(),
+            work_role,
+            source_id,
+            fleet_snapshot_id: admission.fleet_snapshot_id.clone(),
+            logical_device_id: admission.logical_device_id.clone(),
+            model_id: admission.model_id.clone(),
+            physical_host_id: admission.physical_host_id.clone(),
+            model_instance_id: admission.model_instance_id.clone(),
+            provider_transport_id: admission.provider_transport_id.clone(),
+            capacity_evidence_id,
+        };
+        publisher.publisher_id = canonical_digest(&publisher.identity_fields());
+        publisher
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let required = [
+            ("publisher id", self.publisher_id.as_str()),
+            ("task id", self.task_id.as_str()),
+            ("admission id", self.admission_id.as_str()),
+            ("work role", self.work_role.as_str()),
+            ("source id", self.source_id.as_str()),
+            ("fleet snapshot id", self.fleet_snapshot_id.as_str()),
+            ("logical device id", self.logical_device_id.as_str()),
+            ("model id", self.model_id.as_str()),
+            ("physical host id", self.physical_host_id.as_str()),
+            ("model instance id", self.model_instance_id.as_str()),
+            ("provider transport id", self.provider_transport_id.as_str()),
+            ("capacity evidence id", self.capacity_evidence_id.as_str()),
+        ];
+        if let Some((name, _)) = required
+            .into_iter()
+            .find(|(_, value)| value.trim().is_empty())
+        {
+            return Err(format!("semantic activity publisher {name} is empty"));
+        }
+        let expected = canonical_digest(&self.identity_fields());
+        if self.publisher_id != expected {
+            return Err("semantic activity publisher id does not match its sealed identity".into());
+        }
+        Ok(())
+    }
+
+    fn identity_fields(&self) -> SemanticActivityPublisherIdentity<'_> {
+        SemanticActivityPublisherIdentity {
+            task_id: &self.task_id,
+            attempt: self.attempt,
+            admission_id: &self.admission_id,
+            work_role: &self.work_role,
+            source_id: &self.source_id,
+            fleet_snapshot_id: &self.fleet_snapshot_id,
+            logical_device_id: &self.logical_device_id,
+            model_id: &self.model_id,
+            physical_host_id: &self.physical_host_id,
+            model_instance_id: &self.model_instance_id,
+            provider_transport_id: &self.provider_transport_id,
+            capacity_evidence_id: &self.capacity_evidence_id,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct SemanticActivityPublisherIdentity<'a> {
+    task_id: &'a str,
+    attempt: u32,
+    admission_id: &'a str,
+    work_role: &'a str,
+    source_id: &'a str,
+    fleet_snapshot_id: &'a str,
+    logical_device_id: &'a str,
+    model_id: &'a str,
+    physical_host_id: &'a str,
+    model_instance_id: &'a str,
+    provider_transport_id: &'a str,
+    capacity_evidence_id: &'a str,
+}
+
+fn canonical_digest(value: &impl Serialize) -> String {
+    let bytes = serde_json::to_vec(value).expect("engine authority is JSON serializable");
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(71);
+    encoded.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +147,7 @@ pub struct SemanticObservationCaptureRequest {
     pub allowed_finding_routes: Vec<String>,
     pub running_logical_device_id: String,
     pub running_model_id: String,
+    pub activity_publisher: SemanticActivityPublisher,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

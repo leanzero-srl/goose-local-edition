@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use goose::config::GooseMode;
 use goose::conversation::message::Message;
-use goose::providers::base::{MessageStream, ModelInfo, PermissionRouting, Provider};
+use goose::providers::base::{
+    MessageStream, ModelInfo, PermissionRouting, Provider, SingleAttemptFailureProvenance,
+    SingleAttemptStreamOutcome,
+};
 use goose_provider_types::errors::ProviderError;
 use goose_provider_types::model::ModelConfig;
 use goose_provider_types::permission::PermissionConfirmation;
@@ -90,19 +93,6 @@ fn lifecycle_error(action: &str, error: impl std::fmt::Display) -> ProviderError
     ))
 }
 
-pub(crate) fn provider_error_proves_terminal_response(error: &ProviderError) -> bool {
-    matches!(
-        error,
-        ProviderError::Authentication(_)
-            | ProviderError::ContextLengthExceeded(_)
-            | ProviderError::RateLimitExceeded { .. }
-            | ProviderError::ServerError(_)
-            | ProviderError::EndpointNotFound(_)
-            | ProviderError::CreditsExhausted { .. }
-            | ProviderError::Refusal { .. }
-    )
-}
-
 #[async_trait]
 impl Provider for LifecycleProvider {
     fn get_name(&self) -> &str {
@@ -117,6 +107,11 @@ impl Provider for LifecycleProvider {
         self.inner.supports_single_attempt_streaming()
     }
 
+    fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+        self.inner
+            .supports_terminal_proven_single_attempt_streaming()
+    }
+
     async fn stream(
         &self,
         model_config: &ModelConfig,
@@ -124,6 +119,18 @@ impl Provider for LifecycleProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
+        if model_config.model_name != self.lifecycle.admission().model_id {
+            let detail = format!(
+                "model {:?} does not match sealed physical admission model {:?}",
+                model_config.model_name,
+                self.lifecycle.admission().model_id
+            );
+            self.lifecycle
+                .provider_not_started(detail.clone())
+                .await
+                .map_err(|error| lifecycle_error("provider-not-started receipt", error))?;
+            return Err(ProviderError::ExecutionError(detail));
+        }
         if self
             .inner
             .transport_identity(&model_config.model_name)
@@ -140,9 +147,12 @@ impl Provider for LifecycleProvider {
                 .map_err(|error| lifecycle_error("provider-not-started receipt", error))?;
             return Err(ProviderError::ExecutionError(detail));
         }
-        if !self.inner.supports_single_attempt_streaming() {
+        if !self
+            .inner
+            .supports_terminal_proven_single_attempt_streaming()
+        {
             let detail = format!(
-                "provider `{}` has no receipt-safe single-attempt stream boundary",
+                "provider `{}` has no terminal-proven single-attempt stream boundary",
                 self.inner.get_name()
             );
             self.lifecycle
@@ -157,14 +167,18 @@ impl Provider for LifecycleProvider {
             .await
             .map_err(|error| lifecycle_error("start receipt", error))?;
         let mut terminal = ProviderTerminalGuard::new(self.lifecycle.clone(), key);
-        let stream = match self
+        let single_attempt = match self
             .inner
-            .stream_once(model_config, system, messages, tools)
+            .stream_once_with_terminal_proof(model_config, system, messages, tools)
             .await
         {
             Ok(stream) => stream,
             Err(provider_error) => {
-                if provider_error_proves_terminal_response(&provider_error) {
+                if self
+                    .inner
+                    .single_attempt_failure_provenance(&provider_error)
+                    == SingleAttemptFailureProvenance::TerminalResponse
+                {
                     terminal
                         .finish(ProviderTerminalKind::Failed)
                         .await
@@ -178,20 +192,61 @@ impl Provider for LifecycleProvider {
             }
         };
         Ok(Box::pin(async_stream::stream! {
-            let mut stream = stream;
+            let mut stream = single_attempt.stream;
+            let terminal_proof = single_attempt.terminal;
             let mut terminal = terminal;
             while let Some(item) = stream.next().await {
                 match item {
-                    Ok(value) => yield Ok(value),
+                    Ok(value) => {
+                        let terminal_kind = match terminal_proof.outcome() {
+                            SingleAttemptStreamOutcome::Finished => Some(ProviderTerminalKind::Finished),
+                            SingleAttemptStreamOutcome::Failed => Some(ProviderTerminalKind::Failed),
+                            SingleAttemptStreamOutcome::Pending => None,
+                        };
+                        if let Some(kind) = terminal_kind {
+                            if let Err(receipt_error) = terminal.finish(kind).await {
+                                yield Err(receipt_error);
+                                return;
+                            }
+                        }
+                        yield Ok(value);
+                    }
                     Err(provider_error) => {
-                        // A mid-stream client error does not prove that the remote decoder stopped.
+                        let terminal_kind = match terminal_proof.outcome() {
+                            SingleAttemptStreamOutcome::Finished => Some(ProviderTerminalKind::Finished),
+                            SingleAttemptStreamOutcome::Failed => Some(ProviderTerminalKind::Failed),
+                            SingleAttemptStreamOutcome::Pending => None,
+                        };
+                        if let Some(kind) = terminal_kind {
+                            if let Err(receipt_error) = terminal.finish(kind).await {
+                                yield Err(ProviderError::ExecutionError(format!(
+                                    "provider stream failed ({provider_error}); physical provider lifecycle terminal receipt failed: {receipt_error}"
+                                )));
+                                return;
+                            }
+                        }
                         yield Err(provider_error);
                         return;
                     }
                 }
             }
-            if let Err(receipt_error) = terminal.finish(ProviderTerminalKind::Finished).await {
-                yield Err(receipt_error);
+            let terminal_kind = match terminal_proof.outcome() {
+                SingleAttemptStreamOutcome::Finished => Some(ProviderTerminalKind::Finished),
+                SingleAttemptStreamOutcome::Failed => Some(ProviderTerminalKind::Failed),
+                SingleAttemptStreamOutcome::Pending => None,
+            };
+            match terminal_kind {
+                Some(kind) => {
+                    if let Err(receipt_error) = terminal.finish(kind).await {
+                        yield Err(receipt_error);
+                    }
+                }
+                None => {
+                    yield Err(ProviderError::ExecutionError(
+                        "single-attempt stream ended without explicit provider terminal proof"
+                            .to_string(),
+                    ));
+                }
             }
         }))
     }
@@ -300,6 +355,7 @@ mod tests {
     #[derive(Clone)]
     enum Behavior {
         Finished,
+        BareEof,
         Failed,
         NetworkFailed,
         StreamFailed,
@@ -329,6 +385,21 @@ mod tests {
             true
         }
 
+        fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn single_attempt_failure_provenance(
+            &self,
+            error: &ProviderError,
+        ) -> SingleAttemptFailureProvenance {
+            if matches!(error, ProviderError::ServerError(_)) {
+                SingleAttemptFailureProvenance::TerminalResponse
+            } else {
+                SingleAttemptFailureProvenance::Unresolved
+            }
+        }
+
         async fn stream(
             &self,
             _model_config: &ModelConfig,
@@ -348,23 +419,48 @@ mod tests {
             _messages: &[Message],
             _tools: &[Tool],
         ) -> Result<MessageStream, ProviderError> {
+            Ok(self
+                .stream_once_with_terminal_proof(_model_config, _system, _messages, _tools)
+                .await?
+                .stream)
+        }
+
+        async fn stream_once_with_terminal_proof(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<goose::providers::base::SingleAttemptStream, ProviderError> {
             match &self.behavior {
-                Behavior::Finished => Ok(Box::pin(stream::once(async {
-                    Ok((
-                        Some(Message::assistant().with_text("ok")),
-                        Some(ProviderUsage::new("mock".to_string(), Usage::default())),
-                    ))
-                }))),
+                Behavior::Finished => Ok(goose::providers::base::SingleAttemptStream::finished(
+                    Box::pin(stream::once(async {
+                        Ok((
+                            Some(Message::assistant().with_text("ok")),
+                            Some(ProviderUsage::new("mock".to_string(), Usage::default())),
+                        ))
+                    })),
+                )),
+                Behavior::BareEof => Ok(goose::providers::base::SingleAttemptStream::new(
+                    Box::pin(stream::empty()),
+                    goose::providers::base::SingleAttemptTerminalProof::default(),
+                )),
                 Behavior::Failed => Err(ProviderError::ServerError("mock failure".to_string())),
                 Behavior::NetworkFailed => {
                     Err(ProviderError::NetworkError("mock network loss".to_string()))
                 }
-                Behavior::StreamFailed => Ok(Box::pin(stream::once(async {
-                    Err(ProviderError::NetworkError(
-                        "mock mid-stream loss".to_string(),
-                    ))
-                }))),
-                Behavior::Pending => Ok(Box::pin(stream::pending())),
+                Behavior::StreamFailed => Ok(goose::providers::base::SingleAttemptStream::new(
+                    Box::pin(stream::once(async {
+                        Err(ProviderError::NetworkError(
+                            "mock mid-stream loss".to_string(),
+                        ))
+                    })),
+                    goose::providers::base::SingleAttemptTerminalProof::default(),
+                )),
+                Behavior::Pending => Ok(goose::providers::base::SingleAttemptStream::new(
+                    Box::pin(stream::pending()),
+                    goose::providers::base::SingleAttemptTerminalProof::default(),
+                )),
                 Behavior::StartPending(entered) => {
                     entered.notify_one();
                     futures::future::pending().await
@@ -407,6 +503,10 @@ mod tests {
         }
 
         fn supports_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
             true
         }
 
@@ -542,7 +642,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn natural_stream_end_records_finished_before_local_success() {
+    async fn explicit_stream_terminal_records_finished_before_local_success() {
         let (control, work) = admitted().await;
         let provider = wrapped_for(Behavior::Finished, work.lifecycle()).await;
         let mut output = provider
@@ -556,6 +656,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn bare_stream_eof_keeps_provider_claim_unresolved() {
+        let (control, work) = admitted().await;
+        let provider = wrapped_for(Behavior::BareEof, work.lifecycle()).await;
+        let mut output = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .unwrap();
+        let error = output.next().await.unwrap().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("without explicit provider terminal"));
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            work.complete_local(LocalCompletionKind::Error),
+        )
+        .await
+        .is_err());
+        assert_eq!(control.occupancy().await, (0, 1));
     }
 
     #[tokio::test]

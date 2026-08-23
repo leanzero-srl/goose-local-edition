@@ -1,3 +1,4 @@
+use crate::base::{SingleAttemptTerminalProof, SingleAttemptTerminalReporter};
 use crate::conversation::message::{Message, MessageContent, ProviderMetadata};
 use crate::conversation::token_usage::{ProviderUsage, Usage};
 use crate::errors::ProviderError;
@@ -1031,6 +1032,15 @@ fn strip_data_prefix(line: &str) -> Option<&str> {
         .map(|s| s.trim())
 }
 
+fn streaming_line_is_explicit_error(line: &str) -> bool {
+    serde_json::from_str::<Value>(line)
+        .ok()
+        .is_some_and(|value| {
+            value.get("error").is_some()
+                || value.get("object").and_then(Value::as_str) == Some("error")
+        })
+}
+
 fn parse_streaming_chunk(line: &str) -> Result<StreamingChunk, ProviderError> {
     let value: Value = serde_json::from_str(line).map_err(|e| {
         ProviderError::stream_decode_error(format!(
@@ -1061,8 +1071,34 @@ fn parse_streaming_chunk(line: &str) -> Result<StreamingChunk, ProviderError> {
     })
 }
 
+fn validate_single_stream_choice(chunk: &StreamingChunk) -> Result<(), ProviderError> {
+    if chunk.choices.len() > 1
+        || chunk
+            .choices
+            .first()
+            .and_then(|choice| choice.index)
+            .is_some_and(|index| index != 0)
+    {
+        return Err(ProviderError::stream_decode_error(
+            "terminal-proven streaming supports exactly one choice at index 0".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn response_to_streaming_message<S>(
+    stream: S,
+) -> impl Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
+where
+    S: Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
+{
+    let (_, reporter) = SingleAttemptTerminalProof::channel();
+    response_to_streaming_message_with_terminal_proof(stream, reporter)
+}
+
+pub fn response_to_streaming_message_with_terminal_proof<S>(
     mut stream: S,
+    terminal: SingleAttemptTerminalReporter,
 ) -> impl Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
 where
     S: Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
@@ -1087,6 +1123,7 @@ where
             let line = strip_data_prefix(&response_str);
 
             if line.is_some_and(|l| l == "[DONE]") {
+                terminal.mark_finished();
                 break 'outer;
             }
 
@@ -1094,9 +1131,19 @@ where
                 continue
             }
 
-            let chunk: StreamingChunk = parse_streaming_chunk(
-                line.ok_or_else(|| anyhow!("unexpected stream format"))?
-            )?;
+            let line = line.ok_or_else(|| anyhow!("unexpected stream format"))?;
+            if streaming_line_is_explicit_error(line) {
+                terminal.mark_failed();
+            }
+            let chunk: StreamingChunk = parse_streaming_chunk(line)?;
+            validate_single_stream_choice(&chunk)?;
+            if chunk
+                .choices
+                .iter()
+                .any(|choice| choice.finish_reason.is_some())
+            {
+                terminal.mark_finished();
+            }
             if let Some(model) = &chunk.model {
                 last_seen_model = Some(model.clone());
             }
@@ -1139,10 +1186,22 @@ where
                             let response_str = response_chunk?;
                             if let Some(line) = strip_data_prefix(&response_str) {
                                 if line == "[DONE]" {
+                                    terminal.mark_finished();
                                     break 'outer;
                                 }
 
+                                if streaming_line_is_explicit_error(line) {
+                                    terminal.mark_failed();
+                                }
                                 let tool_chunk: StreamingChunk = parse_streaming_chunk(line)?;
+                                validate_single_stream_choice(&tool_chunk)?;
+                                if tool_chunk
+                                    .choices
+                                    .iter()
+                                    .any(|choice| choice.finish_reason.is_some())
+                                {
+                                    terminal.mark_finished();
+                                }
                                 if let Some(model) = &tool_chunk.model {
                                     last_seen_model = Some(model.clone());
                                 }
@@ -1722,6 +1781,40 @@ mod tests {
 
     fn test_model_config(model_name: &str) -> ModelConfig {
         ModelConfig::new(model_name)
+    }
+
+    #[tokio::test]
+    async fn terminal_proof_distinguishes_finish_reason_from_bare_eof() {
+        let bare = tokio_stream::iter(vec![Ok::<_, anyhow::Error>(
+            r#"data: {"model":"m","choices":[{"delta":{"content":"partial"},"index":0,"finish_reason":null}]}"#
+                .to_string(),
+        )]);
+        let (bare_proof, bare_reporter) = SingleAttemptTerminalProof::channel();
+        let bare_messages = response_to_streaming_message_with_terminal_proof(bare, bare_reporter);
+        pin!(bare_messages);
+        while let Some(item) = bare_messages.next().await {
+            item.unwrap();
+        }
+        assert_eq!(
+            bare_proof.outcome(),
+            crate::base::SingleAttemptStreamOutcome::Pending
+        );
+
+        let finished = tokio_stream::iter(vec![Ok::<_, anyhow::Error>(
+            r#"data: {"model":"m","choices":[{"delta":{},"index":0,"finish_reason":"stop"}]}"#
+                .to_string(),
+        )]);
+        let (finished_proof, finished_reporter) = SingleAttemptTerminalProof::channel();
+        let finished_messages =
+            response_to_streaming_message_with_terminal_proof(finished, finished_reporter);
+        pin!(finished_messages);
+        while let Some(item) = finished_messages.next().await {
+            item.unwrap();
+        }
+        assert_eq!(
+            finished_proof.outcome(),
+            crate::base::SingleAttemptStreamOutcome::Finished
+        );
     }
 
     #[test]

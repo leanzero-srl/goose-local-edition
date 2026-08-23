@@ -1,3 +1,6 @@
+use crate::base::{
+    SingleAttemptStreamOutcome, SingleAttemptTerminalProof, SingleAttemptTerminalReporter,
+};
 use crate::conversation::message::{Message, MessageContent};
 use crate::conversation::token_usage::{ProviderUsage, Usage};
 use crate::errors::ProviderError;
@@ -27,6 +30,14 @@ pub struct ResponsesApiResponse {
     pub reasoning: Option<ResponseReasoningInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<ResponseUsage>,
+}
+
+pub fn responses_terminal_outcome(status: &str) -> SingleAttemptStreamOutcome {
+    match status {
+        "completed" => SingleAttemptStreamOutcome::Finished,
+        "failed" | "incomplete" | "cancelled" | "canceled" => SingleAttemptStreamOutcome::Failed,
+        _ => SingleAttemptStreamOutcome::Pending,
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -207,6 +218,16 @@ pub enum ResponsesStreamEvent {
         sequence_number: i32,
         response: ResponseMetadata,
     },
+    #[serde(rename = "response.incomplete")]
+    ResponseIncomplete {
+        sequence_number: i32,
+        response: ResponseMetadata,
+    },
+    #[serde(rename = "response.cancelled")]
+    ResponseCancelled {
+        sequence_number: i32,
+        response: ResponseMetadata,
+    },
     #[serde(rename = "response.failed")]
     ResponseFailed { sequence_number: i32, error: Value },
     #[serde(rename = "response.function_call_arguments.delta")]
@@ -262,6 +283,8 @@ fn is_known_responses_stream_event_type(event_type: &str) -> bool {
             | "response.content_part.done"
             | "response.output_text.done"
             | "response.completed"
+            | "response.incomplete"
+            | "response.cancelled"
             | "response.failed"
             | "response.function_call_arguments.delta"
             | "response.function_call_arguments.done"
@@ -800,7 +823,18 @@ fn process_streaming_output_items(
 }
 
 pub fn responses_api_to_streaming_message<S>(
+    stream: S,
+) -> impl Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
+where
+    S: Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
+{
+    let (_, reporter) = SingleAttemptTerminalProof::channel();
+    responses_api_to_streaming_message_with_terminal_proof(stream, reporter)
+}
+
+pub fn responses_api_to_streaming_message_with_terminal_proof<S>(
     mut stream: S,
+    terminal: SingleAttemptTerminalReporter,
 ) -> impl Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
 where
     S: Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
@@ -842,6 +876,7 @@ where
             };
 
             if data_line == "[DONE]" {
+                terminal.mark_finished();
                 break 'outer;
             }
 
@@ -886,6 +921,15 @@ where
                 }
 
                 ResponsesStreamEvent::ResponseCompleted { response, .. } => {
+                    if responses_terminal_outcome(&response.status)
+                        != SingleAttemptStreamOutcome::Finished
+                    {
+                        Err::<(), ProviderError>(ProviderError::stream_decode_error(format!(
+                            "response.completed carried contradictory status {:?}",
+                            response.status
+                        )))?;
+                    }
+                    terminal.mark_finished();
                     let model = model_name.as_ref().unwrap_or(&response.model);
                     let usage = response.usage.as_ref().map_or_else(
                         Usage::default,
@@ -899,6 +943,23 @@ where
                     }
 
                     break 'outer;
+                }
+
+                ResponsesStreamEvent::ResponseIncomplete { response, .. }
+                | ResponsesStreamEvent::ResponseCancelled { response, .. } => {
+                    if responses_terminal_outcome(&response.status)
+                        != SingleAttemptStreamOutcome::Failed
+                    {
+                        Err::<(), ProviderError>(ProviderError::stream_decode_error(format!(
+                            "terminal Responses event carried contradictory status {:?}",
+                            response.status
+                        )))?;
+                    }
+                    terminal.mark_failed();
+                    Err::<(), ProviderError>(ProviderError::RequestFailed(format!(
+                        "Responses API ended with terminal status {:?}",
+                        response.status
+                    )))?;
                 }
 
                 ResponsesStreamEvent::FunctionCallArgumentsDelta { .. } => {
@@ -934,6 +995,7 @@ where
                 }
 
                 ResponsesStreamEvent::ResponseFailed { error, .. } => {
+                    terminal.mark_failed();
                     Err::<(), ProviderError>(ProviderError::RequestFailed(format!(
                         "Responses API failed: {:?}",
                         error
@@ -941,6 +1003,7 @@ where
                 }
 
                 ResponsesStreamEvent::Error { error } => {
+                    terminal.mark_failed();
                     Err::<(), ProviderError>(ProviderError::RequestFailed(format!(
                         "Responses API error: {:?}",
                         error
@@ -976,6 +1039,41 @@ mod tests {
     use futures::StreamExt;
     use rmcp::model::CallToolRequestParams;
     use rmcp::object;
+
+    #[tokio::test]
+    async fn responses_terminal_proof_distinguishes_completed_from_bare_eof() {
+        let bare = tokio_stream::iter(vec![Ok::<_, anyhow::Error>(
+            r#"data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_1","output_index":0,"content_index":0,"delta":"partial"}"#
+                .to_string(),
+        )]);
+        let (bare_proof, bare_reporter) = SingleAttemptTerminalProof::channel();
+        let bare_messages =
+            responses_api_to_streaming_message_with_terminal_proof(bare, bare_reporter);
+        futures::pin_mut!(bare_messages);
+        while let Some(item) = bare_messages.next().await {
+            item.unwrap();
+        }
+        assert_eq!(
+            bare_proof.outcome(),
+            crate::base::SingleAttemptStreamOutcome::Pending
+        );
+
+        let completed = tokio_stream::iter(vec![Ok::<_, anyhow::Error>(
+            r#"data: {"type":"response.completed","sequence_number":1,"response":{"id":"resp_1","object":"response","created_at":1,"status":"completed","model":"m","output":[]}}"#
+                .to_string(),
+        )]);
+        let (completed_proof, completed_reporter) = SingleAttemptTerminalProof::channel();
+        let completed_messages =
+            responses_api_to_streaming_message_with_terminal_proof(completed, completed_reporter);
+        futures::pin_mut!(completed_messages);
+        while let Some(item) = completed_messages.next().await {
+            item.unwrap();
+        }
+        assert_eq!(
+            completed_proof.outcome(),
+            crate::base::SingleAttemptStreamOutcome::Finished
+        );
+    }
 
     #[tokio::test]
     async fn test_responses_stream_ignores_keepalive_event() -> anyhow::Result<()> {

@@ -18,18 +18,30 @@ use std::time::Duration;
 const DEFAULT_PROVIDER_TIMEOUT_SECS: u64 = 600;
 
 pub fn canonical_transport_identity(host: &str, path: &str) -> Option<String> {
-    use std::fmt::Write as _;
     use url::Url;
 
     let mut base_url = Url::parse(host).ok()?;
+    let query = base_url
+        .query_pairs()
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect::<Vec<_>>();
+    base_url.set_query(None);
     let base_path = base_url.path();
     if !base_path.is_empty() && base_path != "/" && !base_path.ends_with('/') {
         base_url.set_path(&format!("{base_path}/"));
     }
     let mut endpoint = base_url.join(path).ok()?;
+    for (key, value) in query {
+        endpoint.query_pairs_mut().append_pair(&key, &value);
+    }
+    hashed_transport_identity(endpoint)
+}
+
+fn hashed_transport_identity(mut endpoint: url::Url) -> Option<String> {
+    use std::fmt::Write as _;
+
     endpoint.set_username("").ok()?;
     endpoint.set_password(None).ok()?;
-    endpoint.set_query(None);
     endpoint.set_fragment(None);
 
     let digest = Sha256::digest(endpoint.as_str().as_bytes());
@@ -360,7 +372,10 @@ impl ApiClient {
     }
 
     pub fn transport_identity(&self, path: &str) -> Option<String> {
-        canonical_transport_identity(&self.host, path)
+        if self.request_builder.is_some() {
+            return None;
+        }
+        hashed_transport_identity(self.build_url(path).ok()?)
     }
 
     fn rebuild_client(&mut self) -> Result<()> {
@@ -720,7 +735,12 @@ mod tests {
             "v1/chat/completions",
         )
         .unwrap();
-        let equivalent =
+        let equivalent = canonical_transport_identity(
+            "http://lm-link.local:1234/prefix?token=secret",
+            "v1/chat/completions",
+        )
+        .unwrap();
+        let without_query =
             canonical_transport_identity("http://lm-link.local:1234/prefix", "v1/chat/completions")
                 .unwrap();
         let distinct =
@@ -728,10 +748,42 @@ mod tests {
                 .unwrap();
 
         assert_eq!(identity, equivalent);
+        assert_ne!(identity, without_query);
         assert_ne!(identity, distinct);
         assert!(identity.starts_with("sha256:"));
         assert_eq!(identity.len(), 71);
         assert!(!identity.contains("secret"));
         assert!(!identity.contains("lm-link"));
+    }
+
+    #[test]
+    fn api_client_identity_includes_default_query_and_rejects_opaque_url_mutation() {
+        let plain = ApiClient::new_with_tls(
+            "http://lm-link.local:1234/prefix".to_string(),
+            AuthMethod::NoAuth,
+            None,
+        )
+        .unwrap();
+        let queried = ApiClient::new_with_tls(
+            "http://lm-link.local:1234/prefix".to_string(),
+            AuthMethod::NoAuth,
+            None,
+        )
+        .unwrap()
+        .with_query(vec![("token".to_string(), "secret".to_string())]);
+        let decorated = ApiClient::new_with_tls(
+            "http://lm-link.local:1234/prefix".to_string(),
+            AuthMethod::NoAuth,
+            None,
+        )
+        .unwrap()
+        .with_request_builder(Arc::new(Ok));
+
+        let plain_identity = plain.transport_identity("v1/chat/completions").unwrap();
+        let queried_identity = queried.transport_identity("v1/chat/completions").unwrap();
+        assert_ne!(plain_identity, queried_identity);
+        assert!(!queried_identity.contains("secret"));
+        assert_eq!(queried_identity.len(), 71);
+        assert_eq!(decorated.transport_identity("v1/chat/completions"), None);
     }
 }

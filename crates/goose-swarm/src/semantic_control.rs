@@ -38,6 +38,10 @@ pub struct AdmittedSemanticObservationRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AdmittedSemanticReviewError {
     TerminalFailure(String),
+    LocalFailureAfterTerminal {
+        detail: String,
+        provider_terminal: ProviderTerminalKind,
+    },
     ProviderLifecycleUnresolved(String),
 }
 
@@ -50,9 +54,20 @@ impl AdmittedSemanticReviewError {
         Self::ProviderLifecycleUnresolved(detail.into())
     }
 
+    pub fn local_failure_after_terminal(
+        detail: impl Into<String>,
+        provider_terminal: ProviderTerminalKind,
+    ) -> Self {
+        Self::LocalFailureAfterTerminal {
+            detail: detail.into(),
+            provider_terminal,
+        }
+    }
+
     fn detail(&self) -> &str {
         match self {
             Self::TerminalFailure(detail) | Self::ProviderLifecycleUnresolved(detail) => detail,
+            Self::LocalFailureAfterTerminal { detail, .. } => detail,
         }
     }
 }
@@ -507,18 +522,22 @@ impl SemanticObservationReviewer for LifecycleBoundSemanticReviewer {
         };
 
         let reviewer = self.inner.clone();
-        let reviewed = match tokio::spawn(async move { reviewer.review(admitted_request).await }).await
-        {
-            Ok(reviewed) => reviewed,
-            Err(error) => {
-                let detail = format!("semantic provider task ended without a reply: {error}");
-                self.set_proof(ProviderLifecycleProof::Unresolved(detail.clone()));
-                return Err(detail);
-            }
-        };
+        let reviewed =
+            match tokio::spawn(async move { reviewer.review(admitted_request).await }).await {
+                Ok(reviewed) => reviewed,
+                Err(error) => {
+                    let detail = format!("semantic provider task ended without a reply: {error}");
+                    self.set_proof(ProviderLifecycleProof::Unresolved(detail.clone()));
+                    return Err(detail);
+                }
+            };
         let terminal_kind = match &reviewed {
             Ok(_) => ProviderTerminalKind::Finished,
             Err(AdmittedSemanticReviewError::TerminalFailure(_)) => ProviderTerminalKind::Failed,
+            Err(AdmittedSemanticReviewError::LocalFailureAfterTerminal {
+                provider_terminal,
+                ..
+            }) => *provider_terminal,
             Err(AdmittedSemanticReviewError::ProviderLifecycleUnresolved(detail)) => {
                 self.set_proof(ProviderLifecycleProof::Unresolved(detail.clone()));
                 return Err(detail.clone());

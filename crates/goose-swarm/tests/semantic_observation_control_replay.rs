@@ -2,10 +2,9 @@ use async_trait::async_trait;
 use goose_swarm::{
     AcceptanceCriterionSnapshot, AdmittedSemanticObservationRequest,
     AdmittedSemanticObservationReviewer, AdmittedSemanticReviewError, BrokerError,
-    BrokeredSemanticObservationPlane, EventSink,
-    HostCapacityEvidence, LocalCompletionKind, NeutralJudgeSignal, PhysicalAdmissionControl,
-    PhysicalFleetSnapshot, ProviderTerminalKind, SemanticJudgeAction,
-    SemanticObservationAdmissionError, SemanticObservationAdmissionPolicy,
+    BrokeredSemanticObservationPlane, EventSink, HostCapacityEvidence, LocalCompletionKind,
+    NeutralJudgeSignal, PhysicalAdmissionControl, PhysicalFleetSnapshot, ProviderTerminalKind,
+    SemanticJudgeAction, SemanticObservationAdmissionError, SemanticObservationAdmissionPolicy,
     SemanticObservationAdmissionStage, SemanticObservationAdmissionSubmission,
     SemanticObservationSnapshotDraft, SemanticProtocolFailureKind, SemanticTraceSnapshot,
     SourceRevisionKind, SwarmEvent, TaskVersion, VerifiedPhysicalLane, WorkOpportunity, WorkRole,
@@ -120,8 +119,7 @@ fn control(scope: &str, sink: Arc<dyn EventSink>) -> PhysicalAdmissionControl {
             host_id: "host-a".into(),
             model_instance_id: "instance-a".into(),
             provider_transport_id:
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                    .into(),
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
             advertised_instance_capacity: 1,
             routing_weight: 1,
             capacity_evidence: HostCapacityEvidence::MeasuredProfile {
@@ -489,7 +487,8 @@ async fn cancelling_a_pre_call_rejection_cannot_cancel_its_admission_cleanup() {
 
     tokio::time::timeout(Duration::from_secs(2), control.wait_until_drained())
         .await
-        .expect("detached rejection cleanup must release its admission");
+        .expect("detached rejection cleanup must release its admission")
+        .unwrap();
     assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
     assert_eq!(sink.event_count("broker_provider_not_started"), 1);
     assert_eq!(sink.event_count("broker_admission_released"), 2);
@@ -938,7 +937,8 @@ async fn dropping_the_wait_handle_does_not_cancel_an_admitted_provider_lifecycle
     reviewer.release_first.notify_one();
     tokio::time::timeout(Duration::from_secs(2), control.wait_until_drained())
         .await
-        .expect("detached semantic lifecycle must drain");
+        .expect("detached semantic lifecycle must drain")
+        .unwrap();
 
     assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
     assert_eq!(event_count(&sink, "broker_provider_terminal_observed"), 1);

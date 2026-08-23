@@ -4,24 +4,25 @@
 //! action-delivery API: a parsed `NUDGE`, split, acceptance candidate, or other semantic action remains
 //! an observation receipt owned by `goose-swarm`.
 
-use super::swarm_provider_lifecycle::provider_error_proves_terminal_response;
 use async_trait::async_trait;
 use base64::Engine;
 use goose::conversation::message::{Message, MessageContent};
-use goose::providers::base::{collect_stream, Provider};
+use goose::providers::base::{
+    collect_stream, Provider, SingleAttemptFailureProvenance, SingleAttemptStreamOutcome,
+};
 use goose_swarm::{
     AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
-    AdmittedSemanticReviewError,
-    ArtifactExcerptSnapshot, PhysicalFleetSnapshot, SemanticObservationCapture,
-    SemanticObservationCaptureRequest, SemanticObservationSnapshotDraft,
-    SemanticObservationSnapshotProducer, SemanticObservationSummonsSignal, SemanticTraceSnapshot,
-    SourceRevisionKind, TraceStateMeasurement, VerifiedPhysicalLane, WorkRole,
-    SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+    AdmittedSemanticReviewError, ArtifactExcerptSnapshot, EventSink, PhysicalFleetSnapshot,
+    SemanticActivityPublisher, SemanticObservationCapture, SemanticObservationCaptureRequest,
+    SemanticObservationSnapshotDraft, SemanticObservationSnapshotProducer,
+    SemanticObservationSummonsSignal, SemanticTraceSnapshot, SourceRevisionKind,
+    TraceStateMeasurement, VerifiedPhysicalLane, WorkRole, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -33,6 +34,7 @@ const RECURRENCE_HISTORY_CHARS: usize = 65_536;
 const EARLIER_REASONING_MIN_DISTANCE: usize = 20_000;
 const EARLIER_REASONING_MAX_DISTANCE: usize = 40_000;
 const EARLIER_REASONING_EXCERPT_CHARS: usize = 2_000;
+static ACTIVITY_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Flat, injective activity filename encoding shared by the stream writer and snapshot reader. Task
 /// ids include owned paths (`fix::rN::a/b.rs`); distinct escape tails preserve `~`, `/`, and `\\`
@@ -42,6 +44,318 @@ pub(super) fn activity_digest_key(task_id: &str) -> String {
         .replace('~', "~t")
         .replace('/', "~s")
         .replace('\\', "~b")
+}
+
+#[derive(Clone, Debug)]
+struct ActivitySinkFailure {
+    detail: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EngineActivityDigest {
+    revision: u64,
+    bytes: Vec<u8>,
+}
+
+pub(super) struct ActivitySinkHealth {
+    working_dir: PathBuf,
+    required: AtomicBool,
+    failure: Mutex<Option<ActivitySinkFailure>>,
+    mirror_failure: Mutex<Option<ActivitySinkFailure>>,
+    digests: Mutex<HashMap<String, EngineActivityDigest>>,
+    next_revision: AtomicU64,
+    events: Arc<dyn EventSink>,
+}
+
+impl ActivitySinkHealth {
+    pub(super) fn new(
+        working_dir: impl AsRef<Path>,
+        events: Arc<dyn EventSink>,
+    ) -> Result<Self, String> {
+        let working_dir = canonical_working_dir(working_dir.as_ref())?;
+        Ok(Self {
+            working_dir,
+            required: AtomicBool::new(false),
+            failure: Mutex::new(None),
+            mirror_failure: Mutex::new(None),
+            digests: Mutex::new(HashMap::new()),
+            next_revision: AtomicU64::new(1),
+            events,
+        })
+    }
+
+    pub(super) fn activate(&self) -> Result<(), String> {
+        self.ensure_not_degraded()?;
+        self.required.store(true, Ordering::Release);
+        let activity_dir = self.working_dir.join(".swarm").join("activity");
+        let mirror_ready = match probe_activity_mirror(&activity_dir) {
+            Ok(()) => true,
+            Err(error) => {
+                self.record_mirror_failure("activation", "probe", error);
+                false
+            }
+        };
+        self.events.write_value(serde_json::json!({
+            "event": "physical_semantic_activity_sink_ready",
+            "authority": "engine_memory",
+            "ui_mirror": if mirror_ready { "atomic_ready" } else { "degraded" },
+        }));
+        Ok(())
+    }
+
+    pub(super) fn ensure_healthy(&self) -> Result<(), String> {
+        if !self.required.load(Ordering::Acquire) {
+            return Err("physical semantic activity sink was not activated".to_string());
+        }
+        self.ensure_not_degraded()
+    }
+
+    pub(super) fn write_digest(
+        &self,
+        path: &Path,
+        contents: &[u8],
+        task_id: &str,
+        publisher: Option<&SemanticActivityPublisher>,
+        stage: &'static str,
+        required: bool,
+    ) -> Result<(), String> {
+        if required {
+            self.ensure_healthy()?;
+            let publisher = publisher.ok_or_else(|| {
+                self.record_authority_failure(
+                    task_id,
+                    stage,
+                    "physical semantic activity write has no engine-minted publisher".to_string(),
+                )
+            })?;
+            publisher
+                .validate()
+                .map_err(|error| self.record_authority_failure(task_id, stage, error))?;
+            if publisher.task_id != task_id {
+                return Err(self.record_authority_failure(
+                    task_id,
+                    stage,
+                    format!(
+                        "physical semantic activity publisher task {:?} does not match write task {:?}",
+                        publisher.task_id, task_id
+                    ),
+                ));
+            }
+            let expected = self.activity_path(task_id);
+            if path != expected {
+                return Err(self.record_authority_failure(
+                    task_id,
+                    stage,
+                    format!(
+                        "physical activity path {:?} does not match engine-owned path {:?}",
+                        path, expected
+                    ),
+                ));
+            }
+            validate_authoritative_activity(contents, publisher)
+                .map_err(|error| self.record_authority_failure(task_id, stage, error))?;
+
+            let revision = self.next_revision.fetch_add(1, Ordering::AcqRel);
+            unpoison(&self.digests).insert(
+                publisher.publisher_id.clone(),
+                EngineActivityDigest {
+                    revision,
+                    bytes: contents.to_vec(),
+                },
+            );
+
+            if let Err(error) = atomic_activity_write(path, contents, false) {
+                self.record_mirror_failure(task_id, stage, error);
+            }
+            return Ok(());
+        }
+
+        atomic_activity_write(path, contents, false)
+            .map_err(|error| format!("best-effort activity digest {stage} failed: {error}"))
+    }
+
+    pub(super) fn working_dir(&self) -> &Path {
+        &self.working_dir
+    }
+
+    fn activity_path(&self, task_id: &str) -> PathBuf {
+        self.working_dir
+            .join(".swarm")
+            .join("activity")
+            .join(format!("{}.json", activity_digest_key(task_id)))
+    }
+
+    fn read_digest(&self, publisher_id: &str) -> Result<Option<EngineActivityDigest>, String> {
+        self.ensure_healthy()?;
+        Ok(unpoison(&self.digests).get(publisher_id).cloned())
+    }
+
+    fn ensure_not_degraded(&self) -> Result<(), String> {
+        match unpoison(&self.failure).as_ref() {
+            Some(failure) => Err(failure.detail.clone()),
+            None => Ok(()),
+        }
+    }
+
+    fn record_authority_failure(
+        &self,
+        task_id: &str,
+        stage: &'static str,
+        detail: String,
+    ) -> String {
+        let detail =
+            format!("physical semantic activity authority degraded during {stage}: {detail}");
+        let first = {
+            let mut failure = unpoison(&self.failure);
+            if failure.is_some() {
+                false
+            } else {
+                *failure = Some(ActivitySinkFailure {
+                    detail: detail.clone(),
+                });
+                true
+            }
+        };
+        if first {
+            self.events.write_value(serde_json::json!({
+                "event": "physical_semantic_activity_sink_degraded",
+                "task_id": task_id,
+                "stage": stage,
+                "authority": "engine_memory",
+                "provider_terminal_fabricated": false,
+            }));
+            eprintln!("physical semantic supervision degraded: {detail}");
+        }
+        detail
+    }
+
+    fn record_mirror_failure(&self, task_id: &str, stage: &'static str, error: std::io::Error) {
+        let detail = format!(
+            "physical semantic activity UI mirror degraded during {stage} ({:?}): {error}",
+            error.kind()
+        );
+        let first = {
+            let mut failure = unpoison(&self.mirror_failure);
+            if failure.is_some() {
+                false
+            } else {
+                *failure = Some(ActivitySinkFailure {
+                    detail: detail.clone(),
+                });
+                true
+            }
+        };
+        if first {
+            self.events.write_value(serde_json::json!({
+                "event": "physical_semantic_activity_mirror_degraded",
+                "task_id": task_id,
+                "stage": stage,
+                "error_kind": format!("{:?}", error.kind()),
+                "semantic_authority_healthy": true,
+            }));
+            eprintln!("{detail}");
+        }
+    }
+}
+
+fn probe_activity_mirror(activity_dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(activity_dir)?;
+    let probe = activity_dir.join(format!(
+        ".semantic-activity-probe-{}-{}",
+        std::process::id(),
+        ACTIVITY_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let expected = b"physical-semantic-activity-probe";
+    atomic_activity_write(&probe, expected, true)?;
+    let observed = std::fs::read(&probe)?;
+    std::fs::remove_file(&probe)?;
+    if observed != expected {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "physical semantic activity mirror probe read different bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_authoritative_activity(
+    contents: &[u8],
+    publisher: &SemanticActivityPublisher,
+) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_slice(contents)
+        .map_err(|error| format!("activity digest is not valid JSON: {error}"))?;
+    let model = value
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "activity digest has no string model".to_string())?;
+    if model != publisher.model_id {
+        return Err(format!(
+            "activity digest model {model:?} does not match publisher model {:?}",
+            publisher.model_id
+        ));
+    }
+    if let ActivityState::Active(digest) = classify_activity(contents)? {
+        digest.validate()?;
+    }
+    Ok(())
+}
+
+fn canonical_working_dir(working_dir: &Path) -> Result<PathBuf, String> {
+    let working_dir = std::fs::canonicalize(working_dir).map_err(|error| {
+        format!(
+            "cannot canonicalize semantic observation working directory {:?}: {error}",
+            working_dir
+        )
+    })?;
+    if !working_dir.is_dir() {
+        return Err(format!(
+            "semantic observation working directory {:?} is not a directory",
+            working_dir
+        ));
+    }
+    Ok(working_dir)
+}
+
+fn atomic_activity_write(path: &Path, contents: &[u8], sync: bool) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "activity digest path has no parent directory",
+        )
+    })?;
+    std::fs::create_dir_all(parent)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "activity digest path has no UTF-8 filename",
+            )
+        })?;
+    let temporary = parent.join(format!(
+        ".{file_name}.tmp-{}-{}",
+        std::process::id(),
+        ACTIVITY_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(contents)?;
+        if sync {
+            file.sync_all()?;
+        }
+        drop(file);
+        std::fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -236,6 +550,12 @@ struct StableCaptureMaterial {
     artifacts: Vec<OwnedArtifactMaterial>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ActivityDigestRead {
+    revision: Option<u64>,
+    bytes: Vec<u8>,
+}
+
 #[derive(Clone)]
 struct CapturedTraceState {
     attempt: u32,
@@ -245,45 +565,64 @@ struct CapturedTraceState {
 
 pub struct GooseSemanticObservationSnapshotProducer {
     working_dir: PathBuf,
+    activity_health: Option<Arc<ActivitySinkHealth>>,
     state: Mutex<HashMap<String, CapturedTraceState>>,
     task_lanes: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
 }
 
 impl GooseSemanticObservationSnapshotProducer {
     pub fn new(working_dir: impl AsRef<Path>) -> Result<Self, String> {
-        let working_dir = std::fs::canonicalize(working_dir.as_ref()).map_err(|error| {
-            format!(
-                "cannot canonicalize semantic observation working directory {:?}: {error}",
-                working_dir.as_ref()
-            )
-        })?;
-        if !working_dir.is_dir() {
+        let working_dir = canonical_working_dir(working_dir.as_ref())?;
+        Ok(Self {
+            working_dir,
+            activity_health: None,
+            state: Mutex::new(HashMap::new()),
+            task_lanes: Mutex::new(HashMap::new()),
+        })
+    }
+
+    pub(super) fn new_with_activity_health(
+        working_dir: impl AsRef<Path>,
+        activity_health: Arc<ActivitySinkHealth>,
+    ) -> Result<Self, String> {
+        let working_dir = canonical_working_dir(working_dir.as_ref())?;
+        if working_dir != activity_health.working_dir() {
             return Err(format!(
-                "semantic observation working directory {:?} is not a directory",
-                working_dir
+                "semantic observation working directory {:?} does not match activity sink {:?}",
+                working_dir,
+                activity_health.working_dir()
             ));
         }
         Ok(Self {
             working_dir,
+            activity_health: Some(activity_health),
             state: Mutex::new(HashMap::new()),
             task_lanes: Mutex::new(HashMap::new()),
         })
+    }
+
+    fn ensure_activity_healthy(&self) -> Result<(), String> {
+        match &self.activity_health {
+            Some(health) => health.ensure_healthy(),
+            None => Ok(()),
+        }
     }
 
     async fn stable_material(
         &self,
         request: &SemanticObservationCaptureRequest,
     ) -> Result<Option<StableCaptureMaterial>, String> {
-        let Some(first_digest_bytes) = self.read_activity(&request.task_id).await? else {
+        self.ensure_activity_healthy()?;
+        let Some(first_activity) = self.read_activity(request).await? else {
             return Ok(None);
         };
-        let first_digest = match classify_activity(&first_digest_bytes) {
+        let first_digest = match classify_activity(&first_activity.bytes) {
             Ok(ActivityState::Inactive) => return Ok(None),
             Ok(ActivityState::Active(digest)) => digest,
             Err(first_error) => {
                 tokio::task::yield_now().await;
-                let second = self.read_activity(&request.task_id).await?;
-                if second.as_deref() != Some(first_digest_bytes.as_slice()) {
+                let second = self.read_activity(request).await?;
+                if second.as_ref() != Some(&first_activity) {
                     return Ok(None);
                 }
                 return Err(first_error);
@@ -291,13 +630,13 @@ impl GooseSemanticObservationSnapshotProducer {
         };
         let first_artifacts = self.read_owned_artifacts(&request.owned_files).await?;
         tokio::task::yield_now().await;
-        let Some(second_digest_bytes) = self.read_activity(&request.task_id).await? else {
+        let Some(second_activity) = self.read_activity(request).await? else {
             return Ok(None);
         };
-        if first_digest_bytes != second_digest_bytes {
+        if first_activity != second_activity {
             return Ok(None);
         }
-        let second_digest = match classify_activity(&second_digest_bytes)? {
+        let second_digest = match classify_activity(&second_activity.bytes)? {
             ActivityState::Inactive => return Ok(None),
             ActivityState::Active(digest) => digest,
         };
@@ -310,17 +649,34 @@ impl GooseSemanticObservationSnapshotProducer {
             digest: *second_digest,
             artifacts: second_artifacts,
         };
+        self.ensure_activity_healthy()?;
         Ok((first == second).then_some(first))
     }
 
-    async fn read_activity(&self, task_id: &str) -> Result<Option<Vec<u8>>, String> {
+    async fn read_activity(
+        &self,
+        request: &SemanticObservationCaptureRequest,
+    ) -> Result<Option<ActivityDigestRead>, String> {
+        if let Some(health) = &self.activity_health {
+            return health
+                .read_digest(&request.activity_publisher.publisher_id)
+                .map(|digest| {
+                    digest.map(|digest| ActivityDigestRead {
+                        revision: Some(digest.revision),
+                        bytes: digest.bytes,
+                    })
+                });
+        }
         let path = self
             .working_dir
             .join(".swarm")
             .join("activity")
-            .join(format!("{}.json", activity_digest_key(task_id)));
+            .join(format!("{}.json", activity_digest_key(&request.task_id)));
         match tokio::fs::read(&path).await {
-            Ok(bytes) => Ok(Some(bytes)),
+            Ok(bytes) => Ok(Some(ActivityDigestRead {
+                revision: None,
+                bytes,
+            })),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(format!("cannot read activity digest {:?}: {error}", path)),
         }
@@ -379,7 +735,19 @@ impl SemanticObservationSnapshotProducer for GooseSemanticObservationSnapshotPro
         if request.running_model_id.trim().is_empty() {
             return Err("semantic capture request running model is empty".to_string());
         }
-        let lane = self.task_lane(&request.task_id);
+        request.activity_publisher.validate()?;
+        if request.activity_publisher.task_id != request.task_id
+            || request.activity_publisher.attempt != request.attempt
+            || request.activity_publisher.logical_device_id != request.running_logical_device_id
+            || request.activity_publisher.model_id != request.running_model_id
+        {
+            return Err(
+                "semantic capture request does not match its engine-minted activity publisher"
+                    .to_string(),
+            );
+        }
+        let publisher_id = request.activity_publisher.publisher_id.clone();
+        let lane = self.task_lane(&publisher_id);
         let _guard = lane.lock().await;
         let Some(material) = self.stable_material(&request).await? else {
             return Ok(None);
@@ -403,14 +771,14 @@ impl SemanticObservationSnapshotProducer for GooseSemanticObservationSnapshotPro
         let artifact_version = artifact_version(&material.artifacts);
         let measurement_hash = measurement_hash(&request, &material.digest, &artifact_version)?;
         let mut state = unpoison(&self.state);
-        if let Some(previous) = state.get(&request.task_id) {
+        if let Some(previous) = state.get(&publisher_id) {
             if previous.attempt == request.attempt && previous.measurement_hash == measurement_hash
             {
                 return Ok(Some(previous.capture.clone()));
             }
         }
         let source_revision = state
-            .get(&request.task_id)
+            .get(&publisher_id)
             .filter(|previous| previous.attempt == request.attempt)
             .map(|previous| previous.capture.snapshot().source_revision())
             .unwrap_or(0)
@@ -434,7 +802,8 @@ impl SemanticObservationSnapshotProducer for GooseSemanticObservationSnapshotPro
             source_id: format!("signal:trace-measurement:{measurement_hash}"),
             measurement,
             provenance: format!(
-                ".swarm/activity/{}.json plus two identical full owned-artifact reads; deterministic measurements are neutral and grant no intervention authority",
+                "engine publisher {} mirrored at .swarm/activity/{}.json plus two identical full owned-artifact reads; deterministic measurements are neutral and grant no intervention authority",
+                publisher_id,
                 activity_digest_key(&request.task_id)
             ),
         };
@@ -465,7 +834,7 @@ impl SemanticObservationSnapshotProducer for GooseSemanticObservationSnapshotPro
         .map_err(|error| error.to_string())?;
         let capture = SemanticObservationCapture::new(snapshot, summons)?;
         state.insert(
-            request.task_id,
+            publisher_id,
             CapturedTraceState {
                 attempt: request.attempt,
                 measurement_hash,
@@ -690,18 +1059,19 @@ impl GooseSemanticProviderRoute {
                 provider_name
             ));
         }
-        if !provider.supports_single_attempt_streaming() {
+        if !provider.supports_terminal_proven_single_attempt_streaming() {
             return Err(format!(
-                "semantic provider {:?} has no verified single-attempt stream boundary",
+                "semantic provider {:?} has no terminal-proven single-attempt stream boundary",
                 provider_name
             ));
         }
-        let provider_transport_id = provider.transport_identity(&lane.model_id).ok_or_else(|| {
-            format!(
-                "semantic provider {:?} exposes no transport identity",
-                provider_name
-            )
-        })?;
+        let provider_transport_id =
+            provider.transport_identity(&lane.model_id).ok_or_else(|| {
+                format!(
+                    "semantic provider {:?} exposes no transport identity",
+                    provider_name
+                )
+            })?;
         if provider_transport_id != lane.provider_transport_id {
             return Err(format!(
                 "semantic provider {:?} transport does not match verified lane {:?}",
@@ -725,7 +1095,7 @@ pub struct GooseAdmittedSemanticObservationReviewer {
 
 enum SemanticProviderCallError {
     BeforeStream(ProviderError),
-    DuringStream(ProviderError),
+    DuringStream(ProviderError, SingleAttemptStreamOutcome),
 }
 
 impl GooseAdmittedSemanticObservationReviewer {
@@ -888,9 +1258,9 @@ impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationRev
         let messages = [Message::user().with_text(request.observation.user_prompt.clone())];
         let provider_request_id = request.provider_request_id.clone();
         let result = goose::session_context::with_session_id(Some(provider_request_id), async {
-            let stream = route
+            let single_attempt = route
                 .provider
-                .stream_once(
+                .stream_once_with_terminal_proof(
                     &model_config,
                     &request.observation.system_prompt,
                     &messages,
@@ -898,22 +1268,64 @@ impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationRev
                 )
                 .await
                 .map_err(SemanticProviderCallError::BeforeStream)?;
-            collect_stream(stream)
-                .await
-                .map_err(SemanticProviderCallError::DuringStream)
+            let terminal = single_attempt.terminal;
+            match collect_stream(single_attempt.stream).await {
+                Ok(message) => Ok((message, terminal.outcome())),
+                Err(error) => Err(SemanticProviderCallError::DuringStream(
+                    error,
+                    terminal.outcome(),
+                )),
+            }
         })
         .await;
         let (message, _) = match result {
-            Ok(message) => message,
+            Ok((message, SingleAttemptStreamOutcome::Finished)) => message,
+            Ok((_, SingleAttemptStreamOutcome::Failed)) => {
+                return Err(AdmittedSemanticReviewError::terminal_failure(
+                    "semantic reviewer provider reported an explicit failed terminal".to_string(),
+                ));
+            }
+            Ok((_, SingleAttemptStreamOutcome::Pending)) => {
+                return Err(AdmittedSemanticReviewError::unresolved(
+                    "semantic reviewer stream ended without explicit provider terminal proof"
+                        .to_string(),
+                ));
+            }
             Err(SemanticProviderCallError::BeforeStream(error))
-                if provider_error_proves_terminal_response(&error) =>
+                if route.provider.single_attempt_failure_provenance(&error)
+                    == SingleAttemptFailureProvenance::TerminalResponse =>
             {
                 return Err(AdmittedSemanticReviewError::terminal_failure(format!(
                     "semantic reviewer provider returned a terminal failure: {error}"
                 )));
             }
+            Err(SemanticProviderCallError::DuringStream(
+                error,
+                SingleAttemptStreamOutcome::Finished,
+            )) => {
+                return Err(AdmittedSemanticReviewError::local_failure_after_terminal(
+                    format!(
+                        "semantic reviewer failed locally after an explicit finished provider terminal: {error}"
+                    ),
+                    goose_swarm::ProviderTerminalKind::Finished,
+                ));
+            }
+            Err(SemanticProviderCallError::DuringStream(
+                error,
+                SingleAttemptStreamOutcome::Failed,
+            )) => {
+                return Err(AdmittedSemanticReviewError::local_failure_after_terminal(
+                    format!(
+                        "semantic reviewer failed locally after an explicit failed provider terminal: {error}"
+                    ),
+                    goose_swarm::ProviderTerminalKind::Failed,
+                ));
+            }
             Err(SemanticProviderCallError::BeforeStream(error))
-            | Err(SemanticProviderCallError::DuringStream(error)) => {
+            | Err(SemanticProviderCallError::DuringStream(
+                error,
+                SingleAttemptStreamOutcome::Pending,
+            )) => {
                 return Err(AdmittedSemanticReviewError::unresolved(format!(
                     "semantic reviewer provider lifecycle is unresolved: {error}"
                 )));
@@ -1107,6 +1519,10 @@ mod tests {
             true
         }
 
+        fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
         async fn stream_once(
             &self,
             model_config: &ModelConfig,
@@ -1127,6 +1543,19 @@ mod tests {
             ))
         }
 
+        async fn stream_once_with_terminal_proof(
+            &self,
+            model_config: &ModelConfig,
+            system: &str,
+            messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<goose::providers::base::SingleAttemptStream, ProviderError> {
+            Ok(goose::providers::base::SingleAttemptStream::finished(
+                self.stream_once(model_config, system, messages, tools)
+                    .await?,
+            ))
+        }
+
         async fn complete(
             &self,
             _model_config: &ModelConfig,
@@ -1142,9 +1571,45 @@ mod tests {
     }
 
     fn capture_request() -> SemanticObservationCaptureRequest {
+        capture_request_for(0, 1)
+    }
+
+    fn capture_request_for(
+        attempt: u32,
+        admission_sequence: u64,
+    ) -> SemanticObservationCaptureRequest {
+        let capacity_evidence = HostCapacityEvidence::MeasuredProfile {
+            profile_hash: "profile-worker-lane".to_string(),
+            profile_key: "runtime:model:context:build".to_string(),
+            max_concurrent: 1,
+        };
+        let activity_publisher =
+            SemanticActivityPublisher::from_admission(&goose_swarm::AdmissionReceipt {
+                admission_id: format!("run-a:admission:{admission_sequence:08}"),
+                work_id: format!("task:build-api:attempt:{attempt}"),
+                role: WorkRole::Build,
+                priority: goose_swarm::WorkPriority::Implementation,
+                task_rank: 7,
+                source: goose_swarm::TaskVersion {
+                    task_id: "build-api".to_string(),
+                    attempt,
+                    revision: 1,
+                    kind: SourceRevisionKind::TaskAttempt,
+                },
+                fleet_snapshot_id: "fleet-a".to_string(),
+                logical_device_id: "worker-lane".to_string(),
+                model_id: "worker-model".to_string(),
+                physical_host_id: "host-worker-lane".to_string(),
+                model_instance_id: "instance-worker-lane".to_string(),
+                provider_transport_id: VERIFIED_TRANSPORT.to_string(),
+                route_evidence_id: "route-worker-lane".to_string(),
+                capacity_evidence,
+                queue_sequence: admission_sequence,
+                admission_sequence,
+            });
         SemanticObservationCaptureRequest {
             task_id: "build-api".to_string(),
-            attempt: 0,
+            attempt,
             task_rank: 7,
             goal: "Build the sealed API contract".to_string(),
             task_contract: "Implement the owned handler and prove the response".to_string(),
@@ -1159,6 +1624,7 @@ mod tests {
             allowed_finding_routes: vec!["integrate-verify".to_string()],
             running_logical_device_id: "worker-lane".to_string(),
             running_model_id: "worker-model".to_string(),
+            activity_publisher,
         }
     }
 
@@ -1239,8 +1705,7 @@ mod tests {
     fn provider_route_requires_the_sealed_transport_endpoint() {
         for provider in [
             MockProvider::new("unused".to_string()).with_transport(None),
-            MockProvider::new("unused".to_string())
-                .with_transport(Some(OTHER_TRANSPORT)),
+            MockProvider::new("unused".to_string()).with_transport(Some(OTHER_TRANSPORT)),
         ] {
             let error = GooseSemanticProviderRoute::bind(
                 "lmstudio",
@@ -1251,6 +1716,264 @@ mod tests {
             .expect("unproved transport must be rejected");
             assert!(error.contains("transport"));
         }
+    }
+
+    #[test]
+    fn physical_activity_sink_probes_and_atomically_replaces_digest() {
+        let root = tempfile::tempdir().unwrap();
+        let events = Arc::new(RecordingSink::default());
+        let health = ActivitySinkHealth::new(root.path(), events.clone()).unwrap();
+        health.activate().unwrap();
+
+        let request = capture_request();
+        let path = health.activity_path(&request.task_id);
+        health
+            .write_digest(
+                &path,
+                &serde_json::to_vec(&active_digest()).unwrap(),
+                &request.task_id,
+                Some(&request.activity_publisher),
+                "test",
+                true,
+            )
+            .unwrap();
+        let mut second = active_digest();
+        second["last_text"] = serde_json::json!("second authoritative revision");
+        let second = serde_json::to_vec(&second).unwrap();
+        health
+            .write_digest(
+                &path,
+                &second,
+                &request.task_id,
+                Some(&request.activity_publisher),
+                "test",
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), second);
+        assert_eq!(events.count("physical_semantic_activity_sink_ready"), 1);
+        assert!(std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp-")));
+    }
+
+    #[tokio::test]
+    async fn unavailable_ui_mirror_does_not_disable_engine_activity_authority() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(".swarm"), b"blocks the optional mirror").unwrap();
+        std::fs::create_dir_all(root.path().join("src")).unwrap();
+        std::fs::write(root.path().join("src/api.rs"), "pub fn api() {}\n").unwrap();
+        let request = capture_request();
+        let events = Arc::new(RecordingSink::default());
+        let health = Arc::new(ActivitySinkHealth::new(root.path(), events.clone()).unwrap());
+
+        health.activate().unwrap();
+        health
+            .write_digest(
+                &health.activity_path(&request.task_id),
+                &serde_json::to_vec(&active_digest()).unwrap(),
+                &request.task_id,
+                Some(&request.activity_publisher),
+                "stream",
+                true,
+            )
+            .unwrap();
+        let producer =
+            GooseSemanticObservationSnapshotProducer::new_with_activity_health(root.path(), health)
+                .unwrap();
+
+        assert!(producer.capture(request).await.unwrap().is_some());
+        assert_eq!(events.count("physical_semantic_activity_sink_ready"), 1);
+        assert_eq!(
+            events.count("physical_semantic_activity_mirror_degraded"),
+            1
+        );
+        assert_eq!(events.count("physical_semantic_activity_sink_degraded"), 0);
+    }
+
+    #[tokio::test]
+    async fn physical_producer_uses_authoritative_digest_when_ui_mirror_degrades() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("src")).unwrap();
+        std::fs::write(root.path().join("src/api.rs"), "pub fn api() {}\n").unwrap();
+        let request = capture_request();
+        let events = Arc::new(RecordingSink::default());
+        let health = Arc::new(ActivitySinkHealth::new(root.path(), events.clone()).unwrap());
+        health.activate().unwrap();
+        let activity_path = health.activity_path(&request.task_id);
+        health
+            .write_digest(
+                &activity_path,
+                &serde_json::to_vec(&active_digest()).unwrap(),
+                &request.task_id,
+                Some(&request.activity_publisher),
+                "seed",
+                true,
+            )
+            .unwrap();
+        let producer = GooseSemanticObservationSnapshotProducer::new_with_activity_health(
+            root.path(),
+            health.clone(),
+        )
+        .unwrap();
+
+        std::fs::write(
+            &activity_path,
+            serde_json::to_vec(&serde_json::json!({
+                "model": "worker-model",
+                "phase": "done"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(producer.capture(request.clone()).await.unwrap().is_some());
+
+        std::fs::remove_file(&activity_path).unwrap();
+        std::fs::remove_dir(activity_path.parent().unwrap()).unwrap();
+        std::fs::write(activity_path.parent().unwrap(), b"block").unwrap();
+        let mut advanced = active_digest();
+        advanced["last_text"] = serde_json::json!("authoritative memory advanced");
+        health
+            .write_digest(
+                &activity_path,
+                &serde_json::to_vec(&advanced).unwrap(),
+                &request.task_id,
+                Some(&request.activity_publisher),
+                "stream",
+                true,
+            )
+            .unwrap();
+        health
+            .write_digest(
+                &activity_path,
+                &serde_json::to_vec(&advanced).unwrap(),
+                &request.task_id,
+                Some(&request.activity_publisher),
+                "final",
+                true,
+            )
+            .unwrap();
+
+        assert!(producer.capture(request).await.unwrap().is_some());
+        assert_eq!(
+            events.count("physical_semantic_activity_mirror_degraded"),
+            1
+        );
+        assert_eq!(events.count("physical_semantic_activity_sink_degraded"), 0);
+    }
+
+    #[tokio::test]
+    async fn malformed_authoritative_digest_latches_and_blocks_later_provider_turns() {
+        let root = tempfile::tempdir().unwrap();
+        let request = capture_request();
+        let events = Arc::new(RecordingSink::default());
+        let health = Arc::new(ActivitySinkHealth::new(root.path(), events.clone()).unwrap());
+        health.activate().unwrap();
+        let activity_path = health.activity_path(&request.task_id);
+
+        let first = health
+            .write_digest(
+                &activity_path,
+                b"not-json",
+                &request.task_id,
+                Some(&request.activity_publisher),
+                "stream",
+                true,
+            )
+            .unwrap_err();
+        assert!(first.contains("not valid JSON"));
+        let later = health
+            .write_digest(
+                &activity_path,
+                &serde_json::to_vec(&active_digest()).unwrap(),
+                &request.task_id,
+                Some(&request.activity_publisher),
+                "final",
+                true,
+            )
+            .unwrap_err();
+        assert!(later.contains("authority degraded"));
+
+        let producer =
+            GooseSemanticObservationSnapshotProducer::new_with_activity_health(root.path(), health)
+                .unwrap();
+        assert!(producer
+            .capture(request)
+            .await
+            .unwrap_err()
+            .contains("authority degraded"));
+        assert_eq!(events.count("physical_semantic_activity_sink_degraded"), 1);
+    }
+
+    #[tokio::test]
+    async fn retry_publisher_cannot_consume_an_earlier_attempt_digest() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("src")).unwrap();
+        std::fs::write(root.path().join("src/api.rs"), "pub fn api() {}\n").unwrap();
+        let first = capture_request_for(0, 1);
+        let retry = capture_request_for(1, 2);
+        let health = Arc::new(
+            ActivitySinkHealth::new(root.path(), Arc::new(RecordingSink::default())).unwrap(),
+        );
+        health.activate().unwrap();
+        let activity_path = health.activity_path(&first.task_id);
+        health
+            .write_digest(
+                &activity_path,
+                &serde_json::to_vec(&active_digest()).unwrap(),
+                &first.task_id,
+                Some(&first.activity_publisher),
+                "stream",
+                true,
+            )
+            .unwrap();
+        let producer = GooseSemanticObservationSnapshotProducer::new_with_activity_health(
+            root.path(),
+            health.clone(),
+        )
+        .unwrap();
+
+        assert!(producer.capture(retry.clone()).await.unwrap().is_none());
+        health
+            .write_digest(
+                &activity_path,
+                &serde_json::to_vec(&active_digest()).unwrap(),
+                &retry.task_id,
+                Some(&retry.activity_publisher),
+                "stream",
+                true,
+            )
+            .unwrap();
+        assert!(producer.capture(retry).await.unwrap().is_some());
+    }
+
+    #[test]
+    fn physical_activity_authority_rejects_digest_model_mismatch() {
+        let root = tempfile::tempdir().unwrap();
+        let request = capture_request();
+        let events = Arc::new(RecordingSink::default());
+        let health = ActivitySinkHealth::new(root.path(), events.clone()).unwrap();
+        health.activate().unwrap();
+        let path = health.activity_path(&request.task_id);
+        let mut wrong = active_digest();
+        wrong["model"] = serde_json::json!("other-model");
+        let error = health
+            .write_digest(
+                &path,
+                &serde_json::to_vec(&wrong).unwrap(),
+                &request.task_id,
+                Some(&request.activity_publisher),
+                "stream",
+                true,
+            )
+            .unwrap_err();
+        assert!(error.contains("does not match publisher model"));
+        assert_eq!(events.count("physical_semantic_activity_sink_degraded"), 1);
     }
 
     #[tokio::test]

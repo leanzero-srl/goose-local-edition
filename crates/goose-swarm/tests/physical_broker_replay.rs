@@ -5,10 +5,8 @@ use goose_swarm::{
     VerifiedPhysicalLane, WorkOpportunity, WorkPriority, WorkRole,
 };
 
-const TRANSPORT_A: &str =
-    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const TRANSPORT_B: &str =
-    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const TRANSPORT_A: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const TRANSPORT_B: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 fn lane(device: &str, model: &str, host: &str, instance: &str) -> VerifiedPhysicalLane {
     VerifiedPhysicalLane {

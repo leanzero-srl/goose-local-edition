@@ -19,7 +19,7 @@ use crate::event::{EventSink, SwarmEvent};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{oneshot, Mutex, Notify};
 
 type AdmissionResult = Result<AdmissionReceipt, BrokerError>;
@@ -30,6 +30,23 @@ struct ControlState {
     admission_waiters: HashMap<String, oneshot::Sender<AdmissionResult>>,
     provider_waiters: HashMap<(String, ProviderRequestKey), oneshot::Sender<ProviderRequestResult>>,
     released: HashMap<String, ReleasedAdmissionReceipt>,
+}
+
+pub trait ProviderLifecycleJournal: Send + Sync {
+    fn provider_request_started(&self, receipt: &ProviderRequestReceipt) -> Result<(), String>;
+    fn provider_terminal(&self, receipt: &ProviderTerminalReceipt) -> Result<(), String>;
+}
+
+struct NullProviderLifecycleJournal;
+
+impl ProviderLifecycleJournal for NullProviderLifecycleJournal {
+    fn provider_request_started(&self, _receipt: &ProviderRequestReceipt) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn provider_terminal(&self, _receipt: &ProviderTerminalReceipt) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 impl ControlState {
@@ -134,11 +151,46 @@ impl ControlState {
             }
         }
     }
+
+    fn reject_waiters_after_journal_failure(&mut self, reason: &str, sink: &dyn EventSink) {
+        let admission_waiters = std::mem::take(&mut self.admission_waiters);
+        for (work_id, waiter) in admission_waiters {
+            if let Some(receipt) = self.broker.withdraw_pending_work(&work_id) {
+                sink.emit(&SwarmEvent::BrokerWorkWithdrawn { receipt });
+            }
+            let _ = waiter.send(Err(BrokerError::ProviderLifecycleJournal(
+                reason.to_string(),
+            )));
+        }
+
+        let provider_waiters = std::mem::take(&mut self.provider_waiters);
+        for ((admission_id, key), waiter) in provider_waiters {
+            let admission = self.broker.active_receipt(&admission_id).cloned();
+            if let (Some(admission), Ok(receipt)) = (
+                admission,
+                self.broker
+                    .withdraw_pending_provider_request(&admission_id, &key),
+            ) {
+                sink.emit(&SwarmEvent::BrokerProviderRequestWithdrawn {
+                    admission,
+                    receipt,
+                    reason:
+                        "provider lifecycle journal failed before the queued request was admitted"
+                            .to_string(),
+                });
+            }
+            let _ = waiter.send(Err(BrokerError::ProviderLifecycleJournal(
+                reason.to_string(),
+            )));
+        }
+    }
 }
 
 struct ControlInner {
     state: Mutex<ControlState>,
     sink: Arc<dyn EventSink>,
+    journal: Arc<dyn ProviderLifecycleJournal>,
+    journal_failure: StdMutex<Option<String>>,
     changed: Notify,
     semantic_observation_plane_claimed: AtomicBool,
 }
@@ -154,6 +206,20 @@ impl PhysicalAdmissionControl {
         snapshot: PhysicalFleetSnapshot,
         sink: Arc<dyn EventSink>,
     ) -> Result<Self, BrokerError> {
+        Self::new_with_journal(
+            correlation_scope,
+            snapshot,
+            sink,
+            Arc::new(NullProviderLifecycleJournal),
+        )
+    }
+
+    pub fn new_with_journal(
+        correlation_scope: impl Into<String>,
+        snapshot: PhysicalFleetSnapshot,
+        sink: Arc<dyn EventSink>,
+        journal: Arc<dyn ProviderLifecycleJournal>,
+    ) -> Result<Self, BrokerError> {
         let broker = PhysicalBroker::new(correlation_scope, snapshot)?;
         Ok(Self {
             inner: Arc::new(ControlInner {
@@ -164,10 +230,64 @@ impl PhysicalAdmissionControl {
                     released: HashMap::new(),
                 }),
                 sink,
+                journal,
+                journal_failure: StdMutex::new(None),
                 changed: Notify::new(),
                 semantic_observation_plane_claimed: AtomicBool::new(false),
             }),
         })
+    }
+
+    fn journal_failure(&self) -> Option<String> {
+        self.inner
+            .journal_failure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn ensure_journal_healthy(&self) -> Result<(), BrokerError> {
+        match self.journal_failure() {
+            Some(reason) => Err(BrokerError::ProviderLifecycleJournal(reason)),
+            None => Ok(()),
+        }
+    }
+
+    fn reject_after_journal_failure(
+        &self,
+        state: &mut ControlState,
+        failed_start: Option<&ProviderRequestReceipt>,
+        reason: &str,
+    ) {
+        if let Some(receipt) = failed_start {
+            let admission = state.broker.active_receipt(&receipt.admission_id).cloned();
+            if let (Some(admission), Ok(revoked)) = (
+                admission,
+                state
+                    .broker
+                    .revoke_undelivered_provider_request(&receipt.admission_id, &receipt.key),
+            ) {
+                self.inner
+                    .sink
+                    .emit(&SwarmEvent::BrokerProviderRequestGrantRevoked {
+                        admission,
+                        receipt: revoked,
+                        reason:
+                            "provider lifecycle start could not be durably journaled before HTTP"
+                                .to_string(),
+                    });
+            }
+        }
+        state.reject_waiters_after_journal_failure(reason, self.inner.sink.as_ref());
+    }
+
+    fn pump_if_journal_healthy(&self, state: &mut ControlState) -> Result<(), BrokerError> {
+        if let Some(reason) = self.journal_failure() {
+            self.reject_after_journal_failure(state, None, &reason);
+            return Err(BrokerError::ProviderLifecycleJournal(reason));
+        }
+        state.pump(self.inner.sink.as_ref());
+        Ok(())
     }
 
     pub async fn verified_lane(&self, logical_device_id: &str) -> Option<VerifiedPhysicalLane> {
@@ -204,6 +324,7 @@ impl PhysicalAdmissionControl {
     }
 
     pub async fn set_source_revision(&self, source: TaskVersion) -> Result<(), BrokerError> {
+        self.ensure_journal_healthy()?;
         let mut state = self.inner.state.lock().await;
         let stale = match state.broker.set_source_revision(source) {
             Ok(stale) => stale,
@@ -213,13 +334,14 @@ impl PhysicalAdmissionControl {
             }
         };
         state.reject_stale_waiters(&stale, self.inner.sink.as_ref());
-        state.pump(self.inner.sink.as_ref());
+        self.pump_if_journal_healthy(&mut state)?;
         drop(state);
         self.inner.changed.notify_waiters();
         Ok(())
     }
 
     pub async fn remove_source_revision(&self, source: &TaskVersion) -> Result<(), BrokerError> {
+        self.ensure_journal_healthy()?;
         let mut state = self.inner.state.lock().await;
         let stale = match state.broker.remove_source_revision(source) {
             Ok(stale) => stale,
@@ -229,7 +351,7 @@ impl PhysicalAdmissionControl {
             }
         };
         state.reject_stale_waiters(&stale, self.inner.sink.as_ref());
-        state.pump(self.inner.sink.as_ref());
+        self.pump_if_journal_healthy(&mut state)?;
         drop(state);
         self.inner.changed.notify_waiters();
         Ok(())
@@ -241,6 +363,7 @@ impl PhysicalAdmissionControl {
         expected_fleet_snapshot_id: &str,
         evidence: HostCapacityEvidence,
     ) -> Result<CapacityUpdateReceipt, BrokerError> {
+        self.ensure_journal_healthy()?;
         let mut state = self.inner.state.lock().await;
         let receipt =
             match state
@@ -256,7 +379,7 @@ impl PhysicalAdmissionControl {
         self.inner.sink.emit(&SwarmEvent::BrokerCapacityUpdated {
             receipt: receipt.clone(),
         });
-        state.pump(self.inner.sink.as_ref());
+        self.pump_if_journal_healthy(&mut state)?;
         drop(state);
         self.inner.changed.notify_waiters();
         Ok(receipt)
@@ -274,6 +397,7 @@ impl PhysicalAdmissionControl {
         &self,
         opportunity: WorkOpportunity,
     ) -> Result<Option<AdmittedWork>, BrokerError> {
+        self.ensure_journal_healthy()?;
         let work_id = opportunity.work_id.clone();
         let (sender, receiver) = oneshot::channel();
         {
@@ -289,7 +413,7 @@ impl PhysicalAdmissionControl {
                 }
             }
             state.admission_waiters.insert(work_id.clone(), sender);
-            state.pump(self.inner.sink.as_ref());
+            self.pump_if_journal_healthy(&mut state)?;
             if state.admission_waiters.remove(&work_id).is_some() {
                 let receipt = state
                     .broker
@@ -321,6 +445,7 @@ impl PhysicalAdmissionControl {
         &self,
         opportunity: WorkOpportunity,
     ) -> Result<PendingAdmission, BrokerError> {
+        self.ensure_journal_healthy()?;
         let work_id = opportunity.work_id.clone();
         let (sender, receiver) = oneshot::channel();
         {
@@ -336,7 +461,7 @@ impl PhysicalAdmissionControl {
                 }
             }
             state.admission_waiters.insert(work_id.clone(), sender);
-            state.pump(self.inner.sink.as_ref());
+            self.pump_if_journal_healthy(&mut state)?;
         }
         self.inner.changed.notify_waiters();
         Ok(PendingAdmission {
@@ -356,7 +481,8 @@ impl PhysicalAdmissionControl {
         self.inner.state.lock().await.broker.physical_occupancy()
     }
 
-    pub async fn wait_until_drained(&self) {
+    pub async fn wait_until_drained(&self) -> Result<(), BrokerError> {
+        self.ensure_journal_healthy()?;
         let (pending_work_ids, unresolved) = {
             let state = self.inner.state.lock().await;
             (
@@ -375,9 +501,10 @@ impl PhysicalAdmissionControl {
             tokio::pin!(changed);
             changed.as_mut().enable();
             if self.occupancy().await == (0, 0) {
-                return;
+                return Ok(());
             }
             changed.await;
+            self.ensure_journal_healthy()?;
         }
     }
 
@@ -385,6 +512,7 @@ impl PhysicalAdmissionControl {
         &self,
         receipt: ProviderRequestReceipt,
     ) -> Result<ProviderRequestReceipt, BrokerError> {
+        self.ensure_journal_healthy()?;
         let admission_id = receipt.admission_id.clone();
         let key = receipt.key.clone();
         let (sender, receiver) = oneshot::channel();
@@ -401,6 +529,13 @@ impl PhysicalAdmissionControl {
                             admission,
                             receipt: receipt.clone(),
                         });
+                    if let Err(error) = self.journal_provider_start(&receipt) {
+                        let reason = self.journal_failure().unwrap_or_else(|| error.to_string());
+                        self.reject_after_journal_failure(&mut state, Some(&receipt), &reason);
+                        drop(state);
+                        self.inner.changed.notify_waiters();
+                        return Err(error);
+                    }
                     return Ok(receipt);
                 }
                 Ok(ProviderRequestDisposition::Queued(queue_receipt)) => {
@@ -414,7 +549,7 @@ impl PhysicalAdmissionControl {
                     state
                         .provider_waiters
                         .insert((admission_id.clone(), key.clone()), sender);
-                    state.pump(self.inner.sink.as_ref());
+                    self.pump_if_journal_healthy(&mut state)?;
                 }
                 Err(error) => {
                     self.emit_rejection(admission, None, Some(key), "provider_request", &error);
@@ -428,10 +563,19 @@ impl PhysicalAdmissionControl {
             BrokerError::AdmissionWaiterClosed(format!("{admission_id}:provider"))
         })??;
         guard.disarm();
+        if let Err(error) = self.journal_provider_start(&receipt) {
+            let mut state = self.inner.state.lock().await;
+            let reason = self.journal_failure().unwrap_or_else(|| error.to_string());
+            self.reject_after_journal_failure(&mut state, Some(&receipt), &reason);
+            drop(state);
+            self.inner.changed.notify_waiters();
+            return Err(error);
+        }
         Ok(receipt)
     }
 
     async fn close_provider_starts(&self, admission_id: &str) -> Result<(), BrokerError> {
+        self.ensure_journal_healthy()?;
         let mut state = self.inner.state.lock().await;
         let closed = state.broker.close_provider_starts(admission_id)?;
         if let Some(admission) = closed.admission {
@@ -475,6 +619,7 @@ impl PhysicalAdmissionControl {
         &self,
         receipt: ProviderNotStartedReceipt,
     ) -> Result<(), BrokerError> {
+        self.ensure_journal_healthy()?;
         let admission_id = receipt.admission_id.clone();
         let mut state = self.inner.state.lock().await;
         let admission = state.broker.active_receipt(&admission_id).cloned();
@@ -506,9 +651,27 @@ impl PhysicalAdmissionControl {
         &self,
         receipt: ProviderTerminalReceipt,
     ) -> Result<(), BrokerError> {
+        self.ensure_journal_healthy()?;
         let admission_id = receipt.admission_id.clone();
         let mut state = self.inner.state.lock().await;
         let admission = state.broker.active_receipt(&admission_id).cloned();
+        if let Err(error) = state.broker.validate_provider_terminal(&receipt) {
+            self.emit_rejection(
+                admission,
+                None,
+                Some(receipt.key.clone()),
+                "provider_terminal",
+                &error,
+            );
+            return Err(error);
+        }
+        if let Err(error) = self.journal_provider_terminal(&receipt) {
+            let reason = self.journal_failure().unwrap_or_else(|| error.to_string());
+            self.reject_after_journal_failure(&mut state, None, &reason);
+            drop(state);
+            self.inner.changed.notify_waiters();
+            return Err(error);
+        }
         match state.broker.observe_provider_terminal(receipt.clone()) {
             Ok(()) => self
                 .inner
@@ -539,6 +702,7 @@ impl PhysicalAdmissionControl {
         admission_id: &str,
         kind: LocalCompletionKind,
     ) -> Result<(), BrokerError> {
+        self.ensure_journal_healthy()?;
         let mut state = self.inner.state.lock().await;
         let admission = state.broker.active_receipt(admission_id).cloned();
         match state.broker.record_local_completion(admission_id, kind) {
@@ -561,6 +725,7 @@ impl PhysicalAdmissionControl {
         &self,
         admission_id: &str,
     ) -> Result<ReleasedAdmissionReceipt, BrokerError> {
+        self.ensure_journal_healthy()?;
         {
             let state = self.inner.state.lock().await;
             if let Some(receipt) = state.released.get(admission_id).cloned() {
@@ -593,6 +758,7 @@ impl PhysicalAdmissionControl {
                 return Ok(receipt);
             }
             changed.await;
+            self.ensure_journal_healthy()?;
         }
     }
 
@@ -601,6 +767,7 @@ impl PhysicalAdmissionControl {
         state: &mut ControlState,
         admission_id: &str,
     ) -> Result<(), BrokerError> {
+        self.ensure_journal_healthy()?;
         if let Some(receipt) = state.broker.release_if_terminal(admission_id)? {
             self.inner.sink.emit(&SwarmEvent::BrokerAdmissionReleased {
                 receipt: receipt.clone(),
@@ -610,7 +777,7 @@ impl PhysicalAdmissionControl {
         // A provider terminal releases a physical turn permit even while the task envelope remains
         // active for local tool work. Re-run admission on every lifecycle transition, not only when
         // the whole task envelope is released.
-        state.pump(self.inner.sink.as_ref());
+        self.pump_if_journal_healthy(state)?;
         Ok(())
     }
 
@@ -631,7 +798,9 @@ impl PhysicalAdmissionControl {
                     .emit(&SwarmEvent::BrokerAdmissionGrantRevoked { receipt });
             }
         }
-        state.pump(self.inner.sink.as_ref());
+        if self.journal_failure().is_none() {
+            state.pump(self.inner.sink.as_ref());
+        }
         drop(state);
         self.inner.changed.notify_waiters();
     }
@@ -660,7 +829,9 @@ impl PhysicalAdmissionControl {
                         .to_string(),
                 });
         }
-        state.pump(self.inner.sink.as_ref());
+        if self.journal_failure().is_none() {
+            state.pump(self.inner.sink.as_ref());
+        }
         drop(state);
         self.inner.changed.notify_waiters();
     }
@@ -680,6 +851,67 @@ impl PhysicalAdmissionControl {
             receipt_kind: receipt_kind.to_string(),
             reason: error.to_string(),
         });
+    }
+
+    fn journal_provider_start(&self, receipt: &ProviderRequestReceipt) -> Result<(), BrokerError> {
+        let reason = {
+            let mut failure = self
+                .inner
+                .journal_failure
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(reason) = failure.as_ref() {
+                return Err(BrokerError::ProviderLifecycleJournal(reason.clone()));
+            }
+            match self.inner.journal.provider_request_started(receipt) {
+                Ok(()) => return Ok(()),
+                Err(reason) => {
+                    *failure = Some(reason.clone());
+                    reason
+                }
+            }
+        };
+        self.inner.sink.write_value(serde_json::json!({
+            "event": "physical_provider_journal_failed",
+            "transition": "provider_request_started",
+            "admission_id": receipt.admission_id,
+            "provider_request_id": receipt.key.provider_request_id,
+            "reason": reason,
+        }));
+        self.inner.changed.notify_waiters();
+        Err(BrokerError::ProviderLifecycleJournal(reason))
+    }
+
+    fn journal_provider_terminal(
+        &self,
+        receipt: &ProviderTerminalReceipt,
+    ) -> Result<(), BrokerError> {
+        let reason = {
+            let mut failure = self
+                .inner
+                .journal_failure
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(reason) = failure.as_ref() {
+                return Err(BrokerError::ProviderLifecycleJournal(reason.clone()));
+            }
+            match self.inner.journal.provider_terminal(receipt) {
+                Ok(()) => return Ok(()),
+                Err(reason) => {
+                    *failure = Some(reason.clone());
+                    reason
+                }
+            }
+        };
+        self.inner.sink.write_value(serde_json::json!({
+            "event": "physical_provider_journal_failed",
+            "transition": "provider_terminal",
+            "admission_id": receipt.admission_id,
+            "provider_request_id": receipt.key.provider_request_id,
+            "reason": reason,
+        }));
+        self.inner.changed.notify_waiters();
+        Err(BrokerError::ProviderLifecycleJournal(reason))
     }
 
     fn emit_provider_free_dispatch(&self, req: &DispatchRequest) {
