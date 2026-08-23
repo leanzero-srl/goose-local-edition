@@ -3,6 +3,10 @@ use futures::Stream;
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc,
+};
 use utoipa::ToSchema;
 
 use crate::{
@@ -382,6 +386,82 @@ pub enum SingleAttemptFailureProvenance {
     Unresolved,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SingleAttemptStreamOutcome {
+    Pending,
+    Finished,
+    Failed,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SingleAttemptTerminalProof {
+    state: Arc<AtomicU8>,
+}
+
+impl SingleAttemptTerminalProof {
+    const PENDING: u8 = 0;
+    const FINISHED: u8 = 1;
+    const FAILED: u8 = 2;
+
+    pub fn channel() -> (Self, SingleAttemptTerminalReporter) {
+        let proof = Self::default();
+        let reporter = SingleAttemptTerminalReporter {
+            state: proof.state.clone(),
+        };
+        (proof, reporter)
+    }
+
+    pub fn outcome(&self) -> SingleAttemptStreamOutcome {
+        match self.state.load(Ordering::Acquire) {
+            Self::FINISHED => SingleAttemptStreamOutcome::Finished,
+            Self::FAILED => SingleAttemptStreamOutcome::Failed,
+            _ => SingleAttemptStreamOutcome::Pending,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SingleAttemptTerminalReporter {
+    state: Arc<AtomicU8>,
+}
+
+impl SingleAttemptTerminalReporter {
+    pub fn mark_finished(&self) {
+        let _ = self.state.compare_exchange(
+            SingleAttemptTerminalProof::PENDING,
+            SingleAttemptTerminalProof::FINISHED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+
+    pub fn mark_failed(&self) {
+        let _ = self.state.compare_exchange(
+            SingleAttemptTerminalProof::PENDING,
+            SingleAttemptTerminalProof::FAILED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+}
+
+pub struct SingleAttemptStream {
+    pub stream: MessageStream,
+    pub terminal: SingleAttemptTerminalProof,
+}
+
+impl SingleAttemptStream {
+    pub fn new(stream: MessageStream, terminal: SingleAttemptTerminalProof) -> Self {
+        Self { stream, terminal }
+    }
+
+    pub fn finished(stream: MessageStream) -> Self {
+        let (terminal, reporter) = SingleAttemptTerminalProof::channel();
+        reporter.mark_finished();
+        Self { stream, terminal }
+    }
+}
+
 /// Base trait for AI providers (OpenAI, Anthropic, etc)
 #[async_trait]
 pub trait Provider: Send + Sync {
@@ -410,6 +490,12 @@ pub trait Provider: Send + Sync {
         false
     }
 
+    /// Whether `stream_once_with_terminal_proof` reports an explicit provider-protocol terminal
+    /// signal independently from client stream EOF.
+    fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+        false
+    }
+
     /// Classify an error returned before `stream_once` establishes its stream. The default is
     /// deliberately unresolved: a shared `ProviderError` variant does not prove that a remote
     /// request reached a terminal response. Implementations may opt in only when their own
@@ -433,6 +519,22 @@ pub trait Provider: Send + Sync {
     ) -> Result<MessageStream, ProviderError> {
         Err(ProviderError::NotImplemented(format!(
             "provider `{}` does not expose single-attempt streaming",
+            self.get_name()
+        )))
+    }
+
+    /// Start exactly one external provider request and return its protocol-terminal proof. Bare
+    /// client EOF must leave the proof pending; only an explicit provider completion/failure event
+    /// or a fully decoded non-streaming response may resolve it.
+    async fn stream_once_with_terminal_proof(
+        &self,
+        _model_config: &ModelConfig,
+        _system: &str,
+        _messages: &[Message],
+        _tools: &[Tool],
+    ) -> Result<SingleAttemptStream, ProviderError> {
+        Err(ProviderError::NotImplemented(format!(
+            "provider `{}` does not expose terminal-proven single-attempt streaming",
             self.get_name()
         )))
     }
@@ -625,6 +727,19 @@ pub trait Provider: Send + Sync {
 mod tests {
     use super::*;
     use test_case::test_case;
+
+    #[test]
+    fn terminal_proof_preserves_the_first_provider_signal() {
+        let (finished, finished_reporter) = SingleAttemptTerminalProof::channel();
+        finished_reporter.mark_finished();
+        finished_reporter.mark_failed();
+        assert_eq!(finished.outcome(), SingleAttemptStreamOutcome::Finished);
+
+        let (failed, failed_reporter) = SingleAttemptTerminalProof::channel();
+        failed_reporter.mark_failed();
+        failed_reporter.mark_finished();
+        assert_eq!(failed.outcome(), SingleAttemptStreamOutcome::Failed);
+    }
 
     fn content_from_str(s: String) -> MessageContent {
         if let Some(img_data) = s.strip_prefix("*img:") {

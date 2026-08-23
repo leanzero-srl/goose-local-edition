@@ -8,11 +8,12 @@ use super::swarm_control_registry::{
     apply_uncapped_effective_values, control_registry_export, merge_effective_config_controls,
     resolve_control_precedence,
 };
+use super::swarm_provider_journal::DurableProviderLifecycleJournal;
 use super::swarm_provider_lifecycle::{
     bind_current_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
 };
 use super::swarm_semantic::{
-    activity_digest_key, GooseAdmittedSemanticObservationReviewer,
+    activity_digest_key, ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
     GooseSemanticObservationSnapshotProducer, GooseSemanticProviderRoute, ReasoningRecurrenceMeter,
 };
 use anyhow::{anyhow, bail, Result};
@@ -38,8 +39,8 @@ use goose_swarm::{
     JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalAdmissionControl,
     PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle,
     ProviderLifecycleDispatcher, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext,
-    Replanner, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord,
-    Verdict, VerifiedPhysicalIdentity,
+    Replanner, Scheduler, SemanticActivityPublisher, SwarmEvent, TaskDispatcher, TaskRunOutput,
+    TaskSpec, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -16476,6 +16477,9 @@ pub struct GooseAgentDispatcher {
     /// there is no way to record that a user's note was delivered. Measured: a note was written, the engine
     /// read it correctly, and NOTHING in the run log or the UI could show it had happened.
     events: Arc<dyn EventSink>,
+    /// Required, atomically-replaced worker activity evidence while physical semantic supervision is active.
+    /// Legacy runs retain best-effort digests; physical runs fail closed before dispatch or after provider EOF.
+    activity_sink_health: Arc<ActivitySinkHealth>,
     /// Notes older than this belong to a PREVIOUS run in the same directory (nothing ever cleared the inbox).
     /// Epoch-ms of this run's start.
     notes_since_ms: i64,
@@ -16572,6 +16576,9 @@ impl GooseAgentDispatcher {
         repeat_break: bool,
     ) -> Result<Self> {
         let provider = goose::providers::create("lmstudio", vec![]).await?;
+        let activity_sink_health = Arc::new(
+            ActivitySinkHealth::new(&working_dir, events.clone()).map_err(anyhow::Error::msg)?,
+        );
         let session_root = std::env::temp_dir().join("goose-swarm-sessions");
         std::fs::create_dir_all(&session_root)?;
         // Use the global session store so each worker's full trace is fetchable by its logged
@@ -16618,6 +16625,7 @@ impl GooseAgentDispatcher {
             detail_memo_on,
             replan_authority: Mutex::new(None),
             repeat_break,
+            activity_sink_health,
         })
     }
 
@@ -16914,6 +16922,7 @@ impl GooseAgentDispatcher {
             AgentToolSurface::Developer,
             self.planner_timeout_secs,
             activity_key,
+            None,
             None, // no assistant prefill on this path
             None, // planner-side calls are never forced to a tool
             temp_override,
@@ -16946,6 +16955,7 @@ impl GooseAgentDispatcher {
             AgentToolSurface::Developer,
             idle_secs,
             activity_key,
+            None,
             None, // no assistant prefill on this path
             None, // planner-side calls are never forced to a tool
             None,
@@ -16983,6 +16993,7 @@ impl GooseAgentDispatcher {
             None,
             None,
             None,
+            None,
         )
         .await
     }
@@ -16990,6 +17001,51 @@ impl GooseAgentDispatcher {
     /// Like `run_agent` but the agent's file/shell tools are rooted at `work_dir` (the session working_dir).
     /// For a SPECULATIVE twin this is an isolated shadow copy, so the twin never writes the real tree; for
     /// every normal call `work_dir == self.working_dir`, so behavior is unchanged.
+    fn persist_activity_digest(
+        &self,
+        activity_file: Option<&Path>,
+        activity_mirror: Option<&Path>,
+        contents: &[u8],
+        task_id: Option<&str>,
+        activity_publisher: Option<&SemanticActivityPublisher>,
+        stage: &'static str,
+    ) -> Result<()> {
+        let required = activity_publisher.is_some();
+        if required && activity_file.is_none() {
+            return Err(anyhow!(
+                "physical provider dispatch has no semantic activity task id"
+            ));
+        }
+        let task_id = task_id.unwrap_or("legacy-untracked");
+        if let Some(path) = activity_file {
+            let result = self.activity_sink_health.write_digest(
+                path,
+                contents,
+                task_id,
+                activity_publisher,
+                stage,
+                required,
+            );
+            if required {
+                result.map_err(anyhow::Error::msg)?;
+            }
+        }
+        if let Some(path) = activity_mirror {
+            let result = self.activity_sink_health.write_digest(
+                path,
+                contents,
+                task_id,
+                activity_publisher,
+                stage,
+                required,
+            );
+            if required {
+                result.map_err(anyhow::Error::msg)?;
+            }
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn run_agent_in(
         &self,
@@ -17007,6 +17063,7 @@ impl GooseAgentDispatcher {
         // thrashing (many-actions, zero-output) worker by BEHAVIOR instead of waiting on the clock.
         // None for planner-side calls (architect/detailer/scout/judge), which are not judged.
         activity_key: Option<&str>,
+        activity_publisher: Option<&SemanticActivityPublisher>,
         // Text to PREFILL the assistant turn with (None = today's behaviour, byte-identical).
         //
         // A server that receives a conversation ending in an `assistant` message appends no generation
@@ -17158,6 +17215,73 @@ impl GooseAgentDispatcher {
             retry_config: None,
         };
 
+        let physical_activity_required = provider_lifecycle_active();
+        if physical_activity_required && activity_key.is_none() {
+            return Err(anyhow!(
+                "physical provider dispatch has no semantic activity task id"
+            ));
+        }
+        let validated_activity_publisher = match (physical_activity_required, activity_publisher) {
+            (true, Some(publisher)) => {
+                publisher.validate().map_err(anyhow::Error::msg)?;
+                if Some(publisher.task_id.as_str()) != activity_key
+                    || publisher.model_id != model_id
+                {
+                    return Err(anyhow!(
+                        "physical semantic activity publisher does not match task/model dispatch"
+                    ));
+                }
+                Some(publisher)
+            }
+            (true, None) => {
+                return Err(anyhow!(
+                    "physical provider dispatch has no engine-minted activity publisher"
+                ));
+            }
+            (false, _) => None,
+        };
+        let activity_root = if physical_activity_required {
+            self.activity_sink_health.working_dir().to_path_buf()
+        } else {
+            work_dir.clone()
+        };
+        let activity_file = activity_key.map(|key| {
+            activity_root
+                .join(".swarm")
+                .join("activity")
+                .join(format!("{}.json", activity_digest_key(key)))
+        });
+        let activity_mirror = (!physical_activity_required)
+            .then_some(activity_key)
+            .flatten()
+            .filter(|key| key.starts_with("fix::") || key.starts_with("complete-fix"))
+            .and_then(|key| {
+                let directory = self.working_dir.join(".swarm").join("activity");
+                if directory == work_dir.join(".swarm").join("activity") {
+                    return None;
+                }
+                Some(directory.join(format!("{}.json", activity_digest_key(key))))
+            });
+        if activity_file.is_some() {
+            let seed = serde_json::json!({
+                "tool_calls": 0,
+                "errors": 0,
+                "recent": [],
+                "last_text": "",
+                "model": model_id,
+                "phase": "processing",
+            })
+            .to_string();
+            self.persist_activity_digest(
+                activity_file.as_deref(),
+                activity_mirror.as_deref(),
+                seed.as_bytes(),
+                activity_key,
+                validated_activity_publisher,
+                "seed",
+            )?;
+        }
+
         let mut stream = agent
             .reply(user_message, session_config.clone(), None)
             .await
@@ -17184,60 +17308,7 @@ impl GooseAgentDispatcher {
         // and whose tool reported a problem; those are usually PRODUCTIVE (a worker running its own code
         // and finding a real bug), whereas a malformed call is pure waste.
         let mut malformed: usize = 0;
-        // Per-turn activity heartbeat for the judge (worker calls only). Reset to 0 at the start of every
-        // attempt so a re-dispatch never inherits a prior attempt's count. Best-effort: a failed write
-        // just means the judge falls back to its time-based checks.
-        let activity_file = activity_key.map(|k| {
-            // Use work_dir (== self.working_dir for a normal task, == the shadow for a speculative twin) so a
-            // twin's heartbeat stays inside its shadow rather than touching the real tree's .swarm/activity.
-            let dir = work_dir.join(".swarm").join("activity");
-            let _ = std::fs::create_dir_all(&dir);
-            dir.join(format!("{}.json", activity_digest_key(k)))
-        });
-        // MIRROR A FIX TASK'S HEARTBEAT INTO THE REAL TREE. A `fix::` task always runs speculative,
-        // so the line above puts its digest inside a system-temp shadow that the desktop never reads
-        // and that is deleted when the round ends — which is why two fix workers showed "generating…"
-        // with nothing behind them for ten minutes (operator report; the shadow-locality was the
-        // second half of that defect, found by adversarial review of the first fix). Only fix ids are
-        // mirrored: they are unique per round+file, whereas a speculative TWIN shares its task id with
-        // the primary and two writers would fight over one file — the case the comment above protects.
-        let activity_mirror = activity_key
-            // BOTH repair paths. The scheduled per-file tasks are `fix::rN::<file>`; the wave path
-            // races `complete-fix::twinN`, and those are speculative too, so leaving them out put
-            // the panel right back where it started — three nodes grinding repair twins with
-            // nothing behind them. Caught live watching this very run, one prefix short.
-            .filter(|k| k.starts_with("fix::") || k.starts_with("complete-fix"))
-            .and_then(|k| {
-                let dir = self.working_dir.join(".swarm").join("activity");
-                if dir == work_dir.join(".swarm").join("activity") {
-                    return None; // not a shadow — the primary write already lands here
-                }
-                std::fs::create_dir_all(&dir).ok()?;
-                Some(dir.join(format!("{}.json", activity_digest_key(k))))
-            });
-        if let Some(p) = &activity_file {
-            // Seed the digest the instant the call is DISPATCHED — before the first token — carrying the node
-            // (`model`) and phase="processing". LM Studio processes the prompt (often many seconds on a big
-            // context) before it emits anything, and with no token there is no stream event and no digest, so
-            // the node read as "idle — no task" while it was busy prompt-processing. This seed makes the panel
-            // show the node + "processing the prompt…" from the start; the first real digest (with tokens)
-            // overwrites it with phase gone, flipping the node to generating.
-            let _ = std::fs::write(
-                p,
-                serde_json::json!({
-                    "tool_calls": 0,
-                    "errors": 0,
-                    "recent": [],
-                    "last_text": "",
-                    "model": model_id,
-                    "phase": "processing",
-                })
-                .to_string(),
-            );
-            if let Some(m) = &activity_mirror {
-                let _ = std::fs::copy(p, m);
-            }
-        }
+        let mut activity_failure: Option<String> = None;
         // IDLE-based watchdog: kill the task only if NO agent event arrives for `idle_secs` (a genuinely
         // stalled stream), NOT on total wall-clock — a slow-but-progressing local model emits an event
         // every turn and must be allowed to finish. idle_secs == 0 disables the watchdog.
@@ -17840,7 +17911,9 @@ impl GooseAgentDispatcher {
                 Ok(_) => {}
                 Err(e) => return Err(anyhow!("agent stream error: {e}")),
             }
-            if let Some(p) = &activity_file {
+            if activity_file.is_some()
+                && (!physical_activity_required || activity_failure.is_none())
+            {
                 let due = last_digest_at
                     .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(400));
                 if due {
@@ -17855,9 +17928,16 @@ impl GooseAgentDispatcher {
                         &reasoning_recurrence,
                         model_id,
                     );
-                    let _ = std::fs::write(p, digest.to_string());
-                    if let Some(m) = &activity_mirror {
-                        let _ = std::fs::write(m, digest.to_string());
+                    let encoded = digest.to_string();
+                    if let Err(error) = self.persist_activity_digest(
+                        activity_file.as_deref(),
+                        activity_mirror.as_deref(),
+                        encoded.as_bytes(),
+                        activity_key,
+                        validated_activity_publisher,
+                        "stream",
+                    ) {
+                        activity_failure = Some(error.to_string());
                     }
                     last_digest_at = Some(tokio::time::Instant::now());
                 }
@@ -17875,7 +17955,7 @@ impl GooseAgentDispatcher {
         }
         // Guaranteed FINAL digest — the coalesce throttle in the loop may have skipped the last event's state,
         // so write the terminal state exactly once here (pending is drained above → pass an empty map).
-        if let Some(p) = &activity_file {
+        if activity_file.is_some() && activity_failure.is_none() {
             let mut digest = build_worker_digest(
                 &tool_calls,
                 &call_records,
@@ -17893,13 +17973,22 @@ impl GooseAgentDispatcher {
             if let Some(obj) = digest.as_object_mut() {
                 obj.insert("phase".to_string(), serde_json::Value::from("done"));
             }
-            let _ = std::fs::write(p, digest.to_string());
-            // The mirrored copy MUST receive this terminal phase="done" too, or the panel would hold
-            // a mirrored fix node at "working" forever — the shadow (and its digest) is deleted the
-            // moment the round ends, so the mirror is the only copy left to correct.
-            if let Some(m) = &activity_mirror {
-                let _ = std::fs::write(m, digest.to_string());
+            let encoded = digest.to_string();
+            if let Err(error) = self.persist_activity_digest(
+                activity_file.as_deref(),
+                activity_mirror.as_deref(),
+                encoded.as_bytes(),
+                activity_key,
+                validated_activity_publisher,
+                "final",
+            ) {
+                activity_failure = Some(error.to_string());
             }
+        }
+        if let Some(error) = activity_failure {
+            return Err(anyhow!(
+                "physical semantic activity evidence failed after draining the agent stream: {error}"
+            ));
         }
 
         // Stream delivers incremental Text chunks; concatenate to reconstruct the message text.
@@ -30066,8 +30155,7 @@ fn legacy_auxiliary_control_enabled(
     physical_main_execute: bool,
     phase: LegacyAuxiliaryPhase,
 ) -> bool {
-    requested
-        && (!physical_main_execute || matches!(phase, LegacyAuxiliaryPhase::LegacyFixRound))
+    requested && (!physical_main_execute || matches!(phase, LegacyAuxiliaryPhase::LegacyFixRound))
 }
 
 #[cfg(test)]
@@ -32152,6 +32240,7 @@ impl GooseAgentDispatcher {
                 AgentToolSurface::Developer,
                 self.worker_timeout_secs,
                 Some(&req.task_id),
+                req.activity_publisher.as_ref(),
                 // PRE-CLOSE THE THINKING BLOCK for a worker whose job is to WRITE A FILE.
                 //
                 // The template's generation prompt ends with a literal open `<think>\n`, so generation
@@ -36850,6 +36939,7 @@ async fn run_post_build_ast_review(
         doc_facts: doc_facts.to_string(),
         neighborhood: Vec::new(),
         replan_authority: None,
+        activity_publisher: None,
     };
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(fix_cap_secs),
@@ -37982,6 +38072,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
              {error}. Refusing to fall back to logical DeviceCfg.weight."
         );
     }
+    let provider_journal = if broker_enforcement_requested {
+        let snapshot = physical_snapshot
+            .as_ref()
+            .expect("physical broker preflight rejected an unavailable snapshot");
+        Some(Arc::new(
+            DurableProviderLifecycleJournal::open(&working_dir, &run_id, &snapshot.snapshot_id)
+                .map_err(anyhow::Error::msg)?,
+        ))
+    } else {
+        None
+    };
 
     // THE DEVICES THAT CAN ACTUALLY RECEIVE WORK. `run_started.pool` is emitted upstream from
     // `enabled`, BEFORE the planner may be pushed, so it under-reports the worker count on exactly the
@@ -40278,6 +40379,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         LegacyAuxiliaryPhase::MainExecute,
     );
     if broker_enforcement_requested {
+        dispatcher
+            .activity_sink_health
+            .activate()
+            .map_err(anyhow::Error::msg)?;
         let snapshot = physical_snapshot
             .as_ref()
             .expect("physical broker preflight rejected an unavailable snapshot")
@@ -40291,8 +40396,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             })
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(anyhow::Error::msg)?;
-        let producer = GooseSemanticObservationSnapshotProducer::new(&working_dir)
-            .map_err(anyhow::Error::msg)?;
+        let producer = GooseSemanticObservationSnapshotProducer::new_with_activity_health(
+            &working_dir,
+            dispatcher.activity_sink_health.clone(),
+        )
+        .map_err(anyhow::Error::msg)?;
         let reviewer = GooseAdmittedSemanticObservationReviewer::new(
             snapshot,
             routes,
@@ -40310,6 +40418,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "legacy_replanner_substituted": replan_on && cfg.max_replans > 0,
             "nested_omni_judge": false,
             "semantic_nudge_delivery": false,
+            "activity_authority": "engine_memory",
+            "activity_ui_mirror": "best_effort_atomic",
         }));
         eprintln!(
             "physical semantic supervision: observation-only reviews use verified idle routes"
@@ -40408,8 +40518,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .as_ref()
             .expect("physical broker preflight rejected an unavailable snapshot")
             .clone();
-        let control =
-            PhysicalAdmissionControl::new(format!("{run_id}:execute"), snapshot, sink.clone())?;
+        let control = PhysicalAdmissionControl::new_with_journal(
+            format!("{run_id}:execute"),
+            snapshot,
+            sink.clone(),
+            provider_journal
+                .as_ref()
+                .expect("physical provider journal was preflighted")
+                .clone(),
+        )?;
         scheduler
             .run_with_physical_admission(
                 dag,
@@ -41089,6 +41206,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 doc_facts: facts,
                                 neighborhood: Vec::new(),
                                 replan_authority: None,
+                                activity_publisher: None,
                             };
                             // F781/#15: the repair-phase observer. Samples the twin's shadow
                             // fingerprint once a minute while the attempt runs and reports the
@@ -41499,6 +41617,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     // Per-file fix shard: no DAG neighborhood → contract bundle unscoped.
                                     neighborhood: Vec::new(),
                                     replan_authority: None,
+                                    activity_publisher: None,
                                 };
                                 // ONE rule, one implementation. This was a bare `from_secs(1200)`
                                 // while its sibling — the serial fix on the other branch of this same
@@ -41644,6 +41763,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                         neighborhood: Vec::new(),
                         replan_authority: None,
+                        activity_publisher: None,
                     };
                     let ran = tokio::time::timeout(
                         std::time::Duration::from_secs(fix_cap_eff),
@@ -41703,6 +41823,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                     neighborhood: Vec::new(),
                     replan_authority: None,
+                    activity_publisher: None,
                 };
                 // THE TAIL'S DISPATCH EVENTS BELONG ON *THIS* PATH, the default one.
                 //
@@ -41933,6 +42054,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         doc_facts: doc_facts.clone(),
                         neighborhood: Vec::new(),
                         replan_authority: None,
+                        activity_publisher: None,
                     };
                     let _ = tokio::time::timeout(
                         std::time::Duration::from_secs(fix_cap_eff),
@@ -42174,6 +42296,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                     neighborhood: Vec::new(),
                     replan_authority: None,
+                    activity_publisher: None,
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs_scaled(

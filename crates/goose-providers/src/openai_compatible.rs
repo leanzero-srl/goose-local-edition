@@ -13,14 +13,18 @@ use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::io::StreamReader;
 
 use super::api_client::ApiClient;
-use super::base::{stream_from_single_message, MessageStream, Provider};
+use super::base::{
+    stream_from_single_message, MessageStream, Provider, SingleAttemptTerminalProof,
+    SingleAttemptTerminalReporter,
+};
 use super::retry::ProviderRetry;
 use crate::conversation::message::Message;
 use crate::errors::ProviderError;
 use crate::formats::openai::{
     create_request, get_usage, response_to_message, response_to_streaming_message,
+    response_to_streaming_message_with_terminal_proof,
 };
-use crate::formats::openai_responses::responses_api_to_streaming_message;
+use crate::formats::openai_responses::responses_api_to_streaming_message_with_terminal_proof;
 use crate::model::ModelConfig;
 use crate::request_log::{start_log, LoggerHandleExt, RequestLogHandle};
 use rmcp::model::Tool;
@@ -231,9 +235,20 @@ pub(crate) fn telemetry_record(
 /// stats deliberately measure only completed calls.
 pub(crate) fn stream_openai_compat_timed(
     response: Response,
+    log: Option<Box<dyn RequestLogHandle>>,
+    t0: std::time::Instant,
+    model_name: String,
+) -> Result<MessageStream, ProviderError> {
+    let (_, reporter) = SingleAttemptTerminalProof::channel();
+    stream_openai_compat_timed_with_terminal_proof(response, log, t0, model_name, reporter)
+}
+
+pub(crate) fn stream_openai_compat_timed_with_terminal_proof(
+    response: Response,
     mut log: Option<Box<dyn RequestLogHandle>>,
     t0: std::time::Instant,
     model_name: String,
+    terminal: SingleAttemptTerminalReporter,
 ) -> Result<MessageStream, ProviderError> {
     let stream = response.bytes_stream().map_err(std::io::Error::other);
 
@@ -242,7 +257,7 @@ pub(crate) fn stream_openai_compat_timed(
         let framed = FramedRead::new(stream_reader, LinesCodec::new())
             .map_err(Error::from);
 
-        let message_stream = response_to_streaming_message(framed);
+        let message_stream = response_to_streaming_message_with_terminal_proof(framed, terminal);
         pin!(message_stream);
         let mut ttft: Option<std::time::Duration> = None;
         let mut last_usage: Option<crate::conversation::token_usage::Usage> = None;
@@ -300,7 +315,16 @@ pub fn stream_openai_compat(
 
 pub fn stream_responses_compat(
     response: Response,
+    log: Option<Box<dyn RequestLogHandle>>,
+) -> Result<MessageStream, ProviderError> {
+    let (_, reporter) = SingleAttemptTerminalProof::channel();
+    stream_responses_compat_with_terminal_proof(response, log, reporter)
+}
+
+pub fn stream_responses_compat_with_terminal_proof(
+    response: Response,
     mut log: Option<Box<dyn RequestLogHandle>>,
+    terminal: SingleAttemptTerminalReporter,
 ) -> Result<MessageStream, ProviderError> {
     let stream = response.bytes_stream().map_err(std::io::Error::other);
 
@@ -309,7 +333,8 @@ pub fn stream_responses_compat(
         let framed = FramedRead::new(stream_reader, LinesCodec::new())
             .map_err(Error::from);
 
-        let message_stream = responses_api_to_streaming_message(framed);
+        let message_stream =
+            responses_api_to_streaming_message_with_terminal_proof(framed, terminal);
         pin!(message_stream);
         while let Some(message) = message_stream.next().await {
             let (message, usage) = message.map_err(|e|

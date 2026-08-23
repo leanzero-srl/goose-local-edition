@@ -2,13 +2,13 @@ use async_trait::async_trait;
 use goose_swarm::{
     AdmissionReceipt, AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
     AdmittedSemanticReviewError, Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest,
-    EventSink, HostCapacityEvidence,
-    PhysicalAdmissionControl, PhysicalFleetSnapshot, ProviderLifecycle,
-    ProviderLifecycleDispatcher, ProviderTerminalKind, Scheduler, SemanticObservationCapture,
-    SemanticObservationCaptureRequest, SemanticObservationSnapshotDraft,
-    SemanticObservationSnapshotProducer, SemanticObservationSummonsSignal, SemanticTraceSnapshot,
-    SwarmEvent, TaskRunOutput, TaskSpec, TraceStateMeasurement, VerifiedPhysicalLane,
-    SEMANTIC_OBSERVATION_PROTOCOL, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+    EventSink, HostCapacityEvidence, PhysicalAdmissionControl, PhysicalFleetSnapshot,
+    ProviderLifecycle, ProviderLifecycleDispatcher, ProviderTerminalKind, Scheduler,
+    SemanticObservationCapture, SemanticObservationCaptureRequest,
+    SemanticObservationSnapshotDraft, SemanticObservationSnapshotProducer,
+    SemanticObservationSummonsSignal, SemanticTraceSnapshot, SwarmEvent, TaskRunOutput, TaskSpec,
+    TraceStateMeasurement, VerifiedPhysicalLane, SEMANTIC_OBSERVATION_PROTOCOL,
+    SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

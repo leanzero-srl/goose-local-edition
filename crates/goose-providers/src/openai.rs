@@ -1,5 +1,9 @@
 use super::api_client::ApiClient;
-use super::base::{ConfigKey, ModelInfo, Provider, ProviderMetadata};
+use super::base::{
+    ConfigKey, ModelInfo, Provider, ProviderMetadata, SingleAttemptFailureProvenance,
+    SingleAttemptStream, SingleAttemptStreamOutcome, SingleAttemptTerminalProof,
+    SingleAttemptTerminalReporter,
+};
 use super::retry::ProviderRetry;
 use crate::api_client::{AuthMethod, TlsConfig};
 use crate::conversation::message::Message;
@@ -11,11 +15,13 @@ use crate::formats::openai::{
     create_request_with_options, get_usage, response_to_message, OpenAiFormatOptions,
 };
 use crate::formats::openai_responses::{
-    create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
+    create_responses_request, get_responses_usage, responses_api_to_message,
+    responses_terminal_outcome, ResponsesApiResponse,
 };
 use crate::images::ImageFormat;
 use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
+    stream_responses_compat_with_terminal_proof,
 };
 use crate::request_log::{start_log, LoggerHandleExt};
 use anyhow::Result;
@@ -513,6 +519,7 @@ impl OpenAiProvider {
         messages: &[Message],
         tools: &[Tool],
         retry_policy: StreamRetryPolicy,
+        terminal_reporter: Option<SingleAttemptTerminalReporter>,
     ) -> Result<MessageStream, ProviderError> {
         if self.should_use_responses_api_for_provider(&model_config.model_name) {
             let mut payload = create_responses_request(model_config, system, messages, tools)?;
@@ -542,7 +549,12 @@ impl OpenAiProvider {
             })?;
 
             if self.supports_streaming {
-                stream_responses_compat(response, log)
+                match terminal_reporter {
+                    Some(reporter) => {
+                        stream_responses_compat_with_terminal_proof(response, log, reporter)
+                    }
+                    None => stream_responses_compat(response, log),
+                }
             } else {
                 let json: serde_json::Value = response.json().await.map_err(|error| {
                     ProviderError::RequestFailed(format!("Failed to parse JSON: {error}"))
@@ -554,6 +566,29 @@ impl OpenAiProvider {
                             "Failed to parse responses API response: {error}"
                         ))
                     })?;
+
+                match responses_terminal_outcome(&responses_api_response.status) {
+                    SingleAttemptStreamOutcome::Finished => {
+                        if let Some(reporter) = terminal_reporter.as_ref() {
+                            reporter.mark_finished();
+                        }
+                    }
+                    SingleAttemptStreamOutcome::Failed => {
+                        if let Some(reporter) = terminal_reporter.as_ref() {
+                            reporter.mark_failed();
+                        }
+                        return Err(ProviderError::RequestFailed(format!(
+                            "Responses API ended with terminal status {:?}",
+                            responses_api_response.status
+                        )));
+                    }
+                    SingleAttemptStreamOutcome::Pending => {
+                        return Err(ProviderError::RequestFailed(format!(
+                            "Responses API returned nonterminal status {:?} to a nonstream request",
+                            responses_api_response.status
+                        )));
+                    }
+                }
 
                 let message = responses_api_to_message(&responses_api_response)?;
                 let usage_data = get_responses_usage(&responses_api_response);
@@ -603,12 +638,23 @@ impl OpenAiProvider {
             })?;
 
             if self.supports_streaming {
-                super::openai_compatible::stream_openai_compat_timed(
-                    response,
-                    log,
-                    telemetry_t0,
-                    model_config.model_name.clone(),
-                )
+                match terminal_reporter {
+                    Some(reporter) => {
+                        super::openai_compatible::stream_openai_compat_timed_with_terminal_proof(
+                            response,
+                            log,
+                            telemetry_t0,
+                            model_config.model_name.clone(),
+                            reporter,
+                        )
+                    }
+                    None => super::openai_compatible::stream_openai_compat_timed(
+                        response,
+                        log,
+                        telemetry_t0,
+                        model_config.model_name.clone(),
+                    ),
+                }
             } else {
                 let json: serde_json::Value = response.json().await.map_err(|error| {
                     ProviderError::RequestFailed(format!("Failed to parse JSON: {error}"))
@@ -634,6 +680,9 @@ impl OpenAiProvider {
                     Some(usage.usage),
                     0,
                 );
+                if let Some(reporter) = terminal_reporter {
+                    reporter.mark_finished();
+                }
                 Ok(super::base::stream_from_single_message(message, usage))
             }
         }
@@ -773,11 +822,16 @@ impl Provider for OpenAiProvider {
             messages,
             tools,
             StreamRetryPolicy::Standard,
+            None,
         )
         .await
     }
 
     fn supports_single_attempt_streaming(&self) -> bool {
+        true
+    }
+
+    fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
         true
     }
 
@@ -813,8 +867,30 @@ impl Provider for OpenAiProvider {
             messages,
             tools,
             StreamRetryPolicy::SingleAttempt,
+            None,
         )
         .await
+    }
+
+    async fn stream_once_with_terminal_proof(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<SingleAttemptStream, ProviderError> {
+        let (terminal, reporter) = SingleAttemptTerminalProof::channel();
+        let stream = self
+            .stream_with_retry_policy(
+                model_config,
+                system,
+                messages,
+                tools,
+                StreamRetryPolicy::SingleAttempt,
+                Some(reporter),
+            )
+            .await?;
+        Ok(SingleAttemptStream::new(stream, terminal))
     }
 }
 

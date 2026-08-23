@@ -1,6 +1,23 @@
 # Swarm work pause checkpoint — 2026-08-23
 
-This is a deliberate offline pause. No model benchmark, hermetic scorer, publisher, or website process is running. Do not launch any local or cloud run until Mihai gives fresh explicit permission.
+## Resume update — 2026-08-23
+
+Mihai returned and explicitly authorized local and cloud launches once the offline implementation gates are genuinely ready. No model benchmark, hermetic scorer, publisher, or website process has started yet. Authorization is open; the technical launch gate remains closed until the blockers below pass.
+
+Local integration is at `700cec8d8` plus a dirty provider-boundary slice. The slice now has explicit provider-protocol terminal proof, bare-EOF quarantine, provider-owned start-failure provenance, model/transport admission checks, a fail-latched lifecycle journal, and engine-memory semantic activity authority keyed by an engine-minted admission publisher. `.swarm/activity` is now only a best-effort atomic UI mirror: disk spoofing and mirror failure cannot become judge evidence, while malformed/mismatched authoritative writes fail closed. The focused semantic suite passed 15/15; the full provider-types, providers, and swarm suites also passed, including all broker/control/journal/semantic replays. This does not certify launch readiness.
+
+Remaining local P0 gates:
+
+- Replace the project-local lifecycle journal with an engine-owned cross-process global provider lease. It must serialize all runs and working directories by exact physical host/model-instance/transport/capacity identity, survive crash, reject symlinks/tampering, and require explicit reset/reconciliation for unresolved starts.
+- Introduce `AuthorityScope { run_id, phase_lineage_id }` and explicit `phase_epoch`/role. Authority keys use run + stable lineage + task/candidate + kind; epoch ordering prunes queued old repair work while started old work terminalizes without landing. Build retries remain Build; repair attempt zero is explicitly Repair.
+- Create one run-scoped `PhysicalRuntime` for main, COMPLETE, repair, persona, overview, and custom helper calls. It owns one control and semantic plane, supports a generic admitted `submit_operation`, never drains between DAGs, and settles exactly once after submissions close.
+- Repair must use a distinct `SemanticRepairAcceptanceReceipt`; ordinary semantic observations remain evidence-only. Salvage receipts bind an explicit workspace/shadow authority and never ambient cwd.
+- Rewrite repair promotion as prepare -> admitted semantic acceptance -> crash-atomic commit. The authoritative PREPARED/COMMITTING/COMMITTED WAL, rollback bytes, and interprocess writer lock live outside the project/tool/ruler namespace. Kill-after-every-boundary replays must yield exactly the parent or child tree, never a mixture.
+- Freeze an immutable ruler contract and run it on disposable clones with isolated caches/output, scrubbed secrets, and controlled network. The candidate tree is hashed before ruling; ruler side effects (including `npm install`, generated files, caches, or `.swarm` tampering) cannot become promoted bytes. The landed tree must equal the pre-ruler candidate hash and pass the same ruler in a fresh clone.
+
+Cloud hardening continues under adversarial review. Current launch blockers include immutable lifecycle history across retries, scorer-runtime identity bound into the smoke/qualification lineage, entrant/scorer isolation with a parent-only verdict channel, an exact post-cleanup SCORED evidence seal, resume/monitor launch serialization, nonempty process identities, and stop/publication ownership checks. Cloud runs remain stopped until the offline suite and reviewer both clear these boundaries.
+
+The older pause snapshot below is historical context. Where it conflicts with this resume update, this section is authoritative.
 
 ## Invariants that must survive resume
 

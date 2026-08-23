@@ -30,7 +30,8 @@ use crate::semantic_control::{
 };
 use crate::semantic_observation::AcceptanceCriterionSnapshot;
 use crate::semantic_runtime::{
-    SemanticObservationCaptureRequest, SemanticObservationSnapshotProducer, SemanticTraceRevision,
+    SemanticActivityPublisher, SemanticObservationCaptureRequest,
+    SemanticObservationSnapshotProducer, SemanticTraceRevision,
 };
 use anyhow::{bail, Result};
 use serde::Serialize;
@@ -1022,6 +1023,7 @@ struct State {
     held_files: HashSet<String>,
     held_by: HashMap<TaskId, Vec<String>>,
     claimed_device: HashMap<TaskId, usize>,
+    physical_activity_publishers: HashMap<TaskId, SemanticActivityPublisher>,
     dispatched_per_device: HashMap<String, u32>,
     ctx: SharedContext,
     max_attempts: u32,
@@ -1242,10 +1244,20 @@ impl PhysicalDispatchAuthority for SchedulerPhysicalAuthority {
 
         req.device_id = admission.logical_device_id.clone();
         req.model_id = admission.model_id.clone();
+        let activity_publisher = SemanticActivityPublisher::from_admission(admission);
+        activity_publisher.validate().map_err(|reason| {
+            DispatchError::Terminal(format!(
+                "broker minted invalid semantic activity publisher: {reason}"
+            ))
+        })?;
+        req.activity_publisher = Some(activity_publisher.clone());
         state.devices[device_index].in_flight += 1;
         state
             .claimed_device
             .insert(req.task_id.clone(), device_index);
+        state
+            .physical_activity_publishers
+            .insert(req.task_id.clone(), activity_publisher);
         *state
             .dispatched_per_device
             .entry(req.device_id.clone())
@@ -1552,6 +1564,7 @@ impl State {
             allowed_finding_routes,
             running_logical_device_id: running_device.cfg.id.clone(),
             running_model_id: running_device.cfg.model_id.clone(),
+            activity_publisher: self.physical_activity_publishers.get(task_id)?.clone(),
         })
     }
 
@@ -1860,6 +1873,7 @@ impl State {
                 doc_facts: self.doc_facts.clone(),
                 neighborhood,
                 replan_authority,
+                activity_publisher: None,
             },
         });
     }
@@ -2605,6 +2619,7 @@ impl State {
             doc_facts: self.doc_facts.clone(),
             neighborhood,
             replan_authority,
+            activity_publisher: None,
         };
         Some((req, dev))
     }
@@ -3692,7 +3707,7 @@ impl Scheduler {
             .await;
         // Local task completion cannot make a run terminal while a correlated provider terminal is
         // missing. There is intentionally no elapsed-time escape hatch here.
-        control.wait_until_drained().await;
+        control.wait_until_drained().await?;
         report
     }
 
@@ -3765,6 +3780,7 @@ impl Scheduler {
             held_files: HashSet::new(),
             held_by: HashMap::new(),
             claimed_device: HashMap::new(),
+            physical_activity_publishers: HashMap::new(),
             dispatched_per_device: HashMap::new(),
             ctx: SharedContext::new(),
             max_attempts: self.max_attempts,

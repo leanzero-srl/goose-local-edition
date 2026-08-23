@@ -3,6 +3,7 @@
 //! device's LM Link model id, while tests use a mock. This keeps the concurrency core testable.
 
 use crate::dag::ReplanAuthorityReceipt;
+use crate::semantic_runtime::SemanticActivityPublisher;
 use async_trait::async_trait;
 use serde::Serialize;
 
@@ -134,6 +135,10 @@ pub struct DispatchRequest {
     /// Binder/compiler authority for a dynamically admitted read-only acceptance review. The
     /// dispatcher fails closed if a review-shaped task reaches it without this receipt.
     pub replan_authority: Option<ReplanAuthorityReceipt>,
+    /// Engine-minted identity for the one admitted physical publisher allowed to advance this
+    /// attempt's semantic activity channel. It is absent on legacy dispatches and populated only
+    /// after the physical broker selects an exact admission.
+    pub activity_publisher: Option<SemanticActivityPublisher>,
 }
 
 /// Outcome of a failed dispatch. `Transient` is re-dispatched (and steered to a different device);
