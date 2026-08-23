@@ -5801,7 +5801,7 @@ mod tests {
                 quote: format!("requirement {index}"),
             })
             .collect::<Vec<_>>();
-        let models = vec![
+        let models = [
             "node-a".to_string(),
             "node-b".to_string(),
             "node-c".to_string(),
