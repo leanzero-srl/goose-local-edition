@@ -21,6 +21,7 @@ use crate::provider_lease::{
     RunScopedProviderLeaseAuthority,
 };
 use async_trait::async_trait;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard, Weak};
@@ -1294,7 +1295,7 @@ impl AdmittedWork {
         self.complete_local_after_close(kind).await.map(|_| ())
     }
 
-    pub(crate) async fn complete_local_with_completion(
+    pub async fn complete_local_with_completion(
         self,
         kind: LocalCompletionKind,
     ) -> Result<CompletedAdmission, BrokerError> {
@@ -1304,7 +1305,10 @@ impl AdmittedWork {
             .await?;
         self.complete_local_after_close(kind)
             .await
-            .map(|released| CompletedAdmission { released })
+            .map(|released| CompletedAdmission {
+                control: self.lifecycle.control.clone(),
+                released,
+            })
     }
 
     async fn complete_local_after_close(
@@ -1334,7 +1338,8 @@ impl AdmittedWork {
 }
 
 /// Opaque proof of the broker's exact released admission state.
-pub(crate) struct CompletedAdmission {
+pub struct CompletedAdmission {
+    control: PhysicalAdmissionControl,
     released: ReleasedAdmissionReceipt,
 }
 
@@ -1348,9 +1353,25 @@ impl std::fmt::Debug for CompletedAdmission {
 }
 
 impl CompletedAdmission {
-    pub(crate) fn released(&self) -> &ReleasedAdmissionReceipt {
+    pub fn released(&self) -> &ReleasedAdmissionReceipt {
         &self.released
     }
+}
+
+/// Payload-free proof that one exact live provider request accepted a semantic redirect.
+///
+/// The receipt is minted only after the dispatcher-owned delivery channel confirms that the steer
+/// was queued into the source Agent/session. It does not claim that a new provider turn started;
+/// the lifecycle wrapper still records the cancelled terminal before that continuation can run.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProviderNudgeDeliveryReceipt {
+    pub delivery_id: String,
+    pub source_admission_id: String,
+    pub source_provider_request: ProviderRequestKey,
+    pub source_physical_host_id: String,
+    pub source_model_instance_id: String,
+    pub judge_admission_id: String,
+    pub judge_provider_request: ProviderRequestKey,
 }
 
 #[derive(Debug, Default)]
@@ -1589,6 +1610,30 @@ impl LiveProviderRequestSession {
             .ok_or_else(|| "provider request has no dispatcher-owned nudge delivery".to_string())?;
         delivery.try_enqueue(guidance)?;
         on_pinned_enqueue();
+        Ok(())
+    }
+
+    async fn enqueue_nudge_and_wait(&self, guidance: String) -> Result<(), String> {
+        let delivery = {
+            let state = self
+                .request
+                .exposure
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if state.live_use_closed {
+                return Err("provider request is no longer live".to_string());
+            }
+            self.request
+                .nudge_delivery
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+                .ok_or_else(|| {
+                    "provider request has no dispatcher-owned nudge delivery".to_string()
+                })?
+        };
+        delivery.try_enqueue(guidance)?;
+        delivery.cancelled().await;
         Ok(())
     }
 }
@@ -2090,6 +2135,61 @@ impl ProviderLifecycle {
         Arc::ptr_eq(&self.control.inner, &other.control.inner)
     }
 
+    /// Deliver one semantic redirect to this exact live provider request after an independently
+    /// admitted judge has completed successfully on a distinct physical host.
+    pub async fn deliver_nudge_after_judge(
+        &self,
+        judge: CompletedAdmission,
+        guidance: String,
+    ) -> Result<ProviderNudgeDeliveryReceipt, ProviderLifecycleOperationError> {
+        if !Arc::ptr_eq(&self.control.inner, &judge.control.inner) {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "source and judge receipts do not belong to the same physical broker".to_string(),
+            ));
+        }
+        let released = judge.released();
+        let judge_admission = &released.admission;
+        if judge_admission.role != crate::broker::WorkRole::SemanticJudgeObservation
+            || released.local_completion != LocalCompletionKind::Success
+            || released.provider_not_started
+            || released.provider_terminals.len() != 1
+            || released.provider_terminals[0].kind != ProviderTerminalKind::Finished
+        {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "semantic judge has no successful released provider-terminal receipt".to_string(),
+            ));
+        }
+        if judge_admission.physical_host_id == self.admission.physical_host_id {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "semantic judge did not run on a distinct physical host".to_string(),
+            ));
+        }
+        let source_key = ProviderStartKey::from_admission(&self.admission);
+        let started = self
+            .control
+            .inner
+            .provider_starts
+            .query(&source_key)
+            .map_err(|error| ProviderLifecycleOperationError::Unresolved(error.to_string()))?;
+        let source_request = started.request.receipt.clone();
+        let session = LiveProviderRequestSession {
+            request: started.request,
+        };
+        session
+            .enqueue_nudge_and_wait(guidance)
+            .await
+            .map_err(ProviderLifecycleOperationError::Unresolved)?;
+        Ok(ProviderNudgeDeliveryReceipt {
+            delivery_id: format!("provider-nudge-delivery:{:032x}", rand::random::<u128>()),
+            source_admission_id: self.admission.admission_id.clone(),
+            source_provider_request: source_request.key.clone(),
+            source_physical_host_id: self.admission.physical_host_id.clone(),
+            source_model_instance_id: self.admission.model_instance_id.clone(),
+            judge_admission_id: judge_admission.admission_id.clone(),
+            judge_provider_request: released.provider_terminals[0].key.clone(),
+        })
+    }
+
     pub async fn start_provider_request(
         &self,
     ) -> Result<StartedProviderRequest, ProviderLifecycleStartError> {
@@ -2488,6 +2588,11 @@ impl TaskDispatcher for BrokeredTaskDispatcher {
 #[cfg(test)]
 mod provider_start_registry_tests {
     use super::*;
+    use crate::broker::{
+        AuthorityScope, SourceRevisionKind, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
+    };
+    use crate::event::NullSink;
+    use std::sync::atomic::AtomicBool;
 
     fn request_authority(admission_id: &str) -> Arc<ProviderRequestAuthority> {
         ProviderRequestAuthority::new(ProviderRequestReceipt {
@@ -2507,6 +2612,113 @@ mod provider_start_registry_tests {
             task_id: task_id.to_string(),
             attempt,
         }
+    }
+
+    const TRANSPORT: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[derive(Default)]
+    struct DeferredNudgeDelivery {
+        reserved: AtomicBool,
+        released: AtomicBool,
+        queued: Notify,
+        release: Notify,
+    }
+
+    #[async_trait]
+    impl ProviderNudgeDelivery for DeferredNudgeDelivery {
+        fn try_enqueue(&self, _guidance: String) -> Result<(), String> {
+            if self.reserved.swap(true, Ordering::SeqCst) {
+                return Err("delivery already reserved".to_string());
+            }
+            self.queued.notify_waiters();
+            Ok(())
+        }
+
+        fn natural_terminal_allowed(&self) -> bool {
+            !self.reserved.load(Ordering::SeqCst)
+        }
+
+        async fn cancelled(&self) {
+            while !self.released.load(Ordering::SeqCst) {
+                self.release.notified().await;
+            }
+        }
+    }
+
+    fn nudge_control(same_host: bool) -> PhysicalAdmissionControl {
+        let host_capacity = if same_host {
+            HostCapacityEvidence::MeasuredProfile {
+                profile_hash: "same-host-capacity".to_string(),
+                profile_key: "same-host-profile".to_string(),
+                max_concurrent: 2,
+            }
+        } else {
+            HostCapacityEvidence::ProbeSingleStream {
+                probe_epoch: "single-stream".to_string(),
+            }
+        };
+        let source = VerifiedPhysicalIdentity {
+            host_id: "source-host".to_string(),
+            model_instance_id: "source-instance".to_string(),
+            provider_transport_id: TRANSPORT.to_string(),
+            advertised_instance_capacity: 1,
+            capacity_evidence: host_capacity.clone(),
+            route_evidence_id: "source-route".to_string(),
+        }
+        .into_lane("source-device".to_string(), "source-model".to_string(), 1);
+        let judge = VerifiedPhysicalIdentity {
+            host_id: if same_host {
+                "source-host".to_string()
+            } else {
+                "judge-host".to_string()
+            },
+            model_instance_id: "judge-instance".to_string(),
+            provider_transport_id: TRANSPORT.to_string(),
+            advertised_instance_capacity: 1,
+            capacity_evidence: host_capacity,
+            route_evidence_id: "judge-route".to_string(),
+        }
+        .into_lane("judge-device".to_string(), "judge-model".to_string(), 1);
+        let snapshot = PhysicalFleetSnapshot::new("nudge-fleet", vec![source, judge]).unwrap();
+        PhysicalAdmissionControl::new("nudge-test", snapshot, Arc::new(NullSink)).unwrap()
+    }
+
+    async fn admit_role(
+        control: &PhysicalAdmissionControl,
+        task_id: &str,
+        role: WorkRole,
+        device: &str,
+    ) -> AdmittedWork {
+        let source = TaskVersion {
+            authority_scope: AuthorityScope::new("nudge-test", "pre-scheduler"),
+            phase_epoch: 0,
+            task_id: task_id.to_string(),
+            attempt: 0,
+            revision: 1,
+            kind: if role == WorkRole::SemanticJudgeObservation {
+                SourceRevisionKind::Trace {
+                    trace_sequence: 1,
+                    snapshot_hash: format!("snapshot-{task_id}"),
+                }
+            } else {
+                SourceRevisionKind::TaskAttempt
+            },
+        };
+        control.set_source_revision(source.clone()).await.unwrap();
+        control
+            .admit(WorkOpportunity {
+                work_id: format!("work-{task_id}"),
+                role,
+                priority: role.priority(),
+                task_rank: 1,
+                source,
+                eligible_logical_device_ids: vec![device.to_string()],
+                preferred_model_id: None,
+                excluded_logical_device_id: None,
+            })
+            .await
+            .unwrap()
     }
 
     #[test]
@@ -2556,5 +2768,174 @@ mod provider_start_registry_tests {
             dropped_registry.query(&provider_start),
             Err(ProviderStartLookupError::NotLive { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn completed_distinct_host_judge_mints_receipt_only_after_delivery_confirmation() {
+        let control = nudge_control(false);
+        let source = admit_role(
+            &control,
+            "source-task",
+            WorkRole::ResearchEvidence,
+            "source-device",
+        )
+        .await;
+        let judge = admit_role(
+            &control,
+            "judge-task",
+            WorkRole::SemanticJudgeObservation,
+            "judge-device",
+        )
+        .await;
+        let source_lifecycle = source.lifecycle();
+        let source_request = source_lifecycle.start_provider_request().await.unwrap();
+        let delivery = Arc::new(DeferredNudgeDelivery::default());
+        source_request
+            .publish_for_scheduler_with_nudge_delivery(delivery.clone())
+            .unwrap();
+        let judge_request = judge.lifecycle().start_provider_request().await.unwrap();
+        judge_request
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        let judge_admission_id = judge.receipt().admission_id.clone();
+        let completed_judge = judge
+            .complete_local_with_completion(LocalCompletionKind::Success)
+            .await
+            .unwrap();
+
+        let deliver = tokio::spawn({
+            let source_lifecycle = source_lifecycle.clone();
+            async move {
+                source_lifecycle
+                    .deliver_nudge_after_judge(completed_judge, "redirect".to_string())
+                    .await
+            }
+        });
+        while !delivery.reserved.load(Ordering::SeqCst) {
+            delivery.queued.notified().await;
+        }
+        assert!(
+            !deliver.is_finished(),
+            "receipt preceded delivery confirmation"
+        );
+        delivery.released.store(true, Ordering::SeqCst);
+        delivery.release.notify_waiters();
+        let receipt = deliver.await.unwrap().unwrap();
+        assert_eq!(receipt.source_admission_id, source.receipt().admission_id);
+        assert_eq!(receipt.judge_admission_id, judge_admission_id);
+
+        source_request
+            .provider_terminal(ProviderTerminalKind::Cancelled)
+            .await
+            .unwrap();
+        source
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn same_host_judge_cannot_authorize_a_nudge() {
+        let control = nudge_control(true);
+        let source = admit_role(
+            &control,
+            "same-source",
+            WorkRole::PlanningAuthority,
+            "source-device",
+        )
+        .await;
+        let judge = admit_role(
+            &control,
+            "same-judge",
+            WorkRole::SemanticJudgeObservation,
+            "judge-device",
+        )
+        .await;
+        let source_lifecycle = source.lifecycle();
+        let source_request = source_lifecycle.start_provider_request().await.unwrap();
+        source_request
+            .publish_for_scheduler_with_nudge_delivery(Arc::new(DeferredNudgeDelivery::default()))
+            .unwrap();
+        let judge_request = judge.lifecycle().start_provider_request().await.unwrap();
+        judge_request
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        let completed_judge = judge
+            .complete_local_with_completion(LocalCompletionKind::Success)
+            .await
+            .unwrap();
+        let error = source_lifecycle
+            .deliver_nudge_after_judge(completed_judge, "redirect".to_string())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("distinct physical host"));
+        source_request
+            .provider_terminal(ProviderTerminalKind::Cancelled)
+            .await
+            .unwrap();
+        source
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn immediate_idle_judge_miss_leaves_no_supervision_work_queued() {
+        let control = nudge_control(false);
+        let source = admit_role(
+            &control,
+            "busy-source",
+            WorkRole::ResearchEvidence,
+            "source-device",
+        )
+        .await;
+        let blocker = admit_role(
+            &control,
+            "busy-judge-host",
+            WorkRole::PlanningAuthority,
+            "judge-device",
+        )
+        .await;
+        let judge_source = TaskVersion {
+            authority_scope: AuthorityScope::new("nudge-test", "pre-scheduler"),
+            phase_epoch: 0,
+            task_id: "idle-only-judge".to_string(),
+            attempt: 0,
+            revision: 1,
+            kind: SourceRevisionKind::Trace {
+                trace_sequence: 1,
+                snapshot_hash: "idle-only-snapshot".to_string(),
+            },
+        };
+        control
+            .set_source_revision(judge_source.clone())
+            .await
+            .unwrap();
+        let admitted = control
+            .try_admit_idle(WorkOpportunity {
+                work_id: "idle-only-judge-work".to_string(),
+                role: WorkRole::SemanticJudgeObservation,
+                priority: WorkRole::SemanticJudgeObservation.priority(),
+                task_rank: 1,
+                source: judge_source,
+                eligible_logical_device_ids: vec!["judge-device".to_string()],
+                preferred_model_id: None,
+                excluded_logical_device_id: None,
+            })
+            .await
+            .unwrap();
+        assert!(admitted.is_none());
+        assert_eq!(control.occupancy().await, (0, 2));
+        source
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        blocker
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        assert_eq!(control.occupancy().await, (0, 0));
     }
 }
