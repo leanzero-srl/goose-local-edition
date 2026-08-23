@@ -1,13 +1,17 @@
-# Engine 4 semantic observation ledger
+# Engine 4 semantic observation and Engine 5 admission ledger
 
-Date: 2026-08-23  
-Implementation base: `codex/swarm-engine-overhaul@1af43ef02`  
-Implementation branch: `codex/swarm-semantic-judge-observer`
+Date: 2026-08-23
+
+- Implementation base: `codex/swarm-engine-overhaul@1af43ef02`
+- Implementation branch: `codex/swarm-semantic-judge-observer`
+- Physical broker merged: `c60b309b1` via merge commit `7e96aafc5`
+- Admission integration commits: `33b95b2cb`, `8a925e538`
 
 ## Boundary
 
-This slice adds the observation-only semantic control-plane foundation. It does not change SB7, its
-scorer, LM Studio, a benchmark, the shared project tree, or scheduler behavior. It launches no model.
+This slice adds the observation-only semantic control-plane foundation and binds it to the physical
+broker. It does not change SB7, its scorer, LM Studio, a benchmark, or the shared project tree. It
+launches no model. The adapter remains unwired to a live Goose provider or scheduler summons.
 
 The standing semantic judge is preserved. Measurements remain neutral inputs: recurrence, elapsed
 time, counter flatness, stream activity, artifact state, transport state, and occupancy cannot create
@@ -15,12 +19,10 @@ an action. Only a response parsed through the strict semantic protocol can conta
 Engine 4 receipt has `has_intervention_authority() == false` for every action, including `NUDGE`,
 `SPLIT_PROPOSAL`, and `ACCEPT_CANDIDATE`.
 
-The pre-Engine-4 `parse_judge_reply` and `JudgeOutcome` call sites still exist on this pre-broker base.
-They are legacy intervention machinery, not callers of the new plane. They must not be wired beside
-the physical broker. Replacing that live path is an integration operation against the broker branch,
-whose physical scheduler rejects legacy judge work; silently running both would double-spend review
-capacity and leave the old keyword parser authoritative. The new protocol is the replacement API, not
-a compatibility wrapper around the old parser.
+The pre-Engine-4 `parse_judge_reply` and `JudgeOutcome` call sites still exist as legacy intervention
+machinery, not callers of the new plane. The merged physical scheduler rejects that legacy judge path.
+Silently running both would double-spend review capacity and leave the old keyword parser authoritative.
+The new protocol is the replacement API, not a compatibility wrapper around the old parser.
 
 ## Evidence corrections carried into the corpus
 
@@ -40,7 +42,7 @@ a compatibility wrapper around the old parser.
 
 ## Implemented protocol and snapshot rules
 
-Commits `e2855e6ef`, `fafe85c66`, `94f6ec36f`, and `2183e3b32` add:
+Commits `e2855e6ef`, `fafe85c66`, `94f6ec36f`, `2183e3b32`, and `8a925e538` add:
 
 1. Exact actions `CONTINUE|NUDGE|SPLIT_PROPOSAL|ROUTE_FINDING|ACCEPT_CANDIDATE|REQUEST_EVIDENCE|ABSTAIN|INCOMPLETE`
    in a strict JSON envelope. Unknown actions, unknown fields, prose, Markdown fences, missing fields,
@@ -73,6 +75,17 @@ Commits `e2855e6ef`, `fafe85c66`, `94f6ec36f`, and `2183e3b32` add:
 9. One retained current receipt per task for deduplication. Superseded receipts leave the in-memory plane;
    their structured completion events remain the durable history. This removes revision-count memory growth
    without a numeric cap.
+10. A trace-bound physical admission adapter. Every public observation submission publishes a
+    `TaskVersion` whose source kind is `Trace { trace_sequence, snapshot_hash }`, registers the immutable
+    source, revalidates it after acquiring the task review lane, and requests
+    `WorkRole::SemanticJudgeObservation` with role-derived priority.
+11. Exact provider lifecycle binding. The adapter obtains a provider permit immediately before calling the
+    admitted reviewer, records `Finished` or `Failed` against that exact request key, closes local work, and
+    waits for release. A pre-call observer rejection records `provider_not_started` and local error in a
+    detached cleanup task. Cancelling the submission or dropping its public wait handle cannot cancel an
+    already-admitted lifecycle finalizer.
+12. One brokered observation plane per `PhysicalAdmissionControl`. The raw in-process observation plane is
+    crate-private, so an external caller cannot bypass admission through the exported Goose Swarm API.
 
 No duration, token, character, recurrence, review-count, or retry cap was added.
 
@@ -106,72 +119,93 @@ Run from this branch:
 
 ```text
 cargo test -p goose-swarm semantic_observation --lib
+cargo test -p goose-swarm --test semantic_observation_control_replay
 cargo test -p goose-swarm --test semantic_observation_corpus
 cargo test -p goose-swarm
 cargo clippy -p goose-swarm --all-targets -- -D warnings
+cargo check -p goose-cli
 cargo fmt --all -- --check
 git diff --check
 ```
 
-The final focused pass completed 12/12 semantic-observation unit tests and 3/3 corpus tests. Full
-`cargo test -p goose-swarm` passed 77 library tests, 6 historical judge replays, 39 scheduler mocks,
-and 3 semantic corpus tests (125 total). Strict all-target clippy passed with warnings denied.
+The final focused pass completed 13/13 semantic-observation unit tests, 7/7 brokered semantic control
+replays, and 3/3 corpus tests. Full `cargo test -p goose-swarm` passed 78 library tests, 6 historical
+judge replays, 18 physical-broker replays, 16 physical-control replays, 39 scheduler mocks, 7 semantic
+control replays, and 3 semantic corpus tests (167 total). Strict all-target clippy passed with warnings
+denied. `cargo check -p goose-cli` also passed inside Hermit; the first plain-shell attempt lacked CMake
+and failed while building `llama-cpp-sys-2`, before any Goose source diagnostic. The forced
+pre-call-cancellation/lock-contention replay also passed 50 consecutive runs.
 
-## Adversarial quarantine decision
+## Adversarial quarantine decision after broker integration
 
-The safe quarantine is to leave this plane unwired on the pre-broker base and make the physical broker's
-existing rejection of legacy judge work the integration gate. Deprecating, weakening, or partially adapting
-`parse_judge_reply` here would change the ordinary scheduler while still leaving its intervention call sites
-alive. Running the typed observer beside it would be worse: two reviewers could consume capacity and the old
-one could still abort, accept, split, or redispatch.
+The safe quarantine is to leave the new brokered plane unwired to the live provider and keep the physical
+broker's rejection of legacy judge work as the integration gate. Deprecating, weakening, or partially
+adapting `parse_judge_reply` here would change the ordinary scheduler while still leaving its intervention
+call sites alive. Running the typed observer beside it would be worse: two reviewers could consume capacity
+and the old one could still abort, accept, split, or redispatch.
 
 The new module has no scheduler dependency, no `JudgeOutcome` conversion, no provider client, and no action
-delivery API. That is the Engine 4 code boundary. It is not a claim that a public Rust value is impossible for
-future code to misuse. The production integration must retain the broker's legacy-path rejection and add a
-replay proving that one trace snapshot yields at most one broker-admitted typed observation and zero legacy
-judge calls.
+delivery API. The replay suite proves that one sealed trace revision produces at most one provider call,
+that a replay admitted before deduplication is closed with `provider_not_started`, and that stale queued work,
+source supersession, queue cancellation, provider error, provider panic, and a dropped public handle cannot
+create a second call or a phantom admission. A forced lock-contention replay also cancels the duplicate
+submission while pre-call rejection cleanup is in progress and proves that cleanup still drains. The tests
+do not claim that a future provider implementation cannot hide retries inside one reviewer call; real
+provider wiring must prohibit or separately receipt those requests.
 
-## Broker integration still required before any live observation
+## Broker integration now implemented; live provider wiring remains quarantined
 
-This branch intentionally does not acquire a fleet slot. A production adapter must be rebased onto the
-physical broker and submit each snapshot as typed `SemanticJudgeObservation` work. The broker—not the
-observer—owns role priority, physical eligibility, request admission, provider-start correlation,
-provider-terminal proof, and local completion. A broker rejection or source supersession must prevent
-the provider call. No caller may invoke this plane from the old inline stream loop or legacy idle-judge
-queue.
+The physical broker head `c60b309b1` was merged conflict-free in `7e96aafc5`. Commit `8a925e538` adds
+`BrokeredSemanticObservationPlane`; the broker—not the observer—owns role priority, physical eligibility,
+request admission, provider-start correlation, provider-terminal proof, and local completion. Broker
+rejection or source supersession prevents the provider call. No caller invokes this plane from the old inline
+stream loop or legacy idle-judge queue.
 
-The reviewed broker head is `c60b309b1`. The exact mapping is:
+The implemented mapping is:
 
 - snapshot task/attempt/revision/hash -> `TaskVersion { kind: SourceRevisionKind::Trace {
   trace_sequence, snapshot_hash } }`;
 - role -> `WorkRole::SemanticJudgeObservation`, with the role-derived
   `WorkPriority::AuxiliaryEvidence` rather than a caller-authored priority;
 - source publication -> `PhysicalAdmissionControl::set_source_revision` before queue/admission;
-- one admitted physical reviewer -> `AdmittedWork`, passed into the per-submission
-  `SemanticObservationReviewer` adapter;
+- one admitted physical reviewer -> `AdmittedWork`, bound to one per-submission
+  `AdmittedSemanticObservationReviewer` adapter;
 - provider start/terminal -> the admitted lifecycle's correlated request methods; and
 - parsed/stale/error receipt -> `AdmittedWork::complete_local` after the observation handle resolves.
 
 If the observer rejects after physical admission because the same task/revision is already in flight or
-complete, the adapter must record provider-not-started and close the admission as an error; it must not call
-the provider. If provider start fails, the same rule applies. If a provider call starts, every success, error,
-or cancellation must record its exact terminal before local completion. These races need broker/observer
-integration tests; neither plane may infer the other plane's receipt.
+complete, the adapter records provider-not-started and closes the admission as an error; it does not call the
+provider. If provider start fails, the same rule applies. If a provider call starts, success, error, or panic
+records its exact terminal before local completion. The integration replays inspect the broker events and
+receipts rather than inferring lifecycle from an observation result.
 
 The observer accepts its reviewer per submission rather than storing one global reviewer. That is
 load-bearing: it lets the adapter bind one exact broker admission, physical route, and provider lifecycle
 to one snapshot. A global reviewer would make it possible to use the right semantic prompt on the wrong
 physical admission.
 
-The final branch is checked with `git merge-tree --write-tree c60b309b1 <observer-head>`. A conflict-free
-tree is only a structural result; it is not a compiled integration or permission to launch a provider call.
+No production implementation of `AdmittedSemanticObservationReviewer` exists. Wiring one requires an exact
+provider/model mapping, a proof that internal retry cannot fabricate one logical receipt for multiple network
+calls, and a scheduler-side summons that only snapshots already-sealed trace authority. Until those land and
+are replayed, the plane stays unwired. That is a correctness boundary, not a feature flag or a request cap.
 
-Until that adapter and its provider lifecycle tests land, the new plane stays unwired. That is a
-correctness boundary, not a feature flag or a request cap.
+## Deterministic provider-free dispatch boundary
+
+Commit `33b95b2cb` adds a generic `ProviderDispatchClass` at the
+`ProviderLifecycleDispatcher` seam. The default is `ProviderRequired`, so missing classification remains
+fail-closed through source publication, physical admission, and provider lifecycle. Only a dispatcher that
+explicitly certifies `DeterministicProviderFree` can run through `run_provider_free`; that path emits
+`provider_free_dispatch_started` and creates no admission or fabricated provider receipt. Its default
+implementation is a terminal error, so classification without an implementation also fails closed.
+
+The replay mock classifies `skeleton::` and `join::` work and proves that only the model-capable sibling gets
+admission/provider receipts. Concrete Goose classification is deliberately not wired in this branch: the
+production dispatcher must prove that each selected path is wholly deterministic and cannot fall through to
+an agent/model call. Prefix matching exists only in the replay fixture, not as engine policy.
 
 ## Exact Engine 5 gap
 
-Engine 5 begins only after the observation adapter is broker-admitted and measured. It must add all of
+Engine 5 admission is now present, but Engine 5 control authority is not. The remaining work must add all of
 the following without weakening this boundary:
 
 1. `NUDGE`: deliver ordinary guidance only at a natural tool/turn boundary. A high-confidence interrupt
