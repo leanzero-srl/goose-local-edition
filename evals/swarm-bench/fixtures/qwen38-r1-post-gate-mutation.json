@@ -1,0 +1,118 @@
+{
+  "fixture": "qwen38-r1-post-gate-mutation",
+  "captured_at": "2026-08-23",
+  "source": {
+    "run": "sb7-fleet38/swarm-3node-r1",
+    "run_log_path": "evals/swarm-bench/runs/sb7-fleet38/swarm-3node-r1/runs/sb7-fleet38/swarm-3node-r1/run.jsonl",
+    "run_log_sha256": "6402923479726a0a1533493955c0b5625caa59661db630e7b903d274dfcdd5b6",
+    "best_snapshot_path": "evals/swarm-bench/runs/sb7-fleet38/swarm-3node-r1/.swarm/best-tree",
+    "shipped_tree_path": "evals/swarm-bench/runs/sb7-fleet38/swarm-3node-r1",
+    "note": "The archived log and trees are external evidence. This fixture pins their derived hashes and chronology without requiring the archive at test time."
+  },
+  "chronology": [
+    {
+      "event": "complete_verify",
+      "ts": "2026-08-22T12:26:22.908462+00:00",
+      "round": 2,
+      "findings": 3
+    },
+    {
+      "event": "boot_repair_attempt",
+      "ts": "2026-08-22T12:26:27.152100+00:00",
+      "attempt": 1
+    },
+    {
+      "event": "boot_repaired",
+      "ts": "2026-08-22T12:56:28.964913+00:00",
+      "attempts": 1
+    },
+    {
+      "event": "complete_result",
+      "ts": "2026-08-22T12:56:28.964940+00:00",
+      "passed": false,
+      "verified": false
+    },
+    {
+      "event": "review",
+      "ts": "2026-08-22T12:56:29.089101+00:00",
+      "new_findings": 1
+    },
+    {
+      "event": "review_after_fix",
+      "ts": "2026-08-22T13:12:07.385256+00:00",
+      "new_findings": 0
+    },
+    {
+      "event": "run_finished",
+      "ts": "2026-08-22T13:12:07.386998+00:00"
+    }
+  ],
+  "best_snapshot": {
+    "event_ts": "2026-08-22T10:36:00.255317+00:00",
+    "round": 1,
+    "findings": 3,
+    "note": "Round 2 also measured three findings and did not replace the strict-better snapshot."
+  },
+  "changed_files": [
+    {
+      "path": "app/db.py",
+      "snapshot_sha256": "ab9b6e3c989d48133b6194bd00e5334e1e771a9c3661b85e96b15e12b1ed05ae",
+      "shipped_sha256": "13114f83ec10a0ec2590c565770951d04bf6c26bd53b4c8f374ce4262429b189",
+      "shipped_mtime": "2026-08-22T15:39:40+03:00",
+      "window": "boot-repair"
+    },
+    {
+      "path": "app/events.py",
+      "snapshot_sha256": "afc3fd21fb560981668363e5c600cfe510613b623b8c3b1e15e38a5085ea5dcc",
+      "shipped_sha256": "df183e89ef24fa8bce8da9291e6c8c4b1d3afe8b0ece769dfb194367f0a244e7",
+      "shipped_mtime": "2026-08-22T15:40:31+03:00",
+      "window": "boot-repair"
+    },
+    {
+      "path": "app/sync.py",
+      "snapshot_sha256": "9aa7b297fc271e0c8b43cb58e953fdcde5cf3b9584d83a934b7d77a8b57aaf96",
+      "shipped_sha256": "a81442977f9e047e54577a494cbcacd40af84f87a05f5cfe1b422ef1de9f46a3",
+      "shipped_mtime": "2026-08-22T15:56:06+03:00",
+      "window": "boot-repair"
+    },
+    {
+      "path": "app/ledgerd.py",
+      "snapshot_sha256": "54aafdf259c3598d5010081fc163e1c811b346682bd93dc85e1bc60e2b4b96dc",
+      "shipped_sha256": "715e8a6f24a933c8f8e97fe11e72338fe0ef9a42443bf8f07c10dd4b289a5713",
+      "shipped_mtime": "2026-08-22T16:05:38+03:00",
+      "window": "wire-fix"
+    },
+    {
+      "path": "app/__main__.py",
+      "snapshot_sha256": "79ed915772b91f767509b4429fefd0680124ee52c3494de43d30a9c2b9aa3850",
+      "shipped_sha256": "50eaca18643afd6de68a500fdde6a4c66c6f4e6a18acb4a98bd63ff5d69ba76a",
+      "shipped_mtime": "2026-08-22T16:07:10+03:00",
+      "window": "wire-fix"
+    },
+    {
+      "path": "app/notifierd.py",
+      "snapshot_sha256": "132ff1a55d3947c1fba7038c10fd4915eea1aa12dc6f72873e108fa958c48470",
+      "shipped_sha256": "c2bd475ee1321a8a278354caf76392bfcf339fc154ac8f7a803e72fb4a79a697",
+      "shipped_mtime": "2026-08-22T16:07:10+03:00",
+      "window": "wire-fix"
+    }
+  ],
+  "negative_controls": [
+    {
+      "path": "app/api.py",
+      "snapshot_sha256": "ebd8be828e4fb8bb1544a4734a7efcf7dce5af1a8fba4f04f5852afc6bb7b6f1",
+      "shipped_sha256": "ebd8be828e4fb8bb1544a4734a7efcf7dce5af1a8fba4f04f5852afc6bb7b6f1"
+    },
+    {
+      "path": "app/config.py",
+      "snapshot_sha256": "a7563c018f03230e634344b40eeeffe3dd71962d1891c282a760e4d31b6837fe",
+      "shipped_sha256": "a7563c018f03230e634344b40eeeffe3dd71962d1891c282a760e4d31b6837fe"
+    },
+    {
+      "path": "web/styles.css",
+      "snapshot_sha256": "61e9625647eeaef590cc0d9124350d495647b97ecaaa344c15c2a8aa4d8bb387",
+      "shipped_sha256": "61e9625647eeaef590cc0d9124350d495647b97ecaaa344c15c2a8aa4d8bb387"
+    }
+  ],
+  "mtime_caveat": "rsync -a preserves source mtimes, so snapshot mtimes are not snapshot times. Attribution rests on byte hashes, event windows, absence of a successful promotion after the snapshot, the only recorded direct writers, and shipped mtimes falling inside those writer windows."
+}
