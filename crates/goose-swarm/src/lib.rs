@@ -18,6 +18,7 @@ pub mod replan;
 pub mod scheduler;
 pub mod semantic_control;
 pub mod semantic_observation;
+pub mod semantic_runtime;
 
 pub use broker::{
     AdmissionReceipt, BrokerError, BrokerGrant, CapacityUpdateReceipt, HostCapacityEvidence,
@@ -70,4 +71,9 @@ pub use semantic_observation::{
     SemanticObservationSnapshotDraft, SemanticProtocolFailure, SemanticProtocolFailureKind,
     SemanticSplitBoundary, SemanticTraceSnapshot, SEMANTIC_OBSERVATION_PROTOCOL,
     SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+};
+pub use semantic_runtime::{
+    SemanticObservationCapture, SemanticObservationCaptureRequest,
+    SemanticObservationSnapshotProducer, SemanticObservationSummonsSignal, SemanticTraceRevision,
+    TraceStateMeasurement,
 };
