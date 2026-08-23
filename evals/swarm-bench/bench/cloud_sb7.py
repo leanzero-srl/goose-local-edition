@@ -56,7 +56,6 @@ RESTARTABLE_CAMPAIGN_STATES = {
     "RUNNING",
     "BUILD_COMPLETE",
     "SCORING",
-    "ATTENTION",
 }
 POST_BUILD_STATES = {
     "SCORING",
@@ -239,6 +238,9 @@ MONITOR_HEARTBEAT_INTERVAL_SECONDS = 10.0
 MONITOR_LEASE_TIMEOUT_SECONDS = 35.0
 MANAGER_WATCH_POLL_SECONDS = 1.0
 GATED_EXEC_RECEIPT_TIMEOUT_SECONDS = 10.0
+CHILD_GATE_PATH_ENV = "GOOSE_CLOUD_CHILD_GATE_PATH"
+CHILD_GATE_TOKEN_ENV = "GOOSE_CLOUD_CHILD_GATE_TOKEN"
+CHILD_GATE_ROLE_ENV = "GOOSE_CLOUD_CHILD_GATE_ROLE"
 MONITOR_PROGRESS_SCHEMA = 1
 MONITOR_PROGRESS_ROOT = "monitor-progress"
 MONITOR_PROGRESS_WINDOW_CHARS = 48
@@ -8846,6 +8848,18 @@ def smoke_supervise_claimed(root: Path, entrant_id: str) -> int:
     campaign = load_json(campaign_file(root))
     row = manifest_row(root, entrant_id)
     state = read_smoke_state(root, entrant_id)
+    ownership_problem = launched_child_ownership_failure(
+        state,
+        expected_statuses=SMOKE_RETRYABLE_STATES,
+        pid_key="supervisor_pid",
+        pgid_key="supervisor_pgid",
+        sid_key="supervisor_sid",
+        identity_key="supervisor_identity",
+        launched_key="supervisor_launched_at",
+        role=f"smoke supervisor {entrant_id}",
+    )
+    if ownership_problem:
+        return 2
     if state.get("status") not in SMOKE_RETRYABLE_STATES:
         return 0 if state.get("status") == "PASS" else 1
     mismatch = instrument_mismatch(campaign)
@@ -9043,6 +9057,19 @@ def rollback_provider_episode_before_process(
 def supervise_claimed(root: Path, entrant_id: str) -> int:
     require_smoke_proofs(root, pristine_entrant=entrant_id)
     campaign = load_json(campaign_file(root))
+    state = read_state(root, entrant_id)
+    ownership_problem = launched_child_ownership_failure(
+        state,
+        expected_statuses=RETRYABLE_BUILD_STATES,
+        pid_key="supervisor_pid",
+        pgid_key="supervisor_pgid",
+        sid_key="supervisor_sid",
+        identity_key="supervisor_identity",
+        launched_key="launched_at",
+        role=f"build supervisor {entrant_id}",
+    )
+    if ownership_problem:
+        return 2
     if campaign.get("status") != "RUNNING" or (root / SUPERSESSION_RECEIPT).exists():
         return 2
     lineage_problem = lineage_failure(root)
@@ -9071,7 +9098,6 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
     from vendor_service_v3 import serve  # noqa: PLC0415
 
     row = manifest_row(root, entrant_id)
-    state = read_state(root, entrant_id)
     if state["status"] not in RETRYABLE_BUILD_STATES:
         return 0
     mismatch = instrument_mismatch(campaign)
@@ -9352,7 +9378,10 @@ def hash_tree(root: Path) -> str:
 
 
 def launch_detached(
-    cmd: list[str], log_path: Path, on_started: Any = None
+    cmd: list[str],
+    log_path: Path,
+    on_started: Any = None,
+    child_role: str | None = None,
 ) -> subprocess.Popen[Any]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log = log_path.open("a")
@@ -9366,6 +9395,7 @@ def launch_detached(
             stderr=subprocess.STDOUT,
             gate_dir=log_path.parent,
             on_started=on_started or (lambda _proc: None),
+            child_role=child_role,
         )
     finally:
         log.close()
@@ -9380,6 +9410,7 @@ def launch_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
             entrant_id,
             supervisor_pid=proc.pid,
             supervisor_pgid=proc.pid,
+            supervisor_sid=proc.pid,
             supervisor_identity=process_identity(proc.pid),
             launched_at=utc_now(),
         )
@@ -9396,6 +9427,7 @@ def launch_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
         ],
         unit / "logs/supervisor.log",
         on_started=started,
+        child_role=f"build-supervisor:{entrant_id}",
     )
 
 
@@ -9411,6 +9443,7 @@ def launch_smoke_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any
             supervisor_launches=launch,
             supervisor_pid=proc.pid,
             supervisor_pgid=proc.pid,
+            supervisor_sid=proc.pid,
             supervisor_identity=process_identity(proc.pid),
             supervisor_log=str(unit / f"supervisor-{launch}.log"),
             supervisor_launched_at=utc_now(),
@@ -9428,6 +9461,7 @@ def launch_smoke_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any
         ],
         unit / f"supervisor-{launch}.log",
         on_started=started,
+        child_role=f"smoke-supervisor:{entrant_id}",
     )
 
 
@@ -9456,6 +9490,66 @@ def process_alive(pid: Any, expected_identity: Any = None) -> bool:
     if identity is None:
         return False
     return expected_identity is None or identity == str(expected_identity)
+
+
+def launched_child_ownership_failure(
+    state: Mapping[str, Any],
+    *,
+    expected_statuses: set[str],
+    pid_key: str,
+    pgid_key: str,
+    sid_key: str,
+    identity_key: str,
+    launched_key: str,
+    role: str,
+) -> str | None:
+    status = state.get("status")
+    if status not in expected_statuses:
+        return f"{role} launch status is {status}, not an admitted starting state"
+    pid = state.get(pid_key)
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid != os.getpid():
+        return f"{role} launch process id does not own this child"
+    pgid = state.get(pgid_key)
+    if isinstance(pgid, bool) or not isinstance(pgid, int) or pgid != os.getpgrp():
+        return f"{role} launch process group does not own this child"
+    sid = state.get(sid_key)
+    current_sid = os.getsid(0)
+    if (
+        isinstance(sid, bool)
+        or not isinstance(sid, int)
+        or sid != current_sid
+        or pid != pgid
+        or pid != sid
+    ):
+        return f"{role} launch session does not exclusively own this child"
+    identity = state.get(identity_key)
+    current_identity = process_identity(os.getpid())
+    if (
+        not isinstance(identity, str)
+        or not identity
+        or current_identity is None
+        or identity != current_identity
+    ):
+        return f"{role} launch process identity does not own this child"
+    launched_at = state.get(launched_key)
+    if not isinstance(launched_at, str) or not launched_at:
+        return f"{role} has no committed parent launch receipt"
+    return None
+
+
+def manager_process_ownership_failure(
+    root: Path, expected_statuses: set[str]
+) -> str | None:
+    return launched_child_ownership_failure(
+        load_json(root / "manager.json"),
+        expected_statuses=expected_statuses,
+        pid_key="pid",
+        pgid_key="pgid",
+        sid_key="sid",
+        identity_key="identity",
+        launched_key="launched_at",
+        role="cloud benchmark manager",
+    )
 
 
 def monitor_progress_file_evidence(path: Path) -> Dict[str, Any]:
@@ -11112,6 +11206,19 @@ def smoke(root: Path) -> int:
 
 
 def smoke_manage(root: Path) -> int:
+    require_lineage(root)
+    ownership_problem = launched_child_ownership_failure(
+        read_smoke_manager_state(root),
+        expected_statuses={"STARTING"},
+        pid_key="pid",
+        pgid_key="pgid",
+        sid_key="sid",
+        identity_key="identity",
+        launched_key="launched_at",
+        role="cloud smoke manager",
+    )
+    if ownership_problem:
+        return 2
     smoke_manager_state(
         root,
         status="RUNNING",
@@ -11184,6 +11291,7 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
                         status="STARTING",
                         pid=proc.pid,
                         pgid=proc.pid,
+                        sid=proc.pid,
                         identity=process_identity(proc.pid),
                         launched_at=utc_now(),
                         failure=None,
@@ -11205,6 +11313,7 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
                         stderr=subprocess.STDOUT,
                         gate_dir=root / "smoke",
                         on_started=started,
+                        child_role="smoke-manager",
                     )
         campaign = load_json(campaign_file(root))
         state = read_smoke_manager_state(root)
@@ -11580,6 +11689,68 @@ def publisher_environment(
     return env, redactions
 
 
+def consume_child_launch_capability(expected_role: str) -> None:
+    raw_path = os.environ.pop(CHILD_GATE_PATH_ENV, None)
+    token = os.environ.pop(CHILD_GATE_TOKEN_ENV, None)
+    role = os.environ.pop(CHILD_GATE_ROLE_ENV, None)
+    if not raw_path or not token or role != expected_role:
+        raise SystemExit(f"{expected_role} requires a one-shot parent launch capability")
+    gate_path = Path(raw_path)
+    if not gate_path.is_absolute():
+        raise SystemExit(f"{expected_role} launch capability path is not absolute")
+    try:
+        before = gate_path.lstat()
+    except OSError as error:
+        raise SystemExit(
+            f"{expected_role} launch capability is unavailable: {error}"
+        ) from None
+    if (
+        not stat_module.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or stat_module.S_IMODE(before.st_mode) & 0o077
+    ):
+        raise SystemExit(f"{expected_role} launch capability is not a private file")
+    try:
+        receipt = load_json(gate_path)
+    except (OSError, json.JSONDecodeError, SystemExit) as error:
+        raise SystemExit(
+            f"{expected_role} launch capability is unreadable: {error}"
+        ) from None
+    if set(receipt) != {
+        "schema_version",
+        "token",
+        "pid",
+        "parent_pid",
+        "identity",
+        "child_role",
+        "committed_at",
+    }:
+        raise SystemExit(f"{expected_role} launch capability has an invalid schema")
+    current_identity = process_identity(os.getpid())
+    if (
+        receipt.get("schema_version") != 1
+        or not secrets.compare_digest(str(receipt.get("token", "")), token)
+        or receipt.get("pid") != os.getpid()
+        or receipt.get("identity") != current_identity
+        or receipt.get("child_role") != expected_role
+        or not isinstance(receipt.get("parent_pid"), int)
+        or not isinstance(receipt.get("committed_at"), str)
+    ):
+        raise SystemExit(f"{expected_role} launch capability does not own this process")
+    consumed = gate_path.with_name(f".{gate_path.name}.consumed-{os.getpid()}")
+    try:
+        os.rename(gate_path, consumed)
+        claimed = consumed.lstat()
+    except OSError as error:
+        raise SystemExit(
+            f"{expected_role} launch capability was already consumed: {error}"
+        ) from None
+    if (before.st_dev, before.st_ino) != (claimed.st_dev, claimed.st_ino):
+        raise SystemExit(f"{expected_role} launch capability changed during admission")
+    consumed.unlink()
+    fsync_directory(consumed.parent)
+
+
 def gated_exec(gate_path: Path, token: str, command: list[str]) -> int:
     if command and command[0] == "--":
         command = command[1:]
@@ -11601,6 +11772,7 @@ def gated_exec(gate_path: Path, token: str, command: list[str]) -> int:
                 "pid",
                 "parent_pid",
                 "identity",
+                "child_role",
                 "committed_at",
             }:
                 return 126
@@ -11612,6 +11784,19 @@ def gated_exec(gate_path: Path, token: str, command: list[str]) -> int:
                 or receipt.get("identity") != process_identity(os.getpid())
             ):
                 return 126
+            for name in (
+                CHILD_GATE_PATH_ENV,
+                CHILD_GATE_TOKEN_ENV,
+                CHILD_GATE_ROLE_ENV,
+            ):
+                os.environ.pop(name, None)
+            child_role = receipt.get("child_role")
+            if child_role is not None:
+                if not isinstance(child_role, str) or not child_role:
+                    return 126
+                os.environ[CHILD_GATE_PATH_ENV] = str(gate_path)
+                os.environ[CHILD_GATE_TOKEN_ENV] = token
+                os.environ[CHILD_GATE_ROLE_ENV] = child_role
             os.execvpe(command[0], command, os.environ)
         time.sleep(0.01)
     return 124
@@ -11627,7 +11812,10 @@ def launch_after_receipt(
     stderr: Any,
     gate_dir: Path,
     on_started: Any,
+    child_role: str | None = None,
 ) -> subprocess.Popen[Any]:
+    if child_role is not None and not re.fullmatch(r"[a-z0-9][a-z0-9:-]*", child_role):
+        raise ValueError(f"invalid child launch role: {child_role}")
     gate_dir.mkdir(parents=True, exist_ok=True)
     token = secrets.token_hex(16)
     gate_path = gate_dir / f"launch-{token}.json"
@@ -11665,6 +11853,7 @@ def launch_after_receipt(
                 "pid": proc.pid,
                 "parent_pid": parent_pid,
                 "identity": identity,
+                "child_role": child_role,
                 "committed_at": utc_now(),
             },
         )
@@ -13009,6 +13198,11 @@ def score_one(root: Path, entrant_id: str) -> bool:
 
 def score_all(root: Path, row_ids: list[str], finalize_campaign: bool = True) -> bool:
     require_lineage(root)
+    ownership_problem = manager_process_ownership_failure(
+        root, {"RUNNING", "SCORING", "PUBLISHING"}
+    )
+    if ownership_problem:
+        raise SystemExit(f"scoring requires the launched manager: {ownership_problem}")
     recover_interrupted_scoring(root)
     manager_state(root, status="SCORING", active_entrant=None, failure=None)
     update_campaign(root, status="SCORING", score_started_at=utc_now())
@@ -13060,6 +13254,11 @@ def manage(root: Path) -> int:
 
 def manage_claimed(root: Path) -> int:
     campaign = load_json(campaign_file(root))
+    ownership_problem = manager_process_ownership_failure(root, {"STARTING"})
+    if ownership_problem:
+        return 2
+    if campaign.get("status") not in RESTARTABLE_CAMPAIGN_STATES:
+        return 2
     if campaign.get("status") == "STOPPED" or (root / SUPERSESSION_RECEIPT).exists():
         return 2
     recover_interrupted_scoring(root)
@@ -13158,6 +13357,7 @@ def start(root: Path) -> int:
                 status="STARTING",
                 pid=proc.pid,
                 pgid=proc.pid,
+                sid=proc.pid,
                 identity=process_identity(proc.pid),
                 monitor_lease_id=monitor_lease_id,
                 launched_at=utc_now(),
@@ -13173,6 +13373,7 @@ def start(root: Path) -> int:
             ],
             root / "manager.log",
             on_started=manager_started,
+            child_role="manager",
         )
     print(f"started cloud SB7 manager pid={proc.pid} root={root}")
     return 0
@@ -13510,6 +13711,18 @@ def monitor_campaign(
             return 0
         require_lineage(root)
         campaign = load_json(campaign_file(root))
+        ownership_problem = launched_child_ownership_failure(
+            read_monitor_state(root),
+            expected_statuses={"STARTING"},
+            pid_key="pid",
+            pgid_key="pgid",
+            sid_key="session_id",
+            identity_key="identity",
+            launched_key="launched_at",
+            role="cloud benchmark monitor",
+        )
+        if ownership_problem:
+            return 2
         try:
             validate_monitor_progress_ledger(root)
             contract = smoke_contract_identity(campaign)
@@ -13581,6 +13794,7 @@ def monitor_start(root: Path) -> int:
                 status="STARTING",
                 pid=proc.pid,
                 pgid=proc.pid,
+                session_id=proc.pid,
                 identity=process_identity(proc.pid),
                 smoke_contract_sha256=campaign["smoke_contract_sha256"],
                 launched_at=utc_now(),
@@ -13597,6 +13811,7 @@ def monitor_start(root: Path) -> int:
             ],
             root / "monitor.log",
             on_started=monitor_started,
+            child_role="monitor",
         )
     print(f"started cloud SB7 monitor pid={proc.pid} root={root}")
     return 0
@@ -14047,18 +14262,23 @@ def main() -> int:
     if args.command == "smoke":
         return durable_smoke(root)
     if args.command == "_smoke_supervise":
+        consume_child_launch_capability(f"smoke-supervisor:{args.entrant}")
         return smoke_supervise(root, args.entrant)
     if args.command == "_smoke_manage":
+        consume_child_launch_capability("smoke-manager")
         return smoke_manage(root)
     if args.command == "monitor-start":
         return monitor_start(root)
     if args.command == "_monitor":
+        consume_child_launch_capability("monitor")
         return monitor_campaign(root)
     if args.command == "start":
         return start(root)
     if args.command == "_manage":
+        consume_child_launch_capability("manager")
         return manage(root)
     if args.command == "_supervise":
+        consume_child_launch_capability(f"build-supervisor:{args.entrant}")
         return supervise(root, args.entrant)
     if args.command == "status":
         print_status(root)
@@ -14069,13 +14289,16 @@ def main() -> int:
                 print_status(root)
                 manager = load_json(root / "manager.json")
                 campaign = load_json(campaign_file(root))
-                if (
-                    manager.get("status") in {"PUBLISHED", "ATTENTION", "STOPPED"}
-                    or campaign.get("status") == "PUBLISHED"
-                ):
+                statuses = {manager.get("status"), campaign.get("status")}
+                if "PUBLISHED" in statuses:
                     return 0
+                if "ATTENTION" in statuses:
+                    return 1
+                if "STOPPED" in statuses:
+                    return 2
                 if not process_alive(manager.get("pid"), manager.get("identity")):
-                    start(root)
+                    print("manager is not alive; run resume/start explicitly", file=sys.stderr)
+                    return 2
                 print()
                 time.sleep(20)
         except KeyboardInterrupt:
