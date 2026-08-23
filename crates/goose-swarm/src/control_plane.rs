@@ -12,7 +12,9 @@ use crate::broker::{
     ProviderRequestReceipt, ProviderTerminalKind, ProviderTerminalReceipt,
     ReleasedAdmissionReceipt, StaleWorkReceipt, TaskVersion, VerifiedPhysicalLane, WorkOpportunity,
 };
-use crate::dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput};
+use crate::dispatch::{
+    DispatchError, DispatchRequest, ProviderDispatchClass, TaskDispatcher, TaskRunOutput,
+};
 use crate::event::{EventSink, SwarmEvent};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -619,6 +621,16 @@ impl PhysicalAdmissionControl {
             reason: error.to_string(),
         });
     }
+
+    fn emit_provider_free_dispatch(&self, req: &DispatchRequest) {
+        self.inner
+            .sink
+            .emit(&SwarmEvent::ProviderFreeDispatchStarted {
+                task_id: req.task_id.clone(),
+                attempt: req.attempt,
+                class: ProviderDispatchClass::DeterministicProviderFree,
+            });
+    }
 }
 
 struct PendingAdmissionGuard {
@@ -830,12 +842,35 @@ impl ProviderLifecycle {
 
 #[async_trait]
 pub trait ProviderLifecycleDispatcher: Send + Sync {
+    /// Defaulting to provider-required makes an absent or incomplete classifier fail closed through
+    /// physical admission. Implementations may certify only work that cannot invoke a model.
+    fn provider_dispatch_class(&self, _req: &DispatchRequest) -> ProviderDispatchClass {
+        ProviderDispatchClass::ProviderRequired
+    }
+
+    /// Runs locally certified deterministic work without a physical admission or provider receipt.
+    /// The default rejects a certification that has no provider-free implementation.
+    async fn run_provider_free(
+        &self,
+        req: DispatchRequest,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        Err(DispatchError::Terminal(format!(
+            "task `{}` was certified provider-free, but the dispatcher has no deterministic implementation",
+            req.task_id
+        )))
+    }
+
     async fn run_admitted(
         &self,
         req: DispatchRequest,
         admission: AdmissionReceipt,
         lifecycle: ProviderLifecycle,
     ) -> Result<TaskRunOutput, DispatchError>;
+}
+
+enum PreparedDispatch {
+    ProviderRequired(Result<PendingAdmission, String>),
+    DeterministicProviderFree,
 }
 
 #[async_trait]
@@ -853,7 +888,7 @@ pub(crate) struct BrokeredTaskDispatcher {
     control: PhysicalAdmissionControl,
     inner: Arc<dyn ProviderLifecycleDispatcher>,
     authority: Arc<dyn PhysicalDispatchAuthority>,
-    prepared: Mutex<HashMap<(String, u32), Result<PendingAdmission, String>>>,
+    prepared: Mutex<HashMap<(String, u32), PreparedDispatch>>,
 }
 
 impl BrokeredTaskDispatcher {
@@ -872,20 +907,27 @@ impl BrokeredTaskDispatcher {
 
     pub(crate) async fn prepare(&self, req: &DispatchRequest) {
         let key = (req.task_id.clone(), req.attempt);
-        let prepared = match self.authority.opportunity(req).await {
-            Ok(opportunity) => match self
-                .control
-                .set_source_revision(opportunity.source.clone())
-                .await
-            {
-                Ok(()) => self
-                    .control
-                    .queue_admission(opportunity)
-                    .await
-                    .map_err(|error| error.to_string()),
-                Err(error) => Err(error.to_string()),
-            },
-            Err(error) => Err(error.to_string()),
+        let prepared = match self.inner.provider_dispatch_class(req) {
+            ProviderDispatchClass::DeterministicProviderFree => {
+                PreparedDispatch::DeterministicProviderFree
+            }
+            ProviderDispatchClass::ProviderRequired => {
+                PreparedDispatch::ProviderRequired(match self.authority.opportunity(req).await {
+                    Ok(opportunity) => match self
+                        .control
+                        .set_source_revision(opportunity.source.clone())
+                        .await
+                    {
+                        Ok(()) => self
+                            .control
+                            .queue_admission(opportunity)
+                            .await
+                            .map_err(|error| error.to_string()),
+                        Err(error) => Err(error.to_string()),
+                    },
+                    Err(error) => Err(error.to_string()),
+                })
+            }
         };
         let replaced = self.prepared.lock().await.insert(key, prepared);
         debug_assert!(
@@ -921,9 +963,15 @@ impl TaskDispatcher for BrokeredTaskDispatcher {
                     req.task_id, req.attempt
                 ))
             })?;
-        let pending = prepared.map_err(|error| {
-            DispatchError::Terminal(format!("physical admission rejected task: {error}"))
-        })?;
+        let pending = match prepared {
+            PreparedDispatch::DeterministicProviderFree => {
+                self.control.emit_provider_free_dispatch(&req);
+                return self.inner.run_provider_free(req).await;
+            }
+            PreparedDispatch::ProviderRequired(prepared) => prepared.map_err(|error| {
+                DispatchError::Terminal(format!("physical admission rejected task: {error}"))
+            })?,
+        };
         let admitted = pending.wait().await.map_err(|error| {
             DispatchError::Terminal(format!("physical admission rejected task: {error}"))
         })?;
