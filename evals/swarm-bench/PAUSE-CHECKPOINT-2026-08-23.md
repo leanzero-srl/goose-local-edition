@@ -14,7 +14,7 @@ This is a deliberate offline pause. No model benchmark, hermetic scorer, publish
 
 - Local integration: `/Users/mihaiperdum/Projects/goose-engine-integration`, branch `codex/swarm-provider-boundary`. Pre-checkpoint HEAD was `1fd5c37e2`.
 - Cloud integration: `/Users/mihaiperdum/Projects/goose-cloud-harness`, branch `codex/cloud-sb7-harness`, clean at `985b6ff40`.
-- Cloud runtime hardening: `/Users/mihaiperdum/Projects/goose-cloud-runtime-integrity`, branch `codex/cloud-runtime-integrity`. Durable commits are `402a51da9`, `f45449306`, `a879421eb`, and `774a8ffa6`; two cloud harness files remain uncommitted after the final test/review was interrupted.
+- Cloud runtime hardening: `/Users/mihaiperdum/Projects/goose-cloud-runtime-integrity`, branch `codex/cloud-runtime-integrity`. Durable commits are `402a51da9`, `f45449306`, `a879421eb`, `774a8ffa6`, and pause checkpoint `49a994ac1`. The worktree is clean and pushed; the interrupted final full-suite rerun has not certified the checkpoint.
 - Repair causal promotion: `/Users/mihaiperdum/Projects/goose-repair-causal-promotion`, branch `codex/swarm-repair-causal-promotion`, clean at `7609e71a3`; cherry-pick `a2533d341` then `7609e71a3` only after the local provider-boundary slice is complete.
 - Website correction is already committed separately as `694927b`; do not alter it during this implementation pause.
 
@@ -61,7 +61,7 @@ The exact partial seam at pause:
 4. Run `cargo fmt`, `git diff --check`, targeted provider/lifecycle/physical-broker/semantic tests, then `cargo check -p goose-providers -p goose-swarm -p goose-cli`.
 5. Commit and push the completed local provider-boundary slice.
 6. Cherry-pick `a2533d341` and `7609e71a3`, resolving `swarm.rs` by preserving both lifecycle and causal-repair changes; then run focused and consolidated gates.
-7. Resume the cloud runtime worktree, inspect its two-file diff, complete its interrupted full suite, commit it, then cherry-pick its four durable commits plus the final commit onto `codex/cloud-sb7-harness`.
+7. Resume the cloud runtime worktree at `49a994ac1`, inspect the checkpoint diff, complete its interrupted full suite, and add any required correction commit; then cherry-pick the five runtime-hardening commits onto `codex/cloud-sb7-harness`.
 8. Run final offline clippy/test gates and adversarial review. Do not start models.
 9. Clean only exact regenerable target directories. The first cleanup already reclaimed about 131 GB; at pause the local integration target was about 16 GB and the data volume had about 114 GiB free.
 10. Report readiness and wait for Mihai's explicit permission before launching either local or cloud benchmarks.
