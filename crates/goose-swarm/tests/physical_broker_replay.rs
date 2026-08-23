@@ -753,3 +753,117 @@ fn provider_failure_downgrades_a_claimed_local_success() {
         .unwrap();
     assert_eq!(released.local_completion, LocalCompletionKind::Error);
 }
+
+#[test]
+fn later_finished_provider_attempt_recovers_an_earlier_failure() {
+    let mut broker = PhysicalBroker::new(
+        "outcome-recovery",
+        snapshot(
+            "outcome-recovery",
+            vec![lane("lane-a", "model-a", "host-a", "instance-a")],
+        ),
+    )
+    .unwrap();
+    let source = attempt("task", 0, 1);
+    broker.set_source_revision(source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "build:task",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            source,
+        ))
+        .unwrap();
+    let admission = admit_next(&mut broker);
+    let failed = provider_start(&admission, 0);
+    broker.request_provider_turn(failed.clone()).unwrap();
+    broker
+        .observe_provider_terminal(provider_terminal(&failed, ProviderTerminalKind::Failed))
+        .unwrap();
+    let recovered = provider_start(&admission, 1);
+    assert!(matches!(
+        broker.request_provider_turn(recovered.clone()).unwrap(),
+        ProviderRequestDisposition::Queued(_)
+    ));
+    assert!(matches!(
+        broker.grant_next(),
+        Some(BrokerGrant::ProviderRequest { receipt, .. }) if receipt == recovered
+    ));
+    broker
+        .observe_provider_terminal(provider_terminal(
+            &recovered,
+            ProviderTerminalKind::Finished,
+        ))
+        .unwrap();
+    broker
+        .close_provider_starts(&admission.admission_id)
+        .unwrap();
+    broker
+        .record_local_completion(&admission.admission_id, LocalCompletionKind::Success)
+        .unwrap();
+    let released = broker
+        .release_if_terminal(&admission.admission_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(released.local_completion, LocalCompletionKind::Success);
+    assert_eq!(released.provider_terminals.len(), 2);
+    assert_eq!(
+        released.provider_terminals[0].kind,
+        ProviderTerminalKind::Failed
+    );
+    assert_eq!(
+        released.provider_terminals[1].kind,
+        ProviderTerminalKind::Finished
+    );
+}
+
+#[test]
+fn final_failed_provider_attempt_downgrades_prior_success() {
+    let mut broker = PhysicalBroker::new(
+        "outcome-regression",
+        snapshot(
+            "outcome-regression",
+            vec![lane("lane-a", "model-a", "host-a", "instance-a")],
+        ),
+    )
+    .unwrap();
+    let source = attempt("task", 0, 1);
+    broker.set_source_revision(source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "build:task",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            source,
+        ))
+        .unwrap();
+    let admission = admit_next(&mut broker);
+    let finished = provider_start(&admission, 0);
+    broker.request_provider_turn(finished.clone()).unwrap();
+    broker
+        .observe_provider_terminal(provider_terminal(&finished, ProviderTerminalKind::Finished))
+        .unwrap();
+    let failed = provider_start(&admission, 1);
+    assert!(matches!(
+        broker.request_provider_turn(failed.clone()).unwrap(),
+        ProviderRequestDisposition::Queued(_)
+    ));
+    assert!(matches!(
+        broker.grant_next(),
+        Some(BrokerGrant::ProviderRequest { receipt, .. }) if receipt == failed
+    ));
+    broker
+        .observe_provider_terminal(provider_terminal(&failed, ProviderTerminalKind::Failed))
+        .unwrap();
+    broker
+        .close_provider_starts(&admission.admission_id)
+        .unwrap();
+    broker
+        .record_local_completion(&admission.admission_id, LocalCompletionKind::Success)
+        .unwrap();
+    let released = broker
+        .release_if_terminal(&admission.admission_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(released.local_completion, LocalCompletionKind::Error);
+}

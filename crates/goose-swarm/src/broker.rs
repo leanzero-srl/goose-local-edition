@@ -1490,11 +1490,15 @@ impl PhysicalBroker {
             .into_values()
             .filter_map(|turn| turn.terminal)
             .collect();
+        // Provider calls are ordered attempts within one admitted task. Goose can recover from a
+        // failed call by compacting or by running a configured retry, so an earlier failure is not
+        // a contradiction when a later correlated call finishes. Keep every terminal receipt for
+        // audit, but reconcile the local outcome against the final provider attempt.
+        let final_provider_succeeded = provider_terminals
+            .last()
+            .is_some_and(|terminal| terminal.kind == ProviderTerminalKind::Finished);
         let effective_completion = if local_completion == LocalCompletionKind::Success
-            && (active.provider_not_started
-                || provider_terminals
-                    .iter()
-                    .any(|terminal| terminal.kind != ProviderTerminalKind::Finished))
+            && (active.provider_not_started || !final_provider_succeeded)
         {
             LocalCompletionKind::Error
         } else {
