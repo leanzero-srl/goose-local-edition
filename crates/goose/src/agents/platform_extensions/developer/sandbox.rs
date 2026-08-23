@@ -151,8 +151,10 @@ fn macos_profile_for_paths(
              (remote tcp \"localhost:*\") \
              (remote udp \"localhost:*\")) \
          {port_denials}\
+         (deny file-write*) \
          (deny file-read* file-write* (subpath \"{}\")) \
          (deny file-read* file-write* (subpath \"/private/tmp\")) \
+         (allow file-write* (literal \"/dev/null\")) \
          (allow file-read* file-write* (subpath \"{}\")) \
          (allow file-read* file-write* (subpath \"{}\")) \
          (allow file-read* file-write* (subpath \"{}\"))",
@@ -243,6 +245,8 @@ mod tests {
             "(deny network-outbound (remote ip \"localhost:1234\"))",
             "(deny network-inbound (local ip \"localhost:41258\"))",
             "(deny network-outbound (remote ip \"localhost:41258\"))",
+            "(deny file-write*)",
+            "(allow file-write* (literal \"/dev/null\"))",
         ] {
             assert!(profile.contains(clause), "profile omitted {clause}");
         }
@@ -357,6 +361,13 @@ for candidate in [outside, pathlib.Path("escape-link")]:
         pass
     else:
         raise AssertionError(f"sandbox read outside its tree through {candidate}")
+outside_write = outside.parent / "outside-write.txt"
+try:
+    outside_write.write_text("escape")
+except OSError:
+    pass
+else:
+    raise AssertionError(f"sandbox wrote outside its tree through {outside_write}")
 
 try:
     probe = subprocess.run(
