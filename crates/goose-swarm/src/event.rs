@@ -12,6 +12,7 @@ use crate::{
     },
     dag::TaskSpec,
     dispatch::{ProviderDispatchClass, ToolCallRecord},
+    repair::TaskCompletionDisposition,
     semantic_observation::NeutralJudgeSignal,
 };
 use serde::Serialize;
@@ -37,10 +38,11 @@ pub enum SwarmEvent {
     TaskCompleted {
         task_id: String,
         status: String,
-        /// True when `status` is `done` only because the progress watchdog salvaged a stalled task
-        /// whose owned files were already written. 14% of completed tasks in the archive took this
-        /// path and were counted as ordinary successes.
+        /// Compatibility projection of `completion`; never an independent source of truth.
         salvaged: bool,
+        /// Engine-minted completion evidence. A provisional receipt remains present in the final
+        /// report and names the exact artifacts that still require the full repair ruler.
+        completion: Option<TaskCompletionDisposition>,
         device: Option<String>,
         model: Option<String>,
         attempts: u32,
