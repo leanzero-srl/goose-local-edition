@@ -127,7 +127,12 @@ fn macos_profile_for_paths(
 ) -> String {
     let port_denials = denied_local_ports
         .iter()
-        .map(|port| format!("(deny network-outbound (remote ip \"localhost:{port}\")) "))
+        .map(|port| {
+            format!(
+                "(deny network-inbound (local ip \"localhost:{port}\")) \
+                 (deny network-outbound (remote ip \"localhost:{port}\")) "
+            )
+        })
         .collect::<String>();
     format!(
         "(version 1) (allow default) \
@@ -234,7 +239,9 @@ mod tests {
             "(allow network-outbound",
             "(remote tcp \"localhost:*\")",
             "(remote udp \"localhost:*\")",
+            "(deny network-inbound (local ip \"localhost:1234\"))",
             "(deny network-outbound (remote ip \"localhost:1234\"))",
+            "(deny network-inbound (local ip \"localhost:41258\"))",
             "(deny network-outbound (remote ip \"localhost:41258\"))",
         ] {
             assert!(profile.contains(clause), "profile omitted {clause}");
@@ -269,9 +276,14 @@ mod tests {
 
         let allowed_listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let denied_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let denied_bind = TcpListener::bind("127.0.0.1:0").unwrap();
         let allowed_port = allowed_listener.local_addr().unwrap().port();
         let denied_port = denied_listener.local_addr().unwrap().port();
-        let profile = macos_profile_for_paths(&root, &home, &temp, &deny_root, &[denied_port]);
+        let denied_bind_port = denied_bind.local_addr().unwrap().port();
+        drop(denied_bind);
+        let mut denied_ports = vec![denied_port, denied_bind_port];
+        denied_ports.sort_unstable();
+        let profile = macos_profile_for_paths(&root, &home, &temp, &deny_root, &denied_ports);
 
         let mut secret_parent = Command::new("/bin/sleep")
             .arg("30")
@@ -290,8 +302,9 @@ import sys
 outside = pathlib.Path(sys.argv[1])
 allowed_port = int(sys.argv[2])
 denied_port = int(sys.argv[3])
-parent_pid = int(sys.argv[4])
-secret = sys.argv[5]
+denied_bind_port = int(sys.argv[4])
+parent_pid = int(sys.argv[5])
+secret = sys.argv[6]
 
 db = sqlite3.connect("probe.db")
 db.execute("create table evidence(value text)")
@@ -319,6 +332,15 @@ accepted, _ = server.accept()
 client.close()
 accepted.close()
 server.close()
+denied_server = socket.socket()
+try:
+    denied_server.bind(("127.0.0.1", denied_bind_port))
+except OSError:
+    pass
+else:
+    raise AssertionError(f"sandbox bound reserved localhost port {denied_bind_port}")
+finally:
+    denied_server.close()
 socket.create_connection(("127.0.0.1", allowed_port), timeout=1).close()
 for host, port in [("127.0.0.1", denied_port), ("1.1.1.1", 80)]:
     try:
@@ -358,6 +380,7 @@ print("SB7_PROFILE_OK")
             .arg(&outside)
             .arg(allowed_port.to_string())
             .arg(denied_port.to_string())
+            .arg(denied_bind_port.to_string())
             .arg(secret_parent.id().to_string())
             .arg(secret)
             .current_dir(&root)
