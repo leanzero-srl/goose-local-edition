@@ -127,7 +127,9 @@ equal-rank reacquisition uses the source task's work id rather than the syntheti
 the DAG's deterministic id tie-break. Capacity updates create a new fleet-snapshot id, so two
 different capacity truths never share one snapshot identity. Active admissions retain the exact
 snapshot and capacity evidence under which they were routed; later admissions cite the new one.
-Aliases of one physical instance must also share exact route evidence.
+Capacity changes are compare-and-set against the caller's current fleet-snapshot id, so an older
+asynchronous measurement cannot overwrite newer evidence. Aliases of one physical instance must
+also share exact route evidence.
 
 LM Link routes by model identifier, not by the display host. If one identifier is reported on two
 hosts, goose-cli continues its legacy one-logical-worker reconciliation but does not certify either

@@ -597,6 +597,10 @@ pub enum BrokerError {
         host_id: String,
         reason: String,
     },
+    FleetSnapshotMismatch {
+        expected: String,
+        current: String,
+    },
     AdmissionWaiterClosed(String),
     SourceRevisionRollback {
         authority: String,
@@ -732,6 +736,10 @@ impl std::fmt::Display for BrokerError {
             Self::InvalidCapacityEvidence { host_id, reason } => {
                 write!(f, "invalid capacity evidence for `{host_id}`: {reason}")
             }
+            Self::FleetSnapshotMismatch { expected, current } => write!(
+                f,
+                "capacity update expected fleet snapshot `{expected}`, but current is `{current}`"
+            ),
             Self::AdmissionWaiterClosed(work_id) => write!(
                 f,
                 "broker admission waiter for `{work_id}` closed before a receipt arrived"
@@ -1503,6 +1511,7 @@ impl PhysicalBroker {
     pub fn update_host_capacity(
         &mut self,
         host_id: &str,
+        expected_fleet_snapshot_id: &str,
         evidence: HostCapacityEvidence,
     ) -> Result<CapacityUpdateReceipt, BrokerError> {
         evidence
@@ -1516,6 +1525,12 @@ impl PhysicalBroker {
             .get(host_id)
             .copied()
             .ok_or_else(|| BrokerError::UnknownPhysicalHost(host_id.to_string()))?;
+        if expected_fleet_snapshot_id != self.snapshot_id {
+            return Err(BrokerError::FleetSnapshotMismatch {
+                expected: expected_fleet_snapshot_id.to_string(),
+                current: self.snapshot_id.clone(),
+            });
+        }
         let new_capacity = evidence.max_concurrent();
         let previous_fleet_snapshot_id = self.snapshot_id.clone();
         self.snapshot_revision += 1;
