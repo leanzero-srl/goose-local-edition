@@ -1586,6 +1586,18 @@ mod tests {
         attempt: u32,
         admission_sequence: u64,
     ) -> SemanticObservationCaptureRequest {
+        capture_request_with_owned_files(
+            attempt,
+            admission_sequence,
+            vec!["src/api.rs".to_string()],
+        )
+    }
+
+    fn capture_request_with_owned_files(
+        attempt: u32,
+        admission_sequence: u64,
+        owned_files: Vec<String>,
+    ) -> SemanticObservationCaptureRequest {
         let capacity_evidence = HostCapacityEvidence::MeasuredProfile {
             profile_hash: "profile-worker-lane".to_string(),
             profile_key: "runtime:model:context:build".to_string(),
@@ -1623,7 +1635,7 @@ mod tests {
             7,
             "Build the sealed API contract".to_string(),
             "Implement the owned handler and prove the response".to_string(),
-            vec!["src/api.rs".to_string()],
+            owned_files,
             "contract-v1".to_string(),
             vec![AcceptanceCriterionSnapshot {
                 id: "handler".to_string(),
@@ -1932,13 +1944,13 @@ mod tests {
             ActivitySinkHealth::new(root.path(), Arc::new(RecordingSink::default())).unwrap(),
         );
         health.activate().unwrap();
-        let activity_path = health.activity_path(&first.task_id);
+        let activity_path = health.activity_path(first.task_id());
         health
             .write_digest(
                 &activity_path,
                 &serde_json::to_vec(&active_digest()).unwrap(),
-                &first.task_id,
-                Some(&first.activity_publisher),
+                first.task_id(),
+                Some(first.activity_publisher()),
                 "stream",
                 true,
             )
@@ -1954,8 +1966,8 @@ mod tests {
             .write_digest(
                 &activity_path,
                 &serde_json::to_vec(&active_digest()).unwrap(),
-                &retry.task_id,
-                Some(&retry.activity_publisher),
+                retry.task_id(),
+                Some(retry.activity_publisher()),
                 "stream",
                 true,
             )
@@ -2042,9 +2054,12 @@ mod tests {
         );
         assert!(producer.capture(request.clone()).await.is_err());
 
-        let mut escaped = request;
-        escaped.owned_files = vec!["../outside.rs".to_string()];
-        write_activity(root.path(), &escaped.task_id, active_digest());
+        let escaped = capture_request_with_owned_files(
+            request.attempt(),
+            1,
+            vec!["../outside.rs".to_string()],
+        );
+        write_activity(root.path(), escaped.task_id(), active_digest());
         assert!(producer.capture(escaped).await.is_err());
     }
 
