@@ -5706,6 +5706,66 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     Scorer(),
                 )
 
+    def test_screenshot_evidence_requires_a_real_publishable_loaded_capture(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            shots = Path(raw) / "sb7-shots"
+            shots.mkdir()
+            with self.assertRaisesRegex(SystemExit, "no publisher-consumable loaded"):
+                cloud_sb7.screenshot_evidence(shots)
+
+            (shots / "100-viz.png").write_bytes(PNG_1X1)
+            with self.assertRaisesRegex(SystemExit, "no publisher-consumable loaded"):
+                cloud_sb7.screenshot_evidence(shots)
+
+            loaded = shots / "101-loaded.png"
+            loaded.write_text("not a png")
+            with self.assertRaisesRegex(SystemExit, "invalid PNG header"):
+                cloud_sb7.screenshot_evidence(shots)
+
+            loaded.write_bytes(PNG_1X1)
+            (shots / "102-feed.png").write_bytes(PNG_1X1)
+            evidence = cloud_sb7.screenshot_evidence(shots)
+            self.assertEqual(evidence["publisher_loaded"], ["101-loaded.png"])
+            self.assertEqual(len(evidence["files"]), 3)
+            self.assertEqual(
+                evidence["tree_sha256"], cloud_sb7.artifact_tree_sha256(shots)
+            )
+            feed = next(
+                row for row in evidence["files"] if row["name"] == "102-feed.png"
+            )
+            self.assertIsNone(feed["publisher_scenario"])
+            self.assertFalse(feed["publisher_accepted"])
+
+    def test_screenshot_evidence_rejects_oversized_loaded_and_linked_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            shots = Path(raw) / "sb7-shots"
+            shots.mkdir()
+            oversized = shots / "100-loaded.png"
+            oversized.write_bytes(
+                PNG_1X1
+                + b"x"
+                * (
+                    cloud_sb7.PUBLISHER_SCREENSHOT_MAX_BYTES
+                    - len(PNG_1X1)
+                    + 1
+                )
+            )
+            with self.assertRaisesRegex(SystemExit, "no publisher-consumable loaded"):
+                cloud_sb7.screenshot_evidence(shots)
+
+        with tempfile.TemporaryDirectory() as raw:
+            shots = Path(raw) / "sb7-shots"
+            shots.mkdir()
+            source = Path(raw) / "source.png"
+            source.write_bytes(PNG_1X1)
+            os.symlink(source, shots / "100-loaded.png")
+            with self.assertRaisesRegex(SystemExit, "symbolic"):
+                cloud_sb7.screenshot_evidence(shots)
+
     def test_score_rechecks_monitor_lease_at_scored_commit(self) -> None:
         class Scorer:
             pid = 4444
@@ -5791,6 +5851,100 @@ class CloudSb7HarnessTest(unittest.TestCase):
             state = cloud_sb7.read_state(root, entrant_id)
             self.assertEqual(state["status"], "SCORE_FAILED")
             self.assertIn("before score commit", state["failure"])
+            self.assertIsNone(state["score_ownership_marker"])
+
+    def test_score_fails_before_scored_commit_when_screenshots_are_empty(
+        self,
+    ) -> None:
+        class Scorer:
+            pid = 4444
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _, verdict = self.make_scored_campaign(root)
+            entrant_id = "fixture-model"
+            state = cloud_sb7.read_state(root, entrant_id)
+            tree = Path(str(state["tree"]))
+            (tree / "fixture.txt").write_text("fixture\n")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_COMPLETE",
+                raw_tree_sha256=cloud_sb7.hash_tree(tree),
+                verdict=None,
+                verdict_sha256=None,
+                score_evidence_seal=None,
+                score_evidence_seal_sha256=None,
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            campaign["instrument_root"] = str(root / "instrument")
+            cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
+
+            def clone(_root: Path, _entrant: str, attempt: int) -> Path:
+                score_tree = (
+                    root / "scores" / entrant_id / f"attempt-{attempt}" / "tree"
+                )
+                (score_tree / "sb7-shots").mkdir(parents=True)
+                return score_tree
+
+            def launch(*_args: object, **kwargs: object) -> Scorer:
+                kwargs["on_started"](Scorer())
+                native_verdict = dict(verdict)
+                native_verdict.pop("agent", None)
+                native_verdict.pop("rep", None)
+                os.write(
+                    kwargs["pass_fds"][0],
+                    json.dumps(native_verdict).encode(),
+                )
+                return Scorer()
+
+            real_process_identity = cloud_sb7.process_identity
+
+            def process_identity(pid: object) -> str | None:
+                if pid == Scorer.pid:
+                    return "scorer-generation"
+                return real_process_identity(pid)
+
+            with (
+                mock.patch.object(
+                    cloud_sb7,
+                    "active_manager_monitor_lease_failure",
+                    return_value=None,
+                ),
+                mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+                mock.patch.object(
+                    cloud_sb7, "supersession_smoke_gate_failure", return_value=None
+                ),
+                mock.patch.object(cloud_sb7, "instrument_mismatch", return_value=None),
+                mock.patch.object(
+                    cloud_sb7, "persisted_entrant_secret_hits", return_value=[]
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "campaign_instrument_path",
+                    return_value=root / "instrument/score_sb7.py",
+                ),
+                mock.patch.object(
+                    cloud_sb7, "clone_for_score", side_effect=clone
+                ),
+                mock.patch.object(
+                    cloud_sb7, "launch_after_receipt", side_effect=launch
+                ),
+                mock.patch.object(
+                    cloud_sb7, "process_identity", side_effect=process_identity
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "wait_for_scorer",
+                    return_value=(0, True, False),
+                ),
+            ):
+                self.assertFalse(cloud_sb7.score_one(root, entrant_id))
+
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "SCORE_FAILED")
+            self.assertIn("no publisher-consumable loaded", state["failure"])
+            self.assertIsNone(state["score_evidence_seal"])
             self.assertIsNone(state["score_ownership_marker"])
 
     def test_scorer_gate_rechecks_lease_before_child_exec(self) -> None:
@@ -6234,9 +6388,21 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 (runs / "fixture-model-r0/sb7-shots/100-loaded.png").is_file()
             )
             state = cloud_sb7.read_state(root, "fixture-model")
-            self.assertEqual(state["publish_stage_sha256"], cloud_sb7.hash_tree(runs))
+            self.assertEqual(
+                state["publish_stage_sha256"],
+                cloud_sb7.artifact_tree_sha256(runs),
+            )
+            artifact = cloud_sb7.load_json(
+                Path(str(state["publish_artifact_manifest"]))
+            )
+            self.assertEqual(
+                artifact["source_screenshot_evidence"],
+                state["score_evidence_seal"]["screenshots"],
+            )
 
-            (runs / "fixture-model.json").write_text("{}")
+            (runs / "fixture-model-r0/sb7-shots/100-loaded.png").write_bytes(
+                PNG_1X1 + b"changed"
+            )
             with self.assertRaisesRegex(
                 cloud_sb7.PublicationError, "changed after sealing"
             ):
@@ -6960,6 +7126,16 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 )
                 self.assertIn(
                     "rendered board/run verification is incomplete",
+                    cloud_sb7.published_campaign_mismatch(root) or "",
+                )
+                cloud_sb7.update_state(
+                    root, "fixture-model", rendered_verification=rendered
+                )
+                (runs / "fixture-model-r0/sb7-shots/100-loaded.png").write_bytes(
+                    PNG_1X1 + b"changed"
+                )
+                self.assertIn(
+                    "sealed publication stage is missing or changed",
                     cloud_sb7.published_campaign_mismatch(root) or "",
                 )
 
@@ -9333,43 +9509,73 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "instrument_root": str(instrument),
                 "secret_file": str(secret),
             }
-            profile = cloud_sb7.scorer_sandbox_profile(
-                campaign, score_dir, Path(sys.executable).resolve()
-            )
+            cache = root / "browser-cache"
+            components = {}
+            for name in ("chromium", "chromium-headless-shell", "ffmpeg"):
+                component = cache / name
+                component.mkdir(parents=True)
+                components[name] = {"path": str(component)}
+            runtime = {
+                "browser_cache_root": str(cache),
+                "browser_components": components,
+            }
             result_path = score_dir / "attack-result.json"
-            child_code = (
-                "import json,socket; from pathlib import Path; "
-                f"secret=Path({str(secret)!r}); raw=Path({str(raw_file)!r}); "
-                "result={}; "
-                "\ntry: secret.read_text(); result['secret']='read'\n"
-                "except PermissionError: result['secret']='blocked'\n"
-                "try: raw.write_text('mutated'); result['raw']='written'\n"
-                "except PermissionError: result['raw']='blocked'\n"
-                "try:\n s=socket.socket(); s.connect(('1.1.1.1',53)); "
-                "result['network']='connected'\n"
-                "except OSError as e: result['network']=getattr(e,'errno',None)\n"
-                f"Path({str(result_path)!r}).write_text(json.dumps(result))"
-            )
-            parent_code = (
-                "import subprocess; "
-                f"p=subprocess.Popen(['/usr/bin/python3','-c',{child_code!r}],"
-                "start_new_session=True); raise SystemExit(p.wait())"
-            )
+            with socket.socket() as denied_listener:
+                denied_listener.bind(("127.0.0.1", 0))
+                denied_listener.listen()
+                denied_port = int(denied_listener.getsockname()[1])
+                profile = cloud_sb7.scorer_sandbox_profile(
+                    campaign,
+                    score_dir,
+                    Path(sys.executable).resolve(),
+                    runtime=runtime,
+                    denied_local_ports=[denied_port],
+                )
+                child_code = (
+                    "import json,os,socket,subprocess; from pathlib import Path; "
+                    f"secret=Path({str(secret)!r}); raw=Path({str(raw_file)!r}); "
+                    f"outside_pid={os.getpid()}; denied_port={denied_port}; result={{}}; "
+                    "\ntry: secret.read_text(); result['secret']='read'\n"
+                    "except PermissionError: result['secret']='blocked'\n"
+                    "try: raw.write_text('mutated'); result['raw']='written'\n"
+                    "except PermissionError: result['raw']='blocked'\n"
+                    "try:\n s=socket.create_connection(('1.1.1.1',53),timeout=2); s.close(); "
+                    "result['network']='connected'\n"
+                    "except OSError as e: result['network']=getattr(e,'errno',None)\n"
+                    "try:\n s=socket.create_connection("
+                    "('127.0.0.1',denied_port),timeout=2); s.close(); "
+                    "result['denied_local']='connected'\n"
+                    "except OSError as e: result['denied_local']=getattr(e,'errno',None)\n"
+                    "try: os.kill(outside_pid,0); result['outside_signal']='allowed'\n"
+                    "except PermissionError: result['outside_signal']='blocked'\n"
+                    "try:\n p=subprocess.run(['/bin/ps','-p',str(outside_pid),"
+                    "'-o','pid='],capture_output=True,text=True); "
+                    "result['outside_process']='read' if str(outside_pid) in p.stdout "
+                    "else 'blocked'\n"
+                    "except PermissionError: result['outside_process']='blocked'\n"
+                    f"Path({str(result_path)!r}).write_text(json.dumps(result))"
+                )
+                parent_code = (
+                    "import subprocess; "
+                    f"p=subprocess.Popen(['/usr/bin/python3','-c',{child_code!r}],"
+                    "start_new_session=True); raise SystemExit(p.wait())"
+                )
 
-            completed = subprocess.run(
-                [
-                    "/usr/bin/sandbox-exec",
-                    "-p",
-                    profile,
-                    "/usr/bin/python3",
-                    "-c",
-                    parent_code,
-                ],
-                cwd=instrument,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+                completed = subprocess.run(
+                    [
+                        "/usr/bin/sandbox-exec",
+                        "-p",
+                        profile,
+                        "/usr/bin/python3",
+                        "-c",
+                        parent_code,
+                    ],
+                    cwd=instrument,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
 
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(raw_file.read_text(), "sealed\n")
@@ -9377,6 +9583,229 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(result["secret"], "blocked")
             self.assertEqual(result["raw"], "blocked")
             self.assertEqual(result["network"], 1)
+            self.assertEqual(result["denied_local"], 1)
+            self.assertEqual(result["outside_signal"], "blocked")
+            self.assertEqual(result["outside_process"], "blocked")
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS sandbox contract")
+    def test_scorer_sandbox_chromium_mach_lookup_is_runtime_and_pid_scoped(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            instrument = root / "instrument"
+            score_dir = root / "scores/model/attempt-1"
+            cache = root / "browser-cache"
+            instrument.mkdir()
+            score_dir.mkdir(parents=True)
+            components = {}
+            for name in ("chromium", "chromium-headless-shell", "ffmpeg"):
+                path = cache / name
+                path.mkdir(parents=True)
+                components[name] = {"path": str(path)}
+            secret = root / "provider.env"
+            secret.write_text("SECRET=fixture\n")
+            campaign = {
+                "instrument_root": str(instrument),
+                "secret_file": str(secret),
+            }
+            runtime = {
+                "browser_cache_root": str(cache),
+                "browser_components": components,
+            }
+            names = [
+                "org.chromium.Chromium.MachPortRendezvousServer.1",
+                "org.chromium.Chromium.MachPortRendezvousServer.99999",
+                "org.chromium.Chromium.MachPortRendezvousServer.0",
+                "org.chromium.Chromium.MachPortRendezvousServer.01",
+                "org.chromium.Chromium.MachPortRendezvousServer.100000",
+                "org.chromium.Chromium.MachPortRendezvousServer.1.extra",
+                "org.chromium.Chromium.OtherService.1",
+                "com.google.Chrome.MachPortRendezvousServer.1",
+                "com.apple.cfprefsd.daemon",
+            ]
+            code = (
+                "import ctypes,json,sys; "
+                "lib=ctypes.CDLL('/usr/lib/libSystem.B.dylib'); "
+                "bp=ctypes.c_uint.in_dll(lib,'bootstrap_port').value; "
+                "lookup=lib.bootstrap_look_up; "
+                "lookup.argtypes=[ctypes.c_uint,ctypes.c_char_p,"
+                "ctypes.POINTER(ctypes.c_uint)]; lookup.restype=ctypes.c_int; "
+                "names=json.loads(sys.argv[1]); result={}; "
+                "\nfor name in names:\n"
+                " port=ctypes.c_uint(); "
+                "result[name]=lookup(bp,name.encode(),ctypes.byref(port))\n"
+                "print(json.dumps(result,sort_keys=True))"
+            )
+
+            def lookups(profile: str) -> dict[str, int]:
+                completed = subprocess.run(
+                    [
+                        "/usr/bin/sandbox-exec",
+                        "-p",
+                        profile,
+                        "/usr/bin/python3",
+                        "-c",
+                        code,
+                        json.dumps(names),
+                    ],
+                    cwd=instrument,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                return json.loads(completed.stdout)
+
+            without_runtime = cloud_sb7.scorer_sandbox_profile(
+                campaign, score_dir, Path(sys.executable).resolve()
+            )
+            self.assertNotIn(
+                cloud_sb7.CHROMIUM_MACH_RENDEZVOUS_GLOBAL_NAME_REGEX,
+                without_runtime,
+            )
+            self.assertEqual(lookups(without_runtime)[names[0]], 1100)
+
+            with_runtime = cloud_sb7.scorer_sandbox_profile(
+                campaign,
+                score_dir,
+                Path(sys.executable).resolve(),
+                runtime=runtime,
+            )
+            results = lookups(with_runtime)
+            self.assertNotEqual(results[names[0]], 1100)
+            self.assertNotEqual(results[names[1]], 1100)
+            self.assertTrue(all(results[name] == 1100 for name in names[2:]))
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS sandbox contract")
+    def test_scorer_sandbox_launches_real_chromium_and_captures_png(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            instrument = root / "instrument"
+            (instrument / "evals/swarm-bench/bench/node_modules").mkdir(
+                parents=True
+            )
+            score_dir = root / "scores/model/attempt-1"
+            shots = score_dir / "sb7-shots"
+            scorer_home = score_dir / "scorer-home"
+            scorer_tmp = score_dir / "scorer-tmp"
+            for directory in (shots, scorer_home, scorer_tmp):
+                directory.mkdir(parents=True, exist_ok=True)
+            secret = root / "provider.env"
+            secret.write_text("SECRET=fixture\n")
+            secret.chmod(0o600)
+            node = Path(str(shutil.which("node") or "")).resolve()
+            self.assertTrue(node.is_file(), "Node runtime is unavailable")
+            try:
+                runtime = cloud_sb7.scorer_runtime_snapshot(
+                    {
+                        "path": str(node),
+                        "sha256": cloud_sb7.sha256_file(node),
+                        "version": "sandbox-canary",
+                    },
+                    root,
+                )
+                frozen = cloud_sb7.freeze_scorer_runtime(instrument, runtime)
+            except SystemExit as error:
+                self.fail(f"pinned Playwright runtime is unavailable: {error}")
+            script = instrument / "chromium-canary.cjs"
+            script.write_text(
+                "const { chromium } = require(process.argv[2]);\n"
+                "(async () => {\n"
+                "  const browser = await chromium.launch({headless: true});\n"
+                "  const page = await browser.newPage({viewport: {width: 640, height: 480}});\n"
+                "  await page.setContent('<main id=canary>sealed scorer canary</main>');\n"
+                "  await page.screenshot({path: process.argv[3]});\n"
+                "  await browser.close();\n"
+                "  process.stdout.write(JSON.stringify({captured: true}));\n"
+                "})().catch(error => { console.error(error); process.exit(1); });\n"
+            )
+            campaign = {
+                "instrument_root": str(instrument),
+                "secret_file": str(secret),
+            }
+            profile = cloud_sb7.scorer_sandbox_profile(
+                campaign,
+                score_dir,
+                node,
+                runtime=runtime,
+            )
+            self.assertIn("(deny mach-lookup)", profile)
+            self.assertIn(
+                cloud_sb7.CHROMIUM_MACH_RENDEZVOUS_GLOBAL_NAME_REGEX,
+                profile,
+            )
+            self.assertNotIn("(allow mach-lookup) ", profile)
+            screenshot = shots / "100-loaded.png"
+            proc = subprocess.Popen(
+                [
+                    "/usr/bin/sandbox-exec",
+                    "-p",
+                    profile,
+                    str(node),
+                    str(script),
+                    str(frozen["path"]),
+                    str(screenshot),
+                ],
+                cwd=instrument,
+                env={
+                    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                    "HOME": str(scorer_home),
+                    "TMPDIR": str(scorer_tmp),
+                    "PLAYWRIGHT_BROWSERS_PATH": str(
+                        runtime["browser_cache_root"]
+                    ),
+                },
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            stdout = ""
+            stderr = ""
+            timed_out = False
+            try:
+                stdout, stderr = proc.communicate(timeout=45)
+            except subprocess.TimeoutExpired as error:
+                timed_out = True
+                stdout = str(error.stdout or "")
+                stderr = str(error.stderr or "")
+            finally:
+                surviving_before_cleanup = cloud_sb7.process_group_members(proc.pid)
+                if proc.poll() is None or surviving_before_cleanup:
+                    cloud_sb7.stop_group(proc.pid, grace_seconds=2)
+                if proc.poll() is None:
+                    proc.wait(timeout=5)
+                surviving_after_cleanup = cloud_sb7.process_group_members(proc.pid)
+            self.assertFalse(
+                timed_out,
+                f"Chromium sandbox canary timed out: {stdout} {stderr}",
+            )
+            self.assertEqual(proc.returncode, 0, stderr)
+            self.assertEqual(json.loads(stdout), {"captured": True})
+            evidence = cloud_sb7.screenshot_evidence(shots)
+            self.assertEqual(evidence["publisher_loaded"], [screenshot.name])
+            decoded = subprocess.run(
+                [
+                    "/usr/bin/sips",
+                    "-g",
+                    "pixelWidth",
+                    "-g",
+                    "pixelHeight",
+                    str(screenshot),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(decoded.returncode, 0, decoded.stderr)
+            self.assertIn("pixelWidth: 640", decoded.stdout)
+            self.assertIn("pixelHeight: 480", decoded.stdout)
+            self.assertEqual(surviving_before_cleanup, [])
+            self.assertEqual(surviving_after_cleanup, [])
 
     def test_scorer_verdict_uses_inherited_fd_without_reopening_dev_fd(self) -> None:
         read_fd, write_fd = os.pipe()
