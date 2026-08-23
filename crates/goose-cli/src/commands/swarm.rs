@@ -34,7 +34,7 @@ use goose_swarm::{
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1712,8 +1712,9 @@ async fn google_roster(key: &str) -> Result<Vec<String>> {
             Some(t) => format!(
                 "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&pageToken={t}"
             ),
-            None => "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"
-                .to_string(),
+            None => {
+                "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000".to_string()
+            }
         };
         let resp = client
             .get(&url)
@@ -4965,7 +4966,10 @@ mod tests {
         // collision keeps the key honest: it is an equality of the OBSERVABLE summary+result, not of the call.
         let a = repeat_call_hash("shell", &"x".repeat(200), true, &"y".repeat(4000));
         let b = repeat_call_hash("shell", &"x".repeat(200), true, &"y".repeat(4000));
-        assert_eq!(a, b, "identical observables must hash equal — collisions are bounded by N + time, not by key precision");
+        assert_eq!(
+            a, b,
+            "identical observables must hash equal — collisions are bounded by N + time, not by key precision"
+        );
         // Separator guard: ("ab","c") must not equal ("a","bc").
         assert_ne!(
             repeat_call_hash("shell", "ab", true, "c"),
@@ -10116,7 +10120,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 "requirement_ids":["REQ-route"],
                 "contract":"GET /v1/payments returns the specified JSON response",
                 "requires_completed_artifact":true
-            }]
+            }],
+            "artifact_evidence": []
         });
         (plan.to_string(), requirements, evidence, binding)
     }
@@ -10219,9 +10224,83 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(overlap_error.to_string().contains("overlaps tasks"));
 
         let mut missing_edge = original;
-        missing_edge["bindings"][2]["depends_on"] = serde_json::json!(["test-api"]);
+        missing_edge["bindings"][2]["depends_on"] = serde_json::json!(["api"]);
+        missing_edge["interfaces"][0]["producer_task_id"] = serde_json::json!("test-api");
+        missing_edge["interfaces"][0]["requirement_ids"] = serde_json::json!(["REQ-test"]);
+        let mut plan_without_direct_edge: serde_json::Value = serde_json::from_str(&plan).unwrap();
+        plan_without_direct_edge["subtasks"][2]["depends_on"] = serde_json::json!(["api"]);
         let edge_error = compile_requirement_binding(
             &missing_edge.to_string(),
+            &requirements,
+            &evidence,
+            &plan_without_direct_edge.to_string(),
+            &detail_ids,
+        )
+        .unwrap_err();
+        assert!(edge_error
+            .to_string()
+            .contains("requires completed artifact"));
+    }
+
+    #[test]
+    fn semantic_binding_rejects_absolute_parent_and_aliasing_owned_paths() {
+        let (plan, requirements, evidence, original) = requirement_binding_fixture();
+        let detail_ids = ["api".into(), "test-api".into(), "integrate-verify".into()];
+        for unsafe_path in [
+            "",
+            ".",
+            "..",
+            "/tmp/outside.py",
+            "//tmp/outside.py",
+            "../outside.py",
+            "src/../outside.py",
+            "src/./outside.py",
+            "src//outside.py",
+            "src/",
+            "./src/api.py",
+            "C:/outside.py",
+            "C:\\outside.py",
+        ] {
+            let mut raw = original.clone();
+            raw["bindings"][0]["owned_files"] = serde_json::json!(["src/api.py", unsafe_path]);
+            let error = compile_requirement_binding(
+                &raw.to_string(),
+                &requirements,
+                &evidence,
+                &plan,
+                &detail_ids,
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("project-relative")
+                    || error.to_string().contains("escapes or aliases")
+                    || error.to_string().contains("empty or whitespace-padded"),
+                "unsafe binder path was not rejected structurally: {unsafe_path}: {error}"
+            );
+        }
+        let mut unsafe_plan: serde_json::Value = serde_json::from_str(&plan).unwrap();
+        unsafe_plan["subtasks"][0]["files"] = serde_json::json!(["/tmp/original.py"]);
+        let original_path_error = compile_requirement_binding(
+            &original.to_string(),
+            &requirements,
+            &evidence,
+            &unsafe_plan.to_string(),
+            &detail_ids,
+        )
+        .unwrap_err();
+        assert!(original_path_error.to_string().contains("project-relative"));
+        assert!(validate_project_relative_owned_path("api", "src/routes/api.py").is_ok());
+    }
+
+    #[test]
+    fn semantic_binding_cannot_remove_selected_dependency_or_move_a_selected_file() {
+        let (plan, requirements, evidence, original) = requirement_binding_fixture();
+        let detail_ids = ["api".into(), "test-api".into(), "integrate-verify".into()];
+
+        let mut removed_edge = original.clone();
+        removed_edge["bindings"][1]["depends_on"] = serde_json::json!([]);
+        let edge_error = compile_requirement_binding(
+            &removed_edge.to_string(),
             &requirements,
             &evidence,
             &plan,
@@ -10230,7 +10309,330 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         .unwrap_err();
         assert!(edge_error
             .to_string()
-            .contains("requires completed artifact"));
+            .contains("removed selected-plan dependencies"));
+
+        let mut moved_file = original;
+        moved_file["bindings"][0]["owned_files"] = serde_json::json!([]);
+        moved_file["bindings"][1]["owned_files"] =
+            serde_json::json!(["tests/test_api.py", "src/api.py"]);
+        let file_error = compile_requirement_binding(
+            &moved_file.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap_err();
+        assert!(file_error
+            .to_string()
+            .contains("moved or dropped selected-plan files"));
+    }
+
+    #[test]
+    fn semantic_binding_adds_only_exact_requirement_artifacts() {
+        let (plan, mut requirements, evidence, mut raw) = requirement_binding_fixture();
+        requirements[0].quote =
+            "Ship the browser implementation in the exact artifact `web/app.js`.".to_string();
+        let detail_ids = ["api".into(), "test-api".into(), "integrate-verify".into()];
+        let candidate = artifact_evidence_candidates(&requirements)
+            .into_iter()
+            .find(|candidate| candidate.literal == "web/app.js")
+            .unwrap();
+        raw["artifact_evidence"] = serde_json::json!([{
+            "candidate_id": candidate.id,
+            "kind": "delivered_artifact",
+            "task_id": "api"
+        }]);
+
+        let missing_error = compile_requirement_binding(
+            &raw.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap_err();
+        assert!(
+            missing_error
+                .to_string()
+                .contains("is not owned by assigned task"),
+            "an r1-style omitted required file surface was certified: {missing_error}"
+        );
+
+        raw["bindings"][0]["owned_files"] = serde_json::json!(["src/api.py", "web/app.js"]);
+        let compiled = compile_requirement_binding(
+            &raw.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap();
+        assert_eq!(compiled.delivered_artifacts, 1);
+        assert!(compiled.tasks["api"]
+            .owned_files
+            .contains(&"web/app.js".to_string()));
+
+        let (_, ordinary_requirements, _, mut invented) = requirement_binding_fixture();
+        invented["bindings"][0]["owned_files"] =
+            serde_json::json!(["src/api.py", "src/invented.py"]);
+        let invented_error = compile_requirement_binding(
+            &invented.to_string(),
+            &ordinary_requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap_err();
+        assert!(invented_error
+            .to_string()
+            .contains("not classified as delivered artifacts"));
+    }
+
+    #[test]
+    fn semantic_binding_rejects_omitted_exact_root_artifacts() {
+        let (plan, requirements, evidence, raw) = requirement_binding_fixture();
+        let detail_ids = ["api".into(), "test-api".into(), "integrate-verify".into()];
+        for artifact in [
+            "app.py",
+            "package.json",
+            ".env.example",
+            "Dockerfile",
+            "Makefile",
+        ] {
+            let mut requirements = requirements.clone();
+            requirements[0].quote =
+                format!("Create the exact required project artifact `{artifact}`.");
+            let candidate = artifact_evidence_candidates(&requirements)
+                .into_iter()
+                .find(|candidate| candidate.literal == artifact)
+                .unwrap();
+            let mut raw = raw.clone();
+            raw["artifact_evidence"] = serde_json::json!([{
+                "candidate_id": candidate.id,
+                "kind": "delivered_artifact",
+                "task_id": "api"
+            }]);
+            let error = compile_requirement_binding(
+                &raw.to_string(),
+                &requirements,
+                &evidence,
+                &plan,
+                &detail_ids,
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("is not owned by assigned task"),
+                "an omitted exact root artifact was certified: {artifact}: {error}"
+            );
+
+            let mut repaired = raw.clone();
+            repaired["bindings"][0]["owned_files"] = serde_json::json!(["src/api.py", artifact]);
+            compile_requirement_binding(
+                &repaired.to_string(),
+                &requirements,
+                &evidence,
+                &plan,
+                &detail_ids,
+            )
+            .unwrap_or_else(|error| {
+                panic!("exact root artifact could not be bound to its primary owner: {artifact}: {error}")
+            });
+        }
+    }
+
+    #[test]
+    fn artifact_evidence_inventory_exposes_interfaces_without_promoting_prose() {
+        let requirements = vec![RequirementRecord {
+            id: "REQ-literals".to_string(),
+            section: String::new(),
+            quote: "Call `https://example.com/app.js`, expose `GET /api/events`, accept `--db-dir`, use `qwen3.8`, return `application/json`, and mention package.json in prose."
+                .to_string(),
+        }];
+        let literals = artifact_evidence_candidates(&requirements)
+            .into_iter()
+            .map(|candidate| candidate.literal)
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            literals,
+            HashSet::from([
+                "https://example.com/app.js".to_string(),
+                "GET".to_string(),
+                "/api/events".to_string(),
+                "--db-dir".to_string(),
+                "qwen3.8".to_string(),
+                "application/json".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn sb7_runtime_databases_are_not_forced_into_source_ownership() {
+        let (plan, mut requirements, evidence, mut raw) = requirement_binding_fixture();
+        requirements[0].quote = r#"Internal module layout inside `app/` is yours; the three
+commands, the two database files, the `web/` files and `DECISIONS.md` are the contract.
+
+- `ledgerd` owns `ledger.db`; `notifierd` owns `notifier.db`; one SQLite file per service under
+  `--db-dir`. Each service touches ONLY its own file — ledgerd never opens `notifier.db`,
+  notifierd never opens `ledger.db`; cross-service truth flows over HTTP only."#
+            .to_string();
+        let candidates = artifact_evidence_candidates(&requirements);
+        let literals = candidates
+            .iter()
+            .map(|candidate| candidate.literal.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            literals,
+            HashSet::from(["DECISIONS.md", "ledger.db", "notifier.db", "--db-dir"])
+        );
+        raw["bindings"][0]["owned_files"] = serde_json::json!(["src/api.py", "DECISIONS.md"]);
+        raw["artifact_evidence"] = serde_json::json!(candidates
+            .iter()
+            .map(|candidate| serde_json::json!({
+                "candidate_id": candidate.id,
+                "kind": match candidate.literal.as_str() {
+                    "DECISIONS.md" => "delivered_artifact",
+                    "ledger.db" | "notifier.db" => "runtime_data",
+                    "--db-dir" => "interface",
+                    literal => panic!("unexpected SB7 artifact candidate: {literal}"),
+                },
+                "task_id": "api"
+            }))
+            .collect::<Vec<_>>());
+        let detail_ids = ["api".into(), "test-api".into(), "integrate-verify".into()];
+
+        let compiled = compile_requirement_binding(
+            &raw.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap();
+        assert_eq!(compiled.delivered_artifacts, 1);
+        assert_eq!(compiled.runtime_data_literals, 2);
+        assert_eq!(compiled.interface_literals, 1);
+        assert!(!compiled.tasks["api"]
+            .owned_files
+            .contains(&"ledger.db".to_string()));
+        assert!(!compiled.tasks["api"]
+            .owned_files
+            .contains(&"notifier.db".to_string()));
+
+        let mut missing_evidence = raw.clone();
+        missing_evidence["artifact_evidence"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        let missing_error = compile_requirement_binding(
+            &missing_evidence.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap_err();
+        assert!(missing_error
+            .to_string()
+            .contains("does not classify every quoted candidate"));
+
+        let mut source_owned_runtime = raw;
+        source_owned_runtime["bindings"][0]["owned_files"] =
+            serde_json::json!(["src/api.py", "DECISIONS.md", "ledger.db"]);
+        let runtime_error = compile_requirement_binding(
+            &source_owned_runtime.to_string(),
+            &requirements,
+            &evidence,
+            &plan,
+            &detail_ids,
+        )
+        .unwrap_err();
+        assert!(runtime_error
+            .to_string()
+            .contains("incorrectly source-owned"));
+    }
+
+    #[test]
+    fn semantic_binding_rejects_an_r1_style_flat_integration_topology() {
+        let (plan, requirements, evidence, mut raw) = requirement_binding_fixture();
+        let mut flat_plan: serde_json::Value = serde_json::from_str(&plan).unwrap();
+        flat_plan["subtasks"][2]["depends_on"] = serde_json::json!([]);
+        raw["bindings"][2]["depends_on"] = serde_json::json!([]);
+        raw["interfaces"] = serde_json::json!([]);
+        let error = compile_requirement_binding(
+            &raw.to_string(),
+            &requirements,
+            &evidence,
+            &flat_plan.to_string(),
+            &["api".into(), "test-api".into(), "integrate-verify".into()],
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("disconnected completion closures"),
+            "an all-root graph was certified complete: {error}"
+        );
+    }
+
+    #[test]
+    fn integration_topology_rejects_disconnected_named_and_unnamed_sinks() {
+        let disconnected = vec![
+            TaskSpec {
+                id: "api".to_string(),
+                description: String::new(),
+                difficulty: goose_swarm::Difficulty::Easy,
+                preferred_model: None,
+                owned_files: vec!["src/api.py".to_string()],
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+            },
+            TaskSpec {
+                id: "web".to_string(),
+                description: String::new(),
+                difficulty: goose_swarm::Difficulty::Easy,
+                preferred_model: None,
+                owned_files: vec!["web/app.js".to_string()],
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+            },
+            TaskSpec {
+                id: "assemble-api".to_string(),
+                description: String::new(),
+                difficulty: goose_swarm::Difficulty::Easy,
+                preferred_model: None,
+                owned_files: Vec::new(),
+                deps: vec!["api".to_string()],
+                subsplit: Vec::new(),
+            },
+            TaskSpec {
+                id: "release-web".to_string(),
+                description: String::new(),
+                difficulty: goose_swarm::Difficulty::Easy,
+                preferred_model: None,
+                owned_files: Vec::new(),
+                deps: vec!["web".to_string()],
+                subsplit: Vec::new(),
+            },
+        ];
+        let error = validate_integration_closure(&disconnected).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("disconnected completion closures"));
+        assert!(error.to_string().contains("assemble-api"));
+        assert!(error.to_string().contains("release-web"));
+
+        let mut connected = disconnected;
+        connected.push(TaskSpec {
+            id: "ship".to_string(),
+            description: String::new(),
+            difficulty: goose_swarm::Difficulty::Easy,
+            preferred_model: None,
+            owned_files: Vec::new(),
+            deps: vec!["assemble-api".to_string(), "release-web".to_string()],
+            subsplit: Vec::new(),
+        });
+        validate_integration_closure(&connected).unwrap();
     }
 
     /// F852: the JOB decides how many pieces exist (~2 commands per shard), the fleet only caps how
@@ -11544,7 +11946,9 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         ));
         assert!(args_fetch_external_url(
             "developer__shell",
-            &args("python3 -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8930/v1/payments').read())\"")
+            &args(
+                "python3 -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8930/v1/payments').read())\""
+            )
         ));
 
         // THE LAUNDERING CASE the MCP-only rule existed to stop, and which must STILL be stopped: a shell
@@ -11605,7 +12009,10 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // The shape that motivated this: a banner of collected items, then the real error at the end.
         let out = format!(
             "pytest --collect-only errors:\n{}\n=== ERRORS ===\nImportError: cannot import name 'upsert_many'",
-            (0..80).map(|i| format!("test_store.py::test_{i}")).collect::<Vec<_>>().join("\n")
+            (0..80)
+                .map(|i| format!("test_store.py::test_{i}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
         let e = elide_middle(&out, 150, 650);
         assert!(
@@ -12871,20 +13278,30 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         ];
         let cases: [(&str, &str); 5] = [
             // AST review — names a MODULE, never a path. Present in 3 of 3 runs.
-            ("function 'log_message' in module 'vendorsync.api' is a STUB/UNIMPLEMENTED — implement it",
-             "vendorsync/api.py"),
+            (
+                "function 'log_message' in module 'vendorsync.api' is a STUB/UNIMPLEMENTED — implement it",
+                "vendorsync/api.py",
+            ),
             // cross-module drift — names two modules; the READER is the one to fix.
-            ("module 'vendorsync.api' reads field 'total' that 'vendorsync.store' does not define",
-             "vendorsync/api.py"),
+            (
+                "module 'vendorsync.api' reads field 'total' that 'vendorsync.store' does not define",
+                "vendorsync/api.py",
+            ),
             // engine-authored, path in backticks mid-sentence.
-            ("planned deliverable `vendorsync/store.py` is MISSING or EMPTY — create it",
-             "vendorsync/store.py"),
-            ("planned task `test-meridian` FAILED, but its deliverable `tests/test_meridian.py` IS \
+            (
+                "planned deliverable `vendorsync/store.py` is MISSING or EMPTY — create it",
+                "vendorsync/store.py",
+            ),
+            (
+                "planned task `test-meridian` FAILED, but its deliverable `tests/test_meridian.py` IS \
               written. Its attempts were exhausted because the checks it runs DO NOT PASS.",
-             "tests/test_meridian.py"),
+                "tests/test_meridian.py",
+            ),
             // the pytest traceback the extractor was originally written for must still work.
-            ("`pytest -q` failed:\ntests/test_meridian.py:89: in test_x\nE   AssertionError",
-             "tests/test_meridian.py"),
+            (
+                "`pytest -q` failed:\ntests/test_meridian.py:89: in test_x\nE   AssertionError",
+                "tests/test_meridian.py",
+            ),
         ];
         for (finding, want) in cases {
             assert_eq!(
@@ -17881,7 +18298,9 @@ impl GooseAgentDispatcher {
         let research_block = if research_findings.is_empty() {
             String::new()
         } else {
-            format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
+            format!(
+                "## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n"
+            )
         };
         let existing_files = existing_files_manifest(&self.working_dir);
         let lang = detect_language(user_prompt, &existing_files);
@@ -17932,7 +18351,8 @@ impl GooseAgentDispatcher {
             "and related tests into ONE test subtask.".to_string()
         };
         let build_system = |backbone_clause: &str| {
-            format!("You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
+            format!(
+                "You are the ARCHITECT on the smart model. {lang_directive}Produce a PLAN SKELETON ONLY — do NOT write code. \
             You already have any needed research findings — plan DIRECTLY from the task and call final_output FAST; do NOT \
             explore the filesystem or read other directories (a new project has nothing on disk; never read sibling projects). {homo_hint}{backbone_clause}\n\
             Decompose into COHESIVE subtasks — {count_clause}. GROUP several related commands or functions \
@@ -18000,7 +18420,8 @@ impl GooseAgentDispatcher {
             spec's HEADLINE deliverable is actually REACHABLE and surfaced through the default command — a feature whose \
             module exists but is never WIRED into the entry point (so the spec's main ask never appears in the output) is a \
             FAILURE: wire it. Reports PASS/FAIL honestly. \
-            Its own files must NOT overlap the others. Then call the final_output tool with the plan.")
+            Its own files must NOT overlap the others. Then call the final_output tool with the plan."
+            )
         };
         // Round 1 = today's prompt exactly (empty backbone slot → byte-identical). Round 2 (backbone lock)
         // re-invokes build_system with the consensus constraint spliced right after homo_hint.
@@ -18767,9 +19188,13 @@ impl GooseAgentDispatcher {
                 // defaults remain" INTO THE UI, telling the user their spec was clear because the check for it
                 // had crashed. An unmeasured signal must read as unmeasured.
                 if fail_closed {
-                    format!("NOT MEASURED — the spec-clarity probe failed ({reason}). Clamped to {CLARITY_FAILCLOSED} (fail-closed) to force the ask rather than proceed on cross-draft agreement, which cannot see whether your spec is under-specified.")
+                    format!(
+                        "NOT MEASURED — the spec-clarity probe failed ({reason}). Clamped to {CLARITY_FAILCLOSED} (fail-closed) to force the ask rather than proceed on cross-draft agreement, which cannot see whether your spec is under-specified."
+                    )
                 } else {
-                    format!("NOT MEASURED — the spec-clarity probe failed ({reason}). This run's confidence is cross-draft agreement only, which cannot see whether your spec is under-specified.")
+                    format!(
+                        "NOT MEASURED — the spec-clarity probe failed ({reason}). This run's confidence is cross-draft agreement only, which cannot see whether your spec is under-specified."
+                    )
                 }
             } else if !product_specified {
                 "the product itself is undefined — clarity stays low until you say what to build"
@@ -19032,6 +19457,7 @@ impl GooseAgentDispatcher {
         }
         let requirements = normalized_requirement_inventory(binding_spec);
         let evidence = normalized_evidence_inventory(research_findings);
+        let artifact_candidates = artifact_evidence_candidates(&requirements);
         if requirements.is_empty() {
             return Err(anyhow!(
                 "operator specification has no binding requirement clauses"
@@ -19041,7 +19467,7 @@ impl GooseAgentDispatcher {
         self.events.write_value(serde_json::json!({
             "event": "requirement_binding_started",
             "inventory_format": "raw-clause-v1",
-            "binding_format": "semantic-slices-v1",
+            "binding_format": "semantic-slices-v3-artifact-evidence",
             "requirement_units": requirements.len(),
             "advisory_evidence_units": evidence.len(),
             "detail_tasks": detail_task_ids.len(),
@@ -19055,10 +19481,25 @@ impl GooseAgentDispatcher {
             filesystem or shell tools. Preserve every requirement exactly once as primary implementation \
             ownership in owns_requirement_ids; use applies_requirement_ids only for cross-cutting constraints \
             another task must obey, and verifies_requirement_ids for tests or checks. Every model-authored task \
-            must appear exactly once. Keep the selected task IDs fixed. Repair files and dependency edges only \
-            when the requirement/interface meaning demands it; file ownership must remain non-overlapping. \
+            must appear exactly once. Keep the selected task IDs fixed. Existing file ownership and dependency \
+            edges are frozen lower bounds: never remove a path, move it to another task, or remove an edge. Add \
+            a file only when it is an exact project-relative artifact path authored in a supplied requirement; \
+            add dependency edges when requirement/interface meaning demands them. File ownership must remain \
+            non-overlapping. The non-test graph must have one connected completion closure: when a final \
+            integration task exists, every implementation and verification shard must reach it transitively. \
+            Classify every supplied artifact_evidence_candidate exactly once. A delivered_artifact is a \
+            source, configuration, documentation, or other file shipped in the final project and its exact \
+            project-relative literal must be owned by the assigned task. Runtime_data is created or mutated \
+            while the program runs and must not be source-owned. Interface covers API routes, command-line \
+            flags, and external URLs and must not be source-owned. Reference covers an exact version, media \
+            type, library, symbolic value, or other quoted literal that is neither a delivered file, runtime \
+            data, nor an interface; it must not be source-owned. Assign each candidate to a model-authored \
+            task with an owner, applicable, or verifier role for the candidate's quoted requirement. Candidate \
+            IDs and kinds are evidence: never omit, invent, or merge them. \
             Record each producer/consumer interface and whether the consumer truly needs the completed artifact \
-            or can build against a frozen signature. Divide a task into more than one detail slice only when the \
+            or can build against a frozen signature. Every model-authored interface endpoint must carry an owner, \
+            applicable, or verifier role for at least one requirement referenced by that interface. Divide a task \
+            into more than one detail slice only when the \
             slices have distinct semantic acceptance outcomes that can be specified independently. Never split \
             by filename count, text length, token budget, fleet size, or available nodes, and never merge \
             unrelated outcomes to reduce the number of calls. A slice references only requirements and advisory \
@@ -19080,6 +19521,7 @@ impl GooseAgentDispatcher {
         let binding_input = serde_json::json!({
             "requirements": requirements,
             "advisory_evidence": evidence,
+            "artifact_evidence_candidates": artifact_candidates,
             "selected_skeleton": binding_skeleton,
             "model_authored_task_ids": detail_task_ids,
         });
@@ -19092,7 +19534,7 @@ impl GooseAgentDispatcher {
                     json_schema: Some(requirement_binding_schema()),
                 }),
                 0,
-                Some("reqbind-canonical"),
+                Some("reqbind-artifact-evidence-v3"),
             )
             .await
             .map_err(|error| anyhow!("requirement binding agent error: {error}"))?;
@@ -19127,16 +19569,22 @@ impl GooseAgentDispatcher {
             "event": "requirement_binding_resolved",
             "secs": binding_started.elapsed().as_secs_f64().round(),
             "inventory_format": "raw-clause-v1",
-            "binding_format": "semantic-slices-v1",
+            "binding_format": "semantic-slices-v3-artifact-evidence",
             "requirement_units": requirements.len(),
             "requirements_with_primary_owner": binding.owned_requirements,
             "coverage_complete": binding.owned_requirements == requirements.len(),
             "interfaces": binding.interfaces.len(),
+            "artifact_evidence_candidates": binding.artifact_candidates,
+            "delivered_artifact_surfaces": binding.delivered_artifacts,
+            "runtime_data_literals": binding.runtime_data_literals,
+            "interface_literals": binding.interface_literals,
+            "reference_literals": binding.reference_literals,
             "semantic_slices": binding.slice_count,
             "detail_tasks": binding.tasks.len(),
             "roster_used_for_task_or_slice_count": false,
             "authority": "frozen-user-spec-plus-human-decisions",
             "research_authority": "advisory-only",
+            "integration_closure_validated": true,
             "requirement_ids": requirements.iter().map(|record| record.id.as_str()).collect::<Vec<_>>(),
             "interface_ids": binding.interfaces.iter().map(|interface| interface.id.as_str()).collect::<Vec<_>>(),
             "task_slices": task_slice_summary,
@@ -19623,7 +20071,8 @@ impl GooseAgentDispatcher {
         let existing_files = existing_files_manifest(&self.working_dir);
         let lang = detect_language(user_prompt, &existing_files);
         let test_cmd = lang.test_cmd();
-        let system = format!("You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
+        let system = format!(
+            "You are the PLANNER on the smart model. Produce a PLAN ONLY — do NOT write code.\n\
             Decompose into cohesive tasks with independent acceptance closure: each owns one requirement \
             outcome, its NON-OVERLAPPING files, and the concrete evidence that proves it. Task existence and \
             dependency edges come only from the requested system, never from current fleet capacity. Add a \
@@ -19647,14 +20096,17 @@ impl GooseAgentDispatcher {
             confirm all N are correct AND distinct at the right granularity where required; do NOT invent an expected output. \
             FIX wrong output (wrong constants/off-by-one/wrong granularity) at the ROOT CAUSE, and ADD any missing build config \
             the entry needs (e.g. tsconfig.json). Reports PASS/FAIL; its files must NOT overlap the others.\n\
-            Also produce a short integration note. Then call the final_output tool with the plan.");
+            Also produce a short integration note. Then call the final_output tool with the plan."
+        );
         let response = Some(Response {
             json_schema: Some(plan_schema),
         });
         let research_block = if research_findings.is_empty() {
             String::new()
         } else {
-            format!("## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n")
+            format!(
+                "## Prior research findings (use these; do NOT re-research)\n{research_findings}\n\n"
+            )
         };
         // "plandraft-solo": the solo planner is the SAME pure-reasoning shape as a parallel plan
         // draft, and drafts are deliberately DISARMED in spiral_budget_for (healthy deep drafts
@@ -25562,7 +26014,9 @@ impl Judge for GooseAgentDispatcher {
                     .unwrap_or_default(),
                 import_health
                     .as_deref()
-                    .map(|h| format!("pytest --collect-only FAILS (the tree cannot import):\n{h}\n"))
+                    .map(|h| format!(
+                        "pytest --collect-only FAILS (the tree cannot import):\n{h}\n"
+                    ))
                     .unwrap_or_default(),
             ),
         };
@@ -26558,8 +27012,7 @@ const PERSONA_USER_MARKER: &str = "## Your notes";
 /// cannot otherwise tell "the user wrote nothing" from "the user wrote this" — the previous render's own
 /// invitation would be preserved as though it were a correction, and goose would then be reading its own
 /// boilerplate back to itself as user guidance forever.
-const PERSONA_NOTES_PLACEHOLDER: &str =
-    "_Nothing yet. Whatever you write here is read on the next build of this stack and is kept word for word \
+const PERSONA_NOTES_PLACEHOLDER: &str = "_Nothing yet. Whatever you write here is read on the next build of this stack and is kept word for word \
      when goose rewrites the rest of this file — so a correction here is permanent._";
 
 /// Lift the user's own section out of the existing skill so a rewrite cannot clobber it.
@@ -28421,23 +28874,33 @@ impl TargetLang {
     /// The runnable-entry-point mandate, language-specific. The Python text is the original verbatim.
     fn entry_clause(self) -> &'static str {
         match self {
-            TargetLang::Python => "If the request is a CLI / command-line tool (says 'CLI', 'command', 'command-line'), you MUST include a subtask that \
+            TargetLang::Python => {
+                "If the request is a CLI / command-line tool (says 'CLI', 'command', 'command-line'), you MUST include a subtask that \
             writes the RUNNABLE ENTRY POINT — a `cli.py` (argparse or click) that wires the logic modules into actual commands \
             AND a `__main__.py` so `python3 -m <pkg> ...` runs it. The logic modules + tests ALONE are NOT a usable CLI; never \
-            omit the entry point.",
-            TargetLang::TypeScript => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
+            omit the entry point."
+            }
+            TargetLang::TypeScript => {
+                "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
             `src/index.ts` (or `src/cli.ts`) using a real argument parser (commander/yargs, or `process.argv`) wired into actual \
             commands, PLUS a `package.json` with a `bin` and/or `scripts` entry so the CLI runs from the shell (e.g. \
-            `npx tsx src/index.ts ...`). The logic modules + tests ALONE are NOT a usable CLI; never omit the entry point.",
-            TargetLang::Rust => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
+            `npx tsx src/index.ts ...`). The logic modules + tests ALONE are NOT a usable CLI; never omit the entry point."
+            }
+            TargetLang::Rust => {
+                "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
             `src/main.rs` with a real argument parser (clap, or std::env::args) wired into actual commands, PLUS the `Cargo.toml` \
-            `[[bin]]`/deps so `cargo run -- ...` runs it. The library modules + tests ALONE are NOT a usable CLI; never omit it.",
-            TargetLang::Go => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
+            `[[bin]]`/deps so `cargo run -- ...` runs it. The library modules + tests ALONE are NOT a usable CLI; never omit it."
+            }
+            TargetLang::Go => {
+                "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT — a \
             `main.go` (package main, with the `flag` package or os.Args) wired into actual commands so `go run . ...` runs it. The \
-            packages + tests ALONE are NOT a usable CLI; never omit the entry point.",
-            TargetLang::Other => "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT in the \
+            packages + tests ALONE are NOT a usable CLI; never omit the entry point."
+            }
+            TargetLang::Other => {
+                "If the request is a CLI / command-line tool, you MUST include a subtask that writes the RUNNABLE ENTRY POINT in the \
             target language — the idiomatic executable that wires the logic modules into actual shell commands. The logic modules + \
-            tests ALONE are NOT a usable program; never omit the entry point.",
+            tests ALONE are NOT a usable program; never omit the entry point."
+            }
         }
     }
 
@@ -29852,7 +30315,7 @@ impl GooseAgentDispatcher {
                 Err(e) => {
                     return Err(DispatchError::Transient(format!(
                         "speculative shadow setup failed: {e}"
-                    )))
+                    )));
                 }
             }
         } else {
@@ -30032,7 +30495,7 @@ impl GooseAgentDispatcher {
                     }
                 };
                 format!(
-                "You own no single file — you work ACROSS this whole layout. {existence}Confirm the tests \
+                    "You own no single file — you work ACROSS this whole layout. {existence}Confirm the tests \
                  cover each module. CRITICAL: a green pytest \
                  suite does NOT prove the program works — unit tests usually call functions directly and \
                  NEVER invoke the CLI/entry point, so a broken argparse, a bad import, or a crashing \
@@ -30103,7 +30566,7 @@ impl GooseAgentDispatcher {
                     && req.owned_files.iter().any(|f| is_entry_file(f))
                 {
                     format!(
-                            "\nSKELETON-FIRST (OVERRIDES the 'write the whole file in ONE write' rule below, \
+                        "\nSKELETON-FIRST (OVERRIDES the 'write the whole file in ONE write' rule below, \
                              for your ENTRY/wiring file ONLY): your entry file wires many commands, so do NOT \
                              plan the entire file then dump it in one write — that front-loads thinking, burns \
                              turns, and hides a bad import until the very end. Instead: (1) your FIRST `write` \
@@ -30114,8 +30577,8 @@ impl GooseAgentDispatcher {
                              MUST finish with EVERY body fully implemented — a skeleton with placeholder bodies \
                              left in is NOT done and will fail verification. Write any NON-entry owned file \
                              complete in one write as usual.",
-                            check = lang.entry_run_example()
-                        )
+                        check = lang.entry_run_example()
+                    )
                 } else {
                     String::new()
                 };
@@ -31908,7 +32371,7 @@ fn requirement_binding_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["bindings", "interfaces"],
+        "required": ["bindings", "interfaces", "artifact_evidence"],
         "properties": {
             "bindings": {
                 "type": "array",
@@ -31964,6 +32427,22 @@ fn requirement_binding_schema() -> serde_json::Value {
                         "requires_completed_artifact": {"type": "boolean"}
                     }
                 }
+            },
+            "artifact_evidence": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["candidate_id", "kind", "task_id"],
+                    "properties": {
+                        "candidate_id": {"type": "string"},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["delivered_artifact", "runtime_data", "interface", "reference"]
+                        },
+                        "task_id": {"type": "string"}
+                    }
+                }
             }
         }
     })
@@ -31989,6 +32468,219 @@ fn require_unique_known_ids(
     Ok(out)
 }
 
+fn validate_project_relative_owned_path(task_id: &str, file: &str) -> Result<()> {
+    if file.is_empty() || file.trim() != file {
+        bail!("task `{task_id}` has an empty or whitespace-padded owned path");
+    }
+    if file.contains('\\')
+        || file.starts_with('/')
+        || file
+            .as_bytes()
+            .get(1)
+            .is_some_and(|byte| *byte == b':' && file.as_bytes()[0].is_ascii_alphabetic())
+        || file
+            .split('/')
+            .any(|segment| segment.is_empty() || matches!(segment, "." | ".."))
+    {
+        bail!("task `{task_id}` owned path `{file}` is not project-relative");
+    }
+    let mut normal_components = 0usize;
+    for component in Path::new(file).components() {
+        match component {
+            Component::Normal(_) => normal_components += 1,
+            Component::Prefix(_)
+            | Component::RootDir
+            | Component::CurDir
+            | Component::ParentDir => {
+                bail!("task `{task_id}` owned path `{file}` escapes or aliases the project root")
+            }
+        }
+    }
+    if normal_components == 0 {
+        bail!("task `{task_id}` owned path `{file}` has no project-relative component");
+    }
+    Ok(())
+}
+
+fn artifact_evidence_token(token: &str, exact_inline_literal: bool) -> Option<String> {
+    fn trim_markup(value: &str) -> &str {
+        value.trim_matches(|character: char| {
+            matches!(
+                character,
+                '`' | '\''
+                    | '"'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '<'
+                    | '>'
+                    | ','
+                    | ';'
+                    | ':'
+                    | '|'
+                    | '*'
+            )
+        })
+    }
+    let path = if exact_inline_literal {
+        token.trim()
+    } else {
+        let path = trim_markup(token);
+        let path = path.strip_suffix('.').unwrap_or(path);
+        trim_markup(path)
+    };
+    if path.is_empty() || path.split_whitespace().count() != 1 || path.contains('`') {
+        return None;
+    }
+    let exact_non_source_surface = exact_inline_literal
+        && (path.starts_with("http://")
+            || path.starts_with("https://")
+            || path.starts_with("--")
+            || path.starts_with('/')
+            || (path.contains('/') && path.contains('*')));
+    if exact_non_source_surface {
+        return Some(path.to_string());
+    }
+    if path.contains("://") || path.starts_with('/') {
+        return None;
+    }
+    let file_name = path.rsplit('/').next()?;
+    let extension_shape = file_name.rsplit_once('.').is_some_and(|(stem, extension)| {
+        !stem.is_empty() && !extension.is_empty() && extension.chars().all(char::is_alphanumeric)
+    });
+    let dotfile_shape = file_name.strip_prefix('.').is_some_and(|name| {
+        !name.is_empty() && name.chars().any(|character| character.is_alphabetic())
+    });
+    let extensionless_file_shape = !file_name.contains('.')
+        && (file_name.to_ascii_lowercase().ends_with("file")
+            || (file_name.chars().any(char::is_alphabetic)
+                && file_name
+                    .chars()
+                    .filter(|character| character.is_alphabetic())
+                    .all(|character| character.is_uppercase())));
+    let artifact_shape = extension_shape
+        || dotfile_shape
+        || extensionless_file_shape
+        || (exact_inline_literal && path.contains('/'));
+    if !artifact_shape
+        || (!exact_inline_literal && !path.contains('/'))
+        || validate_project_relative_owned_path("requirement-inventory", path).is_err()
+    {
+        return None;
+    }
+    Some(path.to_string())
+}
+
+fn artifact_evidence_candidates(requirements: &[RequirementRecord]) -> Vec<ArtifactCandidate> {
+    let mut candidates = Vec::new();
+    for requirement in requirements {
+        let mut literals = Vec::new();
+        let mut seen = HashSet::new();
+        for (index, span) in requirement.quote.split('`').enumerate() {
+            let exact_inline_literal = index % 2 == 1;
+            for token in span.split_whitespace() {
+                if let Some(literal) = artifact_evidence_token(token, exact_inline_literal) {
+                    if seen.insert(literal.clone()) {
+                        literals.push(literal);
+                    }
+                }
+            }
+        }
+        for literal in literals {
+            let material = format!("{}\n{literal}", requirement.id);
+            candidates.push(ArtifactCandidate {
+                id: stable_inventory_id("ART", &material, 0),
+                requirement_id: requirement.id.clone(),
+                literal,
+            });
+        }
+    }
+    candidates
+}
+
+fn structural_test_task(spec: &TaskSpec) -> bool {
+    let id_is_test = spec
+        .id
+        .to_ascii_lowercase()
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|part| matches!(part, "test" | "tests" | "testing"));
+    if spec.id != "integrate-verify" && id_is_test {
+        return true;
+    }
+    !spec.owned_files.is_empty()
+        && spec.owned_files.iter().all(|file| {
+            let lower = file.to_ascii_lowercase();
+            let base = lower.rsplit('/').next().unwrap_or(lower.as_str());
+            lower
+                .split('/')
+                .any(|part| matches!(part, "test" | "tests"))
+                || base.starts_with("test_")
+                || base.contains(".test.")
+                || base.contains("_test.")
+                || base == "conftest.py"
+        })
+}
+
+fn validate_integration_closure(specs: &[TaskSpec]) -> Result<()> {
+    let participating = specs
+        .iter()
+        .filter(|spec| !structural_test_task(spec))
+        .collect::<Vec<_>>();
+    if participating.len() <= 1 {
+        return Ok(());
+    }
+    let participating_ids: HashSet<&str> =
+        participating.iter().map(|spec| spec.id.as_str()).collect();
+    let mut has_participating_dependent = HashSet::<&str>::new();
+    for spec in &participating {
+        for dependency in &spec.deps {
+            if participating_ids.contains(dependency.as_str()) {
+                has_participating_dependent.insert(dependency.as_str());
+            }
+        }
+    }
+    let mut terminals = participating
+        .iter()
+        .filter(|spec| !has_participating_dependent.contains(spec.id.as_str()))
+        .map(|spec| spec.id.as_str())
+        .collect::<Vec<_>>();
+    terminals.sort();
+    if terminals.len() != 1 {
+        bail!(
+            "integration topology has disconnected completion closures; expected one non-test terminal, found {terminals:?}"
+        );
+    }
+    let sink_id = terminals[0];
+    let by_id: HashMap<&str, &TaskSpec> =
+        specs.iter().map(|spec| (spec.id.as_str(), spec)).collect();
+    let mut ancestors = HashSet::<String>::new();
+    let mut pending = by_id[sink_id].deps.clone();
+    while let Some(task_id) = pending.pop() {
+        if !ancestors.insert(task_id.clone()) {
+            continue;
+        }
+        if let Some(task) = by_id.get(task_id.as_str()) {
+            pending.extend(task.deps.iter().cloned());
+        }
+    }
+    let mut missing = participating
+        .iter()
+        .filter(|spec| spec.id != sink_id)
+        .filter(|spec| !ancestors.contains(&spec.id))
+        .map(|spec| spec.id.clone())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        missing.sort();
+        bail!(
+            "integration topology terminal `{sink_id}` omits non-test task(s) from its dependency closure: {missing:?}"
+        );
+    }
+    Ok(())
+}
+
 fn compile_requirement_binding(
     raw: &str,
     requirements: &[RequirementRecord],
@@ -32007,6 +32699,11 @@ fn compile_requirement_binding(
         .map(|record| record.id.clone())
         .collect();
     let evidence_ids: HashSet<String> = evidence.iter().map(|record| record.id.clone()).collect();
+    let artifact_candidates = artifact_evidence_candidates(requirements);
+    let artifact_candidates_by_id: HashMap<&str, &ArtifactCandidate> = artifact_candidates
+        .iter()
+        .map(|candidate| (candidate.id.as_str(), candidate))
+        .collect();
     if requirement_ids.is_empty() {
         bail!("binding specification has no authored requirement clauses");
     }
@@ -32137,12 +32834,12 @@ fn compile_requirement_binding(
                 );
             }
         }
-        if binding
-            .owned_files
-            .iter()
-            .any(|file| file.trim().is_empty())
-        {
-            bail!("task `{}` has an empty owned file", binding.task_id);
+        let mut owned_paths = HashSet::new();
+        for file in &binding.owned_files {
+            validate_project_relative_owned_path(&binding.task_id, file)?;
+            if !owned_paths.insert(file.as_str()) {
+                bail!("task `{}` repeats owned path `{file}`", binding.task_id);
+            }
         }
         total_slices += binding.slices.len();
         tasks.insert(
@@ -32172,6 +32869,137 @@ fn compile_requirement_binding(
         bail!("requirement inventory is not fully owned; uncovered={uncovered:?}");
     }
 
+    let mut classified_candidates = HashSet::new();
+    let mut delivered_by_task = HashMap::<String, HashSet<String>>::new();
+    let mut non_source_literals = HashSet::<String>::new();
+    let mut literal_kinds = HashMap::<String, ArtifactEvidenceKind>::new();
+    let mut delivered_artifacts = 0usize;
+    let mut runtime_data_literals = 0usize;
+    let mut interface_literals = 0usize;
+    let mut reference_literals = 0usize;
+    for artifact in &draft.artifact_evidence {
+        let candidate = artifact_candidates_by_id
+            .get(artifact.candidate_id.as_str())
+            .ok_or_else(|| {
+                anyhow!(
+                    "artifact evidence references unknown candidate `{}`",
+                    artifact.candidate_id
+                )
+            })?;
+        if !classified_candidates.insert(artifact.candidate_id.as_str()) {
+            bail!(
+                "artifact evidence repeats candidate `{}`",
+                artifact.candidate_id
+            );
+        }
+        let task = tasks.get(&artifact.task_id).ok_or_else(|| {
+            anyhow!(
+                "artifact evidence candidate `{}` is assigned to unknown or engine-authored task `{}`",
+                artifact.candidate_id,
+                artifact.task_id
+            )
+        })?;
+        let task_is_relevant = task
+            .owns_requirement_ids
+            .iter()
+            .chain(task.applies_requirement_ids.iter())
+            .chain(task.verifies_requirement_ids.iter())
+            .any(|id| id == &candidate.requirement_id);
+        if !task_is_relevant {
+            bail!(
+                "artifact evidence candidate `{}` is assigned to task `{}` without a role for quoted requirement `{}`",
+                artifact.candidate_id,
+                artifact.task_id,
+                candidate.requirement_id
+            );
+        }
+        if let Some(previous) = literal_kinds.insert(candidate.literal.clone(), artifact.kind) {
+            if previous != artifact.kind {
+                bail!(
+                    "quoted literal `{}` has contradictory artifact kinds across requirements",
+                    candidate.literal
+                );
+            }
+        }
+        match artifact.kind {
+            ArtifactEvidenceKind::DeliveredArtifact => {
+                validate_project_relative_owned_path(&artifact.task_id, &candidate.literal)?;
+                if !task.owned_files.contains(&candidate.literal) {
+                    bail!(
+                        "delivered artifact candidate `{}` from requirement `{}` is not owned by assigned task `{}`: `{}`",
+                        artifact.candidate_id,
+                        candidate.requirement_id,
+                        artifact.task_id,
+                        candidate.literal
+                    );
+                }
+                delivered_by_task
+                    .entry(artifact.task_id.clone())
+                    .or_default()
+                    .insert(candidate.literal.clone());
+                delivered_artifacts += 1;
+            }
+            ArtifactEvidenceKind::RuntimeData => {
+                non_source_literals.insert(candidate.literal.clone());
+                runtime_data_literals += 1;
+            }
+            ArtifactEvidenceKind::Interface => {
+                non_source_literals.insert(candidate.literal.clone());
+                interface_literals += 1;
+            }
+            ArtifactEvidenceKind::Reference => {
+                non_source_literals.insert(candidate.literal.clone());
+                reference_literals += 1;
+            }
+        }
+    }
+    if classified_candidates.len() != artifact_candidates.len() {
+        let mut missing = artifact_candidates
+            .iter()
+            .filter(|candidate| !classified_candidates.contains(candidate.id.as_str()))
+            .map(|candidate| candidate.id.as_str())
+            .collect::<Vec<_>>();
+        missing.sort();
+        bail!("artifact evidence does not classify every quoted candidate; missing={missing:?}");
+    }
+
+    let specs_by_id: HashMap<&str, &TaskSpec> =
+        specs.iter().map(|spec| (spec.id.as_str(), spec)).collect();
+    for spec in &specs {
+        for file in &spec.owned_files {
+            validate_project_relative_owned_path(&spec.id, file)?;
+        }
+        let Some(binding) = tasks.get(&spec.id) else {
+            continue;
+        };
+        let original_files: HashSet<&str> = spec.owned_files.iter().map(String::as_str).collect();
+        let bound_files: HashSet<&str> = binding.owned_files.iter().map(String::as_str).collect();
+        if !original_files.is_subset(&bound_files) {
+            let mut missing = original_files
+                .difference(&bound_files)
+                .copied()
+                .collect::<Vec<_>>();
+            missing.sort();
+            bail!(
+                "requirement binding moved or dropped selected-plan files from task `{}`: {missing:?}",
+                spec.id
+            );
+        }
+        let original_deps: HashSet<&str> = spec.deps.iter().map(String::as_str).collect();
+        let bound_deps: HashSet<&str> = binding.depends_on.iter().map(String::as_str).collect();
+        if !original_deps.is_subset(&bound_deps) {
+            let mut missing = original_deps
+                .difference(&bound_deps)
+                .copied()
+                .collect::<Vec<_>>();
+            missing.sort();
+            bail!(
+                "requirement binding removed selected-plan dependencies from task `{}`: {missing:?}",
+                spec.id
+            );
+        }
+    }
+
     let mut updated_specs = specs.clone();
     for spec in &mut updated_specs {
         if let Some(binding) = tasks.get(&spec.id) {
@@ -32179,21 +33007,10 @@ fn compile_requirement_binding(
             spec.owned_files = binding.owned_files.clone();
         }
     }
-    let original_files: HashSet<&str> = specs
-        .iter()
-        .flat_map(|spec| spec.owned_files.iter().map(String::as_str))
-        .collect();
-    let updated_files: HashSet<&str> = updated_specs
-        .iter()
-        .flat_map(|spec| spec.owned_files.iter().map(String::as_str))
-        .collect();
-    if !original_files.is_subset(&updated_files) {
-        let missing: Vec<&&str> = original_files.difference(&updated_files).collect();
-        bail!("requirement binding dropped selected-plan owned files: {missing:?}");
-    }
     let mut file_owners = HashMap::<String, String>::new();
     for spec in &updated_specs {
         for file in &spec.owned_files {
+            validate_project_relative_owned_path(&spec.id, file)?;
             if let Some(previous) = file_owners.insert(file.clone(), spec.id.clone()) {
                 bail!(
                     "owned file `{file}` overlaps tasks `{previous}` and `{}` after requirement binding",
@@ -32202,7 +33019,43 @@ fn compile_requirement_binding(
             }
         }
     }
-    Dag::from_specs(updated_specs)?;
+    let mut source_owned_runtime_or_interface = non_source_literals
+        .iter()
+        .filter(|literal| file_owners.contains_key(*literal))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if !source_owned_runtime_or_interface.is_empty() {
+        source_owned_runtime_or_interface.sort();
+        bail!(
+            "non-delivered artifact-evidence literals were incorrectly source-owned: {source_owned_runtime_or_interface:?}"
+        );
+    }
+    for binding in tasks.values() {
+        let original = specs_by_id
+            .get(binding.task_id.as_str())
+            .expect("compiled binding task id was validated against the selected plan");
+        let original_files: HashSet<&str> =
+            original.owned_files.iter().map(String::as_str).collect();
+        let delivered_for_task = delivered_by_task.get(&binding.task_id);
+        let mut ungrounded = binding
+            .owned_files
+            .iter()
+            .filter(|file| {
+                !original_files.contains(file.as_str())
+                    && !delivered_for_task.is_some_and(|paths| paths.contains(file.as_str()))
+            })
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        if !ungrounded.is_empty() {
+            ungrounded.sort();
+            bail!(
+                "task `{}` added owned files that were not classified as delivered artifacts for that task: {ungrounded:?}",
+                binding.task_id
+            );
+        }
+    }
+    Dag::from_specs(updated_specs.clone())?;
+    validate_integration_closure(&updated_specs)?;
 
     let mut interface_ids = HashSet::new();
     for interface in &mut draft.interfaces {
@@ -32252,6 +33105,27 @@ fn compile_requirement_binding(
         if refs.is_empty() {
             bail!("requirement interface has no requirement reference");
         }
+        for endpoint in
+            std::iter::once(&interface.producer_task_id).chain(interface.consumer_task_ids.iter())
+        {
+            let Some(binding) = tasks.get(endpoint) else {
+                continue;
+            };
+            let relevant = binding
+                .owns_requirement_ids
+                .iter()
+                .chain(binding.applies_requirement_ids.iter())
+                .chain(binding.verifies_requirement_ids.iter())
+                .collect::<HashSet<_>>();
+            if refs
+                .iter()
+                .all(|requirement| !relevant.contains(requirement))
+            {
+                bail!(
+                    "interface endpoint `{endpoint}` has no owner/applicable/verifier role for its requirement references"
+                );
+            }
+        }
         let stable_material = format!(
             "{}\n{}\n{}\n{}",
             interface.producer_task_id,
@@ -32270,6 +33144,11 @@ fn compile_requirement_binding(
         interfaces: draft.interfaces,
         owned_requirements: owners.len(),
         slice_count: total_slices,
+        artifact_candidates: artifact_candidates.len(),
+        delivered_artifacts,
+        runtime_data_literals,
+        interface_literals,
+        reference_literals,
     })
 }
 
@@ -32417,6 +33296,13 @@ struct EvidenceRecord {
     authority: &'static str,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct ArtifactCandidate {
+    id: String,
+    requirement_id: String,
+    literal: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct RequirementSliceDraft {
     id: String,
@@ -32448,10 +33334,27 @@ struct RequirementInterfaceDraft {
     requires_completed_artifact: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ArtifactEvidenceKind {
+    DeliveredArtifact,
+    RuntimeData,
+    Interface,
+    Reference,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ArtifactEvidenceDraft {
+    candidate_id: String,
+    kind: ArtifactEvidenceKind,
+    task_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct RequirementBindingDraft {
     bindings: Vec<TaskRequirementBindingDraft>,
     interfaces: Vec<RequirementInterfaceDraft>,
+    artifact_evidence: Vec<ArtifactEvidenceDraft>,
 }
 
 #[derive(Clone, Debug)]
@@ -32471,6 +33374,11 @@ struct CompiledRequirementBinding {
     interfaces: Vec<RequirementInterfaceDraft>,
     owned_requirements: usize,
     slice_count: usize,
+    artifact_candidates: usize,
+    delivered_artifacts: usize,
+    runtime_data_literals: usize,
+    interface_literals: usize,
+    reference_literals: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -33644,7 +34552,7 @@ fn splice_functions(
                 return Err(SpliceRefusal::ImportConflict(format!(
                     "the shadow dropped root import `{}`",
                     ri.name
-                )))
+                )));
             }
             Some(xi) => {
                 if import_text(&root_lines, ri) != import_text(&shad_lines, xi) {
@@ -35825,9 +36733,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         );
                         if ask_floor.is_some() {
                             eprintln!(
-                            "  {} GOOSE_SWARM_ASK_FLOOR is inert on the solo fallback (no confidence signal)",
-                            style("!").yellow()
-                        );
+                                "  {} GOOSE_SWARM_ASK_FLOOR is inert on the solo fallback (no confidence signal)",
+                                style("!").yellow()
+                            );
                         }
                         // SLOTS, NOT DEVICES. A device's `weight` is how many tasks it runs AT ONCE (baked
                         // default 2), so a 3-device fleet holds 6. Passing `devices.len()` told the planner
@@ -35984,9 +36892,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 effective_best_of_n =
                                     (effective_best_of_n + retarget_step).min(RETARGET_MAX_N);
                                 eprintln!(
-                                "  {} retargeting confidence: re-drafting toward consensus (best_of_n {prev}→{effective_best_of_n})",
-                                style("↻").cyan()
-                            );
+                                    "  {} retargeting confidence: re-drafting toward consensus (best_of_n {prev}→{effective_best_of_n})",
+                                    style("↻").cyan()
+                                );
                                 sink.write_value(serde_json::json!({
                                     "event": "confidence_retarget",
                                     "round": retarget_round,
@@ -36054,10 +36962,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 let picked: Vec<String> =
                                     decisions.into_iter().take(RETARGET_MAX_N).collect();
                                 eprintln!(
-                                "  {} retargeting confidence: researching {} open decision(s) instead of asking",
-                                style("↻").cyan(),
-                                picked.len()
-                            );
+                                    "  {} retargeting confidence: researching {} open decision(s) instead of asking",
+                                    style("↻").cyan(),
+                                    picked.len()
+                                );
                                 let short_goal: String = opts.prompt.chars().take(200).collect();
                                 let questions: Vec<ResearchQuestion> = picked
                                 .iter()
@@ -36370,12 +37278,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         plan_conf.spec_clarity = Some(rescored);
                                         plan_conf.spec_clarity_reason = if still_open == 0 {
                                             format!(
-                                            "you answered all {answered} open decision(s) — the spec is pinned"
-                                        )
+                                                "you answered all {answered} open decision(s) — the spec is pinned"
+                                            )
                                         } else {
                                             format!(
-                                            "you answered {answered}; {still_open} open decision(s) goose                                              will still have to guess (raise swarm.ask_max_q to be asked                                              about them)"
-                                        )
+                                                "you answered {answered}; {still_open} open decision(s) goose                                              will still have to guess (raise swarm.ask_max_q to be asked                                              about them)"
+                                            )
                                         };
                                         plan_conf.open_decisions =
                                             plan_conf.open_decisions.split_off(
@@ -36401,10 +37309,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                             "conf_after": plan_conf.final_conf,
                                         }));
                                         eprintln!(
-                                        "  {} you answered {answered} decision(s) — spec clarity {old_clarity} -> {rescored}, confidence now {}/100",
-                                        style("✓").green(),
-                                        plan_conf.final_conf.unwrap_or(0)
-                                    );
+                                            "  {} you answered {answered} decision(s) — spec clarity {old_clarity} -> {rescored}, confidence now {}/100",
+                                            style("✓").green(),
+                                            plan_conf.final_conf.unwrap_or(0)
+                                        );
                                     } else if ask_away {
                                         // P3 (ASK-AWAY only): trim the resolved decisions and refresh the reason
                                         // string UNCONDITIONALLY — even when the rescore did not strictly improve
@@ -36419,12 +37327,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                             );
                                         plan_conf.spec_clarity_reason = if still_open == 0 {
                                             format!(
-                                            "you answered all {answered} open decision(s) — the spec is pinned"
-                                        )
+                                                "you answered all {answered} open decision(s) — the spec is pinned"
+                                            )
                                         } else {
                                             format!(
-                                            "you answered {answered}; {still_open} open decision(s) still lower clarity"
-                                        )
+                                                "you answered {answered}; {still_open} open decision(s) still lower clarity"
+                                            )
                                         };
                                     }
                                 }
@@ -36480,9 +37388,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                             "floor": floor,
                                         }));
                                         eprintln!(
-                                        "  {} re-planning to beat your answered plan (confidence {post_conf}/100 < floor {floor}); kept as the floor to beat",
-                                        style("↻").cyan()
-                                    );
+                                            "  {} re-planning to beat your answered plan (confidence {post_conf}/100 < floor {floor}); kept as the floor to beat",
+                                            style("↻").cyan()
+                                        );
                                         continue 'plan_loop;
                                     }
                                     PostAnswerAction::Replan => {
@@ -36510,9 +37418,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                             "floor": floor,
                                         }));
                                         eprintln!(
-                                        "  {} keeping the plan you just answered — confidence {post_conf}/100 ≥ floor {floor}; not re-drafting it away (GOOSE_SWARM_ANSWERS_WIN_FLOOR)",
-                                        style("✓").green()
-                                    );
+                                            "  {} keeping the plan you just answered — confidence {post_conf}/100 ≥ floor {floor}; not re-drafting it away (GOOSE_SWARM_ANSWERS_WIN_FLOOR)",
+                                            style("✓").green()
+                                        );
                                     }
                                     PostAnswerAction::KeepReuse => {
                                         // This line used to claim the answers were "injected into every worker via
@@ -36521,9 +37429,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         // and only because DispatchRequest.user_decisions exists; say what actually
                                         // carries them.
                                         eprintln!(
-                        "  {} keeping this plan; your decisions go to every worker VERBATIM as a binding block (set GOOSE_SWARM_ASK_REPLAN=1 to re-plan against them instead)",
-                        style("✓").green()
-                    );
+                                            "  {} keeping this plan; your decisions go to every worker VERBATIM as a binding block (set GOOSE_SWARM_ASK_REPLAN=1 to re-plan against them instead)",
+                                            style("✓").green()
+                                        );
                                     }
                                 }
                                 // ASK-AWAY: the answered batch was non-structural and kept. If the plan is still
@@ -36545,12 +37453,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         "open_decisions_remaining": plan_conf.open_decisions.len(),
                                     }));
                                     eprintln!(
-                                    "  {} ask-away: {} open decision(s) still below floor {floor} — asking round {} of {}",
-                                    style("↺").cyan(),
-                                    plan_conf.open_decisions.len(),
-                                    ask_round + 1,
-                                    ask_rounds_max
-                                );
+                                        "  {} ask-away: {} open decision(s) still below floor {floor} — asking round {} of {}",
+                                        style("↺").cyan(),
+                                        plan_conf.open_decisions.len(),
+                                        ask_round + 1,
+                                        ask_rounds_max
+                                    );
                                     continue 'ask_loop;
                                 }
                             }
