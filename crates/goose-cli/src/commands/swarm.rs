@@ -33,6 +33,7 @@ use goose_swarm::{
     TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -35885,17 +35886,1069 @@ fn swarm_repeat_penalty_resolved(cfg: Option<f32>) -> Option<f32> {
     env_f32_clamped("GOOSE_SWARM_REPEAT_PENALTY", 0.5, 2.0).or(cfg)
 }
 
-/// ONE RULER (F862). Grades a tree by the SAME categories the round's complete_verify counts:
-/// smoke + spec_contract (when the round runs it) + http_timeout_scan + cross_module_drift (when
-/// its lever is on) + the missing-deliverables stat (when the round gates on it). The r1
-/// forensics proved the cost of a subset ruler in its worst form: a twin with ZERO shadow edits
-/// graded baseline-3 (the three timeout findings were invisible to smoke+spec_contract), claimed
-/// "strictly better", cancelled the two twins that were actually editing, and promoted twelve
-/// byte-identical files — the wave then went 6→6 flat and the run stalled out red. Any category
-/// the round counts and the grade cannot see converts real work into an invisible delta, in BOTH
-/// directions. Returns (None, false) when the smoke gate cannot run (the vacuous-pass trap);
-/// `established` folds spec_contract's inconclusive legs in, so a blinded probe cannot license
-/// an early-close claim.
+struct CompleteRulerResult {
+    verdict: SmokeResult,
+    missing: Vec<String>,
+    cross_module_enabled: bool,
+    drift: DriftResult,
+    no_timeout: DriftResult,
+    skipped_tests: usize,
+    dom: DriftResult,
+    css: DriftResult,
+    spec_contract: Option<SpecContractResult>,
+}
+
+fn missing_source_deliverables_for(
+    root: &Path,
+    lang: TargetLang,
+    all_files: &[String],
+    enabled: bool,
+) -> Vec<String> {
+    if !enabled {
+        return Vec::new();
+    }
+    let mut missing: Vec<String> = all_files
+        .iter()
+        .filter(|file| {
+            lang.is_source_file(file)
+                && !lang.is_test_file(file.rsplit('/').next().unwrap_or(file))
+        })
+        .filter(|file| {
+            let base = file.rsplit('/').next().unwrap_or(file);
+            base != "__init__.py" && base != "py.typed"
+        })
+        .filter(|file| {
+            !root
+                .join(file)
+                .metadata()
+                .map(|meta| meta.len() > 0)
+                .unwrap_or(false)
+        })
+        .map(|file| {
+            format!(
+                "planned deliverable `{file}` is MISSING or EMPTY — a task was marked done without \
+                 writing it. Create it (the simplest version that satisfies the spec) so the app is \
+                 complete and runnable."
+            )
+        })
+        .collect();
+    missing.sort();
+    missing.dedup();
+    missing
+}
+
+/// The complete phase's sole hermetic ruler. Repair-loop checks, speculative promotion previews,
+/// post-floor verification, and restored ship-best trees all call this function. Keeping collection
+/// here makes it impossible for a candidate to be promoted with a cheaper subset of the checks that
+/// decide the final result.
+async fn run_complete_ruler(
+    root: &std::path::Path,
+    prompt: &str,
+    lang: TargetLang,
+    all_files: &[String],
+    composite: bool,
+    missing_gate: bool,
+    blind_failed_findings: &[String],
+) -> CompleteRulerResult {
+    let mut verdict = run_smoke_gate(root, lang).await;
+    if !verdict.ran {
+        verdict
+            .findings
+            .extend(blind_failed_findings.iter().cloned());
+    }
+
+    let missing = missing_source_deliverables_for(root, lang, all_files, missing_gate);
+    verdict.findings.extend(missing.iter().cloned());
+
+    let cross_module_enabled = swarm_gate_cfg(
+        "GOOSE_SWARM_CROSS_MODULE_CHECK",
+        load_config().cross_module_check,
+    );
+    let drift = if cross_module_enabled {
+        cross_module_drift(root, lang, &app_scope_py(root, all_files)).await
+    } else {
+        DriftResult::default()
+    };
+    verdict.findings.extend(drift.findings.iter().cloned());
+
+    let app_only: Vec<String> = all_files
+        .iter()
+        .filter(|f| !is_test_path(lang, f))
+        .cloned()
+        .collect();
+    let skipped_tests = all_files.len().saturating_sub(app_only.len());
+    let no_timeout = http_timeout_scan(root, lang, &app_scope_py(root, &app_only)).await;
+    verdict.findings.extend(no_timeout.findings.iter().cloned());
+
+    let dom = dom_id_scan(root, all_files).await;
+    verdict.findings.extend(dom.findings.iter().cloned());
+
+    let css = css_coherence_scan(root, all_files).await;
+    verdict.findings.extend(css.findings.iter().cloned());
+
+    let spec_contract = if composite {
+        let result = run_spec_contract(root, prompt, lang).await;
+        verdict.findings.extend(result.findings.iter().cloned());
+        verdict
+            .inconclusive
+            .extend(result.inconclusive.iter().cloned());
+        Some(result)
+    } else {
+        None
+    };
+
+    CompleteRulerResult {
+        verdict,
+        missing,
+        cross_module_enabled,
+        drift,
+        no_timeout,
+        skipped_tests,
+        dom,
+        css,
+        spec_contract,
+    }
+}
+
+fn emit_complete_ruler_observations(
+    sink: &dyn EventSink,
+    round: u32,
+    lang: TargetLang,
+    result: &CompleteRulerResult,
+) {
+    if !result.missing.is_empty() {
+        sink.write_value(serde_json::json!({
+            "event": "complete_missing_deliverables",
+            "round": round,
+            "missing": result.missing.len(),
+            "detail": "planned source deliverables missing/empty on disk this round — blocking green + driving the fix loop",
+        }));
+    }
+
+    if result.cross_module_enabled {
+        sink.write_value(serde_json::json!({
+            "event": "cross_module_drift",
+            "round": round,
+            "ran": result.drift.ran,
+            "checked": result.drift.checked,
+            "findings": result.drift.findings.len(),
+            "partial": result.drift.partial,
+            "detail": if !result.drift.ran {
+                format!("NOT SCANNED — Python-only scanner, lang is {}", lang.name())
+            } else if result.drift.findings.is_empty() {
+                "no module reads a field its sibling does not define".to_string()
+            } else {
+                "a module reads a field a sibling's class does not define — blocking the green claim and driving the fix loop".to_string()
+            },
+        }));
+    }
+
+    sink.write_value(serde_json::json!({
+        "event": "http_timeout_scan",
+        "round": round,
+        "ran": result.no_timeout.ran,
+        "checked": result.no_timeout.checked,
+        "skipped_tests": result.skipped_tests,
+        "findings": result.no_timeout.findings.len(),
+        "partial": result.no_timeout.partial,
+        "detail": if !result.no_timeout.ran {
+            format!("NOT SCANNED — Python-only scanner, lang is {}", lang.name())
+        } else if result.no_timeout.checked == 0 {
+            "CHECKED NOTHING — no file parsed, so a clean result here is silence, not evidence".to_string()
+        } else if result.no_timeout.findings.is_empty() {
+            "no requests/urlopen/http.client call is missing a timeout (other libraries are not scanned)".to_string()
+        } else {
+            "an outbound HTTP call has no timeout — driving the fix loop".to_string()
+        },
+    }));
+
+    if result.dom.ran {
+        sink.write_value(serde_json::json!({
+            "event": "dom_id_scan",
+            "round": round,
+            "checked": result.dom.checked,
+            "findings": result.dom.findings.len(),
+            "detail": if result.dom.findings.is_empty() {
+                "every literal DOM id the js references exists in the html"
+            } else {
+                "js references a DOM id no html defines — driving the fix loop"
+            },
+        }));
+    }
+
+    if result.css.ran {
+        sink.write_value(serde_json::json!({
+            "event": "css_coherence_scan",
+            "round": round,
+            "checked": result.css.checked,
+            "findings": result.css.findings.len(),
+            "detail": if result.css.findings.is_empty() {
+                "the stylesheet's class vocabulary matches the markup"
+            } else {
+                "css classes and markup disagree — the page renders unstyled — driving the fix loop"
+            },
+        }));
+    }
+
+    if let Some(contract) = &result.spec_contract {
+        let found = contract.findings.len();
+        sink.write_value(serde_json::json!({
+            "event": "spec_contract",
+            "round": round,
+            "verified": contract.verified,
+            "findings": found,
+            "inconclusive": contract.inconclusive.len(),
+            "render_gate": contract.render_gate,
+            "probed_post": contract.probed_post,
+            "inconclusive_reasons": contract.inconclusive.iter()
+                .map(|reason| reason.chars().take(240).collect::<String>())
+                .collect::<Vec<_>>(),
+            "detail": spec_contract_detail(contract.verified, found),
+        }));
+    }
+}
+
+fn emit_complete_verify(
+    sink: &dyn EventSink,
+    round: u32,
+    result: &CompleteRulerResult,
+    authoritative: bool,
+    reason: &str,
+    tree_hash: Option<&str>,
+) {
+    sink.write_value(serde_json::json!({
+        "event": "complete_verify",
+        "round": round,
+        "ran": result.verdict.ran,
+        "passed": result.verdict.findings.is_empty(),
+        "findings": result.verdict.findings.len(),
+        "finding_texts": result.verdict.findings.iter().take(12)
+            .map(|finding| elide_middle(finding, 150, 650))
+            .collect::<Vec<_>>(),
+        "inconclusive_reasons": result.verdict.inconclusive.iter()
+            .map(|reason| elide_middle(reason, 150, 650))
+            .collect::<Vec<_>>(),
+        "authoritative": authoritative,
+        "reason": reason,
+        "tree_hash": tree_hash,
+    }));
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RepairTreeSnapshot {
+    sha256: String,
+    entries: std::collections::BTreeMap<String, String>,
+}
+
+fn excluded_from_repair_tree(rel: &Path) -> bool {
+    // This is the existing F886 ship-best rsync contract, not a language or app-file allowlist.
+    // Anything rsync can ship must participate in the ruling, including dependencies, caches,
+    // generated assets, and unplanned files.
+    const ENGINE_EVIDENCE: &[&str] = &[
+        ".swarm",
+        "run.jsonl",
+        "bench-shots",
+        "heartbeat",
+        "graded.db",
+    ];
+    rel.components().any(|component| {
+        matches!(component, Component::Normal(name) if ENGINE_EVIDENCE.contains(&name.to_string_lossy().as_ref()))
+    })
+}
+
+#[cfg(unix)]
+fn repair_entry_mode(metadata: &std::fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode()
+}
+
+#[cfg(not(unix))]
+fn repair_entry_mode(metadata: &std::fs::Metadata) -> u32 {
+    u32::from(metadata.permissions().readonly())
+}
+
+fn lowercase_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(DIGITS[(byte >> 4) as usize] as char);
+        out.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn repair_tree_snapshot(root: &Path) -> Result<RepairTreeSnapshot> {
+    fn collect(
+        root: &Path,
+        dir: &Path,
+        entries: &mut std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        let mut dir_entries = std::fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
+        dir_entries.sort_by_key(|entry| entry.file_name());
+        for entry in dir_entries {
+            let path = entry.path();
+            let rel = path.strip_prefix(root).map_err(|error| anyhow!(error))?;
+            if excluded_from_repair_tree(rel) {
+                continue;
+            }
+            let metadata = std::fs::symlink_metadata(&path)?;
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            let mut hasher = Sha256::new();
+            if metadata.is_dir() {
+                hasher.update(b"dir\0");
+                hasher.update(repair_entry_mode(&metadata).to_be_bytes());
+                entries.insert(rel, lowercase_hex(hasher.finalize().as_slice()));
+                collect(root, &path, entries)?;
+                continue;
+            }
+            if metadata.file_type().is_symlink() {
+                hasher.update(b"symlink\0");
+                hasher.update(std::fs::read_link(&path)?.to_string_lossy().as_bytes());
+            } else if metadata.is_file() {
+                hasher.update(b"file\0");
+                hasher.update(repair_entry_mode(&metadata).to_be_bytes());
+                hasher.update(std::fs::read(&path)?);
+            } else {
+                continue;
+            }
+            entries.insert(rel, lowercase_hex(hasher.finalize().as_slice()));
+        }
+        Ok(())
+    }
+
+    let mut entries = std::collections::BTreeMap::new();
+    collect(root, root, &mut entries)?;
+    let mut tree = Sha256::new();
+    tree.update(b"goose-repair-tree-v2\0");
+    for (path, digest) in &entries {
+        tree.update((path.len() as u64).to_be_bytes());
+        tree.update(path.as_bytes());
+        tree.update((digest.len() as u64).to_be_bytes());
+        tree.update(digest.as_bytes());
+    }
+    Ok(RepairTreeSnapshot {
+        sha256: lowercase_hex(tree.finalize().as_slice()),
+        entries,
+    })
+}
+
+fn changed_repair_files(before: &RepairTreeSnapshot, after: &RepairTreeSnapshot) -> Vec<String> {
+    let mut paths = std::collections::BTreeSet::new();
+    paths.extend(before.entries.keys().cloned());
+    paths.extend(after.entries.keys().cloned());
+    paths
+        .into_iter()
+        .filter(|path| before.entries.get(path) != after.entries.get(path))
+        .collect()
+}
+
+struct RepairCandidateToken {
+    cause: String,
+    epoch: u64,
+    before: RepairTreeSnapshot,
+}
+
+#[derive(Clone)]
+struct RepairTreeRuling {
+    epoch: u64,
+    tree_hash: String,
+    passed: bool,
+    verified: bool,
+    remaining_findings: usize,
+}
+
+struct OpenRepairTree {
+    root: PathBuf,
+    epoch: u64,
+    ruling: Option<RepairTreeRuling>,
+}
+
+impl OpenRepairTree {
+    fn open(root: &Path, sink: &dyn EventSink) -> Result<Self> {
+        let snapshot = repair_tree_snapshot(root)?;
+        sink.write_value(serde_json::json!({
+            "event": "repair_tree_opened",
+            "epoch": 0,
+            "tree_hash": snapshot.sha256,
+            "entries": snapshot.entries.len(),
+        }));
+        Ok(Self {
+            root: root.to_path_buf(),
+            epoch: 0,
+            ruling: None,
+        })
+    }
+
+    fn begin_candidate(&self, cause: impl Into<String>) -> Result<RepairCandidateToken> {
+        Ok(RepairCandidateToken {
+            cause: cause.into(),
+            epoch: self.epoch,
+            before: repair_tree_snapshot(&self.root)?,
+        })
+    }
+
+    fn finish_candidate(
+        &mut self,
+        token: RepairCandidateToken,
+        sink: &dyn EventSink,
+    ) -> Result<bool> {
+        if token.epoch != self.epoch {
+            bail!(
+                "repair candidate `{}` crossed tree epochs (opened {}, current {})",
+                token.cause,
+                token.epoch,
+                self.epoch
+            );
+        }
+        let after = repair_tree_snapshot(&self.root)?;
+        let changed_files = changed_repair_files(&token.before, &after);
+        let changed = !changed_files.is_empty();
+        if changed {
+            self.epoch += 1;
+            self.ruling = None;
+        }
+        sink.write_value(serde_json::json!({
+            "event": "repair_candidate",
+            "cause": token.cause,
+            "epoch_before": token.epoch,
+            "epoch_after": self.epoch,
+            "changed": changed,
+            "changed_files": changed_files,
+            "before_tree_hash": token.before.sha256,
+            "after_tree_hash": after.sha256,
+        }));
+        Ok(changed)
+    }
+
+    fn record_ruling(
+        &mut self,
+        result: &CompleteRulerResult,
+        reason: &str,
+        sink: &dyn EventSink,
+    ) -> Result<RepairTreeRuling> {
+        self.record_ruling_values(
+            result.verdict.findings.is_empty(),
+            result.verdict.established(),
+            result.verdict.findings.len(),
+            reason,
+            sink,
+        )
+    }
+
+    fn record_ruling_values(
+        &mut self,
+        passed: bool,
+        verified: bool,
+        remaining_findings: usize,
+        reason: &str,
+        sink: &dyn EventSink,
+    ) -> Result<RepairTreeRuling> {
+        let snapshot = repair_tree_snapshot(&self.root)?;
+        let ruling = RepairTreeRuling {
+            epoch: self.epoch,
+            tree_hash: snapshot.sha256,
+            passed,
+            verified,
+            remaining_findings,
+        };
+        sink.write_value(serde_json::json!({
+            "event": "repair_tree_ruled",
+            "reason": reason,
+            "epoch": ruling.epoch,
+            "tree_hash": ruling.tree_hash,
+            "passed": ruling.passed,
+            "verified": ruling.verified,
+            "remaining_findings": ruling.remaining_findings,
+        }));
+        self.ruling = Some(ruling.clone());
+        Ok(ruling)
+    }
+
+    fn require_current_ruling(&self) -> Result<&RepairTreeRuling> {
+        let ruling = self
+            .ruling
+            .as_ref()
+            .ok_or_else(|| anyhow!("repair tree has no ruler verdict for epoch {}", self.epoch))?;
+        if ruling.epoch != self.epoch {
+            bail!(
+                "repair tree epoch {} is newer than ruler epoch {}",
+                self.epoch,
+                ruling.epoch
+            );
+        }
+        let current = repair_tree_snapshot(&self.root)?;
+        if current.sha256 != ruling.tree_hash {
+            bail!(
+                "repair tree changed outside a registered candidate (ruled {}, current {})",
+                ruling.tree_hash,
+                current.sha256
+            );
+        }
+        Ok(ruling)
+    }
+
+    fn seal(
+        self,
+        shipped: String,
+        force_unverified: bool,
+        sink: &dyn EventSink,
+    ) -> Result<SealedCompleteTree> {
+        let ruling = self.require_current_ruling()?.clone();
+        let current = repair_tree_snapshot(&self.root)?;
+        if current.sha256 != ruling.tree_hash {
+            bail!(
+                "repair tree changed after its authoritative ruler (ruled {}, current {})",
+                ruling.tree_hash,
+                current.sha256
+            );
+        }
+        let sealed = SealedCompleteTree {
+            root: self.root,
+            epoch: ruling.epoch,
+            tree_hash: ruling.tree_hash,
+            entries: current.entries,
+            passed: ruling.passed,
+            verified: ruling.verified && !force_unverified,
+            remaining_findings: ruling.remaining_findings,
+            shipped,
+        };
+        sink.write_value(serde_json::json!({
+            "event": "repair_tree_sealed",
+            "epoch": sealed.epoch,
+            "tree_hash": sealed.tree_hash,
+            "passed": sealed.passed,
+            "verified": sealed.verified,
+            "remaining_findings": sealed.remaining_findings,
+            "shipped": sealed.shipped,
+        }));
+        Ok(sealed)
+    }
+}
+
+struct SealedCompleteTree {
+    root: PathBuf,
+    epoch: u64,
+    tree_hash: String,
+    entries: std::collections::BTreeMap<String, String>,
+    passed: bool,
+    verified: bool,
+    remaining_findings: usize,
+    shipped: String,
+}
+
+impl SealedCompleteTree {
+    fn emit_final_events(
+        &self,
+        sink: &dyn EventSink,
+        mut run_finished: serde_json::Value,
+    ) -> Result<()> {
+        let current = repair_tree_snapshot(&self.root)?;
+        if current.sha256 != self.tree_hash {
+            sink.write_value(serde_json::json!({
+                "event": "post_seal_mutation",
+                "epoch": self.epoch,
+                "sealed_tree_hash": self.tree_hash,
+                "current_tree_hash": current.sha256,
+                "changed_files": changed_repair_files(
+                    &RepairTreeSnapshot { sha256: self.tree_hash.clone(), entries: self.entries.clone() },
+                    &current,
+                ),
+            }));
+            bail!(
+                "application tree changed after COMPLETE sealed it (sealed {}, current {})",
+                self.tree_hash,
+                current.sha256
+            );
+        }
+        if let Some(object) = run_finished.as_object_mut() {
+            object.insert(
+                "complete_tree_hash".to_string(),
+                serde_json::json!(self.tree_hash),
+            );
+            object.insert(
+                "complete_tree_epoch".to_string(),
+                serde_json::json!(self.epoch),
+            );
+        }
+        sink.write_value(serde_json::json!({
+            "event": "complete_result",
+            "passed": self.passed,
+            "verified": self.verified,
+            "remaining_findings": self.remaining_findings,
+            "shipped": self.shipped,
+            "tree_hash": self.tree_hash,
+            "tree_epoch": self.epoch,
+        }));
+        sink.write_value(run_finished);
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_post_build_ast_review(
+    root: &Path,
+    prompt: &str,
+    all_files: &[String],
+    review_before: &HashSet<String>,
+    review_before_modules: &HashSet<String>,
+    dispatcher: &Arc<GooseAgentDispatcher>,
+    fix_target: Option<(String, String)>,
+    user_decisions: &str,
+    doc_facts: &str,
+    sink: &dyn EventSink,
+    fix_cap_secs: u64,
+    mut repair_tree: Option<&mut OpenRepairTree>,
+) -> Result<Vec<String>> {
+    let lang = detect_language(prompt, all_files);
+    let on_disk_rel: Vec<String> = collect_lang_files(root, lang)
+        .iter()
+        .filter_map(|path| {
+            path.strip_prefix(root)
+                .ok()
+                .map(|rel| rel.to_string_lossy().to_string())
+        })
+        .collect();
+    let orphans = orphan_source_files(&on_disk_rel, all_files);
+    if !orphans.is_empty() {
+        let detail: Vec<serde_json::Value> = orphans
+            .iter()
+            .map(|rel| {
+                let stub = std::fs::read_to_string(root.join(rel))
+                    .map(|content| is_stub_content(&content))
+                    .unwrap_or(false);
+                serde_json::json!({ "file": rel, "stub": stub })
+            })
+            .collect();
+        sink.write_value(serde_json::json!({
+            "event": "orphan_files",
+            "count": orphans.len(),
+            "files": detail,
+        }));
+        eprintln!(
+            "{} {} unplanned file(s) shipped (no task owns them): {}",
+            style("orphan review:").yellow().bold(),
+            orphans.len(),
+            orphans.join(", "),
+        );
+    }
+
+    let scope = app_scope_py(root, all_files);
+    if !scope.dropped.is_empty() {
+        eprintln!(
+            "  {} scanned {} of {} app file(s) — {} SKIPPED by the scan bound: {}. This verdict is \
+             PARTIAL, not clean, and cannot demote.",
+            style("SCAN CAPPED:").red().bold(),
+            scope.files.len(),
+            scope.files.len() + scope.dropped.len(),
+            scope.dropped.len(),
+            scope.dropped.join(", ")
+        );
+    }
+    let review = run_ast_review(root, &scope).await;
+    let review_value = serde_json::to_value(&review).unwrap_or(serde_json::Value::Null);
+    let mut demote_survivors = new_demote_survivors(&review, review_before_modules);
+    let new_findings: Vec<String> = review
+        .findings
+        .iter()
+        .filter(|finding| !review_before.contains(*finding))
+        .cloned()
+        .collect();
+    let pre_existing = review.findings.len().saturating_sub(new_findings.len());
+    sink.write_value(serde_json::json!({
+        "event": "review",
+        "result": review_value,
+        "new_findings": new_findings,
+        "pre_existing_skipped": pre_existing,
+    }));
+
+    if !review.ran {
+        eprintln!("AST review: skipped (no python in the produced tree)");
+        return Ok(demote_survivors);
+    }
+    if new_findings.is_empty() {
+        let extra = if pre_existing > 0 {
+            format!(" ({pre_existing} pre-existing skipped)")
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "{}",
+            style(format!("AST review: clean (no NEW unwired modules){extra}")).green()
+        );
+        return Ok(demote_survivors);
+    }
+
+    let extra = if pre_existing > 0 {
+        format!(", {pre_existing} pre-existing skipped")
+    } else {
+        String::new()
+    };
+    eprintln!(
+        "{} ({} new finding(s){extra} — model-free, advisory):",
+        style("AST review").yellow().bold(),
+        new_findings.len()
+    );
+    for finding in &new_findings {
+        eprintln!("  - {finding}");
+    }
+
+    let Some((device_id, model_id)) = fix_target else {
+        return Ok(demote_survivors);
+    };
+    eprintln!("AST review: dispatching ONE corrective wire-fix attempt ...");
+    let candidate = match repair_tree.as_mut() {
+        Some(tree) => Some(tree.begin_candidate("wire-fix")?),
+        None => None,
+    };
+    let request = DispatchRequest {
+        task_id: "wire-fix".to_string(),
+        description: ast_fix_description(&new_findings),
+        device_id,
+        model_id,
+        context_slice: String::new(),
+        dependency_files: Vec::new(),
+        attempt: 0,
+        owned_files: vec![],
+        all_files: all_files.to_vec(),
+        prior_hint: None,
+        subsplit: Vec::new(),
+        speculative: false,
+        user_decisions: user_decisions.to_string(),
+        doc_facts: doc_facts.to_string(),
+        neighborhood: Vec::new(),
+        replan_authority: None,
+    };
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(fix_cap_secs),
+        dispatcher.run(request),
+    )
+    .await;
+    if let Some(candidate) = candidate {
+        repair_tree
+            .expect("repair tree existed when candidate opened")
+            .finish_candidate(candidate, sink)?;
+    }
+
+    let after = run_ast_review(root, &app_scope_py(root, all_files)).await;
+    let after_new: Vec<String> = after
+        .findings
+        .iter()
+        .filter(|finding| !review_before.contains(*finding))
+        .cloned()
+        .collect();
+    let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
+    sink.write_value(serde_json::json!({
+        "event": "review_after_fix",
+        "result": after_value,
+        "new_findings": after_new,
+    }));
+    demote_survivors = new_demote_survivors(&after, review_before_modules);
+    if after.ran && after_new.is_empty() {
+        eprintln!(
+            "{}",
+            style("AST review: wire-fix RESOLVED the unwired findings").green()
+        );
+    } else {
+        eprintln!(
+            "{} ({} new finding(s) remain after one wire-fix)",
+            style("AST review: still unwired").yellow().bold(),
+            after_new.len()
+        );
+    }
+    Ok(demote_survivors)
+}
+
+#[cfg(test)]
+mod repair_tree_seal_tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct CaptureSink(std::sync::Mutex<Vec<serde_json::Value>>);
+
+    impl EventSink for CaptureSink {
+        fn emit(&self, _event: &SwarmEvent) {}
+
+        fn write_value(&self, value: serde_json::Value) {
+            self.0.lock().unwrap().push(value);
+        }
+    }
+
+    impl CaptureSink {
+        fn names(&self) -> Vec<String> {
+            self.0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|value| value["event"].as_str().map(str::to_string))
+                .collect()
+        }
+    }
+
+    fn synthetic_ruler(findings: &[&str]) -> CompleteRulerResult {
+        CompleteRulerResult {
+            verdict: SmokeResult {
+                ran: true,
+                py_files: 1,
+                collect: None,
+                tests: None,
+                entry_package: Some("fixture".to_string()),
+                entry_ok: Some(true),
+                findings: findings
+                    .iter()
+                    .map(|finding| (*finding).to_string())
+                    .collect(),
+                inconclusive: Vec::new(),
+            },
+            missing: Vec::new(),
+            cross_module_enabled: false,
+            drift: DriftResult::default(),
+            no_timeout: DriftResult::default(),
+            skipped_tests: 0,
+            dom: DriftResult::default(),
+            css: DriftResult::default(),
+            spec_contract: None,
+        }
+    }
+
+    #[test]
+    fn tree_hash_matches_the_ship_contract_and_ignores_only_engine_evidence() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+        let before = repair_tree_snapshot(dir.path()).unwrap();
+
+        std::fs::create_dir_all(dir.path().join(".swarm")).unwrap();
+        std::fs::write(dir.path().join(".swarm/run.jsonl"), "evidence\n").unwrap();
+        std::fs::write(dir.path().join("run.jsonl"), "evidence\n").unwrap();
+        std::fs::write(dir.path().join("heartbeat"), "alive\n").unwrap();
+        let evidence_only = repair_tree_snapshot(dir.path()).unwrap();
+        assert_eq!(before, evidence_only);
+
+        std::fs::create_dir_all(dir.path().join("generated")).unwrap();
+        std::fs::write(dir.path().join("generated/cache.bin"), "shipped bytes").unwrap();
+        let generated = repair_tree_snapshot(dir.path()).unwrap();
+        assert_ne!(before.sha256, generated.sha256);
+        assert_eq!(
+            changed_repair_files(&before, &generated),
+            vec!["generated".to_string(), "generated/cache.bin".to_string()]
+        );
+        std::fs::remove_dir_all(dir.path().join("generated")).unwrap();
+        assert_eq!(before, repair_tree_snapshot(dir.path()).unwrap());
+
+        std::fs::write(dir.path().join("src/main.rs"), "fn main() { panic!() }\n").unwrap();
+        let changed = repair_tree_snapshot(dir.path()).unwrap();
+        assert_ne!(before.sha256, changed.sha256);
+        assert_eq!(
+            changed_repair_files(&before, &changed),
+            vec!["src/main.rs".to_string()]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tree_hash_binds_executable_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("launcher");
+        std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+        let before = repair_tree_snapshot(dir.path()).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(permissions.mode() ^ 0o100);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        let after = repair_tree_snapshot(dir.path()).unwrap();
+        assert_ne!(before.sha256, after.sha256);
+        assert_eq!(
+            changed_repair_files(&before, &after),
+            vec!["launcher".to_string()]
+        );
+    }
+
+    #[test]
+    fn mutation_invalidates_ruling_and_post_seal_drift_cannot_emit_success() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("app.txt"), "v1\n").unwrap();
+        let sink = CaptureSink::default();
+        let mut tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
+        tree.record_ruling(&synthetic_ruler(&[]), "baseline", &sink)
+            .unwrap();
+        assert!(tree.require_current_ruling().is_ok());
+
+        let candidate = tree.begin_candidate("wire-fix").unwrap();
+        std::fs::write(dir.path().join("app.txt"), "v2\n").unwrap();
+        assert!(tree.finish_candidate(candidate, &sink).unwrap());
+        assert!(tree.require_current_ruling().is_err());
+        assert!(tree.seal("unruled".to_string(), false, &sink).is_err());
+
+        let mut tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
+        tree.record_ruling(&synthetic_ruler(&[]), "authoritative", &sink)
+            .unwrap();
+        let sealed = tree.seal("final tree".to_string(), false, &sink).unwrap();
+        sealed
+            .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
+            .unwrap();
+        std::fs::write(dir.path().join("app.txt"), "v3\n").unwrap();
+        assert!(sealed
+            .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
+            .is_err());
+
+        let events = sink.names();
+        for required in [
+            "repair_tree_opened",
+            "repair_candidate",
+            "repair_tree_ruled",
+            "repair_tree_sealed",
+            "complete_result",
+            "run_finished",
+            "post_seal_mutation",
+        ] {
+            assert!(events.iter().any(|event| event == required), "{events:?}");
+        }
+        assert!(
+            events
+                .iter()
+                .position(|event| event == "repair_tree_sealed")
+                < events.iter().position(|event| event == "complete_result")
+        );
+        assert!(
+            events.iter().position(|event| event == "complete_result")
+                < events.iter().position(|event| event == "run_finished")
+        );
+        assert!(
+            events.iter().position(|event| event == "run_finished")
+                < events
+                    .iter()
+                    .position(|event| event == "post_seal_mutation")
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| *event == "complete_result")
+                .count(),
+            1,
+            "post-seal drift must not emit a second result: {events:?}"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| *event == "run_finished")
+                .count(),
+            1,
+            "post-seal drift must not emit a second run report: {events:?}"
+        );
+    }
+
+    #[test]
+    fn byte_identical_candidate_preserves_current_ruling() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("app.txt"), "stable\n").unwrap();
+        let sink = NullSink;
+        let mut tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
+        tree.record_ruling(&synthetic_ruler(&["still red"]), "baseline", &sink)
+            .unwrap();
+        let candidate = tree.begin_candidate("no-op").unwrap();
+        assert!(!tree.finish_candidate(candidate, &sink).unwrap());
+        assert_eq!(tree.require_current_ruling().unwrap().epoch, 0);
+    }
+
+    #[test]
+    fn unregistered_mutation_blocks_ship_selection() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("app.txt"), "ruled\n").unwrap();
+        let sink = NullSink;
+        let mut tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
+        tree.record_ruling(&synthetic_ruler(&[]), "authoritative", &sink)
+            .unwrap();
+
+        std::fs::write(dir.path().join("late.txt"), "not ruled\n").unwrap();
+        assert!(tree.require_current_ruling().is_err());
+        assert!(tree.seal("unruled".to_string(), false, &sink).is_err());
+    }
+
+    #[test]
+    fn archived_r1_fixture_pins_six_post_gate_mutations_and_negative_controls() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../evals/swarm-bench/fixtures/qwen38-r1-post-gate-mutation.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            fixture["source"]["run_log_sha256"],
+            "6402923479726a0a1533493955c0b5625caa59661db630e7b903d274dfcdd5b6"
+        );
+        assert!(fixture["source"]["run_log_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("swarm-3node-r1/run.jsonl"));
+        let changed = fixture["changed_files"].as_array().unwrap();
+        assert_eq!(changed.len(), 6);
+        assert!(changed.iter().all(|file| {
+            file["snapshot_sha256"].as_str().unwrap() != file["shipped_sha256"].as_str().unwrap()
+        }));
+        assert_eq!(
+            changed
+                .iter()
+                .filter(|file| file["window"] == "boot-repair")
+                .count(),
+            3
+        );
+        assert_eq!(
+            changed
+                .iter()
+                .filter(|file| file["window"] == "wire-fix")
+                .count(),
+            3
+        );
+
+        let controls = fixture["negative_controls"].as_array().unwrap();
+        assert_eq!(controls.len(), 3);
+        assert!(controls.iter().all(|file| {
+            file["snapshot_sha256"].as_str().unwrap() == file["shipped_sha256"].as_str().unwrap()
+        }));
+
+        let chronology: Vec<(&str, &str)> = fixture["chronology"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| {
+                (
+                    event["event"].as_str().unwrap(),
+                    event["ts"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            chronology,
+            vec![
+                ("complete_verify", "2026-08-22T12:26:22.908462+00:00"),
+                ("boot_repair_attempt", "2026-08-22T12:26:27.152100+00:00"),
+                ("boot_repaired", "2026-08-22T12:56:28.964913+00:00"),
+                ("complete_result", "2026-08-22T12:56:28.964940+00:00"),
+                ("review", "2026-08-22T12:56:29.089101+00:00"),
+                ("review_after_fix", "2026-08-22T13:12:07.385256+00:00"),
+                ("run_finished", "2026-08-22T13:12:07.386998+00:00"),
+            ]
+        );
+        let events: Vec<&str> = chronology.iter().map(|(event, _)| *event).collect();
+        assert!(
+            events
+                .iter()
+                .position(|event| *event == "boot_repair_attempt")
+                < events.iter().position(|event| *event == "complete_result")
+        );
+        assert!(
+            events.iter().position(|event| *event == "complete_result")
+                < events.iter().position(|event| *event == "review_after_fix")
+        );
+        assert_eq!(events.last(), Some(&"run_finished"));
+        assert!(fixture["mtime_caveat"]
+            .as_str()
+            .unwrap()
+            .contains("rsync -a preserves source mtimes"));
+    }
+}
+
+/// ONE RULER (F862). A speculative grade is UNKNOWN when the smoke gate cannot run, but whenever
+/// it does run its count and establishment bit come from the exact same collector as COMPLETE.
 async fn one_ruler_grade(
     root: &std::path::Path,
     prompt: &str,
@@ -35904,57 +36957,16 @@ async fn one_ruler_grade(
     composite: bool,
     missing_gate: bool,
 ) -> (Option<usize>, bool) {
-    let g = run_smoke_gate(root, lang).await;
-    if !g.ran {
-        return (None, false);
+    let result =
+        run_complete_ruler(root, prompt, lang, all_files, composite, missing_gate, &[]).await;
+    if result.verdict.ran {
+        (
+            Some(result.verdict.findings.len()),
+            result.verdict.established(),
+        )
+    } else {
+        (None, false)
     }
-    let mut est = g.established();
-    let mut n = g.findings.len();
-    if composite {
-        let sc = run_spec_contract(root, prompt, lang).await;
-        est = est && sc.inconclusive.is_empty();
-        n += sc.findings.len();
-    }
-    let app_only: Vec<String> = all_files
-        .iter()
-        .filter(|f| !is_test_path(lang, f))
-        .cloned()
-        .collect();
-    n += http_timeout_scan(root, lang, &app_scope_py(root, &app_only))
-        .await
-        .findings
-        .len();
-    n += dom_id_scan(root, all_files).await.findings.len();
-    n += css_coherence_scan(root, all_files).await.findings.len();
-    if swarm_gate_cfg(
-        "GOOSE_SWARM_CROSS_MODULE_CHECK",
-        load_config().cross_module_check,
-    ) {
-        n += cross_module_drift(root, lang, &app_scope_py(root, all_files))
-            .await
-            .findings
-            .len();
-    }
-    if missing_gate {
-        n += all_files
-            .iter()
-            .filter(|f| {
-                lang.is_source_file(f) && !lang.is_test_file(f.rsplit('/').next().unwrap_or(f))
-            })
-            .filter(|f| {
-                let base = f.rsplit('/').next().unwrap_or(f);
-                base != "__init__.py" && base != "py.typed"
-            })
-            .filter(|f| {
-                !root
-                    .join(f)
-                    .metadata()
-                    .map(|m| m.len() > 0)
-                    .unwrap_or(false)
-            })
-            .count();
-    }
-    (Some(n), est)
 }
 
 /// F856: the per-fix ceiling, scaled by the SAME tree-bytes factor as the sink cap (≤2×), from
@@ -39135,6 +40147,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Off by default => this block never runs and the exit path stays byte-identical.
     let complete_on = swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete);
     let mut complete_failed = false;
+    let mut sealed_complete: Option<SealedCompleteTree> = None;
     // Hoisted for the end-of-run OVERVIEW: whether the verify oracle actually RAN the built app green (not
     // just that workers reported "done"). Only this licenses the overview's confident (non-hedged) layout.
     let mut ov_verified = false;
@@ -39260,11 +40273,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "measured_rates": telemetry_rates,
             }));
         }
-        let mut final_passed = false;
-        // Whether the smoke oracle actually RAN (vs skipped for an unprofiled language / missing toolchain
-        // / empty tree). A skip ships byte-identically to today (final_passed stays true) but is reported
-        // honestly as UNVERIFIED rather than GREEN, so a non-Python tree we can't check isn't a false green.
-        let mut final_verified = false;
         let mut last_findings: Vec<String> = Vec::new();
         // F835 SHIP-BEST-VERIFIED, never ship-last-edited. The serial fix path writes straight
         // into the real tree (its own event admits findings ROSE in 3 of 13 archived rounds),
@@ -39286,7 +40294,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                                             // a blind low count must not capture the best slot, and an established snapshot must
                                                             // never lose to an unestablished final state.
         let mut best_established = false;
-        // Definite-init by the loop: every break happens after the round's verify assigns these.
+        // Definite-init by the loop: every exit happens after this round's canonical ruler.
         let mut last_verify_ran;
         let mut last_verify_count;
         let mut last_verify_established;
@@ -39364,102 +40372,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "detail": "failed planned tasks are blocking the green claim and driving the fix loop",
             }));
         }
-        // #120/#134 (R1): a task SALVAGED to Done can still have left its deliverable UNWRITTEN — measured on
-        // mustsolve-test4, cli-entry was salvaged after writing only a 24-byte go.mod, cmd/logfold/main.go was
-        // never created, so the app had no runnable binary yet the smoke gate reported verified:true (it only
-        // ran --help + import). A MISSING or EMPTY planned SOURCE deliverable (non-manifest by extension,
-        // non-test) is a HARD finding regardless of task Done/Failed status. Deterministic (a stat, no model).
-        // Same gate as the failed-task block. RE-EVALUATED PER ROUND inside the loop (a stat of the CURRENT
-        // tree), NOT computed once before it: measured mustsolve-test5, the fix loop WROTE the missing diff.go
-        // /mine.go but a statically-captured finding kept re-adding "MISSING" every round so the app could never
-        // reach green — 3 fix rounds all ended UNVERIFIED on an app the loop had actually repaired. The closure
-        // below is called each round so writing the file genuinely clears the finding. Deterministic (a stat).
+        // Missing deliverables are re-statted by the canonical ruler on every tree. A frozen pre-loop
+        // list once kept repaired files red forever; this boolean is policy only, never a cached verdict.
         let missing_deliverable_gate = delivery_on
             || swarm_gate_cfg(
                 "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
                 load_config().failed_tasks_block_green,
             );
-        let missing_source_deliverables = || -> Vec<String> {
-            if !missing_deliverable_gate {
-                return Vec::new();
-            }
-            let mut m: Vec<String> = smoke_all_files
-                .iter()
-                // is_test_file is a BASENAME predicate (its own doc) — passing the full path made
-                // Python's test_* prefix rule miss every pathed test (tests/test_api.py flagged as
-                // a missing source deliverable when empty). Audit 2026-08-16.
-                .filter(|f| {
-                    complete_lang.is_source_file(f)
-                        && !complete_lang.is_test_file(f.rsplit('/').next().unwrap_or(f))
-                })
-                // An empty `__init__.py` / `py.typed` is CORRECT — an empty __init__.py IS the standard
-                // package marker, and a task that leaves it empty did its job. MEASURED: the `entry` task
-                // owns raftkv/__init__.py + __main__.py, writes __main__.py, and correctly leaves
-                // __init__.py empty (0 bytes) — every run. This gate flagged that as "marked done without
-                // writing it" and burned a whole fix round re-creating a file that was never wrong. The
-                // owned-file salvage path already exempts these two names; this now matches it.
-                .filter(|f| {
-                    let base = f.rsplit('/').next().unwrap_or(f);
-                    base != "__init__.py" && base != "py.typed"
-                })
-                .filter(|f| !cwd.join(f).metadata().map(|meta| meta.len() > 0).unwrap_or(false))
-                .map(|f| {
-                    format!(
-                        "planned deliverable `{f}` is MISSING or EMPTY — a task was marked done without \
-                         writing it. Create it (the simplest version that satisfies the spec) so the app is \
-                         complete and runnable."
-                    )
-                })
-                .collect();
-            m.sort();
-            m.dedup();
-            m
-        };
-        // CROSS-MODULE DRIFT (GOOSE_SWARM_CROSS_MODULE_CHECK, default OFF). Computed ONCE, before the loop:
-        // it reads the delivered tree, and re-running it every round would only re-read a tree the fix loop
-        // is actively rewriting. Re-added to the findings each round like the failed tasks, so a fix must
-        // actually clear the drift rather than survive one pass.
-        let drift = if swarm_gate_cfg(
-            "GOOSE_SWARM_CROSS_MODULE_CHECK",
-            load_config().cross_module_check,
-        ) {
-            cross_module_drift(&cwd, complete_lang, &app_scope_py(&cwd, &smoke_all_files)).await
-        } else {
-            DriftResult::default()
-        };
-        if !drift.ran {
-            // Lang-generality audit 2026-08-16: off-Python this scan silently did not exist — no
-            // event at all, indistinguishable from "lever disabled". The scan's own doctrine ("0
-            // findings must never be readable without knowing what was in scope") applies one
-            // level up: an un-run scan must SAY so.
-            sink.write_value(serde_json::json!({
-                "event": "cross_module_drift",
-                "checked": 0,
-                "findings": 0,
-                "ran": false,
-                "detail": format!("NOT SCANNED — Python-only scanner, lang is {}", complete_lang.name()),
-            }));
-        }
-        if drift.ran {
-            sink.write_value(serde_json::json!({
-                "event": "cross_module_drift",
-                "checked": drift.checked,
-                "findings": drift.findings.len(),
-                "detail": if drift.findings.is_empty() {
-                    "no module reads a field its sibling does not define"
-                } else {
-                    "a module reads a field a sibling's class does not define — blocking the green claim \
-                     and driving the fix loop"
-                },
-            }));
-            if !drift.findings.is_empty() {
-                eprintln!(
-                    "  {} cross-module drift: {} site(s) read a field the defining class does not have",
-                    style("!").red().bold(),
-                    drift.findings.len()
-                );
-            }
-        }
         // PROGRESS-BASED ROUNDS (speed hunt, 2026-08-16). The static `for round in 0..=rounds` had
         // two dead ends: a FLAT round could not stop early (the stall-exit was arithmetically
         // unreachable at the defaults AND compared finding STRINGS, which mutate every round — the
@@ -39481,226 +40400,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut force_shard_next = false;
         let mut strategy_switched = false;
         loop {
-            let mut verdict = run_smoke_gate(&cwd, complete_lang).await;
-            // A failed task blocks green ONLY when the smoke gate is BLIND (it did not run — an unprofiled
-            // language, a missing toolchain, an empty tree). When the gate RAN (go build+test, pytest, cargo)
-            // it is the authority: a task that failed DURING the build but whose deliverable the fix loop has
-            // since written and made compile/pass is a WORKING app, and a stale "task X failed" finding must
-            // not pin it red forever. Measured mustsolve-test5: 4 static failed-task findings could never clear,
-            // so the loop churned 3 rounds and ended UNVERIFIED on a repairable app. A genuinely broken app is
-            // still caught — by the gate's own build/test findings, re-run every round below.
-            if !verdict.ran {
-                verdict
-                    .findings
-                    .extend(failed_task_findings.iter().cloned());
-            }
-            // #120/#134 (R1): RE-STAT the tree THIS round so writing a deliverable genuinely clears the finding
-            // (the pre-loop static set pinned the app red forever even after the file existed). A source
-            // deliverable still missing/empty on disk is a HARD finding regardless of task Done/Failed status.
-            let missing_now = missing_source_deliverables();
-            if !missing_now.is_empty() {
-                sink.write_value(serde_json::json!({
-                    "event": "complete_missing_deliverables",
-                    "round": round,
-                    "missing": missing_now.len(),
-                    "detail": "planned source deliverables missing/empty on disk this round — blocking green + driving the fix loop",
-                }));
-            }
-            verdict.findings.extend(missing_now);
-            // Same reasoning as the failed tasks: the smoke gate is blind to this (the module IMPORTS fine;
-            // the AttributeError only happens at request time), so without this the loop breaks green at
-            // round 0 on an app whose main endpoint 500s.
-            // F862 (mirror of the shadow-ruler bug, round side): the pre-loop drift was FROZEN
-            // and re-added verbatim every round, so a genuine drift fix could never clear the
-            // count — the same invisible-delta mechanism, pointing the other way. Re-scan the
-            // CURRENT tree each round (a sub-second static scan); the pre-loop `drift` above
-            // remains the first-look event only.
-            let drift_now = if drift.ran {
-                cross_module_drift(&cwd, complete_lang, &app_scope_py(&cwd, &smoke_all_files)).await
-            } else {
-                DriftResult::default()
-            };
-            verdict.findings.extend(drift_now.findings.iter().cloned());
-            // NO-TIMEOUT SCAN. Rides the same scope and the same fix loop as the drift check, because it
-            // is the same KIND of defect: invisible to the smoke gate (the module imports fine and the
-            // call is correct Python) and fatal at request time.
-            //
-            // WHY DETECTION AND NOT MORE INSTRUCTION: `client_timeouts` is the only check of 35 where all
-            // four archived 3-node cells score below the 1-node cell — every one shipped "no request
-            // timeout". F388 already added the fact to the pitfalls library, and F389 measured that
-            // workers RECEIVE the facts they miss, so another sentence in a prompt is not the lever. A
-            // deterministic finding fires whether or not anyone read anything.
-            // POINT THE SCAN AT THE APP, NOT AT THE SWARM'S OWN TESTS. Filtered HERE and not inside
-            // `app_scope_py`, because `cross_module_drift` shares that helper and reports 0 findings
-            // in 24 of 24 runs — widening the edit would buy an untestable scope change on a detector
-            // with no signal to lose.
-            let app_only: Vec<String> = smoke_all_files
-                .iter()
-                .filter(|f| !is_test_path(complete_lang, f))
-                .cloned()
-                .collect();
-            let skipped_tests = smoke_all_files.len().saturating_sub(app_only.len());
-            let no_timeout =
-                http_timeout_scan(&cwd, complete_lang, &app_scope_py(&cwd, &app_only)).await;
-            if !no_timeout.ran {
-                // Same honesty rule as the drift scan above: a TS app's fetch/axios calls default
-                // to NO timeout — exactly the block-forever class this scan hunts — and the log
-                // used to carry no trace that nothing was checked.
-                sink.write_value(serde_json::json!({
-                    "event": "http_timeout_scan",
-                    "round": round,
-                    "checked": 0,
-                    "findings": 0,
-                    "ran": false,
-                    "detail": format!(
-                        "NOT SCANNED — Python-only scanner, lang is {}", complete_lang.name()),
-                }));
-            }
-            if no_timeout.ran {
-                sink.write_value(serde_json::json!({
-                    "event": "http_timeout_scan",
-                    "round": round,
-                    "checked": no_timeout.checked,
-                    // How many files the test filter removed BEFORE the scan. Emitted beside
-                    // `checked` for the same reason `checked` exists: "0 findings" must never be
-                    // readable without knowing what was in scope, and a filter that silently ate the
-                    // whole scope would otherwise look exactly like a clean app.
-                    "skipped_tests": skipped_tests,
-                    "findings": no_timeout.findings.len(),
-                    "partial": no_timeout.partial,
-                    // L230: the affirmative signal decides it. `checked` is reported alongside the
-                    // verdict so "0 findings" can never be read without knowing how many files were
-                    // actually parsed.
-                    "detail": if no_timeout.checked == 0 {
-                        "CHECKED NOTHING — no file parsed, so a clean result here is silence, not evidence"
-                    } else if no_timeout.findings.is_empty() {
-                        // NAME THE LIBRARIES THE SCAN KNOWS. The old wording — "every outbound call
-                        // whose library blocks forever by default passes a timeout" — is a claim about
-                        // ALL outbound calls, which a pattern list can never earn. baseline-n1-r0 emitted
-                        // it twice over an `http.client` client that had no timeout at all, because
-                        // `http.client` was not yet a pattern. A clear is only ever as wide as the list.
-                        "no requests/urlopen/http.client call is missing a timeout (other libraries are not scanned)"
-                    } else {
-                        "an outbound HTTP call has no timeout — driving the fix loop"
-                    },
-                }));
-            }
-            verdict.findings.extend(no_timeout.findings.iter().cloned());
-            // DOM-ID CONTRACT (F864): app.js referencing an id no HTML defines is the
-            // rendered-nothing class (guaranteed null at runtime), invisible to every other
-            // checker. Enters the round ruler and one_ruler_grade TOGETHER — the F862 law.
-            let dom = dom_id_scan(&cwd, &smoke_all_files).await;
-            if dom.ran {
-                sink.write_value(serde_json::json!({
-                    "event": "dom_id_scan",
-                    "round": round,
-                    "checked": dom.checked,
-                    "findings": dom.findings.len(),
-                    "detail": if dom.findings.is_empty() {
-                        "every literal DOM id the js references exists in the html"
-                    } else {
-                        "js references a DOM id no html defines — driving the fix loop"
-                    },
-                }));
-            }
-            verdict.findings.extend(dom.findings.iter().cloned());
-            // CSS-CLASS COHERENCE (F871): a stylesheet whose class vocabulary the markup never
-            // uses ships an unstyled page while every gate stays green (the probe sees "a
-            // stylesheet is present", the DOM-id scan sees ids, nothing owns the agreement).
-            // Enters the round ruler and one_ruler_grade TOGETHER — the F862 law.
-            let css = css_coherence_scan(&cwd, &smoke_all_files).await;
-            if css.ran {
-                sink.write_value(serde_json::json!({
-                    "event": "css_coherence_scan",
-                    "round": round,
-                    "checked": css.checked,
-                    "findings": css.findings.len(),
-                    "detail": if css.findings.is_empty() {
-                        "the stylesheet's class vocabulary matches the markup"
-                    } else {
-                        "css classes and markup disagree — the page renders unstyled — driving the fix loop"
-                    },
-                }));
-            }
-            verdict.findings.extend(css.findings.iter().cloned());
-            // SPEC-CONTRACT (#120, gated OFF): the smoke gate is blind to a spec-advertised endpoint that 500s
-            // or is never implemented (405) — it only ran --help + import. Run the advertised entry + curl the
-            // endpoints. A 5xx/404/405 on an advertised GET is a HARD finding (red + fix loop); an entry that
-            // never binds is inconclusive (verified:false). Deterministic (regex-parsed spec, no model). OFF =
-            // byte-identical (spec_contract_enabled() short-circuits and the block never runs).
-            if delivery_on || spec_contract_enabled() {
-                let sc = run_spec_contract(&cwd, &opts.prompt, complete_lang).await;
-                // EMIT, like every sibling check. cross_module_drift reports {checked, findings,
-                // detail} and complete_missing_deliverables reports too; spec_contract — the run's
-                // ONLY deterministic, no-model spec-to-oracle path — reported nothing at all, and its
-                // findings vanished into complete_verify's bare count. So a zero from it was
-                // indistinguishable from blindness, which is the failure this project has a standing
-                // law about, sitting inside the one check that is supposed to be immune to it.
-                //
-                // `verified` is what makes the zero readable, and it already exists for exactly this:
-                // its own doc says it lets a consumer require verified>=1 so that "findings.is_empty()
-                // && inconclusive.is_empty() because it CHECKED NOTHING is never mistaken for a real
-                // pass". It was written and never read — this is that reader.
-                let (sc_found, sc_incon, sc_verified) =
-                    (sc.findings.len(), sc.inconclusive.len(), sc.verified);
-                sink.write_value(serde_json::json!({
-                    "event": "spec_contract",
-                    "round": round,
-                    "verified": sc_verified,
-                    "findings": sc_found,
-                    "inconclusive": sc_incon,
-                    // The render gate SELF-DECLARES every round: armed+result, or exactly why
-                    // not — a silent browser gate cost a full run its browser-truth findings
-                    // and the postmortem could not even attribute the silence.
-                    "render_gate": sc.render_gate,
-                    // WHETHER THE CHECK LOOKED AT THE MUTATING SURFACE AT ALL. Every other counter
-                    // here is silent about it: a run that never issued a write and a run that issued
-                    // two and found them well-behaved both report zero POST findings. The bare-GET
-                    // limitation is already confessed in `inconclusive_reasons` on every cell of
-                    // every build, which is precisely why it stopped being read — a caveat that is
-                    // always present carries no information. A COUNT changes when the gate flips, so
-                    // it can be graphed, ablated, and used to reject a green.
-                    "probed_post": sc.probed_post,
-                    // THE COUNT WITHOUT THE REASON IS NOT READABLE, and I proved that on myself.
-                    // `inconclusive: 1` appears in 15 of 15 archived cells, and from the count alone I
-                    // attributed it to the already-bound-port guard — the one branch whose comment I had
-                    // just read. THEN I MEASURED THE SPEC AND THAT ATTRIBUTION COLLAPSED: the bed's spec
-                    // does carry a backticked `python -m vendorsync --db PATH --port N`, so
-                    // `spec_run_argv` returns a non-empty argv, so `port` is the OS-assigned free port,
-                    // which is un-bound BY CONSTRUCTION. The guard I blamed cannot fire on this bed at
-                    // all, and the real reason is one of the other push sites — which the log cannot
-                    // distinguish, because it only ever carried a number.
-                    //
-                    // `verified` was added for exactly this class of problem: its own comment says it
-                    // exists so a zero is never mistaken for a pass. The same argument applies one level
-                    // down. A count of abstentions tells a reader THAT the check declined; only the
-                    // reason tells them whether the check is guarding correctly, mis-configured, or
-                    // looking at the wrong process. Truncated, because these strings embed command lines
-                    // and tails of output and the log is read whole.
-                    "inconclusive_reasons": sc.inconclusive.iter()
-                        .map(|r| r.chars().take(240).collect::<String>())
-                        .collect::<Vec<_>>(),
-                    // ORDER MATTERS, AND THE PREVIOUS ORDER WAS BACKWARDS. The "CHECKED NOTHING" arm
-                    // required all THREE counters to be zero — including `inconclusive`. But recording
-                    // WHY a check could not conclude is exactly what puts a message in `inconclusive`,
-                    // so the honest path fell through to "every advertised check that bound was
-                    // satisfied". **The more candidly this check explained itself, the more certainly
-                    // it reported success.**
-                    //
-                    // MEASURED: 9 of 9 `spec_contract` events across all five archived cells emitted
-                    // `verified: 0, findings: 0, inconclusive: 1` and the reassuring string — on this
-                    // bench the check has NEVER concluded, because the spec's only port literal is the
-                    // vendor's (8930) and the already-bound guard correctly refuses to blame the app
-                    // for a port a dependency holds. Zero checks bound, zero satisfied, and the summary
-                    // read as a pass: `all([])` is true, in the engine's own false-green detector.
-                    //
-                    // `verified` alone decides it now. Nothing was affirmatively verified => the result
-                    // is silence, whatever else is or is not recorded alongside it.
-                    "detail": spec_contract_detail(sc_verified, sc_found),
-                }));
-                verdict.findings.extend(sc.findings);
-                verdict.inconclusive.extend(sc.inconclusive);
-            }
+            let ruler = run_complete_ruler(
+                &cwd,
+                &opts.prompt,
+                complete_lang,
+                &smoke_all_files,
+                delivery_on || spec_contract_enabled(),
+                missing_deliverable_gate,
+                &failed_task_findings,
+            )
+            .await;
+            emit_complete_ruler_observations(sink.as_ref(), round, complete_lang, &ruler);
             // GOLDEN CHECK (ADVISORY ONLY): when goals are on, run each distilled pillar's runnable check
             // against the advertised interface and SURFACE any failure as an event — but do NOT gate or fix
             // on it. A distilled check whose arg-shape mismatches how the app was actually built would else
@@ -39720,40 +40430,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     }));
                 }
             }
-            sink.write_value(serde_json::json!({
-                "event": "complete_verify",
-                "round": round,
-                "ran": verdict.ran,
-                "passed": verdict.findings.is_empty(),
-                "findings": verdict.findings.len(),
-                // WHAT the findings ARE, not just how many. This event decides green, and a bare count
-                // makes the one verdict that matters the only one in the run that cannot be checked
-                // against evidence afterwards. MEASURED: a run reported findings: 2 twice; the log did
-                // not say which two, so reconstructing why an app was held red meant inferring from
-                // other events — and the first inference was wrong. Truncated per finding and capped,
-                // because the fix-loop text can be long and this rides every round.
-                "finding_texts": verdict.findings.iter().take(12)
-                    // HEAD-LIGHT, TAIL-HEAVY. The head names the check; the tail carries the error, and
-                    // the error is the only part anyone can act on. MEASURED: a pytest collect failure
-                    // was recorded as a list of collected tests ending in `================`, the error
-                    // banner starting one character past the old 400-char head cut.
-                    .map(|f| elide_middle(f, 150, 650))
-                    .collect::<Vec<_>>(),
-                // WHY the run abstained, which is what decides `verified` — and until now it existed
-                // only in stderr. `verified` is false in 25/25 archived runs, and telling "pytest
-                // timed out having executed nothing" apart from "we never probe POST /api/sync by
-                // design" required reconstructing the reason from 9 surviving verdict.json files
-                // instead of reading all 24 event logs. Same elision as finding_texts above.
-                "inconclusive_reasons": verdict.inconclusive.iter()
-                    .map(|r| elide_middle(r, 150, 650))
-                    .collect::<Vec<_>>(),
-            }));
+            emit_complete_verify(sink.as_ref(), round, &ruler, false, "repair-loop", None);
+            last_verify_ran = ruler.verdict.ran;
+            last_verify_count = ruler.verdict.findings.len();
+            last_verify_established = ruler.verdict.established();
+            let verdict = ruler.verdict;
             // F835: record what THIS verify measured, and snapshot the tree when a RAN verify
             // posts the fewest findings yet. A ran:false verify never snapshots — promoting an
             // UNCHECKED tree is the vacuous-pass trap the speculative-twin path already refuses.
-            last_verify_ran = verdict.ran;
-            last_verify_count = verdict.findings.len();
-            last_verify_established = verdict.established();
             // Established preference: a blind (ran-but-unestablished) lower count never
             // displaces an established snapshot; an established verify may displace an
             // unestablished snapshot at equal count (same number, strictly better evidence).
@@ -39814,7 +40498,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // Clean verify (no smoke finding AND no failing pillar check) => done. An empty findings set on a
             // smoke-skipped tree is still green — there is genuinely nothing to fix.
             if verdict.findings.is_empty() {
-                final_passed = true;
                 // "VERIFIED" MUST MEAN WE ACTUALLY CHECKED — not merely that nothing we looked at was red.
                 //
                 // This was `final_verified = verdict.ran`, and `ran` is set to true for ANY tree with one .py
@@ -39830,7 +40513,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 // verified:false, which the engine and UI already support — a skipped oracle produces exactly
                 // it. This adds NO finding, so it cannot enter the corrective-fix loop and cannot vandalise
                 // correct code: it only narrows a CLAIM to what the evidence supports.
-                final_verified = verdict.established();
                 if verdict.ran && !verdict.inconclusive.is_empty() {
                     eprintln!(
                         "  {} NOT verified — {} check(s) never produced a verdict: {}. Nothing was red, but \
@@ -39840,10 +40522,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         verdict.inconclusive.join("; ")
                     );
                 }
-                // Clear the prior round's findings so complete_result reports remaining_findings=0 on a
-                // green finish — the green break happens before last_findings is refreshed below, so
-                // without this it would report the stale pre-fix count for an app that is actually clean.
-                last_findings.clear();
                 if verdict.ran {
                     eprintln!(
                         "{}",
@@ -39923,9 +40601,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     ))
                     .yellow()
                 );
-                // Refresh before breaking so complete_result reports THIS round's count, not the
-                // previous round's (review: findings rising 3->5 reported remaining 3).
-                last_findings = verdict.findings.clone();
                 break;
             }
             let prev_count = if round > 0 {
@@ -40770,13 +41445,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }
             round += 1;
         }
-        // F835 RESTORE: if the final tree verified WORSE than the best snapshot (or its last
-        // verify never ran), ship the best verified state instead of the last edit. Rank-1
-        // chain fix: an UNESTABLISHED final state — including an unestablished "green", which
-        // is a blind zero — also loses to an ESTABLISHED snapshot: evidence outranks a count
-        // nothing corroborated. An established green never restores.
+        // The ordinary fix loop is now provisional. From this point to `seal`, every corrective
+        // writer must hold an OpenRepairTree candidate token and every changed epoch must pass the
+        // canonical full ruler before ship-best may be selected or a result may be emitted.
+        let mut repair_tree = OpenRepairTree::open(&cwd, sink.as_ref())?;
         let mut shipped_desc = "final tree".to_string();
-        if ship_best && (!final_passed || !final_verified) {
+        // The final repair-loop measurement is a full canonical-ruler decision over this still-current
+        // tree. Bind it to the open epoch before ship-best can inspect it. The restore remains provisional:
+        // it invalidates this ruling, then the boot/wire floor runs on the restored bytes and the final
+        // authoritative ruler decides the exact tree that seals.
+        let selection_ruling = repair_tree.record_ruling_values(
+            last_verify_count == 0,
+            last_verify_established,
+            last_verify_count,
+            "repair-loop-final",
+            sink.as_ref(),
+        )?;
+        repair_tree.require_current_ruling()?;
+        if ship_best && (!selection_ruling.passed || !selection_ruling.verified) {
             if let Some((best_round, best_count)) = best_verified {
                 if !last_verify_ran
                     || last_verify_count > best_count
@@ -40784,8 +41470,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 {
                     let best_dir = cwd.join(".swarm/best-tree");
                     if best_dir.is_dir() {
-                        // F886: same exclusions as the snapshot — the restore ships the best
-                        // APP TREE and must never touch the run's own history or evidence.
+                        let candidate = repair_tree.begin_candidate("ship-best-restore")?;
                         let restored = tokio::process::Command::new("rsync")
                             .args([
                                 "-a",
@@ -40805,8 +41490,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             .arg(format!("{}/", cwd.display()))
                             .status()
                             .await
-                            .map(|s| s.success())
+                            .map(|status| status.success())
                             .unwrap_or(false);
+                        let changed = repair_tree.finish_candidate(candidate, sink.as_ref())?;
                         sink.write_value(serde_json::json!({
                             "event": "best_tree_restored",
                             "from_round": best_round,
@@ -40816,25 +41502,21 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             "final_ran": last_verify_ran,
                             "final_established": last_verify_established,
                             "restored": restored,
+                            "changed": changed,
                         }));
                         if restored {
                             shipped_desc = format!(
                                 "restored round {best_round} snapshot ({best_count} established \
                                  finding(s))"
                             );
-                            // The shipped tree's own truth replaces the final state's claim: it
-                            // carries best_count established findings, so a blind green must
-                            // not be reported as passed over it.
-                            final_passed = best_count == 0;
-                            final_verified = best_established;
                         }
                         eprintln!(
                             "{}",
                             style(format!(
                                 "complete: SHIP-BEST-VERIFIED — restored round {best_round}'s tree \
-                                 ({best_count} finding(s)) over the final state ({} finding(s), \
-                                 ran={})",
-                                last_verify_count, last_verify_ran
+                                 ({best_count} finding(s)) over the final repair-loop state \
+                                 ({last_verify_count} finding(s), ran={last_verify_ran}); the \
+                                 functional floor and final ruler now run on the restored bytes"
                             ))
                             .yellow()
                         );
@@ -40902,6 +41584,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }));
                 prev_err = Some(err_tail.clone());
                 if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
+                    let candidate =
+                        repair_tree.begin_candidate(format!("boot-repair-{attempts}"))?;
                     let boot_req = DispatchRequest {
                         task_id: format!("boot-repair-{attempts}"),
                         description: format!(
@@ -40939,24 +41623,83 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         smoke_fix_dispatcher.run(boot_req),
                     )
                     .await;
+                    repair_tree.finish_candidate(candidate, sink.as_ref())?;
                 } else {
                     break;
                 }
             }
         }
-        complete_failed = !final_passed;
-        ov_verified = final_verified;
-        sink.write_value(serde_json::json!({
-            "event": "complete_result",
-            "passed": final_passed,
-            "verified": final_verified,
-            "remaining_findings": if shipped_desc == "final tree" {
-                last_findings.len()
-            } else {
-                best_verified.map(|(_, c)| c).unwrap_or(last_findings.len())
-            },
-            "shipped": shipped_desc,
-        }));
+        let review_on = swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review);
+        let demote_survivors = if review_on {
+            run_post_build_ast_review(
+                &cwd,
+                &opts.prompt,
+                &smoke_all_files,
+                &review_before,
+                &review_before_modules,
+                &smoke_fix_dispatcher,
+                smoke_fix_target.clone(),
+                &user_decisions,
+                &doc_facts,
+                sink.as_ref(),
+                fix_cap_eff,
+                Some(&mut repair_tree),
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+        let force_unverified = !demote_survivors.is_empty()
+            && swarm_gate_cfg(
+                "GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED",
+                load_config().unwired_demotes_verified,
+            );
+
+        // This is the first authoritative decision: every boot/wire candidate is now behind us,
+        // and the exact same ruler used at the loop head and in promotion previews judges the tree.
+        let authoritative_round = round.saturating_add(1);
+        let authoritative = run_complete_ruler(
+            &cwd,
+            &opts.prompt,
+            complete_lang,
+            &smoke_all_files,
+            delivery_on || spec_contract_enabled(),
+            missing_deliverable_gate,
+            &failed_task_findings,
+        )
+        .await;
+        emit_complete_ruler_observations(
+            sink.as_ref(),
+            authoritative_round,
+            complete_lang,
+            &authoritative,
+        );
+        let ruling =
+            repair_tree.record_ruling(&authoritative, "post-repair-floor", sink.as_ref())?;
+        emit_complete_verify(
+            sink.as_ref(),
+            authoritative_round,
+            &authoritative,
+            true,
+            "post-repair-floor",
+            Some(&ruling.tree_hash),
+        );
+
+        if force_unverified && ruling.verified {
+            sink.write_value(serde_json::json!({
+                "event": "complete_verification_demoted",
+                "reason": "unwired-module-unfixed",
+                "evidence": demote_survivors,
+                "tree_hash": ruling.tree_hash,
+            }));
+        }
+        let sealed = repair_tree.seal(shipped_desc, force_unverified, sink.as_ref())?;
+        complete_failed = !sealed.passed;
+        ov_verified = sealed.verified;
+        let final_passed = sealed.passed;
+        let final_verified = sealed.verified;
+        let final_remaining_findings = sealed.remaining_findings;
+        sealed_complete = Some(sealed);
         // ── LEARN & REFLECT (GOOSE_SWARM_PERSONA, default OFF) ────────────────────────────────────────
         // The run just PROVED the app builds and its checks pass. That proof is a deterministic engine
         // event — the model does not get to decide it "did well". So this is the one honest moment to ask:
@@ -41055,7 +41798,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "{}",
                 style(format!(
                     "complete: STILL RED after {rounds} fix round(s) — the run will NOT report success ({} finding(s) remain)",
-                    last_findings.len()
+                    final_remaining_findings
                 ))
                 .red()
                 .bold()
@@ -41202,211 +41945,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // swarm_gate_cfg makes it a real user-facing lever (env > config > default). Default stays false, so
     // the shipped default is byte-identical to what --assured-less runs already did.
     let review_on = swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review);
-    if review_on {
-        // ORPHAN/STUB check (advisory, language-agnostic). Source files on disk that no task was planned to
-        // own, and whether they are placeholders. Never deletes — the fleet can create a legit un-tracked
-        // file, so this only SURFACES cruft for the eval + the operator. Complements the Python-only AST
-        // unwired review, which cannot see a Swift/TS orphan.
-        {
-            let root = std::env::current_dir().unwrap_or_default();
-            let lang = detect_language(&opts.prompt, &smoke_all_files);
-            let on_disk_rel: Vec<String> = collect_lang_files(&root, lang)
-                .iter()
-                .filter_map(|p| {
-                    p.strip_prefix(&root)
-                        .ok()
-                        .map(|r| r.to_string_lossy().to_string())
-                })
-                .collect();
-            let orphans = orphan_source_files(&on_disk_rel, &smoke_all_files);
-            if !orphans.is_empty() {
-                let detail: Vec<serde_json::Value> = orphans
-                    .iter()
-                    .map(|rel| {
-                        let stub = std::fs::read_to_string(root.join(rel))
-                            .map(|c| is_stub_content(&c))
-                            .unwrap_or(false);
-                        serde_json::json!({ "file": rel, "stub": stub })
-                    })
-                    .collect();
-                sink.write_value(serde_json::json!({
-                    "event": "orphan_files",
-                    "count": orphans.len(),
-                    "files": detail,
-                }));
-                eprintln!(
-                    "{} {} unplanned file(s) shipped (no task owns them): {}",
-                    style("orphan review:").yellow().bold(),
-                    orphans.len(),
-                    orphans.join(", "),
-                );
-            }
-        }
-        let ov_root = std::env::current_dir().unwrap_or_default();
-        let ov_scope = app_scope_py(&ov_root, &smoke_all_files);
-        // NO SILENT TRUNCATION: a capped scan that reads as a clean tree is the false-green class this
-        // engine exists to prevent, so say exactly what was skipped.
-        if !ov_scope.dropped.is_empty() {
-            eprintln!(
-                "  {} scanned {} of {} app file(s) — {} SKIPPED by the scan bound: {}. This verdict is \
-                 PARTIAL, not clean, and cannot demote.",
-                style("SCAN CAPPED:").red().bold(),
-                ov_scope.files.len(),
-                ov_scope.files.len() + ov_scope.dropped.len(),
-                ov_scope.dropped.len(),
-                ov_scope.dropped.join(", ")
-            );
-        }
-        let review = run_ast_review(&ov_root, &ov_scope).await;
-        let review_value = serde_json::to_value(&review).unwrap_or(serde_json::Value::Null);
-        // Unwired PURE-LIBRARY modules THIS run introduced. Survives the optional wire-fix below; whatever
-        // is still here at the end of the block is provably dead code the run shipped.
-        let mut demote_survivors: Vec<String> =
-            new_demote_survivors(&review, &review_before_modules);
-        // Only act on findings THIS run introduced — exclude any that already held before EXECUTE (a
-        // pre-existing intentional dead module). The `review` event still carries ALL findings for the eval.
-        let new_findings: Vec<String> = review
-            .findings
-            .iter()
-            .filter(|f| !review_before.contains(*f))
-            .cloned()
-            .collect();
-        let pre_existing = review.findings.len().saturating_sub(new_findings.len());
-        sink.write_value(serde_json::json!({
-            "event": "review",
-            "result": review_value,
-            "new_findings": new_findings,
-            "pre_existing_skipped": pre_existing,
-        }));
-        if !review.ran {
-            eprintln!("AST review: skipped (no python in the produced tree)");
-        } else if new_findings.is_empty() {
-            let extra = if pre_existing > 0 {
-                format!(" ({pre_existing} pre-existing skipped)")
-            } else {
-                String::new()
-            };
-            eprintln!(
-                "{}",
-                style(format!("AST review: clean (no NEW unwired modules){extra}")).green()
-            );
-        } else {
-            let extra = if pre_existing > 0 {
-                format!(", {pre_existing} pre-existing skipped")
-            } else {
-                String::new()
-            };
-            eprintln!(
-                "{} ({} new finding(s){extra} — model-free, advisory):",
-                style("AST review").yellow().bold(),
-                new_findings.len()
-            );
-            for f in &new_findings {
-                eprintln!("  - {f}");
-            }
-            // Corrective re-dispatch (mirrors the SMOKE autofix): ONE guided wire-fix that imports + uses
-            // the NEWLY-unwired module(s), then re-reviews once. Bounded to a single attempt.
-            if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
-                eprintln!("AST review: dispatching ONE corrective wire-fix attempt ...");
-                let fix_req = DispatchRequest {
-                    task_id: "wire-fix".to_string(),
-                    description: ast_fix_description(&new_findings),
-                    device_id: dev_id,
-                    model_id,
-                    context_slice: String::new(),
-                    dependency_files: Vec::new(),
-                    attempt: 0,
-                    owned_files: vec![],
-                    all_files: smoke_all_files.clone(),
-                    prior_hint: None,
-                    subsplit: Vec::new(),
-                    speculative: false,
-                    // A FIX worker must honour the user's choices too — a fix that re-introduces
-                    // `Decimal` after the user chose integer cents is still wrong.
-                    user_decisions: user_decisions.clone(),
-                    doc_facts: doc_facts.clone(),
-                    // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
-                    neighborhood: Vec::new(),
-                    replan_authority: None,
-                };
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(fix_cap_secs_scaled(
-                        &std::env::current_dir().unwrap_or_default(),
-                        &smoke_all_files,
-                    )),
-                    smoke_fix_dispatcher.run(fix_req),
-                )
-                .await;
-                // Re-derive the scope: the wire-fix worker may have written a NEW module.
-                let after =
-                    run_ast_review(&ov_root, &app_scope_py(&ov_root, &smoke_all_files)).await;
-                let after_new: Vec<String> = after
-                    .findings
-                    .iter()
-                    .filter(|f| !review_before.contains(*f))
-                    .cloned()
-                    .collect();
-                let after_value = serde_json::to_value(&after).unwrap_or(serde_json::Value::Null);
-                sink.write_value(serde_json::json!({
-                    "event": "review_after_fix",
-                    "result": after_value,
-                    "new_findings": after_new,
-                }));
-                demote_survivors = new_demote_survivors(&after, &review_before_modules);
-                if after.ran && after_new.is_empty() {
-                    eprintln!(
-                        "{}",
-                        style("AST review: wire-fix RESOLVED the unwired findings").green()
-                    );
-                } else {
-                    eprintln!(
-                        "{} ({} new finding(s) remain after one wire-fix)",
-                        style("AST review: still unwired").yellow().bold(),
-                        after_new.len()
-                    );
-                }
-            }
-        }
-        // UNWIRED DEMOTE (GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED, default OFF).
-        //
-        // Mirrors the proven-crash demote above, on the same rule: only a DETERMINISTIC engine event may
-        // retract a green claim. An `ast.parse` import-graph walk has no model in its path — no opinion can
-        // create this verdict or argue it away.
-        //
-        // MEASURED: loop-02 shipped complete_result{passed:true, verified:true} with kanban/db.py imported
-        // by nothing; `--help` exit 0 cannot see dead code, and a bonus task then spent a whole dispatch
-        // "hardening" the corpse.
-        //
-        // Only PURE LIBRARIES demote. A standalone script is unwired by design — this repo's own
-        // calls_report.py / conf_trail.py are flagged by the detector and are perfectly alive — so the
-        // script marks as demote-eligible only a module with no __main__ guard and no executable top-level
-        // statement, where an import is the sole way its code could ever run. The "0 false positives"
-        // claim did NOT hold universally; this guard is what makes the finding strong enough to gate on.
-        //
-        // `passed` is NEVER flipped red: false-failing a correct app costs the whole run, while an honest
-        // UNVERIFIED slate costs it nothing.
-        if ov_verified
-            && !demote_survivors.is_empty()
-            && swarm_gate_cfg(
-                "GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED",
-                load_config().unwired_demotes_verified,
-            )
-        {
-            ov_verified = false;
-            sink.write_value(serde_json::json!({
-                "event": "complete_result_revised",
-                "verified": false,
-                "reason": "unwired-module-unfixed",
-                "evidence": demote_survivors,
-            }));
-            for m in &demote_survivors {
-                eprintln!(
-                    "{} module '{}' is built but imported by nothing — it cannot run",
-                    style("NOT VERIFIED — dead code shipped:").red().bold(),
-                    m
-                );
-            }
-        }
+    // COMPLETE owns this writer while its tree is open. The standalone path remains for runs
+    // that did not request COMPLETE and therefore have no authoritative completion seal.
+    if review_on && !complete_on {
+        let root = std::env::current_dir().unwrap_or_default();
+        let _ = run_post_build_ast_review(
+            &root,
+            &opts.prompt,
+            &smoke_all_files,
+            &review_before,
+            &review_before_modules,
+            &smoke_fix_dispatcher,
+            smoke_fix_target.clone(),
+            &user_decisions,
+            &doc_facts,
+            sink.as_ref(),
+            fix_cap_secs_scaled(&root, &smoke_all_files),
+            None,
+        )
+        .await?;
     }
 
     let report_value = serde_json::to_value(&report).unwrap_or(serde_json::Value::Null);
@@ -41564,11 +42121,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             occ_execute, occ_run, fleet_size, busy_node_min
         );
     }
-    sink.write_value(serde_json::json!({
+    let run_finished = serde_json::json!({
         "event": "run_finished",
         "report": report_value,
         "phases": phases_value,
-    }));
+    });
+    if let Some(sealed) = sealed_complete.as_ref() {
+        // One method re-hashes once and emits both terminal events back-to-back. There is no call-site
+        // seam where a future writer can land between the result claim and the run report.
+        sealed.emit_final_events(sink.as_ref(), run_finished)?;
+    } else {
+        sink.write_value(run_finished);
+    }
 
     if json {
         println!(
