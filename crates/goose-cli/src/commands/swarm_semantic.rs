@@ -686,6 +686,12 @@ impl GooseSemanticProviderRoute {
                 provider_name
             ));
         }
+        if !provider.supports_single_attempt_streaming() {
+            return Err(format!(
+                "semantic provider {:?} has no verified single-attempt stream boundary",
+                provider_name
+            ));
+        }
         Ok(Self {
             provider_name,
             provider,
@@ -837,7 +843,7 @@ impl AdmittedSemanticObservationReviewer for GooseAdmittedSemanticObservationRev
             goose::session_context::with_session_id(Some(provider_request_id), async {
                 let stream = route
                     .provider
-                    .stream(
+                    .stream_once(
                         &model_config,
                         &request.observation.system_prompt,
                         &messages,
@@ -959,8 +965,28 @@ mod tests {
     struct MockProvider {
         reply: String,
         stream_calls: AtomicUsize,
+        stream_once_calls: AtomicUsize,
         complete_calls: AtomicUsize,
         calls: Mutex<Vec<CapturedProviderCall>>,
+    }
+
+    struct RetryOnlyProvider;
+
+    #[async_trait]
+    impl Provider for RetryOnlyProvider {
+        fn get_name(&self) -> &str {
+            "lmstudio"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            unreachable!("route binding must reject this provider before dispatch")
+        }
     }
 
     impl MockProvider {
@@ -968,6 +994,7 @@ mod tests {
             Self {
                 reply,
                 stream_calls: AtomicUsize::new(0),
+                stream_once_calls: AtomicUsize::new(0),
                 complete_calls: AtomicUsize::new(0),
                 calls: Mutex::new(Vec::new()),
             }
@@ -982,12 +1009,29 @@ mod tests {
 
         async fn stream(
             &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            self.stream_calls.fetch_add(1, Ordering::SeqCst);
+            Err(ProviderError::ExecutionError(
+                "adapter must not call the retry-capable stream boundary".to_string(),
+            ))
+        }
+
+        fn supports_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        async fn stream_once(
+            &self,
             model_config: &ModelConfig,
             _system: &str,
             _messages: &[Message],
             tools: &[Tool],
         ) -> Result<MessageStream, ProviderError> {
-            self.stream_calls.fetch_add(1, Ordering::SeqCst);
+            self.stream_once_calls.fetch_add(1, Ordering::SeqCst);
             unpoison(&self.calls).push(CapturedProviderCall {
                 model: model_config.model_name.clone(),
                 request_params: model_config.request_params.clone(),
@@ -1093,6 +1137,18 @@ mod tests {
             },
             route_evidence_id: format!("route-{logical_device_id}"),
         }
+    }
+
+    #[test]
+    fn provider_route_rejects_a_retry_only_provider_before_admission() {
+        let error = GooseSemanticProviderRoute::bind(
+            "lmstudio",
+            Arc::new(RetryOnlyProvider),
+            lane("judge-lane"),
+        )
+        .err()
+        .expect("retry-only provider must be rejected");
+        assert!(error.contains("single-attempt stream boundary"));
     }
 
     #[tokio::test]
@@ -1298,7 +1354,8 @@ mod tests {
         };
         handle.wait().await.unwrap();
 
-        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.stream_once_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 0);
         assert_eq!(provider.complete_calls.load(Ordering::SeqCst), 0);
         let calls = unpoison(&provider.calls);
         assert_eq!(calls.len(), 1);
@@ -1380,6 +1437,7 @@ mod tests {
             SemanticObservationAdmissionSubmission::Rejected(_) => panic!("unexpected rejection"),
         }
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.stream_once_calls.load(Ordering::SeqCst), 0);
         assert_eq!(provider.complete_calls.load(Ordering::SeqCst), 0);
         assert_eq!(sink.count("broker_provider_not_started"), 1);
         assert_eq!(sink.count("broker_provider_request_permitted"), 0);

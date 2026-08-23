@@ -391,6 +391,28 @@ pub trait Provider: Send + Sync {
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError>;
 
+    /// Whether this provider has a separately implemented single-attempt path. Callers use this for
+    /// preflight; a false value must prevent provider-start lifecycle from being claimed.
+    fn supports_single_attempt_streaming(&self) -> bool {
+        false
+    }
+
+    /// Start exactly one external provider request. Implementations must not perform credential,
+    /// transport, rate-limit, or status retries. The default fails closed because delegating to
+    /// `stream` would silently collapse multiple external calls into one lifecycle receipt.
+    async fn stream_once(
+        &self,
+        _model_config: &ModelConfig,
+        _system: &str,
+        _messages: &[Message],
+        _tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        Err(ProviderError::NotImplemented(format!(
+            "provider `{}` does not expose single-attempt streaming",
+            self.get_name()
+        )))
+    }
+
     async fn complete(
         &self,
         model_config: &ModelConfig,
