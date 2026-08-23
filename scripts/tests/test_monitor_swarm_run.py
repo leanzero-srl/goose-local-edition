@@ -169,6 +169,77 @@ class EventGateTests(unittest.TestCase):
         )
         self.assertIn("before every seed", incident["reason"])
 
+    def test_saturation_pod_requires_seed_merge_and_distinct_initial_nodes(self):
+        event = {
+            "event": "research_saturation_pod_started",
+            "available_nodes": 3,
+            "requirements": 197,
+            "partitions": 9,
+            "initial_node_roles": [
+                {"model": "gabee"},
+                {"model": "mihai"},
+                {"model": "workhorse"},
+            ],
+        }
+        gate = MONITOR.EventGate(3, True)
+        incident = gate.observe(self.record(event))
+        self.assertIn("before every seed", incident["reason"])
+        gate.seed_merged = True
+        self.assertIsNone(gate.observe(self.record(event)))
+
+    def test_saturation_pod_rejects_duplicate_initial_node_assignment(self):
+        gate = MONITOR.EventGate(3, True)
+        gate.seed_merged = True
+        incident = gate.observe(
+            self.record(
+                {
+                    "event": "research_saturation_pod_started",
+                    "available_nodes": 3,
+                    "requirements": 197,
+                    "partitions": 9,
+                    "initial_node_roles": [
+                        {"model": "gabee"},
+                        {"model": "gabee"},
+                        {"model": "workhorse"},
+                    ],
+                }
+            )
+        )
+        self.assertIn("distinct authority packet", incident["reason"])
+
+    def test_saturation_pod_with_fewer_requirements_than_nodes_is_valid(self):
+        gate = MONITOR.EventGate(3, True)
+        gate.seed_merged = True
+        incident = gate.observe(
+            self.record(
+                {
+                    "event": "research_saturation_pod_started",
+                    "available_nodes": 3,
+                    "requirements": 2,
+                    "partitions": 2,
+                    "initial_node_roles": [
+                        {"model": "gabee"},
+                        {"model": "mihai"},
+                    ],
+                }
+            )
+        )
+        self.assertIsNone(incident)
+
+    def test_saturation_retry_must_move_to_a_distinct_node(self):
+        gate = MONITOR.EventGate(3, True)
+        incident = gate.observe(
+            self.record(
+                {
+                    "event": "research_saturation_packet_reassigned",
+                    "attempt": 2,
+                    "model": "gabee",
+                    "prior_failed_nodes": ["gabee"],
+                }
+            )
+        )
+        self.assertIn("distinct roster device", incident["reason"])
+
     def test_seed_without_one_final_output_is_rejected(self):
         gate = MONITOR.EventGate(3, True)
         incident = gate.observe(

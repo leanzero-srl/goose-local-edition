@@ -427,6 +427,8 @@ class EventGate:
         self.seed_merged = False
         self.seed_concurrency_observed = False
         self.initial_seed_models: List[str] = []
+        self.initial_saturation_models: List[str] = []
+        self.saturation_initial_target = 0
         self.run_finished = False
 
     def observe_lms(self, snapshot: Dict[str, Any]) -> None:
@@ -530,9 +532,52 @@ class EventGate:
                         "evidence": evidence,
                     }
 
+        if event == "research_saturation_pod_started":
+            if not self.seed_merged:
+                return {
+                    "reason": "research saturation pod started before every seed packet compiled and merged",
+                    "evidence": evidence,
+                }
+            initial = value.get("initial_node_roles") or []
+            initial_models = [str(item.get("model", "")) for item in initial]
+            self.saturation_initial_target = min(
+                self.expected_nodes, int(value.get("requirements", 0) or 0)
+            )
+            valid = (
+                int(value.get("available_nodes", 0) or 0) == self.expected_nodes
+                and int(value.get("partitions", 0) or 0)
+                >= self.saturation_initial_target
+                and self.saturation_initial_target > 0
+                and len(initial_models) == self.saturation_initial_target
+                and all(initial_models)
+                and len(set(initial_models)) == self.saturation_initial_target
+            )
+            if not valid:
+                return {
+                    "reason": "research saturation pod did not assign a distinct authority packet to every node",
+                    "evidence": evidence,
+                }
+            self.initial_saturation_models = []
+
+        if event == "research_saturation_packet_attempt_started" and int(
+            value.get("attempt", 0) or 0
+        ) == 1:
+            if len(self.initial_saturation_models) < self.saturation_initial_target:
+                self.initial_saturation_models.append(str(value.get("model", "")))
+                if len(
+                    self.initial_saturation_models
+                ) == self.saturation_initial_target and len(
+                    set(self.initial_saturation_models)
+                ) != self.saturation_initial_target:
+                    return {
+                        "reason": "initial research saturation admissions reused a roster device before all nodes were active",
+                        "evidence": evidence,
+                    }
+
         if event in (
             "research_seed_packet_reassigned",
             "research_evidence_packet_reassigned",
+            "research_saturation_packet_reassigned",
             "planning_pod_audit_reassigned",
         ):
             prior = value.get("prior_failed_nodes") or value.get(
@@ -895,6 +940,8 @@ def watch(args: argparse.Namespace) -> int:
                     "research_seed_merged",
                     "research_seed_tail_started",
                     "research_evidence_tail_started",
+                    "research_saturation_pod_started",
+                    "research_saturation_tail_started",
                     "research_saturation_checked",
                     "planning_pod_started",
                     "planning_pod_audits_drained",
