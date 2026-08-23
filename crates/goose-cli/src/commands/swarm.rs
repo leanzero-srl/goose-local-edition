@@ -5793,6 +5793,245 @@ mod tests {
     }
 
     #[test]
+    fn research_saturation_partitions_exact_authority_and_only_relevant_evidence() {
+        let requirements = (0..12)
+            .map(|index| RequirementRecord {
+                id: format!("REQ-{index}"),
+                section: format!("section-{}", index / 3),
+                quote: format!("requirement {index}"),
+            })
+            .collect::<Vec<_>>();
+        let evidence = vec![
+            ResearchEvidenceRecord {
+                id: "E-first".to_string(),
+                question: "First?".to_string(),
+                requirement_ids: vec!["REQ-0".to_string()],
+                evidence_needed: "first".to_string(),
+                findings: "first finding".to_string(),
+                grounded: true,
+                lookups: vec!["web".to_string()],
+            },
+            ResearchEvidenceRecord {
+                id: "E-cross".to_string(),
+                question: "Cross?".to_string(),
+                requirement_ids: vec!["REQ-4".to_string(), "REQ-11".to_string()],
+                evidence_needed: "cross".to_string(),
+                findings: "cross finding".to_string(),
+                grounded: true,
+                lookups: vec!["web".to_string()],
+            },
+        ];
+        let partitions = plan_research_saturation_partitions(&requirements, &evidence, 5).unwrap();
+        assert_eq!(partitions.len(), 5);
+        let authority = partitions
+            .iter()
+            .flat_map(|partition| {
+                partition
+                    .requirements
+                    .iter()
+                    .map(|requirement| requirement.id.clone())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            authority,
+            requirements
+                .iter()
+                .map(|requirement| requirement.id.clone())
+                .collect::<Vec<_>>()
+        );
+        for partition in &partitions {
+            let requirement_ids = partition
+                .requirements
+                .iter()
+                .map(|requirement| requirement.id.as_str())
+                .collect::<HashSet<_>>();
+            assert!(partition.evidence.iter().all(|record| record
+                .requirement_ids
+                .iter()
+                .any(|requirement_id| requirement_ids.contains(requirement_id.as_str()))));
+        }
+        assert_eq!(
+            partitions
+                .iter()
+                .filter(|partition| partition
+                    .evidence
+                    .iter()
+                    .any(|record| record.id == "E-first"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            partitions
+                .iter()
+                .filter(|partition| partition
+                    .evidence
+                    .iter()
+                    .any(|record| record.id == "E-cross"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn research_saturation_merge_restores_authority_order_and_namespaces_questions() {
+        let requirements = (0..6)
+            .map(|index| RequirementRecord {
+                id: format!("REQ-{index}"),
+                section: format!("section-{}", index / 3),
+                quote: format!("requirement {index}"),
+            })
+            .collect::<Vec<_>>();
+        let routes = ResearchSeedLookupRoutes {
+            attached_extensions: vec!["web-search".to_string()],
+            spec_document_urls: Vec::new(),
+            codebase_shell: false,
+        };
+        let partitions = plan_research_saturation_partitions(&requirements, &[], 2).unwrap();
+        let compiled = partitions
+            .iter()
+            .enumerate()
+            .map(|(index, partition)| {
+                let unresolved = partition.requirements[0].id.clone();
+                let mut coverage = partition
+                    .requirements
+                    .iter()
+                    .map(|requirement| ResearchCoverageAssessment {
+                        requirement_id: requirement.id.clone(),
+                        state: if requirement.id == unresolved {
+                            ResearchCoverageState::Unresolved
+                        } else {
+                            ResearchCoverageState::SpecSufficient
+                        },
+                        evidence_ids: Vec::new(),
+                        rationale: "Exact packet rationale.".to_string(),
+                    })
+                    .collect::<Vec<_>>();
+                coverage.reverse();
+                CompiledResearchSaturationPartition {
+                    partition_id: partition.partition_id.clone(),
+                    model: format!("node-{index}"),
+                    ledger_corrections: 0,
+                    ledger: ResearchSaturationDraft {
+                        status: ResearchSaturationStatus::Continue,
+                        coverage,
+                        next_questions: vec![ResearchQuestion {
+                            id: "same-local-id".to_string(),
+                            question: "Which exact current fact settles this requirement?"
+                                .to_string(),
+                            kind: "web".to_string(),
+                            requirement_ids: vec![unresolved],
+                            evidence_needed: "exact current authority".to_string(),
+                        }],
+                        summary: "One evidence slot remains.".to_string(),
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+        let merged = merge_research_saturation_partitions(
+            &partitions,
+            compiled,
+            &requirements,
+            &[],
+            &HashSet::new(),
+            &routes,
+        )
+        .unwrap();
+        assert_eq!(merged.status, ResearchSaturationStatus::Continue);
+        assert_eq!(
+            merged
+                .coverage
+                .iter()
+                .map(|assessment| assessment.requirement_id.as_str())
+                .collect::<Vec<_>>(),
+            requirements
+                .iter()
+                .map(|requirement| requirement.id.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            merged
+                .next_questions
+                .iter()
+                .map(|question| question.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["saturation-1-same-local-id", "saturation-2-same-local-id"]
+        );
+    }
+
+    #[test]
+    fn research_saturation_blocked_packet_dominates_runnable_sibling() {
+        let requirements = vec![
+            RequirementRecord {
+                id: "REQ-blocked".to_string(),
+                section: "blocked".to_string(),
+                quote: "Needs unavailable evidence.".to_string(),
+            },
+            RequirementRecord {
+                id: "REQ-runnable".to_string(),
+                section: "runnable".to_string(),
+                quote: "Needs available evidence.".to_string(),
+            },
+        ];
+        let routes = ResearchSeedLookupRoutes {
+            attached_extensions: vec!["web-search".to_string()],
+            spec_document_urls: Vec::new(),
+            codebase_shell: false,
+        };
+        let partitions = plan_research_saturation_partitions(&requirements, &[], 2).unwrap();
+        let compiled = vec![
+            CompiledResearchSaturationPartition {
+                partition_id: partitions[0].partition_id.clone(),
+                model: "node-a".to_string(),
+                ledger_corrections: 0,
+                ledger: ResearchSaturationDraft {
+                    status: ResearchSaturationStatus::Blocked,
+                    coverage: vec![ResearchCoverageAssessment {
+                        requirement_id: "REQ-blocked".to_string(),
+                        state: ResearchCoverageState::Blocked,
+                        evidence_ids: Vec::new(),
+                        rationale: "No source route exists.".to_string(),
+                    }],
+                    next_questions: Vec::new(),
+                    summary: "Blocked.".to_string(),
+                },
+            },
+            CompiledResearchSaturationPartition {
+                partition_id: partitions[1].partition_id.clone(),
+                model: "node-b".to_string(),
+                ledger_corrections: 0,
+                ledger: ResearchSaturationDraft {
+                    status: ResearchSaturationStatus::Continue,
+                    coverage: vec![ResearchCoverageAssessment {
+                        requirement_id: "REQ-runnable".to_string(),
+                        state: ResearchCoverageState::Unresolved,
+                        evidence_ids: Vec::new(),
+                        rationale: "A current fact remains.".to_string(),
+                    }],
+                    next_questions: vec![ResearchQuestion {
+                        id: "lookup".to_string(),
+                        question: "What current fact settles the requirement?".to_string(),
+                        kind: "web".to_string(),
+                        requirement_ids: vec!["REQ-runnable".to_string()],
+                        evidence_needed: "current fact".to_string(),
+                    }],
+                    summary: "Runnable.".to_string(),
+                },
+            },
+        ];
+        let merged = merge_research_saturation_partitions(
+            &partitions,
+            compiled,
+            &requirements,
+            &[],
+            &HashSet::new(),
+            &routes,
+        )
+        .unwrap();
+        assert_eq!(merged.status, ResearchSaturationStatus::Blocked);
+        assert!(merged.next_questions.is_empty());
+    }
+
+    #[test]
     fn research_seed_assigns_every_node_before_the_complete_merge_barrier() {
         let requirements = (0..10)
             .map(|index| RequirementRecord {
@@ -16894,6 +17133,20 @@ struct ResearchSaturationDraft {
     summary: String,
 }
 
+#[derive(Clone, Debug)]
+struct ResearchSaturationPartition {
+    partition_id: String,
+    requirements: Vec<RequirementRecord>,
+    evidence: Vec<ResearchEvidenceRecord>,
+}
+
+struct CompiledResearchSaturationPartition {
+    partition_id: String,
+    model: String,
+    ledger_corrections: u64,
+    ledger: ResearchSaturationDraft,
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 struct ResearchEvidenceRecord {
     id: String,
@@ -17243,6 +17496,56 @@ fn plan_research_seed_partitions(
             requirements,
         })
         .collect())
+}
+
+fn plan_research_saturation_partitions(
+    requirements: &[RequirementRecord],
+    evidence: &[ResearchEvidenceRecord],
+    desired_partitions: usize,
+) -> Result<Vec<ResearchSaturationPartition>> {
+    plan_research_seed_partitions(requirements, desired_partitions).map(|partitions| {
+        partitions
+            .into_iter()
+            .enumerate()
+            .map(|(index, partition)| {
+                let requirement_ids = partition
+                    .requirements
+                    .iter()
+                    .map(|requirement| requirement.id.as_str())
+                    .collect::<HashSet<_>>();
+                let evidence = evidence
+                    .iter()
+                    .filter(|record| {
+                        record
+                            .requirement_ids
+                            .iter()
+                            .any(|requirement_id| requirement_ids.contains(requirement_id.as_str()))
+                    })
+                    .cloned()
+                    .collect();
+                ResearchSaturationPartition {
+                    partition_id: format!("saturation-{}", index + 1),
+                    requirements: partition.requirements,
+                    evidence,
+                }
+            })
+            .collect()
+    })
+}
+
+fn research_saturation_partition_cost(partition: &ResearchSaturationPartition) -> usize {
+    partition
+        .requirements
+        .iter()
+        .map(research_seed_unit_cost)
+        .chain(partition.evidence.iter().map(|record| {
+            record
+                .id
+                .chars()
+                .count()
+                .saturating_add(record.findings.chars().count())
+        }))
+        .fold(0usize, usize::saturating_add)
 }
 
 fn research_seed_progress_fingerprint(
@@ -18094,6 +18397,100 @@ fn compile_research_saturation(
         }
     }
     Ok(draft)
+}
+
+fn merge_research_saturation_partitions(
+    partitions: &[ResearchSaturationPartition],
+    compiled: Vec<CompiledResearchSaturationPartition>,
+    requirements: &[RequirementRecord],
+    evidence: &[ResearchEvidenceRecord],
+    seen_question_slots: &HashSet<String>,
+    routes: &ResearchSeedLookupRoutes,
+) -> Result<ResearchSaturationDraft> {
+    if compiled.len() != partitions.len() {
+        bail!(
+            "research saturation barrier returned {} ledgers for {} authority packets",
+            compiled.len(),
+            partitions.len()
+        );
+    }
+
+    let mut coverage_by_requirement = HashMap::new();
+    let mut next_questions = Vec::new();
+    let mut any_blocked_partition = false;
+    for (partition, result) in partitions.iter().zip(compiled) {
+        if result.partition_id != partition.partition_id {
+            bail!(
+                "research saturation barrier returned `{}` for authority packet `{}`",
+                result.partition_id,
+                partition.partition_id
+            );
+        }
+        any_blocked_partition |= result.ledger.status == ResearchSaturationStatus::Blocked;
+        for assessment in result.ledger.coverage {
+            let requirement_id = assessment.requirement_id.clone();
+            if coverage_by_requirement
+                .insert(requirement_id.clone(), assessment)
+                .is_some()
+            {
+                bail!(
+                    "research saturation barrier repeated requirement `{requirement_id}` across packets"
+                );
+            }
+        }
+        next_questions.extend(
+            result
+                .ledger
+                .next_questions
+                .into_iter()
+                .map(|mut question| {
+                    question.id = format!("{}-{}", partition.partition_id, question.id);
+                    question
+                }),
+        );
+    }
+
+    let mut coverage = Vec::with_capacity(requirements.len());
+    for requirement in requirements {
+        let Some(assessment) = coverage_by_requirement.remove(requirement.id.as_str()) else {
+            bail!(
+                "research saturation barrier omitted requirement `{}`",
+                requirement.id
+            );
+        };
+        coverage.push(assessment);
+    }
+    if !coverage_by_requirement.is_empty() {
+        let mut invented = coverage_by_requirement.into_keys().collect::<Vec<_>>();
+        invented.sort();
+        bail!("research saturation barrier invented requirements {invented:?}");
+    }
+
+    let unresolved = coverage
+        .iter()
+        .any(|assessment| assessment.state == ResearchCoverageState::Unresolved);
+    let blocked = coverage
+        .iter()
+        .any(|assessment| assessment.state == ResearchCoverageState::Blocked);
+    let status = if any_blocked_partition || blocked {
+        next_questions.clear();
+        ResearchSaturationStatus::Blocked
+    } else if unresolved {
+        ResearchSaturationStatus::Continue
+    } else {
+        ResearchSaturationStatus::Saturated
+    };
+    let merged = ResearchSaturationDraft {
+        status,
+        coverage,
+        next_questions,
+        summary: format!(
+            "{} capacity-derived coverage packets passed deterministic global authority merge.",
+            partitions.len()
+        ),
+    };
+    let raw = serde_json::to_string(&merged)?;
+    compile_research_saturation(&raw, requirements, evidence, seen_question_slots, routes)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22732,9 +23129,231 @@ impl GooseAgentDispatcher {
         .await
     }
 
+    async fn run_research_saturation_fan(
+        self: &Arc<Self>,
+        cycle: u64,
+        partitions: Vec<ResearchSaturationPartition>,
+        worker_models: Vec<String>,
+        is_amendment: bool,
+        lookup_routes: ResearchSeedLookupRoutes,
+        seen_question_slots: HashSet<String>,
+    ) -> Result<Vec<CompiledResearchSaturationPartition>> {
+        let me = self.clone();
+        let attempt_events = self.events.clone();
+        let tail_events = self.events.clone();
+        fanout_retrying_over_fleet(
+            worker_models,
+            partitions,
+            move |partition, model| {
+                let me = me.clone();
+                let routes = lookup_routes.clone();
+                let seen_slots = seen_question_slots.clone();
+                async move {
+                    let partition_id = partition.partition_id.clone();
+                    let failed_partition_id = partition_id.clone();
+                    let failed_model = model.clone();
+                    let result: Result<CompiledResearchSaturationPartition> = async {
+                        let activity_key =
+                            format!("research-saturation-{cycle}-{partition_id}");
+                        me.events.write_value(serde_json::json!({
+                            "event": "research_pod_role_started",
+                            "cycle": cycle,
+                            "role": "evidence-saturation-auditor",
+                            "partition_id": partition_id.clone(),
+                            "model": model,
+                            "requirement_ids": partition.requirements.iter().map(|requirement| requirement.id.as_str()).collect::<Vec<_>>(),
+                            "requirement_count": partition.requirements.len(),
+                            "evidence_records": partition.evidence.len(),
+                            "scope": "disjoint-authority-packet",
+                        }));
+                        let system = "You are one evidence-saturation auditor in a collaborative research pod. Other active nodes own disjoint requirement packets, and a deterministic compiler will merge every packet after the barrier. Audit ONLY the supplied immutable requirement ids and return exactly one coverage row for each. Mark a requirement `spec-sufficient` only when its authored text itself contains every fact planning needs; mark it `grounded` only when the supplied evidence ledger has real tool provenance and cite those evidence ids; otherwise keep it `unresolved`. For unresolved coverage, emit independent, non-overlapping evidence questions bound only to supplied requirement ids and state the exact evidence that would settle each one. Status applies to this packet alone: use `saturated` only when every supplied requirement is grounded or spec-sufficient, `continue` only with a runnable next queue, and `blocked` only when required evidence has no runnable route. Do not create work to fill hardware and do not draft a plan. There is no round, question, token, or elapsed-time quota; semantic completeness of this packet is the only successful stop. Then call final_output.";
+                        let user = serde_json::to_string_pretty(&serde_json::json!({
+                            "partition_id": partition.partition_id,
+                            "is_amendment": is_amendment,
+                            "authoritative_requirements": partition.requirements,
+                            "available_lookup_routes": routes,
+                            "evidence_ledger": partition.evidence,
+                            "previously_investigated_evidence_slots": seen_slots.len(),
+                        }))?;
+                        let output = me
+                            .run_response_only_agent(
+                                &model,
+                                system.to_string(),
+                                user,
+                                Some(Response {
+                                    json_schema: Some(research_saturation_schema()),
+                                }),
+                                0,
+                                Some(&activity_key),
+                            )
+                            .await?;
+                        let mut raw = output
+                            .final_output
+                            .filter(|value| !value.trim().is_empty())
+                            .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "research saturation packet `{partition_id}` returned no typed ledger"
+                                )
+                            })?;
+                        let mut progress_history = ResearchSaturationProgressHistory::default();
+                        let mut correction = 0u64;
+                        let ledger = loop {
+                            match compile_research_saturation(
+                                &raw,
+                                &partition.requirements,
+                                &partition.evidence,
+                                &seen_slots,
+                                &routes,
+                            ) {
+                                Ok(compiled) => break compiled,
+                                Err(error) => {
+                                    let fingerprint = research_saturation_progress_fingerprint(
+                                        &raw,
+                                        &partition.requirements,
+                                        &partition.evidence,
+                                        &seen_slots,
+                                        &routes,
+                                    );
+                                    if !progress_history.admit(fingerprint) {
+                                        bail!(
+                                            "research saturation packet `{partition_id}` repeated a canonical invalid ledger state after correction: {error}"
+                                        );
+                                    }
+                                    correction += 1;
+                                    me.events.write_value(serde_json::json!({
+                                        "event": "research_saturation_ledger_correction_started",
+                                        "cycle": cycle,
+                                        "partition_id": partition_id.clone(),
+                                        "model": model,
+                                        "correction": correction,
+                                        "compiler_error": error.to_string(),
+                                        "attempt_cap": null,
+                                        "completion_basis": "typed-authority-semantic-saturation-packet",
+                                    }));
+                                    let correction_system = "The deterministic evidence-saturation compiler rejected your previous packet ledger. Re-emit the ENTIRE ledger for this one packet with exactly one coverage row for every supplied immutable requirement id. Cite only supplied evidence ids bound to that requirement; lookup provenance without a found fact cannot make coverage grounded. Emit only runnable, non-repeated questions for unresolved requirements in this packet. The compiler error is factual authority feedback. There is no attempt, question, token, or elapsed-time cap; finish only by calling final_output with a compiler-complete packet ledger.";
+                                    let correction_user = serde_json::to_string_pretty(
+                                        &serde_json::json!({
+                                            "partition_id": partition.partition_id,
+                                            "compiler_error": error.to_string(),
+                                            "is_amendment": is_amendment,
+                                            "authoritative_requirements": partition.requirements,
+                                            "available_lookup_routes": routes,
+                                            "evidence_ledger": partition.evidence,
+                                            "previously_investigated_evidence_slots": seen_slots.len(),
+                                        }),
+                                    )?;
+                                    let correction_key = format!(
+                                        "research-saturation-{cycle}-{partition_id}-correction-{correction}"
+                                    );
+                                    let corrected = me
+                                        .run_response_only_agent(
+                                            &model,
+                                            correction_system.to_string(),
+                                            correction_user,
+                                            Some(Response {
+                                                json_schema: Some(research_saturation_schema()),
+                                            }),
+                                            0,
+                                            Some(&correction_key),
+                                        )
+                                        .await?;
+                                    raw = corrected
+                                        .final_output
+                                        .filter(|value| !value.trim().is_empty())
+                                        .or_else(|| {
+                                            (!corrected.text.trim().is_empty())
+                                                .then_some(corrected.text)
+                                        })
+                                        .ok_or_else(|| {
+                                            anyhow!(
+                                                "research saturation correction for `{partition_id}` returned no typed ledger"
+                                            )
+                                        })?;
+                                }
+                            }
+                        };
+                        me.events.write_value(serde_json::json!({
+                            "event": "research_pod_role_completed",
+                            "cycle": cycle,
+                            "role": "evidence-saturation-auditor",
+                            "partition_id": partition_id.clone(),
+                            "model": model,
+                            "status": ledger.status.as_str(),
+                            "coverage_rows": ledger.coverage.len(),
+                            "next_evidence_slots": ledger.next_questions.len(),
+                            "ledger_corrections": correction,
+                            "summary": ledger.summary,
+                        }));
+                        Ok(CompiledResearchSaturationPartition {
+                            partition_id,
+                            model,
+                            ledger_corrections: correction,
+                            ledger,
+                        })
+                    }
+                    .await;
+                    result.map_err(|error| {
+                        me.events.write_value(serde_json::json!({
+                            "event": "research_pod_role_failed",
+                            "cycle": cycle,
+                            "role": "evidence-saturation-auditor",
+                            "partition_id": failed_partition_id,
+                            "model": failed_model,
+                            "retry_authority": "remaining-distinct-physical-nodes",
+                            "error": error.to_string(),
+                        }));
+                        error.to_string()
+                    })
+                }
+            },
+            research_saturation_partition_cost,
+            |partition| partition.partition_id.clone(),
+            move |attempt| {
+                attempt_events.write_value(serde_json::json!({
+                    "event": "research_saturation_packet_attempt_started",
+                    "cycle": cycle,
+                    "partition_id": attempt.packet,
+                    "source_ordinal": attempt.source_index,
+                    "model": attempt.device,
+                    "attempt": attempt.attempt,
+                    "estimated_output_cost": attempt.priority,
+                    "prior_failed_nodes": attempt.failed_devices,
+                    "admission_basis": "estimated-output-cost-descending-stable-source-ordinal",
+                }));
+                if attempt.attempt > 1 {
+                    attempt_events.write_value(serde_json::json!({
+                        "event": "research_saturation_packet_reassigned",
+                        "cycle": cycle,
+                        "partition_id": attempt.packet,
+                        "model": attempt.device,
+                        "attempt": attempt.attempt,
+                        "prior_failed_nodes": attempt.failed_devices,
+                        "retry_basis": "previous-node-failed-packet-distinct-node-remained",
+                    }));
+                }
+            },
+            move |observation| {
+                if observation.kind == StagedFanObservationKind::DetailTailStarted {
+                    tail_events.write_value(serde_json::json!({
+                        "event": "research_saturation_tail_started",
+                        "cycle": cycle,
+                        "outstanding_partition": observation.outstanding_detail,
+                        "completed_partitions": observation.completed_details,
+                        "in_flight_partitions": observation.in_flight_details,
+                        "logically_free_nodes": observation.logically_free_lanes,
+                        "observation": "idle_capacity_observed",
+                        "supervision_available": false,
+                        "supervision_unavailable_reason": "research-saturation-precedes-physical-scheduler-lifecycle",
+                    }));
+                }
+            },
+        )
+        .await
+    }
+
     async fn research_to_saturation(
         self: &Arc<Self>,
-        planner_model: &str,
         user_prompt: &str,
         is_amendment: bool,
         research_extensions: Arc<Vec<ExtensionConfig>>,
@@ -22760,8 +23379,8 @@ impl GooseAgentDispatcher {
         };
         self.events.write_value(serde_json::json!({
             "event": "research_pod_started",
-            "topology": "full-fleet-semantic-work-stealing-seed-then-one-evidence-ledger-dynamic-nonduplicate-queue",
-            "coordinator_model": planner_model,
+            "topology": "full-fleet-semantic-work-stealing-seed-and-saturation-packets-dynamic-nonduplicate-queue",
+            "coordinator_models": worker_models.clone(),
             "worker_models": worker_models,
             "requirements": requirements.len(),
             "completion_basis": "semantic-requirement-evidence-saturation",
@@ -22880,121 +23499,69 @@ impl GooseAgentDispatcher {
         loop {
             cycle += 1;
             let evidence = research_evidence_inventory(&findings);
-            let coordinator_key = format!("research-pod-coordinator-{cycle}");
+            let requested_partitions = worker_models
+                .len()
+                .saturating_add(available_execution_slots)
+                .min(requirements.len());
+            let partitions = plan_research_saturation_partitions(
+                &requirements,
+                &evidence,
+                requested_partitions,
+            )?;
+            let initial_admissions = retrying_fan_initial_admissions(
+                worker_models.clone(),
+                &partitions,
+                research_saturation_partition_cost,
+            );
             self.events.write_value(serde_json::json!({
-                "event": "research_pod_role_started",
+                "event": "research_saturation_pod_started",
                 "cycle": cycle,
-                "role": "evidence-saturation-coordinator",
-                "model": planner_model,
+                "topology": "capacity-derived-disjoint-coverage-packets-dynamic-work-stealing-deterministic-global-merge",
                 "evidence_records": evidence.len(),
+                "requirements": requirements.len(),
+                "partitions": partitions.len(),
+                "available_nodes": worker_models.len(),
+                "available_execution_slots": available_execution_slots,
+                "initial_node_roles": initial_admissions.iter().map(|(source_ordinal, model)| serde_json::json!({
+                    "source_ordinal": source_ordinal,
+                    "partition_id": partitions[*source_ordinal].partition_id.as_str(),
+                    "model": model,
+                    "requirement_count": partitions[*source_ordinal].requirements.len(),
+                    "evidence_records": partitions[*source_ordinal].evidence.len(),
+                    "estimated_output_cost": research_saturation_partition_cost(&partitions[*source_ordinal]),
+                })).collect::<Vec<_>>(),
+                "partition_basis": "authored-semantic-boundaries-balanced-by-requirement-and-evidence-cost",
+                "completion_basis": "all-packets-compiled-then-global-authority-merge",
+                "fixed_packet_count": null,
+                "elapsed_cap_secs": null,
+                "reasoning_volume_cap_chars": null,
             }));
-            let system = "You are the canonical evidence-saturation coordinator for a coding swarm. Maintain \
-                exactly one coverage row for every immutable requirement id. Mark a requirement `spec-sufficient` \
-                only when its authored text itself contains every fact planning needs; mark it `grounded` only \
-                when the supplied evidence ledger has real tool provenance and cite those evidence ids; otherwise \
-                keep it `unresolved`. For unresolved coverage, emit independent, non-overlapping evidence questions \
-                bound to exact requirement ids and state the exact evidence that would settle each one. Do not emit \
-                a fixed number of questions, do not create work to fill hardware, and do not draft a plan. Use \
-                `blocked` only when evidence is required but no runnable source route remains. Use `saturated` only \
-                when every requirement is grounded or spec-sufficient and the next queue is empty. There is no \
-                round, question, token, or elapsed-time quota; semantic completeness is the only successful stop. \
-                Then call final_output."
-                .to_string();
-            let user = serde_json::to_string_pretty(&serde_json::json!({
-                "is_amendment": is_amendment,
-                "requirements": requirements,
-                "available_lookup_routes": lookup_routes,
-                "evidence_ledger": evidence,
-                "previously_investigated_evidence_slots": seen_question_slots.len(),
-            }))?;
-            let output = self
-                .run_response_only_agent(
-                    planner_model,
-                    system,
-                    user,
-                    Some(Response {
-                        json_schema: Some(research_saturation_schema()),
-                    }),
-                    0,
-                    Some(&coordinator_key),
+            let compiled_packets = self
+                .run_research_saturation_fan(
+                    cycle,
+                    partitions.clone(),
+                    worker_models.clone(),
+                    is_amendment,
+                    lookup_routes.clone(),
+                    seen_question_slots.clone(),
                 )
                 .await?;
-            let mut raw = output
-                .final_output
-                .filter(|value| !value.trim().is_empty())
-                .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
-                .ok_or_else(|| {
-                    anyhow!("research saturation coordinator returned no typed ledger")
-                })?;
-            let mut progress_history = ResearchSaturationProgressHistory::default();
-            let mut correction = 0u64;
-            let compiled = loop {
-                match compile_research_saturation(
-                    &raw,
-                    &requirements,
-                    &evidence,
-                    &seen_question_slots,
-                    &lookup_routes,
-                ) {
-                    Ok(compiled) => break compiled,
-                    Err(error) => {
-                        let fingerprint = research_saturation_progress_fingerprint(
-                            &raw,
-                            &requirements,
-                            &evidence,
-                            &seen_question_slots,
-                            &lookup_routes,
-                        );
-                        if !progress_history.admit(fingerprint) {
-                            bail!(
-                                "research saturation coordinator repeated a canonical invalid ledger state after correction: {error}"
-                            );
-                        }
-                        correction += 1;
-                        self.events.write_value(serde_json::json!({
-                            "event": "research_saturation_ledger_correction_started",
-                            "cycle": cycle,
-                            "model": planner_model,
-                            "correction": correction,
-                            "compiler_error": error.to_string(),
-                            "attempt_cap": null,
-                            "completion_basis": "typed-authority-semantic-saturation",
-                        }));
-                        let correction_system = "The deterministic evidence-saturation compiler rejected your previous ledger. Re-emit the ENTIRE ledger with exactly one coverage row for every immutable requirement id. Cite only supplied evidence ids bound to that requirement; lookup provenance without a found fact cannot make coverage grounded. Emit only runnable, non-repeated questions for unresolved requirements. The compiler error is factual authority feedback. There is no attempt, question, token, or elapsed-time cap; finish only by calling final_output with a compiler-complete ledger.";
-                        let correction_user = serde_json::to_string_pretty(&serde_json::json!({
-                            "compiler_error": error.to_string(),
-                            "is_amendment": is_amendment,
-                            "authoritative_requirements": requirements,
-                            "available_lookup_routes": lookup_routes,
-                            "evidence_ledger": evidence,
-                            "previously_investigated_evidence_slots": seen_question_slots.len(),
-                        }))?;
-                        let correction_key =
-                            format!("research-pod-coordinator-{cycle}-correction-{correction}");
-                        let corrected = self
-                            .run_response_only_agent(
-                                planner_model,
-                                correction_system.to_string(),
-                                correction_user,
-                                Some(Response {
-                                    json_schema: Some(research_saturation_schema()),
-                                }),
-                                0,
-                                Some(&correction_key),
-                            )
-                            .await?;
-                        raw = corrected
-                            .final_output
-                            .filter(|value| !value.trim().is_empty())
-                            .or_else(|| {
-                                (!corrected.text.trim().is_empty()).then_some(corrected.text)
-                            })
-                            .ok_or_else(|| {
-                                anyhow!("research saturation correction returned no typed ledger")
-                            })?;
-                    }
-                }
-            };
+            let contributing_models = compiled_packets
+                .iter()
+                .map(|packet| packet.model.clone())
+                .collect::<Vec<_>>();
+            let ledger_corrections = compiled_packets
+                .iter()
+                .map(|packet| packet.ledger_corrections)
+                .sum::<u64>();
+            let compiled = merge_research_saturation_partitions(
+                &partitions,
+                compiled_packets,
+                &requirements,
+                &evidence,
+                &seen_question_slots,
+                &lookup_routes,
+            )?;
             let state_count = |state| {
                 compiled
                     .coverage
@@ -23006,7 +23573,7 @@ impl GooseAgentDispatcher {
                 "event": "research_saturation_checked",
                 "cycle": cycle,
                 "role": "evidence-saturation-coordinator",
-                "model": planner_model,
+                "models": contributing_models.clone(),
                 "status": compiled.status.as_str(),
                 "coverage_total": compiled.coverage.len(),
                 "grounded": state_count(ResearchCoverageState::Grounded),
@@ -23021,9 +23588,9 @@ impl GooseAgentDispatcher {
                 "event": "research_pod_role_completed",
                 "cycle": cycle,
                 "role": "evidence-saturation-coordinator",
-                "model": planner_model,
+                "models": contributing_models,
                 "status": compiled.status.as_str(),
-                "ledger_corrections": correction,
+                "ledger_corrections": ledger_corrections,
                 "contribution": {
                     "coverage_rows": compiled.coverage.len(),
                     "next_evidence_slots": compiled.next_questions.len(),
@@ -45230,7 +45797,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let worker_models: Vec<String> = fleet_slot_models(&devices);
         phase_banner(
             "RESEARCH POD",
-            "one evidence ledger dispatches unresolved research across the fleet until semantic saturation",
+            "disjoint evidence audits work-steal across the fleet and merge into one authoritative ledger",
         );
         sink.write_value(serde_json::json!({
             "event": "research_policy",
@@ -45247,13 +45814,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "legacy_scout_budget_secs_ignored": cfg.scout_budget_secs,
         }));
         let findings = dispatcher
-            .research_to_saturation(
-                &cfg.planner_model,
-                &opts.prompt,
-                is_amendment,
-                research_exts,
-                worker_models,
-            )
+            .research_to_saturation(&opts.prompt, is_amendment, research_exts, worker_models)
             .await?;
         research_findings = findings
             .iter()
