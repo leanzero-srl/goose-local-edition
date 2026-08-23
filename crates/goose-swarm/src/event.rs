@@ -1,8 +1,18 @@
 //! Streaming observability events the scheduler emits through an injected sink, so goose-cli can
-//! write a structured per-run JSONL log without this model-agnostic core knowing about IO. All
-//! emits happen under the scheduler's state lock, so a sink need only be `Send + Sync`.
+//! write a structured per-run JSONL log without this model-agnostic core knowing about IO. Emits
+//! happen under the owning scheduler or broker state lock, so a sink need only be `Send + Sync`.
 
-use crate::{dag::TaskSpec, dispatch::ToolCallRecord};
+use crate::{
+    broker::{
+        AdmissionReceipt, CapacityUpdateReceipt, LocalCompletionReceipt, PhysicalFleetSnapshot,
+        ProviderNotStartedReceipt, ProviderRequestKey, ProviderRequestQueueReceipt,
+        ProviderRequestReceipt, ProviderTerminalReceipt, QueueReceipt, ReleasedAdmissionReceipt,
+        RevokedAdmissionReceipt, StaleWorkReceipt, UnresolvedAdmissionReceipt,
+        WithdrawnWorkReceipt,
+    },
+    dag::TaskSpec,
+    dispatch::ToolCallRecord,
+};
 use serde::Serialize;
 
 #[derive(Serialize, Debug)]
@@ -61,6 +71,83 @@ pub enum SwarmEvent {
     RunPaused,
     /// The pause sentinel was cleared; the scheduler resumed claiming ready tasks (re-runs nothing).
     RunUnpaused,
+    /// Same-run route/capacity evidence discovered independently of the logical device weights.
+    /// The enforcement field distinguishes shadow observation from lifecycle-capable admission.
+    PhysicalFleetSnapshotObserved {
+        snapshot: PhysicalFleetSnapshot,
+        enforcement: String,
+        provider_lifecycle_available: bool,
+    },
+    PhysicalFleetSnapshotUnavailable {
+        reason: String,
+        enforcement: String,
+        provider_lifecycle_available: bool,
+    },
+    BrokerWorkQueued {
+        receipt: QueueReceipt,
+    },
+    BrokerWorkStale {
+        receipt: StaleWorkReceipt,
+    },
+    BrokerWorkWithdrawn {
+        receipt: WithdrawnWorkReceipt,
+    },
+    BrokerAdmissionGranted {
+        receipt: AdmissionReceipt,
+    },
+    BrokerAdmissionGrantRevoked {
+        receipt: RevokedAdmissionReceipt,
+    },
+    BrokerProviderRequestQueued {
+        admission: AdmissionReceipt,
+        receipt: ProviderRequestQueueReceipt,
+    },
+    BrokerProviderRequestPermitted {
+        admission: AdmissionReceipt,
+        receipt: ProviderRequestReceipt,
+    },
+    BrokerProviderRequestGrantRevoked {
+        admission: AdmissionReceipt,
+        receipt: ProviderRequestReceipt,
+        reason: String,
+    },
+    BrokerProviderRequestWithdrawn {
+        admission: AdmissionReceipt,
+        receipt: ProviderRequestReceipt,
+        reason: String,
+    },
+    BrokerProviderStartsClosed {
+        admission: AdmissionReceipt,
+    },
+    BrokerProviderNotStarted {
+        admission: AdmissionReceipt,
+        receipt: ProviderNotStartedReceipt,
+    },
+    BrokerWorkLocalCompleted {
+        admission: AdmissionReceipt,
+        receipt: LocalCompletionReceipt,
+    },
+    BrokerProviderTerminalObserved {
+        admission: AdmissionReceipt,
+        receipt: ProviderTerminalReceipt,
+    },
+    BrokerAdmissionReleased {
+        receipt: ReleasedAdmissionReceipt,
+    },
+    BrokerReceiptRejected {
+        admission: Option<AdmissionReceipt>,
+        work_id: Option<String>,
+        provider_request: Option<ProviderRequestKey>,
+        receipt_kind: String,
+        reason: String,
+    },
+    BrokerCapacityUpdated {
+        receipt: CapacityUpdateReceipt,
+    },
+    BrokerDrainPending {
+        pending_work_ids: Vec<String>,
+        unresolved: Vec<UnresolvedAdmissionReceipt>,
+    },
     /// A dynamic replan round. `tasks` are the exact admitted specs and `dag` is the complete DAG
     /// after the splice, including the review-to-sink edges. This is the resume and audit authority:
     /// `added` remains as a compact compatibility index, never as a second plan representation.
