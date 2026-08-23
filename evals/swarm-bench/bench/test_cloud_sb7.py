@@ -616,6 +616,334 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
         return cloud_sb7.read_smoke_state(root, entrant_id)
 
+    def install_mixed_smoke_budget_contract(
+        self,
+        root: Path,
+        rows: list[dict[str, object]],
+        *,
+        lineage: dict[str, object],
+        blocked_entrant: str,
+    ) -> None:
+        blocked_row = next(row for row in rows if row["id"] == blocked_entrant)
+        models = {
+            f"{row['provider']}/{row['model']}": {
+                "provider": row["provider"],
+                "model": row["model"],
+                "accepted_reported_models": row["accepted_reported_models"],
+                "context_limit": row["context_limit"],
+                "max_output_tokens": row["max_output_tokens"],
+                "pricing": row["pricing"],
+            }
+            for row in rows
+        }
+        blocked_profile = models[
+            f"{blocked_row['provider']}/{blocked_row['model']}"
+        ]
+        blocked_reserve = cloud_sb7.budget_price(
+            blocked_profile,
+            int(blocked_profile["context_limit"]),
+            int(blocked_profile["max_output_tokens"]),
+        )
+        assert blocked_reserve is not None and blocked_reserve > 0
+        providers = {str(row["provider"]) for row in rows}
+        provider_caps = {provider: 100.0 for provider in providers}
+        provider_caps[str(blocked_row["provider"])] = blocked_reserve * 0.8
+        total_cap = sum(provider_caps.values()) + 100.0
+        config = {
+            "schema_version": 1,
+            "currency": "USD",
+            "total_cap": total_cap,
+            "provider_caps": provider_caps,
+            "models": models,
+        }
+        campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+        config_path = Path(str(campaign["budget_config"]))
+        cloud_sb7.atomic_json(config_path, config)
+        ledger_path = Path(str(campaign["budget_ledger"]))
+        cloud_sb7.atomic_json(
+            ledger_path,
+            {
+                "schema_version": 1,
+                "currency": "USD",
+                "total_cap": total_cap,
+                "provider_caps": provider_caps,
+                "spent_upper_bound": 0.0,
+                "provider_spent_upper_bound": {
+                    provider: 0.0 for provider in provider_caps
+                },
+                "outstanding": {},
+                "settled": [],
+                "updated_at": "fixture-budget-contract",
+            },
+        )
+        coordinator = cloud_sb7.campaign_instrument_path(
+            campaign, cloud_sb7.COORDINATOR_INSTRUMENT_PATH
+        )
+        coordinator.parent.mkdir(parents=True, exist_ok=True)
+        coordinator.write_text("# source coordinator\n")
+        instrument_hashes = dict(campaign["instrument_hashes"])
+        instrument_hashes[cloud_sb7.COORDINATOR_INSTRUMENT_PATH] = (
+            cloud_sb7.sha256_file(coordinator)
+        )
+        campaign.update(
+            {
+                "lineage": lineage,
+                "budget_config_sha256": cloud_sb7.sha256_file(config_path),
+                "instrument_hashes": instrument_hashes,
+                "instrument_set_sha256": cloud_sb7.sha256_bytes(
+                    json.dumps(instrument_hashes, sort_keys=True).encode()
+                ),
+                "coordinator": str(coordinator),
+            }
+        )
+        campaign = cloud_sb7.bind_smoke_contract(campaign, rows)
+        cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
+        for row in rows:
+            entrant_id = str(row["id"])
+            cloud_sb7.update_smoke_state(
+                root,
+                entrant_id,
+                smoke_contract_sha256=campaign["smoke_contract_sha256"],
+                budget_settled_baseline_request_ids=campaign[
+                    "smoke_budget_settled_baselines"
+                ][entrant_id],
+                budget_outstanding_baseline_request_ids=campaign[
+                    "smoke_budget_outstanding_baselines"
+                ][entrant_id],
+                budget_config_sha256=campaign["budget_config_sha256"],
+            )
+
+    def normalize_mixed_smoke_budget_ledger(
+        self, root: Path, rows: list[dict[str, object]]
+    ) -> None:
+        campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+        config = cloud_sb7.load_json(Path(str(campaign["budget_config"])))
+        ledger_path = Path(str(campaign["budget_ledger"]))
+        ledger = cloud_sb7.load_json(ledger_path)
+        normalized = []
+        for index, settlement in enumerate(ledger["settled"], start=1):
+            profile = cloud_sb7.budget_model_profile(
+                config,
+                str(settlement["provider"]),
+                str(settlement["model"]),
+            )
+            assert profile is not None
+            charged = cloud_sb7.budget_price(profile, 2, 3)
+            reserved = cloud_sb7.budget_price(
+                profile,
+                int(profile["context_limit"]),
+                int(profile["max_output_tokens"]),
+            )
+            assert charged is not None and reserved is not None
+            normalized.append(
+                {
+                    **settlement,
+                    "reported_model": settlement["model"],
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                    "charged_upper_bound_usd": charged,
+                    "reserved_usd": reserved,
+                    "settled_at_unix_ms": index,
+                }
+            )
+        provider_spent = {provider: 0.0 for provider in ledger["provider_caps"]}
+        for settlement in normalized:
+            provider_spent[str(settlement["provider"])] += float(
+                settlement["charged_upper_bound_usd"]
+            )
+        ledger.update(
+            {
+                "settled": normalized,
+                "provider_spent_upper_bound": provider_spent,
+                "spent_upper_bound": sum(provider_spent.values()),
+                "updated_at": "fixture-budget-normalized",
+            }
+        )
+        cloud_sb7.atomic_json(ledger_path, ledger)
+
+    def make_mixed_smoke_recovery_fixture(
+        self, root: Path
+    ) -> dict[str, object]:
+        root = root.resolve()
+        predecessor = root / "predecessor"
+        successor = root / "successor"
+        predecessor_rows = self.make_smoke_campaign(predecessor)
+        carried_id = str(predecessor_rows[-1]["id"])
+        self.install_mixed_smoke_budget_contract(
+            predecessor,
+            predecessor_rows,
+            lineage={
+                "generation": 0,
+                "predecessor_campaign_id": None,
+                "predecessor_contract_sha256": None,
+            },
+            blocked_entrant=carried_id,
+        )
+        predecessor_proofs = {}
+        for row in predecessor_rows:
+            state = self.complete_smoke_attempt(predecessor, row)
+            predecessor_proofs[str(row["id"])] = state["proof_sha256"]
+        self.normalize_mixed_smoke_budget_ledger(predecessor, predecessor_rows)
+        predecessor_raw = {
+            str(row["id"]): cloud_sb7.sha256_tree_exact(
+                predecessor / "entrants" / str(row["id"]) / "tree"
+            )
+            for row in predecessor_rows
+        }
+        cloud_sb7.update_campaign(
+            predecessor,
+            smoke_status="PASS",
+            smoke_proof_sha256=predecessor_proofs,
+            smoke_raw_tree_sha256_before=predecessor_raw,
+            smoke_raw_tree_sha256_after=predecessor_raw,
+        )
+        cloud_sb7.require_smoke_proofs(predecessor)
+        predecessor_campaign = cloud_sb7.load_json(
+            cloud_sb7.campaign_file(predecessor)
+        )
+
+        successor_rows = self.make_smoke_campaign(successor)
+        self.install_mixed_smoke_budget_contract(
+            successor,
+            successor_rows,
+            lineage={
+                "generation": 1,
+                "predecessor_campaign_id": predecessor_campaign["campaign_id"],
+                "predecessor_contract_sha256": predecessor_campaign[
+                    "smoke_contract_sha256"
+                ],
+            },
+            blocked_entrant=carried_id,
+        )
+        successor_campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(successor))
+        fresh_ids = [str(row["id"]) for row in successor_rows[:-1]]
+        (successor / "lineage").mkdir()
+        lineage = {
+            "predecessor_root": str(predecessor),
+            "predecessor_campaign_id": predecessor_campaign["campaign_id"],
+            "predecessor_smoke_contract_sha256": predecessor_campaign[
+                "smoke_contract_sha256"
+            ],
+            "successor_root": str(successor),
+            "successor_smoke_contract_sha256": successor_campaign[
+                "smoke_contract_sha256"
+            ],
+            "affected_entrants": [],
+            "unstarted_entrants": fresh_ids,
+            "carried_entrants": [carried_id],
+            "predecessor_episode_attempts": {
+                str(row["id"]): 0 for row in successor_rows
+            },
+        }
+        cloud_sb7.atomic_json(successor / "lineage/lineage.json", lineage)
+        successor_campaign["lineage"] = {
+            **successor_campaign["lineage"],
+            "path": "lineage/lineage.json",
+            "sha256": cloud_sb7.sha256_file(successor / "lineage/lineage.json"),
+        }
+        cloud_sb7.atomic_json(
+            cloud_sb7.campaign_file(successor), successor_campaign
+        )
+
+        fresh_proofs = {}
+        for row in successor_rows[:-1]:
+            state = self.complete_smoke_attempt(successor, row)
+            fresh_proofs[str(row["id"])] = state["proof_sha256"]
+        self.normalize_mixed_smoke_budget_ledger(successor, successor_rows)
+        carried_row = successor_rows[-1]
+        smoke_state = cloud_sb7.prepare_smoke_attempt(
+            successor, carried_id, carried_row
+        )
+        reserve = cloud_sb7.provider_reserve_evidence(
+            cloud_sb7.load_json(cloud_sb7.campaign_file(successor)), carried_row
+        )["reserve_usd"]
+        Path(str(smoke_state["log"])).write_text(
+            "\n".join(
+                map(
+                    json.dumps,
+                    [
+                        {
+                            "type": "message",
+                            "message": {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "systemNotification",
+                                        "notificationType": "creditsExhausted",
+                                    }
+                                ],
+                            },
+                        },
+                        {"type": "complete", "total_tokens": 0},
+                    ],
+                )
+            )
+            + "\n"
+        )
+        cli_logs = Path(str(smoke_state["attempt_root"])) / "profile/state/logs/cli"
+        cli_logs.mkdir(parents=True)
+        (cli_logs / "fixture.log").write_text(
+            f"benchmark reserve ${float(reserve):.6f} for "
+            f"{carried_row['provider']}/{carried_row['model']} does not fit "
+            "remaining campaign/provider envelope\n"
+        )
+        self.assertFalse(
+            cloud_sb7.finalize_smoke_attempt(
+                successor,
+                carried_id,
+                exit_code=1,
+                descendants_clean=True,
+            )
+        )
+        cloud_sb7.update_state(
+            successor,
+            carried_id,
+            status="BUILD_COMPLETE",
+            score=0.3844,
+            lineage_role="carried_success",
+        )
+        raw_hashes = {
+            str(row["id"]): cloud_sb7.sha256_tree_exact(
+                successor / "entrants" / str(row["id"]) / "tree"
+            )
+            for row in successor_rows
+        }
+        cloud_sb7.update_campaign(
+            successor,
+            smoke_status="ATTENTION",
+            smoke_failure="one zero-admission smoke was budget blocked",
+            smoke_proof_sha256={**fresh_proofs, carried_id: None},
+            smoke_raw_tree_sha256_before=raw_hashes,
+            smoke_raw_tree_sha256_after=raw_hashes,
+        )
+        cloud_sb7.atomic_json(
+            successor / "monitor.json", {"status": "STOPPED", "pid": None}
+        )
+        cloud_sb7.atomic_json(
+            successor / "smoke-manager.json",
+            {"status": "ATTENTION", "pid": None, "failure": "budget blocked"},
+        )
+        coordinator = root / "target-cloud-sb7.py"
+        coordinator.write_text("# target coordinator\n")
+        source_hashes = cloud_sb7.load_json(
+            cloud_sb7.campaign_file(successor)
+        )["instrument_hashes"]
+        target_hashes = {
+            **source_hashes,
+            cloud_sb7.COORDINATOR_INSTRUMENT_PATH: cloud_sb7.sha256_file(
+                coordinator
+            ),
+        }
+        return {
+            "root": successor,
+            "predecessor": predecessor,
+            "coordinator": coordinator,
+            "target_hashes": target_hashes,
+            "carried_id": carried_id,
+            "fresh_ids": fresh_ids,
+        }
+
     def make_recovery_campaign(self, root: Path, status: str) -> None:
         (root / "entrants/model/tree").mkdir(parents=True)
         (root / "scores/model").mkdir(parents=True)
@@ -1890,6 +2218,580 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 repeated["pre_smoke_instrument_repair_transition_id"],
                 repaired["pre_smoke_instrument_repair_transition_id"],
             )
+
+    def test_budget_blocked_carried_smoke_recovery_is_explicit_and_idempotent(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_mixed_smoke_recovery_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            carried_id = str(fixture["carried_id"])
+            ledger = Path(
+                str(
+                    cloud_sb7.load_json(cloud_sb7.campaign_file(root))[
+                        "budget_ledger"
+                    ]
+                )
+            )
+            ledger_before = cloud_sb7.sha256_file(ledger)
+            carried_before = cloud_sb7.sha256_file(
+                cloud_sb7.state_file(root, carried_id)
+            )
+            patches = (
+                mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+                mock.patch.object(
+                    cloud_sb7,
+                    "instrument_hashes",
+                    return_value=fixture["target_hashes"],
+                ),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(
+                    cloud_sb7, "process_group_members", return_value=[]
+                ),
+                mock.patch.object(cloud_sb7, "port_is_free", return_value=True),
+            )
+            with contextlib.ExitStack() as stack:
+                for patch in patches:
+                    stack.enter_context(patch)
+                recovered = cloud_sb7.recover_budget_blocked_carried_smoke(
+                    root,
+                    Path(str(fixture["coordinator"])),
+                    source_commit="mixed-smoke-commit",
+                    source_branch="mixed-smoke-branch",
+                )
+                repeated = cloud_sb7.recover_budget_blocked_carried_smoke(
+                    root,
+                    Path(str(fixture["coordinator"])),
+                    source_commit="mixed-smoke-commit",
+                    source_branch="mixed-smoke-branch",
+                )
+
+            self.assertEqual(
+                recovered["smoke_status"],
+                cloud_sb7.BUDGET_BLOCKED_CARRIED_SMOKE_STATUS,
+            )
+            self.assertEqual(
+                recovered["budget_blocked_carried_smoke_transition_id"],
+                repeated["budget_blocked_carried_smoke_transition_id"],
+            )
+            self.assertEqual(cloud_sb7.sha256_file(ledger), ledger_before)
+            self.assertEqual(
+                cloud_sb7.sha256_file(cloud_sb7.state_file(root, carried_id)),
+                carried_before,
+            )
+            self.assertIsNone(
+                cloud_sb7.budget_blocked_carried_smoke_failure(root, recovered)
+            )
+            cloud_sb7.require_smoke_proofs(root)
+            self.assertIn(
+                "predecessor-carried, not fresh",
+                cloud_sb7.carried_smoke_public_provenance(
+                    recovered, carried_id
+                )
+                or "",
+            )
+            for entrant_id in fixture["fresh_ids"]:
+                self.assertIsNone(
+                    cloud_sb7.carried_smoke_public_provenance(
+                        recovered, str(entrant_id)
+                    )
+                )
+
+    def test_budget_blocked_carried_smoke_rejects_identity_activity_and_artifact_drift(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_mixed_smoke_recovery_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            carried_id = str(fixture["carried_id"])
+            with (
+                mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+                mock.patch.object(
+                    cloud_sb7,
+                    "instrument_hashes",
+                    return_value=fixture["target_hashes"],
+                ),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(
+                    cloud_sb7, "process_group_members", return_value=[]
+                ),
+                mock.patch.object(cloud_sb7, "port_is_free", return_value=True),
+            ):
+                campaign = cloud_sb7.recover_budget_blocked_carried_smoke(
+                    root,
+                    Path(str(fixture["coordinator"])),
+                    source_commit="mixed-smoke-commit",
+                    source_branch="mixed-smoke-branch",
+                )
+            self.assertIsNone(
+                cloud_sb7.budget_blocked_carried_smoke_failure(root, campaign)
+            )
+
+            def rejects_file_change(path: Path, replacement: bytes) -> None:
+                original = path.read_bytes()
+                path.write_bytes(replacement)
+                try:
+                    self.assertIsNotNone(
+                        cloud_sb7.budget_blocked_carried_smoke_failure(
+                            root,
+                            cloud_sb7.load_json(cloud_sb7.campaign_file(root)),
+                        )
+                    )
+                finally:
+                    path.write_bytes(original)
+                self.assertIsNone(
+                    cloud_sb7.budget_blocked_carried_smoke_failure(
+                        root,
+                        cloud_sb7.load_json(cloud_sb7.campaign_file(root)),
+                    )
+                )
+
+            state_path = cloud_sb7.state_file(root, carried_id)
+            state = cloud_sb7.load_json(state_path)
+            rejected_state = {**state, "status": "PLANNED"}
+            rejects_file_change(
+                state_path,
+                (json.dumps(rejected_state, indent=2, sort_keys=True) + "\n").encode(),
+            )
+
+            attempt_log = (
+                root
+                / "smoke"
+                / carried_id
+                / "attempts"
+                / "attempt-1"
+                / "logs/smoke.log"
+            )
+            rejects_file_change(attempt_log, attempt_log.read_bytes() + b"drift\n")
+
+            predecessor = Path(str(fixture["predecessor"]))
+            predecessor_campaign_path = cloud_sb7.campaign_file(predecessor)
+            original_predecessor_campaign = cloud_sb7.load_json(
+                predecessor_campaign_path
+            )
+            for field, replacement in (
+                ("binary_sha256", "0" * 64),
+                ("entrant_manifest_sha256", "1" * 64),
+                ("budget_config_sha256", "2" * 64),
+                ("smoke_max_turns", 999),
+            ):
+                predecessor_campaign = {
+                    **original_predecessor_campaign,
+                    field: replacement,
+                }
+                rejects_file_change(
+                    predecessor_campaign_path,
+                    (
+                        json.dumps(
+                            predecessor_campaign,
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    ).encode(),
+                )
+
+            predecessor_manifest_path = Path(
+                str(original_predecessor_campaign["entrant_manifest"])
+            )
+            original_predecessor_manifest = cloud_sb7.load_json(
+                predecessor_manifest_path
+            )
+            for field in ("provider", "model"):
+                predecessor_manifest = json.loads(
+                    json.dumps(original_predecessor_manifest)
+                )
+                carried_row_record = next(
+                    row
+                    for row in predecessor_manifest["entrants"]
+                    if row["id"] == carried_id
+                )
+                carried_row_record[field] = f"cross-entrant-{field}"
+                rejects_file_change(
+                    predecessor_manifest_path,
+                    (
+                        json.dumps(
+                            predecessor_manifest,
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    ).encode(),
+                )
+
+            predecessor_state = cloud_sb7.read_smoke_state(
+                predecessor, carried_id
+            )
+            predecessor_proof = Path(str(predecessor_state["proof"]))
+            rejects_file_change(
+                predecessor_proof, predecessor_proof.read_bytes() + b"drift\n"
+            )
+
+            other_predecessor_state = cloud_sb7.read_smoke_state(
+                predecessor, str(fixture["fresh_ids"][0])
+            )
+            predecessor_state_path = cloud_sb7.smoke_state_file(
+                predecessor, carried_id
+            )
+            cross_entrant_state = {
+                **predecessor_state,
+                "proof": other_predecessor_state["proof"],
+                "proof_sha256": other_predecessor_state["proof_sha256"],
+            }
+            rejects_file_change(
+                predecessor_state_path,
+                (
+                    json.dumps(cross_entrant_state, indent=2, sort_keys=True)
+                    + "\n"
+                ).encode(),
+            )
+
+            carried_smoke_state = cloud_sb7.read_smoke_state(root, carried_id)
+            lifecycle_path = Path(str(carried_smoke_state["provider_lifecycle"]))
+            admission_event = {
+                "schema_version": 1,
+                "timestamp": "now",
+                "request_id": "unexpected-current-admission",
+                "provider": cloud_sb7.manifest_row(root, carried_id)["provider"],
+                "model": cloud_sb7.manifest_row(root, carried_id)["model"],
+                "session": "unexpected-current-admission",
+                "state": "admitted",
+            }
+            rejects_file_change(
+                lifecycle_path,
+                lifecycle_path.read_bytes()
+                + (json.dumps(admission_event) + "\n").encode(),
+            )
+
+            linked_log = attempt_log.with_name("smoke-linked.log")
+            attempt_log.rename(linked_log)
+            attempt_log.symlink_to(linked_log.name)
+            try:
+                self.assertIsNotNone(
+                    cloud_sb7.budget_blocked_carried_smoke_failure(
+                        root,
+                        cloud_sb7.load_json(cloud_sb7.campaign_file(root)),
+                    )
+                )
+            finally:
+                attempt_log.unlink()
+                linked_log.rename(attempt_log)
+            self.assertIsNone(
+                cloud_sb7.budget_blocked_carried_smoke_failure(
+                    root,
+                    cloud_sb7.load_json(cloud_sb7.campaign_file(root)),
+                )
+            )
+
+            current_campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            ledger_path = Path(str(current_campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            carried_row = cloud_sb7.manifest_row(root, carried_id)
+            ledger["outstanding"]["unexpected-current-reserve"] = {
+                "request_id": "unexpected-current-reserve",
+                "provider": carried_row["provider"],
+                "model": carried_row["model"],
+                "reserved_usd": 0.000001,
+                "input_reserve_tokens": 1,
+                "output_reserve_tokens": 1,
+                "created_at_unix_ms": 999,
+            }
+            rejects_file_change(
+                ledger_path,
+                (json.dumps(ledger, indent=2, sort_keys=True) + "\n").encode(),
+            )
+
+            settled_ledger = cloud_sb7.load_json(ledger_path)
+            config = cloud_sb7.load_json(
+                Path(str(current_campaign["budget_config"]))
+            )
+            profile = cloud_sb7.budget_model_profile(
+                config,
+                str(carried_row["provider"]),
+                str(carried_row["model"]),
+            )
+            self.assertIsNotNone(profile)
+            assert profile is not None
+            charged = cloud_sb7.budget_price(profile, 1, 1)
+            reserved = cloud_sb7.budget_price(
+                profile,
+                int(profile["context_limit"]),
+                int(profile["max_output_tokens"]),
+            )
+            self.assertIsNotNone(charged)
+            self.assertIsNotNone(reserved)
+            assert charged is not None and reserved is not None
+            settled_ledger["settled"].append(
+                {
+                    "request_id": "unexpected-current-settlement",
+                    "provider": carried_row["provider"],
+                    "model": carried_row["model"],
+                    "reported_model": carried_row["model"],
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                    "charged_upper_bound_usd": charged,
+                    "reserved_usd": reserved,
+                    "settled_at_unix_ms": 999,
+                }
+            )
+            settled_ledger["provider_spent_upper_bound"][
+                carried_row["provider"]
+            ] += charged
+            settled_ledger["spent_upper_bound"] += charged
+            rejects_file_change(
+                ledger_path,
+                (
+                    json.dumps(settled_ledger, indent=2, sort_keys=True) + "\n"
+                ).encode(),
+            )
+
+            non_carried_state = {
+                **cloud_sb7.load_json(state_path),
+                "lineage_role": "infrastructure_defect_restart",
+            }
+            rejects_file_change(
+                state_path,
+                (
+                    json.dumps(non_carried_state, indent=2, sort_keys=True) + "\n"
+                ).encode(),
+            )
+
+            real_reserve_evidence = cloud_sb7.provider_reserve_evidence
+
+            def fitted_reserve(
+                candidate_campaign: dict[str, object],
+                row: dict[str, object],
+                *,
+                ledger_override: dict[str, object] | None = None,
+            ) -> dict[str, object]:
+                evidence = real_reserve_evidence(
+                    candidate_campaign,
+                    row,
+                    ledger_override=ledger_override,
+                )
+                if ledger_override is None:
+                    evidence = {**evidence, "blocked_by": []}
+                return evidence
+
+            with mock.patch.object(
+                cloud_sb7,
+                "provider_reserve_evidence",
+                side_effect=fitted_reserve,
+            ):
+                self.assertIn(
+                    "reserve now fits",
+                    cloud_sb7.budget_blocked_carried_smoke_failure(
+                        root,
+                        cloud_sb7.load_json(cloud_sb7.campaign_file(root)),
+                    )
+                    or "",
+                )
+
+            application = (
+                root
+                / cloud_sb7.BUDGET_BLOCKED_CARRIED_SMOKE_PATH
+                / cloud_sb7.BUDGET_BLOCKED_CARRIED_SMOKE_APPLICATION
+            )
+            original_application = application.read_bytes()
+            application.unlink()
+            try:
+                self.assertIn(
+                    "application",
+                    cloud_sb7.budget_blocked_carried_smoke_failure(
+                        root,
+                        cloud_sb7.load_json(cloud_sb7.campaign_file(root)),
+                    )
+                    or "",
+                )
+            finally:
+                application.write_bytes(original_application)
+
+    def test_budget_blocked_carried_smoke_rejects_unrecorded_partial_transition(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_mixed_smoke_recovery_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            coordinator_source = Path(str(fixture["coordinator"]))
+            patches = (
+                mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+                mock.patch.object(
+                    cloud_sb7,
+                    "instrument_hashes",
+                    return_value=fixture["target_hashes"],
+                ),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(
+                    cloud_sb7, "process_group_members", return_value=[]
+                ),
+                mock.patch.object(cloud_sb7, "port_is_free", return_value=True),
+                mock.patch.object(
+                    cloud_sb7,
+                    "apply_budget_blocked_carried_smoke",
+                    side_effect=SystemExit("simulated transition crash"),
+                ),
+            )
+            with contextlib.ExitStack() as stack:
+                for patch in patches:
+                    stack.enter_context(patch)
+                with self.assertRaisesRegex(SystemExit, "simulated transition crash"):
+                    cloud_sb7.recover_budget_blocked_carried_smoke(
+                        root,
+                        coordinator_source,
+                        source_commit="mixed-smoke-commit",
+                        source_branch="mixed-smoke-branch",
+                    )
+
+            bundle = root / cloud_sb7.BUDGET_BLOCKED_CARRIED_SMOKE_PATH
+            receipt = cloud_sb7.load_json(bundle / "receipt.json")
+            source_campaign = cloud_sb7.load_json(bundle / "source-campaign.json")
+            frozen_coordinator = cloud_sb7.campaign_instrument_path(
+                source_campaign,
+                cloud_sb7.COORDINATOR_INSTRUMENT_PATH,
+            )
+            original_coordinator = frozen_coordinator.read_bytes()
+            cloud_sb7.atomic_copy(coordinator_source, frozen_coordinator, 0o600)
+            try:
+                with self.assertRaisesRegex(
+                    SystemExit, "changed before its application record"
+                ):
+                    cloud_sb7.apply_budget_blocked_carried_smoke(
+                        root,
+                        bundle,
+                        coordinator_source,
+                    )
+            finally:
+                frozen_coordinator.write_bytes(original_coordinator)
+
+            application = cloud_sb7.budget_blocked_carried_smoke_application(
+                bundle,
+                receipt,
+            )
+            cloud_sb7.atomic_json(
+                bundle / cloud_sb7.BUDGET_BLOCKED_CARRIED_SMOKE_APPLICATION,
+                application,
+            )
+            cloud_sb7.atomic_copy(coordinator_source, frozen_coordinator, 0o600)
+            with (
+                mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(
+                    cloud_sb7, "process_group_members", return_value=[]
+                ),
+                mock.patch.object(cloud_sb7, "port_is_free", return_value=True),
+            ):
+                recovered = cloud_sb7.apply_budget_blocked_carried_smoke(
+                    root,
+                    bundle,
+                    coordinator_source,
+                )
+            self.assertEqual(
+                recovered["smoke_status"],
+                cloud_sb7.BUDGET_BLOCKED_CARRIED_SMOKE_STATUS,
+            )
+            cloud_sb7.require_smoke_proofs(root)
+
+    def test_carried_smoke_publication_adds_exact_non_fresh_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_mixed_smoke_recovery_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            carried_id = str(fixture["carried_id"])
+            with (
+                mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+                mock.patch.object(
+                    cloud_sb7,
+                    "instrument_hashes",
+                    return_value=fixture["target_hashes"],
+                ),
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(
+                    cloud_sb7, "process_group_members", return_value=[]
+                ),
+                mock.patch.object(cloud_sb7, "port_is_free", return_value=True),
+            ):
+                campaign = cloud_sb7.recover_budget_blocked_carried_smoke(
+                    root,
+                    Path(str(fixture["coordinator"])),
+                    source_commit="mixed-smoke-commit",
+                    source_branch="mixed-smoke-branch",
+                )
+            provenance = cloud_sb7.carried_smoke_public_provenance(
+                campaign, carried_id
+            )
+            self.assertIsNotNone(provenance)
+            entry = {
+                "key": carried_id,
+                "doc_id": "brun-baseline-carried-sb70",
+            }
+            before = {
+                "_id": entry["doc_id"],
+                "_rev": "revision-before",
+                "notes": "Frozen SB7 benchmark evidence.",
+            }
+            after = {
+                **before,
+                "_rev": "revision-after",
+                "notes": f"{before['notes']}\n\n{provenance}",
+            }
+
+            class MutationResponse:
+                status = 200
+
+                def __init__(self) -> None:
+                    self.stream = io.BytesIO(b'{"transactionId":"tx-1"}')
+
+                def __enter__(self) -> MutationResponse:
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    return None
+
+                def getcode(self) -> int:
+                    return self.status
+
+                def read1(self, size: int) -> bytes:
+                    return self.stream.read(size)
+
+            with (
+                mock.patch.object(
+                    cloud_sb7,
+                    "pinned_publisher_env_values",
+                    return_value={
+                        "SANITY_WRITE_TOKEN": "fixture-write-token",
+                        "NEXT_PUBLIC_SANITY_PROJECT_ID": "fixture-project",
+                        "NEXT_PUBLIC_SANITY_DATASET": "production",
+                    },
+                ),
+                mock.patch.object(
+                    cloud_sb7, "sanity_document", side_effect=[before, after]
+                ),
+                mock.patch.object(
+                    cloud_sb7.urllib.request,
+                    "urlopen",
+                    return_value=MutationResponse(),
+                ) as mutation,
+            ):
+                receipt = cloud_sb7.ensure_carried_smoke_public_provenance(
+                    campaign, entry
+                )
+            self.assertEqual(receipt["transaction_id"], "tx-1")
+            self.assertFalse(receipt["already_present"])
+            request = mutation.call_args.args[0]
+            payload = json.loads(request.data)
+            self.assertEqual(
+                payload["mutations"][0]["patch"]["set"]["notes"],
+                after["notes"],
+            )
+            self.assertIn("predecessor-carried, not fresh", after["notes"])
 
     def test_supersession_is_idempotent_and_rejects_forks_and_second_hops(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
