@@ -28,19 +28,20 @@ pub use broker::{
     PhysicalExecutionAuthority, PhysicalFleetSnapshot, PhysicalHostOccupancy,
     ProviderNotStartedReceipt, ProviderRequestDisposition, ProviderRequestKey,
     ProviderRequestQueueReceipt, ProviderRequestReceipt, ProviderStartsClosure,
-    ProviderTerminalKind, ProviderTerminalReceipt, QueueReceipt, ReleasedAdmissionReceipt,
-    RevokedAdmissionReceipt, SourceRevisionKind, StaleWorkReceipt, TaskVersion,
-    UnresolvedAdmissionReceipt, VerifiedPhysicalIdentity, VerifiedPhysicalLane,
+    ProviderTerminalKind, ProviderTerminalReceipt, QuarantinedAdmissionReceipt, QueueReceipt,
+    ReleasedAdmissionReceipt, RevokedAdmissionReceipt, SourceRevisionKind, StaleWorkReceipt,
+    TaskVersion, UnresolvedAdmissionReceipt, VerifiedPhysicalIdentity, VerifiedPhysicalLane,
     WithdrawnWorkReceipt, WorkOpportunity, WorkPriority, WorkRole,
 };
 pub use coherence::{extract_signatures, scope_contract_bundle, SigLang};
 pub use context::SharedContext;
 pub use control_plane::{
-    AdmittedWork, CompletedAdmission, PhysicalAdmissionControl, ProviderLifecycle,
-    ProviderLifecycleDispatcher, ProviderLifecycleJournal, ProviderLifecycleOperationError,
-    ProviderLifecycleStartError, ProviderLifecycleTransitionError, ProviderNudgeDelivery,
-    ProviderNudgeDeliveryReceipt, ProviderStartKey, ProviderStartLookupError,
-    ProviderStartRegistry, ProviderStartSession, StartedProviderRequest,
+    AdmittedWork, CapturedProviderRequest, CompletedAdmission, CompletedProviderRequest,
+    PhysicalAdmissionControl, ProviderLifecycle, ProviderLifecycleDispatcher,
+    ProviderLifecycleJournal, ProviderLifecycleOperationError, ProviderLifecycleStartError,
+    ProviderLifecycleTransitionError, ProviderNudgeDelivery, ProviderNudgeDeliveryReceipt,
+    ProviderNudgeSafetyGate, ProviderStartKey, ProviderStartLookupError, ProviderStartRegistry,
+    ProviderStartSession, StartedProviderRequest,
 };
 pub use dag::{
     expand_subsplits, extract_subsplit, fill_fan_enabled, specs_from_plan_json, Dag, Difficulty,
