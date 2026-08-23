@@ -57,6 +57,8 @@ impl From<WorkPriority> for LeaseWorkPriority {
 pub enum LeaseWorkRole {
     Build,
     Repair,
+    ResearchEvidence,
+    PlanningAuthority,
     RuntimeAcceptanceReview,
     CompletedArtifactReview,
     SemanticJudgeObservation,
@@ -69,6 +71,8 @@ impl From<WorkRole> for LeaseWorkRole {
         match value {
             WorkRole::Build => Self::Build,
             WorkRole::Repair => Self::Repair,
+            WorkRole::ResearchEvidence => Self::ResearchEvidence,
+            WorkRole::PlanningAuthority => Self::PlanningAuthority,
             WorkRole::RuntimeAcceptanceReview => Self::RuntimeAcceptanceReview,
             WorkRole::CompletedArtifactReview => Self::CompletedArtifactReview,
             WorkRole::SemanticJudgeObservation => Self::SemanticJudgeObservation,
