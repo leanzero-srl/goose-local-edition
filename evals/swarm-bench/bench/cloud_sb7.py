@@ -217,8 +217,8 @@ PUBLISHER_FILES = (
 )
 PUBLISHER_RUNTIME_PACKAGES = ("@sanity/client", "dotenv")
 PUBLISHER_REQUIRED_ENV = ("SANITY_WRITE_TOKEN", "NEXT_PUBLIC_SANITY_PROJECT_ID")
-PUBLISHER_PUBLIC_IDENTITY_PREFIX = "GOOSE_SB7_PUBLIC_IDENTITY "
-PUBLISHER_PUBLIC_IDENTITY_RECEIPT_SCHEMA = 1
+PUBLIC_SB7_SCORER_VERSION = "sb-7.0"
+PUBLISHER_PUBLIC_IDENTITY_RECEIPT_SCHEMA = 2
 DEFAULT_WEBSITE_BASE_URL = "https://leanzero.net"
 DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS = 900.0
 DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS = 15.0
@@ -15800,11 +15800,13 @@ def run_publisher(
     state = read_state(root, entrant_id)
     if live:
         verdict = load_json(runs / f"{entrant_id}.json")
+        document_id = publish_entry(campaign, entrant_id)["doc_id"]
         identity_failure = publisher_public_identity_receipt_failure(
             state.get("publisher_identity_receipt"),
             verdict,
             campaign,
             state.get("publisher_dry_run"),
+            document_id,
         )
         if identity_failure:
             raise PublicationError(
@@ -16049,9 +16051,12 @@ def public_publication_identity(
             "raw hermetic scorer, calibration, and provisional identity are inconsistent"
         )
     return {
-        "scorer_version": raw_scorer,
-        "calibration": raw_calibration,
-        "provisional": provisional,
+        "raw_scorer_version": raw_scorer,
+        "raw_calibration": raw_calibration,
+        "raw_provisional": provisional,
+        "public_scorer_version": PUBLIC_SB7_SCORER_VERSION,
+        "public_calibration_published": False,
+        "public_provisional_published": False,
     }
 
 
@@ -16068,37 +16073,45 @@ def raw_publication_identity_sha256(verdict: Mapping[str, Any]) -> str:
 
 
 def publisher_public_identity_receipt_from_log(
-    log_path: Path, verdict: Mapping[str, Any], campaign: Mapping[str, Any]
+    log_path: Path,
+    verdict: Mapping[str, Any],
+    campaign: Mapping[str, Any],
+    document_id: str,
 ) -> Dict[str, Any]:
     if log_path.is_symlink() or not log_path.is_file():
         raise PublicationError("publisher dry-run identity log is missing or linked")
     expected = public_publication_identity(campaign, verdict)
-    markers = [
-        raw[len(PUBLISHER_PUBLIC_IDENTITY_PREFIX) :]
-        for raw in log_path.read_text(errors="replace").splitlines()
-        if raw.startswith(PUBLISHER_PUBLIC_IDENTITY_PREFIX)
+    lines = log_path.read_text(errors="replace").splitlines()
+    raw_identity_line = (
+        f"  scorer {expected['raw_scorer_version']} · "
+        f"calibration {expected['raw_calibration']}"
+    )
+    raw_matches = [line for line in lines if line == raw_identity_line]
+    document_pattern = re.compile(
+        r"^  document ([a-z0-9-]+) · scorerVersion ([^ ]+) · "
+        r"([0-9]+) shot\(s\)$"
+    )
+    document_matches = [
+        match
+        for line in lines
+        if (match := document_pattern.fullmatch(line)) is not None
     ]
-    if len(markers) != 1:
+    if len(raw_matches) != 1 or len(document_matches) != 1:
         raise PublicationError(
-            "publisher dry-run cannot prove one exact public scorer/calibration identity"
+            "publisher dry-run cannot prove one exact raw-to-public scorer identity"
         )
-    try:
-        observed = json.loads(markers[0])
-    except json.JSONDecodeError:
+    document_match = document_matches[0]
+    if (
+        document_match.group(1) != document_id
+        or document_match.group(2) != expected["public_scorer_version"]
+    ):
         raise PublicationError(
-            "publisher dry-run public identity receipt is invalid JSON"
-        ) from None
-    if not isinstance(observed, dict) or set(observed) != set(expected):
-        raise PublicationError(
-            "publisher public schema cannot represent the exact scorer identity"
-        )
-    if not same_public_identity(observed, expected):
-        raise PublicationError(
-            "publisher would conceal or alter scorer, calibration, or provisional truth"
+            "publisher dry-run altered the authorized stable SB7 document identity"
         )
     return {
         "schema_version": PUBLISHER_PUBLIC_IDENTITY_RECEIPT_SCHEMA,
         "identity": expected,
+        "document_id": document_id,
         "publisher_dry_run_log_sha256": sha256_file(log_path),
         "verified_at": utc_now(),
     }
@@ -16109,10 +16122,12 @@ def publisher_public_identity_receipt_failure(
     verdict: Mapping[str, Any],
     campaign: Mapping[str, Any],
     dry_run: Any,
+    document_id: str,
 ) -> str | None:
     if not isinstance(receipt, dict) or set(receipt) != {
         "schema_version",
         "identity",
+        "document_id",
         "publisher_dry_run_log_sha256",
         "verified_at",
     }:
@@ -16136,6 +16151,7 @@ def publisher_public_identity_receipt_failure(
         receipt.get("schema_version")
         != PUBLISHER_PUBLIC_IDENTITY_RECEIPT_SCHEMA
         or not same_public_identity(receipt.get("identity"), expected)
+        or receipt.get("document_id") != document_id
         or not isinstance(receipt.get("verified_at"), str)
         or not receipt.get("verified_at")
         or not monitor_progress_sha256(
@@ -16205,14 +16221,17 @@ def remote_publication_receipt(
         "label": entry["label"],
         "model": entry["model"],
         "baseline": True,
-        "scorerVersion": public["scorer_version"],
-        "calibration": public["calibration"],
-        "provisional": public["provisional"],
+        "scorerVersion": public["public_scorer_version"],
         "excellent": bool(verdict.get("excellent")),
     }
     for field, expected in exact_fields.items():
         if not same_json_scalar(document.get(field), expected):
             reasons.append(f"document field {field} differs")
+    for forbidden_field in ("calibration", "provisional"):
+        if forbidden_field in document:
+            reasons.append(
+                f"document field {forbidden_field} must be absent on the stable SB7 board"
+            )
     numeric_fields = {
         "score": verdict.get("score"),
         "tierA": verdict_tier_mean(verdict, "A"),
@@ -16575,7 +16594,7 @@ def rendered_publication_matches(
     score = float(verdict["score"])
     score_text = f"{score:.4f}"
     public = public_publication_identity(campaign, verdict)
-    scorer = str(public["scorer_version"])
+    scorer = str(public["public_scorer_version"])
     run_url = f"{website_base_url.rstrip('/')}/agentic-benchmarks/run/{entry['doc_id']}"
 
     board_parser = RenderedEvidenceParser()
@@ -16595,11 +16614,22 @@ def rendered_publication_matches(
         f"{entry['label']} — {score_text} on {scorer}",
         entry["model"],
         f"scorer {scorer}",
-        str(public["calibration"]),
-        f"provisional {str(public['provisional']).lower()}",
     ]
     expected_visible = [" ".join(value.split()) for value in expected_visible]
     missing_visible = [value for value in expected_visible if value not in run_text]
+    forbidden_visible = [
+        value
+        for value in (
+            (
+                str(public["raw_scorer_version"])
+                if public["raw_scorer_version"] != scorer
+                else ""
+            ),
+            str(public["raw_calibration"]),
+            "provisional true" if public["raw_provisional"] else "",
+        )
+        if value and value in run_text
+    ]
 
     dataset = False
     dataset_identity = False
@@ -16613,12 +16643,17 @@ def rendered_publication_matches(
         score_present = any(same_number(value, score) for value in values)
         if scorer in str(item.get("name", "")) and score_present:
             dataset = True
-            dataset_identity = all(
-                any(same_json_scalar(value, expected) for value in values)
-                for expected in (
-                    scorer,
-                    public["calibration"],
-                    public["provisional"],
+            encoded_item = json.dumps(item, sort_keys=True)
+            dataset_identity = not any(
+                forbidden and forbidden in encoded_item
+                for forbidden in (
+                    (
+                        str(public["raw_scorer_version"])
+                        if public["raw_scorer_version"] != scorer
+                        else ""
+                    ),
+                    str(public["raw_calibration"]),
+                    "provisional true" if public["raw_provisional"] else "",
                 )
             )
             if dataset_identity:
@@ -16631,17 +16666,24 @@ def rendered_publication_matches(
         reasons.append(
             f"run page lacks exact visible fields: {', '.join(missing_visible)}"
         )
+    if forbidden_visible:
+        reasons.append(
+            "run page leaked the raw hermetic identity into the stable SB7 era: "
+            + ", ".join(forbidden_visible)
+        )
     if not dataset:
         reasons.append("run Dataset JSON-LD lacks the exact URL, scorer and score")
     elif not dataset_identity:
         reasons.append(
-            "run Dataset JSON-LD lacks exact scorer, calibration, or provisional truth"
+            "run Dataset JSON-LD leaks raw RC/calibration identity into stable SB7"
         )
     return not reasons, {
         "board_item_exact": board_item,
-        "run_visible_exact": not missing_visible,
+        "run_visible_exact": not missing_visible and not forbidden_visible,
         "run_dataset_exact": dataset and dataset_identity,
-        "run_public_identity_exact": not missing_visible and dataset_identity,
+        "run_public_identity_exact": (
+            not missing_visible and not forbidden_visible and dataset_identity
+        ),
         "reasons": reasons,
     }
 
@@ -16873,6 +16915,7 @@ def publish_one(root: Path, entrant_id: str) -> bool:
                 Path(dry_run["log"]),
                 load_json(runs / f"{entrant_id}.json"),
                 campaign,
+                entry["doc_id"],
             )
             update_state(
                 root,
@@ -16890,6 +16933,7 @@ def publish_one(root: Path, entrant_id: str) -> bool:
             verdict,
             campaign,
             state.get("publisher_dry_run"),
+            entry["doc_id"],
         )
         if identity_failure:
             raise PublicationError(
