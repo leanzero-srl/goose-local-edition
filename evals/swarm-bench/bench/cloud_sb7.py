@@ -75,6 +75,11 @@ POST_BUILD_STATES = {
 }
 BUILD_SUCCESS_STATES = {"BUILD_COMPLETE"} | POST_BUILD_STATES
 CAMPAIGN_SCHEMA = 2
+SUPERSESSION_SCHEMA = 1
+SUPERSESSION_RECEIPT = "supersession-receipt.json"
+SUPERSESSION_ALLOWED_INSTRUMENT_CHANGES = {
+    "evals/swarm-bench/bench/cloud_sb7.py",
+}
 REQUIRED_BINARY_MARKERS = (
     "GOOSE_PROVIDER_LIFECYCLE_FILE",
     "GOOSE_PROVIDER_LIFECYCLE_STRICT",
@@ -152,6 +157,99 @@ def sha256_tree_exact(root: Path) -> str:
     return digest.hexdigest()
 
 
+def artifact_tree_sha256(
+    root: Path, *, excluded_relative_paths: Iterable[str] = ()
+) -> str:
+    if not root.is_dir() or root.is_symlink():
+        raise SystemExit(f"artifact tree is missing or linked: {root}")
+    excluded = set(excluded_relative_paths)
+    digest = hashlib.sha256()
+
+    def walk_failed(error: OSError) -> None:
+        raise SystemExit(f"artifact tree cannot be read: {error}")
+
+    for directory, names, files in os.walk(
+        root, followlinks=False, onerror=walk_failed
+    ):
+        names.sort()
+        files.sort()
+        base = Path(directory)
+        for name in [*names, *files]:
+            path = base / name
+            relative_text = str(path.relative_to(root))
+            if relative_text in excluded:
+                continue
+            relative = relative_text.encode()
+            digest.update(len(relative).to_bytes(8, "big"))
+            digest.update(relative)
+            if path.is_symlink():
+                digest.update(b"L")
+                target = os.readlink(path).encode()
+                digest.update(len(target).to_bytes(8, "big"))
+                digest.update(target)
+            elif path.is_dir():
+                digest.update(b"D")
+            elif path.is_file():
+                digest.update(b"F")
+                with path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            else:
+                raise SystemExit(f"artifact tree contains a special file: {path}")
+    return digest.hexdigest()
+
+
+def optional_artifact_tree_sha256(root: Path) -> str | None:
+    return artifact_tree_sha256(root) if root.is_dir() else None
+
+
+def fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def atomic_copy(source: Path, destination: Path, mode: int | None = None) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, raw = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+    try:
+        with source.open("rb") as incoming, os.fdopen(descriptor, "wb") as outgoing:
+            shutil.copyfileobj(incoming, outgoing)
+            outgoing.flush()
+            os.fsync(outgoing.fileno())
+        os.chmod(raw, mode if mode is not None else source.stat().st_mode & 0o777)
+        os.replace(raw, destination)
+        fsync_directory(destination.parent)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(raw)
+
+
+def write_exclusive_json(path: Path, value: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if path.read_bytes() != payload:
+                raise SystemExit(
+                    f"immutable receipt already exists with different content: {path}"
+                ) from None
+        fsync_directory(path.parent)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+
+
 def atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -162,21 +260,33 @@ def atomic_json(path: Path, value: Mapping[str, Any]) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(raw, path)
+        fsync_directory(path.parent)
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(raw)
 
 
 def load_json(path: Path) -> Dict[str, Any]:
-    with path.open() as stream:
-        value = json.load(stream)
+    def unique_object(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
+        value: Dict[str, Any] = {}
+        for key, nested in pairs:
+            if key in value:
+                raise ValueError(f"duplicate object key: {key}")
+            value[key] = nested
+        return value
+
+    try:
+        with path.open() as stream:
+            value = json.load(stream, object_pairs_hook=unique_object)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise SystemExit(f"invalid JSON in {path}: {error}") from None
     if not isinstance(value, dict):
         raise SystemExit(f"expected an object in {path}")
     return value
 
 
 def parse_secret_file(path: Path) -> Dict[str, str]:
-    if not path.is_file():
+    if not path.is_file() or path.is_symlink():
         raise SystemExit(f"secret file is missing: {path}")
     mode = path.stat().st_mode & 0o777
     if mode & 0o077:
@@ -1341,18 +1451,27 @@ def redacted_copy(
         on_line(line)
 
 
-def secret_occurrences(paths: Iterable[Path], secret_values: Iterable[str]) -> list[str]:
+def secret_occurrences(
+    paths: Iterable[Path],
+    secret_values: Iterable[str],
+    excluded_paths: Iterable[Path] = (),
+) -> list[str]:
     needles = [value.encode() for value in secret_values if value]
     if not needles:
         return []
     overlap = max(map(len, needles)) - 1
+    excluded = {path.resolve() for path in excluded_paths}
     hits: list[str] = []
     files: list[Path] = []
     for path in paths:
-        if path.is_file():
+        if path.is_file() and path.resolve() not in excluded:
             files.append(path)
         elif path.is_dir():
-            files.extend(candidate for candidate in path.rglob("*") if candidate.is_file())
+            files.extend(
+                candidate
+                for candidate in path.rglob("*")
+                if candidate.is_file() and candidate.resolve() not in excluded
+            )
     for path in files:
         try:
             with path.open("rb") as stream:
@@ -1366,6 +1485,16 @@ def secret_occurrences(paths: Iterable[Path], secret_values: Iterable[str]) -> l
         except OSError:
             hits.append(f"unreadable:{path}")
     return sorted(set(hits))
+
+
+def persisted_entrant_secret_hits(
+    root: Path, campaign: Mapping[str, Any], entrant_id: str
+) -> list[str]:
+    if not (root / "entrants" / entrant_id).is_dir():
+        return [f"missing:{root / 'entrants' / entrant_id}"]
+    secret_path = Path(str(campaign["secret_file"]))
+    secret_values = parse_secret_file(secret_path).values()
+    return secret_occurrences([root], secret_values, [secret_path])
 
 
 def event_from_line(line: str) -> Dict[str, Any] | None:
@@ -1418,6 +1547,32 @@ def provider_state_observer(root: Path, entrant_id: str):
     return counters, observe
 
 
+def lifecycle_usage_failure(usage: Any) -> str | None:
+    required = {
+        "reported_model",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+    }
+    if not isinstance(usage, dict) or set(usage) != required:
+        return "usage evidence does not have the exact terminal schema"
+    if not isinstance(usage["reported_model"], str) or not usage["reported_model"]:
+        return "usage evidence has no reported model identity"
+    counts = (
+        usage["input_tokens"],
+        usage["output_tokens"],
+        usage["total_tokens"],
+    )
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in counts
+    ):
+        return "usage evidence has missing, negative, or non-integral token counts"
+    if usage["input_tokens"] + usage["output_tokens"] != usage["total_tokens"]:
+        return "usage evidence has an inconsistent total token count"
+    return None
+
+
 def classify_build_exit(exit_code: int, admitted_requests: int) -> tuple[str, str | None]:
     if exit_code == 0:
         return "BUILD_COMPLETE", None
@@ -1445,6 +1600,7 @@ def lifecycle_summary(
         "transition_errors": [],
         "ambiguous_request_ids": [],
         "request_states": {},
+        "terminal_usage": {},
         "valid": True,
     }
     if not path.is_file():
@@ -1495,12 +1651,16 @@ def lifecycle_summary(
                 f"line {line_number}: malformed lifecycle event"
             )
             continue
-        if state in {"usage_reported", "provider_terminal"} and not isinstance(
-            event.get("usage"), dict
-        ):
+        usage = event.get("usage")
+        usage_problem = (
+            lifecycle_usage_failure(usage)
+            if state in {"usage_reported", "provider_terminal"}
+            else None
+        )
+        if usage_problem:
             summary["malformed_lines"] += 1
             summary["transition_errors"].append(
-                f"line {line_number}: {state} has no usage evidence"
+                f"line {line_number}: {state} {usage_problem}"
             )
             continue
         if provider != expected_provider or model != expected_model:
@@ -1513,7 +1673,7 @@ def lifecycle_summary(
 
         identity = (provider, model, session)
         request = requests.setdefault(
-            request_id, {"identity": identity, "states": []}
+            request_id, {"identity": identity, "states": [], "usage": None}
         )
         states = request["states"]
         transition_error: str | None = None
@@ -1548,6 +1708,8 @@ def lifecycle_summary(
                 transition_error = "provider_terminal occurred without admission"
             elif "usage_reported" not in states:
                 transition_error = "provider_terminal occurred without prior usage"
+            elif request["usage"] != usage:
+                transition_error = "provider_terminal usage differs from usage_reported"
         elif state == "error" and "admitted" in states:
             transition_error = "error was recorded after admission"
 
@@ -1557,10 +1719,13 @@ def lifecycle_summary(
             )
             continue
         states.append(state)
+        if state == "usage_reported":
+            request["usage"] = usage
         if state == "admitted":
             summary["admitted"] += 1
         elif state == "provider_terminal":
             summary["terminal"] += 1
+            summary["terminal_usage"][request_id] = usage
         elif state == "first_item" and summary["first_output_at"] is None:
             summary["first_output_at"] = timestamp
 
@@ -1625,6 +1790,1502 @@ def entrant_outstanding_reservations(
     return sorted(request_ids), None
 
 
+def remap_paths(value: Any, source: Path, destination: Path) -> Any:
+    source_text = str(source.resolve())
+    destination_text = str(destination.resolve())
+    if isinstance(value, dict):
+        return {
+            key: remap_paths(nested, source, destination)
+            for key, nested in value.items()
+        }
+    if isinstance(value, list):
+        return [remap_paths(nested, source, destination) for nested in value]
+    if isinstance(value, str) and (
+        value == source_text or value.startswith(f"{source_text}{os.sep}")
+    ):
+        return destination_text + value[len(source_text) :]
+    return value
+
+
+def budget_model_profile(
+    config: Mapping[str, Any], provider: str, model: str
+) -> Mapping[str, Any] | None:
+    models = config.get("models")
+    if not isinstance(models, dict):
+        return None
+    profile = models.get(f"{provider}/{model}")
+    if (
+        not isinstance(profile, dict)
+        or profile.get("provider") != provider
+        or profile.get("model") != model
+    ):
+        return None
+    return profile
+
+
+def budget_price(
+    profile: Mapping[str, Any], input_tokens: int, output_tokens: int
+) -> float | None:
+    pricing = profile.get("pricing")
+    if not isinstance(pricing, dict):
+        return None
+    input_rate = pricing.get("input_per_million")
+    output_rate = pricing.get("output_per_million")
+    threshold = pricing.get("tier_threshold_tokens")
+    if threshold is not None and (
+        isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 0
+    ):
+        return None
+    if threshold is not None and input_tokens > threshold:
+        input_rate = pricing.get("input_over_threshold_per_million", input_rate)
+        output_rate = pricing.get("output_over_threshold_per_million", output_rate)
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) < 0
+        for value in (input_rate, output_rate)
+    ):
+        return None
+    return (
+        input_tokens * float(input_rate) + output_tokens * float(output_rate)
+    ) / 1_000_000
+
+
+def money_equal(left: float, right: float) -> bool:
+    return abs(left - right) <= max(1e-9, max(abs(left), abs(right)) * 1e-12)
+
+
+def budget_ledger_failure(
+    ledger: Mapping[str, Any], config: Mapping[str, Any] | None = None
+) -> str | None:
+    required = {
+        "schema_version",
+        "currency",
+        "total_cap",
+        "provider_caps",
+        "spent_upper_bound",
+        "provider_spent_upper_bound",
+        "outstanding",
+        "settled",
+        "updated_at",
+    }
+    if not required.issubset(ledger):
+        return "budget ledger is missing required fields"
+    if ledger.get("schema_version") != 1:
+        return "budget ledger schema is not supported"
+    if not isinstance(ledger.get("currency"), str) or not ledger["currency"]:
+        return "budget ledger currency is malformed"
+    if not isinstance(ledger.get("updated_at"), str) or not ledger["updated_at"]:
+        return "budget ledger update timestamp is malformed"
+    provider_caps = ledger.get("provider_caps")
+    provider_spent = ledger.get("provider_spent_upper_bound")
+    outstanding = ledger.get("outstanding")
+    settled = ledger.get("settled")
+    if (
+        not isinstance(provider_caps, dict)
+        or not isinstance(provider_spent, dict)
+        or not isinstance(outstanding, dict)
+        or not isinstance(settled, list)
+    ):
+        return "budget ledger collections are malformed"
+
+    money = [ledger.get("total_cap"), ledger.get("spent_upper_bound")]
+    money.extend(provider_caps.values())
+    money.extend(provider_spent.values())
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) < 0
+        for value in money
+    ):
+        return "budget ledger contains invalid monetary values"
+    if set(provider_caps) != set(provider_spent):
+        return "budget ledger provider totals differ from its caps"
+    if config is not None:
+        config_total = config.get("total_cap")
+        if (
+            config.get("schema_version") != 1
+            or ledger.get("currency") != config.get("currency")
+            or isinstance(config_total, bool)
+            or not isinstance(config_total, (int, float))
+            or not money_equal(float(ledger["total_cap"]), float(config_total))
+            or provider_caps != config.get("provider_caps")
+            or not isinstance(config.get("models"), dict)
+        ):
+            return "budget ledger does not match its frozen config"
+    if float(ledger["spent_upper_bound"]) > float(ledger["total_cap"]):
+        return "budget ledger spent total exceeds its cap"
+
+    settled_ids: set[str] = set()
+    derived_spent = 0.0
+    derived_provider_spent = {provider: 0.0 for provider in provider_caps}
+    for row in settled:
+        if not isinstance(row, dict):
+            return "budget ledger contains a malformed settlement"
+        required_settlement = {
+            "request_id",
+            "provider",
+            "model",
+            "reported_model",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "charged_upper_bound_usd",
+            "reserved_usd",
+            "settled_at_unix_ms",
+        }
+        if not required_settlement.issubset(row):
+            return "budget ledger contains a malformed settlement"
+        request_id = row.get("request_id")
+        provider = row.get("provider")
+        text_fields = (request_id, row.get("model"), row.get("reported_model"))
+        token_fields = (
+            row.get("input_tokens"),
+            row.get("output_tokens"),
+            row.get("total_tokens"),
+            row.get("settled_at_unix_ms"),
+        )
+        charged = row.get("charged_upper_bound_usd")
+        reserved = row.get("reserved_usd")
+        if (
+            not all(isinstance(value, str) and value for value in text_fields)
+            or provider not in provider_caps
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                for value in token_fields
+            )
+            or row["input_tokens"] + row["output_tokens"] != row["total_tokens"]
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) < 0
+                for value in (charged, reserved)
+            )
+            or float(charged) > float(reserved) + 1e-9
+        ):
+            return "budget ledger contains a malformed settlement"
+        if config is not None:
+            profile = budget_model_profile(config, str(provider), str(row["model"]))
+            accepted = profile.get("accepted_reported_models") if profile else None
+            context_limit = profile.get("context_limit") if profile else None
+            output_limit = profile.get("max_output_tokens") if profile else None
+            expected_reserve = (
+                budget_price(profile, context_limit, output_limit)
+                if profile is not None
+                and isinstance(context_limit, int)
+                and not isinstance(context_limit, bool)
+                and context_limit > 0
+                and isinstance(output_limit, int)
+                and not isinstance(output_limit, bool)
+                and output_limit > 0
+                else None
+            )
+            expected_charge = (
+                budget_price(profile, row["input_tokens"], row["output_tokens"])
+                if profile is not None
+                else None
+            )
+            if (
+                not isinstance(accepted, list)
+                or row["reported_model"] not in accepted
+                or expected_reserve is None
+                or expected_charge is None
+                or row["input_tokens"] > context_limit
+                or row["output_tokens"] > output_limit
+                or not money_equal(float(reserved), expected_reserve)
+                or not money_equal(float(charged), expected_charge)
+            ):
+                return "budget ledger settlement differs from its frozen model profile"
+        if request_id in settled_ids:
+            return "budget ledger repeats a settled request id"
+        settled_ids.add(request_id)
+        derived_spent += float(charged)
+        derived_provider_spent[str(provider)] += float(charged)
+    outstanding_total = 0.0
+    outstanding_by_provider = {provider: 0.0 for provider in provider_caps}
+    for request_id, reservation in outstanding.items():
+        required_reservation = {
+            "request_id",
+            "provider",
+            "model",
+            "reserved_usd",
+            "input_reserve_tokens",
+            "output_reserve_tokens",
+            "created_at_unix_ms",
+        }
+        if (
+            not isinstance(request_id, str)
+            or not isinstance(reservation, dict)
+            or not required_reservation.issubset(reservation)
+            or reservation.get("request_id") != request_id
+            or request_id in settled_ids
+        ):
+            return "budget ledger contains a malformed outstanding reservation"
+        provider = reservation.get("provider")
+        reserved = reservation.get("reserved_usd")
+        if (
+            provider not in provider_caps
+            or not isinstance(reservation.get("model"), str)
+            or not reservation.get("model")
+            or any(
+                isinstance(reservation.get(key), bool)
+                or not isinstance(reservation.get(key), int)
+                or int(reservation[key]) < 0
+                for key in (
+                    "input_reserve_tokens",
+                    "output_reserve_tokens",
+                    "created_at_unix_ms",
+                )
+            )
+            or isinstance(reserved, bool)
+            or not isinstance(reserved, (int, float))
+            or not math.isfinite(float(reserved))
+            or float(reserved) < 0
+        ):
+            return "budget ledger contains a malformed outstanding reservation"
+        if config is not None:
+            profile = budget_model_profile(
+                config, str(provider), str(reservation["model"])
+            )
+            context_limit = profile.get("context_limit") if profile else None
+            output_limit = profile.get("max_output_tokens") if profile else None
+            expected_reserve = (
+                budget_price(profile, context_limit, output_limit)
+                if profile is not None
+                and isinstance(context_limit, int)
+                and not isinstance(context_limit, bool)
+                and context_limit > 0
+                and isinstance(output_limit, int)
+                and not isinstance(output_limit, bool)
+                and output_limit > 0
+                else None
+            )
+            if (
+                expected_reserve is None
+                or reservation["input_reserve_tokens"] != context_limit
+                or reservation["output_reserve_tokens"] != output_limit
+                or not money_equal(float(reserved), expected_reserve)
+            ):
+                return (
+                    "budget ledger outstanding reservation differs from its "
+                    "frozen model profile"
+                )
+        outstanding_total += float(reserved)
+        outstanding_by_provider[str(provider)] += float(reserved)
+    if not money_equal(float(ledger["spent_upper_bound"]), derived_spent):
+        return "budget ledger cumulative spend differs from its settlements"
+    if not money_equal(
+        float(ledger["spent_upper_bound"]),
+        sum(float(value) for value in provider_spent.values()),
+    ):
+        return "budget ledger provider spend does not sum to cumulative spend"
+    for provider, amount in derived_provider_spent.items():
+        if not money_equal(float(provider_spent[provider]), amount):
+            return f"budget ledger cumulative spend differs for {provider}"
+        if (
+            amount + outstanding_by_provider[provider]
+            > float(provider_caps[provider]) + 1e-9
+        ):
+            return f"budget ledger reservations exceed the cap for {provider}"
+    if derived_spent + outstanding_total > float(ledger["total_cap"]) + 1e-9:
+        return "budget ledger reservations exceed the total cap"
+    return None
+
+
+def budget_ledger_descendant_failure(
+    initial: Mapping[str, Any],
+    current: Mapping[str, Any],
+    config: Mapping[str, Any] | None = None,
+) -> str | None:
+    for ledger in (initial, current):
+        failure = budget_ledger_failure(ledger, config)
+        if failure:
+            return failure
+    for key in ("schema_version", "currency", "total_cap", "provider_caps"):
+        if current.get(key) != initial.get(key):
+            return f"budget ledger changed immutable field {key}"
+    if float(current["spent_upper_bound"]) < float(initial["spent_upper_bound"]):
+        return "budget ledger cumulative spend decreased across supersession"
+    for provider, amount in initial["provider_spent_upper_bound"].items():
+        if float(current["provider_spent_upper_bound"].get(provider, -1)) < float(amount):
+            return f"budget ledger cumulative spend decreased for {provider}"
+
+    current_settled = {
+        str(row["request_id"]): row for row in current["settled"]
+    }
+    for row in initial["settled"]:
+        if current_settled.get(str(row["request_id"])) != row:
+            return f"predecessor settlement changed or disappeared: {row['request_id']}"
+    for request_id, reservation in initial["outstanding"].items():
+        if current["outstanding"].get(request_id) != reservation:
+            return f"predecessor reservation changed or disappeared: {request_id}"
+    return None
+
+
+def replacement_reserve_failure(
+    ledger: Mapping[str, Any],
+    config: Mapping[str, Any],
+    rows: Iterable[Mapping[str, Any]],
+) -> str | None:
+    outstanding = ledger["outstanding"]
+    pending_total = sum(float(row["reserved_usd"]) for row in outstanding.values())
+    pending_by_provider = {
+        provider: sum(
+            float(row["reserved_usd"])
+            for row in outstanding.values()
+            if row["provider"] == provider
+        )
+        for provider in ledger["provider_caps"]
+    }
+    for row in rows:
+        provider = str(row["provider"])
+        model = str(row["model"])
+        profile = budget_model_profile(config, provider, model)
+        context_limit = profile.get("context_limit") if profile else None
+        output_limit = profile.get("max_output_tokens") if profile else None
+        reserve = (
+            budget_price(profile, context_limit, output_limit)
+            if profile is not None
+            and isinstance(context_limit, int)
+            and not isinstance(context_limit, bool)
+            and isinstance(output_limit, int)
+            and not isinstance(output_limit, bool)
+            else None
+        )
+        if reserve is None:
+            return f"replacement has no valid frozen budget profile for {provider}/{model}"
+        pending_total += reserve
+        pending_by_provider[provider] += reserve
+    if (
+        float(ledger["spent_upper_bound"]) + pending_total
+        > float(ledger["total_cap"]) + 1e-9
+    ):
+        return "replacement requests do not fit the remaining total budget envelope"
+    for provider, pending in pending_by_provider.items():
+        if (
+            float(ledger["provider_spent_upper_bound"][provider]) + pending
+            > float(ledger["provider_caps"][provider]) + 1e-9
+        ):
+            return (
+                "replacement requests do not fit the remaining provider budget "
+                f"envelope for {provider}"
+            )
+    return None
+
+
+def campaign_identity(campaign: Mapping[str, Any]) -> Dict[str, Any]:
+    publisher = campaign.get("publisher")
+    publisher_identity = None
+    if isinstance(publisher, dict):
+        publisher_identity = {
+            key: publisher.get(key)
+            for key in (
+                "instrument_set_sha256",
+                "sanity_target",
+                "expected_checks",
+                "entries",
+            )
+        }
+    return {
+        key: campaign.get(key)
+        for key in (
+            "schema_version",
+            "campaign_id",
+            "binary_sha256",
+            "entrant_manifest_sha256",
+            "budget_config_sha256",
+            "instrument_set_sha256",
+            "prompt_source_sha256",
+            "scorer_version",
+            "calibration",
+        )
+    } | {"publisher": publisher_identity}
+
+
+def validate_defect_evidence(
+    path: Path,
+    predecessor: Mapping[str, Any],
+    replacement_binary: Path,
+    row_ids: set[str],
+    secret_values: Iterable[str],
+) -> tuple[Dict[str, Any], list[Dict[str, Any]], str]:
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > 1024 * 1024:
+        raise SystemExit("defect evidence must be one regular JSON file no larger than 1 MiB")
+    evidence = load_json(path)
+    expected_keys = {
+        "schema_version",
+        "classification",
+        "defect_id",
+        "summary",
+        "affected_entrants",
+        "predecessor_campaign_id",
+        "predecessor_binary_sha256",
+        "replacement_binary_sha256",
+        "fix_source_commit",
+        "artifacts",
+    }
+    if set(evidence) != expected_keys:
+        raise SystemExit("defect evidence schema contains missing or unapproved fields")
+    if evidence.get("schema_version") != SUPERSESSION_SCHEMA:
+        raise SystemExit("defect evidence schema version is not supported")
+    if evidence.get("classification") != "infrastructure_defect":
+        raise SystemExit("only infrastructure defects can authorize a paid supersession")
+    defect_id = evidence.get("defect_id")
+    if not isinstance(defect_id, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]{2,127}", defect_id
+    ):
+        raise SystemExit("defect evidence has an invalid defect_id")
+    summary = evidence.get("summary")
+    if not isinstance(summary, str) or not summary.strip() or len(summary) > 2000:
+        raise SystemExit("defect evidence requires a bounded non-empty summary")
+    affected = evidence.get("affected_entrants")
+    if (
+        not isinstance(affected, list)
+        or not affected
+        or any(not isinstance(value, str) for value in affected)
+        or len(set(affected)) != len(affected)
+        or not set(affected).issubset(row_ids)
+    ):
+        raise SystemExit("defect evidence has invalid affected entrants")
+    replacement_sha = sha256_file(replacement_binary)
+    exact = {
+        "predecessor_campaign_id": predecessor.get("campaign_id"),
+        "predecessor_binary_sha256": predecessor.get("binary_sha256"),
+        "replacement_binary_sha256": replacement_sha,
+        "fix_source_commit": git_value("rev-parse", "HEAD"),
+    }
+    for key, expected in exact.items():
+        if evidence.get(key) != expected:
+            raise SystemExit(f"defect evidence does not bind exact {key}")
+
+    raw_artifacts = evidence.get("artifacts")
+    if not isinstance(raw_artifacts, list) or not raw_artifacts:
+        raise SystemExit("defect evidence has no supporting artifacts")
+    artifacts: list[Dict[str, Any]] = []
+    roles: set[str] = set()
+    for raw in raw_artifacts:
+        if not isinstance(raw, dict) or set(raw) != {"role", "path", "sha256"}:
+            raise SystemExit("defect evidence artifact schema is malformed")
+        role = raw.get("role")
+        if role not in {"root_cause", "regression_test"}:
+            raise SystemExit("defect evidence artifact role is not approved")
+        source = Path(str(raw.get("path", ""))).expanduser().resolve()
+        if (
+            not source.is_file()
+            or source.is_symlink()
+            or source.stat().st_size == 0
+            or source.stat().st_size > 10 * 1024 * 1024
+        ):
+            raise SystemExit(f"defect evidence artifact is not a bounded regular file: {source}")
+        digest = sha256_file(source)
+        if raw.get("sha256") != digest:
+            raise SystemExit(f"defect evidence artifact hash differs: {source}")
+        if secret_occurrences([source], secret_values):
+            raise SystemExit("defect evidence artifact contains a provider credential")
+        roles.add(str(role))
+        artifacts.append({"role": role, "source": source, "sha256": digest})
+    if roles != {"root_cause", "regression_test"}:
+        raise SystemExit("defect evidence requires root-cause and regression-test artifacts")
+    return evidence, artifacts, sha256_file(path)
+
+
+def predecessor_seal(
+    root: Path,
+    campaign: Mapping[str, Any],
+    rows: Iterable[Mapping[str, Any]],
+    transition_id: str,
+) -> Dict[str, Any]:
+    ledger_path = Path(str(campaign.get("budget_ledger", "")))
+    ledger = load_json(ledger_path)
+    budget_config = load_json(Path(str(campaign.get("budget_config", ""))))
+    failure = budget_ledger_failure(ledger, budget_config)
+    if failure:
+        raise SystemExit(f"predecessor {failure}")
+    sealed_entrants: Dict[str, Any] = {}
+    for row in rows:
+        entrant_id = str(row["id"])
+        unit = root / "entrants" / entrant_id
+        state_path = state_file(root, entrant_id)
+        state = read_state(root, entrant_id)
+        lifecycle_path = Path(str(state["provider_lifecycle"]))
+        sealed_entrants[entrant_id] = {
+            "state_sha256": sha256_file(state_path),
+            "unit_sha256": artifact_tree_sha256(unit),
+            "immutable_unit_sha256": artifact_tree_sha256(
+                unit,
+                excluded_relative_paths={"state.json", "state.lock"},
+            ),
+            "raw_tree_sha256": hash_tree(Path(str(state["tree"]))),
+            "scores_sha256": optional_artifact_tree_sha256(
+                root / "scores" / entrant_id
+            ),
+            "publish_sha256": optional_artifact_tree_sha256(
+                root / "publish" / entrant_id
+            ),
+            "lifecycle_sha256": (
+                sha256_file(lifecycle_path) if lifecycle_path.is_file() else None
+            ),
+            "status": state["status"],
+            "provider_episode_attempts": int(state.get("provider_episode_attempts", 0)),
+            "fixture_seed": state["fixture_seed"],
+            "admitted_requests": int(state.get("admitted_requests", 0)),
+            "provider_terminal_requests": int(
+                state.get("provider_terminal_requests", 0)
+            ),
+        }
+    return {
+        "schema_version": SUPERSESSION_SCHEMA,
+        "transition_id": transition_id,
+        "predecessor_root": str(root.resolve()),
+        "campaign_identity": campaign_identity(campaign),
+        "campaign_sha256": sha256_file(campaign_file(root)),
+        "manager_sha256": sha256_file(root / "manager.json"),
+        "budget_ledger_sha256": sha256_file(ledger_path),
+        "entrants": sealed_entrants,
+    }
+
+
+def predecessor_seal_failure(root: Path, seal: Mapping[str, Any]) -> str | None:
+    try:
+        campaign = load_json(campaign_file(root))
+        if sha256_file(campaign_file(root)) != seal.get("campaign_sha256"):
+            return "predecessor campaign receipt changed"
+        if campaign_identity(campaign) != seal.get("campaign_identity"):
+            return "predecessor immutable campaign identity changed"
+        if sha256_file(root / "manager.json") != seal.get("manager_sha256"):
+            return "predecessor manager receipt changed"
+        ledger = Path(str(campaign["budget_ledger"]))
+        if sha256_file(ledger) != seal.get("budget_ledger_sha256"):
+            return "predecessor budget ledger changed after stop"
+        sealed_entrants = seal.get("entrants")
+        if not isinstance(sealed_entrants, dict):
+            return "predecessor seal has no entrants"
+        for entrant_id, expected in sealed_entrants.items():
+            if not isinstance(expected, dict):
+                return f"predecessor seal is malformed for {entrant_id}"
+            unit = root / "entrants" / str(entrant_id)
+            state = read_state(root, str(entrant_id))
+            lifecycle_path = Path(str(state["provider_lifecycle"]))
+            lifecycle_sha = sha256_file(lifecycle_path) if lifecycle_path.is_file() else None
+            current = {
+                "state_sha256": sha256_file(state_file(root, str(entrant_id))),
+                "unit_sha256": artifact_tree_sha256(unit),
+                "immutable_unit_sha256": artifact_tree_sha256(
+                    unit,
+                    excluded_relative_paths={"state.json", "state.lock"},
+                ),
+                "raw_tree_sha256": hash_tree(Path(str(state["tree"]))),
+                "lifecycle_sha256": lifecycle_sha,
+                "scores_sha256": optional_artifact_tree_sha256(
+                    root / "scores" / str(entrant_id)
+                ),
+                "publish_sha256": optional_artifact_tree_sha256(
+                    root / "publish" / str(entrant_id)
+                ),
+            }
+            for key, value in current.items():
+                if expected.get(key) != value:
+                    return f"predecessor {entrant_id} artifact changed: {key}"
+    except (OSError, KeyError, json.JSONDecodeError, SystemExit) as error:
+        return f"predecessor seal cannot be verified: {error}"
+    return None
+
+
+def supersession_fault(_stage: str) -> None:
+    return None
+
+
+def validate_stopped_predecessor(
+    root: Path,
+    campaign: Mapping[str, Any],
+    rows: list[Mapping[str, Any]],
+    affected_entrants: set[str],
+) -> tuple[Dict[str, Dict[str, Any]], Dict[str, Any], Dict[str, list[str]]]:
+    if campaign.get("status") != "STOPPED":
+        raise SystemExit("predecessor campaign must be explicitly stopped")
+    if campaign.get("lineage") is not None:
+        raise SystemExit("a supersession successor cannot be superseded again")
+    manager = load_json(root / "manager.json")
+    if manager.get("status") != "STOPPED":
+        raise SystemExit("predecessor manager is not stopped")
+    if process_alive(manager.get("pid"), manager.get("identity")):
+        raise SystemExit("predecessor manager is still alive")
+    manager_pgid = int(manager.get("pgid") or 0)
+    if manager_pgid and process_group_members(manager_pgid):
+        raise SystemExit("predecessor manager process group is not clean")
+
+    row_ids = {str(row["id"]) for row in rows}
+    if not affected_entrants or not affected_entrants.issubset(row_ids):
+        raise SystemExit("supersession has invalid affected entrants")
+    states: Dict[str, Dict[str, Any]] = {}
+    terminal_outstanding: Dict[str, list[str]] = {}
+    unsuccessful: set[str] = set()
+    ledger = load_json(Path(str(campaign["budget_ledger"])))
+    budget_config = load_json(Path(str(campaign["budget_config"])))
+    failure = budget_ledger_failure(ledger, budget_config)
+    if failure:
+        raise SystemExit(f"predecessor {failure}")
+    max_episodes = int(
+        load_json(Path(str(campaign["entrant_manifest"])))
+        ["spend_policy"]["max_full_episodes_per_model"]
+    )
+
+    for row in rows:
+        entrant_id = str(row["id"])
+        state = read_state(root, entrant_id)
+        states[entrant_id] = state
+        status = str(state.get("status"))
+        if status not in TERMINAL_BUILD_STATES | POST_BUILD_STATES:
+            raise SystemExit(f"predecessor entrant is not stopped: {entrant_id}={status}")
+        for pid_key, pgid_key, identity_key in (
+            ("supervisor_pid", "supervisor_pgid", "supervisor_identity"),
+            ("goose_pid", "process_group", "goose_identity"),
+            ("publisher_pid", "publisher_pgid", "publisher_identity"),
+            ("score_pid", "score_pgid", "score_identity"),
+            ("smoke_pid", "smoke_pgid", "smoke_identity"),
+        ):
+            if process_alive(state.get(pid_key), state.get(identity_key)):
+                raise SystemExit(f"predecessor {entrant_id} still owns {pid_key}")
+            pgid = int(state.get(pgid_key) or 0)
+            if pgid and process_group_members(pgid):
+                raise SystemExit(f"predecessor {entrant_id} still owns process group {pgid}")
+
+        if status not in BUILD_SUCCESS_STATES:
+            unsuccessful.add(entrant_id)
+        if entrant_id not in affected_entrants:
+            if status not in BUILD_SUCCESS_STATES:
+                raise SystemExit(
+                    f"unsuccessful predecessor entrant was omitted from evidence: {entrant_id}"
+                )
+            raw_hash = hash_tree(Path(str(state["tree"])))
+            if raw_hash != state.get("raw_tree_sha256"):
+                raise SystemExit(f"successful predecessor raw tree changed: {entrant_id}")
+            continue
+        if status in BUILD_SUCCESS_STATES:
+            raise SystemExit(
+                f"successful build cannot be rerun as an infrastructure defect: {entrant_id}"
+            )
+        if state.get("score") is not None or state.get("verdict"):
+            raise SystemExit(f"scored or outcome-bearing entrant cannot be rerun: {entrant_id}")
+        attempts = int(state.get("provider_episode_attempts", 0))
+        if attempts >= max_episodes:
+            raise SystemExit(f"provider episode limit is already exhausted: {entrant_id}")
+        lifecycle = lifecycle_summary(
+            Path(str(state["provider_lifecycle"])),
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        lifecycle_problem = lifecycle_failure(lifecycle)
+        if lifecycle_problem:
+            raise SystemExit(
+                f"affected predecessor lifecycle is ambiguous for {entrant_id}: "
+                f"{lifecycle_problem}"
+            )
+        if lifecycle["admitted"] != lifecycle["terminal"]:
+            raise SystemExit(f"affected predecessor has unterminated admission: {entrant_id}")
+        if int(state.get("admitted_requests", 0)) != int(lifecycle["admitted"]):
+            raise SystemExit(f"affected predecessor admission count drifted: {entrant_id}")
+        if int(state.get("provider_terminal_requests", 0)) != int(
+            lifecycle["terminal"]
+        ):
+            raise SystemExit(f"affected predecessor terminal count drifted: {entrant_id}")
+        outstanding, ledger_error = entrant_outstanding_reservations(campaign, row)
+        if ledger_error:
+            raise SystemExit(
+                f"affected predecessor retains ambiguous budget reservations: {entrant_id}"
+            )
+        terminal_usage = lifecycle.get("terminal_usage")
+        if not isinstance(terminal_usage, dict):
+            raise SystemExit(f"affected predecessor has no terminal usage map: {entrant_id}")
+        settlements = {
+            str(settlement["request_id"]): settlement
+            for settlement in ledger["settled"]
+            if settlement["provider"] == row["provider"]
+            and settlement["model"] == row["model"]
+        }
+        for request_id, usage in terminal_usage.items():
+            settlement = settlements.get(request_id)
+            if settlement is None:
+                if request_id not in outstanding:
+                    raise SystemExit(
+                        "affected predecessor terminal request has no preserved "
+                        f"accounting evidence: {entrant_id}/{request_id}"
+                    )
+            elif any(
+                settlement[key] != usage[key]
+                for key in (
+                    "reported_model",
+                    "input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                )
+            ):
+                raise SystemExit(
+                    f"affected predecessor settlement differs from terminal usage: "
+                    f"{entrant_id}/{request_id}"
+                )
+        for request_id in outstanding:
+            usage = terminal_usage.get(request_id)
+            if not isinstance(usage, dict):
+                raise SystemExit(
+                    "affected predecessor has an uncorrelated outstanding reserve: "
+                    f"{entrant_id}/{request_id}"
+                )
+            if (
+                usage["reported_model"] not in row["accepted_reported_models"]
+                or usage["input_tokens"] > int(row["context_limit"])
+                or usage["output_tokens"] > int(row["max_output_tokens"])
+            ):
+                raise SystemExit(
+                    "affected predecessor terminal usage differs from the frozen "
+                    f"model profile: {entrant_id}/{request_id}"
+                )
+        terminal_outstanding[entrant_id] = outstanding
+
+    if unsuccessful != affected_entrants:
+        raise SystemExit("defect evidence must name every and only unsuccessful full entrant")
+    busy = [str(row["vendor_port"]) for row in rows if not port_is_free(int(row["vendor_port"]))]
+    if busy:
+        raise SystemExit(f"predecessor vendor ports are still occupied: {', '.join(busy)}")
+    reserve_problem = replacement_reserve_failure(
+        ledger,
+        budget_config,
+        (row for row in rows if str(row["id"]) in affected_entrants),
+    )
+    if reserve_problem:
+        raise SystemExit(reserve_problem)
+    return states, ledger, terminal_outstanding
+
+
+def supersession_instrument_failure(
+    predecessor: Mapping[str, Any], successor: Mapping[str, Any]
+) -> str | None:
+    old = predecessor.get("instrument_hashes")
+    new = successor.get("instrument_hashes")
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return "campaign instrument hashes are missing"
+    changed = {
+        key
+        for key in set(old) | set(new)
+        if old.get(key) != new.get(key)
+    }
+    unapproved = changed - SUPERSESSION_ALLOWED_INSTRUMENT_CHANGES
+    if unapproved:
+        return f"supersession changed frozen benchmark semantics: {', '.join(sorted(unapproved))}"
+    for key in (
+        "entrant_manifest_sha256",
+        "budget_config_sha256",
+        "prompt_source_sha256",
+        "scorer_version",
+        "calibration",
+    ):
+        if predecessor.get(key) != successor.get(key):
+            return f"supersession changed immutable benchmark field {key}"
+    old_publisher = predecessor.get("publisher")
+    new_publisher = successor.get("publisher")
+    if not isinstance(old_publisher, dict) or not isinstance(new_publisher, dict):
+        return "supersession publisher identity is missing"
+    for key in (
+        "instrument_set_sha256",
+        "sanity_target",
+        "expected_checks",
+        "entries",
+    ):
+        if old_publisher.get(key) != new_publisher.get(key):
+            return f"supersession changed publisher field {key}"
+    return None
+
+
+def copy_evidence_bundle(
+    destination: Path,
+    evidence_path: Path,
+    evidence_sha256: str,
+    artifacts: list[Mapping[str, Any]],
+) -> list[Dict[str, str]]:
+    destination.mkdir(parents=True, exist_ok=False)
+    copied_evidence = destination / "defect-evidence.json"
+    atomic_copy(evidence_path, copied_evidence, 0o600)
+    if sha256_file(copied_evidence) != evidence_sha256:
+        raise SystemExit("copied defect evidence changed")
+    copied = []
+    for index, artifact in enumerate(artifacts):
+        role = str(artifact["role"])
+        target = destination / f"artifact-{index:02d}-{role}"
+        atomic_copy(Path(str(artifact["source"])), target, 0o600)
+        if sha256_file(target) != artifact["sha256"]:
+            raise SystemExit("copied defect artifact changed")
+        copied.append(
+            {
+                "role": role,
+                "path": str(target.relative_to(destination.parent)),
+                "sha256": str(artifact["sha256"]),
+            }
+        )
+    return copied
+
+
+def copy_carried_entrant(
+    predecessor_root: Path,
+    staged_root: Path,
+    target_root: Path,
+    entrant_id: str,
+    sealed: Mapping[str, Any],
+    transition_id: str,
+) -> None:
+    source = predecessor_root / "entrants" / entrant_id
+    destination = staged_root / "entrants" / entrant_id
+    shutil.rmtree(destination)
+    shutil.copytree(source, destination, symlinks=True)
+    if artifact_tree_sha256(destination) != sealed.get("unit_sha256"):
+        raise SystemExit(f"carried entrant copy changed: {entrant_id}")
+    state = remap_paths(
+        load_json(destination / "state.json"), predecessor_root, target_root
+    )
+    state.update(
+        {
+            "lineage_role": "carried_success",
+            "supersession_transition_id": transition_id,
+            "predecessor_state_sha256": sealed["state_sha256"],
+            "predecessor_unit_sha256": sealed["unit_sha256"],
+            "updated_at": utc_now(),
+        }
+    )
+    atomic_json(destination / "state.json", state)
+    if artifact_tree_sha256(
+        destination,
+        excluded_relative_paths={"state.json", "state.lock"},
+    ) != sealed.get("immutable_unit_sha256"):
+        raise SystemExit(f"carried entrant immutable payload changed: {entrant_id}")
+    for collection in ("scores", "publish"):
+        old = predecessor_root / collection / entrant_id
+        new = staged_root / collection / entrant_id
+        if old.exists():
+            if new.exists():
+                shutil.rmtree(new)
+            shutil.copytree(old, new, symlinks=True)
+        expected = sealed.get(f"{collection}_sha256")
+        if optional_artifact_tree_sha256(new) != expected:
+            raise SystemExit(f"carried entrant {collection} copy changed: {entrant_id}")
+
+
+def reset_affected_entrant(
+    staged_root: Path,
+    target_root: Path,
+    entrant_id: str,
+    predecessor_state: Mapping[str, Any],
+    sealed: Mapping[str, Any],
+    transition_id: str,
+) -> None:
+    state = remap_paths(read_state(staged_root, entrant_id), staged_root, target_root)
+    state.update(
+        {
+            "status": "PLANNED",
+            "provider_episode_attempts": int(
+                predecessor_state.get("provider_episode_attempts", 0)
+            ),
+            "fixture_seed": predecessor_state["fixture_seed"],
+            "admitted_requests": 0,
+            "provider_terminal_requests": 0,
+            "failure": None,
+            "lineage_role": "infrastructure_defect_restart",
+            "supersession_transition_id": transition_id,
+            "predecessor_state_sha256": sealed["state_sha256"],
+            "predecessor_unit_sha256": sealed["unit_sha256"],
+            "predecessor_status": predecessor_state["status"],
+            "updated_at": utc_now(),
+        }
+    )
+    atomic_json(state_file(staged_root, entrant_id), state)
+
+
+def supersession_transition_id(
+    predecessor_root: Path,
+    target_root: Path,
+    evidence_sha256: str,
+    replacement_binary_sha256: str,
+    predecessor: Mapping[str, Any],
+) -> str:
+    material = {
+        "predecessor_root": str(predecessor_root.resolve()),
+        "predecessor_campaign_id": predecessor.get("campaign_id"),
+        "target_root": str(target_root.resolve()),
+        "evidence_sha256": evidence_sha256,
+        "replacement_binary_sha256": replacement_binary_sha256,
+        "predecessor_binary_sha256": predecessor.get("binary_sha256"),
+    }
+    return sha256_bytes(json.dumps(material, sort_keys=True).encode())
+
+
+def lineage_failure(root: Path) -> str | None:
+    try:
+        campaign = load_json(campaign_file(root))
+        lineage_pointer = campaign.get("lineage")
+        receipt_at_root = root / SUPERSESSION_RECEIPT
+        if lineage_pointer is None:
+            if receipt_at_root.exists():
+                return "campaign has an immutable supersession receipt and cannot run again"
+            return None
+        if not isinstance(lineage_pointer, dict):
+            return "campaign lineage pointer is malformed"
+        if receipt_at_root.exists():
+            return "one-hop supersession successor has an unexpected successor receipt"
+        if lineage_pointer.get("generation") != 1:
+            return "campaign lineage generation is not exactly one"
+        relative = lineage_pointer.get("path")
+        if relative != "lineage/lineage.json":
+            return "campaign lineage path is not the frozen path"
+        lineage_path = root / str(relative)
+        if not lineage_path.is_file() or lineage_path.is_symlink():
+            return "campaign lineage receipt is missing or linked"
+        if sha256_file(lineage_path) != lineage_pointer.get("sha256"):
+            return "campaign lineage receipt hash changed"
+        lineage = load_json(lineage_path)
+        if lineage.get("schema_version") != SUPERSESSION_SCHEMA:
+            return "campaign lineage schema is not supported"
+        if lineage.get("generation") != 1:
+            return "campaign lineage has an invalid generation"
+        if lineage.get("transition_id") != lineage_pointer.get("transition_id"):
+            return "campaign lineage transition id drifted"
+        if lineage.get("successor_root") != str(root.resolve()):
+            return "campaign lineage is bound to another successor root"
+        if lineage.get("successor_binary_sha256") != campaign.get("binary_sha256"):
+            return "campaign lineage replacement binary identity drifted"
+        binary = Path(str(campaign.get("binary", "")))
+        if not binary.is_file() or sha256_file(binary) != campaign.get("binary_sha256"):
+            return "campaign replacement binary changed"
+
+        predecessor_root = Path(str(lineage.get("predecessor_root", "")))
+        receipt_path = predecessor_root / SUPERSESSION_RECEIPT
+        if not receipt_path.is_file() or receipt_path.is_symlink():
+            return "predecessor immutable supersession receipt is missing"
+        if sha256_file(receipt_path) != lineage.get("predecessor_receipt_sha256"):
+            return "predecessor immutable supersession receipt changed"
+        receipt = load_json(receipt_path)
+        expected_receipt_keys = {
+            "schema_version",
+            "transition_id",
+            "predecessor_campaign_id",
+            "predecessor_root",
+            "target_root",
+            "secret_file",
+            "publisher_repo",
+            "defect_evidence_sha256",
+            "defect_artifacts",
+            "predecessor_binary_sha256",
+            "replacement_binary_sha256",
+            "entrant_manifest_sha256",
+            "predecessor_budget_ledger_sha256",
+            "predecessor_seal_sha256",
+            "affected_entrants",
+            "carried_entrants",
+            "predecessor_episode_attempts",
+            "predecessor_terminal_outstanding",
+            "fresh_all_entrant_smoke_required",
+        }
+        current_publisher = campaign.get("publisher")
+        current_publisher_repo = (
+            current_publisher.get("repo")
+            if isinstance(current_publisher, dict)
+            else None
+        )
+        if (
+            set(receipt) != expected_receipt_keys
+            or receipt.get("schema_version") != SUPERSESSION_SCHEMA
+            or receipt.get("transition_id") != lineage.get("transition_id")
+            or receipt.get("predecessor_root") != str(predecessor_root.resolve())
+            or receipt.get("target_root") != str(root.resolve())
+            or receipt.get("secret_file") != campaign.get("secret_file")
+            or receipt.get("publisher_repo") != current_publisher_repo
+            or receipt.get("replacement_binary_sha256")
+            != campaign.get("binary_sha256")
+            or receipt.get("entrant_manifest_sha256")
+            != campaign.get("entrant_manifest_sha256")
+            or receipt.get("predecessor_seal_sha256")
+            != lineage.get("predecessor_seal_sha256")
+            or receipt.get("defect_evidence_sha256")
+            != lineage.get("defect_evidence_sha256")
+            or receipt.get("affected_entrants") != lineage.get("affected_entrants")
+            or receipt.get("carried_entrants") != lineage.get("carried_entrants")
+            or receipt.get("predecessor_episode_attempts")
+            != lineage.get("predecessor_episode_attempts")
+            or receipt.get("predecessor_terminal_outstanding")
+            != lineage.get("predecessor_terminal_outstanding")
+            or receipt.get("fresh_all_entrant_smoke_required") is not True
+            or lineage.get("fresh_all_entrant_smoke_required") is not True
+        ):
+            return "predecessor supersession receipt is bound to another transition"
+
+        seal_path = predecessor_root / "supersession-seal.json"
+        copied_seal_path = root / "lineage/predecessor-seal.json"
+        expected_seal_sha = lineage.get("predecessor_seal_sha256")
+        for candidate in (seal_path, copied_seal_path):
+            if not candidate.is_file() or sha256_file(candidate) != expected_seal_sha:
+                return "predecessor seal is missing or changed"
+        seal = load_json(seal_path)
+        sealed_campaign_identity = seal.get("campaign_identity")
+        if (
+            seal.get("transition_id") != lineage.get("transition_id")
+            or not isinstance(sealed_campaign_identity, dict)
+            or sealed_campaign_identity.get("campaign_id")
+            != receipt.get("predecessor_campaign_id")
+            or sealed_campaign_identity.get("binary_sha256")
+            != receipt.get("predecessor_binary_sha256")
+        ):
+            return "predecessor seal transition differs"
+        seal_problem = predecessor_seal_failure(predecessor_root, seal)
+        if seal_problem:
+            return seal_problem
+        predecessor_campaign = load_json(campaign_file(predecessor_root))
+        instrument_problem = supersession_instrument_failure(
+            predecessor_campaign, campaign
+        )
+        if instrument_problem:
+            return instrument_problem
+
+        evidence_path = root / "lineage/evidence/defect-evidence.json"
+        if not evidence_path.is_file() or sha256_file(evidence_path) != lineage.get(
+            "defect_evidence_sha256"
+        ):
+            return "copied defect evidence changed"
+        lineage_artifacts = lineage.get("defect_artifacts")
+        if not isinstance(lineage_artifacts, list) or not lineage_artifacts:
+            return "lineage defect artifact records are missing"
+        receipt_artifacts = [
+            {"role": artifact.get("role"), "sha256": artifact.get("sha256")}
+            for artifact in lineage_artifacts
+            if isinstance(artifact, dict)
+        ]
+        if receipt_artifacts != receipt.get("defect_artifacts"):
+            return "lineage defect artifacts differ from the immutable receipt"
+        for artifact in lineage_artifacts:
+            if not isinstance(artifact, dict):
+                return "lineage defect artifact record is malformed"
+            artifact_path = root / "lineage" / str(artifact.get("path", ""))
+            if (
+                not artifact_path.is_file()
+                or artifact_path.is_symlink()
+                or sha256_file(artifact_path) != artifact.get("sha256")
+            ):
+                return "lineage defect artifact changed"
+
+        initial_ledger_path = root / "lineage/predecessor-budget-ledger.json"
+        if not initial_ledger_path.is_file() or sha256_file(
+            initial_ledger_path
+        ) != lineage.get("predecessor_budget_ledger_sha256"):
+            return "predecessor budget snapshot changed"
+        if lineage.get("predecessor_budget_ledger_sha256") != receipt.get(
+            "predecessor_budget_ledger_sha256"
+        ):
+            return "predecessor budget snapshot differs from the immutable receipt"
+        initial_ledger = load_json(initial_ledger_path)
+        current_ledger = load_json(Path(str(campaign["budget_ledger"])))
+        budget_config = load_json(Path(str(campaign["budget_config"])))
+        ledger_problem = budget_ledger_descendant_failure(
+            initial_ledger, current_ledger, budget_config
+        )
+        if ledger_problem:
+            return ledger_problem
+
+        affected = lineage.get("affected_entrants")
+        carried = lineage.get("carried_entrants")
+        attempts = lineage.get("predecessor_episode_attempts")
+        terminal_outstanding = lineage.get("predecessor_terminal_outstanding")
+        if (
+            not isinstance(affected, list)
+            or not isinstance(carried, list)
+            or not isinstance(attempts, dict)
+            or not isinstance(terminal_outstanding, dict)
+            or set(affected) & set(carried)
+        ):
+            return "lineage entrant partition is malformed"
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        manifest_rows = entrants(manifest)
+        row_ids = {str(row["id"]) for row in manifest_rows}
+        if set(affected) | set(carried) != row_ids:
+            return "lineage entrant partition differs from the frozen manifest"
+        if set(terminal_outstanding) != set(affected):
+            return "lineage terminal-outstanding partition differs from affected entrants"
+        rows_by_id = {str(row["id"]): row for row in manifest_rows}
+        initial_outstanding = initial_ledger["outstanding"]
+        for entrant_id, request_ids in terminal_outstanding.items():
+            if (
+                not isinstance(request_ids, list)
+                or request_ids != sorted(set(request_ids))
+            ):
+                return f"lineage terminal-outstanding ids are malformed: {entrant_id}"
+            row = rows_by_id[entrant_id]
+            for request_id in request_ids:
+                reservation = initial_outstanding.get(request_id)
+                if (
+                    not isinstance(reservation, dict)
+                    or reservation.get("provider") != row["provider"]
+                    or reservation.get("model") != row["model"]
+                ):
+                    return (
+                        "lineage terminal-outstanding reserve differs from the "
+                        f"predecessor ledger: {entrant_id}/{request_id}"
+                    )
+        max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
+        seal_entrants = seal.get("entrants")
+        if not isinstance(seal_entrants, dict):
+            return "predecessor seal entrant records are malformed"
+        for entrant_id in sorted(row_ids):
+            state = read_state(root, entrant_id)
+            expected_attempts = attempts.get(entrant_id)
+            if not isinstance(expected_attempts, int):
+                return f"lineage has no attempt count for {entrant_id}"
+            current_attempts = int(state.get("provider_episode_attempts", -1))
+            if entrant_id in affected:
+                if state.get("lineage_role") != "infrastructure_defect_restart":
+                    return f"affected entrant lineage role drifted: {entrant_id}"
+                if current_attempts < expected_attempts or current_attempts > max_episodes:
+                    return f"affected entrant attempt count reset or exceeded: {entrant_id}"
+            else:
+                if state.get("lineage_role") != "carried_success":
+                    return f"carried entrant lineage role drifted: {entrant_id}"
+                if current_attempts != expected_attempts:
+                    return f"carried entrant attempt count changed: {entrant_id}"
+                sealed = seal_entrants.get(entrant_id)
+                if not isinstance(sealed, dict):
+                    return f"carried entrant is absent from predecessor seal: {entrant_id}"
+                if hash_tree(Path(str(state["tree"]))) != sealed.get("raw_tree_sha256"):
+                    return f"carried predecessor raw tree changed: {entrant_id}"
+                unit = root / "entrants" / entrant_id
+                if artifact_tree_sha256(
+                    unit,
+                    excluded_relative_paths={"state.json", "state.lock"},
+                ) != sealed.get("immutable_unit_sha256"):
+                    return f"carried predecessor immutable payload changed: {entrant_id}"
+                if sealed.get("scores_sha256") is not None and (
+                    optional_artifact_tree_sha256(root / "scores" / entrant_id)
+                    != sealed.get("scores_sha256")
+                ):
+                    return f"carried predecessor score evidence changed: {entrant_id}"
+                if sealed.get("status") == "PUBLISHED" and (
+                    optional_artifact_tree_sha256(root / "publish" / entrant_id)
+                    != sealed.get("publish_sha256")
+                ):
+                    return f"carried predecessor publication evidence changed: {entrant_id}"
+            if state.get("supersession_transition_id") != lineage.get("transition_id"):
+                return f"entrant transition id drifted: {entrant_id}"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"campaign lineage cannot be verified: {error}"
+    return None
+
+
+def require_lineage(root: Path) -> None:
+    failure = lineage_failure(root)
+    if failure:
+        raise SystemExit(f"cloud campaign lineage refused execution: {failure}")
+
+
+def supersession_smoke_gate_failure(root: Path) -> str | None:
+    campaign = load_json(campaign_file(root))
+    if campaign.get("lineage") is None:
+        return None
+    return (
+        "supersession requires the strict all-entrant cloud-smoke proof before any "
+        "full build, score, or publication; integrate the frozen cloud-smoke verifier"
+    )
+
+
+def recover_existing_supersession(
+    root: Path,
+    predecessor_root: Path,
+    replacement_sha256: str,
+    manifest_path: Path,
+    secret_path: Path,
+    publisher_repo: Path,
+) -> Dict[str, Any] | None:
+    if not root.exists():
+        return None
+    if not campaign_file(root).is_file():
+        raise SystemExit("supersession target exists without a campaign receipt")
+    campaign = load_json(campaign_file(root))
+    lineage = campaign.get("lineage")
+    if (
+        not isinstance(lineage, dict)
+        or lineage.get("generation") != 1
+        or campaign.get("binary_sha256") != replacement_sha256
+        or campaign.get("secret_file") != str(secret_path)
+        or not isinstance(campaign.get("publisher"), dict)
+        or campaign["publisher"].get("repo") != str(publisher_repo)
+    ):
+        raise SystemExit("supersession target already belongs to another transition")
+    lineage_path = root / str(lineage.get("path", ""))
+    if not lineage_path.is_file():
+        raise SystemExit("supersession target has no durable lineage receipt")
+    lineage_value = load_json(lineage_path)
+    if lineage_value.get("predecessor_root") != str(predecessor_root):
+        raise SystemExit("supersession target is bound to another predecessor")
+    if manifest_path.is_file() and sha256_file(manifest_path) != campaign.get(
+        "entrant_manifest_sha256"
+    ):
+        raise SystemExit("supersession recovery manifest differs from the committed target")
+    failure = lineage_failure(root)
+    if failure:
+        raise SystemExit(f"existing supersession target is invalid: {failure}")
+    return campaign
+
+
+def supersede_campaign(
+    predecessor_root: Path,
+    root: Path,
+    binary: Path,
+    manifest_path: Path,
+    secret_path: Path,
+    publisher_repo: Path,
+    evidence_path: Path,
+    publish_live: bool,
+    website_base_url: str = DEFAULT_WEBSITE_BASE_URL,
+    publish_verify_timeout_seconds: float = DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS,
+    publish_verify_interval_seconds: float = DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS,
+    publish_process_timeout_seconds: float = DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
+) -> Dict[str, Any]:
+    predecessor_root = predecessor_root.resolve()
+    root = root.resolve()
+    binary = binary.resolve()
+    manifest_path = manifest_path.resolve()
+    secret_path = secret_path.resolve()
+    publisher_repo = publisher_repo.resolve()
+    evidence_path = evidence_path.resolve()
+    if predecessor_root == root or predecessor_root.parent != root.parent:
+        raise SystemExit("supersession roots must be distinct siblings on one filesystem")
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise SystemExit("replacement binary is missing or not executable")
+    predecessor = load_json(campaign_file(predecessor_root))
+    if predecessor.get("lineage") is not None:
+        raise SystemExit("supersession is limited to one hop")
+    if secret_path != Path(str(predecessor.get("secret_file", ""))).resolve():
+        raise SystemExit("supersession cannot change the credential source")
+    old_publisher = predecessor.get("publisher")
+    if (
+        not isinstance(old_publisher, dict)
+        or publisher_repo != Path(str(old_publisher.get("repo", ""))).resolve()
+    ):
+        raise SystemExit("supersession cannot change the publisher repository")
+    replacement_sha = sha256_file(binary)
+    if replacement_sha == predecessor.get("binary_sha256"):
+        raise SystemExit("supersession requires a different frozen binary")
+
+    target_lock = root.parent / f".{root.name}.supersession.claim"
+    with exclusive_claim(target_lock, blocking=True) as target_claimed:
+        if not target_claimed:
+            raise SystemExit("cannot claim supersession target")
+        existing = recover_existing_supersession(
+            root,
+            predecessor_root,
+            replacement_sha,
+            manifest_path,
+            secret_path,
+            publisher_repo,
+        )
+        if existing is not None:
+            return existing
+        if not manifest_path.is_file() or sha256_file(
+            manifest_path
+        ) != predecessor.get("entrant_manifest_sha256"):
+            raise SystemExit("supersession cannot change the frozen entrant manifest")
+        manifest = load_json(manifest_path)
+        rows = entrants(manifest)
+        row_ids = {str(row["id"]) for row in rows}
+        secret_values = parse_secret_file(secret_path)
+        evidence, artifacts, evidence_sha = validate_defect_evidence(
+            evidence_path, predecessor, binary, row_ids, secret_values.values()
+        )
+        affected = set(evidence["affected_entrants"])
+        transition_id = supersession_transition_id(
+            predecessor_root, root, evidence_sha, replacement_sha, predecessor
+        )
+        with exclusive_claim(
+            predecessor_root / "locks/manager-launch.claim", blocking=True
+        ) as launch_claimed:
+            if not launch_claimed:
+                raise SystemExit("cannot freeze predecessor manager launch")
+            with exclusive_claim(
+                predecessor_root / "locks/supersession.claim", blocking=True
+            ) as predecessor_claimed:
+                if not predecessor_claimed:
+                    raise SystemExit("cannot claim predecessor supersession")
+                states, predecessor_ledger, terminal_outstanding = (
+                    validate_stopped_predecessor(
+                    predecessor_root, predecessor, rows, affected
+                    )
+                )
+                seal = predecessor_seal(
+                    predecessor_root, predecessor, rows, transition_id
+                )
+                seal_payload = (json.dumps(seal, indent=2, sort_keys=True) + "\n").encode()
+                seal_sha = sha256_bytes(seal_payload)
+                receipt = {
+                    "schema_version": SUPERSESSION_SCHEMA,
+                    "transition_id": transition_id,
+                    "predecessor_campaign_id": predecessor["campaign_id"],
+                    "predecessor_root": str(predecessor_root),
+                    "target_root": str(root),
+                    "secret_file": str(secret_path),
+                    "publisher_repo": str(publisher_repo),
+                    "defect_evidence_sha256": evidence_sha,
+                    "defect_artifacts": [
+                        {"role": artifact["role"], "sha256": artifact["sha256"]}
+                        for artifact in artifacts
+                    ],
+                    "predecessor_binary_sha256": predecessor["binary_sha256"],
+                    "replacement_binary_sha256": replacement_sha,
+                    "entrant_manifest_sha256": predecessor["entrant_manifest_sha256"],
+                    "predecessor_budget_ledger_sha256": sha256_file(
+                        Path(str(predecessor["budget_ledger"]))
+                    ),
+                    "predecessor_seal_sha256": seal_sha,
+                    "affected_entrants": sorted(affected),
+                    "carried_entrants": sorted(row_ids - affected),
+                    "predecessor_episode_attempts": {
+                        entrant_id: int(
+                            states[entrant_id].get("provider_episode_attempts", 0)
+                        )
+                        for entrant_id in sorted(row_ids)
+                    },
+                    "predecessor_terminal_outstanding": terminal_outstanding,
+                    "fresh_all_entrant_smoke_required": True,
+                }
+                receipt_path = predecessor_root / SUPERSESSION_RECEIPT
+                write_exclusive_json(receipt_path, receipt)
+                write_exclusive_json(
+                    predecessor_root / "supersession-seal.json", seal
+                )
+                supersession_fault("receipt_committed")
+
+                staging_parent = Path(
+                    tempfile.mkdtemp(prefix=f".{root.name}.supersession-", dir=root.parent)
+                )
+                staged_root = staging_parent / root.name
+                init_campaign(
+                    staged_root,
+                    binary,
+                    manifest_path,
+                    secret_path,
+                    publisher_repo,
+                    publish_live,
+                    website_base_url,
+                    publish_verify_timeout_seconds,
+                    publish_verify_interval_seconds,
+                    publish_process_timeout_seconds,
+                )
+                supersession_fault("staged_initialized")
+                successor = load_json(campaign_file(staged_root))
+                instrument_problem = supersession_instrument_failure(
+                    predecessor, successor
+                )
+                if instrument_problem:
+                    raise SystemExit(instrument_problem)
+
+                atomic_copy(
+                    Path(str(predecessor["budget_ledger"])),
+                    Path(str(successor["budget_ledger"])),
+                    0o600,
+                )
+                if load_json(Path(str(successor["budget_ledger"]))) != predecessor_ledger:
+                    raise SystemExit("cumulative predecessor budget did not copy exactly")
+                lineage_root = staged_root / "lineage"
+                lineage_root.mkdir()
+                atomic_copy(
+                    predecessor_root / "supersession-seal.json",
+                    lineage_root / "predecessor-seal.json",
+                    0o600,
+                )
+                atomic_copy(
+                    Path(str(predecessor["budget_ledger"])),
+                    lineage_root / "predecessor-budget-ledger.json",
+                    0o600,
+                )
+                copied_artifacts = copy_evidence_bundle(
+                    lineage_root / "evidence",
+                    evidence_path,
+                    evidence_sha,
+                    artifacts,
+                )
+                seal_entrants = seal["entrants"]
+                for row in rows:
+                    entrant_id = str(row["id"])
+                    if entrant_id in affected:
+                        reset_affected_entrant(
+                            staged_root,
+                            root,
+                            entrant_id,
+                            states[entrant_id],
+                            seal_entrants[entrant_id],
+                            transition_id,
+                        )
+                    else:
+                        copy_carried_entrant(
+                            predecessor_root,
+                            staged_root,
+                            root,
+                            entrant_id,
+                            seal_entrants[entrant_id],
+                            transition_id,
+                        )
+
+                successor = remap_paths(
+                    load_json(campaign_file(staged_root)), staged_root, root
+                )
+                lineage = {
+                    "schema_version": SUPERSESSION_SCHEMA,
+                    "generation": 1,
+                    "transition_id": transition_id,
+                    "predecessor_root": str(predecessor_root),
+                    "predecessor_campaign_id": predecessor["campaign_id"],
+                    "predecessor_receipt_sha256": sha256_file(receipt_path),
+                    "predecessor_seal_sha256": seal_sha,
+                    "predecessor_budget_ledger_sha256": sha256_file(
+                        lineage_root / "predecessor-budget-ledger.json"
+                    ),
+                    "defect_evidence_sha256": evidence_sha,
+                    "defect_id": evidence["defect_id"],
+                    "defect_artifacts": copied_artifacts,
+                    "successor_root": str(root),
+                    "successor_binary_sha256": replacement_sha,
+                    "affected_entrants": receipt["affected_entrants"],
+                    "carried_entrants": receipt["carried_entrants"],
+                    "predecessor_episode_attempts": receipt[
+                        "predecessor_episode_attempts"
+                    ],
+                    "predecessor_terminal_outstanding": receipt[
+                        "predecessor_terminal_outstanding"
+                    ],
+                    "fresh_all_entrant_smoke_required": receipt[
+                        "fresh_all_entrant_smoke_required"
+                    ],
+                }
+                atomic_json(lineage_root / "lineage.json", lineage)
+                successor.update(
+                    {
+                        "status": "INITIALIZED",
+                        "lineage": {
+                            "generation": 1,
+                            "transition_id": transition_id,
+                            "path": "lineage/lineage.json",
+                            "sha256": sha256_file(lineage_root / "lineage.json"),
+                        },
+                    }
+                )
+                atomic_json(campaign_file(staged_root), successor)
+                supersession_fault("lineage_staged")
+                fsync_directory(staged_root)
+                os.replace(staged_root, root)
+                fsync_directory(root.parent)
+                supersession_fault("root_committed")
+                failure = lineage_failure(root)
+                if failure:
+                    raise SystemExit(f"committed supersession failed validation: {failure}")
+                with contextlib.suppress(OSError):
+                    staging_parent.rmdir()
+                return load_json(campaign_file(root))
+
+
 @contextlib.contextmanager
 def provider_lane(root: Path, lane: str) -> Iterator[None]:
     path = root / "locks" / f"{lane}.lock"
@@ -1661,6 +3322,26 @@ def supervise(root: Path, entrant_id: str) -> int:
 
 def supervise_claimed(root: Path, entrant_id: str) -> int:
     campaign = load_json(campaign_file(root))
+    if campaign.get("status") == "STOPPED" or (root / SUPERSESSION_RECEIPT).exists():
+        return 2
+    lineage_problem = lineage_failure(root)
+    if lineage_problem:
+        update_state(
+            root,
+            entrant_id,
+            status="PRE_ADMISSION_FAILURE",
+            failure=f"campaign lineage refused provider admission: {lineage_problem}",
+        )
+        return 2
+    smoke_problem = supersession_smoke_gate_failure(root)
+    if smoke_problem:
+        update_state(
+            root,
+            entrant_id,
+            status="PRE_ADMISSION_FAILURE",
+            failure=smoke_problem,
+        )
+        return 2
     instrument_bench = campaign_instrument_path(
         campaign, "evals/swarm-bench/bench/cloud_sb7.py"
     ).parent
@@ -1787,14 +3468,7 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         finally:
             server.shutdown()
         descendants_clean = stop_group_members(os.getpgrp(), {os.getpid()})
-        secret_hits = secret_occurrences(
-            [
-                Path(str(state["tree"])),
-                Path(str(state["profile"])),
-                log_path,
-            ],
-            secret_values.values(),
-        )
+        secret_hits = persisted_entrant_secret_hits(root, campaign, entrant_id)
 
         elapsed = round(time.time() - started, 3)
         lifecycle = lifecycle_summary(
@@ -1841,6 +3515,10 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         elif completed and not descendants_clean:
             status = "INCOMPLETE"
             failure = "background tool descendants survived the build process"
+            completed = False
+        elif lineage_failure(root) is not None:
+            status = "INCOMPLETE"
+            failure = f"campaign lineage changed during build: {lineage_failure(root)}"
             completed = False
         tree_hash = hash_tree(Path(str(state["tree"])))
         final = update_state(
@@ -3088,6 +4766,31 @@ def publish_one(root: Path, entrant_id: str) -> bool:
     if state["status"] not in POST_BUILD_STATES:
         return False
     campaign = load_json(campaign_file(root))
+    if campaign.get("status") == "STOPPED" or (root / SUPERSESSION_RECEIPT).exists():
+        return False
+    lineage_problem = lineage_failure(root)
+    if lineage_problem:
+        update_state(
+            root,
+            entrant_id,
+            status="PUBLISH_FAILED",
+            failure=f"campaign lineage refused publication: {lineage_problem}",
+        )
+        return False
+    smoke_problem = supersession_smoke_gate_failure(root)
+    if smoke_problem:
+        update_state(root, entrant_id, status="PUBLISH_FAILED", failure=smoke_problem)
+        return False
+    secret_hits = persisted_entrant_secret_hits(root, campaign, entrant_id)
+    if secret_hits:
+        update_state(
+            root,
+            entrant_id,
+            status="INCOMPLETE",
+            secret_scan_hits=secret_hits,
+            failure="provider credential appeared in benchmark-controlled artifacts",
+        )
+        return False
     entry = publish_entry(campaign, entrant_id)
     stage = "stage"
     try:
@@ -3149,6 +4852,12 @@ def publish_one(root: Path, entrant_id: str) -> bool:
             )
         else:
             stage = "live-write"
+            require_lineage(root)
+            secret_hits = persisted_entrant_secret_hits(root, campaign, entrant_id)
+            if secret_hits:
+                raise PublicationError(
+                    "provider credential appeared before the live publication boundary"
+                )
             update_state(root, entrant_id, status="PUBLISHING")
             live = run_publisher(root, entrant_id, runs, live=True)
             live_succeeded_at = None
@@ -3266,6 +4975,31 @@ def score_one(root: Path, entrant_id: str) -> bool:
     if state["status"] not in {"BUILD_COMPLETE", "SCORE_FAILED"}:
         return False
     campaign = load_json(campaign_file(root))
+    if campaign.get("status") == "STOPPED" or (root / SUPERSESSION_RECEIPT).exists():
+        return False
+    lineage_problem = lineage_failure(root)
+    if lineage_problem:
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            failure=f"campaign lineage refused scoring: {lineage_problem}",
+        )
+        return False
+    smoke_problem = supersession_smoke_gate_failure(root)
+    if smoke_problem:
+        update_state(root, entrant_id, status="SCORE_FAILED", failure=smoke_problem)
+        return False
+    secret_hits = persisted_entrant_secret_hits(root, campaign, entrant_id)
+    if secret_hits:
+        update_state(
+            root,
+            entrant_id,
+            status="INCOMPLETE",
+            secret_scan_hits=secret_hits,
+            failure="provider credential appeared in benchmark-controlled artifacts",
+        )
+        return False
     mismatch = instrument_mismatch(campaign)
     if mismatch:
         update_state(root, entrant_id, status="SCORE_FAILED", failure=mismatch)
@@ -3432,8 +5166,20 @@ def manage(root: Path) -> int:
 
 
 def manage_claimed(root: Path) -> int:
-    recover_interrupted_scoring(root)
     campaign = load_json(campaign_file(root))
+    if campaign.get("status") == "STOPPED" or (root / SUPERSESSION_RECEIPT).exists():
+        return 2
+    recover_interrupted_scoring(root)
+    lineage_problem = lineage_failure(root)
+    if lineage_problem:
+        manager_state(root, status="ATTENTION", failure=lineage_problem)
+        update_campaign(root, status="ATTENTION", failure=lineage_problem)
+        return 2
+    smoke_problem = supersession_smoke_gate_failure(root)
+    if smoke_problem:
+        manager_state(root, status="ATTENTION", failure=smoke_problem)
+        update_campaign(root, status="ATTENTION", failure=smoke_problem)
+        return 2
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
     row_ids = [str(row["id"]) for row in entrants(manifest)]
     manager_state(
@@ -3483,6 +5229,7 @@ def start(root: Path) -> int:
         if not claimed:
             raise SystemExit("cannot claim cloud benchmark manager launch")
         campaign = load_json(campaign_file(root))
+        require_lineage(root)
         if campaign["status"] not in RESTARTABLE_CAMPAIGN_STATES:
             raise SystemExit(f"campaign cannot start from {campaign['status']}")
         current = load_json(root / "manager.json")
@@ -3536,6 +5283,15 @@ def stop_group(pgid: int, grace_seconds: float = 15.0) -> bool:
 
 
 def stop(root: Path) -> int:
+    with exclusive_claim(root / "locks/supersession.claim", blocking=True) as claimed:
+        if not claimed:
+            raise SystemExit("cannot claim cloud campaign stop")
+        return stop_claimed(root)
+
+
+def stop_claimed(root: Path) -> int:
+    if (root / SUPERSESSION_RECEIPT).exists():
+        return 0
     campaign = load_json(campaign_file(root))
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
     failures = []
@@ -3582,6 +5338,7 @@ def stop(root: Path) -> int:
             busy.append(port)
     if busy:
         raise SystemExit(f"owned vendor ports survived stop: {busy}")
+    update_campaign(root, status="STOPPED", stopped_at=utc_now())
     return 0
 
 
@@ -3692,6 +5449,32 @@ def main() -> int:
         default=DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
     )
 
+    p_supersede = sub.add_parser("supersede")
+    root_arg(p_supersede)
+    p_supersede.add_argument("--from-root", type=Path, required=True)
+    p_supersede.add_argument("--binary", type=Path, required=True)
+    p_supersede.add_argument("--manifest", type=Path, default=DEFAULT_ENTRANTS)
+    p_supersede.add_argument("--secrets", type=Path, default=DEFAULT_SECRET_FILE)
+    p_supersede.add_argument("--publisher-repo", type=Path, required=True)
+    p_supersede.add_argument("--defect-evidence", type=Path, required=True)
+    p_supersede.add_argument("--publish-live", action="store_true")
+    p_supersede.add_argument("--website-base-url", default=DEFAULT_WEBSITE_BASE_URL)
+    p_supersede.add_argument(
+        "--publish-verify-timeout-seconds",
+        type=float,
+        default=DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS,
+    )
+    p_supersede.add_argument(
+        "--publish-verify-interval-seconds",
+        type=float,
+        default=DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS,
+    )
+    p_supersede.add_argument(
+        "--publish-process-timeout-seconds",
+        type=float,
+        default=DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
+    )
+
     for name in ("start", "status", "watch", "results", "stop", "score", "resume"):
         root_arg(sub.add_parser(name))
 
@@ -3724,6 +5507,23 @@ def main() -> int:
             args.publish_process_timeout_seconds,
         )
         print(f"initialized {value['campaign_id']} at {args.root.resolve()}")
+        return 0
+    if args.command == "supersede":
+        value = supersede_campaign(
+            args.from_root,
+            args.root,
+            args.binary,
+            args.manifest,
+            args.secrets,
+            args.publisher_repo,
+            args.defect_evidence,
+            args.publish_live,
+            args.website_base_url,
+            args.publish_verify_timeout_seconds,
+            args.publish_verify_interval_seconds,
+            args.publish_process_timeout_seconds,
+        )
+        print(f"superseded into {value['campaign_id']} at {args.root.resolve()}")
         return 0
     root = args.root.resolve()
     if args.command == "start":
@@ -3761,6 +5561,7 @@ def main() -> int:
         ids = [state["entrant"] for state in status_rows(root)]
         return 0 if score_all(root, ids) else 1
     if args.command == "resume":
+        require_lineage(root)
         recover_dead_manager(root)
         recover_interrupted_publication(root)
         campaign = load_json(campaign_file(root))
