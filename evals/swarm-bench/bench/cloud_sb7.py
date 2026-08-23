@@ -13,6 +13,7 @@ accepted only after both the Sanity receipt and rendered public pages match.
 from __future__ import annotations
 
 import argparse
+import codecs
 import contextlib
 import fcntl
 import hashlib
@@ -30,6 +31,7 @@ import stat as stat_module
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -73,6 +75,7 @@ POST_BUILD_STATES = {
 }
 BUILD_SUCCESS_STATES = {"BUILD_COMPLETE"} | POST_BUILD_STATES
 CAMPAIGN_SCHEMA = 2
+MAX_SCORER_VERDICT_BYTES = 32 * 1024 * 1024
 SUPERSESSION_SCHEMA = 1
 SUPERSESSION_RECEIPT = "supersession-receipt.json"
 QUALIFICATION_RESTART_SCHEMA = 1
@@ -222,8 +225,18 @@ DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS = 15.0
 DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS = 900.0
 INTERRUPTED_PUBLICATION_STATES = {
     "PUBLISH_VALIDATING",
+    "PUBLISH_VALIDATED",
     "PUBLISHING",
+    "PUBLISHED_UNVERIFIED",
     "REVALIDATING",
+    "REVALIDATED",
+    "VERIFYING_RENDERED",
+}
+REMOTE_WRITE_POSSIBLE_PUBLICATION_STATES = {
+    "PUBLISHING",
+    "PUBLISHED_UNVERIFIED",
+    "REVALIDATING",
+    "REVALIDATED",
     "VERIFYING_RENDERED",
 }
 SMOKE_MAX_TURNS = 3
@@ -234,8 +247,14 @@ SMOKE_RETRYABLE_STATES = {"PLANNED", "PRE_ADMISSION_FAILURE"}
 SMOKE_PREPARABLE_STATES = SMOKE_RETRYABLE_STATES | {"WAITING_PROVIDER_LANE"}
 MONITOR_TERMINAL_STATES = {"PUBLISHED", "ATTENTION", "STOPPED"}
 MONITOR_DETACH_TIMEOUT_SECONDS = 5.0
+MONITOR_LAUNCHER_TIMEOUT_SECONDS = 15.0
 MONITOR_HEARTBEAT_INTERVAL_SECONDS = 10.0
 MONITOR_LEASE_TIMEOUT_SECONDS = 35.0
+MONITOR_LEASE_RENEWAL_SECONDS = 5.0
+SCORER_OWNERSHIP_ENV = "GOOSE_SB7_SCORER_OWNERSHIP"
+PUBLISHER_OWNERSHIP_ENV = "GOOSE_SB7_PUBLISHER_OWNERSHIP"
+SCORER_INVENTORY_POLL_SECONDS = 2.0
+MONITOR_NETWORK_TIMEOUT_SECONDS = 10.0
 MANAGER_WATCH_POLL_SECONDS = 1.0
 GATED_EXEC_RECEIPT_TIMEOUT_SECONDS = 10.0
 CHILD_GATE_PATH_ENV = "GOOSE_CLOUD_CHILD_GATE_PATH"
@@ -252,6 +271,17 @@ MONITOR_PROGRESS_WINDOW_REPEAT_NUMERATOR = 2
 MONITOR_PROGRESS_WINDOW_REPEAT_DENOMINATOR = 3
 MONITOR_PROGRESS_SENTENCE_REPEAT_NUMERATOR = 1
 MONITOR_PROGRESS_SENTENCE_REPEAT_DENOMINATOR = 4
+BUDGET_HISTORY_SCHEMA = 2
+BUDGET_HISTORY_ROOT = "budget-history"
+
+
+class BudgetReleasePending(RuntimeError):
+    def __init__(self, pending: Mapping[str, Mapping[str, Any]]) -> None:
+        self.pending = {str(key): dict(value) for key, value in pending.items()}
+        super().__init__(
+            "budget release lifecycle is pending: "
+            + ", ".join(sorted(self.pending))
+        )
 
 
 def utc_now() -> str:
@@ -405,18 +435,20 @@ def atomic_json(path: Path, value: Mapping[str, Any]) -> None:
             os.unlink(raw)
 
 
+def unique_json_object(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
+    value: Dict[str, Any] = {}
+    for key, nested in pairs:
+        if key in value:
+            raise ValueError(f"duplicate object key: {key}")
+        value[key] = nested
+    return value
+
+
 def load_json(path: Path) -> Dict[str, Any]:
-    def unique_object(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
-        value: Dict[str, Any] = {}
-        for key, nested in pairs:
-            if key in value:
-                raise ValueError(f"duplicate object key: {key}")
-            value[key] = nested
-        return value
 
     try:
         with path.open() as stream:
-            value = json.load(stream, object_pairs_hook=unique_object)
+            value = json.load(stream, object_pairs_hook=unique_json_object)
     except (json.JSONDecodeError, ValueError) as error:
         raise SystemExit(f"invalid JSON in {path}: {error}") from None
     if not isinstance(value, dict):
@@ -710,6 +742,22 @@ def validated_qualification_history(
     return dict(history)
 
 
+def scorer_runtime_contract_identity(runtime: Any) -> str:
+    if not isinstance(runtime, Mapping) or runtime.get("schema_version") != 1:
+        raise SystemExit("campaign scorer runtime contract is malformed")
+    try:
+        canonical = json.loads(json.dumps(runtime, sort_keys=True))
+    except (TypeError, ValueError) as error:
+        raise SystemExit(f"campaign scorer runtime cannot be canonicalized: {error}")
+    frozen = canonical.get("frozen")
+    if not isinstance(frozen, dict) or not isinstance(frozen.get("sha256"), str):
+        raise SystemExit("campaign scorer runtime has no frozen package identity")
+    frozen.pop("path", None)
+    return sha256_bytes(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
+    )
+
+
 def smoke_contract_identity(campaign: Mapping[str, Any]) -> str:
     lineage = validated_campaign_lineage(campaign)
     qualification_history = validated_qualification_history(campaign)
@@ -746,6 +794,9 @@ def smoke_contract_identity(campaign: Mapping[str, Any]) -> str:
         "entrant_manifest_sha256": campaign.get("entrant_manifest_sha256"),
         "budget_config_sha256": campaign.get("budget_config_sha256"),
         "smoke_max_turns": campaign.get("smoke_max_turns"),
+        "scorer_runtime_sha256": scorer_runtime_contract_identity(
+            campaign.get("scorer_runtime")
+        ),
         **normalized,
     }
     if qualification_history is not None:
@@ -756,6 +807,7 @@ def smoke_contract_identity(campaign: Mapping[str, Any]) -> str:
         "instrument_set_sha256",
         "entrant_manifest_sha256",
         "budget_config_sha256",
+        "scorer_runtime_sha256",
     ):
         if not isinstance(payload[field], str) or not payload[field]:
             raise SystemExit(f"campaign smoke contract has no {field}")
@@ -1332,6 +1384,253 @@ def freeze_instrument(
     return frozen
 
 
+def sha256_tree_without_top_level(root: Path, excluded: set[str]) -> str:
+    if not root.is_dir() or root.is_symlink():
+        raise SystemExit(f"runtime package is missing or linked: {root}")
+    digest = hashlib.sha256()
+    for directory, names, files in os.walk(root, followlinks=False):
+        base = Path(directory)
+        if base == root:
+            names[:] = sorted(name for name in names if name not in excluded)
+        else:
+            names.sort()
+        files.sort()
+        for name in files:
+            path = base / name
+            if path.is_symlink() or not path.is_file():
+                raise SystemExit(f"runtime package contains a non-regular file: {path}")
+            relative = str(path.relative_to(root)).encode()
+            digest.update(len(relative).to_bytes(8, "big"))
+            digest.update(relative)
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+    return digest.hexdigest()
+
+
+def playwright_package_candidates(publisher_repo: Path) -> list[Path]:
+    candidates: list[Path] = []
+    configured = os.environ.get("GOOSE_SB7_PLAYWRIGHT_PACKAGE")
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend(
+        [
+            REPO / "node_modules/playwright",
+            REPO / "ui/node_modules/playwright",
+            publisher_repo / "node_modules/playwright",
+        ]
+    )
+    npm = shutil.which("npm")
+    if npm:
+        result = subprocess.run(
+            [str(Path(npm).resolve()), "root", "-g"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            candidates.append(Path(result.stdout.strip()) / "playwright")
+    candidates.extend(
+        sorted(
+            (Path.home() / ".nvm/versions/node").glob(
+                "*/lib/node_modules/playwright"
+            ),
+            reverse=True,
+        )
+    )
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        absolute = candidate.absolute()
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        unique.append(absolute)
+    return unique
+
+
+def playwright_core_for_package(playwright: Path) -> Path | None:
+    candidates = [
+        playwright / "node_modules/playwright-core",
+        playwright.parent / "playwright-core",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir() and not candidate.is_symlink():
+            return candidate.absolute()
+    return None
+
+
+def scorer_runtime_snapshot(
+    node: Mapping[str, Any], publisher_repo: Path
+) -> Dict[str, Any]:
+    node_path = Path(str(node.get("path", "")))
+    if (
+        not node_path.is_absolute()
+        or node_path.is_symlink()
+        or not node_path.is_file()
+        or node_path.resolve() != node_path
+        or sha256_file(node_path) != node.get("sha256")
+    ):
+        raise SystemExit("scorer node runtime is not the authenticated publisher node")
+    selected: tuple[Path, Path, Mapping[str, Any], Mapping[str, Any]] | None = None
+    failures: list[str] = []
+    for playwright in playwright_package_candidates(publisher_repo):
+        try:
+            if (
+                playwright.is_symlink()
+                or not (playwright / "package.json").is_file()
+            ):
+                continue
+            core = playwright_core_for_package(playwright)
+            if core is None or not (core / "browsers.json").is_file():
+                continue
+            playwright_manifest = load_json(playwright / "package.json")
+            core_manifest = load_json(core / "package.json")
+            if (
+                playwright_manifest.get("name") != "playwright"
+                or core_manifest.get("name") != "playwright-core"
+                or playwright_manifest.get("dependencies", {}).get("playwright-core")
+                != core_manifest.get("version")
+            ):
+                failures.append(f"version mismatch: {playwright}")
+                continue
+            sha256_tree_without_top_level(playwright, {"node_modules"})
+            sha256_tree_exact(core)
+            selected = playwright, core, playwright_manifest, core_manifest
+            break
+        except (OSError, KeyError, TypeError, json.JSONDecodeError, SystemExit) as error:
+            failures.append(f"{playwright}: {error}")
+    if selected is None:
+        detail = f" ({'; '.join(failures)})" if failures else ""
+        raise SystemExit(f"cannot resolve a regular Playwright runtime{detail}")
+    playwright, core, playwright_manifest, core_manifest = selected
+    browser_cache = Path(
+        os.environ.get(
+            "PLAYWRIGHT_BROWSERS_PATH",
+            str(Path.home() / "Library/Caches/ms-playwright"),
+        )
+    ).absolute()
+    if browser_cache.is_symlink() or not browser_cache.is_dir():
+        raise SystemExit("Playwright browser cache is missing or linked")
+    browsers = load_json(core / "browsers.json").get("browsers")
+    if not isinstance(browsers, list):
+        raise SystemExit("Playwright browser registry is malformed")
+    required_names = {"chromium", "chromium-headless-shell", "ffmpeg"}
+    revisions = {
+        str(value.get("name")): str(value.get("revision"))
+        for value in browsers
+        if isinstance(value, dict) and value.get("name") in required_names
+    }
+    if set(revisions) != required_names or any(not value for value in revisions.values()):
+        raise SystemExit("Playwright browser registry omits the Chromium closure")
+    components: Dict[str, Dict[str, str]] = {}
+    for name in sorted(required_names):
+        directory_name = name.replace("-", "_") + "-" + revisions[name]
+        path = browser_cache / directory_name
+        if path.is_symlink() or not path.is_dir():
+            raise SystemExit(f"Playwright browser component is missing: {path}")
+        components[name] = {
+            "path": str(path),
+            "sha256": artifact_tree_sha256(path),
+            "revision": revisions[name],
+        }
+    return {
+        "schema_version": 1,
+        "node": dict(node),
+        "playwright_source": {
+            "path": str(playwright),
+            "version": str(playwright_manifest["version"]),
+            "sha256": sha256_tree_without_top_level(playwright, {"node_modules"}),
+        },
+        "playwright_core_source": {
+            "path": str(core),
+            "version": str(core_manifest["version"]),
+            "sha256": sha256_tree_exact(core),
+        },
+        "browser_cache_root": str(browser_cache),
+        "browser_components": components,
+    }
+
+
+def scorer_runtime_source_failure(runtime: Mapping[str, Any]) -> str | None:
+    try:
+        if runtime.get("schema_version") != 1:
+            return "scorer runtime schema differs"
+        node = runtime["node"]
+        node_path = Path(str(node["path"]))
+        if (
+            node_path.is_symlink()
+            or not node_path.is_file()
+            or node_path.resolve() != node_path
+            or sha256_file(node_path) != node.get("sha256")
+        ):
+            return "scorer node runtime changed"
+        playwright = runtime["playwright_source"]
+        playwright_path = Path(str(playwright["path"]))
+        if (
+            sha256_tree_without_top_level(playwright_path, {"node_modules"})
+            != playwright.get("sha256")
+        ):
+            return "Playwright package changed"
+        core = runtime["playwright_core_source"]
+        core_path = Path(str(core["path"]))
+        if sha256_tree_exact(core_path) != core.get("sha256"):
+            return "Playwright core package changed"
+        cache = Path(str(runtime["browser_cache_root"]))
+        if cache.is_symlink() or not cache.is_dir():
+            return "Playwright browser cache changed"
+        components = runtime["browser_components"]
+        if not isinstance(components, dict) or set(components) != {
+            "chromium",
+            "chromium-headless-shell",
+            "ffmpeg",
+        }:
+            return "Playwright browser closure differs"
+        for component in components.values():
+            path = Path(str(component["path"]))
+            if (
+                path.is_symlink()
+                or not path.is_dir()
+                or not path.is_relative_to(cache)
+                or artifact_tree_sha256(path) != component.get("sha256")
+            ):
+                return "Playwright browser component changed"
+    except (OSError, KeyError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"scorer runtime cannot be verified: {error}"
+    return None
+
+
+def freeze_scorer_runtime(
+    instrument_root: Path, runtime: Mapping[str, Any]
+) -> Dict[str, Any]:
+    problem = scorer_runtime_source_failure(runtime)
+    if problem:
+        raise SystemExit(problem)
+    playwright = Path(str(runtime["playwright_source"]["path"]))
+    core = Path(str(runtime["playwright_core_source"]["path"]))
+    destination = (
+        instrument_root
+        / "evals/swarm-bench/bench/node_modules/playwright"
+    )
+    if destination.exists():
+        raise SystemExit("frozen Playwright runtime already exists")
+
+    def ignore(source: str, names: list[str]) -> set[str]:
+        return {"node_modules"} if Path(source) == playwright else set()
+
+    shutil.copytree(playwright, destination, ignore=ignore, symlinks=False)
+    shutil.copytree(core, destination / "node_modules/playwright-core")
+    frozen = {
+        "path": str(destination),
+        "sha256": sha256_tree_exact(destination),
+        "playwright_version": runtime["playwright_source"]["version"],
+        "playwright_core_version": runtime["playwright_core_source"]["version"],
+    }
+    return frozen
+
+
 def campaign_instrument_path(campaign: Mapping[str, Any], relative: str) -> Path:
     root = campaign.get("instrument_root")
     if not root:
@@ -1567,6 +1866,7 @@ def preflight(
         for provider in {str(row["provider"]) for row in rows}
     }
     publisher = publisher_snapshot(publisher_repo, rows)
+    scorer_runtime = scorer_runtime_snapshot(publisher["node"], publisher_repo)
     return {
         "checked_at": utc_now(),
         "binary_sha256": sha256_file(binary),
@@ -1576,6 +1876,7 @@ def preflight(
         "ports_free": True,
         "credential_file_mode": f"{secret_path.stat().st_mode & 0o777:04o}",
         "publisher": publisher,
+        "scorer_runtime": scorer_runtime,
     }
 
 
@@ -1603,6 +1904,7 @@ def validated_preflight_snapshot(
         "ports_free",
         "credential_file_mode",
         "publisher",
+        "scorer_runtime",
     }
     if not isinstance(value, Mapping) or set(value) != expected_keys:
         raise SystemExit("verified preflight snapshot has an invalid schema")
@@ -1648,6 +1950,14 @@ def validated_preflight_snapshot(
         )
     if checked.get("publisher") != publisher_snapshot(publisher_repo, rows):
         raise SystemExit("publisher changed after authenticated preflight")
+    scorer_runtime = checked.get("scorer_runtime")
+    if not isinstance(scorer_runtime, dict):
+        raise SystemExit("verified preflight scorer runtime is missing")
+    runtime_problem = scorer_runtime_source_failure(scorer_runtime)
+    if runtime_problem:
+        raise SystemExit(runtime_problem)
+    if scorer_runtime.get("node") != checked["publisher"].get("node"):
+        raise SystemExit("verified scorer and publisher node runtimes differ")
     checked_at = checked.get("checked_at")
     if not isinstance(checked_at, str) or not checked_at:
         raise SystemExit("verified preflight snapshot has no timestamp")
@@ -1714,6 +2024,10 @@ def init_campaign(
     (root / "instrument").mkdir()
     instrument_root = root / "instrument/source"
     hashes = freeze_instrument(instrument_root)
+    scorer_runtime = dict(checked["scorer_runtime"])
+    scorer_runtime["frozen"] = freeze_scorer_runtime(
+        instrument_root, scorer_runtime
+    )
     (root / "entrants").mkdir()
     (root / "smoke").mkdir()
     (root / "locks").mkdir()
@@ -1803,11 +2117,12 @@ def init_campaign(
             json.dumps(hashes, sort_keys=True).encode()
         ),
         "prompt_source_sha256": sha256_bytes(prompt_source),
+        "scorer_runtime": scorer_runtime,
         "secret_file": str(secret_path),
         "preflight": {
             key: value
             for key, value in checked.items()
-            if key not in {"models", "publisher"}
+            if key not in {"models", "publisher", "scorer_runtime"}
         },
         "publisher": publisher,
         "requested_models": checked["requested_models"],
@@ -1830,6 +2145,7 @@ def init_campaign(
         (unit / "tree").mkdir(parents=True)
         (unit / "profile").mkdir()
         (unit / "logs").mkdir()
+        (unit / "attempts").mkdir()
         seed = secrets.token_hex(8)
         state = {
             "schema_version": CAMPAIGN_SCHEMA,
@@ -1839,6 +2155,7 @@ def init_campaign(
             "provider_lane": row["provider_lane"],
             "status": "PLANNED",
             "provider_episode_attempts": 0,
+            "provider_launch_attempts": 0,
             "fixture_seed": seed,
             "vendor_port": int(row["vendor_port"]),
             "tree": str(unit / "tree"),
@@ -2002,20 +2319,51 @@ def prepare_smoke_attempt(
         or state.get("smoke_contract_sha256") != contract
     ):
         raise SystemExit(f"{entrant_id} smoke contract identity changed before launch")
-    attempt = int(state.get("launch_attempts", 0)) + 1
-    attempt_root = root / "smoke" / entrant_id / "attempts" / f"attempt-{attempt}"
-    attempt_root.mkdir(parents=True, exist_ok=False)
-    tree = attempt_root / "tree"
-    profile = attempt_root / "profile"
+    unit = root / "smoke" / entrant_id
+    attempts_root = unit / "attempts"
+    disk_attempts = [
+        int(path.name.removeprefix("attempt-"))
+        for path in attempts_root.iterdir()
+        if path.is_dir()
+        and not path.is_symlink()
+        and re.fullmatch(r"attempt-[1-9][0-9]*", path.name)
+    ]
+    attempt = max([int(state.get("launch_attempts", 0)), *disk_attempts]) + 1
+    attempt_root = attempts_root / f"attempt-{attempt}"
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".smoke-attempt-{attempt}-", dir=unit)
+    )
+    tree = staging / "tree"
+    profile = staging / "profile"
     tree.mkdir()
     profile.mkdir()
-    (attempt_root / "logs").mkdir()
+    (staging / "logs").mkdir()
+    (staging / "provider-lifecycle.jsonl").write_text("")
     nonce = secrets.token_bytes(32)
     command, verified = smoke_shell_command(nonce)
     marker = f"SB7_CONTRACT_SMOKE_PASS_{secrets.token_hex(16)}"
     prompt = smoke_prompt(command, marker)
-    prompt_path = attempt_root / "prompt.txt"
+    prompt_path = staging / "prompt.txt"
     prompt_path.write_text(prompt)
+    atomic_json(
+        staging / "prelaunch-receipt.json",
+        {
+            "schema_version": CAMPAIGN_SCHEMA,
+            "campaign_id": campaign.get("campaign_id"),
+            "smoke_contract_sha256": contract,
+            "entrant": entrant_id,
+            "attempt": attempt,
+            "prompt_sha256": sha256_file(prompt_path),
+            "expected_command_sha256": sha256_bytes(command.encode()),
+            "prepared_at": utc_now(),
+        },
+    )
+    fsync_directory(staging)
+    os.replace(staging, attempt_root)
+    fsync_directory(attempts_root)
+    tree = attempt_root / tree.name
+    profile = attempt_root / profile.name
+    prompt_path = attempt_root / prompt_path.name
     return update_smoke_state(
         root,
         entrant_id,
@@ -2140,7 +2488,7 @@ def parse_smoke_stream(
             continue
         try:
             event = json.loads(raw)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, SystemExit):
             errors.append(f"line {line_number}: malformed stream JSON")
             continue
         if not isinstance(event, dict):
@@ -2570,6 +2918,118 @@ def redacted_copy(
         on_line(line)
 
 
+def redacted_copy_until_process_exit(
+    proc: subprocess.Popen[Any],
+    destination: Any,
+    secrets_to_redact: Iterable[str],
+    on_line: Any,
+    *,
+    owned_pgid: int,
+    excluded_pids: set[int],
+    on_inventory: Any = None,
+) -> tuple[int, bool]:
+    if proc.stdout is None:
+        raise RuntimeError("owned process has no output stream")
+    redactions = [value for value in secrets_to_redact if value]
+    descriptor = proc.stdout.fileno()
+    os.set_blocking(descriptor, False)
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    selector = selectors.DefaultSelector()
+    selector.register(descriptor, selectors.EVENT_READ)
+    pending = ""
+    inventory: list[Dict[str, Any]] = []
+    next_inventory_at = 0.0
+    exit_code: int | None = None
+    drain_deadline: float | None = None
+    descendants_observed = False
+    cleanup_proven = True
+
+    def persist_lines(*, final: bool = False) -> None:
+        nonlocal pending
+        while "\n" in pending:
+            line, pending = pending.split("\n", 1)
+            line += "\n"
+            for value in redactions:
+                line = line.replace(value, "[REDACTED]")
+            destination.write(line)
+            destination.flush()
+            on_line(line)
+        if final and pending:
+            line = pending
+            pending = ""
+            for value in redactions:
+                line = line.replace(value, "[REDACTED]")
+            destination.write(line)
+            destination.flush()
+            on_line(line)
+
+    try:
+        while selector.get_map() or exit_code is None:
+            now = time.monotonic()
+            if exit_code is None and now >= next_inventory_at:
+                observed = process_descendant_records(proc.pid)
+                inventory = normalized_process_inventory([*inventory, *observed])
+                if on_inventory is not None:
+                    on_inventory(inventory)
+                next_inventory_at = now + 0.5
+            if exit_code is None and proc.poll() is not None:
+                exit_code = proc.wait()
+                live_inventory = refreshed_process_inventory(inventory)
+                same_group_members = {
+                    pid
+                    for pid, _ in process_group_members(owned_pgid)
+                    if pid not in excluded_pids | {proc.pid}
+                }
+                descendants_observed = bool(live_inventory or same_group_members)
+                for record in live_inventory:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(int(record["pid"]), signal.SIGTERM)
+                cleanup_proven = stop_group_members(
+                    owned_pgid, excluded_pids | {proc.pid}, grace_seconds=2.0
+                )
+                for record in refreshed_process_inventory(live_inventory):
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(int(record["pid"]), signal.SIGKILL)
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline and refreshed_process_inventory(
+                    live_inventory
+                ):
+                    time.sleep(0.05)
+                if refreshed_process_inventory(live_inventory):
+                    cleanup_proven = False
+                drain_deadline = time.monotonic() + 2.0
+            for key, _ in selector.select(timeout=0.2):
+                try:
+                    chunk = os.read(key.fd, 65536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    pending += decoder.decode(b"", final=True)
+                    persist_lines(final=True)
+                    with contextlib.suppress(Exception):
+                        selector.unregister(key.fd)
+                    continue
+                pending += decoder.decode(chunk)
+                persist_lines()
+            if (
+                exit_code is not None
+                and selector.get_map()
+                and drain_deadline is not None
+                and time.monotonic() >= drain_deadline
+            ):
+                cleanup_proven = False
+                for key in list(selector.get_map().values()):
+                    with contextlib.suppress(Exception):
+                        selector.unregister(key.fd)
+                pending += decoder.decode(b"", final=True)
+                persist_lines(final=True)
+        assert exit_code is not None
+        return exit_code, bool(cleanup_proven and not descendants_observed)
+    finally:
+        selector.close()
+        proc.stdout.close()
+
+
 def secret_occurrences(
     paths: Iterable[Path],
     secret_values: Iterable[str],
@@ -2579,18 +3039,20 @@ def secret_occurrences(
     if not needles:
         return []
     overlap = max(map(len, needles)) - 1
-    excluded = {path.resolve() for path in excluded_paths}
+    excluded = {path.absolute() for path in excluded_paths}
     hits: list[str] = []
     files: list[Path] = []
     for path in paths:
-        if path.is_file() and path.resolve() not in excluded:
+        if path.is_symlink():
+            hits.append(f"symbolic:{path}")
+        elif path.is_file() and path.absolute() not in excluded:
             files.append(path)
         elif path.is_dir():
-            files.extend(
-                candidate
-                for candidate in path.rglob("*")
-                if candidate.is_file() and candidate.resolve() not in excluded
-            )
+            for candidate in path.rglob("*"):
+                if candidate.is_symlink():
+                    hits.append(f"symbolic:{candidate}")
+                elif candidate.is_file() and candidate.absolute() not in excluded:
+                    files.append(candidate)
     for path in files:
         try:
             with path.open("rb") as stream:
@@ -2662,6 +3124,7 @@ def provider_state_observer(root: Path, entrant_id: str):
                 first_output_at=counters["first_output_at"],
                 last_provider_event=event,
             )
+            anchor_budget_ledger(root)
 
     return counters, observe
 
@@ -2722,13 +3185,22 @@ def smoke_state_observer(root: Path, entrant_id: str):
                 first_output_at=counters["first_output_at"],
                 last_provider_event=event,
             )
+            anchor_budget_ledger(root)
 
     return counters, observe
 
 
 def classify_build_exit(
-    exit_code: int, admitted_requests: int
+    exit_code: int,
+    admitted_requests: int,
+    *,
+    descendants_clean: bool = True,
 ) -> tuple[str, str | None]:
+    if not descendants_clean:
+        return (
+            "INCOMPLETE",
+            "background tool descendants survived the build process",
+        )
     if exit_code == 0:
         return "BUILD_COMPLETE", None
     if admitted_requests == 0:
@@ -2740,6 +3212,26 @@ def classify_build_exit(
         "INCOMPLETE",
         f"goose exited {exit_code} after {admitted_requests} admitted request(s); "
         "ambiguous admitted work is never retried",
+    )
+
+
+def interrupted_build_pre_admission_proven(
+    status: str, lifecycle: Mapping[str, Any]
+) -> bool:
+    if int(lifecycle.get("admitted", 0)) != 0 or lifecycle_failure(lifecycle):
+        return False
+    if status in {"PLANNED", "WAITING_PROVIDER_LANE"}:
+        return True
+    if status != "BUILD_RUNNING":
+        return False
+    request_states = lifecycle.get("request_states")
+    return bool(
+        isinstance(request_states, dict)
+        and request_states
+        and all(
+            isinstance(states, list) and states and states[-1] == "error"
+            for states in request_states.values()
+        )
     )
 
 
@@ -2755,11 +3247,23 @@ def lifecycle_summary(
         "transition_errors": [],
         "ambiguous_request_ids": [],
         "request_states": {},
+        "request_event_sha256": {},
         "terminal_usage": {},
+        "snapshot_sha256": sha256_bytes(b""),
         "valid": True,
     }
     if not path.is_file():
         return summary
+    try:
+        with path.open("rb") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
+            try:
+                payload = stream.read()
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    except FileNotFoundError:
+        return summary
+    summary["snapshot_sha256"] = sha256_bytes(payload)
     requests: Dict[str, Dict[str, Any]] = {}
     terminal_states = {"provider_terminal", "stream_ambiguous", "error"}
     known_states = {
@@ -2770,10 +3274,10 @@ def lifecycle_summary(
         *terminal_states,
     }
     for line_number, raw in enumerate(
-        path.read_text(errors="replace").splitlines(), start=1
+        payload.decode(errors="replace").splitlines(), start=1
     ):
         try:
-            event = json.loads(raw)
+            event = json.loads(raw, object_pairs_hook=unique_json_object)
         except json.JSONDecodeError:
             summary["malformed_lines"] += 1
             continue
@@ -2828,7 +3332,8 @@ def lifecycle_summary(
 
         identity = (provider, model, session)
         request = requests.setdefault(
-            request_id, {"identity": identity, "states": [], "usage": None}
+            request_id,
+            {"identity": identity, "states": [], "usage": None, "events": []},
         )
         states = request["states"]
         transition_error: str | None = None
@@ -2874,6 +3379,7 @@ def lifecycle_summary(
             )
             continue
         states.append(state)
+        request["events"].append(event)
         if state == "usage_reported":
             request["usage"] = usage
         if state == "admitted":
@@ -2893,6 +3399,17 @@ def lifecycle_summary(
             ambiguous_request_ids.append(request_id)
     summary["request_states"] = {
         request_id: request["states"]
+        for request_id, request in sorted(requests.items())
+    }
+    summary["request_event_sha256"] = {
+        request_id: sha256_bytes(
+            json.dumps(
+                request["events"],
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode()
+        )
         for request_id, request in sorted(requests.items())
     }
     summary["ambiguous_request_ids"] = sorted(ambiguous_request_ids)
@@ -2916,6 +3433,140 @@ def lifecycle_failure(summary: Mapping[str, Any]) -> str | None:
     if ambiguous_ids:
         reasons.append(f"{len(ambiguous_ids)} ambiguous lifecycle request(s)")
     return "; ".join(reasons) if reasons else None
+
+
+def full_episode_lifecycle_paths(
+    root: Path,
+    entrant_id: str,
+    state: Mapping[str, Any] | None = None,
+) -> list[Path]:
+    unit = root.resolve() / "entrants" / entrant_id
+    attempts_root = unit / "attempts"
+    paths: list[Path] = []
+    campaign_id = load_json(campaign_file(root)).get("campaign_id")
+    if attempts_root.exists():
+        if attempts_root.is_symlink() or not attempts_root.is_dir():
+            raise SystemExit(
+                f"{entrant_id} full-episode attempt history is not a regular directory"
+            )
+        for attempt_root in sorted(attempts_root.iterdir()):
+            if (
+                attempt_root.is_symlink()
+                or not attempt_root.is_dir()
+                or re.fullmatch(r"attempt-[1-9][0-9]*", attempt_root.name) is None
+            ):
+                raise SystemExit(
+                    f"{entrant_id} full-episode attempt history is malformed"
+                )
+            lifecycle = attempt_root / "provider-lifecycle.jsonl"
+            receipt_path = attempt_root / "prelaunch-receipt.json"
+            try:
+                receipt = load_json(receipt_path)
+            except (OSError, json.JSONDecodeError, SystemExit) as error:
+                raise SystemExit(
+                    f"{entrant_id} full-episode prelaunch receipt is invalid: {error}"
+                ) from None
+            attempt = int(attempt_root.name.removeprefix("attempt-"))
+            if (
+                set(receipt)
+                != {
+                    "schema_version",
+                    "campaign_id",
+                    "entrant",
+                    "attempt",
+                    "lifecycle",
+                    "prepared_at",
+                }
+                or receipt.get("schema_version") != CAMPAIGN_SCHEMA
+                or receipt.get("campaign_id") != campaign_id
+                or receipt.get("entrant") != entrant_id
+                or receipt.get("attempt") != attempt
+                or receipt.get("lifecycle") != "provider-lifecycle.jsonl"
+                or not isinstance(receipt.get("prepared_at"), str)
+                or not receipt.get("prepared_at")
+            ):
+                raise SystemExit(
+                    f"{entrant_id} full-episode prelaunch receipt is malformed"
+                )
+            if lifecycle.is_symlink() or not lifecycle.is_file():
+                raise SystemExit(
+                    f"{entrant_id} full-episode lifecycle is not a regular file"
+                )
+            paths.append(lifecycle)
+
+    legacy = unit / "provider-lifecycle.jsonl"
+    if legacy.exists():
+        if legacy.is_symlink() or not legacy.is_file():
+            raise SystemExit(
+                f"{entrant_id} legacy full-episode lifecycle is not a regular file"
+            )
+        paths.append(legacy)
+
+    paths = list(dict.fromkeys(path.resolve(strict=False) for path in paths))
+    current = state if state is not None else read_state(root, entrant_id)
+    current_value = current.get("provider_lifecycle")
+    if isinstance(current_value, str) and current_value:
+        current_path = Path(current_value)
+        unresolved_unit = root.absolute() / "entrants" / entrant_id
+        aliases = {
+            unresolved_unit / path.relative_to(unit)
+            for path in [legacy.resolve(strict=False), *paths]
+        }
+        allowed = current_path in {
+            legacy.resolve(strict=False),
+            *paths,
+            *aliases,
+        }
+        if not allowed:
+            raise SystemExit(
+                f"{entrant_id} current full-episode lifecycle escaped immutable history"
+            )
+        current_path = current_path.resolve(strict=False)
+        if current_path not in paths:
+            paths.append(current_path)
+    return list(dict.fromkeys(paths))
+
+
+def prepare_full_provider_attempt(
+    root: Path,
+    entrant_id: str,
+    state: Mapping[str, Any],
+    campaign: Mapping[str, Any],
+) -> tuple[int, Path, Path]:
+    unit = root / "entrants" / entrant_id
+    attempts_root = unit / "attempts"
+    if attempts_root.is_symlink() or not attempts_root.is_dir():
+        raise OSError("immutable provider attempt history is missing or linked")
+    disk_attempts: list[int] = []
+    for path in attempts_root.iterdir():
+        if path.is_dir() and not path.is_symlink() and re.fullmatch(
+            r"attempt-[1-9][0-9]*", path.name
+        ):
+            disk_attempts.append(int(path.name.removeprefix("attempt-")))
+    launch_attempt = max(
+        [int(state.get("provider_launch_attempts", 0)), *disk_attempts]
+    ) + 1
+    attempt_root = attempts_root / f"attempt-{launch_attempt}"
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".provider-attempt-{launch_attempt}-", dir=unit)
+    )
+    lifecycle_path = staging / "provider-lifecycle.jsonl"
+    lifecycle_path.open("x").close()
+    atomic_json(
+        staging / "prelaunch-receipt.json",
+        {
+            "schema_version": CAMPAIGN_SCHEMA,
+            "campaign_id": campaign.get("campaign_id"),
+            "entrant": entrant_id,
+            "attempt": launch_attempt,
+            "lifecycle": "provider-lifecycle.jsonl",
+            "prepared_at": utc_now(),
+        },
+    )
+    fsync_directory(staging)
+    os.replace(staging, attempt_root)
+    fsync_directory(attempts_root)
+    return launch_attempt, attempt_root, attempt_root / lifecycle_path.name
 
 
 def entrant_outstanding_reservations(
@@ -3329,6 +3980,922 @@ def budget_ledger_descendant_failure(
     return None
 
 
+def budget_ledger_monotonic_failure(
+    previous: Mapping[str, Any],
+    current: Mapping[str, Any],
+    config: Mapping[str, Any],
+    immutable_outstanding_ids: set[str],
+    release_evidence: Mapping[str, Mapping[str, Any]] | None = None,
+) -> str | None:
+    releases = release_evidence or {}
+    released_ids = set(releases)
+    for ledger in (previous, current):
+        failure = budget_ledger_failure(ledger, config)
+        if failure:
+            return failure
+    for key in ("schema_version", "currency", "total_cap", "provider_caps"):
+        if current.get(key) != previous.get(key):
+            return f"budget ledger changed immutable field {key}"
+    if float(current["spent_upper_bound"]) < float(previous["spent_upper_bound"]):
+        return "budget ledger cumulative spend decreased across anchored history"
+    for provider, amount in previous["provider_spent_upper_bound"].items():
+        if float(current["provider_spent_upper_bound"].get(provider, -1)) < float(
+            amount
+        ):
+            return f"budget ledger cumulative spend decreased for {provider}"
+
+    current_settled = {
+        str(row["request_id"]): row for row in current["settled"]
+    }
+    for row in previous["settled"]:
+        if current_settled.get(str(row["request_id"])) != row:
+            return f"anchored settlement changed or disappeared: {row['request_id']}"
+    observed_releases: set[str] = set()
+    for request_id, reservation in previous["outstanding"].items():
+        current_reservation = current["outstanding"].get(request_id)
+        if current_reservation == reservation:
+            continue
+        if current_reservation is not None:
+            return f"anchored reservation changed while still outstanding: {request_id}"
+        if request_id in immutable_outstanding_ids:
+            return f"carried reservation changed or disappeared: {request_id}"
+        settlement = current_settled.get(request_id)
+        if not isinstance(settlement, dict):
+            if request_id not in released_ids:
+                return (
+                    "anchored reservation disappeared without settlement or "
+                    f"proven pre-admission release: {request_id}"
+                )
+            release = releases[request_id]
+            if (
+                release.get("reservation_was_anchored") is not True
+                or
+                release.get("provider") != reservation.get("provider")
+                or release.get("model") != reservation.get("model")
+            ):
+                return (
+                    "pre-admission release identity differs from anchored reservation: "
+                    f"{request_id}"
+                )
+            observed_releases.add(request_id)
+            continue
+        if (
+            settlement.get("provider") != reservation.get("provider")
+            or settlement.get("model") != reservation.get("model")
+            or not money_equal(
+                float(settlement.get("reserved_usd", -1)),
+                float(reservation.get("reserved_usd", -2)),
+            )
+        ):
+            return f"anchored reservation settled under different terms: {request_id}"
+    anchored_release_ids = {
+        request_id
+        for request_id, release in releases.items()
+        if release.get("reservation_was_anchored") is True
+    }
+    if anchored_release_ids != observed_releases:
+        return "anchored pre-admission release evidence differs from ledger transition"
+    previous_settled_ids = {
+        str(row["request_id"]) for row in previous["settled"]
+    }
+    current_settled_ids = {str(row["request_id"]) for row in current["settled"]}
+    for request_id, release in releases.items():
+        if release.get("reservation_was_anchored") is not False:
+            continue
+        if (
+            request_id in previous["outstanding"]
+            or request_id in current["outstanding"]
+            or request_id in previous_settled_ids
+            or request_id in current_settled_ids
+        ):
+            return (
+                "ephemeral pre-admission release conflicts with budget ledger: "
+                f"{request_id}"
+            )
+    return None
+
+
+def budget_history_root(root: Path) -> Path:
+    return root / BUDGET_HISTORY_ROOT
+
+
+def budget_history_entry(root: Path, sequence: int) -> Path:
+    return budget_history_root(root) / "entries" / f"{sequence:08d}"
+
+
+def budget_history_entry_payload(
+    campaign: Mapping[str, Any],
+    transition_id: str,
+    sequence: int,
+    previous_record_sha256: str | None,
+    ledger_sha256: str,
+    release_evidence_sha256: str,
+) -> Dict[str, Any]:
+    return {
+        "schema_version": BUDGET_HISTORY_SCHEMA,
+        "campaign_id": campaign.get("campaign_id"),
+        "transition_id": transition_id,
+        "sequence": sequence,
+        "previous_record_sha256": previous_record_sha256,
+        "ledger_sha256": ledger_sha256,
+        "release_evidence_sha256": release_evidence_sha256,
+        "created_at": utc_now(),
+    }
+
+
+def budget_history_fault(stage: str) -> None:
+    del stage
+
+
+def write_budget_history_entry(
+    root: Path,
+    campaign: Mapping[str, Any],
+    transition_id: str,
+    sequence: int,
+    previous_record_sha256: str | None,
+    ledger: Mapping[str, Any],
+    release_evidence: Mapping[str, Mapping[str, Any]],
+) -> Dict[str, Any]:
+    entries = budget_history_root(root) / "entries"
+    entries.mkdir(parents=True, exist_ok=True)
+    target = budget_history_entry(root, sequence)
+    if target.exists():
+        raise SystemExit(f"budget history sequence already exists: {sequence}")
+    temporary = Path(tempfile.mkdtemp(prefix=f".{sequence:08d}.", dir=entries))
+    try:
+        ledger_path = temporary / "ledger.json"
+        atomic_json(ledger_path, dict(ledger))
+        release_path = temporary / "releases.json"
+        atomic_json(
+            release_path,
+            {
+                "schema_version": BUDGET_HISTORY_SCHEMA,
+                "releases": [
+                    dict(release_evidence[request_id])
+                    for request_id in sorted(release_evidence)
+                ],
+            },
+        )
+        record = budget_history_entry_payload(
+            campaign,
+            transition_id,
+            sequence,
+            previous_record_sha256,
+            sha256_file(ledger_path),
+            sha256_file(release_path),
+        )
+        atomic_json(temporary / "record.json", record)
+        fsync_directory(temporary)
+        os.replace(temporary, target)
+        fsync_directory(entries)
+        budget_history_fault("entry_committed")
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+    record_path = target / "record.json"
+    return {
+        "schema_version": BUDGET_HISTORY_SCHEMA,
+        "sequence": sequence,
+        "record_sha256": sha256_file(record_path),
+        "ledger_sha256": sha256_file(target / "ledger.json"),
+    }
+
+
+def initialize_budget_history(
+    root: Path,
+    campaign: Mapping[str, Any],
+    transition_id: str,
+    ledger: Mapping[str, Any],
+) -> Dict[str, Any]:
+    history = budget_history_root(root)
+    if history.exists():
+        raise SystemExit("budget history already exists")
+    (history / "entries").mkdir(parents=True)
+    head = write_budget_history_entry(
+        root,
+        campaign,
+        transition_id,
+        0,
+        None,
+        ledger,
+        {},
+    )
+    atomic_json(history / "head.json", head)
+    return head
+
+
+def generation_two_carried_reservation_ids(
+    root: Path, campaign: Mapping[str, Any]
+) -> set[str]:
+    if validated_campaign_lineage(campaign)["generation"] != 2:
+        return set()
+    lineage = load_json(root / ORCHESTRATOR_RECOVERY_PATH)
+    carried = lineage.get("source_ambiguous_request_ids")
+    if not isinstance(carried, dict):
+        raise SystemExit("orchestrator recovery carried reservations are malformed")
+    values: set[str] = set()
+    for request_ids in carried.values():
+        if (
+            not isinstance(request_ids, list)
+            or any(not isinstance(value, str) or not value for value in request_ids)
+            or request_ids != sorted(set(request_ids))
+        ):
+            raise SystemExit("orchestrator recovery carried reservations are malformed")
+        values.update(request_ids)
+    return values
+
+
+def generation_two_release_evidence(
+    root: Path, campaign: Mapping[str, Any]
+) -> tuple[
+    Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], str | None
+]:
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    evidence: Dict[str, Dict[str, Any]] = {}
+    pending: Dict[str, Dict[str, Any]] = {}
+    seen_request_ids: set[str] = set()
+    for row in entrants(manifest):
+        entrant_id = str(row["id"])
+        lifecycle_paths: list[tuple[Path, bool]] = []
+        smoke_state = (
+            read_smoke_state(root, entrant_id)
+            if smoke_state_file(root, entrant_id).is_file()
+            else {}
+        )
+        smoke_lifecycle = Path(str(smoke_state.get("provider_lifecycle", "")))
+        smoke_owner_live = bool(
+            smoke_state.get("status") == "RUNNING"
+            and (
+                process_alive(
+                    smoke_state.get("goose_pid"), smoke_state.get("goose_identity")
+                )
+                or process_alive(
+                    smoke_state.get("supervisor_pid"),
+                    smoke_state.get("supervisor_identity"),
+                )
+            )
+        )
+        attempts_root = root / "smoke" / entrant_id / "attempts"
+        if attempts_root.is_dir() and not attempts_root.is_symlink():
+            lifecycle_paths.extend(
+                (
+                    path / "provider-lifecycle.jsonl",
+                    smoke_owner_live
+                    and path / "provider-lifecycle.jsonl" == smoke_lifecycle,
+                )
+                for path in sorted(attempts_root.glob("attempt-*"))
+                if path.is_dir() and not path.is_symlink()
+            )
+        state = read_state(root, entrant_id)
+        full_owner_live = bool(
+            state.get("status") == "BUILD_RUNNING"
+            and (
+                process_alive(state.get("goose_pid"), state.get("goose_identity"))
+                or process_alive(
+                    state.get("supervisor_pid"), state.get("supervisor_identity")
+                )
+            )
+        )
+        full_current = Path(str(state.get("provider_lifecycle", "")))
+        lifecycle_paths.extend(
+            (path, full_owner_live and path == full_current)
+            for path in full_episode_lifecycle_paths(root, entrant_id, state)
+        )
+        for lifecycle_path, pending_owner_live in lifecycle_paths:
+            summary = lifecycle_summary(
+                lifecycle_path,
+                expected_provider=str(row["provider"]),
+                expected_model=str(row["model"]),
+            )
+            if summary["malformed_lines"] or summary["transition_errors"]:
+                return {}, {}, (
+                    f"{entrant_id} release lifecycle contains malformed or invalid "
+                    "transitions"
+                )
+            request_states = summary.get("request_states")
+            request_digests = summary.get("request_event_sha256")
+            if not isinstance(request_states, dict) or not isinstance(
+                request_digests, dict
+            ):
+                return {}, {}, (
+                    f"{entrant_id} release lifecycle has no request states"
+                )
+            duplicate = seen_request_ids & set(request_states)
+            if duplicate:
+                return {}, {}, (
+                    "generation-two release lifecycle reused request IDs: "
+                    + ", ".join(sorted(duplicate))
+                )
+            seen_request_ids.update(request_states)
+            for request_id, states in request_states.items():
+                if states == ["queued"] and pending_owner_live:
+                    pending[str(request_id)] = {
+                        "request_id": str(request_id),
+                        "entrant": entrant_id,
+                        "provider": str(row["provider"]),
+                        "model": str(row["model"]),
+                        "states": ["queued"],
+                        "lifecycle_sha256": str(request_digests[request_id]),
+                    }
+                if states != ["queued", "error"]:
+                    continue
+                evidence[str(request_id)] = {
+                    "request_id": str(request_id),
+                    "entrant": entrant_id,
+                    "provider": str(row["provider"]),
+                    "model": str(row["model"]),
+                    "states": ["queued", "error"],
+                    "lifecycle_sha256": str(request_digests[request_id]),
+                }
+    return evidence, pending, None
+
+
+def budget_transition_release_ids(
+    previous: Mapping[str, Any], current: Mapping[str, Any]
+) -> set[str]:
+    current_settled = {
+        str(row["request_id"])
+        for row in current["settled"]
+        if isinstance(row, dict) and isinstance(row.get("request_id"), str)
+    }
+    return {
+        str(request_id)
+        for request_id in previous["outstanding"]
+        if request_id not in current["outstanding"]
+        and request_id not in current_settled
+    }
+
+
+def budget_release_payload_failure(value: Any) -> str | None:
+    if not isinstance(value, dict) or set(value) != {"schema_version", "releases"}:
+        return "budget release evidence payload is malformed"
+    releases = value.get("releases")
+    if value.get("schema_version") != BUDGET_HISTORY_SCHEMA or not isinstance(
+        releases, list
+    ):
+        return "budget release evidence payload is malformed"
+    request_ids: list[str] = []
+    for release in releases:
+        if (
+            not isinstance(release, dict)
+            or set(release)
+            != {
+                "request_id",
+                "entrant",
+                "provider",
+                "model",
+                "states",
+                "lifecycle_sha256",
+                "reservation_was_anchored",
+            }
+            or not all(
+                isinstance(release.get(key), str) and release.get(key)
+                for key in ("request_id", "entrant", "provider", "model")
+            )
+            or release.get("states") != ["queued", "error"]
+            or not isinstance(release.get("lifecycle_sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", release["lifecycle_sha256"]) is None
+            or not isinstance(release.get("reservation_was_anchored"), bool)
+        ):
+            return "budget release evidence record is malformed"
+        request_ids.append(str(release["request_id"]))
+    if request_ids != sorted(set(request_ids)):
+        return "budget release evidence request IDs are not exact and unique"
+    return None
+
+
+def _budget_history_failure_unlocked(
+    root: Path,
+    campaign: Mapping[str, Any],
+    *,
+    require_current_head: bool = False,
+    adopt_single_tail: bool = False,
+) -> str | None:
+    try:
+        lineage = load_json(root / ORCHESTRATOR_RECOVERY_PATH)
+        transition_id = lineage.get("transition_id")
+        expected_initial = lineage.get("budget_history_initial_record_sha256")
+        history = budget_history_root(root)
+        entries_root = history / "entries"
+        if (
+            not entries_root.is_dir()
+            or entries_root.is_symlink()
+            or not isinstance(transition_id, str)
+            or not transition_id
+            or not isinstance(expected_initial, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_initial) is None
+        ):
+            return "generation-two budget history identity is malformed"
+        entries = sorted(
+            path for path in entries_root.iterdir() if not path.name.startswith(".")
+        )
+        expected_names = [f"{index:08d}" for index in range(len(entries))]
+        if not entries or [path.name for path in entries] != expected_names:
+            return "generation-two budget history sequence is not contiguous"
+        config = load_json(Path(str(campaign["budget_config"])))
+        source_ledger = load_json(root / "recovery/source-budget-ledger.json")
+        carried_ids = generation_two_carried_reservation_ids(root, campaign)
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        entrant_identities = {
+            str(row["id"]): (str(row["provider"]), str(row["model"]))
+            for row in entrants(manifest)
+        }
+        live_release_evidence, pending_release_evidence, release_problem = (
+            generation_two_release_evidence(root, campaign)
+        )
+        if release_problem:
+            return release_problem
+        anchored_release_evidence: Dict[str, Dict[str, Any]] = {}
+        previous_record_sha: str | None = None
+        previous_ledger: Dict[str, Any] | None = None
+        latest_head: Dict[str, Any] | None = None
+        validated_heads: list[Dict[str, Any]] = []
+        for sequence, entry in enumerate(entries):
+            if not entry.is_dir() or entry.is_symlink():
+                return f"budget history entry is not a regular directory: {entry.name}"
+            record_path = entry / "record.json"
+            ledger_path = entry / "ledger.json"
+            release_path = entry / "releases.json"
+            if any(
+                path.is_symlink() or not path.is_file()
+                for path in (record_path, ledger_path, release_path)
+            ):
+                return f"budget history entry is incomplete: {entry.name}"
+            record = load_json(record_path)
+            expected_record_keys = {
+                "schema_version",
+                "campaign_id",
+                "transition_id",
+                "sequence",
+                "previous_record_sha256",
+                "ledger_sha256",
+                "release_evidence_sha256",
+                "created_at",
+            }
+            if (
+                set(record) != expected_record_keys
+                or record.get("schema_version") != BUDGET_HISTORY_SCHEMA
+                or record.get("campaign_id") != campaign.get("campaign_id")
+                or record.get("transition_id") != transition_id
+                or record.get("sequence") != sequence
+                or record.get("previous_record_sha256") != previous_record_sha
+                or record.get("ledger_sha256") != sha256_file(ledger_path)
+                or record.get("release_evidence_sha256")
+                != sha256_file(release_path)
+                or not isinstance(record.get("created_at"), str)
+                or not record.get("created_at")
+            ):
+                return f"budget history record is malformed: {entry.name}"
+            ledger = load_json(ledger_path)
+            ledger_problem = budget_ledger_failure(ledger, config)
+            if ledger_problem:
+                return f"budget history {entry.name} {ledger_problem}"
+            release_payload = load_json(release_path)
+            release_payload_problem = budget_release_payload_failure(release_payload)
+            if release_payload_problem:
+                return f"budget history {entry.name} {release_payload_problem}"
+            entry_release_evidence = {
+                str(value["request_id"]): value
+                for value in release_payload["releases"]
+            }
+            for release in entry_release_evidence.values():
+                if entrant_identities.get(str(release["entrant"])) != (
+                    str(release["provider"]),
+                    str(release["model"]),
+                ):
+                    return (
+                        f"budget history {entry.name} release evidence has a false "
+                        "entrant identity"
+                    )
+            duplicate_releases = set(anchored_release_evidence) & set(
+                entry_release_evidence
+            )
+            if duplicate_releases:
+                return (
+                    "budget history repeats pre-admission release evidence: "
+                    + ", ".join(sorted(duplicate_releases))
+                )
+            if sequence == 0:
+                if ledger != source_ledger:
+                    return "budget history initial ledger differs from recovery source"
+                if sha256_file(record_path) != expected_initial:
+                    return "budget history initial record differs from lineage"
+                if entry_release_evidence:
+                    return "budget history initial entry has release evidence"
+            elif previous_ledger is not None:
+                monotonic_problem = budget_ledger_monotonic_failure(
+                    previous_ledger,
+                    ledger,
+                    config,
+                    carried_ids,
+                    entry_release_evidence,
+                )
+                if monotonic_problem:
+                    return f"budget history {entry.name} is not monotonic: {monotonic_problem}"
+            anchored_release_evidence.update(entry_release_evidence)
+            previous_record_sha = sha256_file(record_path)
+            previous_ledger = ledger
+            latest_head = {
+                "schema_version": BUDGET_HISTORY_SCHEMA,
+                "sequence": sequence,
+                "record_sha256": previous_record_sha,
+                "ledger_sha256": sha256_file(ledger_path),
+            }
+            validated_heads.append(latest_head)
+        head_path = history / "head.json"
+        if head_path.is_symlink() or not head_path.is_file():
+            return "budget history has no durable head"
+        stored_head = load_json(head_path)
+        if stored_head != latest_head:
+            exactly_one_valid_tail = bool(
+                len(validated_heads) >= 2 and stored_head == validated_heads[-2]
+            )
+            if not adopt_single_tail or not exactly_one_valid_tail:
+                return "budget history head does not name the latest committed entry"
+            assert latest_head is not None
+            atomic_json(head_path, latest_head)
+        for request_id, anchored_release in anchored_release_evidence.items():
+            live_release = live_release_evidence.get(request_id)
+            if live_release is None:
+                return (
+                    "durable pre-admission release lost its lifecycle evidence: "
+                    f"{request_id}"
+                )
+            replayed = {
+                key: anchored_release.get(key)
+                for key in (
+                    "request_id",
+                    "entrant",
+                    "provider",
+                    "model",
+                    "states",
+                    "lifecycle_sha256",
+                )
+            }
+            if replayed != live_release:
+                return (
+                    "durable pre-admission release lifecycle changed after anchoring: "
+                    f"{request_id}"
+                )
+        current = load_json(Path(str(campaign["budget_ledger"])))
+        assert previous_ledger is not None
+        current_release_ids = budget_transition_release_ids(
+            previous_ledger, current
+        )
+        unproven_release_ids = current_release_ids - set(live_release_evidence)
+        if unproven_release_ids - set(pending_release_evidence):
+            return (
+                "current budget ledger rolled back behind its durable head: "
+                "reservation disappeared without proven pre-admission release"
+            )
+        current_release_evidence = {
+            request_id: {
+                **(
+                    live_release_evidence.get(request_id)
+                    or pending_release_evidence[request_id]
+                ),
+                "reservation_was_anchored": True,
+            }
+            for request_id in current_release_ids
+        }
+        current_problem = budget_ledger_monotonic_failure(
+            previous_ledger,
+            current,
+            config,
+            carried_ids,
+            current_release_evidence,
+        )
+        if current_problem:
+            return f"current budget ledger rolled back behind its durable head: {current_problem}"
+        if require_current_head and current != previous_ledger:
+            return "current budget ledger is not durably anchored"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"budget history cannot be verified: {error}"
+    return None
+
+
+def anchored_budget_release_evidence(root: Path) -> Dict[str, Dict[str, Any]]:
+    head = load_json(budget_history_root(root) / "head.json")
+    releases: Dict[str, Dict[str, Any]] = {}
+    for sequence in range(int(head["sequence"]) + 1):
+        payload = load_json(budget_history_entry(root, sequence) / "releases.json")
+        for release in payload["releases"]:
+            request_id = str(release["request_id"])
+            if request_id in releases:
+                raise SystemExit(
+                    f"budget history repeats pre-admission release evidence: {request_id}"
+                )
+            releases[request_id] = dict(release)
+    return releases
+
+
+def budget_history_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    *,
+    require_current_head: bool = False,
+) -> str | None:
+    with exclusive_claim(
+        root / "locks/budget-history.claim", blocking=True
+    ) as claimed:
+        if not claimed:
+            return "cannot claim generation-two budget history validation"
+        return _budget_history_failure_unlocked(
+            root,
+            campaign,
+            require_current_head=require_current_head,
+        )
+
+
+def anchor_budget_ledger(
+    root: Path, *, require_current: bool = False
+) -> Dict[str, Any] | None:
+    campaign = load_json(campaign_file(root))
+    if validated_campaign_lineage(campaign)["generation"] != 2:
+        return None
+    with exclusive_claim(root / "locks/budget-history.claim", blocking=True) as claimed:
+        if not claimed:
+            raise SystemExit("cannot claim generation-two budget history")
+        ledger_path = Path(str(campaign["budget_ledger"]))
+        with exclusive_claim(ledger_path.with_suffix(".lock"), blocking=True) as locked:
+            if not locked:
+                raise SystemExit("cannot claim generation-two budget ledger snapshot")
+            problem = _budget_history_failure_unlocked(
+                root, campaign, adopt_single_tail=True
+            )
+            if problem:
+                raise SystemExit(problem)
+            history = budget_history_root(root)
+            head = load_json(history / "head.json")
+            last_ledger = load_json(
+                budget_history_entry(root, int(head["sequence"])) / "ledger.json"
+            )
+            current = load_json(ledger_path)
+            release_ids = budget_transition_release_ids(last_ledger, current)
+            release_evidence, pending_release_evidence, release_problem = (
+                generation_two_release_evidence(root, campaign)
+            )
+            if release_problem:
+                raise SystemExit(release_problem)
+            pending_ids = release_ids & set(pending_release_evidence)
+            if pending_ids:
+                if require_current:
+                    raise BudgetReleasePending(
+                        {
+                            request_id: pending_release_evidence[request_id]
+                            for request_id in pending_ids
+                        }
+                    )
+                return head
+            already_anchored = anchored_budget_release_evidence(root)
+            new_release_evidence: Dict[str, Dict[str, Any]] = {}
+            previous_settled = {
+                str(value["request_id"]) for value in last_ledger["settled"]
+            }
+            current_settled = {
+                str(value["request_id"]) for value in current["settled"]
+            }
+            for request_id, release in release_evidence.items():
+                if request_id in already_anchored:
+                    continue
+                if request_id in release_ids:
+                    reservation_was_anchored = True
+                elif (
+                    request_id not in last_ledger["outstanding"]
+                    and request_id not in current["outstanding"]
+                    and request_id not in previous_settled
+                    and request_id not in current_settled
+                ):
+                    reservation_was_anchored = False
+                else:
+                    raise SystemExit(
+                        "pre-admission release conflicts with budget ledger identity: "
+                        f"{request_id}"
+                    )
+                new_release_evidence[request_id] = {
+                    **release,
+                    "reservation_was_anchored": reservation_was_anchored,
+                }
+            missing_release_ids = release_ids - set(new_release_evidence)
+            if missing_release_ids:
+                raise SystemExit(
+                    "budget transition lacks new proven pre-admission releases: "
+                    + ", ".join(sorted(missing_release_ids))
+                )
+            if current == last_ledger and not new_release_evidence:
+                return head
+            next_head = write_budget_history_entry(
+                root,
+                campaign,
+                str(load_json(root / ORCHESTRATOR_RECOVERY_PATH)["transition_id"]),
+                int(head["sequence"]) + 1,
+                str(head["record_sha256"]),
+                current,
+                new_release_evidence,
+            )
+            atomic_json(history / "head.json", next_head)
+            problem = _budget_history_failure_unlocked(
+                root, campaign, require_current_head=True
+            )
+            if problem:
+                raise SystemExit(problem)
+            return next_head
+
+
+def generation_two_entrant_accounting_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    row: Mapping[str, Any],
+) -> str | None:
+    try:
+        if validated_campaign_lineage(campaign)["generation"] != 2:
+            return None
+        entrant_id = str(row["id"])
+        initial = load_json(root / "recovery/source-budget-ledger.json")
+        current = load_json(Path(str(campaign["budget_ledger"])))
+        config = load_json(Path(str(campaign["budget_config"])))
+        for ledger in (initial, current):
+            problem = budget_ledger_failure(ledger, config)
+            if problem:
+                return problem
+        baseline_settled = {
+            str(value["request_id"])
+            for value in initial["settled"]
+            if value.get("provider") == row.get("provider")
+            and value.get("model") == row.get("model")
+        }
+        baseline_outstanding = {
+            str(request_id)
+            for request_id, value in initial["outstanding"].items()
+            if value.get("provider") == row.get("provider")
+            and value.get("model") == row.get("model")
+        }
+        current_settlements = {
+            str(value["request_id"]): value
+            for value in current["settled"]
+            if value.get("provider") == row.get("provider")
+            and value.get("model") == row.get("model")
+            and str(value["request_id"]) not in baseline_settled
+        }
+        current_outstanding = {
+            str(request_id): value
+            for request_id, value in current["outstanding"].items()
+            if value.get("provider") == row.get("provider")
+            and value.get("model") == row.get("model")
+            and str(request_id) not in baseline_outstanding
+        }
+
+        lifecycle_paths: list[Path] = []
+        attempts_root = root / "smoke" / entrant_id / "attempts"
+        if attempts_root.is_dir() and not attempts_root.is_symlink():
+            lifecycle_paths.extend(
+                path / "provider-lifecycle.jsonl"
+                for path in sorted(attempts_root.glob("attempt-*"))
+                if path.is_dir() and not path.is_symlink()
+            )
+        state = read_state(root, entrant_id)
+        lifecycle_paths.extend(
+            full_episode_lifecycle_paths(root, entrant_id, state)
+        )
+
+        request_states: Dict[str, list[str]] = {}
+        request_event_sha256: Dict[str, str] = {}
+        terminal_usage: Dict[str, Dict[str, Any]] = {}
+        for lifecycle_path in lifecycle_paths:
+            summary = lifecycle_summary(
+                lifecycle_path,
+                expected_provider=str(row["provider"]),
+                expected_model=str(row["model"]),
+            )
+            problem = lifecycle_failure(summary)
+            if problem:
+                return f"{entrant_id} current-generation lifecycle is invalid: {problem}"
+            duplicate = set(request_states) & set(summary["request_states"])
+            if duplicate:
+                return f"{entrant_id} reused request IDs: {', '.join(sorted(duplicate))}"
+            request_states.update(summary["request_states"])
+            request_event_sha256.update(summary["request_event_sha256"])
+            terminal_usage.update(summary["terminal_usage"])
+
+        predecessor_request_ids = {
+            str(value["request_id"]) for value in initial["settled"]
+        } | {str(request_id) for request_id in initial["outstanding"]}
+        reused_predecessor_ids = predecessor_request_ids & set(request_states)
+        if reused_predecessor_ids:
+            return (
+                f"{entrant_id} reused predecessor request IDs: "
+                + ", ".join(sorted(reused_predecessor_ids))
+            )
+
+        terminal_ids = {
+            request_id
+            for request_id, states in request_states.items()
+            if states and states[-1] == "provider_terminal"
+        }
+        error_ids = {
+            request_id
+            for request_id, states in request_states.items()
+            if states and states[-1] == "error"
+        }
+        outstanding_ids = {
+            request_id
+            for request_id, states in request_states.items()
+            if not states or states[-1] not in {"provider_terminal", "error"}
+        }
+        durable_releases = {
+            request_id: release
+            for request_id, release in anchored_budget_release_evidence(root).items()
+            if release.get("entrant") == entrant_id
+        }
+        if set(durable_releases) != error_ids:
+            return (
+                f"{entrant_id} current-generation error lifecycle and durable releases "
+                "differ exactly"
+            )
+        if any(
+            release.get("provider") != row.get("provider")
+            or release.get("model") != row.get("model")
+            or release.get("lifecycle_sha256")
+            != request_event_sha256.get(request_id)
+            for request_id, release in durable_releases.items()
+        ):
+            return f"{entrant_id} durable release identity or lifecycle differs"
+        if set(current_settlements) != terminal_ids:
+            return (
+                f"{entrant_id} current-generation terminal lifecycle and settlements "
+                "differ exactly"
+            )
+        if set(current_outstanding) != outstanding_ids:
+            return (
+                f"{entrant_id} current-generation nonterminal lifecycle and outstanding "
+                "reservations differ exactly"
+            )
+        for request_id, usage in terminal_usage.items():
+            settlement = current_settlements.get(request_id)
+            if settlement is None or any(
+                settlement.get(key) != usage.get(key)
+                for key in (
+                    "reported_model",
+                    "input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                )
+            ):
+                return f"{entrant_id} settlement differs from terminal usage: {request_id}"
+        for request_id in outstanding_ids:
+            reservation = current_outstanding.get(request_id)
+            if (
+                not isinstance(reservation, dict)
+                or reservation.get("provider") != row.get("provider")
+                or reservation.get("model") != row.get("model")
+            ):
+                return f"{entrant_id} outstanding reservation identity differs: {request_id}"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"generation-two accounting cannot be verified: {error}"
+    return None
+
+
+def anchored_generation_two_entrant_accounting_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    row: Mapping[str, Any],
+) -> str | None:
+    while True:
+        try:
+            anchor_budget_ledger(root, require_current=True)
+            break
+        except BudgetReleasePending as error:
+            pending_entrants = {
+                str(value.get("entrant")) for value in error.pending.values()
+            }
+            if str(row["id"]) in pending_entrants:
+                return f"generation-two budget anchoring failed: {error}"
+            current = load_json(campaign_file(root))
+            if current.get("status") in {"ATTENTION", "STOPPED"}:
+                return f"generation-two budget anchoring failed: {error}"
+            manager = load_json(root / "manager.json")
+            if manager.get("monitor_lease_id"):
+                lease_problem = active_manager_monitor_lease_failure(root, current)
+                if lease_problem:
+                    return (
+                        "generation-two budget anchoring lost supervision: "
+                        f"{lease_problem}"
+                    )
+            else:
+                smoke_manager = read_smoke_manager_state(root)
+                if not process_alive(
+                    smoke_manager.get("pid"), smoke_manager.get("identity")
+                ):
+                    return (
+                        "generation-two budget anchoring has no live smoke or "
+                        "manager supervision"
+                    )
+            time.sleep(0.01)
+        except SystemExit as error:
+            return f"generation-two budget anchoring failed: {error}"
+    return generation_two_entrant_accounting_failure(root, campaign, row)
+
+
 def replacement_reserve_failure(
     ledger: Mapping[str, Any],
     config: Mapping[str, Any],
@@ -3393,7 +4960,7 @@ def campaign_identity(campaign: Mapping[str, Any]) -> Dict[str, Any]:
                 "entries",
             )
         }
-    return {
+    identity = {
         key: campaign.get(key)
         for key in (
             "schema_version",
@@ -3407,6 +4974,10 @@ def campaign_identity(campaign: Mapping[str, Any]) -> Dict[str, Any]:
             "calibration",
         )
     } | {"publisher": publisher_identity}
+    identity["scorer_runtime_sha256"] = scorer_runtime_contract_identity(
+        campaign.get("scorer_runtime")
+    )
+    return identity
 
 
 def validate_defect_evidence(
@@ -3805,6 +5376,8 @@ def validate_stopped_predecessor(
             pgid = int(state.get(pgid_key) or 0)
             if pgid and process_group_members(pgid):
                 raise SystemExit(f"predecessor {entrant_id} still owns process group {pgid}")
+        if scorer_runtime_survivors(state):
+            raise SystemExit(f"predecessor {entrant_id} retains scorer descendants")
         smoke_state = read_smoke_state(root, entrant_id)
         if process_alive(
             smoke_state.get("supervisor_pid"), smoke_state.get("supervisor_identity")
@@ -4257,6 +5830,13 @@ def qualification_instrument_failure(
 ) -> str | None:
     if source.get("binary_sha256") != target.get("binary_sha256"):
         return "qualification restart changed the frozen Goose binary"
+    try:
+        if scorer_runtime_contract_identity(
+            source.get("scorer_runtime")
+        ) != scorer_runtime_contract_identity(target.get("scorer_runtime")):
+            return "qualification restart changed the scorer runtime closure"
+    except SystemExit as error:
+        return f"qualification restart scorer runtime cannot be compared: {error}"
     old_hashes = source.get("instrument_hashes")
     new_hashes = target.get("instrument_hashes")
     if not isinstance(old_hashes, dict) or not isinstance(new_hashes, dict):
@@ -4457,6 +6037,10 @@ def validate_stopped_qualification_source(
                 raise SystemExit(
                     f"qualification source {entrant_id} still owns process group {pgid}"
                 )
+        if scorer_runtime_survivors(state):
+            raise SystemExit(
+                f"qualification source {entrant_id} retains scorer descendants"
+            )
         lifecycle = lifecycle_summary(
             Path(str(state["provider_lifecycle"])),
             expected_provider=str(row["provider"]),
@@ -6419,6 +8003,10 @@ def stopped_orchestrator_recovery_source(
                 raise SystemExit(
                     f"orchestrator recovery source {entrant_id} still owns group {pgid}"
                 )
+        if scorer_runtime_survivors(state):
+            raise SystemExit(
+                f"orchestrator recovery source {entrant_id} retains scorer descendants"
+            )
         smoke_state = read_smoke_state(root, entrant_id)
         if process_alive(
             smoke_state.get("supervisor_pid"), smoke_state.get("supervisor_identity")
@@ -7028,6 +8616,7 @@ def recovery_preflight_snapshot(
         **preflight_value,
         "models": models,
         "publisher": publisher_snapshot(publisher_repo, rows),
+        "scorer_runtime": source.get("scorer_runtime"),
     }
     return validated_preflight_snapshot(
         checked,
@@ -7082,6 +8671,7 @@ def orchestrator_recovery_lineage_failure(
             "source_state_sha256",
             "source_episode_attempts",
             "source_ambiguous_request_ids",
+            "budget_history_initial_record_sha256",
             "fresh_all_entrant_smoke_required",
             "provider_terminal_usage_fabricated",
         }
@@ -7202,6 +8792,9 @@ def orchestrator_recovery_lineage_failure(
         )
         if ledger_problem:
             return ledger_problem
+        history_problem = budget_history_failure(root, campaign)
+        if history_problem:
+            return history_problem
 
         source_evidence = source_root / ORCHESTRATOR_RECOVERY_EVIDENCE
         target_evidence = root / "recovery/evidence"
@@ -7688,6 +9281,12 @@ def orchestrator_recovery_campaign(
                                 smoke_state_file(staged_root, entrant_id), smoke_state
                             )
                         target = remap_paths(target, staged_root, root)
+                        budget_head = initialize_budget_history(
+                            staged_root,
+                            target,
+                            str(receipt["transition_id"]),
+                            source_ledger,
+                        )
                         lineage = {
                             "schema_version": ORCHESTRATOR_RECOVERY_SCHEMA,
                             "kind": "orchestrator_monitor_recovery",
@@ -7728,6 +9327,9 @@ def orchestrator_recovery_campaign(
                             ],
                             "source_ambiguous_request_ids": receipt[
                                 "source_ambiguous_request_ids"
+                            ],
+                            "budget_history_initial_record_sha256": budget_head[
+                                "record_sha256"
                             ],
                             "fresh_all_entrant_smoke_required": True,
                             "provider_terminal_usage_fabricated": False,
@@ -7965,11 +9567,62 @@ def smoke_admission_history(
                 expected_provider=str(row["provider"]),
                 expected_model=str(row["model"]),
             )
+            receipt_path = attempt_root / "prelaunch-receipt.json"
+            receipt_valid = False
+            try:
+                receipt = load_json(receipt_path)
+                prompt_path = attempt_root / "prompt.txt"
+                receipt_valid = bool(
+                    set(receipt)
+                    == {
+                        "schema_version",
+                        "campaign_id",
+                        "smoke_contract_sha256",
+                        "entrant",
+                        "attempt",
+                        "prompt_sha256",
+                        "expected_command_sha256",
+                        "prepared_at",
+                    }
+                    and receipt.get("schema_version") == CAMPAIGN_SCHEMA
+                    and receipt.get("campaign_id") == campaign.get("campaign_id")
+                    and receipt.get("smoke_contract_sha256") == contract
+                    and receipt.get("entrant") == entrant_id
+                    and receipt.get("attempt") == attempt_number
+                    and isinstance(receipt.get("prepared_at"), str)
+                    and bool(receipt.get("prepared_at"))
+                    and prompt_path.is_file()
+                    and not prompt_path.is_symlink()
+                    and receipt.get("prompt_sha256") == sha256_file(prompt_path)
+                    and isinstance(receipt.get("expected_command_sha256"), str)
+                    and re.fullmatch(
+                        r"[0-9a-f]{64}", receipt["expected_command_sha256"]
+                    )
+                    is not None
+                    and lifecycle_path.is_file()
+                    and not lifecycle_path.is_symlink()
+                )
+            except (OSError, json.JSONDecodeError, SystemExit):
+                receipt_valid = False
+            if not receipt_valid:
+                errors.append(f"{attempt_root.name} has no valid prelaunch receipt")
             evidence_path = attempt_root / "attempt-evidence.json"
             evidence: Dict[str, Any] | None = None
             evidence_sha: str | None = None
+            state_attempt_root = Path(str(state.get("attempt_root", ""))).resolve(
+                strict=False
+            )
+            unclaimed_prelaunch = bool(
+                receipt_valid
+                and state_attempt_root != attempt_root.resolve(strict=False)
+                and int(state.get("launch_attempts", 0)) < attempt_number
+                and int(lifecycle.get("events", 0)) == 0
+                and lifecycle_failure(lifecycle) is None
+                and attempt_root.name not in evidence_hashes
+            )
             if evidence_path.is_symlink() or not evidence_path.is_file():
-                errors.append(f"{attempt_root.name} has no sealed attempt evidence")
+                if not unclaimed_prelaunch:
+                    errors.append(f"{attempt_root.name} has no sealed attempt evidence")
             else:
                 try:
                     evidence_sha = sha256_file(evidence_path)
@@ -8023,6 +9676,7 @@ def smoke_admission_history(
                     "admitted": int(lifecycle.get("admitted", 0)),
                     "terminal": int(lifecycle.get("terminal", 0)),
                     "lifecycle_valid": lifecycle_failure(lifecycle) is None,
+                    "prelaunch_only": unclaimed_prelaunch,
                 }
             )
     extra_indexes = sorted(set(evidence_hashes) - seen_names)
@@ -8216,6 +9870,11 @@ def smoke_attempt_evidence(
         reasons.append(
             "terminal lifecycle request IDs are absent from the shared budget ledger"
         )
+    generation_two_accounting = anchored_generation_two_entrant_accounting_failure(
+        root, campaign, row
+    )
+    if generation_two_accounting:
+        reasons.append(generation_two_accounting)
 
     try:
         expected_nonce = bytes.fromhex(str(state.get("nonce_hex", "")))
@@ -8686,6 +10345,11 @@ def smoke_proof_mismatch(
     _, settled, budget_error = current_smoke_budget_requests(campaign, row)
     if budget_error:
         return budget_error
+    generation_two_accounting = anchored_generation_two_entrant_accounting_failure(
+        root, campaign, row
+    )
+    if generation_two_accounting:
+        return generation_two_accounting
     terminal_ids = evidence.get("terminal_request_ids")
     if not isinstance(terminal_ids, list) or not set(terminal_ids).issubset(
         set(settled)
@@ -8783,13 +10447,11 @@ def recover_smoke_entrant(root: Path, entrant_id: str) -> bool:
         return state.get("status") == "PASS"
     if state.get("status") == "PLANNED":
         return False
-    if process_alive(state.get("supervisor_pid"), state.get("supervisor_identity")):
+    if process_alive(
+        state.get("supervisor_pid"), state.get("supervisor_identity")
+    ):
         return False
-    clean = stop_recorded_group(
-        state.get("supervisor_pid"),
-        state.get("supervisor_pgid"),
-        state.get("supervisor_identity"),
-    )
+    clean = stop_build_runtime_topology(state)
     if state.get("active_attempt"):
         return finalize_smoke_attempt(
             root,
@@ -8799,15 +10461,21 @@ def recover_smoke_entrant(root: Path, entrant_id: str) -> bool:
         )
     row = manifest_row(root, entrant_id)
     ambiguity = smoke_attempt_history_failure(root, entrant_id, row)
-    update_smoke_state(
-        root,
-        entrant_id,
-        status="FAILED" if ambiguity or not clean else "PRE_ADMISSION_FAILURE",
-        failure=ambiguity or "smoke supervisor disappeared before provider admission",
-        supervisor_pid=None,
-        supervisor_pgid=None,
-        supervisor_identity=None,
-    )
+    changes: Dict[str, Any] = {
+        "status": "FAILED" if ambiguity or not clean else "PRE_ADMISSION_FAILURE",
+        "failure": ambiguity
+        or "smoke supervisor disappeared before provider admission",
+    }
+    if clean:
+        changes.update(
+            supervisor_pid=None,
+            supervisor_pgid=None,
+            supervisor_identity=None,
+            goose_pid=None,
+            process_group=None,
+            goose_identity=None,
+        )
+    update_smoke_state(root, entrant_id, **changes)
     return False
 
 
@@ -8836,6 +10504,17 @@ def exclusive_claim(path: Path, blocking: bool = False) -> Iterator[bool]:
             yield True
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def exclusive_claim_is_held(path: Path) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    return False
 
 
 def smoke_supervise(root: Path, entrant_id: str) -> int:
@@ -8976,7 +10655,6 @@ def smoke_supervise_claimed(root: Path, entrant_id: str) -> int:
         ]
         log_path = Path(str(state["log"]))
         lifecycle_path = Path(str(state["provider_lifecycle"]))
-        lifecycle_path.unlink(missing_ok=True)
         _, observe = smoke_state_observer(root, entrant_id)
         update_smoke_state(
             root,
@@ -9006,17 +10684,38 @@ def smoke_supervise_claimed(root: Path, entrant_id: str) -> int:
                     goose_pid=proc.pid,
                     goose_identity=process_identity(proc.pid),
                     process_group=os.getpgrp(),
+                    goose_process_inventory=[],
                 )
-                assert proc.stdout is not None
-                redacted_copy(proc.stdout, log, secret_values.values(), observe)
-                exit_code = proc.wait()
+                last_inventory: list[Dict[str, Any]] = []
+
+                def persist_inventory(records: list[Dict[str, Any]]) -> None:
+                    nonlocal last_inventory
+                    if records == last_inventory:
+                        return
+                    last_inventory = records
+                    update_smoke_state(
+                        root,
+                        entrant_id,
+                        goose_process_inventory=records,
+                        goose_process_inventory_updated_at=utc_now(),
+                    )
+
+                exit_code, descendants_clean = redacted_copy_until_process_exit(
+                    proc,
+                    log,
+                    secret_values.values(),
+                    observe,
+                    owned_pgid=os.getpgrp(),
+                    excluded_pids={os.getpid()},
+                    on_inventory=persist_inventory,
+                )
         except OSError as error:
             update_smoke_state(
                 root,
                 entrant_id,
                 launch_failure=f"{type(error).__name__}: {error}",
             )
-        descendants_clean = stop_group_members(os.getpgrp(), {os.getpid()})
+            descendants_clean = stop_group_members(os.getpgrp(), {os.getpid()})
         passed = finalize_smoke_attempt(
             root,
             entrant_id,
@@ -9188,13 +10887,6 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         telemetry = Path(str(state["tree"])) / ".swarm/telemetry.jsonl"
         telemetry.parent.mkdir(parents=True, exist_ok=True)
         telemetry.write_text("")
-        lifecycle_path = Path(str(state["provider_lifecycle"]))
-        lifecycle_path.unlink(missing_ok=True)
-        env = child_env(row, state, secret_value)
-        cmd = build_goose_command(binary, row, prompt)
-        log_path = Path(str(state["build_log"]))
-        counters, observe = provider_state_observer(root, entrant_id)
-        started = time.time()
         manifest = load_json(Path(str(campaign["entrant_manifest"])))
         max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
         previous_attempt = int(state.get("provider_episode_attempts", 0))
@@ -9208,6 +10900,37 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
                 failure="provider episode limit exhausted before process creation",
             )
             return 2
+        try:
+            launch_attempt, attempt_root, lifecycle_path = (
+                prepare_full_provider_attempt(
+                    root, entrant_id, state, campaign
+                )
+            )
+        except OSError as error:
+            server.shutdown()
+            update_state(
+                root,
+                entrant_id,
+                status="PRE_ADMISSION_FAILURE",
+                failure=(
+                    "immutable provider attempt could not be created: "
+                    f"{type(error).__name__}: {error}"
+                ),
+            )
+            return 2
+        state = update_state(
+            root,
+            entrant_id,
+            provider_launch_attempts=launch_attempt,
+            provider_attempt=launch_attempt,
+            provider_attempt_root=str(attempt_root),
+            provider_lifecycle=str(lifecycle_path),
+        )
+        env = child_env(row, state, secret_value)
+        cmd = build_goose_command(binary, row, prompt)
+        log_path = Path(str(state["build_log"]))
+        counters, observe = provider_state_observer(root, entrant_id)
+        started = time.time()
         update_state(
             root,
             entrant_id,
@@ -9270,13 +10993,37 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
                     goose_pid=proc.pid,
                     goose_identity=process_identity(proc.pid),
                     process_group=os.getpgrp(),
+                    goose_process_inventory=[],
                 )
-                assert proc.stdout is not None
-                redacted_copy(proc.stdout, log, secret_values.values(), observe)
-                exit_code = proc.wait()
+                last_inventory: list[Dict[str, Any]] = []
+
+                def persist_inventory(records: list[Dict[str, Any]]) -> None:
+                    nonlocal last_inventory
+                    if records == last_inventory:
+                        return
+                    last_inventory = records
+                    update_state(
+                        root,
+                        entrant_id,
+                        goose_process_inventory=records,
+                        goose_process_inventory_updated_at=utc_now(),
+                    )
+
+                exit_code, descendants_clean = redacted_copy_until_process_exit(
+                    proc,
+                    log,
+                    secret_values.values(),
+                    observe,
+                    owned_pgid=os.getpgrp(),
+                    excluded_pids={os.getpid()},
+                    on_inventory=persist_inventory,
+                )
         finally:
             server.shutdown()
-        descendants_clean = stop_group_members(os.getpgrp(), {os.getpid()})
+        descendants_clean = bool(
+            descendants_clean
+            and stop_group_members(os.getpgrp(), {os.getpid()})
+        )
         secret_hits = persisted_entrant_secret_hits(root, campaign, entrant_id)
 
         elapsed = round(time.time() - started, 3)
@@ -9288,12 +11035,19 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         counters["admitted"] = lifecycle["admitted"]
         counters["terminal"] = lifecycle["terminal"]
         counters["first_output_at"] = lifecycle["first_output_at"]
-        completed = exit_code == 0
-        status, failure = classify_build_exit(exit_code, counters["admitted"])
+        completed = exit_code == 0 and descendants_clean
+        status, failure = classify_build_exit(
+            exit_code,
+            counters["admitted"],
+            descendants_clean=descendants_clean,
+        )
         isolation_problem = listener_isolation_failure(
             campaign, row, read_state(root, entrant_id), smoke=False
         )
         outstanding_ids, budget_error = current_full_episode_outstanding_reservations(
+            root, campaign, row
+        )
+        generation_two_accounting = anchored_generation_two_entrant_accounting_failure(
             root, campaign, row
         )
         if budget_error:
@@ -9310,6 +11064,10 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         elif lifecycle_failure(lifecycle) is not None:
             status = "INCOMPLETE"
             failure = f"provider lifecycle evidence is invalid: {lifecycle_failure(lifecycle)}"
+            completed = False
+        elif generation_two_accounting:
+            status = "INCOMPLETE"
+            failure = generation_two_accounting
             completed = False
         elif isolation_problem:
             status = "INCOMPLETE"
@@ -9329,10 +11087,6 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         elif secret_hits:
             status = "INCOMPLETE"
             failure = "provider credential appeared in benchmark-controlled artifacts"
-            completed = False
-        elif completed and not descendants_clean:
-            status = "INCOMPLETE"
-            failure = "background tool descendants survived the build process"
             completed = False
         elif lineage_failure(root) is not None:
             status = "INCOMPLETE"
@@ -9362,15 +11116,55 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         return 0 if completed else 1
 
 
+RAW_SCORE_EXCLUDED_ENTRY_NAMES = frozenset(
+    {
+        ".DS_Store",
+        "__pycache__",
+        ".pytest_cache",
+        "graded-sb7-db",
+        "sb7-empty-db",
+        "sb7-combined-db",
+        "sb7-shots",
+        "sb7-tokens.json",
+        "sb7-expect.json",
+        "vendor-trace-sb7.jsonl",
+    }
+)
+
+
+def raw_score_path_excluded(relative: Path) -> bool:
+    if relative.as_posix() == ".swarm/telemetry.jsonl":
+        return True
+    if relative.suffix == ".pyc":
+        return True
+    return any(part in RAW_SCORE_EXCLUDED_ENTRY_NAMES for part in relative.parts)
+
+
+def raw_score_copy_ignored_names(
+    raw_root: Path, directory: Path, names: Iterable[str]
+) -> list[str]:
+    relative_directory = directory.relative_to(raw_root)
+    return sorted(
+        name
+        for name in names
+        if raw_score_path_excluded(relative_directory / name)
+    )
+
+
 def hash_tree(root: Path) -> str:
     h = hashlib.sha256()
     if not root.is_dir():
         return h.hexdigest()
-    ignored = {".DS_Store", "telemetry.jsonl"}
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.name in ignored:
+        metadata = path.lstat()
+        if stat_module.S_ISDIR(metadata.st_mode):
             continue
-        rel = str(path.relative_to(root)).encode()
+        if not stat_module.S_ISREG(metadata.st_mode):
+            raise SystemExit(f"artifact tree contains a non-regular entry: {path}")
+        relative_path = path.relative_to(root)
+        if raw_score_path_excluded(relative_path):
+            continue
+        rel = str(relative_path).encode()
         h.update(len(rel).to_bytes(8, "big"))
         h.update(rel)
         with path.open("rb") as stream:
@@ -9467,24 +11261,63 @@ def launch_smoke_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any
     )
 
 
+class ProcessInventoryError(RuntimeError):
+    pass
+
+
+def ps_snapshot_absent_or_raise(
+    result: subprocess.CompletedProcess[str], stage: str
+) -> bool:
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    if result.returncode == 1 and not stdout and not stderr:
+        return True
+    if result.returncode != 0 or stderr:
+        raise ProcessInventoryError(
+            f"{stage} process inventory query failed: "
+            f"exit={result.returncode} stderr={stderr[:500]!r}"
+        )
+    return False
+
+
+def global_ps_snapshot_or_raise(
+    result: subprocess.CompletedProcess[str], stage: str
+) -> None:
+    stderr = result.stderr.strip()
+    if result.returncode != 0 or stderr or not result.stdout.strip():
+        raise ProcessInventoryError(
+            f"{stage} global process inventory query failed: "
+            f"exit={result.returncode} stderr={stderr[:500]!r} "
+            f"empty={not bool(result.stdout.strip())}"
+        )
+
+
 def process_identity(pid: Any) -> str | None:
     try:
         value = int(pid)
     except (TypeError, ValueError):
         return None
+    if isinstance(pid, bool) or value <= 1:
+        return None
     proc = subprocess.run(
-        ["ps", "-p", str(value), "-o", "stat=", "-o", "lstart="],
+        ["/bin/ps", "-p", str(value), "-o", "stat=", "-o", "lstart="],
         text=True,
         capture_output=True,
         check=False,
     )
-    raw = proc.stdout.strip()
-    if proc.returncode != 0 or not raw:
+    if ps_snapshot_absent_or_raise(proc, f"pid {value} identity"):
         return None
+    raw = proc.stdout.strip()
+    if not raw:
+        raise ProcessInventoryError(
+            f"pid {value} identity inventory returned an empty successful snapshot"
+        )
     fields = raw.split(maxsplit=1)
     if not fields or fields[0].startswith("Z"):
         return None
-    return fields[1] if len(fields) > 1 else "running"
+    if len(fields) != 2 or not fields[1]:
+        raise ProcessInventoryError(f"pid {value} identity snapshot is malformed")
+    return fields[1]
 
 
 def process_alive(pid: Any, expected_identity: Any = None) -> bool:
@@ -9554,6 +11387,40 @@ def manager_process_ownership_failure(
     )
 
 
+def monitor_process_topology(pid: Any) -> Dict[str, int] | None:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(pid, bool) or value <= 1:
+        return None
+    proc = subprocess.run(
+        ["/bin/ps", "-p", str(value), "-o", "ppid=", "-o", "pgid=", "-o", "stat="],
+        text=True,
+        capture_output=True,
+        check=False,
+        start_new_session=True,
+    )
+    if ps_snapshot_absent_or_raise(proc, f"pid {value} topology"):
+        return None
+    fields = proc.stdout.split()
+    if len(fields) != 3:
+        raise ProcessInventoryError(f"pid {value} topology snapshot is malformed")
+    if fields[2].startswith("Z"):
+        return None
+    try:
+        parent_pid = int(fields[0])
+        pgid = int(fields[1])
+        session_id = os.getsid(value)
+    except (OSError, TypeError, ValueError):
+        return None
+    return {
+        "parent_pid": parent_pid,
+        "pgid": pgid,
+        "session_id": session_id,
+    }
+
+
 def monitor_progress_file_evidence(path: Path) -> Dict[str, Any]:
     evidence: Dict[str, Any] = {
         "regular": False,
@@ -9594,7 +11461,6 @@ def monitor_progress_tree_evidence(root: Path) -> Dict[str, Any]:
     }
     if root.is_symlink() or not root.is_dir():
         return evidence
-    ignored = {".DS_Store", "telemetry.jsonl"}
     try:
         digest = hashlib.sha256()
         file_count = 0
@@ -9609,21 +11475,26 @@ def monitor_progress_tree_evidence(root: Path) -> Dict[str, Any]:
             names.sort()
             files.sort()
             base = Path(directory)
+            kept_names: list[str] = []
             for name in names:
                 path = base / name
                 if path.is_symlink():
                     raise OSError(f"symbolic directory: {path}")
+                if raw_score_path_excluded(path.relative_to(root)):
+                    continue
+                kept_names.append(name)
                 relative = str(path.relative_to(root)).encode()
                 digest.update(b"D")
                 digest.update(len(relative).to_bytes(8, "big"))
                 digest.update(relative)
+            names[:] = kept_names
             for name in files:
-                if name in ignored:
-                    continue
                 path = base / name
                 metadata = path.lstat()
                 if not stat_module.S_ISREG(metadata.st_mode):
                     raise OSError(f"non-regular tree entry: {path}")
+                if raw_score_path_excluded(path.relative_to(root)):
+                    continue
                 relative = str(path.relative_to(root)).encode()
                 digest.update(b"F")
                 digest.update(len(relative).to_bytes(8, "big"))
@@ -9647,7 +11518,12 @@ def monitor_progress_tree_evidence(root: Path) -> Dict[str, Any]:
             }
         )
     except OSError as error:
-        evidence["read_error"] = type(error).__name__
+        detail = str(error)
+        evidence["read_error"] = (
+            "non-regular-entry"
+            if detail.startswith(("symbolic directory:", "non-regular tree entry:"))
+            else type(error).__name__
+        )
     return evidence
 
 
@@ -9849,7 +11725,6 @@ def monitor_progress_observation(root: Path, entrant_id: str) -> Dict[str, Any]:
     unit = root / "entrants" / entrant_id
     expected_paths = {
         "tree": unit / "tree",
-        "provider_lifecycle": unit / "provider-lifecycle.jsonl",
         "build_log": unit / "logs/build.log",
     }
     for key, expected in expected_paths.items():
@@ -9858,7 +11733,8 @@ def monitor_progress_observation(root: Path, entrant_id: str) -> Dict[str, Any]:
                 f"monitor progress {entrant_id} {key} escaped its entrant unit"
             )
     tree = expected_paths["tree"]
-    lifecycle_path = expected_paths["provider_lifecycle"]
+    full_episode_lifecycle_paths(root, entrant_id, state)
+    lifecycle_path = Path(str(state.get("provider_lifecycle", "")))
     build_log = expected_paths["build_log"]
     telemetry = tree / ".swarm/telemetry.jsonl"
     if any(path.is_symlink() for path in (unit, tree, lifecycle_path, build_log)):
@@ -10058,7 +11934,10 @@ def evaluate_monitor_progress(
         "active_provider_request_ids"
     ]
     evidence_problems = monitor_progress_evidence_problems(record)
-    if status not in {"WAITING_PROVIDER_LANE", "BUILD_RUNNING"}:
+    if record["evidence"]["tree"]["read_error"] == "non-regular-entry":
+        classification = "EVIDENCE_CORRUPT"
+        reason = "entrant tree contains a symbolic or non-regular entry"
+    elif status not in {"WAITING_PROVIDER_LANE", "BUILD_RUNNING"}:
         classification = "STATE_OBSERVED"
         reason = f"entrant state is {status}"
     elif evidence_problems:
@@ -10488,6 +12367,7 @@ def monitor_progress_record_failure(
         return "delta evidence changes are inconsistent"
     classifications = {
         "STATE_OBSERVED",
+        "EVIDENCE_CORRUPT",
         "EVIDENCE_UNSTABLE",
         "PROCESS_BASELINE",
         "PROGRESSING",
@@ -11013,6 +12893,11 @@ def monitor_progress_tick(root: Path) -> list[Dict[str, Any]]:
         record = append_monitor_progress_observation(
             root, entrant_id, monitor_progress_observation(root, entrant_id)
         )
+        if record["classification"] == "EVIDENCE_CORRUPT":
+            raise SystemExit(
+                f"monitor progress evidence is structurally corrupt for "
+                f"{entrant_id}: {record['reason']}"
+            )
         summaries.append(
             {
                 "entrant": entrant_id,
@@ -11047,24 +12932,557 @@ def monitor_progress_tick(root: Path) -> list[Dict[str, Any]]:
 
 def process_group_members(pgid: int) -> list[tuple[int, str]]:
     proc = subprocess.run(
-        ["ps", "-axo", "pid=,pgid=,stat="],
+        ["/bin/ps", "-axo", "pid=,pgid=,stat="],
         text=True,
         capture_output=True,
         check=False,
         start_new_session=True,
     )
+    global_ps_snapshot_or_raise(proc, f"process group {pgid}")
     members: list[tuple[int, str]] = []
     for raw in proc.stdout.splitlines():
         fields = raw.split()
-        if len(fields) < 3:
-            continue
+        if len(fields) != 3:
+            raise ProcessInventoryError(
+                f"process group {pgid} inventory snapshot is malformed"
+            )
         try:
             pid, candidate = int(fields[0]), int(fields[1])
-        except ValueError:
-            continue
+        except ValueError as error:
+            raise ProcessInventoryError(
+                f"process group {pgid} inventory snapshot is malformed"
+            ) from error
         if candidate == pgid and not fields[2].startswith("Z"):
             members.append((pid, fields[2]))
     return members
+
+
+def process_descendant_records_from_roots(
+    parent_pids: Iterable[Any],
+) -> list[Dict[str, Any]]:
+    root_pids: set[int] = set()
+    for value in parent_pids:
+        try:
+            pid = int(value)
+        except (TypeError, ValueError):
+            continue
+        if pid > 1:
+            root_pids.add(pid)
+    if not root_pids:
+        return []
+    proc = subprocess.run(
+        ["/bin/ps", "-axo", "pid=,ppid=,pgid=,stat=,lstart="],
+        text=True,
+        capture_output=True,
+        check=False,
+        start_new_session=True,
+    )
+    global_ps_snapshot_or_raise(proc, "process descendant topology")
+    rows: Dict[int, tuple[int, int, str, str]] = {}
+    for raw in proc.stdout.splitlines():
+        fields = raw.split()
+        if len(fields) != 9:
+            raise ProcessInventoryError(
+                "process descendant topology snapshot is malformed"
+            )
+        try:
+            pid, ppid, pgid = map(int, fields[:3])
+        except ValueError as error:
+            raise ProcessInventoryError(
+                "process descendant topology snapshot is malformed"
+            ) from error
+        if fields[3].startswith("Z"):
+            continue
+        rows[pid] = (ppid, pgid, fields[3], " ".join(fields[4:9]))
+    descendants: set[int] = set()
+    frontier = set(root_pids)
+    while frontier:
+        children = {
+            pid
+            for pid, (ppid, _, _, _) in rows.items()
+            if ppid in frontier and pid not in descendants and pid not in root_pids
+        }
+        if not children:
+            break
+        descendants.update(children)
+        frontier = children
+    records: list[Dict[str, Any]] = []
+    for pid in sorted(descendants):
+        ppid, pgid, _, identity = rows[pid]
+        try:
+            session_id = os.getsid(pid)
+        except (OSError, ProcessLookupError):
+            continue
+        record = {
+            "pid": pid,
+            "ppid": ppid,
+            "pgid": pgid,
+            "session_id": session_id,
+            "identity": identity,
+        }
+        if process_inventory_snapshot_record_alive(record):
+            records.append(record)
+    return records
+
+
+def process_descendant_records(parent_pid: Any) -> list[Dict[str, Any]]:
+    return process_descendant_records_from_roots([parent_pid])
+
+
+def ownership_marker_process_records(
+    environment_name: str,
+    marker: Any,
+) -> tuple[list[Dict[str, Any]], bool]:
+    if not isinstance(marker, str) or len(marker) < 32:
+        return [], False
+    proc = subprocess.run(
+        [
+            "/bin/ps",
+            "eww",
+            "-axo",
+            "pid=,ppid=,pgid=,stat=,lstart=,command=",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        start_new_session=True,
+    )
+    if proc.returncode != 0 or proc.stderr.strip() or not proc.stdout.strip():
+        return [], False
+    needle = f"{environment_name}={marker}"
+    records: list[Dict[str, Any]] = []
+    for raw in proc.stdout.splitlines():
+        fields = raw.split(maxsplit=9)
+        if len(fields) != 10:
+            return [], False
+        if needle not in fields[9] or fields[3].startswith("Z"):
+            continue
+        try:
+            pid, ppid, pgid = map(int, fields[:3])
+        except ValueError:
+            continue
+        identity = " ".join(fields[4:9])
+        try:
+            session_id = os.getsid(pid)
+        except (OSError, ProcessLookupError):
+            continue
+        record = {
+            "pid": pid,
+            "ppid": ppid,
+            "pgid": pgid,
+            "session_id": session_id,
+            "identity": identity,
+        }
+        if process_inventory_snapshot_record_alive(record):
+            records.append(record)
+    return normalized_process_inventory(records), True
+
+
+def scorer_marker_process_records(
+    marker: Any,
+) -> tuple[list[Dict[str, Any]], bool]:
+    return ownership_marker_process_records(SCORER_OWNERSHIP_ENV, marker)
+
+
+def normalized_process_inventory(value: Any) -> list[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    records: Dict[tuple[int, str], Dict[str, Any]] = {}
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            pid = int(raw.get("pid"))
+            ppid = int(raw.get("ppid"))
+            pgid = int(raw.get("pgid"))
+            session_id = int(raw.get("session_id"))
+        except (TypeError, ValueError):
+            continue
+        identity = raw.get("identity")
+        if (
+            pid <= 1
+            or ppid < 0
+            or pgid <= 1
+            or session_id <= 0
+            or not isinstance(identity, str)
+            or not identity
+        ):
+            continue
+        records[(pid, identity)] = {
+            "pid": pid,
+            "ppid": ppid,
+            "pgid": pgid,
+            "session_id": session_id,
+            "identity": identity,
+        }
+    return [records[key] for key in sorted(records)]
+
+
+def current_process_inventory_tuple(pid: Any) -> tuple[int, int, str] | None:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(pid, bool) or value <= 1:
+        return None
+    proc = subprocess.run(
+        [
+            "/bin/ps",
+            "-p",
+            str(value),
+            "-o",
+            "ppid=",
+            "-o",
+            "pgid=",
+            "-o",
+            "stat=",
+            "-o",
+            "lstart=",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        start_new_session=True,
+    )
+    if ps_snapshot_absent_or_raise(proc, f"pid {value} inventory"):
+        return None
+    fields = proc.stdout.split()
+    if len(fields) != 8:
+        raise ProcessInventoryError(f"pid {value} inventory snapshot is malformed")
+    if fields[2].startswith("Z"):
+        return None
+    try:
+        return int(fields[0]), int(fields[1]), " ".join(fields[3:8])
+    except ValueError:
+        return None
+
+
+def process_inventory_snapshot_record_alive(record: Mapping[str, Any]) -> bool:
+    try:
+        pid = int(record["pid"])
+        expected = (
+            int(record["ppid"]),
+            int(record["pgid"]),
+            str(record["identity"]),
+        )
+        expected_session = int(record["session_id"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if current_process_inventory_tuple(pid) != expected:
+        return False
+    try:
+        session_id = os.getsid(pid)
+    except (OSError, ProcessLookupError):
+        return False
+    return session_id == expected_session and current_process_inventory_tuple(pid) == expected
+
+
+def process_inventory_record_alive(record: Mapping[str, Any]) -> bool:
+    try:
+        pid = int(record["pid"])
+        identity = str(record["identity"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if pid <= 1 or not identity or not process_alive(pid, identity):
+        return False
+    return process_alive(pid, identity)
+
+
+def refreshed_process_inventory_record(
+    record: Mapping[str, Any],
+) -> Dict[str, Any] | None:
+    if not process_inventory_record_alive(record):
+        return None
+    pid = int(record["pid"])
+    current = current_process_inventory_tuple(pid)
+    if current is None or current[2] != str(record["identity"]):
+        return None
+    try:
+        session_id = os.getsid(pid)
+    except (OSError, ProcessLookupError):
+        return None
+    if not process_inventory_record_alive(record):
+        return None
+    return {
+        "pid": pid,
+        "ppid": current[0],
+        "pgid": current[1],
+        "session_id": session_id,
+        "identity": current[2],
+    }
+
+
+def refreshed_process_inventory(value: Any) -> list[Dict[str, Any]]:
+    refreshed = [
+        current
+        for record in normalized_process_inventory(value)
+        if (current := refreshed_process_inventory_record(record)) is not None
+    ]
+    return normalized_process_inventory(refreshed)
+
+
+def cleared_scorer_ownership_changes(
+    state: Mapping[str, Any],
+) -> Dict[str, Any]:
+    closed_at = utc_now()
+    inventory = normalized_process_inventory(state.get("score_process_inventory"))
+    raw_history = state.get("score_process_inventory_history")
+    history = list(raw_history) if isinstance(raw_history, list) else []
+    if inventory:
+        history.append(
+            {
+                "score_attempt": int(state.get("score_attempts", 0)),
+                "closed_at": closed_at,
+                "processes": inventory,
+            }
+        )
+    return {
+        "score_pid": None,
+        "score_pgid": None,
+        "score_identity": None,
+        "score_ownership_marker": None,
+        "score_process_inventory": [],
+        "score_process_inventory_updated_at": closed_at,
+        "score_process_inventory_history": history,
+    }
+
+
+def record_scorer_process_inventory(
+    root: Path, entrant_id: str, scorer_pid: Any
+) -> list[Dict[str, Any]]:
+    state = read_state(root, entrant_id)
+    existing = refreshed_process_inventory(state.get("score_process_inventory"))
+    roots = {
+        int(record["pid"])
+        for record in existing
+        if process_inventory_record_alive(record)
+    }
+    score_identity = state.get("score_identity")
+    if (
+        isinstance(score_identity, str)
+        and score_identity
+        and process_alive(scorer_pid, score_identity)
+    ):
+        roots.add(int(scorer_pid))
+    marked, _ = scorer_marker_process_records(state.get("score_ownership_marker"))
+    combined = normalized_process_inventory(
+        [*existing, *process_descendant_records_from_roots(roots), *marked]
+    )
+    if combined != existing:
+        update_state(
+            root,
+            entrant_id,
+            score_process_inventory=combined,
+            score_process_inventory_updated_at=utc_now(),
+        )
+    return combined
+
+
+def scorer_runtime_survivors(
+    state: Mapping[str, Any], *, include_current_descendants: bool = True
+) -> list[Dict[str, Any]]:
+    inventory = refreshed_process_inventory(state.get("score_process_inventory"))
+    if include_current_descendants:
+        roots = {
+            int(record["pid"])
+            for record in inventory
+            if process_inventory_record_alive(record)
+        }
+        score_identity = state.get("score_identity")
+        if (
+            isinstance(score_identity, str)
+            and score_identity
+            and process_alive(state.get("score_pid"), score_identity)
+        ):
+            roots.add(int(state["score_pid"]))
+        inventory = normalized_process_inventory(
+            [*inventory, *process_descendant_records_from_roots(roots)]
+        )
+    marked, _ = scorer_marker_process_records(state.get("score_ownership_marker"))
+    inventory = normalized_process_inventory([*inventory, *marked])
+    survivors = refreshed_process_inventory(inventory)
+    score_pid = state.get("score_pid")
+    score_pgid = int(state.get("score_pgid") or 0)
+    if (
+        score_pgid > 1
+        and process_alive(score_pid, state.get("score_identity"))
+    ):
+        identity = state.get("score_identity")
+        survivors.append(
+            {
+                "pid": int(score_pid or score_pgid),
+                "ppid": 0,
+                "pgid": score_pgid,
+                "session_id": score_pgid,
+                "identity": str(identity or "unknown"),
+            }
+        )
+    return normalized_process_inventory(survivors)
+
+
+def stop_scorer_runtime(root: Path, entrant_id: str) -> tuple[bool, bool]:
+    state = read_state(root, entrant_id)
+    inventory = record_scorer_process_inventory(
+        root, entrant_id, state.get("score_pid")
+    )
+    state = read_state(root, entrant_id)
+    marker = state.get("score_ownership_marker")
+    marker_required = isinstance(marker, str) and len(marker) >= 32
+    _, marker_scan_proven = scorer_marker_process_records(marker)
+    score_pgid = int(state.get("score_pgid") or 0)
+    survivors_before = scorer_runtime_survivors(state)
+    score_group_members = process_group_members(score_pgid) if score_pgid > 1 else []
+    score_group_attributed = any(
+        int(record["pgid"]) == score_pgid for record in survivors_before
+    )
+    unattributed_score_group = bool(
+        score_group_members and not score_group_attributed
+    )
+    groups = {
+        int(record["pgid"])
+        for record in survivors_before
+        if int(record["pgid"]) > 1 and int(record["pgid"]) != os.getpgrp()
+    }
+    if (
+        score_pgid > 1
+        and score_pgid != os.getpgrp()
+        and score_group_attributed
+    ):
+        groups.add(score_pgid)
+    for pgid in sorted(groups):
+        stop_group(pgid, grace_seconds=5.0)
+    targeted_groups = set(groups)
+    for record in normalized_process_inventory(
+        [*inventory, *survivors_before]
+    ):
+        if process_inventory_record_alive(record):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(record["pid"], signal.SIGKILL)
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        current = read_state(root, entrant_id)
+        record_scorer_process_inventory(root, entrant_id, current.get("score_pid"))
+        current = read_state(root, entrant_id)
+        _, marker_scan_proven = scorer_marker_process_records(marker)
+        groups_empty = all(
+            not process_group_members(pgid) for pgid in targeted_groups
+        )
+        if not scorer_runtime_survivors(current) and groups_empty:
+            attribution_proven = marker_required and marker_scan_proven
+            cleanup_proven = not unattributed_score_group and attribution_proven
+            return cleanup_proven, bool(survivors_before)
+        time.sleep(0.2)
+    current = read_state(root, entrant_id)
+    record_scorer_process_inventory(root, entrant_id, current.get("score_pid"))
+    _, marker_scan_proven = scorer_marker_process_records(marker)
+    clean = not scorer_runtime_survivors(read_state(root, entrant_id)) and all(
+        not process_group_members(pgid) for pgid in targeted_groups
+    )
+    attribution_proven = marker_required and marker_scan_proven
+    cleanup_proven = bool(
+        clean and not unattributed_score_group and attribution_proven
+    )
+    return cleanup_proven, bool(survivors_before)
+
+
+def cleared_publisher_ownership_changes() -> Dict[str, Any]:
+    return {
+        "publisher_pid": None,
+        "publisher_pgid": None,
+        "publisher_identity": None,
+        "publisher_ownership_marker": None,
+    }
+
+
+def stop_publisher_runtime(root: Path, entrant_id: str) -> tuple[bool, bool]:
+    state = read_state(root, entrant_id)
+    marker = state.get("publisher_ownership_marker")
+    marker_required = isinstance(marker, str) and len(marker) >= 32
+    marked, marker_scan_proven = ownership_marker_process_records(
+        PUBLISHER_OWNERSHIP_ENV, marker
+    )
+    pid = state.get("publisher_pid")
+    pgid = int(state.get("publisher_pgid") or 0)
+    identity = state.get("publisher_identity")
+    root_attributed = bool(
+        isinstance(identity, str)
+        and identity
+        and process_alive(pid, identity)
+    )
+    group_members = process_group_members(pgid) if pgid > 1 else []
+    marked_groups = {
+        int(record["pgid"])
+        for record in marked
+        if int(record["pgid"]) > 1 and int(record["pgid"]) != os.getpgrp()
+    }
+    if root_attributed and pgid > 1 and pgid != os.getpgrp():
+        marked_groups.add(pgid)
+    unattributed_group = bool(group_members and pgid not in marked_groups)
+    had_survivors = bool(marked or group_members or root_attributed)
+    targeted_groups = set(marked_groups)
+    for owned_group in sorted(targeted_groups):
+        stop_group(owned_group, grace_seconds=5.0)
+    for record in marked:
+        if process_inventory_record_alive(record):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(record["pid"]), signal.SIGKILL)
+    marked_after, marker_scan_after = ownership_marker_process_records(
+        PUBLISHER_OWNERSHIP_ENV, marker
+    )
+    group_after = process_group_members(pgid) if pgid > 1 else []
+    targeted_groups_empty = all(
+        not process_group_members(owned_group)
+        for owned_group in targeted_groups
+    )
+    root_after = bool(
+        isinstance(identity, str)
+        and identity
+        and process_alive(pid, identity)
+    )
+    cleanup_proven = bool(
+        marker_required
+        and marker_scan_proven
+        and marker_scan_after
+        and not marked_after
+        and not group_after
+        and targeted_groups_empty
+        and not root_after
+        and not unattributed_group
+    )
+    return cleanup_proven, had_survivors
+
+
+def wait_for_scorer(
+    root: Path,
+    entrant_id: str,
+    campaign: Mapping[str, Any],
+    proc: subprocess.Popen[Any],
+    poll_seconds: float = 0.25,
+) -> tuple[int, bool, bool]:
+    next_inventory_at = 0.0
+    while proc.poll() is None:
+        now = time.monotonic()
+        if now >= next_inventory_at:
+            record_scorer_process_inventory(root, entrant_id, proc.pid)
+            next_inventory_at = now + SCORER_INVENTORY_POLL_SECONDS
+        lease_problem = active_manager_monitor_lease_failure(root, campaign)
+        if lease_problem:
+            clean, _ = stop_scorer_runtime(root, entrant_id)
+            raise RuntimeError(
+                "monitor lease failed during scorer execution: "
+                f"{lease_problem}; descendants_clean={clean}"
+            )
+        time.sleep(poll_seconds)
+    record_scorer_process_inventory(root, entrant_id, proc.pid)
+    exit_code = proc.wait()
+    clean, had_survivors = stop_scorer_runtime(root, entrant_id)
+    lease_problem = active_manager_monitor_lease_failure(root, campaign)
+    if lease_problem:
+        raise RuntimeError(
+            "monitor lease failed after scorer cleanup: "
+            f"{lease_problem}; descendants_clean={clean}"
+        )
+    return exit_code, clean, had_survivors
 
 
 def stop_group_members(
@@ -11100,24 +13518,20 @@ def manager_monitor_attention(root: Path, lease_failure: str) -> None:
     campaign = load_json(campaign_file(root))
     cleanup_failures: list[str] = []
     for state in status_rows(root):
-        if state["status"] in TERMINAL_BUILD_STATES | POST_BUILD_STATES:
-            continue
         entrant_id = str(state["entrant"])
-        pgid = int(state.get("supervisor_pgid") or 0)
-        group_clean = True
-        if pgid and (
-            process_alive(
-                state.get("supervisor_pid"), state.get("supervisor_identity")
-            )
-            or process_group_members(pgid)
-        ):
-            group_clean = stop_recorded_group(
-                state.get("supervisor_pid"),
-                pgid,
-                state.get("supervisor_identity"),
-            )
+        group_clean = not any(build_runtime_ownership(state)) or (
+            stop_build_runtime_topology(state)
+        )
         if not group_clean:
-            cleanup_failures.append(f"{entrant_id}:supervisor-pgid={pgid}")
+            cleanup_failures.append(f"{entrant_id}:build-topology")
+        else:
+            clear_build_runtime_ownership(root, entrant_id)
+        state = read_state(root, entrant_id)
+        if (
+            state.get("status") in TERMINAL_BUILD_STATES | POST_BUILD_STATES
+            and group_clean
+        ):
+            continue
         row = manifest_row(root, entrant_id)
         lifecycle = lifecycle_summary(
             Path(str(state["provider_lifecycle"])),
@@ -11127,11 +13541,19 @@ def manager_monitor_attention(root: Path, lease_failure: str) -> None:
         outstanding, budget_error = current_full_episode_outstanding_reservations(
             root, campaign, row
         )
+        accounting_error = anchored_generation_two_entrant_accounting_failure(
+            root, campaign, row
+        )
+        pre_admission_proven = interrupted_build_pre_admission_proven(
+            str(state.get("status")), lifecycle
+        )
         ambiguous = bool(
             lifecycle["admitted"]
             or lifecycle_failure(lifecycle)
             or outstanding
             or budget_error
+            or accounting_error
+            or not pre_admission_proven
             or not group_clean
         )
         reasons = [f"monitor lease lost: {lease_failure}"]
@@ -11143,21 +13565,26 @@ def manager_monitor_attention(root: Path, lease_failure: str) -> None:
             )
         if budget_error:
             reasons.append(budget_error)
+        if accounting_error:
+            reasons.append(accounting_error)
+        if not pre_admission_proven:
+            reasons.append("pre-admission termination is not explicitly proven")
         if not group_clean:
-            reasons.append("owned supervisor group survived cleanup")
-        update_state(
-            root,
-            entrant_id,
-            status="INCOMPLETE" if ambiguous else "PRE_ADMISSION_FAILURE",
-            failure="; ".join(reasons),
-            admitted_requests=lifecycle["admitted"],
-            provider_terminal_requests=lifecycle["terminal"],
-            lifecycle_events=lifecycle["events"],
-            lifecycle_malformed_lines=lifecycle["malformed_lines"],
-            lifecycle_transition_errors=lifecycle["transition_errors"],
-            lifecycle_ambiguous_request_ids=lifecycle["ambiguous_request_ids"],
-            budget_outstanding_request_ids=outstanding,
-        )
+            reasons.append("owned build topology survived cleanup")
+        changes: Dict[str, Any] = {
+            "status": "INCOMPLETE" if ambiguous else "PRE_ADMISSION_FAILURE",
+            "failure": "; ".join(reasons),
+            "admitted_requests": lifecycle["admitted"],
+            "provider_terminal_requests": lifecycle["terminal"],
+            "lifecycle_events": lifecycle["events"],
+            "lifecycle_malformed_lines": lifecycle["malformed_lines"],
+            "lifecycle_transition_errors": lifecycle["transition_errors"],
+            "lifecycle_ambiguous_request_ids": lifecycle["ambiguous_request_ids"],
+            "budget_outstanding_request_ids": outstanding,
+        }
+        if group_clean:
+            changes.update(dict.fromkeys(BUILD_RUNTIME_OWNERSHIP_FIELDS, None))
+        update_state(root, entrant_id, **changes)
     failure = f"monitor lease lost; provider work stopped: {lease_failure}"
     if cleanup_failures:
         failure += "; owned groups survived: " + ", ".join(cleanup_failures)
@@ -11197,8 +13624,14 @@ def wait_for_builds(
                 if not process_alive(
                     state["supervisor_pid"], state.get("supervisor_identity")
                 ):
-                    pgid = int(state.get("supervisor_pgid") or 0)
-                    group_clean = not process_group_members(pgid) or stop_group(pgid)
+                    group_clean = stop_build_runtime_topology(state)
+                    state = read_state(root, str(state["entrant"]))
+                    if (
+                        state.get("status")
+                        in TERMINAL_BUILD_STATES | POST_BUILD_STATES
+                        and group_clean
+                    ):
+                        continue
                     row = manifest_row(root, str(state["entrant"]))
                     lifecycle = lifecycle_summary(
                         Path(str(state["provider_lifecycle"])),
@@ -11210,11 +13643,19 @@ def wait_for_builds(
                             root, campaign, row
                         )
                     )
+                    accounting_error = anchored_generation_two_entrant_accounting_failure(
+                        root, campaign, row
+                    )
+                    pre_admission_proven = interrupted_build_pre_admission_proven(
+                        str(state.get("status")), lifecycle
+                    )
                     ambiguous = bool(
                         lifecycle["admitted"]
                         or lifecycle_failure(lifecycle)
                         or outstanding_ids
                         or budget_error
+                        or accounting_error
+                        or not pre_admission_proven
                         or not group_clean
                     )
                     reasons = ["supervisor disappeared; silence is not success"]
@@ -11228,6 +13669,12 @@ def wait_for_builds(
                         )
                     if budget_error:
                         reasons.append(budget_error)
+                    if accounting_error:
+                        reasons.append(accounting_error)
+                    if not pre_admission_proven:
+                        reasons.append(
+                            "pre-admission termination is not explicitly proven"
+                        )
                     if not group_clean:
                         reasons.append("owned process group survived cleanup")
                     update_state(
@@ -11396,13 +13843,9 @@ def smoke_manage(root: Path) -> int:
             )
             return result
         monitor_start(root)
-        smoke_manager_state(
-            root,
-            status="HANDED_OFF",
-            exit_code=0,
-            finished_at=utc_now(),
-            failure=None,
-        )
+        campaign = load_json(campaign_file(root))
+        monitor = wait_for_authenticated_monitor(root, campaign)
+        commit_smoke_monitor_handoff(root, campaign, monitor)
         return 0
     except (Exception, SystemExit) as error:
         safe = f"{type(error).__name__}: {error}"[:1000]
@@ -11417,6 +13860,105 @@ def smoke_manage(root: Path) -> int:
         return 1
 
 
+def wait_for_authenticated_monitor(
+    root: Path,
+    campaign: Mapping[str, Any],
+    timeout_seconds: float = MONITOR_LEASE_TIMEOUT_SECONDS,
+    poll_seconds: float = 0.05,
+) -> Dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_problem = "monitor has not entered RUNNING"
+    while time.monotonic() < deadline:
+        monitor = read_monitor_state(root)
+        problem = monitor_lease_snapshot_failure(root, monitor, campaign)
+        if problem is None:
+            return monitor
+        last_problem = problem
+        if monitor.get("status") in MONITOR_TERMINAL_STATES:
+            break
+        time.sleep(poll_seconds)
+    raise SystemExit(
+        "detached monitor did not establish authenticated RUNNING ownership: "
+        f"{last_problem}"
+    )
+
+
+def commit_smoke_monitor_handoff(
+    root: Path,
+    campaign: Mapping[str, Any],
+    monitor: Mapping[str, Any],
+) -> Dict[str, Any]:
+    problem = monitor_lease_snapshot_failure(root, monitor, campaign)
+    if problem:
+        raise SystemExit(f"smoke monitor handoff is not authenticated: {problem}")
+    receipt = {
+        "schema_version": CAMPAIGN_SCHEMA,
+        "handed_off_at": utc_now(),
+        "monitor_pid": monitor["pid"],
+        "monitor_pgid": monitor["pgid"],
+        "monitor_session_id": monitor["session_id"],
+        "monitor_identity": monitor["identity"],
+        "lease_id": monitor["lease_id"],
+        "smoke_contract_sha256": monitor["smoke_contract_sha256"],
+    }
+    return smoke_manager_state(
+        root,
+        status="HANDED_OFF",
+        monitor_handoff=receipt,
+        exit_code=0,
+        finished_at=utc_now(),
+        failure=None,
+    )
+
+
+def smoke_monitor_handoff_failure(root: Path) -> str | None:
+    try:
+        campaign = load_json(campaign_file(root))
+        state = read_smoke_manager_state(root)
+        receipt = state.get("monitor_handoff")
+        if state.get("status") != "HANDED_OFF" or not isinstance(receipt, dict):
+            return "smoke manager has no committed monitor handoff"
+        expected_keys = {
+            "schema_version",
+            "handed_off_at",
+            "monitor_pid",
+            "monitor_pgid",
+            "monitor_session_id",
+            "monitor_identity",
+            "lease_id",
+            "smoke_contract_sha256",
+        }
+        if (
+            set(receipt) != expected_keys
+            or receipt.get("schema_version") != CAMPAIGN_SCHEMA
+            or not isinstance(receipt.get("handed_off_at"), str)
+            or not receipt.get("handed_off_at")
+            or not isinstance(receipt.get("monitor_identity"), str)
+            or not receipt.get("monitor_identity")
+        ):
+            return "smoke monitor handoff receipt is malformed"
+        monitor = read_monitor_state(root)
+        problem = monitor_lease_snapshot_failure(
+            root, monitor, campaign, str(receipt.get("lease_id", ""))
+        )
+        if problem:
+            return problem
+        exact = {
+            "monitor_pid": monitor.get("pid"),
+            "monitor_pgid": monitor.get("pgid"),
+            "monitor_session_id": monitor.get("session_id"),
+            "monitor_identity": monitor.get("identity"),
+            "lease_id": monitor.get("lease_id"),
+            "smoke_contract_sha256": monitor.get("smoke_contract_sha256"),
+        }
+        for key, value in exact.items():
+            if receipt.get(key) != value:
+                return f"smoke monitor handoff differs on {key}"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"smoke monitor handoff cannot be verified: {error}"
+    return None
+
+
 def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
     while True:
         with exclusive_claim(
@@ -11429,8 +13971,23 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
             if campaign.get("smoke_status") == "PASS":
                 require_smoke_proofs(root)
                 monitor = read_monitor_state(root)
-                if not process_alive(monitor.get("pid"), monitor.get("identity")):
+                monitor_alive = process_alive(
+                    monitor.get("pid"), monitor.get("identity")
+                )
+                launcher_alive = process_alive(
+                    monitor.get("launcher_pid"), monitor.get("launcher_identity")
+                )
+                if not monitor_alive and not launcher_alive:
                     monitor_start(root)
+                elif launcher_alive:
+                    monitor_start(root)
+                monitor = wait_for_authenticated_monitor(root, campaign)
+                commit_smoke_monitor_handoff(root, campaign, monitor)
+                handoff_problem = smoke_monitor_handoff_failure(root)
+                if handoff_problem:
+                    raise SystemExit(
+                        f"durable smoke monitor handoff failed: {handoff_problem}"
+                    )
                 return 0
             current = read_smoke_manager_state(root)
             if not process_alive(current.get("pid"), current.get("identity")):
@@ -11473,12 +14030,10 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
                     )
         campaign = load_json(campaign_file(root))
         state = read_smoke_manager_state(root)
-        if campaign.get("smoke_status") == "PASS" and state.get("status") in {
-            "HANDED_OFF",
-            "RUNNING",
-        }:
+        if campaign.get("smoke_status") == "PASS" and state.get("status") == "HANDED_OFF":
             require_smoke_proofs(root)
-            return 0
+            if smoke_monitor_handoff_failure(root) is None:
+                return 0
         if state.get("status") == "ATTENTION" or campaign.get(
             "smoke_status"
         ) == "ATTENTION":
@@ -11490,6 +14045,7 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
 
 def clone_for_score(root: Path, entrant_id: str, attempt: int) -> Path:
     raw = root / "entrants" / entrant_id / "tree"
+    hash_tree(raw)
     dest = root / "scores" / entrant_id / f"attempt-{attempt}" / "tree"
     if dest.exists():
         raise SystemExit(
@@ -11499,21 +14055,217 @@ def clone_for_score(root: Path, entrant_id: str, attempt: int) -> Path:
     shutil.copytree(
         raw,
         dest,
-        ignore=shutil.ignore_patterns(
-            ".swarm",
-            "__pycache__",
-            ".pytest_cache",
-            "*.pyc",
-            "graded-sb7-db",
-            "sb7-empty-db",
-            "sb7-combined-db",
-            "sb7-shots",
-            "sb7-tokens.json",
-            "sb7-expect.json",
-            "vendor-trace-sb7.jsonl",
+        ignore=lambda directory, names: raw_score_copy_ignored_names(
+            raw, Path(directory), names
         ),
     )
     return dest
+
+
+def pinned_scorer_node(campaign: Mapping[str, Any]) -> Path:
+    publisher = campaign.get("publisher")
+    node = publisher.get("node") if isinstance(publisher, dict) else None
+    if not isinstance(node, dict):
+        raise SystemExit("campaign has no pinned scorer node runtime")
+    raw_path = node.get("path")
+    expected_sha = node.get("sha256")
+    if not isinstance(raw_path, str) or not raw_path:
+        raise SystemExit("campaign scorer node path is malformed")
+    path = Path(raw_path)
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+        or path.resolve() != path
+        or not isinstance(expected_sha, str)
+        or sha256_file(path) != expected_sha
+    ):
+        raise SystemExit("pinned scorer node runtime changed")
+    return path
+
+
+def pinned_scorer_runtime(campaign: Mapping[str, Any]) -> Dict[str, Any]:
+    runtime = campaign.get("scorer_runtime")
+    if not isinstance(runtime, dict) or runtime.get("schema_version") != 1:
+        raise SystemExit("campaign has no pinned scorer browser runtime")
+    node = pinned_scorer_node(campaign)
+    if runtime.get("node") != campaign.get("publisher", {}).get("node"):
+        raise SystemExit("pinned scorer node identity differs from publisher node")
+    frozen = runtime.get("frozen")
+    if not isinstance(frozen, dict):
+        raise SystemExit("campaign has no frozen Playwright package")
+    expected_frozen = (
+        Path(str(campaign["instrument_root"]))
+        / "evals/swarm-bench/bench/node_modules/playwright"
+    )
+    frozen_path = Path(str(frozen.get("path", "")))
+    if (
+        frozen_path != expected_frozen
+        or frozen_path.is_symlink()
+        or not frozen_path.is_dir()
+        or sha256_tree_exact(frozen_path) != frozen.get("sha256")
+    ):
+        raise SystemExit("frozen Playwright package changed")
+    cache = Path(str(runtime.get("browser_cache_root", "")))
+    components = runtime.get("browser_components")
+    if (
+        not cache.is_absolute()
+        or cache.is_symlink()
+        or not cache.is_dir()
+        or not isinstance(components, dict)
+        or set(components) != {"chromium", "chromium-headless-shell", "ffmpeg"}
+    ):
+        raise SystemExit("pinned Playwright browser closure is malformed")
+    verified_components: Dict[str, Dict[str, str]] = {}
+    for name, raw in components.items():
+        if not isinstance(raw, dict):
+            raise SystemExit("pinned Playwright browser component is malformed")
+        path = Path(str(raw.get("path", "")))
+        if (
+            not path.is_absolute()
+            or path.is_symlink()
+            or not path.is_dir()
+            or not path.is_relative_to(cache)
+            or artifact_tree_sha256(path) != raw.get("sha256")
+        ):
+            raise SystemExit(f"pinned Playwright browser component changed: {name}")
+        verified_components[str(name)] = {
+            "path": str(path),
+            "sha256": str(raw["sha256"]),
+            "revision": str(raw["revision"]),
+        }
+    return {
+        **runtime,
+        "node_path": str(node),
+        "browser_components": verified_components,
+    }
+
+
+def scorer_listener_isolation(
+    campaign: Mapping[str, Any],
+    state: Mapping[str, Any],
+    score_dir: Path,
+) -> tuple[list[int], Path]:
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    manifest_ports = canonical_listener_ports(
+        sorted(int(row["vendor_port"]) for row in entrants(manifest))
+    )
+    own_vendor_port = int(state["vendor_port"])
+    preexisting = snapshot_listening_tcp_ports()
+    if own_vendor_port in preexisting:
+        raise SystemExit(
+            f"scorer vendor port is occupied immediately before launch: {own_vendor_port}"
+        )
+    denied = canonical_listener_ports(
+        sorted((set(preexisting) | set(manifest_ports)) - {own_vendor_port})
+    )
+    snapshot = {
+        "schema_version": 1,
+        "captured_at": utc_now(),
+        "entrant": str(state["entrant"]),
+        "entrant_manifest_sha256": campaign["entrant_manifest_sha256"],
+        "preexisting_listener_ports": preexisting,
+        "manifest_vendor_ports": manifest_ports,
+        "own_vendor_port": own_vendor_port,
+        "denied_local_ports": denied,
+    }
+    path = score_dir / "sandbox-listeners.json"
+    atomic_json(path, snapshot)
+    return denied, path
+
+
+def sandbox_profile_path(path: Path) -> str:
+    return str(path).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def scorer_sandbox_profile(
+    campaign: Mapping[str, Any],
+    score_dir: Path,
+    node: Path,
+    *,
+    runtime: Mapping[str, Any] | None = None,
+    denied_local_ports: Iterable[int] = (),
+) -> str:
+    home = Path.home().resolve()
+    instrument_source = Path(str(campaign["instrument_root"]))
+    score_source = score_dir
+    secret_source = Path(str(campaign["secret_file"]))
+    instrument = instrument_source.resolve()
+    score_root = score_source.resolve()
+    campaign_root = score_root.parents[2]
+    secret = secret_source.resolve()
+    if (
+        instrument_source.is_symlink()
+        or not instrument.is_dir()
+        or score_source.is_symlink()
+        or not score_root.is_dir()
+        or secret_source.is_symlink()
+        or not secret.is_file()
+        or not instrument.is_relative_to(campaign_root)
+        or not score_root.is_relative_to(campaign_root)
+        or secret.is_relative_to(instrument)
+        or secret.is_relative_to(score_root)
+    ):
+        raise SystemExit("scorer sandbox roots are missing or linked")
+    read_roots = {instrument, score_root}
+    if runtime is not None:
+        components = runtime.get("browser_components")
+        if not isinstance(components, dict):
+            raise SystemExit("scorer sandbox has no pinned browser components")
+        read_roots.update(
+            Path(str(component["path"])) for component in components.values()
+        )
+    read_clauses = " ".join(
+        f'(allow file-read* (subpath "{sandbox_profile_path(path)}"))'
+        for path in sorted(read_roots, key=str)
+    )
+    metadata_paths: set[Path] = set()
+    for path in read_roots:
+        metadata_paths.update(path.parents)
+    metadata_clauses = " ".join(
+        f'(allow file-read-metadata (literal "{sandbox_profile_path(path)}"))'
+        for path in sorted(metadata_paths, key=str)
+        if str(path) != "/"
+    )
+    port_denials = " ".join(
+        (
+            f'(deny network-inbound (local ip "localhost:{port}")) '
+            f'(deny network-outbound (remote ip "localhost:{port}"))'
+        )
+        for port in canonical_listener_ports(denied_local_ports)
+    )
+    cache_metadata = ""
+    if runtime is not None:
+        cache = Path(str(runtime["browser_cache_root"]))
+        cache_metadata = (
+            f'(allow file-read-metadata (literal "{sandbox_profile_path(cache)}")) '
+        )
+    return (
+        "(version 1) (allow default) "
+        "(deny process-info*) "
+        "(allow process-info* (target self)) "
+        "(allow process-info-codesignature) "
+        "(deny signal) "
+        "(allow signal (target self)) "
+        "(allow signal (target same-sandbox)) "
+        "(deny mach-lookup) "
+        "(deny network*) "
+        '(allow network-inbound (local tcp "localhost:*") '
+        '(local udp "localhost:*")) '
+        '(allow network-outbound (remote tcp "localhost:*") '
+        '(remote udp "localhost:*")) '
+        f"{port_denials} "
+        "(deny file-write*) "
+        f'(deny file-read* file-write* (subpath "{sandbox_profile_path(home)}")) '
+        f'(deny file-read* file-write* (subpath "{sandbox_profile_path(campaign_root)}")) '
+        f'(deny file-read* file-write* (literal "{sandbox_profile_path(secret)}")) '
+        '(deny file-read* file-write* (subpath "/private/tmp")) '
+        '(allow file-write* (literal "/dev/null")) '
+        f"{cache_metadata}"
+        f"{metadata_clauses} "
+        f'{read_clauses} '
+        f'(allow file-read* file-write* (subpath "{sandbox_profile_path(score_root)}"))'
+    )
 
 
 def next_score_attempt(root: Path, entrant_id: str, state: Mapping[str, Any]) -> int:
@@ -11534,39 +14286,52 @@ def stop_recorded_group(
     grace_seconds: float = 5.0,
 ) -> bool:
     actual_identity = process_identity(pid)
-    if actual_identity is not None:
-        if identity is not None and actual_identity != str(identity):
-            return True
-        return stop_group(int(pgid or pid), grace_seconds=grace_seconds)
     group = int(pgid or 0)
-    if group and process_group_members(group):
-        return stop_group(group, grace_seconds=grace_seconds)
-    return True
+    members = process_group_members(group) if group > 1 else []
+    if actual_identity is not None and isinstance(identity, str) and identity:
+        if actual_identity != identity:
+            return not members
+        return stop_group(int(pgid or pid), grace_seconds=grace_seconds)
+    return not members
 
 
 def recover_interrupted_scoring(root: Path) -> None:
+    survived: list[str] = []
     for state in status_rows(root):
-        if state["status"] != "SCORING":
-            continue
-        clean = stop_recorded_group(
-            state.get("score_pid"),
-            state.get("score_pgid"),
-            state.get("score_identity"),
+        scorer_owned = bool(
+            state.get("score_pid")
+            or state.get("score_pgid")
+            or state.get("score_process_inventory")
+            or state.get("score_ownership_marker")
         )
-        update_state(
-            root,
-            str(state["entrant"]),
-            status="SCORE_FAILED" if clean else "INCOMPLETE",
-            failure=(
-                "scorer supervision disappeared; the immutable attempt is retained and "
-                "a fresh attempt is required"
-                if clean
-                else "interrupted scorer process group survived recovery"
-            ),
-            score_recovered_at=utc_now(),
-            score_pid=None,
-            score_pgid=None,
-            score_identity=None,
+        if state["status"] != "SCORING" and not scorer_owned:
+            continue
+        entrant_id = str(state["entrant"])
+        clean, _ = stop_scorer_runtime(root, entrant_id)
+        current = read_state(root, entrant_id)
+        if clean:
+            changes = cleared_scorer_ownership_changes(current)
+            if state["status"] == "SCORING":
+                changes.update(
+                    status="SCORE_FAILED",
+                    failure=(
+                        "scorer supervision disappeared; the immutable attempt is "
+                        "retained and a fresh attempt is required"
+                    ),
+                    score_recovered_at=utc_now(),
+                )
+        else:
+            changes = {
+                "status": "INCOMPLETE",
+                "failure": "interrupted scorer topology survived recovery",
+                "score_recovered_at": utc_now(),
+            }
+            survived.append(entrant_id)
+        update_state(root, entrant_id, **changes)
+    if survived:
+        raise SystemExit(
+            "scorer topology survived manager recovery: "
+            + ", ".join(sorted(survived))
         )
 
 
@@ -11579,10 +14344,26 @@ def recover_dead_manager(root: Path) -> bool:
         identity is None or actual_identity == str(identity)
     ):
         return False
-    if actual_identity is None and not stop_recorded_group(
-        pid, manager.get("pgid"), identity
-    ):
+    if not stop_recorded_group(pid, manager.get("pgid"), identity):
         raise SystemExit("dead manager's process group survived recovery")
+    topology_failures = sweep_build_runtime_ownership_for_manager_recovery(root)
+    if topology_failures:
+        raise SystemExit(
+            "entrant build topology survived manager recovery: "
+            + "; ".join(topology_failures)
+        )
+    interrupted = normalize_interrupted_builds(
+        root,
+        load_json(campaign_file(root)),
+        transition_label="manager recovery",
+        normalized_field_prefix="manager_recovery",
+        preserve_authenticated_supervisors=True,
+    )
+    if interrupted:
+        raise SystemExit(
+            "interrupted build evidence refused manager recovery: "
+            + "; ".join(interrupted)
+        )
     recover_interrupted_scoring(root)
     recover_interrupted_publication(root)
     manager_state(
@@ -11631,6 +14412,9 @@ def manager_restart_mismatch(root: Path) -> str | None:
         outstanding, budget_error = current_full_episode_outstanding_reservations(
             root, campaign, row
         )
+        accounting_error = anchored_generation_two_entrant_accounting_failure(
+            root, campaign, row
+        )
         reasons = []
         if lifecycle.get("admitted"):
             reasons.append(f"{lifecycle['admitted']} provider request(s) admitted")
@@ -11642,6 +14426,8 @@ def manager_restart_mismatch(root: Path) -> str | None:
             )
         if budget_error:
             reasons.append(budget_error)
+        if accounting_error:
+            reasons.append(accounting_error)
         attempts = int(state.get("provider_episode_attempts", 0))
         if could_relaunch and attempts >= max_episodes:
             reasons.append("provider episode allowance is exhausted")
@@ -11652,17 +14438,444 @@ def manager_restart_mismatch(root: Path) -> str | None:
     return None
 
 
+def stop_owned_runtime_topology(
+    records: Iterable[tuple[Any, Any, Any]],
+) -> bool:
+    owned = list(records)
+    for pid, pgid, identity in owned:
+        if (
+            isinstance(identity, str)
+            and identity
+            and process_alive(pid, identity)
+        ):
+            stop_recorded_group(pid, pgid, identity)
+    for pid, pgid, identity in owned:
+        if process_alive(pid, identity):
+            return False
+        group = int(pgid or 0)
+        if group > 1 and process_group_members(group):
+            return False
+    return True
+
+
+def stop_build_runtime_topology(state: Mapping[str, Any]) -> bool:
+    inventory = refreshed_process_inventory(state.get("goose_process_inventory"))
+    return stop_owned_runtime_topology(
+        [
+            (
+                state.get("supervisor_pid"),
+                state.get("supervisor_pgid"),
+                state.get("supervisor_identity"),
+            ),
+            (
+                state.get("goose_pid"),
+                state.get("process_group"),
+                state.get("goose_identity"),
+            ),
+            *(
+                (record["pid"], record["pgid"], record["identity"])
+                for record in inventory
+            ),
+        ]
+    )
+
+
+BUILD_RUNTIME_OWNERSHIP_FIELDS = (
+    "supervisor_pid",
+    "supervisor_pgid",
+    "supervisor_identity",
+    "goose_pid",
+    "process_group",
+    "goose_identity",
+    "goose_process_inventory",
+)
+
+
+def build_runtime_ownership(state: Mapping[str, Any]) -> tuple[Any, ...]:
+    return tuple(state.get(field) for field in BUILD_RUNTIME_OWNERSHIP_FIELDS)
+
+
+def clear_build_runtime_ownership(root: Path, entrant_id: str) -> None:
+    update_state(
+        root,
+        entrant_id,
+        supervisor_pid=None,
+        supervisor_pgid=None,
+        supervisor_identity=None,
+        goose_pid=None,
+        process_group=None,
+        goose_identity=None,
+        goose_process_inventory=[],
+    )
+
+
+def authenticated_live_build_supervisor(state: Mapping[str, Any]) -> bool:
+    if state.get("status") not in {"WAITING_PROVIDER_LANE", "BUILD_RUNNING"}:
+        return False
+    pid = state.get("supervisor_pid")
+    pgid = state.get("supervisor_pgid")
+    identity = state.get("supervisor_identity")
+    if (
+        isinstance(pid, bool)
+        or not isinstance(pid, int)
+        or pid <= 1
+        or pgid != pid
+        or not isinstance(identity, str)
+        or not identity
+        or not process_alive(pid, identity)
+    ):
+        return False
+    current = current_process_inventory_tuple(pid)
+    if current is None or current[1] != pgid or current[2] != identity:
+        return False
+    return any(member_pid == pid for member_pid, _ in process_group_members(pgid))
+
+
+def sweep_build_runtime_ownership(
+    root: Path,
+    *,
+    transition: str,
+    preserve_authenticated_supervisors: bool = False,
+) -> list[str]:
+    checked_field = f"{transition}_topology_checked_at"
+    failure_text = f"owned provider process topology survived {transition} cleanup"
+    failures: list[str] = []
+    for initial in status_rows(root):
+        if (
+            preserve_authenticated_supervisors
+            and authenticated_live_build_supervisor(initial)
+        ):
+            update_state(
+                root,
+                str(initial["entrant"]),
+                **{
+                    checked_field: utc_now(),
+                    f"{transition}_supervisor_adopted_at": utc_now(),
+                },
+            )
+            continue
+        if not any(build_runtime_ownership(initial)):
+            continue
+        entrant_id = str(initial["entrant"])
+        stop_build_runtime_topology(initial)
+        current = read_state(root, entrant_id)
+        if build_runtime_ownership(current) != build_runtime_ownership(initial):
+            stop_build_runtime_topology(current)
+            current = read_state(root, entrant_id)
+        clean = stop_build_runtime_topology(current)
+        if not clean:
+            update_state(
+                root,
+                entrant_id,
+                status="INCOMPLETE",
+                failure=failure_text,
+                **{checked_field: utc_now()},
+            )
+            failures.append(f"{entrant_id}: {failure_text}")
+            continue
+        clear_build_runtime_ownership(root, entrant_id)
+        update_state(root, entrant_id, **{checked_field: utc_now()})
+    return failures
+
+
+def sweep_build_runtime_ownership_for_resume(root: Path) -> list[str]:
+    return sweep_build_runtime_ownership(root, transition="resume")
+
+
+def sweep_build_runtime_ownership_for_manager_recovery(root: Path) -> list[str]:
+    return sweep_build_runtime_ownership(
+        root,
+        transition="manager_recovery",
+        preserve_authenticated_supervisors=True,
+    )
+
+
+def normalize_interrupted_builds(
+    root: Path,
+    campaign: Mapping[str, Any],
+    *,
+    transition_label: str = "resume",
+    normalized_field_prefix: str = "resume",
+    preserve_authenticated_supervisors: bool = False,
+) -> list[str]:
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    max_episodes: int | None = None
+    refused: list[str] = []
+    for row in entrants(manifest):
+        entrant_id = str(row["id"])
+        state = read_state(root, entrant_id)
+        interrupted_status = str(state.get("status"))
+        if interrupted_status not in {"WAITING_PROVIDER_LANE", "BUILD_RUNNING"}:
+            continue
+        if (
+            preserve_authenticated_supervisors
+            and authenticated_live_build_supervisor(state)
+        ):
+            continue
+        if max_episodes is None:
+            max_episodes = int(
+                manifest["spend_policy"]["max_full_episodes_per_model"]
+            )
+
+        topology_clean = stop_build_runtime_topology(state)
+        state = read_state(root, entrant_id)
+        interrupted_status = str(state.get("status"))
+        if (
+            interrupted_status not in {"WAITING_PROVIDER_LANE", "BUILD_RUNNING"}
+            and topology_clean
+        ):
+            continue
+        lifecycle = lifecycle_summary(
+            Path(str(state.get("provider_lifecycle", ""))),
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        outstanding, budget_error = current_full_episode_outstanding_reservations(
+            root, campaign, row
+        )
+        accounting_error = anchored_generation_two_entrant_accounting_failure(
+            root, campaign, row
+        )
+        pre_admission_proven = interrupted_build_pre_admission_proven(
+            interrupted_status, lifecycle
+        )
+        safe_pre_admission = bool(
+            topology_clean
+            and not outstanding
+            and budget_error is None
+            and accounting_error is None
+            and pre_admission_proven
+        )
+        attempts = int(state.get("provider_episode_attempts", 0))
+        if safe_pre_admission and attempts < max_episodes:
+            update_state(
+                root,
+                entrant_id,
+                status="PLANNED",
+                failure=None,
+                admitted_requests=0,
+                provider_terminal_requests=int(lifecycle.get("terminal", 0)),
+                lifecycle_events=int(lifecycle.get("events", 0)),
+                lifecycle_transition_errors=lifecycle.get("transition_errors", []),
+                lifecycle_ambiguous_request_ids=lifecycle.get(
+                    "ambiguous_request_ids", []
+                ),
+                budget_outstanding_request_ids=[],
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+                goose_pid=None,
+                process_group=None,
+                goose_identity=None,
+                **{
+                    f"{normalized_field_prefix}_normalized_from": interrupted_status,
+                    f"{normalized_field_prefix}_normalized_at": utc_now(),
+                },
+            )
+            continue
+
+        reasons = [
+            f"{transition_label} reconstructed interrupted {interrupted_status}"
+        ]
+        if int(lifecycle.get("admitted", 0)):
+            reasons.append(
+                f"{int(lifecycle['admitted'])} provider request(s) were admitted"
+            )
+        lifecycle_problem = lifecycle_failure(lifecycle)
+        if lifecycle_problem:
+            reasons.append(f"lifecycle is ambiguous: {lifecycle_problem}")
+        if not pre_admission_proven:
+            reasons.append("pre-admission termination is not explicitly proven")
+        if outstanding:
+            reasons.append(
+                f"outstanding full-budget reserves: {', '.join(outstanding)}"
+            )
+        if budget_error:
+            reasons.append(budget_error)
+        if accounting_error:
+            reasons.append(accounting_error)
+        if not topology_clean:
+            reasons.append("owned provider process topology survived cleanup")
+        if safe_pre_admission and attempts >= max_episodes:
+            reasons.append("provider episode allowance is exhausted")
+        failure = "; ".join(reasons)
+        changes: Dict[str, Any] = {
+            "status": "INCOMPLETE",
+            "failure": failure,
+            f"{normalized_field_prefix}_normalized_from": interrupted_status,
+            f"{normalized_field_prefix}_normalized_at": utc_now(),
+            "admitted_requests": int(lifecycle.get("admitted", 0)),
+            "provider_terminal_requests": int(lifecycle.get("terminal", 0)),
+            "lifecycle_events": int(lifecycle.get("events", 0)),
+            "lifecycle_transition_errors": lifecycle.get("transition_errors", []),
+            "lifecycle_ambiguous_request_ids": lifecycle.get(
+                "ambiguous_request_ids", []
+            ),
+            "budget_outstanding_request_ids": outstanding,
+        }
+        if topology_clean:
+            changes.update(
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+                goose_pid=None,
+                process_group=None,
+                goose_identity=None,
+            )
+        update_state(root, entrant_id, **changes)
+        refused.append(f"{entrant_id}: {failure}")
+    return refused
+
+
 def resume_campaign(root: Path) -> int:
+    with exclusive_claim(
+        root / "locks/manager-launch.claim", blocking=True
+    ) as manager_launch_claimed:
+        if not manager_launch_claimed:
+            raise SystemExit("cannot claim cloud benchmark manager launch")
+        with exclusive_claim(
+            root / "locks/supersession.claim", blocking=True
+        ) as supersession_claimed:
+            if not supersession_claimed:
+                raise SystemExit("cannot claim cloud campaign supersession boundary")
+            with exclusive_claim(
+                root / "locks/monitor-launch.claim", blocking=True
+            ) as monitor_launch_claimed:
+                if not monitor_launch_claimed:
+                    raise SystemExit("cannot claim cloud benchmark monitor launch")
+                result = resume_campaign_with_runtime_claims(root)
+            if result != 0:
+                return result
+            result = monitor_start(root)
+            if result != 0:
+                return result
+            campaign = load_json(campaign_file(root))
+            monitor = wait_for_authenticated_monitor(root, campaign)
+            commit_smoke_monitor_handoff(root, campaign, monitor)
+            handoff_problem = smoke_monitor_handoff_failure(root)
+            if handoff_problem:
+                raise SystemExit(
+                    f"resume monitor handoff failed: {handoff_problem}"
+                )
+            return 0
+
+
+def quiesce_monitor_for_resume(root: Path) -> Dict[str, Any]:
+    for _ in range(2):
+        state = read_monitor_state(root)
+        launcher_clean = not (
+            state.get("launcher_pid") or state.get("launcher_pgid")
+        ) or stop_recorded_group(
+            state.get("launcher_pid"),
+            state.get("launcher_pgid"),
+            state.get("launcher_identity"),
+        )
+        monitor_clean = not (state.get("pid") or state.get("pgid")) or (
+            stop_recorded_group(
+                state.get("pid"), state.get("pgid"), state.get("identity")
+            )
+        )
+        if not launcher_clean or not monitor_clean:
+            raise SystemExit("attention monitor topology survived resume quiescence")
+    state = read_monitor_state(root)
+    if (
+        process_alive(state.get("launcher_pid"), state.get("launcher_identity"))
+        or process_group_members(int(state.get("launcher_pgid") or 0))
+        or process_alive(state.get("pid"), state.get("identity"))
+        or process_group_members(int(state.get("pgid") or 0))
+        or exclusive_claim_is_held(root / "locks/monitor-run.claim")
+    ):
+        raise SystemExit("attention monitor ownership could not be proven quiescent")
+    return monitor_state(
+        root,
+        status="QUIESCED",
+        pid=None,
+        pgid=None,
+        identity=None,
+        parent_pid=None,
+        session_id=None,
+        detached_session=None,
+        lease_id=None,
+        lease_owner_pid=None,
+        lease_owner_identity=None,
+        launcher_pid=None,
+        launcher_pgid=None,
+        launcher_identity=None,
+        launcher_committed_monitor_pid=None,
+        launcher_committed_at=None,
+        quiesced_at=utc_now(),
+    )
+
+
+def resume_campaign_with_runtime_claims(root: Path) -> int:
     with exclusive_claim(root / "locks/resume.claim", blocking=True) as claimed:
         if not claimed:
             raise SystemExit("cannot claim cloud campaign resume transition")
         require_lineage(root)
-        recover_dead_manager(root)
+        campaign = load_json(campaign_file(root))
+        if campaign.get("status") != "ATTENTION":
+            raise SystemExit(
+                "resume is permitted only for a campaign already in ATTENTION"
+            )
+        quiesced_monitor = quiesce_monitor_for_resume(root)
+        if not recover_dead_manager(root):
+            raise SystemExit("resume refused because the recorded manager is still alive")
         recover_interrupted_publication(root)
         campaign = load_json(campaign_file(root))
+        topology_failures = sweep_build_runtime_ownership_for_resume(root)
+        if topology_failures:
+            failure = "resume refused entrant runtime ownership: " + "; ".join(
+                topology_failures
+            )
+            manager_state(root, status="ATTENTION", failure=failure[:4000])
+            update_campaign(root, status="ATTENTION", failure=failure[:4000])
+            raise SystemExit(failure)
+        try:
+            anchor_budget_ledger(root, require_current=True)
+        except (SystemExit, BudgetReleasePending) as error:
+            failure = f"resume refused unanchored budget transition: {error}"
+            manager_state(root, status="ATTENTION", failure=failure[:4000])
+            update_campaign(root, status="ATTENTION", failure=failure[:4000])
+            raise SystemExit(failure) from None
+        interrupted = normalize_interrupted_builds(root, campaign)
+        if interrupted:
+            failure = "resume refused interrupted build evidence: " + "; ".join(
+                interrupted
+            )
+            manager_state(root, status="ATTENTION", failure=failure[:4000])
+            update_campaign(root, status="ATTENTION", failure=failure[:4000])
+            raise SystemExit(failure)
+        topology_failures = sweep_build_runtime_ownership_for_resume(root)
+        if topology_failures:
+            failure = "resume refused entrant runtime ownership: " + "; ".join(
+                topology_failures
+            )
+            manager_state(root, status="ATTENTION", failure=failure[:4000])
+            update_campaign(root, status="ATTENTION", failure=failure[:4000])
+            raise SystemExit(failure)
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
         for state in status_rows(root):
             if state["status"] == "PRE_ADMISSION_FAILURE":
                 row = manifest_row(root, str(state["entrant"]))
+                topology_clean = stop_build_runtime_topology(state)
+                state = read_state(root, str(state["entrant"]))
+                if state.get("status") != "PRE_ADMISSION_FAILURE":
+                    if topology_clean and state.get("status") in (
+                        {"BUILD_COMPLETE"} | POST_BUILD_STATES
+                    ):
+                        continue
+                    failure = (
+                        "resume denied because entrant state changed during runtime "
+                        f"cleanup: {state.get('status')}"
+                    )
+                    update_state(
+                        root,
+                        str(state["entrant"]),
+                        status="INCOMPLETE",
+                        failure=failure,
+                    )
+                    raise SystemExit(failure)
                 lifecycle = lifecycle_summary(
                     Path(str(state["provider_lifecycle"])),
                     expected_provider=str(row["provider"]),
@@ -11673,35 +14886,76 @@ def resume_campaign(root: Path) -> int:
                         root, campaign, row
                     )
                 )
-                pgid = int(state.get("supervisor_pgid") or 0)
-                members = process_group_members(pgid) if pgid else []
-                if (
-                    lifecycle["admitted"]
-                    or lifecycle_failure(lifecycle)
-                    or outstanding_ids
-                    or budget_error
-                    or members
-                ):
+                accounting_error = anchored_generation_two_entrant_accounting_failure(
+                    root, campaign, row
+                )
+                attempts = int(state.get("provider_episode_attempts", 0))
+                reasons = []
+                if lifecycle["admitted"]:
+                    reasons.append(
+                        f"{lifecycle['admitted']} provider request(s) admitted"
+                    )
+                lifecycle_problem = lifecycle_failure(lifecycle)
+                if lifecycle_problem:
+                    reasons.append(f"lifecycle is ambiguous: {lifecycle_problem}")
+                if outstanding_ids:
+                    reasons.append(
+                        "outstanding full-budget reserves: "
+                        + ", ".join(outstanding_ids)
+                    )
+                if budget_error:
+                    reasons.append(budget_error)
+                if accounting_error:
+                    reasons.append(accounting_error)
+                if not topology_clean:
+                    reasons.append("owned provider process topology survived cleanup")
+                if attempts >= max_episodes:
+                    reasons.append("provider episode allowance is exhausted")
+                if reasons:
+                    failure = (
+                        "resume denied: reconstructed pre-admission evidence is unsafe: "
+                        + "; ".join(reasons)
+                    )
+                    changes: Dict[str, Any] = {
+                        "status": "INCOMPLETE",
+                        "failure": failure,
+                        "admitted_requests": lifecycle["admitted"],
+                        "provider_terminal_requests": lifecycle["terminal"],
+                        "lifecycle_transition_errors": lifecycle[
+                            "transition_errors"
+                        ],
+                        "lifecycle_ambiguous_request_ids": lifecycle[
+                            "ambiguous_request_ids"
+                        ],
+                        "budget_outstanding_request_ids": outstanding_ids,
+                    }
+                    if topology_clean:
+                        changes.update(
+                            supervisor_pid=None,
+                            supervisor_pgid=None,
+                            supervisor_identity=None,
+                            goose_pid=None,
+                            process_group=None,
+                            goose_identity=None,
+                        )
                     update_state(
                         root,
                         state["entrant"],
-                        status="INCOMPLETE",
-                        failure=(
-                            "resume denied: reconstructed provider/process evidence "
-                            "is ambiguous"
-                        ),
-                        admitted_requests=lifecycle["admitted"],
-                        provider_terminal_requests=lifecycle["terminal"],
-                        lifecycle_transition_errors=lifecycle["transition_errors"],
-                        lifecycle_ambiguous_request_ids=lifecycle[
-                            "ambiguous_request_ids"
-                        ],
-                        budget_outstanding_request_ids=outstanding_ids,
+                        **changes,
                     )
-                    raise SystemExit(
-                        f"{state['entrant']} has ambiguous evidence and cannot be retried"
-                    )
-                update_state(root, state["entrant"], status="PLANNED", failure=None)
+                    raise SystemExit(failure)
+                update_state(
+                    root,
+                    state["entrant"],
+                    status="PLANNED",
+                    failure=None,
+                    supervisor_pid=None,
+                    supervisor_pgid=None,
+                    supervisor_identity=None,
+                    goose_pid=None,
+                    process_group=None,
+                    goose_identity=None,
+                )
             elif state["status"] in {"INCOMPLETE", "STOPPED"}:
                 raise SystemExit(
                     f"{state['entrant']} is {state['status']}; admitted or "
@@ -11715,18 +14969,29 @@ def resume_campaign(root: Path) -> int:
                     failure="scorer was interrupted; raw build remains sealed",
                 )
 
-        monitor = read_monitor_state(root)
+        current_campaign = load_json(campaign_file(root))
+        current_manager = load_json(root / "manager.json")
+        current_monitor = read_monitor_state(root)
         if (
-            monitor.get("pid")
-            and (
-                process_alive(monitor.get("pid"), monitor.get("identity"))
-                or process_group_members(int(monitor.get("pgid") or 0))
-            )
-            and not stop_recorded_group(
-                monitor.get("pid"), monitor.get("pgid"), monitor.get("identity")
-            )
+            current_campaign.get("campaign_id") != campaign.get("campaign_id")
+            or current_campaign.get("status") != "ATTENTION"
+            or (root / SUPERSESSION_RECEIPT).exists()
+            or (root / QUALIFICATION_RESTART_RECEIPT).exists()
+            or (root / ORCHESTRATOR_RECOVERY_RECEIPT).exists()
+            or current_monitor != quiesced_monitor
+            or exclusive_claim_is_held(root / "locks/monitor-run.claim")
         ):
-            raise SystemExit("attention monitor process group survived resume")
+            raise SystemExit("resume boundary changed before restart commit")
+        if process_alive(
+            current_manager.get("pid"), current_manager.get("identity")
+        ) or process_group_members(int(current_manager.get("pgid") or 0)):
+            raise SystemExit("manager ownership reappeared before restart commit")
+        topology_failures = sweep_build_runtime_ownership_for_resume(root)
+        if topology_failures:
+            raise SystemExit(
+                "entrant runtime ownership reappeared before restart commit: "
+                + "; ".join(topology_failures)
+            )
         update_campaign(root, status="INITIALIZED", failure=None)
         manager_state(
             root,
@@ -11743,43 +15008,224 @@ def resume_campaign(root: Path) -> int:
             pid=None,
             pgid=None,
             identity=None,
+            launcher_pid=None,
+            launcher_pgid=None,
+            launcher_identity=None,
+            launcher_committed_monitor_pid=None,
+            launcher_committed_at=None,
             lease_id=None,
             failure=None,
         )
         require_smoke_proofs(root)
-        return monitor_start(root)
+        return 0
 
 
 def recover_interrupted_publication(root: Path) -> None:
+    survived: list[str] = []
     for state in status_rows(root):
-        if state["status"] not in INTERRUPTED_PUBLICATION_STATES:
-            continue
-        clean = stop_recorded_group(
-            state.get("publisher_pid"),
-            state.get("publisher_pgid"),
-            state.get("publisher_identity"),
+        publisher_owned = bool(
+            state.get("publisher_pid")
+            or state.get("publisher_pgid")
+            or state.get("publisher_ownership_marker")
         )
+        if state["status"] not in INTERRUPTED_PUBLICATION_STATES and not publisher_owned:
+            continue
+        entrant_id = str(state["entrant"])
+        clean, _ = stop_publisher_runtime(root, entrant_id)
         if not clean:
-            raise SystemExit(
-                f"{state['entrant']} publisher process group survived recovery"
+            update_state(
+                root,
+                entrant_id,
+                status="INCOMPLETE",
+                failure="publisher process topology survived recovery",
             )
+            survived.append(entrant_id)
+            continue
+        changes = cleared_publisher_ownership_changes()
+        if state["status"] not in INTERRUPTED_PUBLICATION_STATES:
+            update_state(root, entrant_id, **changes)
+            continue
         update_state(
             root,
-            str(state["entrant"]),
+            entrant_id,
             status="PUBLISH_FAILED",
-            publisher_pid=None,
-            publisher_pgid=None,
-            publisher_identity=None,
             publisher_recovered_at=utc_now(),
             failure=(
                 "publication was interrupted; deterministic remote receipt must be "
                 "checked before any retry"
             ),
+            **changes,
         )
+    if survived:
+        raise SystemExit(
+            "publisher topology survived manager recovery: "
+            + ", ".join(sorted(survived))
+        )
+
+
+def reconcile_interrupted_publication_for_stop(
+    root: Path, entrant_id: str
+) -> str | None:
+    state = read_state(root, entrant_id)
+    publisher_owned = bool(
+        state.get("publisher_pid")
+        or state.get("publisher_pgid")
+        or state.get("publisher_ownership_marker")
+    )
+    clean = True
+    if publisher_owned:
+        clean, _ = stop_publisher_runtime(root, entrant_id)
+    if not clean:
+        failure = "publisher process topology survived operator stop"
+        update_state(root, entrant_id, status="INCOMPLETE", failure=failure)
+        return failure
+
+    ownership_changes = cleared_publisher_ownership_changes()
+    state = read_state(root, entrant_id)
+    status = str(state.get("status"))
+    failure_stage = str(state.get("publication_failure_stage") or "")
+    interrupted = status in INTERRUPTED_PUBLICATION_STATES
+    remote_write_possible = bool(
+        status in REMOTE_WRITE_POSSIBLE_PUBLICATION_STATES
+        or state.get("publisher_live_succeeded_at")
+        or failure_stage
+        in {
+            "live-write",
+            "post-write-receipt",
+            "revalidation",
+            "rendered-verification",
+        }
+    )
+    if not interrupted and not remote_write_possible:
+        if publisher_owned:
+            update_state(root, entrant_id, **ownership_changes)
+        return None
+    if not remote_write_possible:
+        update_state(
+            root,
+            entrant_id,
+            status="PUBLISH_FAILED",
+            failure=(
+                "operator stop interrupted publication before the live-write boundary"
+            ),
+            publisher_stop_reconciled_at=utc_now(),
+            publisher_write_adopted=False,
+            **ownership_changes,
+        )
+        return None
+
+    campaign = load_json(campaign_file(root))
+    try:
+        runs = publication_stage(root, entrant_id)
+        current = read_state(root, entrant_id)
+        screenshot_plan = current.get("publisher_plan")
+        if not isinstance(screenshot_plan, list) or not screenshot_plan:
+            raise PublicationError(
+                "interrupted live publication has no frozen screenshot plan"
+            )
+        receipt = converged_remote_publication_receipt(
+            campaign,
+            publish_entry(campaign, entrant_id),
+            load_json(runs / f"{entrant_id}.json"),
+            screenshot_plan,
+        )
+    except (Exception, SystemExit) as error:
+        redactions: list[str] = []
+        with contextlib.suppress(OSError, SystemExit, PublicationError):
+            _, redactions = publisher_environment(campaign)
+        safe = redact_text(str(error), redactions)[:1000]
+        failure = (
+            "operator stop could not reconcile the possibly committed remote "
+            f"publication: {type(error).__name__}: {safe}"
+        )
+        update_state(
+            root,
+            entrant_id,
+            status="PUBLISH_FAILED",
+            failure=failure,
+            publisher_stop_reconciliation_failure=failure,
+            **ownership_changes,
+        )
+        return failure
+
+    matched = receipt.get("matched") is True
+    update_state(
+        root,
+        entrant_id,
+        status="PUBLISH_FAILED",
+        failure=(
+            "operator stop adopted the exact remotely committed publication; "
+            "revalidation and rendered verification remain required"
+            if matched
+            else "operator stop proved the stable document does not match the "
+            "interrupted publication"
+        ),
+        publisher_remote_receipt=receipt,
+        publisher_stop_reconciliation_receipt=receipt,
+        publisher_stop_reconciled_at=utc_now(),
+        publisher_write_adopted=matched,
+        **(
+            {"publisher_live_succeeded_at": state.get("publisher_live_succeeded_at") or utc_now()}
+            if matched
+            else {}
+        ),
+        **ownership_changes,
+    )
+    return None
 
 
 class PublicationError(RuntimeError):
     pass
+
+
+class MonitorLeaseError(PublicationError):
+    pass
+
+
+def publication_lease_checkpoint(lease_probe: Any, stage: str) -> None:
+    if lease_probe is None:
+        return
+    failure = lease_probe()
+    if failure:
+        raise MonitorLeaseError(f"monitor lease failed during {stage}: {failure}")
+
+
+def publication_lease_wait(
+    seconds: float, *, lease_probe: Any, stage: str
+) -> None:
+    deadline = time.monotonic() + max(0.0, seconds)
+    while True:
+        publication_lease_checkpoint(lease_probe, stage)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(1.0, remaining))
+        publication_lease_checkpoint(lease_probe, stage)
+
+
+def read_response_with_lease(
+    response: Any,
+    byte_limit: int,
+    *,
+    lease_probe: Any,
+    stage: str,
+) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    reader = getattr(response, "read1", None) or response.read
+    while True:
+        publication_lease_checkpoint(lease_probe, f"{stage} read")
+        chunk = reader(min(65536, byte_limit + 1 - total))
+        publication_lease_checkpoint(lease_probe, f"{stage} read")
+        if not chunk:
+            break
+        if not isinstance(chunk, bytes):
+            raise PublicationError(f"{stage} returned non-byte response data")
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > byte_limit:
+            break
+    return b"".join(chunks)
 
 
 def redact_text(value: str, redactions: Iterable[str]) -> str:
@@ -11915,8 +15361,6 @@ def gated_exec(gate_path: Path, token: str, command: list[str]) -> int:
     deadline = time.monotonic() + GATED_EXEC_RECEIPT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         parent_pid = os.getppid()
-        if parent_pid == 1:
-            return 125
         if gate_path.is_file() and not gate_path.is_symlink():
             try:
                 receipt = load_json(gate_path)
@@ -11936,7 +15380,13 @@ def gated_exec(gate_path: Path, token: str, command: list[str]) -> int:
                 receipt.get("schema_version") != 1
                 or receipt.get("token") != token
                 or receipt.get("pid") != os.getpid()
-                or receipt.get("parent_pid") != parent_pid
+                or isinstance(receipt.get("parent_pid"), bool)
+                or not isinstance(receipt.get("parent_pid"), int)
+                or int(receipt["parent_pid"]) <= 1
+                or (
+                    parent_pid != receipt.get("parent_pid")
+                    and parent_pid != 1
+                )
                 or receipt.get("identity") != process_identity(os.getpid())
             ):
                 return 126
@@ -11954,6 +15404,8 @@ def gated_exec(gate_path: Path, token: str, command: list[str]) -> int:
                 os.environ[CHILD_GATE_TOKEN_ENV] = token
                 os.environ[CHILD_GATE_ROLE_ENV] = child_role
             os.execvpe(command[0], command, os.environ)
+        if parent_pid == 1:
+            return 125
         time.sleep(0.01)
     return 124
 
@@ -11969,6 +15421,7 @@ def launch_after_receipt(
     gate_dir: Path,
     on_started: Any,
     child_role: str | None = None,
+    pass_fds: tuple[int, ...] = (),
 ) -> subprocess.Popen[Any]:
     if child_role is not None and not re.fullmatch(r"[a-z0-9][a-z0-9:-]*", child_role):
         raise ValueError(f"invalid child launch role: {child_role}")
@@ -11995,6 +15448,7 @@ def launch_after_receipt(
         stderr=stderr,
         start_new_session=True,
         close_fds=True,
+        pass_fds=pass_fds,
     )
     try:
         identity = process_identity(proc.pid)
@@ -12014,7 +15468,17 @@ def launch_after_receipt(
             },
         )
     except BaseException:
-        stop_recorded_group(proc.pid, proc.pid, process_identity(proc.pid))
+        with contextlib.suppress(Exception, SystemExit):
+            stop_recorded_group(proc.pid, proc.pid, process_identity(proc.pid))
+        if proc.poll() is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=5)
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                with contextlib.suppress(Exception):
+                    stream.close()
         raise
     return proc
 
@@ -12027,6 +15491,7 @@ def run_logged_process(
     timeout_seconds: float,
     redactions: Iterable[str],
     on_started: Any = None,
+    lease_probe: Any = None,
 ) -> Dict[str, Any]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     proc = launch_after_receipt(
@@ -12059,13 +15524,22 @@ def run_logged_process(
 
         with log_path.open("w", buffering=1) as log:
             while selector.get_map() or proc.poll() is None:
-                if (
-                    not timed_out
-                    and proc.poll() is None
-                    and time.monotonic() >= deadline
-                ):
+                if lease_probe is not None:
+                    lease_problem = lease_probe()
+                    if lease_problem:
+                        stop_group(proc.pid, grace_seconds=5.0)
+                        raise RuntimeError(
+                            f"monitor lease failed during child process: {lease_problem}"
+                        )
+                if not timed_out and time.monotonic() >= deadline:
                     timed_out = True
-                    stop_group(proc.pid, grace_seconds=5.0)
+                    stop_group(proc.pid, grace_seconds=1.0)
+                    if proc.poll() is None:
+                        with contextlib.suppress(ProcessLookupError):
+                            proc.kill()
+                    for key in list(selector.get_map().values()):
+                        with contextlib.suppress(Exception):
+                            selector.unregister(key.fileobj)
                 for key, _ in selector.select(timeout=0.25):
                     try:
                         chunk = os.read(key.fd, 65536)
@@ -12079,11 +15553,17 @@ def run_logged_process(
                     while "\n" in pending:
                         line, pending = pending.split("\n", 1)
                         persist(f"{line}\n", log)
-                if timed_out and proc.poll() is not None and not selector.get_map():
+                if timed_out and proc.poll() is not None:
                     break
             if pending:
                 persist(pending, log)
         exit_code = proc.wait()
+        if lease_probe is not None:
+            lease_problem = lease_probe()
+            if lease_problem:
+                raise RuntimeError(
+                    f"monitor lease failed as child process exited: {lease_problem}"
+                )
         return {
             "exit_code": exit_code,
             "timed_out": timed_out,
@@ -12116,6 +15596,11 @@ def publish_entry(campaign: Mapping[str, Any], entrant_id: str) -> Dict[str, str
 def publication_stage(root: Path, entrant_id: str) -> Path:
     campaign = load_json(campaign_file(root))
     state = read_state(root, entrant_id)
+    seal_problem = score_evidence_seal_failure(
+        root, entrant_id, campaign, state
+    )
+    if seal_problem:
+        raise PublicationError(f"sealed score evidence changed: {seal_problem}")
     attempt = int(state.get("score_attempts", 0))
     if attempt <= 0:
         raise PublicationError(f"{entrant_id} has no successful score attempt to stage")
@@ -12125,7 +15610,26 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
     source_verdict = Path(str(state.get("verdict", "")))
     if not source_verdict.is_file():
         raise PublicationError(f"scored verdict is missing: {source_verdict}")
+    expected_verdict_sha256 = state.get("verdict_sha256")
+    sealed = state.get("score_evidence_seal")
+    if (
+        not isinstance(expected_verdict_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected_verdict_sha256) is None
+        or not isinstance(sealed, dict)
+        or sealed.get("verdict_sha256") != expected_verdict_sha256
+        or sha256_file(source_verdict) != expected_verdict_sha256
+    ):
+        raise PublicationError("scored verdict differs from its parent-captured seal")
     verdict = load_json(source_verdict)
+    if sha256_file(source_verdict) != expected_verdict_sha256:
+        raise PublicationError("scored verdict changed while it was read for publication")
+    invalid_verdict = verdict_failure(
+        verdict,
+        campaign,
+        expected_fixture_seed=state.get("fixture_seed"),
+    )
+    if invalid_verdict:
+        raise PublicationError(f"scored verdict is invalid: {invalid_verdict}")
     rep = verdict.get("rep", 0)
     if not isinstance(rep, int) or rep < 0:
         raise PublicationError("scored verdict has an invalid repetition index")
@@ -12135,21 +15639,56 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
     linked = [path for path in source_shots.rglob("*") if path.is_symlink()]
     if linked:
         raise PublicationError("scorer screenshot evidence contains a symbolic link")
+    try:
+        source_shots_sha256 = artifact_tree_sha256(source_shots)
+    except SystemExit as error:
+        raise PublicationError(str(error)) from None
 
     if target.exists():
         if not runs.is_dir() or not artifact_manifest.is_file():
             raise PublicationError(f"partial publication stage is present: {target}")
         artifact = load_json(artifact_manifest)
         actual_hash = hash_tree(runs)
+        staged_verdict = runs / f"{entrant_id}.json"
+        staged_shots = runs / f"{entrant_id}-r{rep}" / "sb7-shots"
+        try:
+            staged_shots_sha256 = artifact_tree_sha256(staged_shots)
+            current_source_shots_sha256 = artifact_tree_sha256(source_shots)
+        except SystemExit as error:
+            raise PublicationError(str(error)) from None
+        actual_files = {
+            str(path.relative_to(runs)): sha256_file(path)
+            for path in sorted(runs.rglob("*"))
+            if path.is_file() and not path.is_symlink()
+        }
+        current_state = read_state(root, entrant_id)
         if (
             artifact.get("entrant") != entrant_id
             or artifact.get("score_attempt") != attempt
-            or artifact.get("source_verdict_sha256") != sha256_file(source_verdict)
+            or artifact.get("source_verdict_sha256") != expected_verdict_sha256
+            or sha256_file(source_verdict) != expected_verdict_sha256
+            or staged_verdict.is_symlink()
+            or not staged_verdict.is_file()
+            or sha256_file(staged_verdict) != expected_verdict_sha256
+            or artifact.get("source_shots_sha256") != source_shots_sha256
+            or current_source_shots_sha256 != source_shots_sha256
+            or staged_shots_sha256 != source_shots_sha256
+            or artifact.get("score_evidence_seal_sha256")
+            != state.get("score_evidence_seal_sha256")
             or artifact.get("runs_sha256") != actual_hash
+            or artifact.get("files") != actual_files
             or artifact.get("instrument_set_sha256")
             != campaign.get("instrument_set_sha256")
             or artifact.get("publisher_instrument_set_sha256")
             != campaign.get("publisher", {}).get("instrument_set_sha256")
+            or current_state.get("score_attempts") != attempt
+            or current_state.get("verdict_sha256") != expected_verdict_sha256
+            or current_state.get("score_evidence_seal_sha256")
+            != state.get("score_evidence_seal_sha256")
+            or score_evidence_seal_failure(
+                root, entrant_id, campaign, current_state
+            )
+            is not None
         ):
             raise PublicationError(f"publication stage changed after sealing: {target}")
         update_state(
@@ -12167,12 +15706,44 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
     try:
         temporary_runs = temporary / "runs"
         temporary_runs.mkdir()
-        shutil.copy2(source_verdict, temporary_runs / f"{entrant_id}.json")
+        staged_verdict = temporary_runs / f"{entrant_id}.json"
+        staged_shots = temporary_runs / f"{entrant_id}-r{rep}" / "sb7-shots"
+        shutil.copy2(source_verdict, staged_verdict)
+        if sha256_file(staged_verdict) != expected_verdict_sha256:
+            raise PublicationError("copied verdict differs from its parent-captured seal")
         shutil.copytree(
             source_shots,
-            temporary_runs / f"{entrant_id}-r{rep}" / "sb7-shots",
+            staged_shots,
         )
+        try:
+            copied_shots_sha256 = artifact_tree_sha256(staged_shots)
+            source_shots_after_copy = artifact_tree_sha256(source_shots)
+        except SystemExit as error:
+            raise PublicationError(str(error)) from None
+        current_state = read_state(root, entrant_id)
+        post_copy_seal_problem = score_evidence_seal_failure(
+            root, entrant_id, campaign, current_state
+        )
+        if (
+            copied_shots_sha256 != source_shots_sha256
+            or source_shots_after_copy != source_shots_sha256
+            or sha256_file(source_verdict) != expected_verdict_sha256
+            or sha256_file(staged_verdict) != expected_verdict_sha256
+            or current_state.get("score_attempts") != attempt
+            or current_state.get("verdict_sha256") != expected_verdict_sha256
+            or current_state.get("score_evidence_seal_sha256")
+            != state.get("score_evidence_seal_sha256")
+            or post_copy_seal_problem is not None
+        ):
+            raise PublicationError(
+                "sealed score evidence changed while publication was staged"
+            )
         runs_hash = hash_tree(temporary_runs)
+        files = {
+            str(path.relative_to(temporary_runs)): sha256_file(path)
+            for path in sorted(temporary_runs.rglob("*"))
+            if path.is_file() and not path.is_symlink()
+        }
         artifact = {
             "schema_version": 1,
             "entrant": entrant_id,
@@ -12180,7 +15751,11 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
             "rep": rep,
             "created_at": utc_now(),
             "source_verdict": str(source_verdict),
-            "source_verdict_sha256": sha256_file(source_verdict),
+            "source_verdict_sha256": expected_verdict_sha256,
+            "source_shots_sha256": source_shots_sha256,
+            "score_evidence_seal_sha256": state.get(
+                "score_evidence_seal_sha256"
+            ),
             "runs_sha256": runs_hash,
             "instrument_set_sha256": campaign.get("instrument_set_sha256"),
             "binary_sha256": campaign.get("binary_sha256"),
@@ -12188,13 +15763,11 @@ def publication_stage(root: Path, entrant_id: str) -> Path:
             "publisher_instrument_set_sha256": campaign.get("publisher", {}).get(
                 "instrument_set_sha256"
             ),
-            "files": {
-                str(path.relative_to(temporary_runs)): sha256_file(path)
-                for path in sorted(temporary_runs.rglob("*"))
-                if path.is_file()
-            },
+            "files": files,
         }
         atomic_json(temporary / "artifact-manifest.json", artifact)
+        if active_manager_monitor_lease_failure(root, campaign):
+            raise PublicationError("monitor lease expired while publication was staged")
         os.replace(temporary, target)
     finally:
         if temporary.exists():
@@ -12252,22 +15825,41 @@ def run_publisher(
     if live:
         cmd.append("--live")
     env, redactions = publisher_environment(campaign, include_credentials=live)
+    publisher_ownership_marker = secrets.token_hex(32)
+    env[PUBLISHER_OWNERSHIP_ENV] = publisher_ownership_marker
     attempt = int(state["score_attempts"])
     log_path = (
         root / "publish" / entrant_id / f"attempt-{attempt}" / f"publisher-{phase}.log"
     )
 
     def started(proc: subprocess.Popen[Any]) -> None:
+        identity = process_identity(proc.pid)
+        if identity is None:
+            raise RuntimeError("publisher has no process identity")
         update_state(
             root,
             entrant_id,
             publisher_pid=proc.pid,
             publisher_pgid=proc.pid,
-            publisher_identity=process_identity(proc.pid),
+            publisher_identity=identity,
             publisher_phase=phase,
             publisher_started_at=utc_now(),
         )
+        validated_runs = publication_stage(root, entrant_id)
+        if validated_runs.resolve() != runs.resolve():
+            raise PublicationError(
+                "publisher gated launch names a different sealed publication stage"
+            )
+        publication_lease_checkpoint(
+            lambda: active_manager_monitor_lease_failure(root, campaign),
+            f"publisher {phase} gated launch",
+        )
 
+    update_state(
+        root,
+        entrant_id,
+        publisher_ownership_marker=publisher_ownership_marker,
+    )
     result = run_logged_process(
         cmd,
         cwd=repo,
@@ -12276,15 +15868,21 @@ def run_publisher(
         timeout_seconds=float(publisher["process_timeout_seconds"]),
         redactions=redactions,
         on_started=started,
+        lease_probe=lambda: active_manager_monitor_lease_failure(root, campaign),
     )
+    cleanup_proven, had_survivors = stop_publisher_runtime(root, entrant_id)
+    if not cleanup_proven:
+        raise PublicationError(
+            "publisher process topology could not be proven clean"
+        )
     update_state(
         root,
         entrant_id,
-        publisher_pid=None,
-        publisher_pgid=None,
-        publisher_identity=None,
         publisher_finished_at=utc_now(),
+        **cleared_publisher_ownership_changes(),
     )
+    if had_survivors:
+        raise PublicationError("publisher left descendant processes after exit")
     return result
 
 
@@ -12327,8 +15925,12 @@ def publisher_plan_from_log(log_path: Path, runs: Path) -> list[Dict[str, Any]]:
 
 
 def sanity_document(
-    campaign: Mapping[str, Any], document_id: str
+    campaign: Mapping[str, Any],
+    document_id: str,
+    *,
+    lease_probe: Any = None,
 ) -> Dict[str, Any] | None:
+    publication_lease_checkpoint(lease_probe, "Sanity receipt preflight")
     publisher = campaign["publisher"]
     values = pinned_publisher_env_values(campaign)
     token = values.get("SANITY_WRITE_TOKEN", "")
@@ -12352,17 +15954,27 @@ def sanity_document(
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(
+            request, timeout=MONITOR_NETWORK_TIMEOUT_SECONDS
+        ) as response:
             status = int(getattr(response, "status", response.getcode()))
-            raw = response.read(10 * 1024 * 1024 + 1)
+            raw = read_response_with_lease(
+                response,
+                10 * 1024 * 1024,
+                lease_probe=lease_probe,
+                stage="Sanity receipt response",
+            )
     except urllib.error.HTTPError as error:
         raise PublicationError(
             f"Sanity receipt read returned HTTP {error.code}"
         ) from None
+    except MonitorLeaseError:
+        raise
     except Exception as error:
         raise PublicationError(
             f"Sanity receipt read failed: {type(error).__name__}"
         ) from None
+    publication_lease_checkpoint(lease_probe, "Sanity receipt response")
     if status != 200 or len(raw) > 10 * 1024 * 1024:
         raise PublicationError(f"Sanity receipt read returned invalid HTTP {status}")
     try:
@@ -12560,16 +16172,28 @@ def remote_publication_receipt(
     entry: Mapping[str, str],
     verdict: Mapping[str, Any],
     screenshot_plan: list[Mapping[str, Any]],
+    *,
+    lease_probe: Any = None,
 ) -> Dict[str, Any]:
+    publication_lease_checkpoint(lease_probe, "remote publication receipt preflight")
     public = public_publication_identity(campaign, verdict)
     raw_identity_sha256 = raw_publication_identity_sha256(verdict)
-    document = sanity_document(campaign, entry["doc_id"])
+    document = (
+        sanity_document(campaign, entry["doc_id"])
+        if lease_probe is None
+        else sanity_document(
+            campaign, entry["doc_id"], lease_probe=lease_probe
+        )
+    )
     if document is None:
         return {
             "checked_at": utc_now(),
             "doc_id": entry["doc_id"],
             "matched": False,
             "reasons": ["stable document does not exist"],
+            "document_sha256": None,
+            "revision": None,
+            "updated_at": None,
             "expected_public_identity": public,
             "raw_verdict_identity_sha256": raw_identity_sha256,
         }
@@ -12722,7 +16346,11 @@ def remote_publication_receipt(
             if not isinstance(asset_ref, str):
                 reasons.append(f"document screenshot {index} has no asset reference")
                 continue
-            asset_doc = sanity_document(campaign, asset_ref)
+            asset_doc = (
+                sanity_document(campaign, asset_ref)
+                if lease_probe is None
+                else sanity_document(campaign, asset_ref, lease_probe=lease_probe)
+            )
             asset_sha1 = str((asset_doc or {}).get("sha1hash", "")).lower()
             expected_sha1 = str(planned["sha1"]).lower()
             asset_id_matches = asset_ref.startswith(f"image-{expected_sha1}-")
@@ -12732,6 +16360,7 @@ def remote_publication_receipt(
                 reasons.append(f"document screenshot {index} caption differs")
 
     canonical = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+    publication_lease_checkpoint(lease_probe, "remote publication receipt completion")
     return {
         "checked_at": utc_now(),
         "doc_id": entry["doc_id"],
@@ -12747,9 +16376,83 @@ def remote_publication_receipt(
     }
 
 
-def revalidate_publication(
-    campaign: Mapping[str, Any], entry: Mapping[str, str]
+def converged_remote_publication_receipt(
+    campaign: Mapping[str, Any],
+    entry: Mapping[str, str],
+    verdict: Mapping[str, Any],
+    screenshot_plan: list[Mapping[str, Any]],
 ) -> Dict[str, Any]:
+    publisher = campaign.get("publisher")
+    if not isinstance(publisher, dict):
+        raise PublicationError("campaign has no pinned publisher")
+    timeout_seconds = float(publisher["verify_timeout_seconds"])
+    interval_seconds = float(publisher["verify_interval_seconds"])
+    if timeout_seconds <= 0 or interval_seconds <= 0:
+        raise PublicationError("remote convergence window is malformed")
+    started = time.monotonic()
+    deadline = started + timeout_seconds
+    stable_key: str | None = None
+    stable_since = started
+    observations: list[Dict[str, Any]] = []
+    while True:
+        receipt = remote_publication_receipt(
+            campaign, entry, verdict, screenshot_plan
+        )
+        observed_at = time.monotonic()
+        key = json.dumps(
+            {
+                "matched": receipt.get("matched"),
+                "reasons": receipt.get("reasons"),
+                "revision": receipt.get("revision"),
+                "document_sha256": receipt.get("document_sha256"),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if key != stable_key:
+            stable_key = key
+            stable_since = observed_at
+        observations.append(
+            {
+                "observed_monotonic_offset": round(observed_at - started, 6),
+                "matched": receipt.get("matched") is True,
+                "revision": receipt.get("revision"),
+                "document_sha256": receipt.get("document_sha256"),
+                "identity_sha256": sha256_bytes(key.encode()),
+            }
+        )
+        if receipt.get("matched") is True:
+            return {
+                **receipt,
+                "converged": True,
+                "convergence_observations": observations,
+                "convergence_window_seconds": round(observed_at - started, 6),
+            }
+        if observed_at >= deadline:
+            stable_for = observed_at - stable_since
+            if len(observations) >= 2 and stable_for >= interval_seconds:
+                return {
+                    **receipt,
+                    "converged": True,
+                    "convergence_observations": observations,
+                    "convergence_window_seconds": round(
+                        observed_at - started, 6
+                    ),
+                }
+            raise PublicationError(
+                "remote publication identity did not stabilize before the "
+                "bounded convergence deadline"
+            )
+        time.sleep(min(interval_seconds, max(0.0, deadline - observed_at)))
+
+
+def revalidate_publication(
+    campaign: Mapping[str, Any],
+    entry: Mapping[str, str],
+    *,
+    lease_probe: Any = None,
+) -> Dict[str, Any]:
+    publication_lease_checkpoint(lease_probe, "revalidation preflight")
     publisher = campaign["publisher"]
     values = pinned_publisher_env_values(campaign)
     token = values.get("SANITY_WRITE_TOKEN", "")
@@ -12768,17 +16471,27 @@ def revalidate_publication(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(
+            request, timeout=MONITOR_NETWORK_TIMEOUT_SECONDS
+        ) as response:
             status = int(getattr(response, "status", response.getcode()))
-            raw = response.read(1024 * 1024 + 1)
+            raw = read_response_with_lease(
+                response,
+                1024 * 1024,
+                lease_probe=lease_probe,
+                stage="revalidation response",
+            )
     except urllib.error.HTTPError as error:
         raise PublicationError(
             f"benchmark revalidation returned HTTP {error.code}"
         ) from None
+    except MonitorLeaseError:
+        raise
     except Exception as error:
         raise PublicationError(
             f"benchmark revalidation failed: {type(error).__name__}"
         ) from None
+    publication_lease_checkpoint(lease_probe, "revalidation response")
     if status != 200 or len(raw) > 1024 * 1024:
         raise PublicationError(f"benchmark revalidation returned invalid HTTP {status}")
     try:
@@ -12933,7 +16646,10 @@ def rendered_publication_matches(
     }
 
 
-def fetch_rendered_page(url: str) -> tuple[int, str, Dict[str, str]]:
+def fetch_rendered_page(
+    url: str, *, lease_probe: Any = None
+) -> tuple[int, str, Dict[str, str]]:
+    publication_lease_checkpoint(lease_probe, "rendered-page request preflight")
     request = urllib.request.Request(
         url,
         headers={
@@ -12941,9 +16657,16 @@ def fetch_rendered_page(url: str) -> tuple[int, str, Dict[str, str]]:
             "User-Agent": "goose-sb7-cloud-publisher/1",
         },
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(
+        request, timeout=MONITOR_NETWORK_TIMEOUT_SECONDS
+    ) as response:
         status = int(getattr(response, "status", response.getcode()))
-        raw = response.read(10 * 1024 * 1024 + 1)
+        raw = read_response_with_lease(
+            response,
+            10 * 1024 * 1024,
+            lease_probe=lease_probe,
+            stage="rendered-page response",
+        )
         if len(raw) > 10 * 1024 * 1024:
             raise PublicationError(f"rendered page is unexpectedly large: {url}")
         content_type = response.headers.get_content_charset() or "utf-8"
@@ -12952,6 +16675,7 @@ def fetch_rendered_page(url: str) -> tuple[int, str, Dict[str, str]]:
             for key in ("x-cache", "x-nextjs-cache", "age")
             if response.headers.get(key)
         }
+    publication_lease_checkpoint(lease_probe, "rendered-page response")
     return status, raw.decode(content_type, errors="replace"), headers
 
 
@@ -12959,6 +16683,8 @@ def verify_rendered_publication(
     campaign: Mapping[str, Any],
     entry: Mapping[str, str],
     verdict: Mapping[str, Any],
+    *,
+    lease_probe: Any = None,
 ) -> Dict[str, Any]:
     publisher = campaign["publisher"]
     base_url = str(publisher["website_base_url"]).rstrip("/")
@@ -12972,8 +16698,21 @@ def verify_rendered_publication(
     while True:
         attempts += 1
         try:
-            board_status, board_html, board_headers = fetch_rendered_page(board_url)
-            run_status, run_html, run_headers = fetch_rendered_page(run_url)
+            publication_lease_checkpoint(
+                lease_probe, "rendered verification attempt preflight"
+            )
+            if lease_probe is None:
+                board_status, board_html, board_headers = fetch_rendered_page(
+                    board_url
+                )
+                run_status, run_html, run_headers = fetch_rendered_page(run_url)
+            else:
+                board_status, board_html, board_headers = fetch_rendered_page(
+                    board_url, lease_probe=lease_probe
+                )
+                run_status, run_html, run_headers = fetch_rendered_page(
+                    run_url, lease_probe=lease_probe
+                )
             matched, checks = rendered_publication_matches(
                 campaign, board_html, run_html, base_url, entry, verdict
             )
@@ -12988,6 +16727,9 @@ def verify_rendered_publication(
                 **checks,
             }
             if board_status == 200 and run_status == 200 and matched:
+                publication_lease_checkpoint(
+                    lease_probe, "rendered verification match"
+                )
                 return {
                     **last,
                     "verified_at": utc_now(),
@@ -13000,6 +16742,8 @@ def verify_rendered_publication(
                         raw_publication_identity_sha256(verdict)
                     ),
                 }
+        except MonitorLeaseError:
+            raise
         except Exception as error:
             last = {
                 "attempt": attempts,
@@ -13011,29 +16755,42 @@ def verify_rendered_publication(
                 f"rendered verification timed out after {attempts} attempt(s): "
                 f"{json.dumps(last, sort_keys=True)}"
             )
-        time.sleep(min(interval_seconds, max(0.0, deadline - now)))
+        publication_lease_wait(
+            min(interval_seconds, max(0.0, deadline - now)),
+            lease_probe=lease_probe,
+            stage="rendered verification retry wait",
+        )
 
 
 def publication_failed(
     root: Path, entrant_id: str, stage: str, error: BaseException
 ) -> None:
     campaign = load_json(campaign_file(root))
+    state = read_state(root, entrant_id)
     redactions: list[str] = []
     try:
         _, redactions = publisher_environment(campaign)
     except (OSError, SystemExit, PublicationError):
         pass
     safe = redact_text(str(error), redactions)[:1000]
-    update_state(
-        root,
-        entrant_id,
-        status="PUBLISH_FAILED",
-        publication_failure_stage=stage,
-        publisher_pid=None,
-        publisher_pgid=None,
-        publisher_identity=None,
-        failure=f"publication {stage} failed: {safe}",
-    )
+    clean = True
+    if (
+        state.get("publisher_pid")
+        or state.get("publisher_pgid")
+        or state.get("publisher_ownership_marker")
+    ):
+        clean, _ = stop_publisher_runtime(root, entrant_id)
+    changes: Dict[str, Any] = {
+        "status": "PUBLISH_FAILED" if clean else "INCOMPLETE",
+        "publication_failure_stage": stage,
+        "failure": (
+            f"publication {stage} failed: {safe}"
+            + ("" if clean else "; publisher process topology survived cleanup")
+        ),
+    }
+    if clean:
+        changes.update(cleared_publisher_ownership_changes())
+    update_state(root, entrant_id, **changes)
 
 
 def publish_one(root: Path, entrant_id: str) -> bool:
@@ -13054,6 +16811,7 @@ def publish_one(root: Path, entrant_id: str) -> bool:
             failure=f"monitor lease refused publication: {monitor_problem}",
         )
         return False
+    lease_probe = lambda: active_manager_monitor_lease_failure(root, campaign)
     lineage_problem = lineage_failure(root)
     if lineage_problem:
         update_state(
@@ -13140,7 +16898,11 @@ def publish_one(root: Path, entrant_id: str) -> bool:
 
         stage = "pre-write-receipt"
         pre_write_receipt = remote_publication_receipt(
-            campaign, entry, verdict, screenshot_plan
+            campaign,
+            entry,
+            verdict,
+            screenshot_plan,
+            lease_probe=lease_probe,
         )
         update_state(
             root,
@@ -13197,6 +16959,7 @@ def publish_one(root: Path, entrant_id: str) -> bool:
                 entry,
                 load_json(runs / f"{entrant_id}.json"),
                 screenshot_plan,
+                lease_probe=lease_probe,
             )
             update_state(
                 root,
@@ -13224,7 +16987,9 @@ def publish_one(root: Path, entrant_id: str) -> bool:
 
         stage = "revalidation"
         update_state(root, entrant_id, status="REVALIDATING")
-        revalidation = revalidate_publication(campaign, entry)
+        revalidation = revalidate_publication(
+            campaign, entry, lease_probe=lease_probe
+        )
         update_state(
             root,
             entrant_id,
@@ -13235,7 +17000,12 @@ def publish_one(root: Path, entrant_id: str) -> bool:
         stage = "rendered-verification"
         update_state(root, entrant_id, status="VERIFYING_RENDERED")
         verdict = load_json(runs / f"{entrant_id}.json")
-        rendered = verify_rendered_publication(campaign, entry, verdict)
+        rendered = verify_rendered_publication(
+            campaign, entry, verdict, lease_probe=lease_probe
+        )
+        publication_lease_checkpoint(
+            lease_probe, "rendered publication commit"
+        )
         update_state(
             root,
             entrant_id,
@@ -13252,17 +17022,37 @@ def publish_one(root: Path, entrant_id: str) -> bool:
         return False
 
 
+SB7_VERDICT_TIERS = frozenset({"A", "B", "C", "D", "J", "V", "P", "T", "X", "R", "E"})
+
+
+def finite_verdict_number(
+    value: Any, *, minimum: float | None = None, maximum: float | None = None
+) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    numeric = float(value)
+    return bool(
+        math.isfinite(numeric)
+        and (minimum is None or numeric >= minimum)
+        and (maximum is None or numeric <= maximum)
+    )
+
+
 def verdict_failure(
-    result: Mapping[str, Any], campaign: Mapping[str, Any]
+    result: Mapping[str, Any],
+    campaign: Mapping[str, Any],
+    *,
+    expected_fixture_seed: Any = None,
+    require_parent_metadata: bool = True,
 ) -> str | None:
     score = result.get("score")
-    if (
-        not isinstance(score, (int, float))
-        or isinstance(score, bool)
-        or not math.isfinite(float(score))
-        or not 0 <= float(score) <= 1
-    ):
+    if not finite_verdict_number(score, minimum=0, maximum=1):
         return "hermetic verdict has no finite score from 0 to 1"
+    fixture_seed = result.get("fixture_seed")
+    if not isinstance(fixture_seed, str) or not fixture_seed:
+        return "hermetic verdict has no fixture seed identity"
+    if expected_fixture_seed is not None and fixture_seed != expected_fixture_seed:
+        return "hermetic verdict fixture seed differs from the frozen entrant"
     if result.get("scorer_version") != campaign.get("scorer_version"):
         return "hermetic verdict scorer version differs from the frozen campaign"
     calibration = result.get("calibration")
@@ -13277,12 +17067,204 @@ def verdict_failure(
         publisher.get("expected_checks") if isinstance(publisher, dict) else None
     )
     checks = result.get("checks")
-    if not isinstance(checks, list) or len(checks) != expected_checks:
+    if (
+        isinstance(expected_checks, bool)
+        or not isinstance(expected_checks, int)
+        or expected_checks <= 0
+        or not isinstance(checks, list)
+        or len(checks) != expected_checks
+    ):
         return (
             f"hermetic verdict check count differs from frozen publisher contract: "
             f"expected {expected_checks}, found "
             f"{len(checks) if isinstance(checks, list) else '<missing>'}"
         )
+    tiers = result.get("tiers")
+    if not isinstance(tiers, dict) or set(tiers) != SB7_VERDICT_TIERS:
+        return "hermetic verdict tier registry differs from the frozen SB7 contract"
+    for tier_name in sorted(SB7_VERDICT_TIERS):
+        tier = tiers.get(tier_name)
+        if not isinstance(tier, dict) or not finite_verdict_number(
+            tier.get("mean"), minimum=0, maximum=1
+        ):
+            return f"hermetic verdict {tier_name} tier mean is malformed"
+    seen_checks: set[str] = set()
+    for index, check in enumerate(checks):
+        if not isinstance(check, dict):
+            return f"hermetic verdict check {index} is malformed"
+        name = check.get("check")
+        tier_name = check.get("tier")
+        if not isinstance(name, str) or not name or name in seen_checks:
+            return f"hermetic verdict check {index} has an invalid identity"
+        seen_checks.add(name)
+        if tier_name not in SB7_VERDICT_TIERS:
+            return f"hermetic verdict check {name} has an invalid tier"
+        if not finite_verdict_number(check.get("score"), minimum=0, maximum=1):
+            return f"hermetic verdict check {name} has an invalid score"
+        if not isinstance(check.get("detail"), str):
+            return f"hermetic verdict check {name} has invalid detail evidence"
+    if require_parent_metadata:
+        agent = result.get("agent")
+        if (
+            not isinstance(agent, dict)
+            or not finite_verdict_number(agent.get("secs"), minimum=0)
+            or not isinstance(agent.get("timed_out"), bool)
+        ):
+            return "hermetic verdict parent timing evidence is malformed"
+        rep = result.get("rep")
+        if isinstance(rep, bool) or not isinstance(rep, int) or rep < 0:
+            return "hermetic verdict parent repetition index is malformed"
+    if not isinstance(result.get("excellent"), bool):
+        return "hermetic verdict excellence result is malformed"
+    if "inner" in result and not finite_verdict_number(
+        result.get("inner"), minimum=0, maximum=1
+    ):
+        return "hermetic verdict inner score is malformed"
+    excellence = result.get("excellence")
+    if excellence is not None:
+        if (
+            not isinstance(excellence, dict)
+            or not finite_verdict_number(
+                excellence.get("fraction"), minimum=0, maximum=1
+            )
+            or not finite_verdict_number(
+                excellence.get("e_mean"), minimum=0, maximum=1
+            )
+            or not isinstance(excellence.get("conditions"), list)
+        ):
+            return "hermetic verdict excellence evidence is malformed"
+        for condition in excellence["conditions"]:
+            if (
+                not isinstance(condition, dict)
+                or not isinstance(condition.get("name"), str)
+                or not isinstance(condition.get("ok"), bool)
+                or (
+                    condition.get("value") is not None
+                    and not finite_verdict_number(condition.get("value"))
+                )
+            ):
+                return "hermetic verdict excellence condition is malformed"
+    critical = result.get("critical")
+    if critical is not None and (
+        not isinstance(critical, dict)
+        or any(
+            not finite_verdict_number(critical.get(field), minimum=0, maximum=1)
+            for field in ("floor", "multiplier", "pre_severity_score")
+        )
+    ):
+        return "hermetic verdict critical multiplier evidence is malformed"
+    return None
+
+
+def parent_enriched_scorer_verdict(
+    result: Mapping[str, Any], state: Mapping[str, Any]
+) -> Dict[str, Any]:
+    if "agent" in result or "rep" in result:
+        raise ValueError("scorer attempted to supply parent-owned publication metadata")
+    elapsed = state.get("elapsed_seconds")
+    if not finite_verdict_number(elapsed, minimum=0):
+        raise ValueError("build has no finite parent-measured elapsed time")
+    return {
+        **result,
+        "agent": {"secs": float(elapsed), "timed_out": False},
+        "rep": 0,
+    }
+
+
+def drain_scorer_verdict_fd(fd: int, capture: Dict[str, Any]) -> None:
+    payload = bytearray()
+    overflow = False
+    error: str | None = None
+    try:
+        while True:
+            chunk = os.read(fd, 64 * 1024)
+            if not chunk:
+                break
+            remaining = MAX_SCORER_VERDICT_BYTES - len(payload)
+            if remaining > 0:
+                payload.extend(chunk[:remaining])
+            if len(chunk) > remaining:
+                overflow = True
+    except OSError as caught:
+        error = f"{type(caught).__name__}: {caught}"
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+    capture.update(payload=bytes(payload), overflow=overflow, error=error)
+
+
+def score_evidence_seal(
+    root: Path,
+    entrant_id: str,
+    campaign: Mapping[str, Any],
+    state: Mapping[str, Any],
+    expected_verdict_sha256: str | None = None,
+) -> Dict[str, Any]:
+    attempt = int(state.get("score_attempts", 0))
+    attempt_root = root / "scores" / entrant_id / f"attempt-{attempt}"
+    verdict = attempt_root / "verdict.json"
+    score_tree = attempt_root / "tree"
+    score_log = attempt_root / "score.log"
+    listeners = attempt_root / "sandbox-listeners.json"
+    if attempt <= 0 or Path(str(state.get("score_attempt_root", ""))) != attempt_root:
+        raise SystemExit("score attempt identity is not the immutable attempt root")
+    for name, path in {
+        "verdict": verdict,
+        "score log": score_log,
+        "listener snapshot": listeners,
+    }.items():
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(f"score {name} is missing or symbolic")
+    if score_tree.is_symlink() or not score_tree.is_dir():
+        raise SystemExit("score tree is missing or symbolic")
+    if sha256_file(listeners) != state.get("score_listener_snapshot_sha256"):
+        raise SystemExit("score listener snapshot changed during scoring")
+    verdict_sha256 = sha256_file(verdict)
+    expected_verdict = expected_verdict_sha256 or state.get("verdict_sha256")
+    if (
+        not isinstance(expected_verdict, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected_verdict) is None
+        or verdict_sha256 != expected_verdict
+    ):
+        raise SystemExit("score verdict differs from the parent-captured result")
+    sandbox_sha = state.get("score_sandbox_profile_sha256")
+    if not isinstance(sandbox_sha, str) or re.fullmatch(r"[0-9a-f]{64}", sandbox_sha) is None:
+        raise SystemExit("score sandbox profile identity is missing")
+    return {
+        "schema_version": 1,
+        "entrant": entrant_id,
+        "score_attempt": attempt,
+        "attempt_root": str(attempt_root),
+        "raw_tree_sha256": state.get("raw_tree_sha256"),
+        "verdict_sha256": verdict_sha256,
+        "score_tree_sha256": artifact_tree_sha256(score_tree),
+        "score_log_sha256": sha256_file(score_log),
+        "listener_snapshot_sha256": sha256_file(listeners),
+        "sandbox_profile_sha256": sandbox_sha,
+        "scorer_runtime_sha256": scorer_runtime_contract_identity(
+            campaign.get("scorer_runtime")
+        ),
+    }
+
+
+def score_evidence_seal_failure(
+    root: Path,
+    entrant_id: str,
+    campaign: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> str | None:
+    try:
+        expected = score_evidence_seal(root, entrant_id, campaign, state)
+        sealed = state.get("score_evidence_seal")
+        if not isinstance(sealed, dict) or sealed != expected:
+            return "score evidence differs from its post-cleanup seal"
+        digest = sha256_bytes(
+            json.dumps(sealed, sort_keys=True, separators=(",", ":")).encode()
+        )
+        if state.get("score_evidence_seal_sha256") != digest:
+            return "score evidence seal digest differs"
+    except (OSError, KeyError, TypeError, ValueError, SystemExit) as error:
+        return f"score evidence seal cannot be verified: {error}"
     return None
 
 
@@ -13348,107 +17330,410 @@ def score_one(root: Path, entrant_id: str) -> bool:
             failure="raw tree changed before scoring",
         )
         return False
+    try:
+        scorer_runtime = pinned_scorer_runtime(campaign)
+        scorer_node = Path(str(scorer_runtime["node_path"]))
+    except (OSError, KeyError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            failure=f"hermetic scorer runtime validation failed: {error}",
+            score_setup_failed_at=utc_now(),
+        )
+        return False
     score_attempt = next_score_attempt(root, entrant_id, state)
-    score_tree = clone_for_score(root, entrant_id, score_attempt)
-    score_dir = score_tree.parent
+    score_dir = root / "scores" / entrant_id / f"attempt-{score_attempt}"
+    score_tree = score_dir / "tree"
     verdict = score_dir / "verdict.json"
     log_path = score_dir / "score.log"
-    cmd = [
-        sys.executable,
-        str(campaign_instrument_path(campaign, "evals/swarm-bench/bench/score_sb7.py")),
-        "--tree",
-        str(score_tree),
-        "--port",
-        str(state["vendor_port"]),
-        "--seed",
-        str(state["fixture_seed"]),
-        "--json-out",
-        str(verdict),
-    ]
+    score_ownership_marker = secrets.token_hex(32)
     update_state(
         root,
         entrant_id,
         status="SCORING",
         score_started_at=utc_now(),
         score_attempts=score_attempt,
+        score_attempt_root=str(score_dir),
+        score_setup_stage="CLAIMED",
+        score_ownership_marker=score_ownership_marker,
+        score_node_path=str(scorer_node),
+        score_node_sha256=sha256_file(scorer_node),
     )
     proc: subprocess.Popen[Any] | None = None
-    monitor_problem = active_manager_monitor_lease_failure(root, campaign)
-    if monitor_problem:
-        update_state(
-            root,
-            entrant_id,
-            status="SCORE_FAILED",
-            failure=f"monitor lease expired before scorer launch: {monitor_problem}",
-        )
-        return False
+    verdict_read_fd: int | None = None
+    verdict_write_fd: int | None = None
+    verdict_capture: Dict[str, Any] = {}
+    verdict_reader: threading.Thread | None = None
 
     def scorer_started(started: subprocess.Popen[Any]) -> None:
+        identity = process_identity(started.pid)
+        if identity is None:
+            raise RuntimeError("hermetic scorer has no process identity")
         update_state(
             root,
             entrant_id,
             score_pid=started.pid,
             score_pgid=started.pid,
-            score_identity=process_identity(started.pid),
+            score_identity=identity,
+            score_process_inventory=[],
         )
-
-    try:
-        with log_path.open("w") as log:
-            proc = launch_after_receipt(
-                cmd,
-                cwd=Path(str(campaign["instrument_root"])),
-                env=None,
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                gate_dir=score_dir,
-                on_started=scorer_started,
+        lease_problem = active_manager_monitor_lease_failure(root, campaign)
+        if lease_problem:
+            raise RuntimeError(
+                "monitor lease failed at the gated scorer launch boundary: "
+                f"{lease_problem}"
             )
-            exit_code = proc.wait()
-    except BaseException:
-        if proc is not None:
-            stop_recorded_group(proc.pid, proc.pid, process_identity(proc.pid))
+
+    scorer_cleanup_proven = False
+    scorer_had_survivors = False
+    try:
+        score_tree = clone_for_score(root, entrant_id, score_attempt)
+        score_dir = score_tree.parent
+        scorer_home = score_dir / "scorer-home"
+        scorer_tmp = score_dir / "scorer-tmp"
+        scorer_home.mkdir()
+        scorer_tmp.mkdir()
+        denied_local_ports, listener_snapshot = scorer_listener_isolation(
+            campaign, state, score_dir
+        )
+        sandbox_profile = scorer_sandbox_profile(
+            campaign,
+            score_dir,
+            scorer_node,
+            runtime=scorer_runtime,
+            denied_local_ports=denied_local_ports,
+        )
+        verdict_read_fd, verdict_write_fd = os.pipe()
+        verdict_reader = threading.Thread(
+            target=drain_scorer_verdict_fd,
+            args=(verdict_read_fd, verdict_capture),
+            daemon=True,
+        )
+        verdict_reader.start()
+        scorer_command = [
+            sys.executable,
+            str(
+                campaign_instrument_path(
+                    campaign, "evals/swarm-bench/bench/score_sb7.py"
+                )
+            ),
+            "--tree",
+            str(score_tree),
+            "--port",
+            str(state["vendor_port"]),
+            "--seed",
+            str(state["fixture_seed"]),
+            "--json-fd",
+            str(verdict_write_fd),
+        ]
+        cmd = ["/usr/bin/sandbox-exec", "-p", sandbox_profile, *scorer_command]
+        update_state(
+            root,
+            entrant_id,
+            score_setup_stage="READY",
+            score_sandbox_profile_sha256=sha256_bytes(sandbox_profile.encode()),
+            score_listener_snapshot=str(listener_snapshot),
+            score_listener_snapshot_sha256=sha256_file(listener_snapshot),
+            score_preexisting_listener_ports=load_json(listener_snapshot)[
+                "preexisting_listener_ports"
+            ],
+            score_denied_local_ports=denied_local_ports,
+        )
+        monitor_problem = active_manager_monitor_lease_failure(root, campaign)
+        if monitor_problem:
+            raise RuntimeError(
+                f"monitor lease expired before scorer launch: {monitor_problem}"
+            )
+        scorer_env = {
+            key: value
+            for key, value in os.environ.items()
+            if key in SAFE_ENV_NAMES and key != "PATH"
+        }
+        scorer_env.update(
+            {
+                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "HOME": str(scorer_home),
+                "TMPDIR": str(scorer_tmp),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "GOOSE_SWARM_RENDER_NODE": str(scorer_node),
+                "PLAYWRIGHT_BROWSERS_PATH": str(
+                    scorer_runtime["browser_cache_root"]
+                ),
+            }
+        )
+        scorer_env[SCORER_OWNERSHIP_ENV] = score_ownership_marker
+        with log_path.open("w") as log:
+            try:
+                proc = launch_after_receipt(
+                    cmd,
+                    cwd=Path(str(campaign["instrument_root"])),
+                    env=scorer_env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    gate_dir=score_dir,
+                    on_started=scorer_started,
+                    pass_fds=(verdict_write_fd,),
+                )
+            finally:
+                if verdict_write_fd is not None:
+                    with contextlib.suppress(OSError):
+                        os.close(verdict_write_fd)
+                    verdict_write_fd = None
+            exit_code, scorer_cleanup_proven, scorer_had_survivors = wait_for_scorer(
+                root, entrant_id, campaign, proc
+            )
+        if verdict_reader is None:
+            raise RuntimeError("hermetic scorer verdict channel was not created")
+        verdict_reader.join(timeout=5)
+        if verdict_reader.is_alive():
+            raise RuntimeError("hermetic scorer verdict channel did not reach EOF")
+        if verdict_capture.get("error"):
+            raise RuntimeError(
+                "hermetic scorer verdict channel failed: "
+                f"{verdict_capture['error']}"
+            )
+        if verdict_capture.get("overflow"):
+            raise RuntimeError("hermetic scorer verdict exceeded the bounded channel")
+    except BaseException as error:
+        if verdict_write_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(verdict_write_fd)
+            verdict_write_fd = None
+        if verdict_reader is not None:
+            verdict_reader.join(timeout=1)
+        persisted = read_state(root, entrant_id)
+        scorer_owned = bool(
+            persisted.get("score_pid")
+            or persisted.get("score_pgid")
+            or persisted.get("score_process_inventory")
+            or persisted.get("score_ownership_marker")
+        )
+        clean = not scorer_owned and proc is None
+        if proc is not None or scorer_owned:
+            clean, _ = stop_scorer_runtime(root, entrant_id)
+        changes: Dict[str, Any] = {
+            "status": "SCORE_FAILED" if clean else "INCOMPLETE",
+            "failure": (
+                f"hermetic scorer setup/supervision failed: {error}; "
+                "immutable attempt retained"
+                if clean
+                else "hermetic scorer supervision failed and descendants survived"
+            ),
+            "score_setup_failed_at": utc_now(),
+        }
+        if clean:
+            changes.update(
+                cleared_scorer_ownership_changes(read_state(root, entrant_id))
+            )
+        update_state(root, entrant_id, **changes)
+        return False
+    if not scorer_cleanup_proven:
+        update_state(
+            root,
+            entrant_id,
+            status="INCOMPLETE",
+            score_exit_code=exit_code,
+            failure=(
+                "hermetic scorer descendants survived cleanup; ownership is retained"
+            ),
+        )
+        return False
+    if scorer_had_survivors:
+        ownership_changes = cleared_scorer_ownership_changes(
+            read_state(root, entrant_id)
+        )
         update_state(
             root,
             entrant_id,
             status="SCORE_FAILED",
-            failure="hermetic scorer supervision failed; immutable attempt retained",
-            score_pid=None,
-            score_pgid=None,
-            score_identity=None,
+            score_exit_code=exit_code,
+            failure="hermetic scorer left descendant processes; attempt rejected",
+            **ownership_changes,
         )
-        raise
-    if exit_code != 0 or not verdict.is_file():
+        return False
+    post_score_secret_hits = persisted_entrant_secret_hits(root, campaign, entrant_id)
+    post_score_lineage_failure = lineage_failure(root)
+    try:
+        pinned_scorer_runtime(campaign)
+    except (OSError, KeyError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        post_score_runtime_failure = str(error)
+    else:
+        post_score_runtime_failure = None
+    try:
+        raw_after_score = hash_tree(raw)
+    except SystemExit as error:
+        raw_after_score = None
+        raw_integrity_failure = str(error)
+    else:
+        raw_integrity_failure = None
+    if (
+        post_score_secret_hits
+        or post_score_lineage_failure
+        or post_score_runtime_failure
+        or raw_after_score != state.get("raw_tree_sha256")
+    ):
+        ownership_changes = cleared_scorer_ownership_changes(
+            read_state(root, entrant_id)
+        )
+        update_state(
+            root,
+            entrant_id,
+            status="INCOMPLETE",
+            score_exit_code=exit_code,
+            secret_scan_hits=post_score_secret_hits,
+            failure=(
+                "provider credential appeared during hermetic scoring"
+                if post_score_secret_hits
+                else (
+                    f"campaign lineage changed during hermetic scoring: "
+                    f"{post_score_lineage_failure}"
+                    if post_score_lineage_failure
+                    else (
+                        f"scorer runtime changed during hermetic scoring: "
+                        f"{post_score_runtime_failure}"
+                        if post_score_runtime_failure
+                        else raw_integrity_failure
+                        or "raw build changed during hermetic scoring"
+                    )
+                )
+            ),
+            **ownership_changes,
+        )
+        return False
+    if exit_code != 0:
+        ownership_changes = cleared_scorer_ownership_changes(
+            read_state(root, entrant_id)
+        )
         update_state(
             root,
             entrant_id,
             status="SCORE_FAILED",
             score_exit_code=exit_code,
             failure="hermetic scorer failed; raw build remains sealed",
-            score_pid=None,
-            score_pgid=None,
-            score_identity=None,
+            **ownership_changes,
         )
         return False
     try:
-        result = load_json(verdict)
-    except (OSError, json.JSONDecodeError, SystemExit) as error:
+        verdict_payload = verdict_capture.get("payload")
+        if not isinstance(verdict_payload, bytes) or not verdict_payload:
+            raise ValueError("verdict channel was empty")
+        result = json.loads(
+            verdict_payload,
+            object_pairs_hook=unique_json_object,
+        )
+        if not isinstance(result, dict):
+            raise ValueError("verdict channel did not contain an object")
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError, SystemExit) as error:
+        ownership_changes = cleared_scorer_ownership_changes(
+            read_state(root, entrant_id)
+        )
         update_state(
             root,
             entrant_id,
             status="SCORE_FAILED",
             score_exit_code=exit_code,
             failure=f"hermetic scorer emitted an unreadable verdict: {error}",
+            **ownership_changes,
         )
         return False
-    invalid = verdict_failure(result, campaign)
+    invalid = verdict_failure(
+        result,
+        campaign,
+        expected_fixture_seed=state.get("fixture_seed"),
+        require_parent_metadata=False,
+    )
+    if invalid is None:
+        try:
+            result = parent_enriched_scorer_verdict(result, state)
+        except (TypeError, ValueError) as error:
+            invalid = f"hermetic verdict parent metadata failed: {error}"
+    if invalid is None:
+        invalid = verdict_failure(
+            result,
+            campaign,
+            expected_fixture_seed=state.get("fixture_seed"),
+        )
     if invalid:
+        ownership_changes = cleared_scorer_ownership_changes(
+            read_state(root, entrant_id)
+        )
         update_state(
             root,
             entrant_id,
             status="SCORE_FAILED",
             score_exit_code=exit_code,
             failure=invalid,
+            **ownership_changes,
+        )
+        return False
+    canonical_verdict = (json.dumps(result, indent=2, sort_keys=True) + "\n").encode()
+    expected_verdict_sha256 = sha256_bytes(canonical_verdict)
+    atomic_json(verdict, result)
+    if sha256_file(verdict) != expected_verdict_sha256:
+        ownership_changes = cleared_scorer_ownership_changes(
+            read_state(root, entrant_id)
+        )
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            score_exit_code=exit_code,
+            failure="parent-captured scorer verdict changed before commit",
+            **ownership_changes,
+        )
+        return False
+    monitor_problem = active_manager_monitor_lease_failure(root, campaign)
+    if monitor_problem:
+        ownership_changes = cleared_scorer_ownership_changes(
+            read_state(root, entrant_id)
+        )
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            score_exit_code=exit_code,
+            failure=f"monitor lease expired before score commit: {monitor_problem}",
+            **ownership_changes,
+        )
+        return False
+    ownership_changes = cleared_scorer_ownership_changes(
+        read_state(root, entrant_id)
+    )
+    sealing_state = read_state(root, entrant_id)
+    try:
+        sealed_evidence = score_evidence_seal(
+            root,
+            entrant_id,
+            campaign,
+            sealing_state,
+            expected_verdict_sha256=expected_verdict_sha256,
+        )
+    except (OSError, KeyError, TypeError, ValueError, SystemExit) as error:
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            score_exit_code=exit_code,
+            failure=f"score evidence could not be sealed: {error}",
+            **ownership_changes,
+        )
+        return False
+    sealed_evidence_sha256 = sha256_bytes(
+        json.dumps(
+            sealed_evidence, sort_keys=True, separators=(",", ":")
+        ).encode()
+    )
+    monitor_problem = active_manager_monitor_lease_failure(root, campaign)
+    if monitor_problem:
+        update_state(
+            root,
+            entrant_id,
+            status="SCORE_FAILED",
+            score_exit_code=exit_code,
+            failure=f"monitor lease expired before sealed score commit: {monitor_problem}",
+            **ownership_changes,
         )
         return False
     update_state(
@@ -13462,9 +17747,10 @@ def score_one(root: Path, entrant_id: str) -> bool:
         calibration=result.get("calibration"),
         calibrated=result.get("calibrated"),
         verdict=str(verdict),
-        score_pid=None,
-        score_pgid=None,
-        score_identity=None,
+        verdict_sha256=expected_verdict_sha256,
+        score_evidence_seal=sealed_evidence,
+        score_evidence_seal_sha256=sealed_evidence_sha256,
+        **ownership_changes,
     )
     return True
 
@@ -13543,7 +17829,7 @@ def manage_claimed(root: Path) -> int:
     require_smoke_proofs(root)
     recover_interrupted_scoring(root)
     monitor = read_monitor_state(root)
-    monitor_problem = monitor_lease_snapshot_failure(monitor, campaign)
+    monitor_problem = monitor_lease_snapshot_failure(root, monitor, campaign)
     if monitor_problem:
         failure = f"manager monitor lease refused execution: {monitor_problem}"
         manager_state(root, status="ATTENTION", failure=failure)
@@ -13614,7 +17900,7 @@ def start(root: Path) -> int:
             raise SystemExit(f"campaign cannot start from {campaign['status']}")
         require_smoke_proofs(root)
         monitor = read_monitor_state(root)
-        monitor_problem = monitor_lease_snapshot_failure(monitor, campaign)
+        monitor_problem = monitor_lease_snapshot_failure(root, monitor, campaign)
         if monitor_problem:
             raise SystemExit(f"manager requires a ready detached monitor: {monitor_problem}")
         monitor_lease_id = str(monitor["lease_id"])
@@ -13653,6 +17939,7 @@ def start(root: Path) -> int:
 
 
 def monitor_lease_snapshot_failure(
+    root: Path,
     monitor: Mapping[str, Any],
     campaign: Mapping[str, Any],
     expected_lease_id: str | None = None,
@@ -13662,18 +17949,47 @@ def monitor_lease_snapshot_failure(
         return f"monitor status is {monitor.get('status')}, not RUNNING"
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 1:
         return "monitor has no valid process id"
-    if not process_alive(pid, monitor.get("identity")):
-        return "monitor process identity is not alive"
-    if monitor.get("parent_pid") != 1:
-        return "monitor has not proven parent pid 1"
+    identity = monitor.get("identity")
+    if not isinstance(identity, str) or not identity:
+        return "monitor has no authenticated process identity"
+    try:
+        if not process_alive(pid, identity):
+            return "monitor process identity is not alive"
+    except ProcessInventoryError as error:
+        return f"monitor process identity cannot be proven: {error}"
+    receipt_problem = monitor_launcher_receipt_failure(monitor)
+    if receipt_problem:
+        return receipt_problem
+    try:
+        topology = monitor_process_topology(pid)
+    except ProcessInventoryError as error:
+        return f"monitor process topology cannot be proven: {error}"
+    if topology is None:
+        return "monitor process topology cannot be authenticated"
+    if topology["parent_pid"] != 1 or monitor.get("parent_pid") != 1:
+        return "monitor has not proven actual parent pid 1"
     if monitor.get("detached_session") is not True:
         return "monitor has not proven a detached session"
-    if monitor.get("pgid") != pid or monitor.get("session_id") != pid:
+    if (
+        topology["pgid"] != pid
+        or topology["session_id"] != pid
+        or monitor.get("pgid") != topology["pgid"]
+        or monitor.get("session_id") != topology["session_id"]
+    ):
         return "monitor process, group, and session identities differ"
+    if not exclusive_claim_is_held(root / "locks/monitor-run.claim"):
+        return "monitor process does not hold its exclusive runtime claim"
     if monitor.get("smoke_contract_sha256") != campaign.get(
         "smoke_contract_sha256"
     ):
         return "monitor is bound to another smoke contract"
+    if monitor.get("lease_heartbeat_failure"):
+        return "monitor heartbeat worker reported failure"
+    if (
+        monitor.get("lease_owner_pid") != pid
+        or monitor.get("lease_owner_identity") != identity
+    ):
+        return "monitor renewable lease owner differs from its process generation"
     lease_id = monitor.get("lease_id")
     if not isinstance(lease_id, str) or not lease_id:
         return "monitor has no renewable lease identity"
@@ -13698,7 +18014,7 @@ def manager_monitor_gate_failure(
     expected_lease_id: str | None = None,
 ) -> str | None:
     return monitor_lease_snapshot_failure(
-        read_monitor_state(root), campaign, expected_lease_id
+        root, read_monitor_state(root), campaign, expected_lease_id
     )
 
 
@@ -13720,6 +18036,20 @@ def provider_admission_gate_failure(
         return "campaign identity changed before provider admission"
     if current.get("status") != "RUNNING":
         return f"campaign status is {current.get('status')}, not RUNNING"
+    while True:
+        try:
+            anchor_budget_ledger(root, require_current=True)
+            break
+        except BudgetReleasePending:
+            lease_problem = active_manager_monitor_lease_failure(root, current)
+            if lease_problem:
+                return lease_problem
+            latest = load_json(campaign_file(root))
+            if latest.get("status") != "RUNNING":
+                return f"campaign status is {latest.get('status')}, not RUNNING"
+            time.sleep(0.01)
+        except SystemExit as error:
+            return f"generation-two budget history refused admission: {error}"
     return active_manager_monitor_lease_failure(root, current)
 
 
@@ -13731,30 +18061,42 @@ def stop_runtime_groups_for_attention(root: Path) -> list[str]:
     ):
         failures.append(f"manager-pgid={manager.get('pgid')}")
     for state in status_rows(root):
-        if state.get("supervisor_pgid") and not stop_recorded_group(
-            state.get("supervisor_pid"),
-            state.get("supervisor_pgid"),
-            state.get("supervisor_identity"),
+        entrant_id = str(state.get("entrant"))
+        if any(build_runtime_ownership(state)):
+            if not stop_build_runtime_topology(state):
+                failures.append(f"{entrant_id}:build-topology")
+            else:
+                clear_build_runtime_ownership(root, entrant_id)
+                state = read_state(root, entrant_id)
+        if (
+            state.get("publisher_pid")
+            or state.get("publisher_pgid")
+            or state.get("publisher_ownership_marker")
         ):
-            failures.append(
-                f"{state.get('entrant')}:supervisor-pgid={state.get('supervisor_pgid')}"
-            )
-        if state.get("publisher_pgid") and not stop_recorded_group(
-            state.get("publisher_pid"),
-            state.get("publisher_pgid"),
-            state.get("publisher_identity"),
+            if not stop_publisher_runtime(root, entrant_id)[0]:
+                failures.append(f"{entrant_id}:publisher-topology")
+            else:
+                update_state(
+                    root,
+                    entrant_id,
+                    **cleared_publisher_ownership_changes(),
+                )
+        if (
+            state.get("score_pid")
+            or state.get("score_pgid")
+            or state.get("score_process_inventory")
+            or state.get("score_ownership_marker")
         ):
-            failures.append(
-                f"{state.get('entrant')}:publisher-pgid={state.get('publisher_pgid')}"
-            )
-        if state.get("score_pgid") and not stop_recorded_group(
-            state.get("score_pid"),
-            state.get("score_pgid"),
-            state.get("score_identity"),
-        ):
-            failures.append(
-                f"{state.get('entrant')}:score-pgid={state.get('score_pgid')}"
-            )
+            if not stop_scorer_runtime(root, entrant_id)[0]:
+                failures.append(f"{entrant_id}:scorer-topology")
+            else:
+                update_state(
+                    root,
+                    entrant_id,
+                    **cleared_scorer_ownership_changes(
+                        read_state(root, entrant_id)
+                    ),
+                )
     return failures
 
 
@@ -13792,9 +18134,18 @@ def published_campaign_mismatch(root: Path) -> str | None:
             verdict = load_json(verdict_path)
         except (OSError, json.JSONDecodeError, SystemExit) as error:
             return f"{entrant_id} hermetic verdict cannot be read: {error}"
-        invalid = verdict_failure(verdict, campaign)
+        invalid = verdict_failure(
+            verdict,
+            campaign,
+            expected_fixture_seed=state.get("fixture_seed"),
+        )
         if invalid:
             return f"{entrant_id} hermetic verdict is invalid: {invalid}"
+        seal_problem = score_evidence_seal_failure(
+            root, entrant_id, campaign, state
+        )
+        if seal_problem:
+            return f"{entrant_id} sealed score evidence changed: {seal_problem}"
         if not same_number(state.get("score"), verdict.get("score")):
             return f"{entrant_id} persisted score differs from its hermetic verdict"
         stage = Path(str(state.get("publish_stage", "")))
@@ -13815,6 +18166,8 @@ def published_campaign_mismatch(root: Path) -> str | None:
             artifact.get("entrant") != entrant_id
             or artifact.get("score_attempt") != attempt
             or artifact.get("source_verdict_sha256") != sha256_file(verdict_path)
+            or artifact.get("score_evidence_seal_sha256")
+            != state.get("score_evidence_seal_sha256")
             or artifact.get("runs_sha256") != state.get("publish_stage_sha256")
         ):
             return f"{entrant_id} publication artifact manifest differs"
@@ -13923,6 +18276,12 @@ def monitor_tick(root: Path) -> tuple[bool, int]:
         require_smoke_proofs(root)
     except SystemExit as error:
         return monitor_attention(root, f"smoke proof gate failed: {error}")
+    try:
+        anchor_budget_ledger(root)
+    except SystemExit as error:
+        return monitor_attention(
+            root, f"generation-two budget history failed closed: {error}"
+        )
     if process_alive(manager.get("pid"), manager.get("identity")):
         try:
             progress = monitor_progress_tick(root)
@@ -13988,6 +18347,62 @@ def wait_for_monitor_detachment(
         time.sleep(poll_seconds)
 
 
+def renew_monitor_lease(
+    root: Path,
+    pid: int,
+    identity: str,
+    lease_id: str,
+) -> None:
+    current = read_monitor_state(root)
+    if (
+        current.get("status") != "RUNNING"
+        or current.get("pid") != pid
+        or current.get("identity") != identity
+        or current.get("lease_id") != lease_id
+    ):
+        raise RuntimeError("monitor lease ownership changed before renewal")
+    receipt_problem = monitor_launcher_receipt_failure(current)
+    if receipt_problem:
+        raise RuntimeError(receipt_problem)
+    topology = monitor_process_topology(pid)
+    if (
+        topology is None
+        or topology.get("parent_pid") != 1
+        or topology.get("pgid") != pid
+        or topology.get("session_id") != pid
+        or not exclusive_claim_is_held(root / "locks/monitor-run.claim")
+    ):
+        raise RuntimeError("monitor lease lost its authenticated OS/lock ownership")
+    monitor_state(
+        root,
+        lease_owner_pid=pid,
+        lease_owner_identity=identity,
+        lease_renewals=int(current.get("lease_renewals", 0)) + 1,
+        lease_heartbeat_failure=None,
+    )
+
+
+def monitor_lease_heartbeat(
+    root: Path,
+    pid: int,
+    identity: str,
+    lease_id: str,
+    stop_event: threading.Event,
+    interval_seconds: float = MONITOR_LEASE_RENEWAL_SECONDS,
+) -> None:
+    while not stop_event.wait(interval_seconds):
+        try:
+            renew_monitor_lease(root, pid, identity, lease_id)
+        except (Exception, SystemExit) as error:
+            monitor_state(
+                root,
+                lease_heartbeat_failure=(
+                    f"{type(error).__name__}: {str(error)[:1000]}"
+                ),
+            )
+            return
+
+
 def monitor_campaign(
     root: Path, poll_seconds: float = MONITOR_HEARTBEAT_INTERVAL_SECONDS
 ) -> int:
@@ -14031,35 +18446,203 @@ def monitor_campaign(
         anchored_progress = previous_monitor.get("entrant_progress")
         if not isinstance(anchored_progress, list):
             anchored_progress = []
+        monitor_pid = os.getpid()
+        monitor_identity = process_identity(monitor_pid)
+        if monitor_identity is None:
+            monitor_attention(root, "monitor process identity vanished at startup")
+            return 1
+        try:
+            wait_for_committed_monitor_launch_receipt(
+                root, monitor_pid, monitor_identity
+            )
+        except SystemExit as error:
+            monitor_attention(root, f"monitor launch provenance failed: {error}")
+            return 1
+        lease_id = secrets.token_hex(16)
         monitor_state(
             root,
             status="RUNNING",
-            pid=os.getpid(),
+            pid=monitor_pid,
             pgid=os.getpgrp(),
-            identity=process_identity(os.getpid()),
+            identity=monitor_identity,
             parent_pid=parent_pid,
             session_id=os.getsid(0),
-            detached_session=os.getsid(0) == os.getpid(),
+            detached_session=os.getsid(0) == monitor_pid,
             smoke_contract_sha256=contract,
-            lease_id=secrets.token_hex(16),
+            lease_id=lease_id,
             progress_ledger=str(root / MONITOR_PROGRESS_ROOT),
             progress_ledger_id=progress_ledger["ledger_id"],
             progress_ledger_sha256=monitor_progress_ledger_digest(root),
             entrant_progress=anchored_progress,
+            lease_owner_pid=monitor_pid,
+            lease_owner_identity=monitor_identity,
+            lease_renewals=0,
+            lease_heartbeat_failure=None,
             started_at=utc_now(),
             failure=None,
         )
-        while True:
-            try:
-                terminal, exit_code = monitor_tick(root)
-            except (Exception, SystemExit) as error:
-                monitor_attention(
-                    root, f"monitor crashed while evaluating campaign state: {error}"
-                )
-                return 1
-            if terminal:
-                return exit_code
-            time.sleep(poll_seconds)
+        stop_event = threading.Event()
+        heartbeat = threading.Thread(
+            target=monitor_lease_heartbeat,
+            args=(
+                root,
+                monitor_pid,
+                monitor_identity,
+                lease_id,
+                stop_event,
+            ),
+            name="sb7-monitor-lease",
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            while True:
+                try:
+                    terminal, exit_code = monitor_tick(root)
+                except (Exception, SystemExit) as error:
+                    monitor_attention(
+                        root, f"monitor crashed while evaluating campaign state: {error}"
+                    )
+                    return 1
+                if terminal:
+                    return exit_code
+                time.sleep(poll_seconds)
+        finally:
+            stop_event.set()
+            heartbeat.join(timeout=MONITOR_LEASE_RENEWAL_SECONDS + 1)
+
+
+def monitor_launch(root: Path) -> int:
+    require_lineage(root)
+    require_smoke_proofs(root)
+    campaign = load_json(campaign_file(root))
+    state = read_monitor_state(root)
+    launcher_pid = os.getpid()
+    launcher_identity = process_identity(launcher_pid)
+    ownership_problem = launched_child_ownership_failure(
+        state,
+        expected_statuses={"LAUNCHING"},
+        pid_key="launcher_pid",
+        pgid_key="launcher_pgid",
+        sid_key="launcher_sid",
+        identity_key="launcher_identity",
+        launched_key="launched_at",
+        role="cloud benchmark monitor launcher",
+    )
+    if ownership_problem or launcher_identity is None:
+        raise SystemExit(
+            "monitor launcher does not own the persisted launch receipt: "
+            + (ownership_problem or "process identity is unavailable")
+        )
+
+    def monitor_started(proc: subprocess.Popen[Any]) -> None:
+        identity = process_identity(proc.pid)
+        if identity is None:
+            raise RuntimeError("detached monitor has no process identity")
+        monitor_state(
+            root,
+            status="STARTING",
+            pid=proc.pid,
+            pgid=proc.pid,
+            session_id=proc.pid,
+            identity=identity,
+            smoke_contract_sha256=campaign["smoke_contract_sha256"],
+            launched_at=utc_now(),
+            failure=None,
+        )
+
+    proc = launch_detached(
+        [
+            sys.executable,
+            str(campaign["coordinator"]),
+            "_monitor",
+            "--root",
+            str(root),
+        ],
+        root / "monitor.log",
+        on_started=monitor_started,
+        child_role="monitor",
+    )
+    monitor_state(
+        root,
+        launcher_committed_monitor_pid=proc.pid,
+        launcher_committed_at=utc_now(),
+    )
+    return 0
+
+
+def wait_for_recorded_process_exit(
+    pid: Any,
+    identity: Any,
+    timeout_seconds: float = MONITOR_LAUNCHER_TIMEOUT_SECONDS,
+) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while process_alive(pid, identity):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def monitor_launcher_receipt_failure(state: Mapping[str, Any]) -> str | None:
+    pid = state.get("pid")
+    identity = state.get("identity")
+    if not isinstance(pid, int) or pid <= 1:
+        return "monitor launcher has no child PID receipt"
+    if not isinstance(identity, str) or not identity:
+        return "monitor launcher has no child identity receipt"
+    launcher_pid = state.get("launcher_pid")
+    launcher_pgid = state.get("launcher_pgid")
+    launcher_identity = state.get("launcher_identity")
+    if (
+        isinstance(launcher_pid, bool)
+        or not isinstance(launcher_pid, int)
+        or launcher_pid <= 1
+        or launcher_pgid != launcher_pid
+        or not isinstance(launcher_identity, str)
+        or not launcher_identity
+    ):
+        return "monitor has no authenticated launcher generation receipt"
+    if state.get("launcher_committed_monitor_pid") != pid:
+        return "monitor launcher child PID was not durably committed"
+    committed_at = state.get("launcher_committed_at")
+    if not isinstance(committed_at, str) or not committed_at:
+        return "monitor launcher child receipt has no commit timestamp"
+    return None
+
+
+def wait_for_committed_monitor_launch_receipt(
+    root: Path,
+    pid: int,
+    identity: str,
+    timeout_seconds: float = MONITOR_LAUNCHER_TIMEOUT_SECONDS,
+    poll_seconds: float = 0.01,
+) -> Dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_problem = "monitor launcher receipt is not committed"
+    while time.monotonic() < deadline:
+        state = read_monitor_state(root)
+        if state.get("status") != "STARTING":
+            raise SystemExit(
+                f"monitor launch receipt state is {state.get('status')}, not STARTING"
+            )
+        if state.get("pid") != pid or state.get("identity") != identity:
+            raise SystemExit("monitor launch receipt names another process generation")
+        last_problem = monitor_launcher_receipt_failure(state) or ""
+        if not last_problem:
+            return state
+        try:
+            alive = process_alive(pid, identity)
+        except ProcessInventoryError as error:
+            raise SystemExit(
+                f"monitor launch process identity cannot be proven: {error}"
+            ) from None
+        if not alive:
+            raise SystemExit("monitor died before its launcher receipt was committed")
+        time.sleep(poll_seconds)
+    raise SystemExit(
+        "monitor launcher did not commit authenticated provenance: " + last_problem
+    )
 
 
 def monitor_start(root: Path) -> int:
@@ -14074,29 +18657,76 @@ def monitor_start(root: Path) -> int:
         require_lineage(root)
         require_smoke_proofs(root)
         current = read_monitor_state(root)
+        if process_alive(
+            current.get("launcher_pid"), current.get("launcher_identity")
+        ):
+            if not wait_for_recorded_process_exit(
+                current.get("launcher_pid"), current.get("launcher_identity")
+            ):
+                raise SystemExit("monitor launcher did not finish after adoption")
+            adopted = read_monitor_state(root)
+            receipt_problem = monitor_launcher_receipt_failure(adopted)
+            if receipt_problem:
+                raise SystemExit(receipt_problem)
+            wait_for_authenticated_monitor(root, campaign)
+            return 0
         if process_alive(current.get("pid"), current.get("identity")):
-            raise SystemExit(f"monitor is already running as pid {current.get('pid')}")
+            if current.get("status") == "STARTING":
+                receipt_problem = monitor_launcher_receipt_failure(current)
+                if receipt_problem:
+                    raise SystemExit(receipt_problem)
+                wait_for_authenticated_monitor(root, campaign)
+                return 0
+            if current.get("status") == "RUNNING":
+                monitor_problem = monitor_lease_snapshot_failure(
+                    root, current, campaign
+                )
+                if monitor_problem:
+                    raise SystemExit(
+                        f"live monitor ownership is unauthenticated: {monitor_problem}"
+                    )
+                return 0
+            raise SystemExit(
+                f"monitor has live ownership in state {current.get('status')}"
+            )
         if current.get("pid") and not stop_recorded_group(
             current.get("pid"), current.get("pgid"), current.get("identity")
         ):
             raise SystemExit("dead monitor's owned process group survived recovery")
+        if current.get("launcher_pid") and not stop_recorded_group(
+            current.get("launcher_pid"),
+            current.get("launcher_pgid"),
+            current.get("launcher_identity"),
+        ):
+            raise SystemExit("dead monitor launcher's process group survived recovery")
         monitor_state(
             root,
             status="RECOVERED" if current.get("pid") else "IDLE",
             pid=None,
             pgid=None,
             identity=None,
+            launcher_pid=None,
+            launcher_pgid=None,
+            launcher_identity=None,
             lease_id=None,
             recovered_at=utc_now() if current.get("pid") else None,
         )
-        def monitor_started(proc: subprocess.Popen[Any]) -> None:
+        def launcher_started(proc: subprocess.Popen[Any]) -> None:
+            identity = process_identity(proc.pid)
+            if identity is None:
+                raise RuntimeError("monitor launcher has no process identity")
             monitor_state(
                 root,
-                status="STARTING",
-                pid=proc.pid,
-                pgid=proc.pid,
-                session_id=proc.pid,
-                identity=process_identity(proc.pid),
+                status="LAUNCHING",
+                pid=None,
+                pgid=None,
+                identity=None,
+                launcher_pid=proc.pid,
+                launcher_pgid=proc.pid,
+                launcher_sid=proc.pid,
+                launcher_identity=identity,
+                launcher_committed_monitor_pid=None,
+                launcher_committed_at=None,
                 smoke_contract_sha256=campaign["smoke_contract_sha256"],
                 launched_at=utc_now(),
                 failure=None,
@@ -14106,15 +18736,31 @@ def monitor_start(root: Path) -> int:
             [
                 sys.executable,
                 str(campaign["coordinator"]),
-                "_monitor",
+                "_monitor_launch",
                 "--root",
                 str(root),
             ],
-            root / "monitor.log",
-            on_started=monitor_started,
-            child_role="monitor",
+            root / "monitor-launcher.log",
+            on_started=launcher_started,
+            child_role="monitor-launcher",
         )
-    print(f"started cloud SB7 monitor pid={proc.pid} root={root}")
+        try:
+            exit_code = proc.wait(timeout=MONITOR_LAUNCHER_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            stop_recorded_group(
+                proc.pid,
+                proc.pid,
+                process_identity(proc.pid),
+            )
+            raise SystemExit("monitor launcher timed out") from None
+        if exit_code != 0:
+            raise SystemExit(f"monitor launcher exited {exit_code}")
+        launched = read_monitor_state(root)
+        receipt_problem = monitor_launcher_receipt_failure(launched)
+        if receipt_problem:
+            raise SystemExit(receipt_problem)
+        wait_for_authenticated_monitor(root, campaign)
+    print(f"started cloud SB7 monitor pid={launched['pid']} root={root}")
     return 0
 
 
@@ -14141,10 +18787,22 @@ def stop_group(pgid: int, grace_seconds: float = 15.0) -> bool:
 
 
 def stop(root: Path) -> int:
-    with exclusive_claim(root / "locks/supersession.claim", blocking=True) as claimed:
-        if not claimed:
-            raise SystemExit("cannot claim cloud campaign stop")
-        return stop_claimed(root)
+    with exclusive_claim(
+        root / "locks/manager-launch.claim", blocking=True
+    ) as manager_launch_claimed:
+        if not manager_launch_claimed:
+            raise SystemExit("cannot claim cloud benchmark manager launch")
+        with exclusive_claim(
+            root / "locks/supersession.claim", blocking=True
+        ) as claimed:
+            if not claimed:
+                raise SystemExit("cannot claim cloud campaign stop")
+            with exclusive_claim(
+                root / "locks/monitor-launch.claim", blocking=True
+            ) as monitor_launch_claimed:
+                if not monitor_launch_claimed:
+                    raise SystemExit("cannot claim cloud benchmark monitor launch")
+                return stop_claimed(root)
 
 
 def stop_claimed(root: Path) -> int:
@@ -14154,102 +18812,162 @@ def stop_claimed(root: Path) -> int:
         return 0
     campaign = load_json(campaign_file(root))
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    rows = entrants(manifest)
     failures = []
-    smoke_manager = read_smoke_manager_state(root)
-    if (
-        smoke_manager.get("status") not in {"HANDED_OFF", "ATTENTION", "STOPPED"}
-        and smoke_manager.get("pgid")
-        and (
-            process_alive(
-                smoke_manager.get("pid"), smoke_manager.get("identity")
-            )
-            or process_group_members(int(smoke_manager["pgid"]))
+    update_campaign(root, status="STOPPING", stopping_at=utc_now())
+    for row in rows:
+        entrant_id = str(row["id"])
+        state = read_state(root, entrant_id)
+        if (
+            state.get("publisher_pid")
+            or state.get("publisher_pgid")
+            or state.get("publisher_ownership_marker")
+        ):
+            stop_publisher_runtime(root, entrant_id)
+    monitor = read_monitor_state(root)
+    launcher_owned = bool(
+        monitor.get("launcher_pid") or monitor.get("launcher_pgid")
+    )
+    launcher_clean = not launcher_owned or stop_recorded_group(
+            monitor.get("launcher_pid"),
+            monitor.get("launcher_pgid"),
+            monitor.get("launcher_identity"),
         )
-        and not stop_recorded_group(
+    if not launcher_clean:
+        failures.append(f"monitor-launcher:pgid={monitor.get('launcher_pgid')}")
+    monitor_owned = bool(monitor.get("pid") or monitor.get("pgid"))
+    monitor_clean = not monitor_owned or stop_recorded_group(
+            monitor.get("pid"), monitor.get("pgid"), monitor.get("identity")
+        )
+    if not monitor_clean:
+        failures.append(f"monitor:pgid={monitor.get('pgid')}")
+    monitor_changes: Dict[str, Any] = {
+        "status": "STOPPING",
+        "stop_failures": failures,
+    }
+    if launcher_clean:
+        monitor_changes.update(
+            launcher_pid=None,
+            launcher_pgid=None,
+            launcher_identity=None,
+            launcher_committed_monitor_pid=None,
+            launcher_committed_at=None,
+        )
+    if monitor_clean:
+        monitor_changes.update(pid=None, pgid=None, identity=None, lease_id=None)
+    monitor_state(root, **monitor_changes)
+    manager = load_json(root / "manager.json")
+    manager_owned = bool(manager.get("pid") or manager.get("pgid"))
+    manager_clean = not manager_owned or stop_recorded_group(
+            manager.get("pid"), manager.get("pgid"), manager.get("identity")
+        )
+    if not manager_clean:
+        failures.append(f"manager:pgid={manager.get('pgid')}")
+    manager_changes: Dict[str, Any] = {
+        "status": "STOPPING",
+        "stop_failures": failures,
+    }
+    if manager_clean:
+        manager_changes.update(pid=None, pgid=None, identity=None)
+    manager_state(root, **manager_changes)
+    smoke_manager = read_smoke_manager_state(root)
+    smoke_manager_owned = bool(
+        smoke_manager.get("pid") or smoke_manager.get("pgid")
+    )
+    smoke_manager_clean = not smoke_manager_owned or stop_recorded_group(
             smoke_manager.get("pid"),
             smoke_manager.get("pgid"),
             smoke_manager.get("identity"),
         )
-    ):
+    if not smoke_manager_clean:
         failures.append(f"smoke-manager:pgid={smoke_manager.get('pgid')}")
-    smoke_manager_state(root, status="STOPPED", stop_failures=failures)
-    for row in entrants(manifest):
+    smoke_manager_changes: Dict[str, Any] = {
+        "status": "STOPPED",
+        "stop_failures": failures,
+    }
+    if smoke_manager_clean:
+        smoke_manager_changes.update(pid=None, pgid=None, identity=None)
+    smoke_manager_state(root, **smoke_manager_changes)
+    for row in rows:
         entrant_id = str(row["id"])
         smoke_path = smoke_state_file(root, entrant_id)
         if smoke_path.is_file():
             smoke_state = read_smoke_state(root, entrant_id)
             smoke_pgid = smoke_state.get("supervisor_pgid")
-            if (
-                smoke_pgid
-                and (
-                    process_alive(
-                        smoke_state.get("supervisor_pid"),
-                        smoke_state.get("supervisor_identity"),
-                    )
-                    or process_group_members(int(smoke_pgid))
+            smoke_owned = any(
+                smoke_state.get(field)
+                for field in (
+                    "supervisor_pid",
+                    "supervisor_pgid",
+                    "supervisor_identity",
+                    "goose_pid",
+                    "process_group",
+                    "goose_identity",
+                    "goose_process_inventory",
                 )
-                and not stop_recorded_group(
-                    smoke_state.get("supervisor_pid"),
-                    smoke_pgid,
-                    smoke_state.get("supervisor_identity"),
-                )
-            ):
-                failures.append(f"{entrant_id}:smoke-pgid={smoke_pgid}")
-            if smoke_state.get("status") not in SMOKE_TERMINAL_STATES:
-                update_smoke_state(
-                    root, entrant_id, status="STOPPED", stopped_at=utc_now()
-                )
-        state = read_state(root, entrant_id)
-        publisher_pgid = state.get("publisher_pgid")
-        if (
-            state["status"] in INTERRUPTED_PUBLICATION_STATES
-            and publisher_pgid
-            and not stop_recorded_group(
-                state.get("publisher_pid"),
-                publisher_pgid,
-                state.get("publisher_identity"),
             )
-        ):
-            failures.append(f"{entrant_id}:publisher-pgid={publisher_pgid}")
-        pgid = state.get("supervisor_pgid")
+            smoke_clean = not smoke_owned or stop_build_runtime_topology(smoke_state)
+            if not smoke_clean:
+                failures.append(f"{entrant_id}:smoke-pgid={smoke_pgid}")
+            smoke_changes: Dict[str, Any] = {}
+            if smoke_state.get("status") not in SMOKE_TERMINAL_STATES:
+                smoke_changes.update(status="STOPPED", stopped_at=utc_now())
+            if smoke_clean:
+                smoke_changes.update(
+                    supervisor_pid=None,
+                    supervisor_pgid=None,
+                    supervisor_identity=None,
+                    goose_pid=None,
+                    process_group=None,
+                    goose_identity=None,
+                    goose_process_inventory=[],
+                )
+            if smoke_changes:
+                update_smoke_state(root, entrant_id, **smoke_changes)
+        publication_problem = reconcile_interrupted_publication_for_stop(
+            root, entrant_id
+        )
+        if publication_problem:
+            failures.append(f"{entrant_id}:publication-reconciliation")
+        state = read_state(root, entrant_id)
         if (
-            state["status"] not in TERMINAL_BUILD_STATES | POST_BUILD_STATES
-            and pgid
-            and process_group_members(int(pgid))
-            and not stop_group(int(pgid))
+            state.get("score_pid")
+            or
+            state.get("score_pgid")
+            or state.get("score_process_inventory")
+            or state.get("score_ownership_marker")
         ):
-            failures.append(f"{entrant_id}:pgid={pgid}")
-        if state["status"] not in TERMINAL_BUILD_STATES | {"PUBLISHED"}:
+            scorer_clean, _ = stop_scorer_runtime(root, entrant_id)
+            if not scorer_clean:
+                failures.append(f"{entrant_id}:scorer-topology")
+            else:
+                update_state(
+                    root,
+                    entrant_id,
+                    **cleared_scorer_ownership_changes(
+                        read_state(root, entrant_id)
+                    ),
+                )
+                state = read_state(root, entrant_id)
+        if any(build_runtime_ownership(state)):
+            topology_clean = stop_build_runtime_topology(state)
+            if not topology_clean:
+                failures.append(f"{entrant_id}:build-topology")
+            else:
+                clear_build_runtime_ownership(root, entrant_id)
+                state = read_state(root, entrant_id)
+        if state["status"] not in TERMINAL_BUILD_STATES | {
+            "PUBLISH_FAILED",
+            "PUBLISHED",
+        }:
             update_state(root, entrant_id, status="STOPPED", stopped_at=utc_now())
-    manager = load_json(root / "manager.json")
-    pgid = manager.get("pgid")
-    if (
-        manager.get("status") not in {"PUBLISHED", "ATTENTION", "STOPPED"}
-        and pgid
-        and process_group_members(int(pgid))
-        and not stop_group(int(pgid))
-    ):
-        failures.append(f"manager:pgid={pgid}")
-    manager_state(root, status="STOPPED", stop_failures=failures)
-    monitor = read_monitor_state(root)
-    monitor_pgid = monitor.get("pgid")
-    if (
-        monitor.get("status") not in MONITOR_TERMINAL_STATES
-        and monitor_pgid
-        and (
-            process_alive(monitor.get("pid"), monitor.get("identity"))
-            or process_group_members(int(monitor_pgid))
-        )
-        and not stop_recorded_group(
-            monitor.get("pid"), monitor_pgid, monitor.get("identity")
-        )
-    ):
-        failures.append(f"monitor:pgid={monitor_pgid}")
-    monitor_state(root, status="STOPPED", stop_failures=failures)
+    terminal_stop_status = "STOPPING" if failures else "STOPPED"
+    manager_state(root, status=terminal_stop_status, stop_failures=failures)
+    monitor_state(root, status=terminal_stop_status, stop_failures=failures)
     if failures:
         raise SystemExit(f"owned process groups survived stop: {', '.join(failures)}")
     busy = []
-    for row in entrants(manifest):
+    for row in rows:
         port = int(row["vendor_port"])
         if not port_is_free(port):
             busy.append(port)
@@ -14468,6 +19186,7 @@ def main() -> int:
     root_arg(p_smoke_supervise)
     p_smoke_supervise.add_argument("--entrant", required=True)
     root_arg(sub.add_parser("_smoke_manage"))
+    root_arg(sub.add_parser("_monitor_launch"))
     root_arg(sub.add_parser("_monitor"))
     p_supervise = sub.add_parser("_supervise")
     root_arg(p_supervise)
@@ -14570,6 +19289,9 @@ def main() -> int:
         return smoke_manage(root)
     if args.command == "monitor-start":
         return monitor_start(root)
+    if args.command == "_monitor_launch":
+        consume_child_launch_capability("monitor-launcher")
+        return monitor_launch(root)
     if args.command == "_monitor":
         consume_child_launch_capability("monitor")
         return monitor_campaign(root)
