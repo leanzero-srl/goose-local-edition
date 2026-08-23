@@ -11,6 +11,7 @@ use super::swarm_control_registry::{
 use super::swarm_provider_journal::DurableProviderLifecycleJournal;
 use super::swarm_provider_lifecycle::{
     bind_current_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
+    ProviderNudgeDeliveryFactory,
 };
 use super::swarm_semantic::{
     activity_digest_key, ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
@@ -38,10 +39,10 @@ use goose_swarm::{
     DeviceCfg, DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig,
     JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalAdmissionControl,
     PhysicalExecutionAuthority, PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest,
-    PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher, ReplanAuthorityFact,
-    ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler, SemanticActivityPublisher,
-    SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
-    VerifiedPhysicalIdentity, WorkRole,
+    PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher, ProviderNudgeDelivery,
+    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler,
+    SemanticActivityPublisher, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord,
+    Verdict, VerifiedPhysicalIdentity, WorkRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17990,6 +17991,86 @@ enum AgentToolSurface {
     ResponseOnly,
 }
 
+struct AgentProviderNudgeFactory {
+    agent: Arc<Agent>,
+    session_id: String,
+}
+
+impl ProviderNudgeDeliveryFactory for AgentProviderNudgeFactory {
+    fn open(&self) -> Arc<dyn ProviderNudgeDelivery> {
+        Arc::new(AgentProviderNudgeChannel::new(
+            self.agent.clone(),
+            self.session_id.clone(),
+        ))
+    }
+}
+
+#[derive(Default)]
+struct AgentProviderNudgeState {
+    reserved: bool,
+    closed: bool,
+}
+
+struct AgentProviderNudgeChannel {
+    sender: tokio::sync::mpsc::UnboundedSender<String>,
+    cancelled: tokio::sync::watch::Sender<bool>,
+    state: Mutex<AgentProviderNudgeState>,
+}
+
+impl AgentProviderNudgeChannel {
+    fn new(agent: Arc<Agent>, session_id: String) -> Self {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let (cancelled, _) = tokio::sync::watch::channel(false);
+        let wake_cancelled = cancelled.clone();
+        tokio::spawn(async move {
+            if let Some(guidance) = receiver.recv().await {
+                agent
+                    .steer(&session_id, Message::user().with_text(guidance))
+                    .await;
+                let _ = wake_cancelled.send(true);
+            }
+        });
+        Self {
+            sender,
+            cancelled,
+            state: Mutex::new(AgentProviderNudgeState::default()),
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderNudgeDelivery for AgentProviderNudgeChannel {
+    fn try_enqueue(&self, guidance: String) -> std::result::Result<(), String> {
+        let mut state = self.state.lock().unwrap();
+        if state.closed || state.reserved {
+            return Err("provider nudge delivery is closed or already reserved".to_string());
+        }
+        self.sender
+            .send(guidance)
+            .map_err(|_| "provider nudge dispatcher is unavailable".to_string())?;
+        state.reserved = true;
+        Ok(())
+    }
+
+    fn natural_terminal_allowed(&self) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.reserved {
+            return false;
+        }
+        state.closed = true;
+        true
+    }
+
+    async fn cancelled(&self) {
+        let mut receiver = self.cancelled.subscribe();
+        while !*receiver.borrow_and_update() {
+            if receiver.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
 pub struct GooseAgentDispatcher {
     provider: Arc<dyn Provider>,
     /// model_id → provider name for CLOUD pool devices; consulted at the single update_provider
@@ -18760,7 +18841,7 @@ impl GooseAgentDispatcher {
             true,
             GoosePlatform::GooseCli,
         );
-        let agent = Agent::with_config(agent_config);
+        let agent = Arc::new(Agent::with_config(agent_config));
         agent.set_swarm_single_owned_file(single_owned_file);
 
         let session = self
@@ -18820,7 +18901,15 @@ impl GooseAgentDispatcher {
         if !extra.is_empty() {
             model_config = model_config.with_merged_request_params(extra);
         }
-        let provider = bind_current_provider_lifecycle(self.provider_for(model_id).await?);
+        let nudge_factory: Arc<dyn ProviderNudgeDeliveryFactory> =
+            Arc::new(AgentProviderNudgeFactory {
+                agent: agent.clone(),
+                session_id: session_id.clone(),
+            });
+        let provider = bind_current_provider_lifecycle(
+            self.provider_for(model_id).await?,
+            Some(nudge_factory),
+        );
         agent
             .update_provider(provider, model_config, &session_id)
             .await

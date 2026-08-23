@@ -1,18 +1,18 @@
 use async_trait::async_trait;
-use goose_provider_types::base::{ProviderHttpProtocol, expose_current_provider_http_request};
+use goose_provider_types::base::{expose_current_provider_http_request, ProviderHttpProtocol};
 use goose_swarm::{
     AdmissionReceipt, AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
     AdmittedSemanticReviewError, AuthorityScope, Dag, DeviceCfg, Difficulty, DispatchError,
     DispatchRequest, EventSink, GlobalProviderLeaseAuthority, HostCapacityEvidence,
     PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
     ProviderLeaseWaitPolicy, ProviderLifecycle, ProviderLifecycleDispatcher,
-    ProviderLifecycleJournal, ProviderRequestReceipt, ProviderTerminalKind,
-    ProviderTerminalReceipt, RunScopedProviderLeaseAuthority, SEMANTIC_OBSERVATION_PROTOCOL,
-    SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA, Scheduler, SealedProviderLeaseAuthority,
-    SemanticObservationCapture, SemanticObservationCaptureRequest,
+    ProviderLifecycleJournal, ProviderNudgeDelivery, ProviderRequestReceipt, ProviderTerminalKind,
+    ProviderTerminalReceipt, RunScopedProviderLeaseAuthority, Scheduler,
+    SealedProviderLeaseAuthority, SemanticObservationCapture, SemanticObservationCaptureRequest,
     SemanticObservationSnapshotDraft, SemanticObservationSnapshotProducer,
     SemanticObservationSummonsSignal, SemanticTraceSnapshot, SwarmEvent, TaskRunOutput, TaskSpec,
     TraceStateMeasurement, VerifiedPhysicalLane, VerifiedProviderProtocolRoute, WorkRole,
+    SEMANTIC_OBSERVATION_PROTOCOL, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -48,6 +48,20 @@ impl RecordingSink {
                     && event["receipt"]["role"] == "semantic_judge_observation"
             })
             .count()
+    }
+
+    fn worker_terminal_kinds(&self, task_id: &str) -> Vec<String> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                event["event"] == "broker_provider_terminal_observed"
+                    && event["admission"]["source"]["task_id"] == task_id
+                    && event["admission"]["role"] == "build"
+            })
+            .filter_map(|event| event["receipt"]["kind"].as_str().map(str::to_string))
+            .collect()
     }
 }
 
@@ -289,19 +303,22 @@ impl AdmittedSemanticObservationReviewer for NudgeObserver {
         .map_err(AdmittedSemanticReviewError::unresolved)?;
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.called.notify_waiters();
-        let source_id = request.observation.snapshot.payload().neutral_signals[0]
-            .source_id
-            .clone();
         Ok(serde_json::json!({
             "protocol": SEMANTIC_OBSERVATION_PROTOCOL,
             "snapshot_hash": request.observation.snapshot.snapshot_hash(),
             "observation": {
                 "action": "NUDGE",
                 "summary": "the sealed trace could use a semantic correction",
-                "evidence": [{
-                    "source_id": source_id,
-                    "observation": "the typed trace measurement is sealed"
-                }],
+                "evidence": [
+                    {
+                        "source_id": "acceptance:task-contract",
+                        "observation": "the task contract is the exact sealed acceptance criterion"
+                    },
+                    {
+                        "source_id": "trace:1",
+                        "observation": "the current sealed trace needs a semantic correction"
+                    }
+                ],
                 "guidance": "re-check the exact acceptance criterion"
             }
         })
@@ -309,14 +326,99 @@ impl AdmittedSemanticObservationReviewer for NudgeObserver {
     }
 }
 
+#[derive(Default)]
+struct ReplayNudgeState {
+    reserved: bool,
+    closed: bool,
+    guidance: Vec<String>,
+    order: Vec<String>,
+}
+
+struct ReplayNudgeDelivery {
+    state: Mutex<ReplayNudgeState>,
+    cancelled: tokio::sync::watch::Sender<bool>,
+}
+
+impl ReplayNudgeDelivery {
+    fn new() -> Self {
+        let (cancelled, _) = tokio::sync::watch::channel(false);
+        Self {
+            state: Mutex::new(ReplayNudgeState::default()),
+            cancelled,
+        }
+    }
+
+    fn guidance(&self) -> Vec<String> {
+        self.state.lock().unwrap().guidance.clone()
+    }
+
+    fn order(&self) -> Vec<String> {
+        self.state.lock().unwrap().order.clone()
+    }
+
+    fn record_cancel(&self) {
+        self.state.lock().unwrap().order.push("cancel".to_string());
+    }
+
+    async fn wait_for_guidance(&self) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while self.state.lock().unwrap().guidance.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("semantic nudge was not enqueued");
+    }
+
+    fn release_cancel(&self) {
+        let _ = self.cancelled.send(true);
+    }
+}
+
+#[async_trait]
+impl ProviderNudgeDelivery for ReplayNudgeDelivery {
+    fn try_enqueue(&self, guidance: String) -> Result<(), String> {
+        let mut state = self.state.lock().unwrap();
+        if state.closed || state.reserved {
+            return Err("delivery is closed or already reserved".to_string());
+        }
+        state.reserved = true;
+        state.guidance.push(guidance);
+        state.order.push("steer".to_string());
+        Ok(())
+    }
+
+    fn natural_terminal_allowed(&self) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.reserved {
+            return false;
+        }
+        state.closed = true;
+        true
+    }
+
+    async fn cancelled(&self) {
+        let mut receiver = self.cancelled.subscribe();
+        while !*receiver.borrow_and_update() {
+            if receiver.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
 struct GapDispatcher {
     release_long: Notify,
+    nudge_delivery: Arc<ReplayNudgeDelivery>,
+    resumed_delivery: Arc<ReplayNudgeDelivery>,
 }
 
 impl GapDispatcher {
     fn new() -> Self {
         Self {
             release_long: Notify::new(),
+            nudge_delivery: Arc::new(ReplayNudgeDelivery::new()),
+            resumed_delivery: Arc::new(ReplayNudgeDelivery::new()),
         }
     }
 }
@@ -334,7 +436,7 @@ impl ProviderLifecycleDispatcher for GapDispatcher {
             .await
             .map_err(|error| DispatchError::Terminal(error.to_string()))?;
         started
-            .publish_for_scheduler()
+            .publish_for_scheduler_with_nudge_delivery(self.nudge_delivery.clone())
             .map_err(|error| DispatchError::Terminal(error.to_string()))?;
         started
             .scope_http(async {
@@ -345,11 +447,54 @@ impl ProviderLifecycleDispatcher for GapDispatcher {
             })
             .await
             .map_err(DispatchError::Terminal)?;
-        if request.task_id == "a-long" {
+        let terminal_kind = if request.task_id == "a-long" {
+            tokio::select! {
+                biased;
+                _ = self.nudge_delivery.cancelled() => ProviderTerminalKind::Cancelled,
+                _ = self.release_long.notified() => {
+                    if self.nudge_delivery.natural_terminal_allowed() {
+                        ProviderTerminalKind::Finished
+                    } else {
+                        self.nudge_delivery.cancelled().await;
+                        ProviderTerminalKind::Cancelled
+                    }
+                }
+            }
+        } else {
+            ProviderTerminalKind::Finished
+        };
+        if terminal_kind == ProviderTerminalKind::Cancelled {
+            self.nudge_delivery.record_cancel();
+            started
+                .provider_terminal(ProviderTerminalKind::Cancelled)
+                .await
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            let resumed = lifecycle
+                .start_provider_request()
+                .await
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            resumed
+                .publish_for_scheduler_with_nudge_delivery(self.resumed_delivery.clone())
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            resumed
+                .scope_http(async {
+                    expose_current_provider_http_request(
+                        ProviderHttpProtocol::OpenAiChatCompletions,
+                        VERIFIED_TRANSPORT,
+                    )
+                })
+                .await
+                .map_err(DispatchError::Terminal)?;
             self.release_long.notified().await;
+            assert!(self.resumed_delivery.natural_terminal_allowed());
+            resumed
+                .provider_terminal(ProviderTerminalKind::Finished)
+                .await
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            return Ok(format!("completed:{}", request.task_id).into());
         }
         started
-            .provider_terminal(ProviderTerminalKind::Finished)
+            .provider_terminal(terminal_kind)
             .await
             .map_err(|error| DispatchError::Terminal(error.to_string()))?;
         Ok(format!("completed:{}", request.task_id).into())
@@ -374,7 +519,7 @@ async fn wait_for_semantic_release(sink: &RecordingSink) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn scheduler_uses_one_idle_route_for_one_trace_revision_and_never_delivers_the_nudge() {
+async fn scheduler_delivers_one_nudge_before_cancel_and_rejects_replayed_trace_revision() {
     let authority = tempfile::tempdir().unwrap();
     let sink = Arc::new(RecordingSink::default());
     let event_sink: Arc<dyn EventSink> = sink.clone();
@@ -419,7 +564,9 @@ async fn scheduler_uses_one_idle_route_for_one_trace_revision_and_never_delivers
         .await
         .expect("idle semantic observer did not run");
     wait_for_semantic_release(&sink).await;
+    dispatcher.nudge_delivery.wait_for_guidance().await;
     producer.wait_for_calls(2).await;
+    dispatcher.nudge_delivery.release_cancel();
     dispatcher.release_long.notify_one();
 
     let report = tokio::time::timeout(Duration::from_secs(2), run)
@@ -433,6 +580,16 @@ async fn scheduler_uses_one_idle_route_for_one_trace_revision_and_never_delivers
     assert_eq!(observer.calls.load(Ordering::SeqCst), 1);
     assert_eq!(sink.count("semantic_observation_summoned"), 1);
     assert_eq!(sink.semantic_admissions(), 1);
+    assert_eq!(
+        dispatcher.nudge_delivery.guidance(),
+        vec!["re-check the exact acceptance criterion".to_string()]
+    );
+    assert_eq!(dispatcher.nudge_delivery.order(), vec!["steer", "cancel"]);
+    assert!(dispatcher.resumed_delivery.guidance().is_empty());
+    assert_eq!(
+        sink.worker_terminal_kinds("a-long"),
+        vec!["cancelled", "finished"]
+    );
     assert_eq!(control.occupancy().await, (0, 0));
 }
 
