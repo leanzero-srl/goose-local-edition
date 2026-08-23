@@ -5675,6 +5675,88 @@ mod tests {
     }
 
     #[test]
+    fn research_seed_assigns_every_node_before_the_complete_merge_barrier() {
+        let requirements = (0..10)
+            .map(|index| RequirementRecord {
+                id: format!("REQ-{index}"),
+                section: format!("section-{}", index / 3),
+                quote: format!("requirement {index}"),
+            })
+            .collect::<Vec<_>>();
+        let models = vec![
+            "node-a".to_string(),
+            "node-b".to_string(),
+            "node-c".to_string(),
+        ];
+        let assignments = plan_research_seed_assignments(&requirements, &models).unwrap();
+        assert_eq!(assignments.len(), models.len());
+        assert_eq!(
+            assignments
+                .iter()
+                .map(|assignment| assignment.model.as_str())
+                .collect::<Vec<_>>(),
+            vec!["node-a", "node-b", "node-c"]
+        );
+        assert_eq!(
+            assignments
+                .iter()
+                .map(|assignment| assignment.requirements.len())
+                .collect::<Vec<_>>(),
+            vec![4, 3, 3]
+        );
+        assert_eq!(
+            assignments
+                .iter()
+                .flat_map(|assignment| {
+                    assignment
+                        .requirements
+                        .iter()
+                        .map(|requirement| requirement.id.as_str())
+                })
+                .collect::<Vec<_>>(),
+            requirements
+                .iter()
+                .map(|requirement| requirement.id.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let ledgers = assignments
+            .iter()
+            .map(|assignment| {
+                let raw = serde_json::json!({
+                    "partition_id": assignment.partition_id,
+                    "complete": true,
+                    "assessments": assignment.requirements.iter().map(|requirement| serde_json::json!({
+                        "requirement_id": requirement.id,
+                        "state": "needs-evidence",
+                        "rationale": "The exact authored clause leaves one external fact unresolved.",
+                        "observations": format!("Exact clause: {}", requirement.quote),
+                        "question_id": format!("q-{}", requirement.id),
+                        "question": format!("What exact implementation fact settles {}?", requirement.id),
+                        "kind": "codebase",
+                        "evidence_needed": format!("Exact implementation fact for {}", requirement.id)
+                    })).collect::<Vec<_>>()
+                })
+                .to_string();
+                compile_research_seed_ledger(&raw, assignment).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert!(merge_research_seed_ledgers(&assignments, ledgers[..2].to_vec()).is_err());
+        let merged = merge_research_seed_ledgers(&assignments, ledgers).unwrap();
+        assert_eq!(merged.questions.len(), requirements.len());
+        assert_eq!(merged.findings.len(), requirements.len());
+        assert!(merged
+            .questions
+            .iter()
+            .all(|question| question.requirement_ids.len() == 1));
+        assert!(merged
+            .findings
+            .iter()
+            .all(|finding| finding.requirement_ids.len() == 1 && !finding.grounded));
+        assert!(merged.blocked_requirement_ids.is_empty());
+    }
+
+    #[test]
     fn research_saturation_requires_real_grounding_and_rejects_repeated_semantic_slots() {
         let requirements = vec![RequirementRecord {
             id: "REQ-api".to_string(),
@@ -5706,6 +5788,22 @@ mod tests {
             &false_grounding,
             &requirements,
             &evidence,
+            &HashSet::new(),
+        )
+        .is_err());
+        let wrong_requirement_evidence = vec![ResearchEvidenceRecord {
+            id: "RESEARCH-docs".to_string(),
+            question: "What is the endpoint?".to_string(),
+            requirement_ids: vec!["REQ-other".to_string()],
+            evidence_needed: "exact endpoint".to_string(),
+            findings: "Fetched from the vendor docs".to_string(),
+            grounded: true,
+            lookups: vec!["web-search".to_string()],
+        }];
+        assert!(compile_research_saturation(
+            &false_grounding,
+            &requirements,
+            &wrong_requirement_evidence,
             &HashSet::new(),
         )
         .is_err());
@@ -16131,6 +16229,273 @@ struct ResearchEvidenceRecord {
     lookups: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum ResearchSeedState {
+    SpecSufficient,
+    NeedsEvidence,
+    Blocked,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ResearchSeedAssessment {
+    requirement_id: String,
+    state: ResearchSeedState,
+    rationale: String,
+    observations: String,
+    question_id: String,
+    question: String,
+    kind: String,
+    evidence_needed: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ResearchSeedLedgerDraft {
+    partition_id: String,
+    complete: bool,
+    assessments: Vec<ResearchSeedAssessment>,
+}
+
+#[derive(Clone, Debug)]
+struct ResearchSeedAssignment {
+    partition_id: String,
+    model: String,
+    requirements: Vec<RequirementRecord>,
+}
+
+#[derive(Clone, Debug)]
+struct CompiledResearchSeedLedger {
+    partition_id: String,
+    model: String,
+    assessments: Vec<ResearchSeedAssessment>,
+}
+
+struct MergedResearchSeed {
+    findings: Vec<ResearchFinding>,
+    questions: Vec<ResearchQuestion>,
+    blocked_requirement_ids: Vec<String>,
+}
+
+fn plan_research_seed_assignments(
+    requirements: &[RequirementRecord],
+    models: &[String],
+) -> Result<Vec<ResearchSeedAssignment>> {
+    if models.is_empty() {
+        bail!("research seed fan has no available node");
+    }
+    if requirements.len() < models.len() {
+        bail!(
+            "research seed fan cannot give {} nodes non-duplicate authoritative work from only {} requirements",
+            models.len(),
+            requirements.len()
+        );
+    }
+    let base = requirements.len() / models.len();
+    let remainder = requirements.len() % models.len();
+    let mut cursor = 0usize;
+    Ok(models
+        .iter()
+        .enumerate()
+        .map(|(index, model)| {
+            let width = base + usize::from(index < remainder);
+            let partition = ResearchSeedAssignment {
+                partition_id: format!("seed-{}", index + 1),
+                model: model.clone(),
+                requirements: requirements[cursor..cursor + width].to_vec(),
+            };
+            cursor += width;
+            partition
+        })
+        .collect())
+}
+
+fn compile_research_seed_ledger(
+    raw: &str,
+    assignment: &ResearchSeedAssignment,
+) -> Result<CompiledResearchSeedLedger> {
+    let draft: ResearchSeedLedgerDraft = serde_json::from_str(strip_code_fences(raw).trim())
+        .map_err(|error| anyhow!("research seed ledger was not valid typed JSON: {error}"))?;
+    if draft.partition_id != assignment.partition_id || !draft.complete {
+        bail!(
+            "research seed ledger `{}` did not complete assigned partition `{}`",
+            draft.partition_id,
+            assignment.partition_id
+        );
+    }
+    let expected = assignment
+        .requirements
+        .iter()
+        .map(|requirement| requirement.id.as_str())
+        .collect::<HashSet<_>>();
+    let mut actual = HashSet::new();
+    let mut question_ids = HashSet::new();
+    for assessment in &draft.assessments {
+        if !expected.contains(assessment.requirement_id.as_str())
+            || !actual.insert(assessment.requirement_id.as_str())
+        {
+            bail!(
+                "research seed partition `{}` repeated or invented requirement `{}`",
+                assignment.partition_id,
+                assessment.requirement_id
+            );
+        }
+        if assessment.rationale.trim().is_empty() || assessment.observations.trim().is_empty() {
+            bail!(
+                "research seed assessment for `{}` omitted its rationale or specific observations",
+                assessment.requirement_id
+            );
+        }
+        match assessment.state {
+            ResearchSeedState::SpecSufficient => {
+                if !assessment.question_id.is_empty()
+                    || !assessment.question.is_empty()
+                    || assessment.kind != "none"
+                    || !assessment.evidence_needed.is_empty()
+                {
+                    bail!(
+                        "spec-sufficient seed assessment for `{}` fabricated a research question",
+                        assessment.requirement_id
+                    );
+                }
+            }
+            ResearchSeedState::NeedsEvidence => {
+                let safe_question_id = !assessment.question_id.is_empty()
+                    && assessment.question_id.chars().all(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+                    });
+                if !safe_question_id
+                    || !question_ids.insert(assessment.question_id.as_str())
+                    || !assessment.question.trim_end().ends_with('?')
+                    || !matches!(
+                        assessment.kind.as_str(),
+                        "library_docs" | "web" | "codebase"
+                    )
+                    || assessment.evidence_needed.trim().is_empty()
+                {
+                    bail!(
+                        "research seed assessment for `{}` emitted an invalid evidence question",
+                        assessment.requirement_id
+                    );
+                }
+            }
+            ResearchSeedState::Blocked => {
+                if !assessment.question_id.is_empty()
+                    || !assessment.question.is_empty()
+                    || assessment.kind != "none"
+                    || assessment.evidence_needed.trim().is_empty()
+                {
+                    bail!(
+                        "blocked seed assessment for `{}` did not name one unavailable evidence need",
+                        assessment.requirement_id
+                    );
+                }
+            }
+        }
+    }
+    if actual != expected {
+        let mut missing = expected.difference(&actual).copied().collect::<Vec<_>>();
+        missing.sort();
+        bail!(
+            "research seed partition `{}` omitted requirements {missing:?}",
+            assignment.partition_id
+        );
+    }
+    Ok(CompiledResearchSeedLedger {
+        partition_id: draft.partition_id,
+        model: assignment.model.clone(),
+        assessments: draft.assessments,
+    })
+}
+
+fn merge_research_seed_ledgers(
+    assignments: &[ResearchSeedAssignment],
+    ledgers: Vec<CompiledResearchSeedLedger>,
+) -> Result<MergedResearchSeed> {
+    let expected = assignments
+        .iter()
+        .map(|assignment| (assignment.partition_id.as_str(), assignment.model.as_str()))
+        .collect::<HashMap<_, _>>();
+    let mut returned = HashSet::new();
+    let mut findings = Vec::new();
+    let mut questions = Vec::new();
+    let mut blocked_requirement_ids = Vec::new();
+    let mut question_slots = HashSet::new();
+    for ledger in ledgers {
+        if expected.get(ledger.partition_id.as_str()) != Some(&ledger.model.as_str())
+            || !returned.insert(ledger.partition_id.clone())
+        {
+            bail!(
+                "research seed merge received duplicate or unassigned partition `{}` from `{}`",
+                ledger.partition_id,
+                ledger.model
+            );
+        }
+        for assessment in ledger.assessments {
+            let requirement_id = assessment.requirement_id.clone();
+            let evidence_needed = assessment.evidence_needed.clone();
+            match assessment.state {
+                ResearchSeedState::SpecSufficient => {}
+                ResearchSeedState::NeedsEvidence => {
+                    findings.push(ResearchFinding {
+                        question: format!("Seed assessment for {requirement_id}"),
+                        kind: "seed-assessment".to_string(),
+                        requirement_ids: vec![requirement_id.clone()],
+                        evidence_needed: evidence_needed.clone(),
+                        findings: format!("{}\n{}", assessment.rationale, assessment.observations),
+                        grounded: false,
+                        lookups: Vec::new(),
+                        attempt: ResearchAttempt::NeverCalled,
+                    });
+                    let question = ResearchQuestion {
+                        id: assessment.question_id,
+                        question: assessment.question,
+                        kind: assessment.kind,
+                        requirement_ids: vec![requirement_id],
+                        evidence_needed,
+                    };
+                    let slot = research_question_slot(&question);
+                    if !question_slots.insert(slot) {
+                        bail!("research seed merge emitted a duplicate semantic evidence slot");
+                    }
+                    questions.push(question);
+                }
+                ResearchSeedState::Blocked => {
+                    findings.push(ResearchFinding {
+                        question: format!("Blocked seed assessment for {requirement_id}"),
+                        kind: "seed-assessment".to_string(),
+                        requirement_ids: vec![requirement_id.clone()],
+                        evidence_needed,
+                        findings: format!("{}\n{}", assessment.rationale, assessment.observations),
+                        grounded: false,
+                        lookups: Vec::new(),
+                        attempt: ResearchAttempt::NeverCalled,
+                    });
+                    blocked_requirement_ids.push(requirement_id);
+                }
+            }
+        }
+    }
+    let expected_partitions = expected.keys().copied().collect::<HashSet<_>>();
+    let returned_partitions = returned.iter().map(String::as_str).collect::<HashSet<_>>();
+    if returned_partitions != expected_partitions {
+        let mut missing = expected_partitions
+            .difference(&returned_partitions)
+            .copied()
+            .collect::<Vec<_>>();
+        missing.sort();
+        bail!(
+            "research seed barrier is incomplete; coordinator remains forbidden until partitions {missing:?} return"
+        );
+    }
+    Ok(MergedResearchSeed {
+        findings,
+        questions,
+        blocked_requirement_ids,
+    })
+}
+
 fn normalized_research_slot_text(value: &str) -> String {
     let mut terms = value
         .split(|character: char| !character.is_alphanumeric())
@@ -16229,6 +16594,16 @@ fn compile_research_saturation(
             if !cited.insert(evidence_id.as_str()) {
                 bail!(
                     "research coverage for `{}` repeated evidence `{evidence_id}`",
+                    assessment.requirement_id
+                );
+            }
+            if !record
+                .requirement_ids
+                .iter()
+                .any(|requirement_id| requirement_id == &assessment.requirement_id)
+            {
+                bail!(
+                    "research coverage for `{}` cited evidence `{evidence_id}` bound to different requirements",
                     assessment.requirement_id
                 );
             }
@@ -20337,6 +20712,124 @@ impl GooseAgentDispatcher {
         .await
     }
 
+    async fn run_research_seed_fan(
+        self: &Arc<Self>,
+        assignments: Vec<ResearchSeedAssignment>,
+        research_extensions: Arc<Vec<ExtensionConfig>>,
+        spec_doc_urls: Arc<Vec<String>>,
+        is_amendment: bool,
+    ) -> Result<Vec<CompiledResearchSeedLedger>> {
+        let mut join_set = tokio::task::JoinSet::new();
+        let assignment_count = assignments.len();
+        for (index, assignment) in assignments.into_iter().enumerate() {
+            let me = self.clone();
+            let extensions = research_extensions.clone();
+            let doc_urls = spec_doc_urls.clone();
+            join_set.spawn(async move {
+                let activity_key = format!("research-pod-{}", assignment.partition_id);
+                me.events.write_value(serde_json::json!({
+                    "event": "research_pod_role_started",
+                    "role": "seed-requirement-evidence-mapper",
+                    "partition_id": assignment.partition_id,
+                    "model": assignment.model,
+                    "requirement_ids": assignment.requirements.iter().map(|requirement| requirement.id.as_str()).collect::<Vec<_>>(),
+                    "requirement_count": assignment.requirements.len(),
+                    "coordinator_call_started": false,
+                }));
+                let routes = serde_json::json!({
+                    "attached_extensions": extensions.iter().map(|extension| extension.name().to_string()).collect::<Vec<_>>(),
+                    "spec_document_urls": doc_urls.as_ref(),
+                    "codebase_shell": is_amendment,
+                });
+                let system = "You are one seed evidence mapper in a collaborative research pod. You own only \
+                    the contiguous authoritative requirement partition supplied below; every other node owns a \
+                    different partition concurrently. Return exactly one typed assessment per requirement id, \
+                    never one summary for the partition and never a plan. `spec-sufficient` means the authored \
+                    requirement itself contains every exact fact planning needs. `needs-evidence` means a specific \
+                    external, library-documentation, or codebase fact can materially change implementation: emit \
+                    one narrow interrogative bound to that one requirement and name the exact evidence needed. \
+                    `blocked` means evidence is necessary but none of the listed routes can obtain it. Observations \
+                    must be requirement-specific and preserve exact literals, interfaces, values, and constraints. \
+                    You may inspect available sources, but this seed ledger is conservatively advisory: a later \
+                    one-question call establishes per-record tool provenance. Do not create or modify files. There \
+                    is no token, turn, lookup, or elapsed-time cap; complete every assigned requirement, then call \
+                    final_output."
+                    .to_string();
+                let user = serde_json::to_string_pretty(&serde_json::json!({
+                    "partition_id": assignment.partition_id,
+                    "authoritative_requirements": assignment.requirements,
+                    "available_lookup_routes": routes,
+                    "field_rules": {
+                        "spec-sufficient": "kind=none and question_id/question/evidence_needed are empty",
+                        "needs-evidence": "kind is library_docs/web/codebase and question_id/question/evidence_needed are specific",
+                        "blocked": "kind=none, question_id/question empty, evidence_needed names the unavailable source fact"
+                    }
+                }))?;
+                let output = me
+                    .run_agent_in(
+                        me.working_dir.clone(),
+                        &assignment.model,
+                        system,
+                        user,
+                        Some(Response {
+                            json_schema: Some(research_seed_schema()),
+                        }),
+                        Some(UNBOUNDED_AGENT_TURNS),
+                        &extensions,
+                        AgentToolSurface::Developer,
+                        0,
+                        Some(&activity_key),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await?;
+                let raw = output
+                    .final_output
+                    .filter(|value| !value.trim().is_empty())
+                    .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "research seed partition `{}` returned no typed ledger",
+                            assignment.partition_id
+                        )
+                    })?;
+                let compiled = compile_research_seed_ledger(&raw, &assignment)?;
+                me.events.write_value(serde_json::json!({
+                    "event": "research_pod_role_completed",
+                    "role": "seed-requirement-evidence-mapper",
+                    "partition_id": compiled.partition_id,
+                    "model": compiled.model,
+                    "assessments": compiled.assessments.len(),
+                    "spec_sufficient": compiled.assessments.iter().filter(|assessment| assessment.state == ResearchSeedState::SpecSufficient).count(),
+                    "needs_evidence": compiled.assessments.iter().filter(|assessment| assessment.state == ResearchSeedState::NeedsEvidence).count(),
+                    "blocked": compiled.assessments.iter().filter(|assessment| assessment.state == ResearchSeedState::Blocked).count(),
+                    "tool_calls": output.tool_calls.len(),
+                    "seed_records_admitted_as_grounded": 0,
+                }));
+                Ok::<_, anyhow::Error>((index, compiled))
+            });
+        }
+        let mut ordered = vec![None; assignment_count];
+        let mut failures = Vec::new();
+        while let Some(joined) = join_set.join_next().await {
+            match joined {
+                Ok(Ok((index, ledger))) => ordered[index] = Some(ledger),
+                Ok(Err(error)) => failures.push(error.to_string()),
+                Err(error) => failures.push(format!("research seed task panicked: {error}")),
+            }
+        }
+        if !failures.is_empty() {
+            bail!(
+                "research seed barrier failed before coordinator admission: {}",
+                failures.join("; ")
+            );
+        }
+        Ok(ordered.into_iter().flatten().collect())
+    }
+
     async fn run_research_queue(
         self: &Arc<Self>,
         cycle: u64,
@@ -20504,7 +20997,7 @@ impl GooseAgentDispatcher {
         let spec_doc_urls = Arc::new(spec_doc_urls(user_prompt));
         self.events.write_value(serde_json::json!({
             "event": "research_pod_started",
-            "topology": "one-evidence-ledger-dynamic-nonduplicate-queue",
+            "topology": "full-fleet-seed-fan-then-one-evidence-ledger-dynamic-nonduplicate-queue",
             "coordinator_model": planner_model,
             "worker_models": worker_models,
             "requirements": requirements.len(),
@@ -20517,8 +21010,75 @@ impl GooseAgentDispatcher {
             "lookup_cap": null,
         }));
 
-        let mut findings = Vec::new();
+        let seed_assignments = plan_research_seed_assignments(&requirements, &worker_models)?;
+        self.events.write_value(serde_json::json!({
+            "event": "research_seed_roles_assigned",
+            "roles": seed_assignments.iter().map(|assignment| serde_json::json!({
+                "partition_id": assignment.partition_id,
+                "model": assignment.model,
+                "requirement_ids": assignment.requirements.iter().map(|requirement| requirement.id.as_str()).collect::<Vec<_>>(),
+                "requirement_count": assignment.requirements.len(),
+            })).collect::<Vec<_>>(),
+            "available_nodes": worker_models.len(),
+            "assigned_nodes": seed_assignments.len(),
+            "all_nodes_assigned_before_first_model_call": seed_assignments.len() == worker_models.len(),
+            "coordinator_calls_started": 0,
+            "partition_basis": "balanced-contiguous-authoritative-requirement-order",
+        }));
+        let seed_ledgers = self
+            .run_research_seed_fan(
+                seed_assignments.clone(),
+                research_extensions.clone(),
+                spec_doc_urls.clone(),
+                is_amendment,
+            )
+            .await?;
+        let seed = merge_research_seed_ledgers(&seed_assignments, seed_ledgers)?;
+        self.events.write_value(serde_json::json!({
+            "event": "research_seed_merged",
+            "completed_node_roles": seed_assignments.len(),
+            "available_nodes": worker_models.len(),
+            "requirement_coverage": requirements.len(),
+            "typed_seed_assessment_records": requirements.len(),
+            "unresolved_or_blocked_advisory_records": seed.findings.len(),
+            "initial_evidence_questions": seed.questions.len(),
+            "blocked_requirement_ids": seed.blocked_requirement_ids,
+            "coordinator_admitted": true,
+            "admission_basis": "every-assigned-seed-partition-compiled-and-merged",
+        }));
+
+        let mut findings = seed.findings;
         let mut seen_question_slots = HashSet::new();
+        if !seed.questions.is_empty() {
+            for question in &seed.questions {
+                seen_question_slots.insert(research_question_slot(question));
+            }
+            self.events.write_value(serde_json::json!({
+                "event": "research_queue_dispatched",
+                "cycle": 0,
+                "questions": seed.questions.iter().map(|question| serde_json::json!({
+                    "id": question.id,
+                    "kind": question.kind,
+                    "requirement_ids": question.requirement_ids,
+                    "evidence_needed": question.evidence_needed,
+                })).collect::<Vec<_>>(),
+                "dispatch_basis": "full-fleet-seed-unresolved-evidence-slots",
+                "fleet_capacity_used_to_create_work": false,
+            }));
+            let batch = self
+                .run_research_queue(
+                    0,
+                    seed.questions,
+                    research_extensions.clone(),
+                    worker_models.clone(),
+                    spec_doc_urls.clone(),
+                )
+                .await;
+            if batch.is_empty() {
+                bail!("semantic research seed queue made no progress: no evidence worker returned");
+            }
+            findings.extend(batch);
+        }
         let mut cycle = 0u64;
         loop {
             cycle += 1;
@@ -20549,7 +21109,6 @@ impl GooseAgentDispatcher {
                 Then call final_output."
                 .to_string();
             let user = serde_json::to_string_pretty(&serde_json::json!({
-                "task": user_prompt,
                 "is_amendment": is_amendment,
                 "requirements": requirements,
                 "available_lookup_routes": lookup_routes,
@@ -36180,6 +36739,45 @@ fn research_saturation_schema() -> serde_json::Value {
                 }
             },
             "summary": {"type": "string"}
+        }
+    })
+}
+
+fn research_seed_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["partition_id", "complete", "assessments"],
+        "properties": {
+            "partition_id": {"type": "string"},
+            "complete": {"type": "boolean"},
+            "assessments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "requirement_id", "state", "rationale", "observations", "question_id",
+                        "question", "kind", "evidence_needed"
+                    ],
+                    "properties": {
+                        "requirement_id": {"type": "string"},
+                        "state": {
+                            "type": "string",
+                            "enum": ["spec-sufficient", "needs-evidence", "blocked"]
+                        },
+                        "rationale": {"type": "string"},
+                        "observations": {"type": "string"},
+                        "question_id": {"type": "string"},
+                        "question": {"type": "string"},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["none", "library_docs", "web", "codebase"]
+                        },
+                        "evidence_needed": {"type": "string"}
+                    }
+                }
+            }
         }
     })
 }
