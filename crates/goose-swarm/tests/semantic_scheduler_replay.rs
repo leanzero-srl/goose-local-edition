@@ -1,15 +1,20 @@
 use async_trait::async_trait;
+use goose_provider_types::base::{ProviderHttpProtocol, expose_current_provider_http_request};
 use goose_swarm::{
     AdmissionReceipt, AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
     AdmittedSemanticReviewError, AuthorityScope, Dag, DeviceCfg, Difficulty, DispatchError,
-    DispatchRequest, EventSink, HostCapacityEvidence, PhysicalAdmissionControl,
-    PhysicalExecutionAuthority, PhysicalFleetSnapshot, ProviderLifecycle,
-    ProviderLifecycleDispatcher, ProviderTerminalKind, Scheduler, SemanticObservationCapture,
-    SemanticObservationCaptureRequest, SemanticObservationSnapshotDraft,
-    SemanticObservationSnapshotProducer, SemanticObservationSummonsSignal, SemanticTraceSnapshot,
-    SwarmEvent, TaskRunOutput, TaskSpec, TraceStateMeasurement, VerifiedPhysicalLane, WorkRole,
-    SEMANTIC_OBSERVATION_PROTOCOL, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+    DispatchRequest, EventSink, GlobalProviderLeaseAuthority, HostCapacityEvidence,
+    PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
+    ProviderLeaseWaitPolicy, ProviderLifecycle, ProviderLifecycleDispatcher,
+    ProviderLifecycleJournal, ProviderRequestReceipt, ProviderTerminalKind,
+    ProviderTerminalReceipt, RunScopedProviderLeaseAuthority, SEMANTIC_OBSERVATION_PROTOCOL,
+    SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA, Scheduler, SealedProviderLeaseAuthority,
+    SemanticObservationCapture, SemanticObservationCaptureRequest,
+    SemanticObservationSnapshotDraft, SemanticObservationSnapshotProducer,
+    SemanticObservationSummonsSignal, SemanticTraceSnapshot, SwarmEvent, TaskRunOutput, TaskSpec,
+    TraceStateMeasurement, VerifiedPhysicalLane, VerifiedProviderProtocolRoute, WorkRole,
 };
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -105,13 +110,46 @@ fn control(
     scope: &str,
     lanes: Vec<VerifiedPhysicalLane>,
     sink: Arc<dyn EventSink>,
+    authority_root: &Path,
 ) -> PhysicalAdmissionControl {
-    PhysicalAdmissionControl::new(
+    let snapshot = PhysicalFleetSnapshot::new(format!("snapshot:{scope}"), lanes).unwrap();
+    let sealed = SealedProviderLeaseAuthority::from_fleet_snapshot(
+        &snapshot,
+        [VerifiedProviderProtocolRoute::new(
+            VERIFIED_TRANSPORT,
+            ProviderHttpProtocol::OpenAiChatCompletions,
+        )
+        .unwrap()],
+    )
+    .unwrap();
+    let global = Arc::new(
+        GlobalProviderLeaseAuthority::open_test_root(authority_root.join("authority")).unwrap(),
+    );
+    let leases = RunScopedProviderLeaseAuthority::new_with_wait_policy(
+        global,
+        sealed,
+        ProviderLeaseWaitPolicy::new(Duration::from_millis(1)),
+    );
+    PhysicalAdmissionControl::new_with_journal_and_provider_leases(
         scope,
-        PhysicalFleetSnapshot::new(format!("snapshot:{scope}"), lanes).unwrap(),
+        snapshot,
         sink,
+        Arc::new(NullJournal),
+        Some(leases),
     )
     .unwrap()
+}
+
+struct NullJournal;
+
+impl ProviderLifecycleJournal for NullJournal {
+    fn provider_request_started(&self, _receipt: &ProviderRequestReceipt) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn provider_terminal(&self, _receipt: &ProviderTerminalReceipt) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 fn execution() -> PhysicalExecutionAuthority {
@@ -244,6 +282,11 @@ impl AdmittedSemanticObservationReviewer for NudgeObserver {
         &self,
         request: AdmittedSemanticObservationRequest,
     ) -> Result<String, AdmittedSemanticReviewError> {
+        expose_current_provider_http_request(
+            ProviderHttpProtocol::OpenAiChatCompletions,
+            VERIFIED_TRANSPORT,
+        )
+        .map_err(AdmittedSemanticReviewError::unresolved)?;
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.called.notify_waiters();
         let source_id = request.observation.snapshot.payload().neutral_signals[0]
@@ -286,17 +329,29 @@ impl ProviderLifecycleDispatcher for GapDispatcher {
         _admission: AdmissionReceipt,
         lifecycle: ProviderLifecycle,
     ) -> Result<TaskRunOutput, DispatchError> {
-        let key = lifecycle
-            .provider_request_started(format!("provider:{}", request.task_id))
+        let started = lifecycle
+            .start_provider_request()
             .await
             .map_err(|error| DispatchError::Terminal(error.to_string()))?;
-        lifecycle
-            .provider_terminal(key, ProviderTerminalKind::Finished)
-            .await
+        started
+            .publish_for_scheduler()
             .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+        started
+            .scope_http(async {
+                expose_current_provider_http_request(
+                    ProviderHttpProtocol::OpenAiChatCompletions,
+                    VERIFIED_TRANSPORT,
+                )
+            })
+            .await
+            .map_err(DispatchError::Terminal)?;
         if request.task_id == "a-long" {
             self.release_long.notified().await;
         }
+        started
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .map_err(|error| DispatchError::Terminal(error.to_string()))?;
         Ok(format!("completed:{}", request.task_id).into())
     }
 }
@@ -320,6 +375,7 @@ async fn wait_for_semantic_release(sink: &RecordingSink) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn scheduler_uses_one_idle_route_for_one_trace_revision_and_never_delivers_the_nudge() {
+    let authority = tempfile::tempdir().unwrap();
     let sink = Arc::new(RecordingSink::default());
     let event_sink: Arc<dyn EventSink> = sink.clone();
     let control = control(
@@ -329,6 +385,7 @@ async fn scheduler_uses_one_idle_route_for_one_trace_revision_and_never_delivers
             lane("lane-b", "model-b", "host-b", 1),
         ],
         event_sink,
+        authority.path(),
     );
     let producer = Arc::new(FixedSnapshotProducer::new());
     let observer = Arc::new(NudgeObserver::new());
@@ -381,12 +438,14 @@ async fn scheduler_uses_one_idle_route_for_one_trace_revision_and_never_delivers
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn scheduler_fails_closed_when_the_only_verified_route_is_the_observed_worker() {
+    let authority = tempfile::tempdir().unwrap();
     let sink = Arc::new(RecordingSink::default());
     let event_sink: Arc<dyn EventSink> = sink.clone();
     let control = control(
         "semantic-scheduler-no-route",
         vec![lane("lane-a", "model-a", "host-a", 2)],
         event_sink,
+        authority.path(),
     );
     let producer = Arc::new(FixedSnapshotProducer::new());
     let observer = Arc::new(NudgeObserver::new());
@@ -455,6 +514,7 @@ async fn scheduler_fails_closed_when_the_only_verified_route_is_the_observed_wor
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn scheduler_never_admits_an_idle_lane_without_a_verified_reviewer_provider() {
+    let authority = tempfile::tempdir().unwrap();
     let sink = Arc::new(RecordingSink::default());
     let event_sink: Arc<dyn EventSink> = sink.clone();
     let control = control(
@@ -464,6 +524,7 @@ async fn scheduler_never_admits_an_idle_lane_without_a_verified_reviewer_provide
             lane("lane-b", "model-b", "host-b", 1),
         ],
         event_sink,
+        authority.path(),
     );
     let producer = Arc::new(FixedSnapshotProducer::new());
     let observer = Arc::new(NudgeObserver::bound_to(vec!["lane-a".to_string()]));
