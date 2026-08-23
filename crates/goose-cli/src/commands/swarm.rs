@@ -5669,8 +5669,27 @@ mod tests {
             "summary": "Twelve independent evidence slots remain."
         })
         .to_string();
+        let unavailable = ResearchSeedLookupRoutes {
+            attached_extensions: Vec::new(),
+            spec_document_urls: Vec::new(),
+            codebase_shell: false,
+        };
+        let error =
+            compile_research_saturation(&raw, &requirements, &[], &HashSet::new(), &unavailable)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            error.contains("without a runnable downstream route"),
+            "{error}"
+        );
+        let routes = ResearchSeedLookupRoutes {
+            attached_extensions: vec!["web-search".to_string()],
+            spec_document_urls: Vec::new(),
+            codebase_shell: false,
+        };
         let compiled =
-            compile_research_saturation(&raw, &requirements, &[], &HashSet::new()).unwrap();
+            compile_research_saturation(&raw, &requirements, &[], &HashSet::new(), &routes)
+                .unwrap();
         assert_eq!(compiled.status, ResearchSaturationStatus::Continue);
         assert_eq!(compiled.next_questions.len(), 12);
     }
@@ -5836,7 +5855,39 @@ mod tests {
     }
 
     #[test]
-    fn research_seed_progress_history_is_bounded_and_ignores_wording_churn() {
+    fn research_lookup_routes_match_actual_extension_capabilities() {
+        let context7_only = ResearchSeedLookupRoutes {
+            attached_extensions: vec!["context7".to_string()],
+            spec_document_urls: Vec::new(),
+            codebase_shell: false,
+        };
+        assert!(context7_only.supports("library_docs"));
+        assert!(!context7_only.supports("web"));
+
+        let web_search = ResearchSeedLookupRoutes {
+            attached_extensions: vec!["web-search".to_string()],
+            spec_document_urls: Vec::new(),
+            codebase_shell: false,
+        };
+        assert!(web_search.supports("library_docs"));
+        assert!(web_search.supports("web"));
+
+        let named_document = ResearchSeedLookupRoutes {
+            attached_extensions: vec!["context7".to_string()],
+            spec_document_urls: vec!["https://vendor.example/reference".to_string()],
+            codebase_shell: false,
+        };
+        assert!(named_document.supports("web"));
+        let web_prompt = research_evidence_route_prompt("web", &named_document);
+        assert!(web_prompt.contains("https://vendor.example/reference"));
+        assert!(!web_prompt.contains("Context7"));
+        let library_prompt = research_evidence_route_prompt("library_docs", &named_document);
+        assert!(library_prompt.contains("Context7"));
+        assert!(library_prompt.contains("https://vendor.example/reference"));
+    }
+
+    #[test]
+    fn research_seed_progress_history_rejects_wording_churn_and_a_b_c_a_recurrence() {
         let assignment = ResearchSeedAssignment {
             partition_id: "seed-1".to_string(),
             model: "node-a".to_string(),
@@ -5883,16 +5934,21 @@ mod tests {
         assert!(!history.admit(same_structure));
         let mut second = first.clone();
         second.complete = false;
-        let mut third = first;
+        let mut third = first.clone();
         third.partition_matches = false;
-        assert!(history.admit(second));
-        assert!(history.admit(third));
-        assert_eq!(history.capacity, 2);
-        assert_eq!(history.fingerprints.len(), history.capacity);
+        let mut recurrence = ResearchSeedProgressHistory::for_assignment(&assignment);
+        assert!(recurrence.admit(first.clone()));
+        assert!(recurrence.admit(second));
+        assert!(recurrence.admit(third));
+        assert!(
+            !recurrence.admit(first),
+            "retaining every finite canonical state must reject A→B→C→A even for one requirement"
+        );
+        assert_eq!(recurrence.fingerprints.len(), 3);
     }
 
     #[test]
-    fn research_seed_packets_preserve_authority_and_balance_authored_cost() {
+    fn research_seed_packets_preserve_authority_and_balance_estimated_output_cost() {
         let requirements = (0..197)
             .map(|index| RequirementRecord {
                 id: format!("REQ-{index}"),
@@ -5944,7 +6000,49 @@ mod tests {
     }
 
     #[test]
+    fn research_seed_final_splits_balance_long_and_short_assessment_rows_by_cost() {
+        let mut requirements = vec![RequirementRecord {
+            id: "REQ-anchor".to_string(),
+            section: "anchor".to_string(),
+            quote: "a".repeat(10_000),
+        }];
+        requirements.push(RequirementRecord {
+            id: "REQ-mixed-long".to_string(),
+            section: "mixed".to_string(),
+            quote: "l".repeat(1_000),
+        });
+        requirements.extend((0..7).map(|index| RequirementRecord {
+            id: format!("REQ-mixed-short-{index}"),
+            section: "mixed".to_string(),
+            quote: "x".to_string(),
+        }));
+
+        let partitions = plan_research_seed_partitions(&requirements, 4).unwrap();
+        assert_eq!(partitions.len(), 4);
+        let mut splittable_section_costs = partitions
+            .iter()
+            .filter(|partition| partition.requirements[0].section == "mixed")
+            .map(research_seed_partition_cost)
+            .collect::<Vec<_>>();
+        assert_eq!(splittable_section_costs.len(), 3);
+        splittable_section_costs.sort_unstable();
+        assert!(
+            splittable_section_costs[2]
+                <= splittable_section_costs[0].saturating_mul(4),
+            "cost-nearest final splits must not recreate count-midpoint skew: {splittable_section_costs:?}"
+        );
+        assert!(partitions
+            .iter()
+            .all(|partition| !partition.requirements.is_empty()));
+    }
+
+    #[test]
     fn research_saturation_requires_real_grounding_and_rejects_repeated_semantic_slots() {
+        let routes = ResearchSeedLookupRoutes {
+            attached_extensions: vec!["web-search".to_string()],
+            spec_document_urls: Vec::new(),
+            codebase_shell: false,
+        };
         let requirements = vec![RequirementRecord {
             id: "REQ-api".to_string(),
             section: "task".to_string(),
@@ -5976,6 +6074,7 @@ mod tests {
             &requirements,
             &evidence,
             &HashSet::new(),
+            &routes,
         )
         .is_err());
         let wrong_requirement_evidence = vec![ResearchEvidenceRecord {
@@ -5992,6 +6091,7 @@ mod tests {
             &requirements,
             &wrong_requirement_evidence,
             &HashSet::new(),
+            &routes,
         )
         .is_err());
 
@@ -6023,7 +6123,71 @@ mod tests {
             "summary": "The same evidence is still missing."
         })
         .to_string();
-        assert!(compile_research_saturation(&repeated, &requirements, &[], &seen).is_err());
+        assert!(
+            compile_research_saturation(&repeated, &requirements, &[], &seen, &routes).is_err()
+        );
+    }
+
+    #[test]
+    fn research_saturation_correction_history_rejects_a_b_c_a_recurrence() {
+        let requirements = vec![RequirementRecord {
+            id: "REQ-api".to_string(),
+            section: "API".to_string(),
+            quote: "Use the current endpoint.".to_string(),
+        }];
+        let routes = ResearchSeedLookupRoutes {
+            attached_extensions: vec!["web-search".to_string()],
+            spec_document_urls: Vec::new(),
+            codebase_shell: false,
+        };
+        let invalid = |status: &str, summary: &str| {
+            serde_json::json!({
+                "status": status,
+                "coverage": [{
+                    "requirement_id": "REQ-api",
+                    "state": "unresolved",
+                    "evidence_ids": [],
+                    "rationale": "The endpoint is unresolved."
+                }],
+                "next_questions": [],
+                "summary": summary
+            })
+            .to_string()
+        };
+        let a = research_saturation_progress_fingerprint(
+            &invalid("saturated", "First wording."),
+            &requirements,
+            &[],
+            &HashSet::new(),
+            &routes,
+        );
+        let same_structure = research_saturation_progress_fingerprint(
+            &invalid("saturated", "Completely different wording."),
+            &requirements,
+            &[],
+            &HashSet::new(),
+            &routes,
+        );
+        assert_eq!(a, same_structure);
+        let b = research_saturation_progress_fingerprint(
+            &invalid("continue", "Still invalid."),
+            &requirements,
+            &[],
+            &HashSet::new(),
+            &routes,
+        );
+        let c = research_saturation_progress_fingerprint(
+            &invalid("blocked", "Also invalid."),
+            &requirements,
+            &[],
+            &HashSet::new(),
+            &routes,
+        );
+        let mut history = ResearchSaturationProgressHistory::default();
+        assert!(history.admit(a.clone()));
+        assert!(history.admit(b));
+        assert!(history.admit(c));
+        assert!(!history.admit(a));
     }
 
     #[test]
@@ -7187,6 +7351,145 @@ mod tests {
             attempt: classify_research_attempt(&[mk("developer__shell", false, Some(true))]),
         };
         assert_eq!(f.attempt, ResearchAttempt::CalledEmpty);
+    }
+
+    #[test]
+    fn typed_research_evidence_requires_exact_assignment_and_successful_source_provenance() {
+        let question = ResearchQuestion {
+            id: "vendor-endpoint".to_string(),
+            question: "Which endpoint is current?".to_string(),
+            kind: "web".to_string(),
+            requirement_ids: vec!["REQ-api".to_string()],
+            evidence_needed: "The current endpoint from the named vendor document.".to_string(),
+        };
+        let unavailable = serde_json::json!({
+            "question_id": "vendor-endpoint",
+            "complete": true,
+            "disposition": "unavailable",
+            "findings": "The consulted document does not define this endpoint.",
+            "source_provenance": ["https://vendor.example/reference"]
+        })
+        .to_string();
+        assert!(compile_research_evidence_worker(&unavailable, &question, &[]).is_err());
+        let compiled = compile_research_evidence_worker(
+            &unavailable,
+            &question,
+            &["developer__shell".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            compiled.disposition,
+            ResearchEvidenceDisposition::Unavailable
+        );
+        assert!(!compiled.disposition.fact_grounded());
+        assert!(compiled.findings.contains("Disposition: unavailable"));
+        assert!(compiled
+            .findings
+            .contains("https://vendor.example/reference"));
+
+        let wrong_assignment = unavailable.replace("vendor-endpoint", "different-question");
+        assert!(compile_research_evidence_worker(
+            &wrong_assignment,
+            &question,
+            &["developer__shell".to_string()],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn research_evidence_slot_commit_is_atomic_after_typed_batch_success() {
+        let question = ResearchQuestion {
+            id: "vendor-endpoint".to_string(),
+            question: "Which endpoint is current?".to_string(),
+            kind: "web".to_string(),
+            requirement_ids: vec!["REQ-api".to_string()],
+            evidence_needed: "The current vendor endpoint.".to_string(),
+        };
+        let slot = research_question_slot(&question);
+        let mut seen = HashSet::new();
+        let failed_batch: Result<Vec<ResearchFinding>> = Err(anyhow!("provider transport failed"));
+        assert!(commit_research_queue_batch(&mut seen, vec![slot.clone()], failed_batch).is_err());
+        assert!(seen.is_empty(), "a failed packet must remain eligible");
+
+        let finding = ResearchFinding {
+            question: question.question,
+            kind: question.kind,
+            requirement_ids: question.requirement_ids,
+            evidence_needed: question.evidence_needed,
+            findings: "Disposition: found\nThe endpoint is /v2/items.".to_string(),
+            grounded: true,
+            lookups: vec!["web-search__search".to_string()],
+            attempt: ResearchAttempt::Grounded,
+        };
+        let committed =
+            commit_research_queue_batch(&mut seen, vec![slot.clone()], Ok(vec![finding])).unwrap();
+        assert_eq!(committed.len(), 1);
+        assert_eq!(seen, HashSet::from([slot]));
+
+        let unavailable_slot = "web|REQ-api|missing vendor endpoint".to_string();
+        let unavailable = ResearchFinding {
+            question: "Does the vendor reference define the endpoint?".to_string(),
+            kind: "web".to_string(),
+            requirement_ids: vec!["REQ-api".to_string()],
+            evidence_needed: "The missing vendor endpoint.".to_string(),
+            findings: "Disposition: unavailable\nThe consulted reference omits it.".to_string(),
+            grounded: false,
+            lookups: vec!["developer__shell".to_string()],
+            attempt: ResearchAttempt::Grounded,
+        };
+        let mut unavailable_seen = HashSet::new();
+        assert!(commit_research_queue_batch(
+            &mut unavailable_seen,
+            vec![unavailable_slot.clone()],
+            Ok(vec![unavailable]),
+        )
+        .is_ok());
+        assert_eq!(unavailable_seen, HashSet::from([unavailable_slot]));
+    }
+
+    #[test]
+    fn research_saturation_rejects_proven_unavailable_as_fact_grounded() {
+        let requirements = vec![RequirementRecord {
+            id: "REQ-api".to_string(),
+            section: "API".to_string(),
+            quote: "Use the vendor endpoint.".to_string(),
+        }];
+        let evidence = vec![ResearchEvidenceRecord {
+            id: "RESEARCH-unavailable".to_string(),
+            question: "Does the vendor reference define the endpoint?".to_string(),
+            requirement_ids: vec!["REQ-api".to_string()],
+            evidence_needed: "The vendor endpoint.".to_string(),
+            findings: "Disposition: unavailable\nThe consulted reference omits it.".to_string(),
+            grounded: false,
+            lookups: vec!["developer__shell".to_string()],
+        }];
+        let false_grounding = serde_json::json!({
+            "status": "saturated",
+            "coverage": [{
+                "requirement_id": "REQ-api",
+                "state": "grounded",
+                "evidence_ids": ["RESEARCH-unavailable"],
+                "rationale": "The source was consulted."
+            }],
+            "next_questions": [],
+            "summary": "Complete."
+        })
+        .to_string();
+        let routes = ResearchSeedLookupRoutes {
+            attached_extensions: Vec::new(),
+            spec_document_urls: vec!["https://vendor.example/reference".to_string()],
+            codebase_shell: false,
+        };
+        let error = compile_research_saturation(
+            &false_grounding,
+            &requirements,
+            &evidence,
+            &HashSet::new(),
+            &routes,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("called ungrounded"), "{error}");
     }
 
     // ---- PROVEN-CRASH DEMOTE ----------------------------------------------------------------
@@ -16296,9 +16599,6 @@ struct ResearchQuestion {
 /// must separate: no tool call at all, a failed/cut-off lookup, an MCP call that returned nothing usable,
 /// and a real successful MCP lookup. Derived purely from engine tool-call events — no model opinion enters.
 ///
-/// Not yet consumed by the routing logic (that is #94's per-decision classifier, deferred): P1 lands the
-/// substrate so the ASK-AWAY interim routing ("CalledEmpty → ask, Errored/NeverCalled → retry") is buildable
-/// without guessing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ResearchAttempt {
     /// No research tool call at all — pure model reasoning.
@@ -16309,6 +16609,17 @@ enum ResearchAttempt {
     CalledEmpty,
     /// At least one successful MCP lookup (today's `grounded: true`).
     Grounded,
+}
+
+impl ResearchAttempt {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NeverCalled => "never-called",
+            Self::Errored => "errored",
+            Self::CalledEmpty => "called-empty",
+            Self::Grounded => "grounded",
+        }
+    }
 }
 
 /// Classify the research tool-call trace into a single `ResearchAttempt`. Pure + deterministic (engine
@@ -16346,10 +16657,87 @@ struct ResearchFinding {
     grounded: bool,
     /// The tool names that grounded it (for the audit trail — today "N resolved" says nothing about HOW).
     lookups: Vec<String>,
-    /// The tool-attempt outcome (P1 substrate for #94's classifier fallback). Widens `grounded` into the
-    /// four distinct cases: NeverCalled / Errored / CalledEmpty / Grounded. Not yet routed on.
-    #[allow(dead_code)]
+    /// The tool-attempt outcome. Dynamic evidence packets use this to retry transport/parser/non-lookup
+    /// failures on a different physical node instead of permanently consuming the semantic slot.
     attempt: ResearchAttempt,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ResearchEvidenceDisposition {
+    Found,
+    Unavailable,
+}
+
+impl ResearchEvidenceDisposition {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Found => "found",
+            Self::Unavailable => "unavailable",
+        }
+    }
+
+    fn fact_grounded(self) -> bool {
+        self == Self::Found
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResearchEvidenceWorkerDraft {
+    question_id: String,
+    complete: bool,
+    disposition: ResearchEvidenceDisposition,
+    findings: String,
+    source_provenance: Vec<String>,
+}
+
+struct CompiledResearchEvidenceWorker {
+    disposition: ResearchEvidenceDisposition,
+    findings: String,
+}
+
+fn compile_research_evidence_worker(
+    raw: &str,
+    question: &ResearchQuestion,
+    lookups: &[String],
+) -> Result<CompiledResearchEvidenceWorker> {
+    let draft: ResearchEvidenceWorkerDraft = serde_json::from_str(strip_code_fences(raw).trim())
+        .map_err(|error| anyhow!("research evidence packet was not valid typed JSON: {error}"))?;
+    if draft.question_id != question.id || !draft.complete {
+        bail!(
+            "research evidence packet `{}` did not complete assigned question `{}`",
+            draft.question_id,
+            question.id
+        );
+    }
+    if lookups.is_empty() {
+        bail!(
+            "research evidence packet `{}` completed without successful lookup provenance",
+            question.id
+        );
+    }
+    if draft.findings.trim().is_empty()
+        || draft.source_provenance.is_empty()
+        || draft
+            .source_provenance
+            .iter()
+            .any(|source| source.trim().is_empty())
+    {
+        bail!(
+            "research evidence packet `{}` omitted findings or source provenance",
+            question.id
+        );
+    }
+    Ok(CompiledResearchEvidenceWorker {
+        disposition: draft.disposition,
+        findings: format!(
+            "Disposition: {}\nSource provenance: {}\n{}",
+            draft.disposition.as_str(),
+            draft.source_provenance.join("; "),
+            draft.findings.trim()
+        ),
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -16469,14 +16857,62 @@ struct ResearchSeedLookupRoutes {
 }
 
 impl ResearchSeedLookupRoutes {
+    fn has_extension(&self, name: &str) -> bool {
+        self.attached_extensions
+            .iter()
+            .any(|extension| extension == name)
+    }
+
     fn supports(&self, kind: &str) -> bool {
         match kind {
-            "library_docs" | "web" => {
-                !self.attached_extensions.is_empty() || !self.spec_document_urls.is_empty()
+            "library_docs" => {
+                self.has_extension("context7")
+                    || self.has_extension("web-search")
+                    || !self.spec_document_urls.is_empty()
             }
+            "web" => self.has_extension("web-search") || !self.spec_document_urls.is_empty(),
             "codebase" => self.codebase_shell,
             _ => false,
         }
+    }
+}
+
+fn research_evidence_route_prompt(kind: &str, routes: &ResearchSeedLookupRoutes) -> String {
+    let mut instructions = Vec::new();
+    match kind {
+        "library_docs" => {
+            if routes.has_extension("context7") {
+                instructions.push(
+                    "Use Context7 to resolve the exact library and read its current documentation; cite exact API names and signatures."
+                        .to_string(),
+                );
+            }
+            if routes.has_extension("web-search") {
+                instructions.push(
+                    "Use web search to find the authoritative library documentation; cite exact API names and signatures."
+                        .to_string(),
+                );
+            }
+        }
+        "web" if routes.has_extension("web-search") => instructions.push(
+            "Use web search and distinguish sourced facts from inference.".to_string(),
+        ),
+        "codebase" if routes.codebase_shell => instructions.push(
+            "Use shell/tree to inspect the current working directory and cite exact paths and symbols."
+                .to_string(),
+        ),
+        _ => {}
+    }
+    if matches!(kind, "library_docs" | "web") && !routes.spec_document_urls.is_empty() {
+        instructions.push(format!(
+            "The specification names these source documents: {}. Fetch the relevant source with curl and cite the exact text that answers the question.",
+            routes.spec_document_urls.join(", ")
+        ));
+    }
+    if instructions.is_empty() {
+        "No runnable lookup route was supplied. Do not invent evidence.".to_string()
+    } else {
+        instructions.join(" ")
     }
 }
 
@@ -16488,7 +16924,18 @@ fn research_seed_field_rules() -> serde_json::Value {
     })
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+const RESEARCH_SEED_ASSESSMENT_FIELDS: [&str; 8] = [
+    "requirement_id",
+    "state",
+    "rationale",
+    "observations",
+    "question_id",
+    "question",
+    "kind",
+    "evidence_needed",
+];
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct ResearchSeedProgressFingerprint {
     json_kind: u8,
     top_level_fields: u8,
@@ -16504,28 +16951,23 @@ struct ResearchSeedProgressFingerprint {
     route_infeasible_assessments: usize,
 }
 
+/// Retain every canonical invalid state for this correction loop. The fingerprint contains no model prose,
+/// and every counter is clamped by the immutable assignment cardinality, so its semantic state space is
+/// finite. Keeping the full finite set makes recurrence terminal without a retry, token, or elapsed-time cap;
+/// a rolling window would let a cycle longer than the window run forever.
 struct ResearchSeedProgressHistory {
-    capacity: usize,
-    fingerprints: std::collections::VecDeque<ResearchSeedProgressFingerprint>,
+    fingerprints: HashSet<ResearchSeedProgressFingerprint>,
 }
 
 impl ResearchSeedProgressHistory {
-    fn for_assignment(assignment: &ResearchSeedAssignment) -> Self {
+    fn for_assignment(_assignment: &ResearchSeedAssignment) -> Self {
         Self {
-            capacity: assignment.requirements.len().saturating_add(1),
-            fingerprints: std::collections::VecDeque::new(),
+            fingerprints: HashSet::new(),
         }
     }
 
     fn admit(&mut self, fingerprint: ResearchSeedProgressFingerprint) -> bool {
-        if self.fingerprints.contains(&fingerprint) {
-            return false;
-        }
-        if self.fingerprints.len() == self.capacity {
-            self.fingerprints.pop_front();
-        }
-        self.fingerprints.push_back(fingerprint);
-        true
+        self.fingerprints.insert(fingerprint)
     }
 }
 
@@ -16542,8 +16984,59 @@ struct MergedResearchSeed {
     blocked_requirement_ids: Vec<String>,
 }
 
+fn research_seed_assessment_structure_cost() -> usize {
+    RESEARCH_SEED_ASSESSMENT_FIELDS
+        .iter()
+        .map(|field| field.len().saturating_add(3))
+        .fold(2usize, usize::saturating_add)
+        .saturating_add(RESEARCH_SEED_ASSESSMENT_FIELDS.len().saturating_sub(1))
+}
+
+fn research_seed_authored_cost(requirement: &RequirementRecord) -> usize {
+    requirement
+        .id
+        .chars()
+        .count()
+        .saturating_add(requirement.section.chars().count())
+        .saturating_add(requirement.quote.chars().count().max(1))
+}
+
 fn research_seed_unit_cost(requirement: &RequirementRecord) -> usize {
-    requirement.section.chars().count() + requirement.quote.chars().count().max(1)
+    research_seed_authored_cost(requirement)
+        .saturating_add(research_seed_assessment_structure_cost())
+}
+
+fn research_seed_partition_authored_cost(partition: &ResearchSeedPartition) -> usize {
+    partition
+        .requirements
+        .iter()
+        .map(research_seed_authored_cost)
+        .fold(0usize, usize::saturating_add)
+}
+
+fn research_seed_split_boundary(group: &[RequirementRecord]) -> Option<usize> {
+    if group.len() < 2 {
+        return None;
+    }
+    let total_cost = group
+        .iter()
+        .map(research_seed_unit_cost)
+        .fold(0usize, usize::saturating_add);
+    (1..group.len()).min_by_key(|candidate| {
+        let prefix_cost = group[..*candidate]
+            .iter()
+            .map(research_seed_unit_cost)
+            .fold(0usize, usize::saturating_add);
+        prefix_cost.abs_diff(total_cost.saturating_sub(prefix_cost))
+    })
+}
+
+fn research_seed_partition_cost(partition: &ResearchSeedPartition) -> usize {
+    partition
+        .requirements
+        .iter()
+        .map(research_seed_unit_cost)
+        .fold(0usize, usize::saturating_add)
 }
 
 fn plan_research_seed_partitions(
@@ -16574,11 +17067,11 @@ fn plan_research_seed_partitions(
     let total_cost = requirements
         .iter()
         .map(research_seed_unit_cost)
-        .sum::<usize>();
+        .fold(0usize, usize::saturating_add);
     let target_cost = total_cost.div_ceil(desired_partitions).max(1);
 
     // A single oversized authored section is still a straggler. Split only such sections, at the
-    // requirement boundary nearest half their measured authored-text cost; there is no token/time cap
+    // requirement boundary nearest half their estimated typed-output cost; there is no token/time cap
     // and no task-count literal here.
     loop {
         let split_candidate = groups
@@ -16588,23 +17081,19 @@ fn plan_research_seed_partitions(
             .map(|(index, group)| {
                 (
                     index,
-                    group.iter().map(research_seed_unit_cost).sum::<usize>(),
+                    group
+                        .iter()
+                        .map(research_seed_unit_cost)
+                        .fold(0usize, usize::saturating_add),
                 )
             })
             .filter(|(_, cost)| *cost > target_cost)
             .max_by_key(|(_, cost)| *cost);
-        let Some((index, cost)) = split_candidate else {
+        let Some((index, _)) = split_candidate else {
             break;
         };
         let group = groups.remove(index);
-        let split_at = (1..group.len())
-            .min_by_key(|candidate| {
-                let prefix_cost = group[..*candidate]
-                    .iter()
-                    .map(research_seed_unit_cost)
-                    .sum::<usize>();
-                prefix_cost.abs_diff(cost - prefix_cost)
-            })
+        let split_at = research_seed_split_boundary(&group)
             .expect("a multi-requirement section has a split boundary");
         let left = group[..split_at].to_vec();
         let right = group[split_at..].to_vec();
@@ -16622,7 +17111,7 @@ fn plan_research_seed_partitions(
                     .iter()
                     .chain(groups[*index + 1].iter())
                     .map(research_seed_unit_cost)
-                    .sum::<usize>()
+                    .fold(0usize, usize::saturating_add)
             })
             .expect("more than one research group has an adjacent pair");
         let right = groups.remove(merge_at + 1);
@@ -16633,13 +17122,19 @@ fn plan_research_seed_partitions(
             .iter()
             .enumerate()
             .filter(|(_, group)| group.len() > 1)
-            .max_by_key(|(_, group)| group.iter().map(research_seed_unit_cost).sum::<usize>())
+            .max_by_key(|(_, group)| {
+                group
+                    .iter()
+                    .map(research_seed_unit_cost)
+                    .fold(0usize, usize::saturating_add)
+            })
             .map(|(index, _)| index)
             .expect("fewer groups than requirements leaves a splittable group");
         let group = groups.remove(split_at_group);
-        let midpoint = group.len() / 2;
-        groups.insert(split_at_group, group[midpoint..].to_vec());
-        groups.insert(split_at_group, group[..midpoint].to_vec());
+        let split_at = research_seed_split_boundary(&group)
+            .expect("a multi-requirement research group has a split boundary");
+        groups.insert(split_at_group, group[split_at..].to_vec());
+        groups.insert(split_at_group, group[..split_at].to_vec());
     }
 
     Ok(groups
@@ -16703,27 +17198,17 @@ fn research_seed_progress_fingerprint(
     };
     let overflow_bucket = assignment.requirements.len().saturating_add(1);
     fingerprint.assessment_count = assessments.len().min(overflow_bucket);
-    let assessment_fields = [
-        "requirement_id",
-        "state",
-        "rationale",
-        "observations",
-        "question_id",
-        "question",
-        "kind",
-        "evidence_needed",
-    ];
     fingerprint.assessment_fields = assessments
         .iter()
         .filter_map(serde_json::Value::as_object)
         .map(|assessment| {
-            assessment_fields
+            RESEARCH_SEED_ASSESSMENT_FIELDS
                 .iter()
                 .filter(|field| assessment.contains_key(**field))
                 .count()
         })
-        .sum::<usize>()
-        .min(overflow_bucket.saturating_mul(assessment_fields.len()));
+        .fold(0usize, usize::saturating_add)
+        .min(overflow_bucket.saturating_mul(RESEARCH_SEED_ASSESSMENT_FIELDS.len()));
 
     let mut actual = HashSet::new();
     let mut question_ids = HashSet::new();
@@ -16789,7 +17274,8 @@ fn research_seed_progress_fingerprint(
                 let unique_question = question_ids.insert(question_id);
                 let route_feasible = routes.supports(kind);
                 if !route_feasible {
-                    fingerprint.route_infeasible_assessments += 1;
+                    fingerprint.route_infeasible_assessments =
+                        fingerprint.route_infeasible_assessments.saturating_add(1);
                 }
                 safe_question_id
                     && unique_question
@@ -16810,6 +17296,9 @@ fn research_seed_progress_fingerprint(
             fingerprint.structurally_valid_assessments += 1;
         }
     }
+    fingerprint.route_infeasible_assessments = fingerprint
+        .route_infeasible_assessments
+        .min(overflow_bucket);
     fingerprint
 }
 
@@ -17029,6 +17518,54 @@ fn research_question_slot(question: &ResearchQuestion) -> String {
     )
 }
 
+fn research_question_authored_cost(question: &ResearchQuestion) -> usize {
+    question
+        .question
+        .chars()
+        .count()
+        .saturating_add(question.evidence_needed.chars().count())
+        .saturating_add(
+            question
+                .requirement_ids
+                .iter()
+                .map(|requirement_id| requirement_id.chars().count())
+                .fold(0usize, usize::saturating_add),
+        )
+}
+
+fn commit_research_queue_batch(
+    seen_question_slots: &mut HashSet<String>,
+    dispatched_slots: Vec<String>,
+    batch: Result<Vec<ResearchFinding>>,
+) -> Result<Vec<ResearchFinding>> {
+    let findings = batch?;
+    if findings.len() != dispatched_slots.len() {
+        bail!(
+            "research evidence queue returned {} typed packets for {} dispatched semantic slots",
+            findings.len(),
+            dispatched_slots.len()
+        );
+    }
+    if findings
+        .iter()
+        .any(|finding| finding.attempt != ResearchAttempt::Grounded || finding.lookups.is_empty())
+    {
+        bail!(
+            "research evidence queue cannot commit a packet without successful lookup provenance"
+        );
+    }
+    let distinct = dispatched_slots.iter().collect::<HashSet<_>>();
+    if distinct.len() != dispatched_slots.len()
+        || dispatched_slots
+            .iter()
+            .any(|slot| seen_question_slots.contains(slot))
+    {
+        bail!("research evidence queue attempted to commit a duplicate semantic slot");
+    }
+    seen_question_slots.extend(dispatched_slots);
+    Ok(findings)
+}
+
 fn research_evidence_inventory(findings: &[ResearchFinding]) -> Vec<ResearchEvidenceRecord> {
     let mut occurrences = HashMap::<String, usize>::new();
     findings
@@ -17057,11 +17594,229 @@ fn research_evidence_inventory(findings: &[ResearchFinding]) -> Vec<ResearchEvid
         .collect()
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct ResearchSaturationProgressFingerprint {
+    json_kind: u8,
+    typed: bool,
+    status: u8,
+    summary_present: bool,
+    coverage_count: usize,
+    coverage_states: Vec<u8>,
+    rationalized_coverage: Vec<bool>,
+    duplicate_coverage: bool,
+    invented_coverage: bool,
+    evidence_reference_count: usize,
+    unknown_evidence: bool,
+    repeated_evidence: bool,
+    mismatched_evidence: bool,
+    ungrounded_evidence: bool,
+    grounded_without_evidence: usize,
+    question_count: usize,
+    safe_question_ids: usize,
+    duplicate_question_ids: bool,
+    structurally_valid_questions: usize,
+    route_feasible_questions: usize,
+    invalid_question_binding: bool,
+    question_targets_non_unresolved: bool,
+    repeated_question_slot: bool,
+}
+
+/// Saturation corrections retain every canonical compiler state. The fingerprint stores only
+/// immutable-authority membership, enums, booleans, and cardinality-clamped counters, so the state
+/// space is finite without imposing an attempt, token, question, or elapsed-time cap.
+#[derive(Default)]
+struct ResearchSaturationProgressHistory {
+    fingerprints: HashSet<ResearchSaturationProgressFingerprint>,
+}
+
+impl ResearchSaturationProgressHistory {
+    fn admit(&mut self, fingerprint: ResearchSaturationProgressFingerprint) -> bool {
+        self.fingerprints.insert(fingerprint)
+    }
+}
+
+fn research_saturation_progress_fingerprint(
+    raw: &str,
+    requirements: &[RequirementRecord],
+    evidence: &[ResearchEvidenceRecord],
+    seen_question_slots: &HashSet<String>,
+    routes: &ResearchSeedLookupRoutes,
+) -> ResearchSaturationProgressFingerprint {
+    let mut fingerprint = ResearchSaturationProgressFingerprint {
+        json_kind: 0,
+        typed: false,
+        status: 0,
+        summary_present: false,
+        coverage_count: 0,
+        coverage_states: vec![0; requirements.len()],
+        rationalized_coverage: vec![false; requirements.len()],
+        duplicate_coverage: false,
+        invented_coverage: false,
+        evidence_reference_count: 0,
+        unknown_evidence: false,
+        repeated_evidence: false,
+        mismatched_evidence: false,
+        ungrounded_evidence: false,
+        grounded_without_evidence: 0,
+        question_count: 0,
+        safe_question_ids: 0,
+        duplicate_question_ids: false,
+        structurally_valid_questions: 0,
+        route_feasible_questions: 0,
+        invalid_question_binding: false,
+        question_targets_non_unresolved: false,
+        repeated_question_slot: false,
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(strip_code_fences(raw).trim()) else {
+        return fingerprint;
+    };
+    fingerprint.json_kind = 1;
+    if !value.is_object() {
+        return fingerprint;
+    }
+    fingerprint.json_kind = 2;
+    let Ok(draft) = serde_json::from_value::<ResearchSaturationDraft>(value) else {
+        return fingerprint;
+    };
+    fingerprint.typed = true;
+    fingerprint.status = match draft.status {
+        ResearchSaturationStatus::Continue => 1,
+        ResearchSaturationStatus::Saturated => 2,
+        ResearchSaturationStatus::Blocked => 3,
+    };
+    fingerprint.summary_present = !draft.summary.trim().is_empty();
+
+    let requirement_positions = requirements
+        .iter()
+        .enumerate()
+        .map(|(index, requirement)| (requirement.id.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let evidence_by_id = evidence
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect::<HashMap<_, _>>();
+    let coverage_overflow = requirements.len().saturating_add(1);
+    fingerprint.coverage_count = draft.coverage.len().min(coverage_overflow);
+    let evidence_reference_overflow = coverage_overflow
+        .saturating_mul(evidence.len().saturating_add(1))
+        .max(1);
+    let mut coverage_seen = HashSet::new();
+    for assessment in &draft.coverage {
+        let Some(&position) = requirement_positions.get(assessment.requirement_id.as_str()) else {
+            fingerprint.invented_coverage = true;
+            continue;
+        };
+        if !coverage_seen.insert(assessment.requirement_id.as_str()) {
+            fingerprint.duplicate_coverage = true;
+        }
+        fingerprint.coverage_states[position] = match assessment.state {
+            ResearchCoverageState::Grounded => 1,
+            ResearchCoverageState::SpecSufficient => 2,
+            ResearchCoverageState::Unresolved => 3,
+            ResearchCoverageState::Blocked => 4,
+        };
+        fingerprint.rationalized_coverage[position] = !assessment.rationale.trim().is_empty();
+        if assessment.state == ResearchCoverageState::Grounded && assessment.evidence_ids.is_empty()
+        {
+            fingerprint.grounded_without_evidence = fingerprint
+                .grounded_without_evidence
+                .saturating_add(1)
+                .min(coverage_overflow);
+        }
+        fingerprint.evidence_reference_count = fingerprint
+            .evidence_reference_count
+            .saturating_add(assessment.evidence_ids.len())
+            .min(evidence_reference_overflow);
+        let mut cited = HashSet::new();
+        for evidence_id in &assessment.evidence_ids {
+            if !cited.insert(evidence_id.as_str()) {
+                fingerprint.repeated_evidence = true;
+            }
+            let Some(record) = evidence_by_id.get(evidence_id.as_str()) else {
+                fingerprint.unknown_evidence = true;
+                continue;
+            };
+            if !record
+                .requirement_ids
+                .iter()
+                .any(|requirement_id| requirement_id == &assessment.requirement_id)
+            {
+                fingerprint.mismatched_evidence = true;
+            }
+            if assessment.state == ResearchCoverageState::Grounded && !record.grounded {
+                fingerprint.ungrounded_evidence = true;
+            }
+        }
+    }
+
+    let question_overflow = requirements
+        .len()
+        .saturating_add(evidence.len())
+        .saturating_add(1)
+        .max(1);
+    fingerprint.question_count = draft.next_questions.len().min(question_overflow);
+    let mut question_ids = HashSet::new();
+    let mut batch_slots = HashSet::new();
+    for question in &draft.next_questions {
+        let safe_id = !question.id.trim().is_empty()
+            && question.id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            });
+        if safe_id {
+            fingerprint.safe_question_ids = fingerprint
+                .safe_question_ids
+                .saturating_add(1)
+                .min(question_overflow);
+        }
+        if !question_ids.insert(question.id.as_str()) {
+            fingerprint.duplicate_question_ids = true;
+        }
+        let structurally_valid = safe_id
+            && !question.question.trim().is_empty()
+            && question.question.trim_end().ends_with('?')
+            && !question.evidence_needed.trim().is_empty()
+            && matches!(question.kind.as_str(), "library_docs" | "web" | "codebase")
+            && !question.requirement_ids.is_empty();
+        if structurally_valid {
+            fingerprint.structurally_valid_questions = fingerprint
+                .structurally_valid_questions
+                .saturating_add(1)
+                .min(question_overflow);
+        }
+        if routes.supports(&question.kind) {
+            fingerprint.route_feasible_questions = fingerprint
+                .route_feasible_questions
+                .saturating_add(1)
+                .min(question_overflow);
+        }
+        let mut bound = HashSet::new();
+        for requirement_id in &question.requirement_ids {
+            if !requirement_positions.contains_key(requirement_id.as_str())
+                || !bound.insert(requirement_id.as_str())
+            {
+                fingerprint.invalid_question_binding = true;
+                continue;
+            }
+            if !coverage_seen.contains(requirement_id.as_str())
+                || fingerprint.coverage_states[requirement_positions[requirement_id.as_str()]] != 3
+            {
+                fingerprint.question_targets_non_unresolved = true;
+            }
+        }
+        let slot = research_question_slot(question);
+        if seen_question_slots.contains(&slot) || !batch_slots.insert(slot) {
+            fingerprint.repeated_question_slot = true;
+        }
+    }
+    fingerprint
+}
+
 fn compile_research_saturation(
     raw: &str,
     requirements: &[RequirementRecord],
     evidence: &[ResearchEvidenceRecord],
     seen_question_slots: &HashSet<String>,
+    routes: &ResearchSeedLookupRoutes,
 ) -> Result<ResearchSaturationDraft> {
     let draft: ResearchSaturationDraft = serde_json::from_str(strip_code_fences(raw).trim())
         .map_err(|error| anyhow!("research saturation ledger was not valid typed JSON: {error}"))?;
@@ -17169,6 +17924,13 @@ fn compile_research_saturation(
             bail!(
                 "research question `{}` lacked an interrogative, evidence target, kind, or requirement binding",
                 question.id
+            );
+        }
+        if !routes.supports(&question.kind) {
+            bail!(
+                "research question `{}` requested `{}` evidence without a runnable downstream route",
+                question.id,
+                question.kind
             );
         }
         let mut question_requirements = HashSet::new();
@@ -21421,20 +22183,18 @@ impl GooseAgentDispatcher {
     async fn run_research_seed_fan(
         self: &Arc<Self>,
         partitions: Vec<ResearchSeedPartition>,
-        research_extensions: Arc<Vec<ExtensionConfig>>,
-        spec_doc_urls: Arc<Vec<String>>,
-        is_amendment: bool,
+        lookup_routes: ResearchSeedLookupRoutes,
         worker_models: Vec<String>,
     ) -> Result<(Vec<ResearchSeedAssignment>, Vec<CompiledResearchSeedLedger>)> {
         let me = self.clone();
+        let attempt_events = self.events.clone();
         let events = self.events.clone();
         let results = fanout_retrying_over_fleet(
             worker_models,
             partitions,
             move |partition: ResearchSeedPartition, model: String| {
                 let me = me.clone();
-                let extensions = research_extensions.clone();
-                let doc_urls = spec_doc_urls.clone();
+                let routes = lookup_routes.clone();
                 async move {
                     let assignment = ResearchSeedAssignment {
                         partition_id: partition.partition_id,
@@ -21457,14 +22217,6 @@ impl GooseAgentDispatcher {
                     "requirement_count": assignment.requirements.len(),
                     "coordinator_call_started": false,
                 }));
-                let routes = ResearchSeedLookupRoutes {
-                    attached_extensions: extensions
-                        .iter()
-                        .map(|extension| extension.name().to_string())
-                        .collect(),
-                    spec_document_urls: doc_urls.as_ref().clone(),
-                    codebase_shell: is_amendment,
-                };
                 let field_rules = research_seed_field_rules();
                 let system = "You are one seed evidence mapper in a collaborative research pod. You own only \
                     the capacity-derived semantic requirement packet supplied below; every other active node owns a \
@@ -21615,14 +22367,30 @@ impl GooseAgentDispatcher {
                     }
                 }
             },
-            |partition| {
-                partition
-                    .requirements
-                    .iter()
-                    .map(research_seed_unit_cost)
-                    .fold(0usize, usize::saturating_add)
-            },
+            research_seed_partition_cost,
             |partition| partition.partition_id.clone(),
+            move |attempt| {
+                attempt_events.write_value(serde_json::json!({
+                    "event": "research_seed_packet_attempt_started",
+                    "partition_id": attempt.packet,
+                    "source_ordinal": attempt.source_index,
+                    "model": attempt.device,
+                    "attempt": attempt.attempt,
+                    "estimated_output_cost": attempt.priority,
+                    "prior_failed_nodes": attempt.failed_devices,
+                    "admission_basis": "estimated-output-cost-descending-stable-source-ordinal",
+                }));
+                if attempt.attempt > 1 {
+                    attempt_events.write_value(serde_json::json!({
+                        "event": "research_seed_packet_reassigned",
+                        "partition_id": attempt.packet,
+                        "model": attempt.device,
+                        "attempt": attempt.attempt,
+                        "prior_failed_nodes": attempt.failed_devices,
+                        "retry_basis": "previous-node-failed-packet-distinct-node-remained",
+                    }));
+                }
+            },
             move |observation| {
                 if observation.kind == StagedFanObservationKind::DetailTailStarted {
                     events.write_value(serde_json::json!({
@@ -21655,145 +22423,209 @@ impl GooseAgentDispatcher {
         questions: Vec<ResearchQuestion>,
         research_extensions: Arc<Vec<ExtensionConfig>>,
         worker_models: Vec<String>,
-        spec_doc_urls: Arc<Vec<String>>,
-    ) -> Vec<ResearchFinding> {
+        lookup_routes: ResearchSeedLookupRoutes,
+    ) -> Result<Vec<ResearchFinding>> {
         let models = one_lane_per_host(worker_models);
         if models.is_empty() {
-            return Vec::new();
+            bail!("semantic research queue has work but no distinct evidence node");
         }
         let me = self.clone();
-        fanout_over_fleet(models, questions, move |question, model| {
-            let me = me.clone();
-            let extensions = research_extensions.clone();
-            let doc_urls = spec_doc_urls.clone();
-            async move {
-                let started = std::time::Instant::now();
-                let activity_key = format!("research-queue-{cycle}-{}", question.id);
-                me.events.write_value(serde_json::json!({
-                    "event": "research_pod_role_started",
-                    "cycle": cycle,
-                    "role": "evidence-worker",
-                    "question_id": question.id,
-                    "model": model,
-                    "requirement_ids": question.requirement_ids,
-                    "evidence_needed": question.evidence_needed,
-                    "question_kind": question.kind,
-                    "elapsed_cap_secs": null,
-                    "reasoning_volume_cap_chars": null,
-                    "lookup_cap": null,
-                }));
-                let route = match question.kind.as_str() {
-                    "library_docs" if !extensions.is_empty() => {
-                        "Use the attached documentation/search tools and cite exact API names and signatures."
-                            .to_string()
-                    }
-                    "web" if !extensions.is_empty() => {
-                        "Use the attached search tools and distinguish sourced facts from inference."
-                            .to_string()
-                    }
-                    "codebase" => "Use shell/tree to inspect the current working directory and cite exact paths and symbols."
-                        .to_string(),
-                    _ if !doc_urls.is_empty() => format!(
-                        "The specification names these source documents: {}. Fetch the relevant source with curl and cite the exact text that answers the question.",
-                        doc_urls.join(", ")
-                    ),
-                    _ => "No external lookup connector or specification-named document is available. Do not guess: report the evidence as UNAVAILABLE and explain exactly which source would be needed."
-                        .to_string(),
-                };
-                let system = format!(
-                    "You are one evidence worker in a collaborative research pod. Investigate ONLY the assigned \
-                     evidence need; do not draft a plan and do not create or modify files. {route} Return the \
-                     specific facts, exact values/signatures/paths, source provenance, contradictions, and planning \
-                     implication needed to settle it. If the source cannot be reached or does not answer it, say \
-                     UNAVAILABLE rather than filling the gap from memory. There is no token, lookup, turn, or \
-                     elapsed-time quota: stop when this evidence need is actually answered or proven unavailable."
-                );
-                let user = serde_json::to_string_pretty(&serde_json::json!({
-                    "question_id": question.id,
-                    "question": question.question,
-                    "kind": question.kind,
-                    "requirement_ids": question.requirement_ids,
-                    "evidence_needed": question.evidence_needed,
-                }))
-                .unwrap_or_default();
-                let output = me
-                    .run_agent_in(
-                        me.working_dir.clone(),
-                        &model,
-                        system,
-                        user,
-                        None,
-                        Some(UNBOUNDED_AGENT_TURNS),
-                        &extensions,
-                        AgentToolSurface::Developer,
-                        0,
-                        Some(&activity_key),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                    .await;
-                let (findings, mut lookups, attempt) = match output {
-                    Ok(output) => {
-                        let mut lookups = research_lookups(&output.tool_calls);
-                        if question.kind == "codebase" {
-                            lookups.extend(
-                                output
-                                    .tool_calls
-                                    .iter()
-                                    .filter(|call| {
-                                        call.ok == Some(true)
-                                            && (call.name.contains("shell")
-                                                || call.name.contains("tree"))
-                                    })
-                                    .map(|call| call.name.clone()),
-                            );
-                            lookups.sort();
-                            lookups.dedup();
+        let events = self.events.clone();
+        let tail_events = self.events.clone();
+        fanout_retrying_over_fleet(
+            models,
+            questions,
+            move |question, model| {
+                let me = me.clone();
+                let extensions = research_extensions.clone();
+                let routes = lookup_routes.clone();
+                async move {
+                    let started = std::time::Instant::now();
+                    let activity_key = format!("research-queue-{cycle}-{}", question.id);
+                    me.events.write_value(serde_json::json!({
+                        "event": "research_pod_role_started",
+                        "cycle": cycle,
+                        "role": "evidence-worker",
+                        "question_id": question.id,
+                        "model": model,
+                        "requirement_ids": question.requirement_ids,
+                        "evidence_needed": question.evidence_needed,
+                        "question_kind": question.kind,
+                        "elapsed_cap_secs": null,
+                        "reasoning_volume_cap_chars": null,
+                        "lookup_cap": null,
+                    }));
+                    let route = research_evidence_route_prompt(&question.kind, &routes);
+                    let system = format!(
+                        "You are one evidence worker in a collaborative research pod. Investigate ONLY the assigned \
+                         evidence need; do not draft a plan and do not create or modify files. {route} Consult the \
+                         real source before completing. Return disposition `found` with the specific facts, exact \
+                         values/signatures/paths, contradictions, and planning implication. Return disposition \
+                         `unavailable` only after a real lookup succeeded but the consulted source did not contain \
+                         the needed fact. A failed tool call or model recollection is not unavailable evidence. Put \
+                         exact URLs, paths, or source identifiers in source_provenance. There is no token, lookup, \
+                         turn, or elapsed-time quota: finish the assigned evidence need, then call final_output."
+                    );
+                    let user = serde_json::to_string_pretty(&serde_json::json!({
+                        "question_id": question.id,
+                        "question": question.question,
+                        "kind": question.kind,
+                        "authoritative_requirement_ids": question.requirement_ids,
+                        "evidence_needed": question.evidence_needed,
+                    }))
+                    .unwrap_or_default();
+                    let output = match me
+                        .run_agent_in(
+                            me.working_dir.clone(),
+                            &model,
+                            system,
+                            user,
+                            Some(Response {
+                                json_schema: Some(research_evidence_worker_schema()),
+                            }),
+                            Some(UNBOUNDED_AGENT_TURNS),
+                            &extensions,
+                            AgentToolSurface::Developer,
+                            0,
+                            Some(&activity_key),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(output) => output,
+                        Err(error) => {
+                            me.events.write_value(serde_json::json!({
+                                "event": "research_pod_role_failed",
+                                "cycle": cycle,
+                                "role": "evidence-worker",
+                                "question_id": question.id,
+                                "model": model,
+                                "attempt_outcome": ResearchAttempt::Errored.as_str(),
+                                "retry_authority": "remaining-distinct-physical-nodes",
+                                "error": error.to_string(),
+                            }));
+                            return Err(error.to_string());
                         }
-                        let attempt = if !lookups.is_empty() {
-                            ResearchAttempt::Grounded
-                        } else {
-                            classify_research_attempt(&output.tool_calls)
-                        };
-                        (output.text, lookups, attempt)
+                    };
+                    let mut lookups = research_lookups(&output.tool_calls);
+                    if question.kind == "codebase" {
+                        lookups.extend(
+                            output
+                                .tool_calls
+                                .iter()
+                                .filter(|call| {
+                                    call.ok == Some(true)
+                                        && (call.name.contains("shell")
+                                            || call.name.contains("tree"))
+                                })
+                                .map(|call| call.name.clone()),
+                        );
                     }
-                    Err(error) => (
-                        format!("UNAVAILABLE: research worker failed: {error}"),
-                        Vec::new(),
-                        ResearchAttempt::Errored,
-                    ),
-                };
-                lookups.sort();
-                lookups.dedup();
-                let grounded = !lookups.is_empty();
-                me.events.write_value(serde_json::json!({
-                    "event": "research_pod_role_completed",
-                    "cycle": cycle,
-                    "role": "evidence-worker",
-                    "question_id": question.id,
-                    "model": model,
-                    "requirement_ids": question.requirement_ids,
-                    "evidence_needed": question.evidence_needed,
-                    "grounded": grounded,
-                    "lookups": lookups,
-                    "finding_chars": findings.chars().count(),
-                    "elapsed_secs": started.elapsed().as_secs_f64(),
-                }));
-                ResearchFinding {
-                    question: question.question,
-                    kind: question.kind,
-                    requirement_ids: question.requirement_ids,
-                    evidence_needed: question.evidence_needed,
-                    findings,
-                    grounded,
-                    lookups,
-                    attempt,
+                    lookups.sort();
+                    lookups.dedup();
+                    let attempt = if !lookups.is_empty() {
+                        ResearchAttempt::Grounded
+                    } else {
+                        classify_research_attempt(&output.tool_calls)
+                    };
+                    let raw = output
+                        .final_output
+                        .filter(|value| !value.trim().is_empty())
+                        .or_else(|| (!output.text.trim().is_empty()).then_some(output.text));
+                    let compiled = match raw
+                        .ok_or_else(|| anyhow!("research evidence worker returned no typed packet"))
+                        .and_then(|raw| {
+                            compile_research_evidence_worker(&raw, &question, &lookups)
+                        }) {
+                        Ok(compiled) => compiled,
+                        Err(error) => {
+                            me.events.write_value(serde_json::json!({
+                                "event": "research_pod_role_failed",
+                                "cycle": cycle,
+                                "role": "evidence-worker",
+                                "question_id": question.id,
+                                "model": model,
+                                "attempt_outcome": attempt.as_str(),
+                                "retry_authority": "remaining-distinct-physical-nodes",
+                                "error": error.to_string(),
+                            }));
+                            return Err(error.to_string());
+                        }
+                    };
+                    let fact_grounded = compiled.disposition.fact_grounded();
+                    me.events.write_value(serde_json::json!({
+                        "event": "research_pod_role_completed",
+                        "cycle": cycle,
+                        "role": "evidence-worker",
+                        "question_id": question.id,
+                        "model": model,
+                        "requirement_ids": question.requirement_ids,
+                        "evidence_needed": question.evidence_needed,
+                        "grounded": fact_grounded,
+                        "disposition": compiled.disposition.as_str(),
+                        "attempt_outcome": attempt.as_str(),
+                        "lookups": lookups,
+                        "finding_chars": compiled.findings.chars().count(),
+                        "elapsed_secs": started.elapsed().as_secs_f64(),
+                    }));
+                    Ok(ResearchFinding {
+                        question: question.question,
+                        kind: question.kind,
+                        requirement_ids: question.requirement_ids,
+                        evidence_needed: question.evidence_needed,
+                        findings: compiled.findings,
+                        grounded: fact_grounded,
+                        lookups,
+                        attempt,
+                    })
                 }
-            }
-        })
+            },
+            research_question_authored_cost,
+            |question| question.id.clone(),
+            move |attempt| {
+                events.write_value(serde_json::json!({
+                    "event": "research_evidence_packet_attempt_started",
+                    "cycle": cycle,
+                    "question_id": attempt.packet,
+                    "source_ordinal": attempt.source_index,
+                    "model": attempt.device,
+                    "attempt": attempt.attempt,
+                    "authored_cost": attempt.priority,
+                    "prior_failed_nodes": attempt.failed_devices,
+                    "admission_basis": "authored-cost-descending-stable-source-ordinal",
+                }));
+                if attempt.attempt > 1 {
+                    events.write_value(serde_json::json!({
+                        "event": "research_evidence_packet_reassigned",
+                        "cycle": cycle,
+                        "question_id": attempt.packet,
+                        "model": attempt.device,
+                        "attempt": attempt.attempt,
+                        "prior_failed_nodes": attempt.failed_devices,
+                        "retry_basis": "previous-node-failed-packet-distinct-node-remained",
+                    }));
+                }
+            },
+            move |observation| {
+                if observation.kind == StagedFanObservationKind::DetailTailStarted {
+                    tail_events.write_value(serde_json::json!({
+                        "event": "research_evidence_tail_started",
+                        "cycle": cycle,
+                        "outstanding_question": observation.outstanding_detail,
+                        "completed_questions": observation.completed_details,
+                        "in_flight_questions": observation.in_flight_details,
+                        "logically_free_nodes": observation.logically_free_lanes,
+                        "observation": "idle_capacity_observed",
+                        "supervision_available": false,
+                        "supervision_unavailable_reason": "research-evidence-precedes-physical-scheduler-lifecycle",
+                    }));
+                }
+            },
+        )
         .await
     }
 
@@ -21815,6 +22647,14 @@ impl GooseAgentDispatcher {
             bail!("semantic research has no evidence-worker model");
         }
         let spec_doc_urls = Arc::new(spec_doc_urls(user_prompt));
+        let lookup_routes = ResearchSeedLookupRoutes {
+            attached_extensions: research_extensions
+                .iter()
+                .map(|extension| extension.name().to_string())
+                .collect(),
+            spec_document_urls: spec_doc_urls.as_ref().clone(),
+            codebase_shell: is_amendment,
+        };
         self.events.write_value(serde_json::json!({
             "event": "research_pod_started",
             "topology": "full-fleet-semantic-work-stealing-seed-then-one-evidence-ledger-dynamic-nonduplicate-queue",
@@ -21840,37 +22680,48 @@ impl GooseAgentDispatcher {
         let seed_partitions =
             plan_research_seed_partitions(&requirements, requested_seed_partitions)?;
         let speed_weights = load_config().speed_weights;
-        let initial_models = order_fleet_by_speed(worker_models.clone(), &speed_weights);
+        let initial_admissions = retrying_fan_initial_admissions(
+            worker_models.clone(),
+            &seed_partitions,
+            research_seed_partition_cost,
+        );
         self.events.write_value(serde_json::json!({
             "event": "research_seed_roles_assigned",
-            "roles": seed_partitions.iter().map(|partition| serde_json::json!({
+            "roles": seed_partitions.iter().enumerate().map(|(source_ordinal, partition)| serde_json::json!({
                 "partition_id": partition.partition_id,
                 "model": null,
+                "source_ordinal": source_ordinal,
                 "requirement_ids": partition.requirements.iter().map(|requirement| requirement.id.as_str()).collect::<Vec<_>>(),
                 "requirement_count": partition.requirements.len(),
-                "authored_cost": partition.requirements.iter().map(research_seed_unit_cost).sum::<usize>(),
+                "assessment_rows": partition.requirements.len(),
+                "authored_cost": research_seed_partition_authored_cost(partition),
+                "estimated_output_cost": research_seed_partition_cost(partition),
             })).collect::<Vec<_>>(),
-            "initial_node_roles": initial_models.iter().zip(seed_partitions.iter()).map(|(model, partition)| serde_json::json!({
-                "partition_id": partition.partition_id,
+            "initial_node_roles": initial_admissions.iter().map(|(source_ordinal, model)| serde_json::json!({
+                "source_ordinal": source_ordinal,
+                "partition_id": seed_partitions[*source_ordinal].partition_id.as_str(),
                 "model": model,
+                "assessment_rows": seed_partitions[*source_ordinal].requirements.len(),
+                "authored_cost": research_seed_partition_authored_cost(&seed_partitions[*source_ordinal]),
+                "estimated_output_cost": research_seed_partition_cost(&seed_partitions[*source_ordinal]),
                 "capacity_weight": configured_speed_weight(&speed_weights, model),
             })).collect::<Vec<_>>(),
             "available_nodes": worker_models.len(),
             "available_execution_slots": available_execution_slots,
             "seed_partitions": seed_partitions.len(),
-            "assigned_nodes": worker_models.len(),
-            "queued_partitions_after_initial_admission": seed_partitions.len().saturating_sub(worker_models.len()),
-            "all_nodes_assigned_before_first_model_call": seed_partitions.len() >= worker_models.len(),
+            "assigned_nodes": initial_admissions.len(),
+            "queued_partitions_after_initial_admission": seed_partitions.len().saturating_sub(initial_admissions.len()),
+            "all_nodes_assigned_before_first_model_call": initial_admissions.len() == worker_models.len(),
             "coordinator_calls_started": 0,
             "partition_basis": "authored-semantic-boundaries-balanced-by-authority-cost-dynamic-work-stealing",
             "queue_depth_basis": "physical-hosts-plus-resolved-execution-slots",
+            "initial_admission_order": "estimated-output-cost-descending-stable-source-ordinal",
+            "subsequent_assignment_observed_via": "research_seed_packet_attempt_started",
         }));
         let (seed_assignments, seed_ledgers) = self
             .run_research_seed_fan(
                 seed_partitions,
-                research_extensions.clone(),
-                spec_doc_urls.clone(),
-                is_amendment,
+                lookup_routes.clone(),
                 worker_models.clone(),
             )
             .await?;
@@ -21891,9 +22742,11 @@ impl GooseAgentDispatcher {
         let mut findings = seed.findings;
         let mut seen_question_slots = HashSet::new();
         if !seed.questions.is_empty() {
-            for question in &seed.questions {
-                seen_question_slots.insert(research_question_slot(question));
-            }
+            let dispatched_slots = seed
+                .questions
+                .iter()
+                .map(research_question_slot)
+                .collect::<Vec<_>>();
             self.events.write_value(serde_json::json!({
                 "event": "research_queue_dispatched",
                 "cycle": 0,
@@ -21906,18 +22759,18 @@ impl GooseAgentDispatcher {
                 "dispatch_basis": "full-fleet-seed-unresolved-evidence-slots",
                 "fleet_capacity_used_to_create_work": false,
             }));
-            let batch = self
-                .run_research_queue(
+            let batch = commit_research_queue_batch(
+                &mut seen_question_slots,
+                dispatched_slots,
+                self.run_research_queue(
                     0,
                     seed.questions,
                     research_extensions.clone(),
                     worker_models.clone(),
-                    spec_doc_urls.clone(),
+                    lookup_routes.clone(),
                 )
-                .await;
-            if batch.is_empty() {
-                bail!("semantic research seed queue made no progress: no evidence worker returned");
-            }
+                .await,
+            )?;
             findings.extend(batch);
         }
         let mut cycle = 0u64;
@@ -21932,11 +22785,6 @@ impl GooseAgentDispatcher {
                 "model": planner_model,
                 "evidence_records": evidence.len(),
             }));
-            let lookup_routes = serde_json::json!({
-                "attached_extensions": research_extensions.iter().map(|extension| extension.name().to_string()).collect::<Vec<_>>(),
-                "spec_document_urls": spec_doc_urls.as_ref(),
-                "codebase_shell": is_amendment,
-            });
             let system = "You are the canonical evidence-saturation coordinator for a coding swarm. Maintain \
                 exactly one coverage row for every immutable requirement id. Mark a requirement `spec-sufficient` \
                 only when its authored text itself contains every fact planning needs; mark it `grounded` only \
@@ -21968,15 +22816,82 @@ impl GooseAgentDispatcher {
                     Some(&coordinator_key),
                 )
                 .await?;
-            let raw = output
+            let mut raw = output
                 .final_output
                 .filter(|value| !value.trim().is_empty())
                 .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
                 .ok_or_else(|| {
                     anyhow!("research saturation coordinator returned no typed ledger")
                 })?;
-            let compiled =
-                compile_research_saturation(&raw, &requirements, &evidence, &seen_question_slots)?;
+            let mut progress_history = ResearchSaturationProgressHistory::default();
+            let mut correction = 0u64;
+            let compiled = loop {
+                match compile_research_saturation(
+                    &raw,
+                    &requirements,
+                    &evidence,
+                    &seen_question_slots,
+                    &lookup_routes,
+                ) {
+                    Ok(compiled) => break compiled,
+                    Err(error) => {
+                        let fingerprint = research_saturation_progress_fingerprint(
+                            &raw,
+                            &requirements,
+                            &evidence,
+                            &seen_question_slots,
+                            &lookup_routes,
+                        );
+                        if !progress_history.admit(fingerprint) {
+                            bail!(
+                                "research saturation coordinator repeated a canonical invalid ledger state after correction: {error}"
+                            );
+                        }
+                        correction += 1;
+                        self.events.write_value(serde_json::json!({
+                            "event": "research_saturation_ledger_correction_started",
+                            "cycle": cycle,
+                            "model": planner_model,
+                            "correction": correction,
+                            "compiler_error": error.to_string(),
+                            "attempt_cap": null,
+                            "completion_basis": "typed-authority-semantic-saturation",
+                        }));
+                        let correction_system = "The deterministic evidence-saturation compiler rejected your previous ledger. Re-emit the ENTIRE ledger with exactly one coverage row for every immutable requirement id. Cite only supplied evidence ids bound to that requirement; lookup provenance without a found fact cannot make coverage grounded. Emit only runnable, non-repeated questions for unresolved requirements. The compiler error is factual authority feedback. There is no attempt, question, token, or elapsed-time cap; finish only by calling final_output with a compiler-complete ledger.";
+                        let correction_user = serde_json::to_string_pretty(&serde_json::json!({
+                            "compiler_error": error.to_string(),
+                            "is_amendment": is_amendment,
+                            "authoritative_requirements": requirements,
+                            "available_lookup_routes": lookup_routes,
+                            "evidence_ledger": evidence,
+                            "previously_investigated_evidence_slots": seen_question_slots.len(),
+                        }))?;
+                        let correction_key =
+                            format!("research-pod-coordinator-{cycle}-correction-{correction}");
+                        let corrected = self
+                            .run_response_only_agent(
+                                planner_model,
+                                correction_system.to_string(),
+                                correction_user,
+                                Some(Response {
+                                    json_schema: Some(research_saturation_schema()),
+                                }),
+                                0,
+                                Some(&correction_key),
+                            )
+                            .await?;
+                        raw = corrected
+                            .final_output
+                            .filter(|value| !value.trim().is_empty())
+                            .or_else(|| {
+                                (!corrected.text.trim().is_empty()).then_some(corrected.text)
+                            })
+                            .ok_or_else(|| {
+                                anyhow!("research saturation correction returned no typed ledger")
+                            })?;
+                    }
+                }
+            };
             let state_count = |state| {
                 compiled
                     .coverage
@@ -22005,6 +22920,7 @@ impl GooseAgentDispatcher {
                 "role": "evidence-saturation-coordinator",
                 "model": planner_model,
                 "status": compiled.status.as_str(),
+                "ledger_corrections": correction,
                 "contribution": {
                     "coverage_rows": compiled.coverage.len(),
                     "next_evidence_slots": compiled.next_questions.len(),
@@ -22018,9 +22934,11 @@ impl GooseAgentDispatcher {
                 }
                 ResearchSaturationStatus::Continue => {}
             }
-            for question in &compiled.next_questions {
-                seen_question_slots.insert(research_question_slot(question));
-            }
+            let dispatched_slots = compiled
+                .next_questions
+                .iter()
+                .map(research_question_slot)
+                .collect::<Vec<_>>();
             self.events.write_value(serde_json::json!({
                 "event": "research_queue_dispatched",
                 "cycle": cycle,
@@ -22033,18 +22951,18 @@ impl GooseAgentDispatcher {
                 "dispatch_basis": "unresolved-semantic-evidence-slots",
                 "fleet_capacity_used_to_create_work": false,
             }));
-            let batch = self
-                .run_research_queue(
+            let batch = commit_research_queue_batch(
+                &mut seen_question_slots,
+                dispatched_slots,
+                self.run_research_queue(
                     cycle,
                     compiled.next_questions,
                     research_extensions.clone(),
                     worker_models.clone(),
-                    spec_doc_urls.clone(),
+                    lookup_routes.clone(),
                 )
-                .await;
-            if batch.is_empty() {
-                bail!("semantic research queue made no progress: no evidence worker returned");
-            }
+                .await,
+            )?;
             findings.extend(batch);
         }
     }
@@ -29690,13 +30608,20 @@ mod fan_order_tests {
         let admissions = Arc::new(Mutex::new(Vec::new()));
         let admitted = Arc::new(tokio::sync::Semaphore::new(0));
         let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let devices = vec!["node-a".to_string(), "node-b".to_string()];
+        let items = vec![
+            ("source-0".to_string(), 1usize),
+            ("source-1".to_string(), 1usize),
+            ("heavy-source-2".to_string(), 100usize),
+        ];
+        let planned_initial =
+            retrying_fan_initial_admissions(devices.clone(), &items, |item| item.1)
+                .into_iter()
+                .map(|(source_index, device)| (items[source_index].0.clone(), device))
+                .collect::<HashSet<_>>();
         let run = tokio::spawn(fanout_retrying_over_fleet(
-            vec!["node-a".to_string(), "node-b".to_string()],
-            vec![
-                ("source-0".to_string(), 1usize),
-                ("source-1".to_string(), 1usize),
-                ("heavy-source-2".to_string(), 100usize),
-            ],
+            devices,
+            items,
             {
                 let admissions = admissions.clone();
                 let admitted = admitted.clone();
@@ -29716,6 +30641,7 @@ mod fan_order_tests {
             |item| item.1,
             |item| item.0.clone(),
             |_| {},
+            |_| {},
         ));
 
         admitted
@@ -29729,9 +30655,10 @@ mod fan_order_tests {
             .unwrap()
             .iter()
             .take(2)
-            .map(|(id, _)| id.clone())
+            .cloned()
             .collect::<HashSet<_>>();
-        assert!(initial.contains("heavy-source-2"));
+        assert_eq!(initial, planned_initial);
+        assert!(initial.iter().any(|(packet, _)| packet == "heavy-source-2"));
         release.add_permits(3);
         let output = run.await.unwrap().unwrap();
         assert_eq!(output, vec!["source-0", "source-1", "heavy-source-2"]);
@@ -29740,6 +30667,7 @@ mod fan_order_tests {
     #[tokio::test]
     async fn retrying_fan_moves_fast_failures_to_distinct_healthy_nodes() {
         let attempts = Arc::new(Mutex::new(Vec::new()));
+        let observed_attempts = Arc::new(Mutex::new(Vec::new()));
         let output = fanout_retrying_over_fleet(
             vec![
                 "fast-failure".to_string(),
@@ -29766,6 +30694,10 @@ mod fan_order_tests {
             },
             |_| 0,
             String::clone,
+            {
+                let observed_attempts = observed_attempts.clone();
+                move |attempt| observed_attempts.lock().unwrap().push(attempt)
+            },
             |_| {},
         )
         .await
@@ -29798,6 +30730,15 @@ mod fan_order_tests {
                 "a failed packet must never return to the same node"
             );
         }
+        let observed_attempts = observed_attempts.lock().unwrap();
+        assert!(observed_attempts.iter().any(|attempt| {
+            attempt.attempt > 1
+                && attempt.device != "fast-failure"
+                && attempt
+                    .failed_devices
+                    .iter()
+                    .any(|device| device == "fast-failure")
+        }));
     }
 
     #[tokio::test]
@@ -29850,6 +30791,7 @@ mod fan_order_tests {
             },
             |item| item.1,
             |item| item.0.clone(),
+            |_| {},
             |_| {},
         ));
 
@@ -30186,17 +31128,60 @@ struct RetryingFanCompletion<T, R> {
     output: std::result::Result<R, String>,
 }
 
+fn retrying_fan_priority_cmp(
+    left_priority: usize,
+    left_index: usize,
+    right_priority: usize,
+    right_index: usize,
+) -> std::cmp::Ordering {
+    right_priority
+        .cmp(&left_priority)
+        .then_with(|| left_index.cmp(&right_index))
+}
+
+fn retrying_fan_initial_admissions<T, Priority>(
+    devices: Vec<String>,
+    items: &[T],
+    priority: Priority,
+) -> Vec<(usize, String)>
+where
+    Priority: Fn(&T) -> usize,
+{
+    let devices = order_fleet_by_speed(one_lane_per_host(devices), &load_config().speed_weights);
+    let mut source_indices = (0..items.len()).collect::<Vec<_>>();
+    source_indices.sort_by(|left, right| {
+        retrying_fan_priority_cmp(
+            priority(&items[*left]),
+            *left,
+            priority(&items[*right]),
+            *right,
+        )
+    });
+    source_indices.into_iter().zip(devices).collect()
+}
+
+#[derive(Clone, Debug)]
+struct RetryingFanAttemptObservation {
+    packet: String,
+    source_index: usize,
+    device: String,
+    attempt: usize,
+    priority: usize,
+    failed_devices: Vec<String>,
+}
+
 /// Run authority-bearing packets with work stealing and failover. A failed packet may not return to a
 /// device that already failed it; it remains queued until a different device is free. There is no retry-count
 /// or time cap: the finite set of distinct physical nodes is the retry authority, and failure is terminal only
 /// after that set is exhausted. Results are restored to source order even when admission is priority-ordered.
-async fn fanout_retrying_over_fleet<T, R, F, Fut, Priority, Label, Observe>(
+async fn fanout_retrying_over_fleet<T, R, F, Fut, Priority, Label, ObserveAttempt, ObserveTail>(
     devices: Vec<String>,
     items: Vec<T>,
     f: F,
     priority: Priority,
     label: Label,
-    observe: Observe,
+    observe_attempt: ObserveAttempt,
+    observe_tail: ObserveTail,
 ) -> Result<Vec<R>>
 where
     T: Clone + Send + 'static,
@@ -30205,7 +31190,8 @@ where
     Fut: std::future::Future<Output = std::result::Result<R, String>> + Send + 'static,
     Priority: Fn(&T) -> usize,
     Label: Fn(&T) -> String,
-    Observe: Fn(StagedFanObservation),
+    ObserveAttempt: Fn(RetryingFanAttemptObservation),
+    ObserveTail: Fn(StagedFanObservation),
 {
     use std::collections::VecDeque;
 
@@ -30217,7 +31203,7 @@ where
         bail!("retrying fleet fan has work but no distinct node");
     }
     let device_count = devices.len();
-    let labels = items.iter().map(|item| label(item)).collect::<Vec<_>>();
+    let labels = items.iter().map(label).collect::<Vec<_>>();
     let item_count = items.len();
     let mut pending = items
         .into_iter()
@@ -30231,10 +31217,7 @@ where
         })
         .collect::<Vec<_>>();
     let order_pending = |left: &RetryingFanPending<T>, right: &RetryingFanPending<T>| {
-        right
-            .priority
-            .cmp(&left.priority)
-            .then_with(|| left.index.cmp(&right.index))
+        retrying_fan_priority_cmp(left.priority, left.index, right.priority, right.index)
     };
     pending.sort_by(&order_pending);
 
@@ -30258,6 +31241,18 @@ where
                     continue;
                 };
                 let mut pending_item = pending.remove(position);
+                observe_attempt(RetryingFanAttemptObservation {
+                    packet: labels.get(pending_item.index).cloned().unwrap_or_default(),
+                    source_index: pending_item.index,
+                    device: device.clone(),
+                    attempt: pending_item.attempted_devices.len().saturating_add(1),
+                    priority: pending_item.priority,
+                    failed_devices: pending_item
+                        .failures
+                        .iter()
+                        .map(|(device, _)| device.clone())
+                        .collect(),
+                });
                 pending_item.attempted_devices.insert(device.clone());
                 in_flight.insert(pending_item.index);
                 let call_item = pending_item.item.clone();
@@ -30280,7 +31275,7 @@ where
 
         if pending.is_empty() && in_flight.len() == 1 && !tail_reported {
             let index = *in_flight.iter().next().expect("one packet is in flight");
-            observe(StagedFanObservation {
+            observe_tail(StagedFanObservation {
                 kind: StagedFanObservationKind::DetailTailStarted,
                 outstanding_detail: labels.get(index).cloned().unwrap_or_default(),
                 pending_details: 0,
@@ -37980,6 +38975,26 @@ fn research_saturation_schema() -> serde_json::Value {
                 }
             },
             "summary": {"type": "string"}
+        }
+    })
+}
+
+fn research_evidence_worker_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+            "question_id", "complete", "disposition", "findings", "source_provenance"
+        ],
+        "properties": {
+            "question_id": {"type": "string"},
+            "complete": {"type": "boolean"},
+            "disposition": {
+                "type": "string",
+                "enum": ["found", "unavailable"]
+            },
+            "findings": {"type": "string"},
+            "source_provenance": {"type": "array", "items": {"type": "string"}}
         }
     })
 }
