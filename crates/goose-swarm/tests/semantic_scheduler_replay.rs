@@ -220,6 +220,13 @@ impl SemanticObservationSnapshotProducer for FixedSnapshotProducer {
             recurrence_observed_windows: 300,
             recurrence_repeated_windows: 12,
             recurrence_repeat_share: 0.04,
+            provider_stream_revision: 0,
+            provider_stream_chunks: 0,
+            provider_stream_bytes: 0,
+            provider_structured_output_chunks: 0,
+            provider_structured_output_bytes: 0,
+            provider_last_progress_elapsed_ms: 0,
+            provider_structured_output_active: false,
             artifact_version: "artifact-v1".to_string(),
         };
         let summons = SemanticObservationSummonsSignal::TraceStateAdvanced {

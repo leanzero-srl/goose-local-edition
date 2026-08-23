@@ -1697,7 +1697,7 @@ enum ProviderLifecycleProof {
     Pending,
     ProviderNotStarted,
     TerminalObserved {
-        completion: CompletedProviderRequest,
+        completion: Box<CompletedProviderRequest>,
         reviewer_raw_reply_hash: Option<String>,
     },
     Unresolved(String),
@@ -1755,7 +1755,7 @@ impl SemanticObservationReviewer for LifecycleBoundSemanticReviewer {
                 match finish_started_provider_request(started, ProviderTerminalKind::Failed).await {
                     Ok(completion) => {
                         self.set_proof(ProviderLifecycleProof::TerminalObserved {
-                            completion,
+                            completion: Box::new(completion),
                             reviewer_raw_reply_hash: None,
                         });
                     }
@@ -1785,7 +1785,7 @@ impl SemanticObservationReviewer for LifecycleBoundSemanticReviewer {
         match finish_started_provider_request(started, terminal_kind).await {
             Ok(completion) => {
                 self.set_proof(ProviderLifecycleProof::TerminalObserved {
-                    completion,
+                    completion: Box::new(completion),
                     reviewer_raw_reply_hash,
                 });
             }
@@ -1878,14 +1878,14 @@ async fn finalize_admitted_observation(
             } else {
                 LocalCompletionKind::Success
             };
-            (local_completion, Some(completion), reviewer_raw_reply_hash)
+            (local_completion, Some(*completion), reviewer_raw_reply_hash)
         }
         ProviderLifecycleProof::TerminalObserved {
             completion,
             reviewer_raw_reply_hash,
         } => (
             LocalCompletionKind::Error,
-            Some(completion),
+            Some(*completion),
             reviewer_raw_reply_hash,
         ),
         ProviderLifecycleProof::ProviderNotStarted => (LocalCompletionKind::Error, None, None),

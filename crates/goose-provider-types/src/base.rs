@@ -291,6 +291,44 @@ pub type MessageStream = Pin<
     Box<dyn Stream<Item = Result<(Option<Message>, Option<ProviderUsage>), ProviderError>> + Send>,
 >;
 
+/// Payload-free progress observed while a provider decoder consumes streaming response frames.
+/// Structured output remains buffered until it is a complete tool request; this side channel only
+/// proves that the decoder is still receiving bytes while no `MessageStream` item can safely exist.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProviderStreamChunkKind {
+    Content,
+    StructuredOutput,
+}
+
+pub trait ProviderStreamProgressSink: Send + Sync {
+    fn record_decoded_chunk(&self, decoded_bytes: usize, kind: ProviderStreamChunkKind);
+
+    fn structured_output_completed(&self) {}
+}
+
+tokio::task_local! {
+    static ACTIVE_PROVIDER_STREAM_PROGRESS: Arc<dyn ProviderStreamProgressSink>;
+}
+
+pub async fn scope_provider_stream_progress<F>(
+    sink: Arc<dyn ProviderStreamProgressSink>,
+    future: F,
+) -> F::Output
+where
+    F: Future,
+{
+    ACTIVE_PROVIDER_STREAM_PROGRESS.scope(sink, future).await
+}
+
+pub fn record_current_provider_stream_chunk(decoded_bytes: usize, kind: ProviderStreamChunkKind) {
+    let _ = ACTIVE_PROVIDER_STREAM_PROGRESS
+        .try_with(|sink| sink.record_decoded_chunk(decoded_bytes, kind));
+}
+
+pub fn complete_current_provider_structured_output() {
+    let _ = ACTIVE_PROVIDER_STREAM_PROGRESS.try_with(|sink| sink.structured_output_completed());
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PermissionRouting {
     ActionRequired,

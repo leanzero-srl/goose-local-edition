@@ -166,6 +166,12 @@ pub struct JudgeInput {
     /// never fires either. A NON-ZERO value here is positive proof the worker is producing.
     /// `None` when no heartbeat is available, or on a digest written before this key existed.
     pub worker_thinking_chars: Option<u64>,
+    /// Decoded provider bytes belonging to a still-buffered structured tool argument. These bytes
+    /// are never exposed as content or an executable partial tool request.
+    pub worker_structured_output_bytes: Option<u64>,
+    /// True only while the provider decoder is assembling structured output that has not yet become
+    /// a complete `ToolRequest`.
+    pub worker_structured_output_active: bool,
     /// `worker_thinking_chars` AS OF THE PREVIOUS JUDGE OBSERVATION of this same attempt, if there
     /// was one. `None` on the first look.
     ///
@@ -176,8 +182,8 @@ pub struct JudgeInput {
     /// a worker mid-generation from a worker that has stopped.
     pub prev_thinking_chars: Option<u64>,
     /// `worker_tool_calls` AS OF THE PREVIOUS JUDGE OBSERVATION of this same attempt, if there was one.
-    /// `None` on the first look. This is the ACTION counterpart to `prev_thinking_chars` and the input
-    /// `is_still_producing` keys on: reasoning that grows proves only that the model is talking.
+    /// `None` on the first look. This is the ACTION counterpart to `prev_thinking_chars`; reasoning
+    /// that grows proves only that the model is talking.
     pub prev_tool_calls: Option<u32>,
     /// `elapsed_secs` AS OF that previous observation, so the delta above can be read as a RATE rather
     /// than as an unbounded "acted at some point since last time I looked".
@@ -189,6 +195,9 @@ pub struct JudgeInput {
     /// and one of them was `test-meridian`, which had written its files 12 minutes earlier and still held
     /// a slot at 27 minutes. An observation that old cannot certify that a worker is producing NOW.
     pub prev_observed_secs: Option<u64>,
+    /// Structured-output byte count and observation time from the previous look at this attempt.
+    pub prev_structured_output_bytes: Option<u64>,
+    pub prev_structured_observed_secs: Option<u64>,
     /// How many times THIS task has already been split. Splitting is capped (once) so a task can never be
     /// recursively shattered; a task that has already been split is never split again.
     pub split_count: u32,
@@ -490,6 +499,7 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
         && !input.any_owned_written
         && input.worker_tool_calls == Some(0)
         && input.worker_thinking_chars.unwrap_or(0) >= cfg.spiral_thinking_chars
+        && !input.worker_structured_output_active
         && input.elapsed_secs >= cfg.min_age_secs
     {
         return Some(JudgeOutcome {
@@ -536,9 +546,9 @@ pub fn deterministic_verdict(input: &JudgeInput, cfg: &JudgeConfig) -> Option<Ju
     // the corpus is p90 475s for implementers and p90 831s (max 1099s) for test-authors — the constant
     // sat BELOW the p90 of BOTH populations it judged, and all 11 trips fired in 420-485s. A worker that
     // is still PRODUCING therefore gets double the budget, while one that has gone quiet dies on the
-    // original schedule. Combined with `is_still_producing` keying on ACTIONS rather than reasoning, a
-    // spiral (thinking climbs, tool calls flat) is NOT producing and still dies at 420s — which is the
-    // case this branch exists for.
+    // original schedule. `is_still_producing` accepts actions or active decoder-validated structured
+    // output, never reasoning growth, so a spiral (thinking climbs while both stay flat) is NOT
+    // producing and still dies at 420s — which is the case this branch exists for.
     let deadline = no_output_deadline_secs(
         cfg.min_age_secs.max(420),
         input.attempt,
@@ -841,11 +851,13 @@ fn no_file_hint(input: &JudgeInput, read_nothing: bool) -> String {
 /// trip all still bound a worker that generates forever; this only declines to call a producing
 /// worker "stuck".
 fn is_still_producing(input: &JudgeInput, cfg: &JudgeConfig) -> bool {
-    // ACTIONS, not reasoning. Keying this on thinking growth made it permanently true for a spiral, since
-    // a spiral's thinking climbs monotonically BY DEFINITION — MEASURED (F191): test-api wrote its file at
+    // ACTIONS or decoder-validated structured output, never reasoning. Keying this on thinking growth
+    // made it permanently true for a spiral, since a spiral's thinking climbs monotonically BY
+    // DEFINITION — MEASURED (F191): test-api wrote its file at
     // 408s then ran 595s with ZERO tool calls while thinking went 2,897 -> 22,627, and every trip that
-    // could have caught it was blocked by this predicate. A tool call is the only signal that separates a
-    // worker doing work from one talking to itself.
+    // could have caught it was blocked by this predicate. Tool-call growth and bytes actively being
+    // assembled into a typed request are the two payload-independent signals that separate work from
+    // talking to itself.
     //
     // Verified not to re-introduce F163's false kill (F195): that case had flat thinking AND flat tool
     // calls, and was protected by `any_owned_written == false` in all three flat observations, so this
@@ -859,13 +871,30 @@ fn is_still_producing(input: &JudgeInput, cfg: &JudgeConfig) -> bool {
     // the SAME constant the Accept branch and the deadline use, deliberately: a predicate must not be
     // allowed to override a staleness threshold using evidence coarser than that threshold. No new
     // literal, and the rule stays true if that constant is ever retuned.
-    match (input.prev_tool_calls, input.worker_tool_calls) {
+    let recent_action_growth = match (input.prev_tool_calls, input.worker_tool_calls) {
         (Some(prev), Some(now)) if now > prev => match input.prev_observed_secs {
             Some(then) => input.elapsed_secs.saturating_sub(then) <= cfg.min_age_secs.max(420),
             None => true,
         },
         _ => false,
-    }
+    };
+    let recent_structured_growth = if input.worker_structured_output_active {
+        match (
+            input.prev_structured_output_bytes,
+            input.worker_structured_output_bytes,
+        ) {
+            (Some(prev), Some(now)) if now > prev => {
+                input.prev_structured_observed_secs.is_none_or(|then| {
+                    input.elapsed_secs.saturating_sub(then) <= cfg.min_age_secs.max(420)
+                })
+            }
+            (None, Some(now)) => now > 0,
+            _ => false,
+        }
+    } else {
+        false
+    };
+    recent_action_growth || recent_structured_growth
 }
 
 /// The finalize-spin correction, COMPOSED FROM WHAT THIS WORKER ACTUALLY DID.
@@ -950,14 +979,43 @@ fn spin_hint(input: &JudgeInput) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn growing_partial_structured_output_disproves_a_stale_worker_without_hiding_a_real_stall() {
+        let cfg = JudgeConfig::default();
+        let mut first = mk_no_write(1, 500, 0);
+        first.worker_structured_output_bytes = Some(16_384);
+        first.worker_structured_output_active = true;
+        assert!(
+            deterministic_verdict(&first, &cfg).is_none(),
+            "an active first observation gets one look to establish its monotonic baseline"
+        );
+
+        let mut growing = first.clone();
+        growing.prev_structured_output_bytes = Some(16_384);
+        growing.prev_structured_observed_secs = Some(450);
+        growing.worker_structured_output_bytes = Some(20_480);
+        assert!(
+            deterministic_verdict(&growing, &cfg).is_none(),
+            "validated structured argument growth is provider work, not an idle worker"
+        );
+
+        let mut flat = growing;
+        flat.prev_structured_output_bytes = flat.worker_structured_output_bytes;
+        assert!(
+            deterministic_verdict(&flat, &cfg).is_some(),
+            "an active flag with no byte growth must not grant permanent immunity"
+        );
+    }
+
     /// F143's contract, REWRITTEN because F191 refuted it: CLIMBING REASONING IS NOT PRODUCTION.
     ///
     /// The original test asserted that growing `thinking_chars` protects a worker from the spin trip.
     /// That is exactly what a spiral looks like — a spiral's reasoning grows monotonically BY
     /// DEFINITION. MEASURED (F191): `test-api` wrote its file at 408s then ran 595s with ZERO tool
     /// calls while thinking climbed 2,897 -> 22,627, and every trip that could have caught it was
-    /// suppressed by this rule. `is_still_producing` now keys on ACTIONS, so the case below must be
-    /// CAUGHT, not protected. Keeping the old assertion would have pinned the defect in place.
+    /// suppressed by this rule. `is_still_producing` now keys on ACTIONS or active structured decode,
+    /// so the case below must be CAUGHT, not protected. Keeping the old assertion would have pinned
+    /// the defect in place.
     #[test]
     fn climbing_reasoning_alone_does_not_protect_a_worker() {
         let cfg = JudgeConfig::default();
@@ -1106,9 +1164,13 @@ mod tests {
             secs_since_last_write: last_write,
             worker_tool_calls: None,
             worker_thinking_chars: None,
+            worker_structured_output_bytes: None,
+            worker_structured_output_active: false,
             prev_thinking_chars: None,
             prev_tool_calls: None,
             prev_observed_secs: None,
+            prev_structured_output_bytes: None,
+            prev_structured_observed_secs: None,
             split_count: 0,
             attempt: 0,
         }
@@ -1429,12 +1491,16 @@ mod provenance_tests {
             secs_since_last_write: Some(10),
             worker_tool_calls: Some(3),
             worker_thinking_chars: Some(100),
+            worker_structured_output_bytes: None,
+            worker_structured_output_active: false,
             // Added by F143, and the tripwire did its job: this literal is deliberately exhaustive so
             // a new field cannot be introduced without a human deciding what it means HERE. It means
             // "no previous observation", which leaves every trip armed — the safe default.
             prev_thinking_chars: None,
             prev_tool_calls: None,
             prev_observed_secs: None,
+            prev_structured_output_bytes: None,
+            prev_structured_observed_secs: None,
             split_count: 0,
             attempt: 0,
         };
