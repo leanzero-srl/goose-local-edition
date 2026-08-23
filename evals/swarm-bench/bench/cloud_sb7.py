@@ -18211,6 +18211,63 @@ def transport_unknown_quiescence_failure(
     return None
 
 
+def discard_uncommitted_transport_staging(
+    parent: Path,
+    destination: Path,
+    prefix: str,
+    *,
+    allowed_files: set[str],
+    allowed_empty_directories: set[str] | None = None,
+) -> None:
+    if destination.exists() or destination.is_symlink() or not parent.exists():
+        return
+    if parent.is_symlink() or not parent.is_dir() or parent.resolve() != parent:
+        raise SystemExit("transport-unknown staging parent is missing or linked")
+    allowed_directories = allowed_empty_directories or set()
+    removed = False
+    for candidate in sorted(parent.iterdir()):
+        if not candidate.name.startswith(prefix):
+            continue
+        suffix = candidate.name.removeprefix(prefix)
+        if not suffix or re.fullmatch(r"[a-z0-9_]+", suffix) is None:
+            continue
+        if candidate.is_symlink() or not candidate.is_dir():
+            raise SystemExit(
+                f"transport-unknown staging candidate is not a directory: {candidate}"
+            )
+        for entry in candidate.iterdir():
+            if entry.is_symlink():
+                raise SystemExit(
+                    f"transport-unknown staging candidate contains a link: {candidate}"
+                )
+            if entry.name in allowed_directories:
+                if not entry.is_dir() or any(entry.iterdir()):
+                    raise SystemExit(
+                        "transport-unknown staging candidate contains an invalid "
+                        f"directory: {candidate}"
+                    )
+                continue
+            atomic_for_allowed_file = any(
+                entry.name.startswith(f".{name}.")
+                and re.fullmatch(
+                    r"[a-z0-9_]+", entry.name.removeprefix(f".{name}.")
+                )
+                is not None
+                for name in allowed_files
+            )
+            if (
+                entry.name not in allowed_files and not atomic_for_allowed_file
+            ) or not entry.is_file():
+                raise SystemExit(
+                    "transport-unknown staging candidate contains unexpected "
+                    f"evidence: {candidate}"
+                )
+        shutil.rmtree(candidate)
+        removed = True
+    if removed:
+        fsync_directory(parent)
+
+
 def apply_transport_unknown_isolation(
     root: Path, entrant_id: str
 ) -> Dict[str, Any]:
@@ -18313,7 +18370,20 @@ def isolate_transport_unknown(root: Path, entrant_id: str) -> Dict[str, Any]:
             exclusive_claim(ledger_path.with_suffix(".lock"), blocking=True)
         ):
             raise SystemExit("cannot claim transport-unknown budget boundary")
+        registry_root = root / TRANSPORT_UNKNOWN_PATH
         bundle = transport_unknown_bundle(root, entrant_id)
+        discard_uncommitted_transport_staging(
+            registry_root,
+            bundle,
+            f".{entrant_id}-isolation-",
+            allowed_files={
+                "source-state.json",
+                "source-budget-ledger.json",
+                "isolation.json",
+            },
+        )
+        if bundle.is_symlink():
+            raise SystemExit("transport-unknown isolation bundle is linked")
         if bundle.exists():
             return apply_transport_unknown_isolation(root, entrant_id)
         require_lineage(root)
@@ -18381,7 +18451,6 @@ def isolate_transport_unknown(root: Path, entrant_id: str) -> Dict[str, Any]:
             raise SystemExit(
                 "transport-unknown isolation requires the exact entrant reserve set"
             )
-        registry_root = root / TRANSPORT_UNKNOWN_PATH
         registry_root.mkdir(parents=True, exist_ok=True)
         staging = Path(
             tempfile.mkdtemp(prefix=f".{entrant_id}-isolation-", dir=registry_root)
@@ -18452,6 +18521,7 @@ def isolate_transport_unknown(root: Path, entrant_id: str) -> Dict[str, Any]:
                 "transport_never_left_proven": False,
             }
             atomic_json(staging / "isolation.json", receipt)
+            transport_unknown_fault("isolation_staged")
             fsync_directory(staging)
             if (
                 sha256_file(state_file(root, entrant_id))
@@ -18590,7 +18660,21 @@ def adjudicate_transport_unknown_successor(
             exclusive_claim(ledger_path.with_suffix(".lock"), blocking=True)
         ):
             raise SystemExit("cannot claim transport-unknown successor budget boundary")
-        workspace = transport_unknown_bundle(root, entrant_id) / "successor-run"
+        bundle = transport_unknown_bundle(root, entrant_id)
+        workspace = bundle / "successor-run"
+        discard_uncommitted_transport_staging(
+            bundle,
+            workspace,
+            ".successor-run-",
+            allowed_files={
+                "source-state.json",
+                "source-budget-ledger.json",
+                "receipt.json",
+            },
+            allowed_empty_directories={"tree", "profile", "logs"},
+        )
+        if workspace.is_symlink():
+            raise SystemExit("transport-unknown successor workspace is linked")
         if workspace.exists():
             return apply_transport_unknown_successor(root, entrant_id)
         require_lineage(root)
@@ -18637,7 +18721,6 @@ def adjudicate_transport_unknown_successor(
             for request_id in request_ids
         ):
             raise SystemExit("transport-unknown reserve changed before adjudication")
-        bundle = transport_unknown_bundle(root, entrant_id)
         staging = Path(
             tempfile.mkdtemp(prefix=".successor-run-", dir=bundle)
         )
@@ -18715,6 +18798,7 @@ def adjudicate_transport_unknown_successor(
                 "settled_or_spend_rewritten": False,
             }
             atomic_json(staging / "receipt.json", receipt)
+            transport_unknown_fault("successor_staged")
             fsync_directory(staging)
             if (
                 sha256_file(state_file(root, entrant_id))

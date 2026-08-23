@@ -2904,6 +2904,96 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 self.assertEqual(ledger_path.read_bytes(), ledger_before)
                 self.assertIsNone(cloud_sb7.lineage_failure(root))
 
+    def test_transport_unknown_isolation_replays_after_sigkill_while_staging(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            ledger_path = Path(str(fixture["ledger_path"]))
+            ledger_before = ledger_path.read_bytes()
+            attempts_before = cloud_sb7.read_state(root, entrant_id)[
+                "provider_episode_attempts"
+            ]
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="queued transport is unresolved"
+            )
+            child = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import os,signal,sys; from pathlib import Path; "
+                        "import cloud_sb7; "
+                        "cloud_sb7.transport_unknown_fault=lambda stage: "
+                        "os.kill(os.getpid(),signal.SIGKILL) if "
+                        "stage=='isolation_staged' else None; "
+                        "cloud_sb7.isolate_transport_unknown(Path(sys.argv[1]),"
+                        "sys.argv[2])"
+                    ),
+                    str(root),
+                    entrant_id,
+                ],
+                cwd=Path(cloud_sb7.__file__).parent,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            self.assertEqual(child.returncode, -signal.SIGKILL)
+            registry = root / cloud_sb7.TRANSPORT_UNKNOWN_PATH
+            prefix = f".{entrant_id}-isolation-"
+            self.assertEqual(
+                len(
+                    [
+                        path
+                        for path in registry.iterdir()
+                        if path.name.startswith(prefix)
+                    ]
+                ),
+                1,
+            )
+            self.assertFalse(
+                cloud_sb7.transport_unknown_bundle(root, entrant_id).exists()
+            )
+
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+
+            self.assertFalse(
+                any(path.name.startswith(prefix) for path in registry.iterdir())
+            )
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], cloud_sb7.TRANSPORT_UNKNOWN_STATUS)
+            self.assertEqual(state["provider_episode_attempts"], attempts_before)
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            self.assertIsNone(cloud_sb7.lineage_failure(root))
+
+    def test_transport_unknown_isolation_never_deletes_unvalidated_lookalike(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="queued transport is unresolved"
+            )
+            lookalike = (
+                root
+                / cloud_sb7.TRANSPORT_UNKNOWN_PATH
+                / f".{entrant_id}-isolation-lookalike"
+            )
+            lookalike.mkdir(parents=True)
+            (lookalike / "operator-data.txt").write_text("do not delete\n")
+
+            with self.assertRaisesRegex(SystemExit, "unexpected evidence"):
+                cloud_sb7.isolate_transport_unknown(root, entrant_id)
+
+            self.assertEqual(
+                (lookalike / "operator-data.txt").read_text(), "do not delete\n"
+            )
+
     def test_transport_unknown_successor_carries_reserve_and_attempt_ordinal(
         self,
     ) -> None:
@@ -2993,6 +3083,80 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 )
                 self.assertEqual(ledger_path.read_bytes(), ledger_before)
                 self.assertIsNone(cloud_sb7.lineage_failure(root))
+
+    def test_transport_unknown_successor_replays_after_sigkill_while_staging(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            ledger_path = Path(str(fixture["ledger_path"]))
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="queued transport is unresolved"
+            )
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+            ledger_before = ledger_path.read_bytes()
+            attempts_before = cloud_sb7.read_state(root, entrant_id)[
+                "provider_episode_attempts"
+            ]
+            child = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import os,signal,sys; from pathlib import Path; "
+                        "import cloud_sb7; "
+                        "cloud_sb7.transport_unknown_fault=lambda stage: "
+                        "os.kill(os.getpid(),signal.SIGKILL) if "
+                        "stage=='successor_staged' else None; "
+                        "cloud_sb7.adjudicate_transport_unknown_successor("
+                        "Path(sys.argv[1]),sys.argv[2])"
+                    ),
+                    str(root),
+                    entrant_id,
+                ],
+                cwd=Path(cloud_sb7.__file__).parent,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            self.assertEqual(child.returncode, -signal.SIGKILL)
+            bundle = cloud_sb7.transport_unknown_bundle(root, entrant_id)
+            self.assertEqual(
+                len(
+                    [
+                        path
+                        for path in bundle.iterdir()
+                        if path.name.startswith(".successor-run-")
+                    ]
+                ),
+                1,
+            )
+            self.assertFalse((bundle / "successor-run").exists())
+
+            campaign = cloud_sb7.adjudicate_transport_unknown_successor(
+                root, entrant_id
+            )
+
+            self.assertFalse(
+                any(
+                    path.name.startswith(".successor-run-")
+                    for path in bundle.iterdir()
+                )
+            )
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "PLANNED")
+            self.assertEqual(state["provider_episode_attempts"], attempts_before)
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            self.assertEqual(
+                cloud_sb7.current_full_episode_outstanding_reservations(
+                    root, campaign, fixture["row"]
+                ),
+                ([], None),
+            )
+            self.assertIsNone(cloud_sb7.lineage_failure(root))
 
     def test_transport_unknown_successor_rejects_duplicate_request_id(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
