@@ -2956,7 +2956,6 @@ def redacted_copy_until_process_exit(
     next_inventory_at = 0.0
     exit_code: int | None = None
     drain_deadline: float | None = None
-    descendants_observed = False
     cleanup_proven = True
 
     def persist_lines(*, final: bool = False) -> None:
@@ -2995,7 +2994,6 @@ def redacted_copy_until_process_exit(
                     for pid, _ in process_group_members(owned_pgid)
                     if pid not in excluded_pids | {proc.pid}
                 }
-                descendants_observed = bool(live_inventory or same_group_members)
                 for record in live_inventory:
                     with contextlib.suppress(ProcessLookupError):
                         os.kill(int(record["pid"]), signal.SIGTERM)
@@ -3039,7 +3037,7 @@ def redacted_copy_until_process_exit(
                 pending += decoder.decode(b"", final=True)
                 persist_lines(final=True)
         assert exit_code is not None
-        return exit_code, bool(cleanup_proven and not descendants_observed)
+        return exit_code, cleanup_proven
     finally:
         selector.close()
         proc.stdout.close()
@@ -5578,6 +5576,7 @@ def same_binary_supersession_failure(
     predecessor: Mapping[str, Any],
     rows: Iterable[Mapping[str, Any]],
     states: Mapping[str, Mapping[str, Any]],
+    affected_entrants: set[str],
     replacement_instrument_hashes: Mapping[str, str],
 ) -> str | None:
     old_hashes = predecessor.get("instrument_hashes")
@@ -5603,10 +5602,27 @@ def same_binary_supersession_failure(
             expected_provider=str(row["provider"]),
             expected_model=str(row["model"]),
         )
+        if entrant_id in affected_entrants:
+            if (
+                state.get("status") not in TERMINAL_BUILD_STATES
+                or state.get("status") in BUILD_SUCCESS_STATES
+                or state.get("score") is not None
+                or state.get("verdict") not in {None, ""}
+                or lifecycle_failure(lifecycle) is not None
+                or int(lifecycle.get("admitted", 0))
+                != int(lifecycle.get("terminal", 0))
+            ):
+                return (
+                    "same-binary supersession requires affected full episodes to "
+                    f"have a terminal, unscored infrastructure failure: {entrant_id}"
+                )
+            continue
+        if state.get("status") in BUILD_SUCCESS_STATES:
+            continue
         if not full_entrant_was_never_started(state, lifecycle):
             return (
-                "same-binary supersession is limited to smoke-only defects before "
-                f"every full episode: {entrant_id}"
+                "same-binary supersession requires unaffected entrants to be "
+                f"successful or unstarted: {entrant_id}"
             )
         tree = Path(str(state["tree"]))
         if (
@@ -6959,6 +6975,7 @@ def supersede_campaign(
                         predecessor,
                         rows,
                         states,
+                        affected,
                         replacement_instrument_hashes,
                     )
                     if same_binary_problem:

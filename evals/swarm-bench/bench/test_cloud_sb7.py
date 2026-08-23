@@ -2743,7 +2743,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(successor["qualification_history"]["restart_count"], 1)
             self.assertIsNone(cloud_sb7.lineage_failure(successor_root))
 
-    def test_same_binary_supersession_is_smoke_only_and_instrument_exact(
+    def test_same_binary_supersession_accepts_only_proven_terminal_recovery(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -2777,7 +2777,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             replacement = {coordinator: "new", stable: "same"}
             self.assertIsNone(
                 cloud_sb7.same_binary_supersession_failure(
-                    predecessor, rows, {"model": state}, replacement
+                    predecessor, rows, {"model": state}, set(), replacement
                 )
             )
 
@@ -2785,6 +2785,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 predecessor,
                 rows,
                 {"model": state},
+                set(),
                 dict(predecessor["instrument_hashes"]),
             )
             self.assertIn("exactly one coordinator", no_change or "")
@@ -2793,19 +2794,66 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 predecessor,
                 rows,
                 {"model": state},
+                set(),
                 {coordinator: "new", stable: "changed"},
             )
             self.assertIn("exactly one coordinator", extra_change or "")
 
-            started = {**state, "provider_episode_attempts": 1}
-            full_episode = cloud_sb7.same_binary_supersession_failure(
-                predecessor, rows, {"model": started}, replacement
+            lifecycle.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in self.provider_lifecycle_events(
+                        rows[0],
+                        [
+                            "queued",
+                            "admitted",
+                            "first_item",
+                            "usage_reported",
+                            "provider_terminal",
+                        ],
+                        request_id="terminal-recovery",
+                    )
+                )
+                + "\n"
             )
-            self.assertIn("smoke-only defects", full_episode or "")
+            failed = {
+                **state,
+                "status": "INCOMPLETE",
+                "provider_episode_attempts": 1,
+                "admitted_requests": 1,
+                "provider_terminal_requests": 1,
+            }
+            self.assertIsNone(
+                cloud_sb7.same_binary_supersession_failure(
+                    predecessor,
+                    rows,
+                    {"model": failed},
+                    {"model"},
+                    replacement,
+                )
+            )
 
+            ambiguous_events = self.provider_lifecycle_events(
+                rows[0],
+                ["queued", "admitted", "first_item"],
+                request_id="ambiguous-recovery",
+            )
+            lifecycle.write_text(
+                "\n".join(json.dumps(event) for event in ambiguous_events) + "\n"
+            )
+            ambiguous = cloud_sb7.same_binary_supersession_failure(
+                predecessor,
+                rows,
+                {"model": failed},
+                {"model"},
+                replacement,
+            )
+            self.assertIn("terminal, unscored", ambiguous or "")
+
+            lifecycle.write_text("")
             (tree / "artifact.txt").write_text("not pristine\n")
             nonempty = cloud_sb7.same_binary_supersession_failure(
-                predecessor, rows, {"model": state}, replacement
+                predecessor, rows, {"model": state}, set(), replacement
             )
             self.assertIn("raw benchmark tree", nonempty or "")
 
@@ -10325,7 +10373,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     process.kill()
                     process.wait(timeout=5)
 
-    def test_build_and_smoke_pipe_pump_bounds_inherited_stdout(self) -> None:
+    def test_build_and_smoke_pipe_pump_accepts_proven_descendant_cleanup(self) -> None:
         child_pid_path: Path | None = None
         with tempfile.TemporaryDirectory() as raw:
             child_pid_path = Path(raw) / "child.pid"
@@ -10355,11 +10403,49 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
             elapsed = time.monotonic() - started
             self.assertEqual(exit_code, 0)
-            self.assertFalse(clean)
+            self.assertTrue(clean)
             self.assertLess(elapsed, 5)
             self.assertIn("parent complete", output.getvalue())
             child_pid = int(child_pid_path.read_text())
             self.assertFalse(cloud_sb7.process_alive(child_pid))
+
+    def test_build_pipe_pump_rejects_unproven_descendant_cleanup(self) -> None:
+        child_pid_path: Path | None = None
+        with tempfile.TemporaryDirectory() as raw:
+            child_pid_path = Path(raw) / "child.pid"
+            code = (
+                "import pathlib,subprocess,sys; "
+                "child=subprocess.Popen([sys.executable,'-c',"
+                "'import time; time.sleep(120)']); "
+                f"pathlib.Path({str(child_pid_path)!r}).write_text(str(child.pid)); "
+                "print('parent complete', flush=True)"
+            )
+            proc = subprocess.Popen(
+                [sys.executable, "-c", code],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+            output = io.StringIO()
+            with mock.patch.object(
+                cloud_sb7, "stop_group_members", return_value=False
+            ):
+                exit_code, clean = cloud_sb7.redacted_copy_until_process_exit(
+                    proc,
+                    output,
+                    [],
+                    lambda _line: None,
+                    owned_pgid=proc.pid,
+                    excluded_pids=set(),
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertFalse(clean)
+            child_pid = int(child_pid_path.read_text())
+            cloud_sb7.stop_group_members(proc.pid, set())
+            deadline = time.monotonic() + 2
+            while cloud_sb7.process_alive(child_pid) and time.monotonic() < deadline:
+                time.sleep(0.02)
 
     def test_publisher_log_pump_bounds_inherited_stdout_after_parent_exit(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
