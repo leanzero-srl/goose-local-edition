@@ -2,7 +2,14 @@
 //! write a structured per-run JSONL log without this model-agnostic core knowing about IO. All
 //! emits happen under the scheduler's state lock, so a sink need only be `Send + Sync`.
 
-use crate::{dag::TaskSpec, dispatch::ToolCallRecord};
+use crate::{
+    broker::{
+        AdmissionReceipt, LocalCompletionReceipt, PhysicalFleetSnapshot, ProviderRequestReceipt,
+        ProviderTerminalReceipt, QueueReceipt, ReleasedAdmissionReceipt, StaleWorkReceipt,
+    },
+    dag::TaskSpec,
+    dispatch::ToolCallRecord,
+};
 use serde::Serialize;
 
 #[derive(Serialize, Debug)]
@@ -61,6 +68,44 @@ pub enum SwarmEvent {
     RunPaused,
     /// The pause sentinel was cleared; the scheduler resumed claiming ready tasks (re-runs nothing).
     RunUnpaused,
+    /// Same-run route/capacity evidence discovered independently of the logical device weights.
+    /// Engine 4 remains shadow-only until provider lifecycle receipts are available.
+    PhysicalFleetSnapshotObserved {
+        snapshot: PhysicalFleetSnapshot,
+        enforcement: String,
+        provider_lifecycle_available: bool,
+    },
+    PhysicalFleetSnapshotUnavailable {
+        reason: String,
+        enforcement: String,
+        provider_lifecycle_available: bool,
+    },
+    BrokerWorkQueued {
+        receipt: QueueReceipt,
+    },
+    BrokerWorkStale {
+        receipt: StaleWorkReceipt,
+    },
+    BrokerAdmissionGranted {
+        receipt: AdmissionReceipt,
+    },
+    BrokerProviderRequestStarted {
+        receipt: ProviderRequestReceipt,
+    },
+    BrokerWorkLocalCompleted {
+        receipt: LocalCompletionReceipt,
+    },
+    BrokerProviderTerminalObserved {
+        receipt: ProviderTerminalReceipt,
+    },
+    BrokerAdmissionReleased {
+        receipt: ReleasedAdmissionReceipt,
+    },
+    BrokerReceiptRejected {
+        admission_id: Option<String>,
+        receipt_kind: String,
+        reason: String,
+    },
     /// A dynamic replan round. `tasks` are the exact admitted specs and `dag` is the complete DAG
     /// after the splice, including the review-to-sink edges. This is the resume and audit authority:
     /// `added` remains as a compact compatibility index, never as a second plan representation.

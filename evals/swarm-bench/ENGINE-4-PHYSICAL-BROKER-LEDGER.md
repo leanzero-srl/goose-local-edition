@@ -76,6 +76,13 @@ benchmark fleet, LM Studio mutation, scorer change, or SB7 change.
 
 ## Gate log
 
-- Pure broker increment: `cargo test -p goose-swarm --test physical_broker_replay` (6/6),
+- Pure broker increment: `cargo test -p goose-swarm --test physical_broker_replay` (10/10),
   `cargo test -p goose-swarm --lib` (65/65), and
   `cargo clippy -p goose-swarm --all-targets -- -D warnings` pass with the shared target.
+
+Red-team refinement: `PARALLEL` is represented only as a model-instance ceiling. Same-run
+`lms ps` evidence starts at one host-wide admission; a higher host capacity requires an exact
+measured profile. An admission can own multiple provider turns and is releasable only after local
+completion plus exact terminal receipts for every turn (or an explicit provider-not-started
+receipt). The broker accepts typed task-attempt, artifact, trace, or contract revisions; role and
+revision-kind mismatches fail closed.
