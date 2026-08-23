@@ -134,6 +134,9 @@ fn macos_profile_for_paths(
          (deny process-info*) \
          (allow process-info* (target self)) \
          (allow process-info-codesignature) \
+         (deny signal) \
+         (allow signal (target self)) \
+         (allow signal (target same-sandbox)) \
          (deny mach-lookup) \
          (deny network*) \
          (allow network-inbound \
@@ -220,6 +223,9 @@ mod tests {
             "(deny process-info*)",
             "(allow process-info* (target self))",
             "(allow process-info-codesignature)",
+            "(deny signal)",
+            "(allow signal (target self))",
+            "(allow signal (target same-sandbox))",
             "(deny mach-lookup)",
             "(deny network*)",
             "(allow network-inbound",
@@ -274,6 +280,8 @@ mod tests {
             .unwrap();
         let script = r#"
 import pathlib
+import os
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -282,7 +290,7 @@ import sys
 outside = pathlib.Path(sys.argv[1])
 allowed_port = int(sys.argv[2])
 denied_port = int(sys.argv[3])
-parent_pid = sys.argv[4]
+parent_pid = int(sys.argv[4])
 secret = sys.argv[5]
 
 db = sqlite3.connect("probe.db")
@@ -293,6 +301,15 @@ db.close()
 assert pathlib.Path("roundtrip.bin").write_bytes(b"SB7") == 3
 assert pathlib.Path("roundtrip.bin").read_bytes() == b"SB7"
 subprocess.run(["/usr/bin/python3", "-c", "print(123)"], check=True)
+owned_child = subprocess.Popen(["/bin/sleep", "30"])
+owned_child.terminate()
+assert owned_child.wait(timeout=2) == -signal.SIGTERM
+try:
+    os.kill(parent_pid, signal.SIGTERM)
+except OSError:
+    pass
+else:
+    raise AssertionError("sandbox signaled a process outside its inherited profile")
 
 server = socket.socket()
 server.bind(("127.0.0.1", 0))
