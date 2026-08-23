@@ -155,10 +155,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
                             "toolCall": {
                                 "status": "success",
                                 "value": {
-                                    "name": "developer__shell",
+                                    "name": "shell",
                                     "arguments": {"command": state["expected_command"]},
                                 },
                             },
+                            "_meta": {"goose_extension": "developer"},
                         }
                     ],
                 },
@@ -177,9 +178,17 @@ class CloudSb7HarnessTest(unittest.TestCase):
                                     "content": [
                                         {
                                             "type": "text",
-                                            "text": state["expected_tool_output"],
+                                            "text": (
+                                                "xcodebuild sandbox warning\n"
+                                                + str(state["expected_tool_output"])
+                                            ),
                                         }
                                     ],
+                                    "structuredContent": {
+                                        "stdout": state["expected_tool_output"],
+                                        "stderr": "xcodebuild sandbox warning",
+                                        "exit_code": 0,
+                                    },
                                     "isError": False,
                                 },
                             },
@@ -1330,11 +1339,29 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(len({row["vendor_port"] for row in rows}), 5)
         self.assertEqual(len({row["provider_lane"] for row in rows}), 5)
         self.assertEqual(rows[0]["provider"], "zai_api")
+        self.assertEqual(
+            rows[0]["endpoint_family"], "https://api.z.ai/api/coding/paas/v4"
+        )
+        self.assertEqual(rows[0]["base_url_env"], "ZAI_API_BASE_URL")
         policy = cloud_sb7.spend_policy(manifest, rows)
         self.assertEqual(policy["total_cap"], 400.0)
         self.assertEqual(policy["provider_caps"]["google"], 250.0)
         self.assertIs(policy["launch_all_entrants_concurrently"], True)
         self.assertEqual(cloud_sb7.smoke_max_turns(manifest), cloud_sb7.SMOKE_MAX_TURNS)
+
+    def test_provider_endpoint_rejects_credential_exfiltration_shapes(self) -> None:
+        self.assertEqual(
+            cloud_sb7.normalized_provider_endpoint("https://api.example.test/v1/"),
+            "https://api.example.test/v1",
+        )
+        for malformed in (
+            "http://api.example.test/v1",
+            "https://user:pass@api.example.test/v1",
+            "https://api.example.test/v1?redirect=evil",
+            "https://api.example.test/v1#fragment",
+        ):
+            with self.subTest(malformed=malformed), self.assertRaises(SystemExit):
+                cloud_sb7.normalized_provider_endpoint(malformed)
 
     def test_only_smoke_command_has_safety_turn_limit(self) -> None:
         row = cloud_sb7.entrants(cloud_sb7.load_json(cloud_sb7.DEFAULT_ENTRANTS))[0]
@@ -1344,6 +1371,8 @@ class CloudSb7HarnessTest(unittest.TestCase):
             binary, row, "smoke prompt", cloud_sb7.SMOKE_MAX_TURNS
         )
         self.assertNotIn("--max-turns", build)
+        self.assertIn("--quiet", build)
+        self.assertIn("--quiet", smoke)
         self.assertEqual(
             smoke[smoke.index("--max-turns") + 1], str(cloud_sb7.SMOKE_MAX_TURNS)
         )
@@ -1365,9 +1394,17 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 env = cloud_sb7.child_env(row, state, "active-secret")
             self.assertEqual(env["GOOSE_BENCH_CAMPAIGN"], str(root))
             self.assertEqual(
+                env["ZAI_API_BASE_URL"], "https://api.z.ai/api/coding/paas/v4"
+            )
+            self.assertEqual(
                 env["GOOSE_BENCH_BUDGET_LEDGER"], str(root / "budget-ledger.json")
             )
             self.assertEqual(env["GOOSE_TOOL_SANDBOX_ROOT"], state["tree"])
+
+            hostile = dict(row)
+            hostile["base_url_env"] = "HOME"
+            with self.assertRaisesRegex(SystemExit, "protected env"):
+                cloud_sb7.child_env(hostile, state, "active-secret")
             self.assertEqual(env["GOOSE_PATH_ROOT"], state["profile"])
             self.assertEqual(env["GOOSE_BENCH_TOOL_ALLOWLIST"], "developer")
             self.assertEqual(env["GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES"], "true")
@@ -1473,6 +1510,19 @@ class CloudSb7HarnessTest(unittest.TestCase):
             failed = json.loads(json.dumps(valid))
             failed[1]["message"]["content"][0]["toolResult"]["status"] = "error"
             cases["successful tool response"] = failed
+            unowned_shell = json.loads(json.dumps(valid))
+            del unowned_shell[0]["message"]["content"][0]["_meta"]
+            cases["extension-qualified shell identity"] = unowned_shell
+            false_text_fallback = json.loads(json.dumps(valid))
+            false_text_fallback[1]["message"]["content"][0]["toolResult"]["value"][
+                "structuredContent"
+            ]["stdout"] = "wrong stdout"
+            cases["structured stdout authority"] = false_text_fallback
+            nonzero_exit = json.loads(json.dumps(valid))
+            nonzero_exit[1]["message"]["content"][0]["toolResult"]["value"][
+                "structuredContent"
+            ]["exit_code"] = 1
+            cases["structured zero exit"] = nonzero_exit
             missing_complete = json.loads(json.dumps(valid[:-1]))
             cases["complete event"] = missing_complete
             truncated = json.loads(json.dumps(valid))
@@ -1500,6 +1550,14 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     result = parse(events)
                     self.assertIs(result["valid"], False)
                     self.assertTrue(result["errors"])
+
+    def test_process_group_inspector_runs_outside_the_group_it_measures(self) -> None:
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch.object(
+            cloud_sb7.subprocess, "run", return_value=completed
+        ) as run:
+            self.assertEqual(cloud_sb7.process_group_members(12345), [])
+        self.assertIs(run.call_args.kwargs["start_new_session"], True)
 
     def test_smoke_proof_seals_tool_nonce_lifecycle_and_budget(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
