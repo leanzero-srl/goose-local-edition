@@ -12,6 +12,7 @@ use crate::{
     },
     dag::TaskSpec,
     dispatch::{ProviderDispatchClass, ToolCallRecord},
+    semantic_observation::NeutralJudgeSignal,
 };
 use serde::Serialize;
 
@@ -90,6 +91,15 @@ pub enum SwarmEvent {
     },
     SemanticObservationSourcePublished {
         source: TaskVersion,
+    },
+    SemanticObservationSummoned {
+        source: TaskVersion,
+        signal: NeutralJudgeSignal,
+    },
+    SemanticObservationCaptureFailed {
+        task_id: String,
+        attempt: u32,
+        reason: String,
     },
     SemanticObservationDeferred {
         task_id: String,
