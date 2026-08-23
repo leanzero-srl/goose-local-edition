@@ -4,7 +4,9 @@
 //! [`crate::judge::JudgeOutcome`]. A parsed action is evidence for a later control-plane decision; it
 //! is not permission to interrupt, nudge, accept, split, route, or schedule work.
 
-use crate::event::{EventSink, NullSink};
+use crate::event::EventSink;
+#[cfg(test)]
+use crate::event::NullSink;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -750,7 +752,7 @@ pub fn semantic_observation_response_schema(snapshot_hash: &str) -> serde_json::
 }
 
 #[async_trait]
-pub trait SemanticObservationReviewer: Send + Sync {
+pub(crate) trait SemanticObservationReviewer: Send + Sync {
     async fn review(
         &self,
         request: SemanticObservationRequest,
@@ -779,17 +781,17 @@ impl SemanticObservationReceipt {
     }
 }
 
-pub struct SemanticObservationHandle {
+pub(crate) struct SemanticObservationHandle {
     snapshot_hash: String,
     completion: oneshot::Receiver<SemanticObservationReceipt>,
 }
 
 impl SemanticObservationHandle {
-    pub fn snapshot_hash(&self) -> &str {
+    pub(crate) fn snapshot_hash(&self) -> &str {
         &self.snapshot_hash
     }
 
-    pub async fn wait(
+    pub(crate) async fn wait(
         self,
     ) -> std::result::Result<SemanticObservationReceipt, oneshot::error::RecvError> {
         self.completion.await
@@ -805,13 +807,13 @@ pub enum SemanticObservationRejection {
     ConflictingRevision { current_snapshot: String },
 }
 
-pub enum SemanticObservationSubmission {
+pub(crate) enum SemanticObservationSubmission {
     Started(SemanticObservationHandle),
     Rejected(SemanticObservationRejection),
 }
 
 #[derive(Clone)]
-pub struct SemanticObservationPlane {
+pub(crate) struct SemanticObservationPlane {
     events: Arc<dyn EventSink>,
     state: Arc<Mutex<SemanticObservationState>>,
 }
@@ -831,14 +833,15 @@ struct CurrentSnapshot {
 }
 
 impl SemanticObservationPlane {
-    pub fn new(events: Arc<dyn EventSink>) -> Self {
+    pub(crate) fn new(events: Arc<dyn EventSink>) -> Self {
         Self {
             events,
             state: Arc::new(Mutex::new(SemanticObservationState::default())),
         }
     }
 
-    pub fn without_events() -> Self {
+    #[cfg(test)]
+    fn without_events() -> Self {
         Self::new(Arc::new(NullSink))
     }
 
@@ -846,7 +849,7 @@ impl SemanticObservationPlane {
     ///
     /// This method does not acquire fleet capacity. The physical broker must admit the request before a
     /// production caller invokes it.
-    pub fn submit(
+    pub(crate) fn submit(
         &self,
         snapshot: SealedSemanticObservationSnapshot,
         reviewer: Arc<dyn SemanticObservationReviewer>,
@@ -999,14 +1002,15 @@ impl SemanticObservationPlane {
 
     /// Marks a newer snapshot authoritative without starting another review. An in-flight older review
     /// may finish, but its receipt will be stale and its action will be ABSTAIN.
-    pub fn register_current(
+    pub(crate) fn register_current(
         &self,
         snapshot: &SealedSemanticObservationSnapshot,
     ) -> std::result::Result<(), SemanticObservationRejection> {
         register_current(&mut lock_state(&self.state), snapshot)
     }
 
-    pub fn receipt(&self, snapshot_hash: &str) -> Option<SemanticObservationReceipt> {
+    #[cfg(test)]
+    fn receipt(&self, snapshot_hash: &str) -> Option<SemanticObservationReceipt> {
         lock_state(&self.state)
             .completed_by_task
             .values()
@@ -1031,8 +1035,8 @@ fn register_current(
         );
         return Ok(());
     };
-    let incoming_version = (snapshot.attempt(), snapshot.source_revision());
-    let current_version = (current.attempt, current.source_revision);
+    let incoming_version = (snapshot.source_revision(), snapshot.attempt());
+    let current_version = (current.source_revision, current.attempt);
     if incoming_version < current_version {
         return Err(SemanticObservationRejection::OlderThanCurrent {
             current_snapshot: current.snapshot_hash.clone(),
@@ -1291,6 +1295,21 @@ mod tests {
             .sibling_contract_versions
             .insert("web".into(), "".into());
         assert!(empty_version.seal().is_err());
+    }
+
+    #[test]
+    fn source_revision_remains_primary_across_attempt_changes() {
+        let plane = SemanticObservationPlane::without_events();
+        let mut current = draft(8, "current");
+        current.attempt = 0;
+        plane.register_current(&current.seal().unwrap()).unwrap();
+
+        let mut rollback = draft(7, "older revision on a later attempt");
+        rollback.attempt = 99;
+        assert!(matches!(
+            plane.register_current(&rollback.seal().unwrap()),
+            Err(SemanticObservationRejection::OlderThanCurrent { .. })
+        ));
     }
 
     #[test]
