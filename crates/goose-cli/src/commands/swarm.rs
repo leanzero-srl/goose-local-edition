@@ -21204,16 +21204,17 @@ impl PreSchedulerSemanticRuntime {
                 )
                 .catch_unwind();
                 tokio::pin!(review);
-                let source_closed = captured_source.closed();
-                tokio::pin!(source_closed);
-                let (review, source_request_closed_before_judge) = tokio::select! {
-                    review = &mut review => (review, false),
-                    _ = &mut source_closed => {
-                        judge_cancellation.request();
-                        (review.await, true)
+                let (review, source_request_closed_before_judge) = {
+                    let source_closed = captured_source.closed();
+                    tokio::pin!(source_closed);
+                    tokio::select! {
+                        review = &mut review => (review, false),
+                        _ = &mut source_closed => {
+                            judge_cancellation.request();
+                            (review.await, true)
+                        }
                     }
                 };
-                drop(source_closed);
                 let reconciliation = judge_lifecycle.reconcile_cancelled_after_drop().await;
                 if let Err(error) = reconciliation {
                     let quarantine = admitted
@@ -21968,7 +21969,6 @@ impl GooseAgentDispatcher {
         model_id: &str,
         system_prompt: String,
         user_text: String,
-        response: Option<Response>,
         max_turns: u32,
         extensions: &[ExtensionConfig],
         semantic_source_label: &str,
@@ -21977,7 +21977,7 @@ impl GooseAgentDispatcher {
             model_id,
             system_prompt,
             user_text,
-            response,
+            None,
             max_turns,
             extensions,
             self.planner_timeout_secs,
@@ -23680,7 +23680,6 @@ impl GooseAgentDispatcher {
                         &model,
                         system,
                         q.question.clone(),
-                        None,
                         12,
                         &exts,
                         &source_label,
