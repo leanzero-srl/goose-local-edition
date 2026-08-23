@@ -847,7 +847,7 @@ impl SchedulerSemanticObservationRuntime {
         } = scheduled;
         let task_id = request.task_id.clone();
         let attempt = request.attempt;
-        let _task_evidence = match self
+        let task_evidence = match self
             .plane
             .register_scheduler_task_evidence(task_authority, &request)
         {
@@ -934,6 +934,21 @@ impl SchedulerSemanticObservationRuntime {
             return SemanticObservationAttemptResult {
                 task_id,
                 revision: None,
+                disposition: SemanticObservationAttemptDisposition::NoCapture,
+            };
+        }
+        if let Err(reason) =
+            self.plane
+                .publish_scheduler_activity(&task_evidence, &request, &capture)
+        {
+            self.capture_failed(
+                &request.task_id,
+                request.attempt,
+                format!("semantic activity publication was rejected: {reason}"),
+            );
+            return SemanticObservationAttemptResult {
+                task_id,
+                revision: Some(revision),
                 disposition: SemanticObservationAttemptDisposition::NoCapture,
             };
         }

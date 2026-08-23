@@ -24,12 +24,12 @@ use crate::semantic_runtime::{
     BoundSemanticObservationCapture, EngineSemanticTaskAuthority, SemanticNudgeBoundary,
     SemanticObservationCapture, SemanticObservationCaptureRequest,
     SemanticSourceProviderSessionBoundary, SemanticTaskAcceptanceSlice,
-    SemanticTaskEvidenceCapability,
+    SemanticTaskEvidenceCapability, SemanticTraceRevision,
 };
 use async_trait::async_trait;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
@@ -357,10 +357,11 @@ struct SemanticNudgeLedger {
     registered_tasks: HashMap<String, String>,
     source_provider_sessions: HashMap<String, ExposedProviderRequestWitness>,
     unused_capture_permits: HashMap<String, CapturePermitRecord>,
-    capture_by_snapshot: HashMap<String, String>,
+    capture_by_snapshot: HashMap<String, SnapshotBindingRecord>,
     captures: HashMap<String, RegisteredNudgeCapture>,
     current_capture_by_task: HashMap<String, String>,
-    capabilities: HashMap<String, SemanticCapabilityState>,
+    latest_activity_by_task: HashMap<String, SemanticTraceRevision>,
+    capabilities: HashMap<String, SemanticCapabilityRecord>,
 }
 
 // Semantic authority paths always take this ledger before pinning provider exposure state.
@@ -369,13 +370,26 @@ struct SemanticNudgeLedger {
 struct CapturePermitRecord {
     task_key: String,
     request_hash: String,
+    provider_request_hash: String,
     source_session_hash: String,
+}
+
+struct SnapshotBindingRecord {
+    task_key: String,
+    trace_revision: u64,
 }
 
 struct RegisteredNudgeCapture {
     task_key: String,
     trace_revision: u64,
+    snapshot_hash: String,
+    provider_request_hash: String,
     review_consumed: bool,
+}
+
+struct SemanticCapabilityRecord {
+    capture_id: String,
+    state: SemanticCapabilityState,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -460,6 +474,7 @@ impl SemanticNudgeAuthority {
                 capture_by_snapshot: HashMap::new(),
                 captures: HashMap::new(),
                 current_capture_by_task: HashMap::new(),
+                latest_activity_by_task: HashMap::new(),
                 capabilities: HashMap::new(),
             })),
         }
@@ -502,6 +517,7 @@ impl SemanticNudgeAuthority {
         let provider_request_hash = canonical_sha256(started_provider_request.receipt());
         let provider_session = {
             let mut ledger = lock_nudge_ledger(&self.inner);
+            prune_closed_provider_authority(&mut ledger);
             if task_evidence.authority_id() != ledger.authority_id {
                 return Err(SemanticNudgeAuthorityError::AuthorityMismatch);
             }
@@ -530,7 +546,7 @@ impl SemanticNudgeAuthority {
                     })?;
                 ledger
                     .source_provider_sessions
-                    .insert(provider_request_hash, witness);
+                    .insert(provider_request_hash.clone(), witness);
                 session
             }
         };
@@ -542,17 +558,22 @@ impl SemanticNudgeAuthority {
         let permit_id = format!("semantic-capture-permit:{:032x}", rand::random::<u128>());
         let source_session_hash = source_provider_session.binding_hash().to_string();
         let mut ledger = lock_nudge_ledger(&self.inner);
+        prune_closed_provider_authority(&mut ledger);
         if task_evidence.authority_id() != ledger.authority_id
             || ledger.registered_tasks.get(&task_key).map(String::as_str)
                 != Some(task_evidence.request_hash())
         {
             return Err(SemanticNudgeAuthorityError::TaskEvidenceNotRegistered);
         }
+        ledger
+            .unused_capture_permits
+            .retain(|_, record| record.task_key != task_key);
         ledger.unused_capture_permits.insert(
             permit_id.clone(),
             CapturePermitRecord {
                 task_key,
                 request_hash: task_evidence.request_hash().to_string(),
+                provider_request_hash,
                 source_session_hash: source_session_hash.clone(),
             },
         );
@@ -561,6 +582,54 @@ impl SemanticNudgeAuthority {
             permit_id,
             source_provider_session,
         })
+    }
+
+    fn publish_activity(
+        &self,
+        task_evidence: &SemanticTaskEvidenceCapability,
+        request: &SemanticObservationCaptureRequest,
+        capture: &SemanticObservationCapture,
+    ) -> Result<(), SemanticNudgeAuthorityError> {
+        let revision = capture.revision();
+        let task_key = semantic_task_key(request);
+        let admitted_source = &request.activity_publisher.source;
+        if revision.authority_scope != admitted_source.authority_scope
+            || revision.phase_epoch != admitted_source.phase_epoch
+            || revision.task_id != request.task_id
+            || revision.attempt != request.attempt
+        {
+            return Err(SemanticNudgeAuthorityError::InvalidCapture(
+                "published semantic activity does not match its scheduler-owned task boundary"
+                    .to_string(),
+            ));
+        }
+        let mut ledger = lock_nudge_ledger(&self.inner);
+        prune_closed_provider_authority(&mut ledger);
+        if task_evidence.authority_id() != ledger.authority_id
+            || !task_evidence.matches(request)
+            || ledger.registered_tasks.get(&task_key).map(String::as_str)
+                != Some(task_evidence.request_hash())
+        {
+            return Err(SemanticNudgeAuthorityError::TaskEvidenceNotRegistered);
+        }
+        if let Some(current) = ledger.latest_activity_by_task.get(&task_key) {
+            if revision.source_revision < current.source_revision {
+                return Err(SemanticNudgeAuthorityError::CaptureNotCurrent);
+            }
+            if revision.source_revision == current.source_revision {
+                return if revision == *current {
+                    Ok(())
+                } else {
+                    Err(SemanticNudgeAuthorityError::InvalidCapture(format!(
+                        "semantic activity revision {} changed immutable snapshot identity",
+                        revision.source_revision
+                    )))
+                };
+            }
+        }
+        prune_task_capture_authority(&mut ledger, &task_key, revision.source_revision);
+        ledger.latest_activity_by_task.insert(task_key, revision);
+        Ok(())
     }
 
     fn seal_capture(
@@ -583,6 +652,7 @@ impl SemanticNudgeAuthority {
         let capture_id = format!("semantic-capture:{:032x}", rand::random::<u128>());
         let provider_session = permit.source_provider_session.provider_session();
         let mut ledger = lock_nudge_ledger(&self.inner);
+        prune_closed_provider_authority(&mut ledger);
         let _source_pin = provider_session
             .try_pin()
             .map_err(|_| SemanticNudgeAuthorityError::SourceProviderNotLive)?;
@@ -604,6 +674,9 @@ impl SemanticNudgeAuthority {
         if ledger.capture_by_snapshot.contains_key(&snapshot_key) {
             return Err(SemanticNudgeAuthorityError::SnapshotAlreadyBound);
         }
+        if ledger.latest_activity_by_task.get(&permit_record.task_key) != Some(&revision) {
+            return Err(SemanticNudgeAuthorityError::CaptureNotCurrent);
+        }
         if let Some(current_id) = ledger.current_capture_by_task.get(&permit_record.task_key) {
             let current = ledger
                 .captures
@@ -621,9 +694,13 @@ impl SemanticNudgeAuthority {
                 capture_id.clone(),
             )
             .map_err(SemanticNudgeAuthorityError::InvalidCapture)?;
-        ledger
-            .capture_by_snapshot
-            .insert(snapshot_key, capture_id.clone());
+        ledger.capture_by_snapshot.insert(
+            snapshot_key,
+            SnapshotBindingRecord {
+                task_key: permit_record.task_key.clone(),
+                trace_revision: revision.source_revision,
+            },
+        );
         ledger
             .current_capture_by_task
             .insert(permit_record.task_key.clone(), capture_id.clone());
@@ -632,6 +709,8 @@ impl SemanticNudgeAuthority {
             RegisteredNudgeCapture {
                 task_key: permit_record.task_key,
                 trace_revision: revision.source_revision,
+                snapshot_hash: revision.snapshot_hash,
+                provider_request_hash: permit_record.provider_request_hash,
                 review_consumed: false,
             },
         );
@@ -646,6 +725,8 @@ impl SemanticNudgeAuthority {
     ) -> Result<Option<SemanticJudgeNudgeEligibility>, SemanticNudgeAuthorityError> {
         let authority_id = bound_capture.authority_id().to_string();
         let capture_id = bound_capture.capture_id().to_string();
+        let trace_revision = bound_capture.nudge_boundary().trace_source_revision();
+        let snapshot_hash = bound_capture.nudge_boundary().snapshot_hash().to_string();
         let eligibility =
             derive_semantic_judge_nudge_eligibility(bound_capture, receipt, receipt_authority)
                 .map_err(SemanticNudgeAuthorityError::InvalidEvidence)?;
@@ -656,6 +737,7 @@ impl SemanticNudgeAuthority {
                 .provider_session()
         });
         let mut ledger = lock_nudge_ledger(&self.inner);
+        prune_closed_provider_authority(&mut ledger);
         if authority_id != ledger.authority_id {
             return Err(SemanticNudgeAuthorityError::AuthorityMismatch);
         }
@@ -668,6 +750,13 @@ impl SemanticNudgeAuthority {
             return Err(SemanticNudgeAuthorityError::ReviewAlreadyConsumed);
         }
         if ledger.current_capture_by_task.get(&task_key) != Some(&capture_id) {
+            return Err(SemanticNudgeAuthorityError::CaptureNotCurrent);
+        }
+        if !latest_activity_matches(
+            ledger.latest_activity_by_task.get(&task_key),
+            trace_revision,
+            &snapshot_hash,
+        ) {
             return Err(SemanticNudgeAuthorityError::CaptureNotCurrent);
         }
         let source_pin = provider_session
@@ -683,7 +772,10 @@ impl SemanticNudgeAuthority {
         if let Some(eligibility) = &eligibility {
             ledger.capabilities.insert(
                 eligibility.evidence_receipt_hash.clone(),
-                SemanticCapabilityState::Eligible,
+                SemanticCapabilityRecord {
+                    capture_id,
+                    state: SemanticCapabilityState::Eligible,
+                },
             );
         }
         drop(ledger);
@@ -695,6 +787,14 @@ impl SemanticNudgeAuthority {
         &self,
         eligibility: &SemanticJudgeNudgeEligibility,
     ) -> Result<(), SemanticNudgeAuthorityError> {
+        self.redeem_record_with_pin_hook(eligibility, || {})
+    }
+
+    fn redeem_record_with_pin_hook(
+        &self,
+        eligibility: &SemanticJudgeNudgeEligibility,
+        on_pinned_spend: impl FnOnce(),
+    ) -> Result<(), SemanticNudgeAuthorityError> {
         let provider_session = eligibility
             .boundary
             .source_provider_session()
@@ -703,40 +803,144 @@ impl SemanticNudgeAuthority {
         if eligibility.boundary.authority_id() != ledger.authority_id {
             return Err(SemanticNudgeAuthorityError::AuthorityMismatch);
         }
-        let state = ledger
-            .capabilities
-            .get(&eligibility.evidence_receipt_hash)
-            .copied()
-            .ok_or(SemanticNudgeAuthorityError::CapabilityUnknown)?;
-        if state != SemanticCapabilityState::Eligible {
-            return Err(SemanticNudgeAuthorityError::CapabilityAlreadySpent);
-        }
-        let _source_pin = provider_session
-            .try_pin()
-            .map_err(|_| SemanticNudgeAuthorityError::SourceProviderNotLive)?;
         let capture_id = eligibility.boundary.capture_id();
-        let registered = ledger
-            .captures
-            .get(capture_id)
-            .ok_or(SemanticNudgeAuthorityError::CaptureNotCurrent)?;
-        if ledger
-            .current_capture_by_task
-            .get(&registered.task_key)
-            .map(String::as_str)
-            != Some(capture_id)
-        {
-            ledger.capabilities.insert(
-                eligibility.evidence_receipt_hash.clone(),
-                SemanticCapabilityState::Invalidated,
-            );
+        let task_key = semantic_boundary_task_key(&eligibility.boundary);
+        if !latest_activity_matches(
+            ledger.latest_activity_by_task.get(&task_key),
+            eligibility.boundary.trace_source_revision(),
+            eligibility.boundary.snapshot_hash(),
+        ) {
+            if let Some(record) = ledger
+                .capabilities
+                .get_mut(&eligibility.evidence_receipt_hash)
+            {
+                record.state = SemanticCapabilityState::Invalidated;
+            }
             return Err(SemanticNudgeAuthorityError::CaptureNotCurrent);
         }
-        ledger.capabilities.insert(
-            eligibility.evidence_receipt_hash.clone(),
-            SemanticCapabilityState::SpentDeliveryUnavailable,
-        );
+        let source_pin = match provider_session.try_pin() {
+            Ok(pin) => pin,
+            Err(_) => {
+                if let Some(record) = ledger
+                    .capabilities
+                    .get_mut(&eligibility.evidence_receipt_hash)
+                {
+                    record.state = SemanticCapabilityState::Invalidated;
+                }
+                prune_closed_provider_authority(&mut ledger);
+                return Err(SemanticNudgeAuthorityError::SourceProviderNotLive);
+            }
+        };
+        let record = ledger
+            .capabilities
+            .get(&eligibility.evidence_receipt_hash)
+            .ok_or(SemanticNudgeAuthorityError::CapabilityUnknown)?;
+        if record.state != SemanticCapabilityState::Eligible {
+            return Err(SemanticNudgeAuthorityError::CapabilityAlreadySpent);
+        }
+        let capture_is_current = record.capture_id == capture_id
+            && ledger
+                .current_capture_by_task
+                .get(&task_key)
+                .map(String::as_str)
+                == Some(capture_id)
+            && ledger.captures.get(capture_id).is_some_and(|capture| {
+                capture.task_key == task_key
+                    && capture.trace_revision == eligibility.boundary.trace_source_revision()
+                    && capture.snapshot_hash == eligibility.boundary.snapshot_hash()
+            });
+        if !capture_is_current {
+            ledger
+                .capabilities
+                .get_mut(&eligibility.evidence_receipt_hash)
+                .expect("semantic capability remains registered")
+                .state = SemanticCapabilityState::Invalidated;
+            return Err(SemanticNudgeAuthorityError::CaptureNotCurrent);
+        }
+        ledger
+            .capabilities
+            .get_mut(&eligibility.evidence_receipt_hash)
+            .expect("semantic capability remains registered")
+            .state = SemanticCapabilityState::SpentDeliveryUnavailable;
+        on_pinned_spend();
+        drop(source_pin);
         Err(SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)
     }
+}
+
+fn latest_activity_matches(
+    latest: Option<&SemanticTraceRevision>,
+    trace_revision: u64,
+    snapshot_hash: &str,
+) -> bool {
+    latest.is_some_and(|latest| {
+        latest.source_revision == trace_revision && latest.snapshot_hash == snapshot_hash
+    })
+}
+
+fn semantic_boundary_task_key(boundary: &SemanticNudgeBoundary) -> String {
+    canonical_sha256(&(
+        "goose.semantic.task_lineage.v1",
+        &boundary.authority_scope().run_id,
+        boundary.task_id(),
+    ))
+}
+
+fn prune_task_capture_authority(
+    ledger: &mut SemanticNudgeLedger,
+    task_key: &str,
+    newest_revision: u64,
+) {
+    let removed_capture_ids = ledger
+        .captures
+        .iter()
+        .filter(|(_, capture)| capture.task_key == task_key)
+        .map(|(capture_id, _)| capture_id.clone())
+        .collect::<HashSet<_>>();
+    ledger
+        .captures
+        .retain(|capture_id, _| !removed_capture_ids.contains(capture_id));
+    ledger
+        .current_capture_by_task
+        .retain(|_, capture_id| !removed_capture_ids.contains(capture_id));
+    ledger
+        .capabilities
+        .retain(|_, record| !removed_capture_ids.contains(&record.capture_id));
+    ledger.capture_by_snapshot.retain(|_, binding| {
+        binding.task_key != task_key || binding.trace_revision >= newest_revision
+    });
+}
+
+fn prune_closed_provider_authority(ledger: &mut SemanticNudgeLedger) {
+    let closed_session_hashes = ledger
+        .source_provider_sessions
+        .iter()
+        .filter_map(|(session_hash, witness)| witness.try_pin().err().map(|_| session_hash.clone()))
+        .collect::<HashSet<_>>();
+    if closed_session_hashes.is_empty() {
+        return;
+    }
+    ledger
+        .source_provider_sessions
+        .retain(|session_hash, _| !closed_session_hashes.contains(session_hash));
+    ledger
+        .unused_capture_permits
+        .retain(|_, permit| !closed_session_hashes.contains(&permit.provider_request_hash));
+    let removed_capture_ids = ledger
+        .captures
+        .iter()
+        .filter(|(_, capture)| closed_session_hashes.contains(&capture.provider_request_hash))
+        .map(|(capture_id, _)| capture_id.clone())
+        .collect::<HashSet<_>>();
+    ledger
+        .captures
+        .retain(|capture_id, _| !removed_capture_ids.contains(capture_id));
+    ledger
+        .current_capture_by_task
+        .retain(|_, capture_id| !removed_capture_ids.contains(capture_id));
+    ledger
+        .capabilities
+        .retain(|_, record| !removed_capture_ids.contains(&record.capture_id));
 }
 
 fn semantic_task_key(request: &SemanticObservationCaptureRequest) -> String {
@@ -1172,6 +1376,18 @@ impl BrokeredSemanticObservationPlane {
     ) -> Result<SemanticNudgeCapturePermit, SemanticNudgeAuthorityError> {
         self.nudge_authority
             .mint_capture_permit(task_evidence, request, started_provider_request)
+    }
+
+    /// Advance the engine-held activity head before any capture can be reviewed or sealed.
+    pub(crate) fn publish_scheduler_activity(
+        &self,
+        task_evidence: &SemanticTaskEvidenceCapability,
+        request: &SemanticObservationCaptureRequest,
+        capture: &SemanticObservationCapture,
+    ) -> Result<(), String> {
+        self.nudge_authority
+            .publish_activity(task_evidence, request, capture)
+            .map_err(|error| error.to_string())
     }
 
     /// Consume a one-shot provider-bound permit and seal observation bytes for eligibility review.

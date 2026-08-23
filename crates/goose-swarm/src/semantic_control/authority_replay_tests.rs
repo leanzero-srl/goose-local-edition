@@ -330,6 +330,11 @@ async fn fixture() -> EngineFixture {
 }
 
 fn seal_trace(fixture: &EngineFixture, trace_revision: u64) -> BoundSemanticObservationCapture {
+    let capture = observation_capture(&fixture.request, trace_revision);
+    fixture
+        .plane
+        .publish_scheduler_activity(&fixture.task_evidence, &fixture.request, &capture)
+        .unwrap();
     let permit = fixture
         .plane
         .mint_semantic_nudge_capture_permit(
@@ -340,12 +345,7 @@ fn seal_trace(fixture: &EngineFixture, trace_revision: u64) -> BoundSemanticObse
         .unwrap();
     fixture
         .plane
-        .seal_semantic_nudge_capture(
-            observation_capture(&fixture.request, trace_revision),
-            &fixture.request,
-            &fixture.task_evidence,
-            permit,
-        )
+        .seal_semantic_nudge_capture(capture, &fixture.request, &fixture.task_evidence, permit)
         .unwrap()
 }
 
@@ -440,6 +440,9 @@ async fn identical_capture_bytes_cannot_bind_to_two_genuine_provider_requests() 
         first_capture.snapshot().snapshot_hash(),
         second_capture.snapshot().snapshot_hash()
     );
+    plane
+        .publish_scheduler_activity(&task_evidence, &request, &first_capture)
+        .unwrap();
     let first_permit = plane
         .mint_semantic_nudge_capture_permit(&task_evidence, &request, &source_request)
         .unwrap();
@@ -672,6 +675,12 @@ async fn source_terminal_after_review_rejects_redemption_without_semantic_callba
         plane.redeem_existing_judge_nudge(&eligibility),
         Err(SemanticNudgeAuthorityError::SourceProviderNotLive),
     ));
+    let ledger = lock_nudge_ledger(&plane.nudge_authority.inner);
+    assert!(ledger.source_provider_sessions.is_empty());
+    assert!(ledger.unused_capture_permits.is_empty());
+    assert!(ledger.captures.is_empty());
+    assert!(ledger.current_capture_by_task.is_empty());
+    assert!(ledger.capabilities.is_empty());
 }
 
 #[tokio::test]
@@ -702,12 +711,163 @@ async fn newer_trace_after_review_invalidates_older_issue() {
     let fixture = fixture().await;
     let old = seal_trace(&fixture, 7);
     let old_receipt = review(&fixture.plane, &old, ReplyKind::Nudge).await;
-    let _new = seal_trace(&fixture, 8);
+    let newer_activity = observation_capture(&fixture.request, 8);
+    fixture
+        .plane
+        .publish_scheduler_activity(&fixture.task_evidence, &fixture.request, &newer_activity)
+        .unwrap();
     assert!(matches!(
         fixture
             .plane
             .issue_semantic_nudge_eligibility(old, old_receipt),
         Err(SemanticNudgeAuthorityError::CaptureNotCurrent)
+    ));
+}
+
+#[tokio::test]
+async fn newer_activity_without_a_second_capture_invalidates_issued_eligibility() {
+    let fixture = fixture().await;
+    let bound = seal_trace(&fixture, 7);
+    let receipt = review(&fixture.plane, &bound, ReplyKind::Nudge).await;
+    let eligibility = fixture
+        .plane
+        .issue_semantic_nudge_eligibility(bound, receipt)
+        .unwrap()
+        .unwrap();
+    let newer_activity = observation_capture(&fixture.request, 8);
+    fixture
+        .plane
+        .publish_scheduler_activity(&fixture.task_evidence, &fixture.request, &newer_activity)
+        .unwrap();
+    assert!(matches!(
+        fixture.plane.redeem_existing_judge_nudge(&eligibility),
+        Err(SemanticNudgeAuthorityError::CaptureNotCurrent)
+    ));
+    let ledger = lock_nudge_ledger(&fixture.plane.nudge_authority.inner);
+    assert!(ledger.captures.is_empty());
+    assert!(ledger.current_capture_by_task.is_empty());
+    assert!(ledger.capabilities.is_empty());
+}
+
+#[tokio::test]
+async fn stale_capture_cannot_be_sealed_after_newer_activity_publication() {
+    let fixture = fixture().await;
+    let stale = observation_capture(&fixture.request, 7);
+    fixture
+        .plane
+        .publish_scheduler_activity(&fixture.task_evidence, &fixture.request, &stale)
+        .unwrap();
+    let permit = fixture
+        .plane
+        .mint_semantic_nudge_capture_permit(
+            &fixture.task_evidence,
+            &fixture.request,
+            &fixture.source_request,
+        )
+        .unwrap();
+    let newer = observation_capture(&fixture.request, 8);
+    fixture
+        .plane
+        .publish_scheduler_activity(&fixture.task_evidence, &fixture.request, &newer)
+        .unwrap();
+    assert!(matches!(
+        fixture.plane.seal_semantic_nudge_capture(
+            stale,
+            &fixture.request,
+            &fixture.task_evidence,
+            permit,
+        ),
+        Err(SemanticNudgeAuthorityError::CaptureNotCurrent)
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_duplicate_redemption_has_one_terminal_spend() {
+    let fixture = fixture().await;
+    let bound = seal_trace(&fixture, 7);
+    let receipt = review(&fixture.plane, &bound, ReplyKind::Nudge).await;
+    let eligibility = Arc::new(
+        fixture
+            .plane
+            .issue_semantic_nudge_eligibility(bound, receipt)
+            .unwrap()
+            .unwrap(),
+    );
+    let first_plane = fixture.plane.clone();
+    let first_eligibility = eligibility.clone();
+    let first = tokio::task::spawn_blocking(move || {
+        first_plane.redeem_existing_judge_nudge(&first_eligibility)
+    });
+    let second_plane = fixture.plane.clone();
+    let second =
+        tokio::task::spawn_blocking(move || second_plane.redeem_existing_judge_nudge(&eligibility));
+    let results = [first.await.unwrap(), second.await.unwrap()];
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(
+                result,
+                Err(SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(
+                result,
+                Err(SemanticNudgeAuthorityError::CapabilityAlreadySpent)
+            ))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn source_terminal_during_redemption_cannot_open_a_retry_path() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Barrier;
+    use std::time::Duration;
+
+    let fixture = fixture().await;
+    let bound = seal_trace(&fixture, 7);
+    let receipt = review(&fixture.plane, &bound, ReplyKind::Nudge).await;
+    let eligibility = fixture
+        .plane
+        .issue_semantic_nudge_eligibility(bound, receipt)
+        .unwrap()
+        .unwrap();
+    let entered = Arc::new(Barrier::new(2));
+    let terminal_done = Arc::new(AtomicBool::new(false));
+    let terminal_entered = entered.clone();
+    let terminal_finished = terminal_done.clone();
+    let source_request = fixture.source_request;
+    let terminal = tokio::spawn(async move {
+        terminal_entered.wait();
+        source_request
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        terminal_finished.store(true, Ordering::SeqCst);
+    });
+    let result = fixture
+        .plane
+        .nudge_authority
+        .redeem_record_with_pin_hook(&eligibility, || {
+            entered.wait();
+            std::thread::sleep(Duration::from_millis(25));
+            assert!(!terminal_done.load(Ordering::SeqCst));
+        });
+    assert!(matches!(
+        result,
+        Err(SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)
+    ));
+    terminal.await.unwrap();
+    assert!(matches!(
+        fixture.plane.redeem_existing_judge_nudge(&eligibility),
+        Err(SemanticNudgeAuthorityError::SourceProviderNotLive)
+            | Err(SemanticNudgeAuthorityError::CapabilityAlreadySpent)
     ));
 }
 
