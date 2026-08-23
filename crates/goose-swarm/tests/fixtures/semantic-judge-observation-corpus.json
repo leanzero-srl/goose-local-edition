@@ -1,0 +1,304 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "f924-long-period-recurrence",
+      "source_fixture": "evals/swarm-bench/fixtures/f924-detail-tail-shape.json",
+      "expected_action": "NUDGE",
+      "task_id": "api-server-api",
+      "source_revision": 203447,
+      "goal": "Implement the frozen API server contract without repeating analysis indefinitely",
+      "task_contract": "Produce the API handler that satisfies the sealed endpoint and acceptance contract",
+      "acceptance": [
+        {"id": "api-handler", "text": "The owned API handler exists and satisfies every frozen endpoint case"}
+      ],
+      "allowed_finding_routes": ["integrate-verify"],
+      "artifacts": [],
+      "trace": {
+        "recent_reasoning": "For the buckets endpoint, I am iterating through all payments and building a matrix. For the buckets endpoint, I am iterating through all payments and building a matrix.",
+        "recent_actions": [],
+        "prior_intervention": null,
+        "response_to_prior_intervention": null
+      },
+      "neutral_signals": [
+        {
+          "source_id": "signal:f924-recurrence",
+          "kind": "long_period_recurrence_observation",
+          "value": {"tail_reasoning_chars": 203447, "captured_chars": 9304, "repeat_share": 0.4033, "tail_window_detected": false},
+          "provenance": "f924-detail-tail-shape.json plus the preserved 9304-character incident capture; the signal summons review but does not vote"
+        }
+      ],
+      "observation": {
+        "action": "NUDGE",
+        "summary": "The same endpoint analysis recurs without an artifact or a new falsifiable decision.",
+        "evidence": [
+          {"source_id": "signal:f924-recurrence", "observation": "The preserved long-window recurrence is visible while the old tail window remains blind."},
+          {"source_id": "trace:203447", "observation": "The current trace repeats the buckets-endpoint analysis and records no action."}
+        ],
+        "guidance": "Stop restating endpoint behavior and write the smallest contract-complete API handler now."
+      }
+    },
+    {
+      "id": "slow-healthy-reasoning",
+      "source_fixture": null,
+      "expected_action": "CONTINUE",
+      "task_id": "detail-domain-model",
+      "source_revision": 1187,
+      "goal": "Produce a specific domain model contract",
+      "task_contract": "Resolve the invariant and emit the typed detail result",
+      "acceptance": [
+        {"id": "typed-detail", "text": "The response binds every invariant to an acceptance check"}
+      ],
+      "allowed_finding_routes": [],
+      "artifacts": [],
+      "trace": {
+        "recent_reasoning": "Hypothesis three rejects the earlier nullable-state design because the invariant requires a total transition. Next I will bind the revised transition to the oracle.",
+        "recent_actions": ["rejected hypothesis two", "introduced a falsifiable transition invariant"],
+        "prior_intervention": null,
+        "response_to_prior_intervention": null
+      },
+      "neutral_signals": [
+        {
+          "source_id": "signal:semantic-advance",
+          "kind": "semantic_progress_observation",
+          "value": {"new_hypotheses": 1, "requirements_closed": 1, "repeated_windows": 0},
+          "provenance": "versioned trace comparison"
+        }
+      ],
+      "observation": {
+        "action": "CONTINUE",
+        "summary": "The long reasoning is closing a requirement through a new falsifiable hypothesis.",
+        "evidence": [
+          {"source_id": "trace:1187", "observation": "The trace rejects an earlier design and names the next oracle binding."},
+          {"source_id": "signal:semantic-advance", "observation": "The version comparison records new hypothesis and requirement closure."}
+        ]
+      }
+    },
+    {
+      "id": "tool-payload-silence",
+      "source_fixture": null,
+      "expected_action": "CONTINUE",
+      "task_id": "test-meridian",
+      "source_revision": 234,
+      "goal": "Write the Meridian tests",
+      "task_contract": "Create the owned test file and cover the frozen API cases",
+      "acceptance": [
+        {"id": "owned-test", "text": "The owned test file covers the Meridian API contract"}
+      ],
+      "allowed_finding_routes": [],
+      "artifacts": [],
+      "trace": {
+        "recent_reasoning": "The reasoning counter is flat while a write-tool argument is streaming.",
+        "recent_actions": [],
+        "prior_intervention": null,
+        "response_to_prior_intervention": null
+      },
+      "neutral_signals": [
+        {
+          "source_id": "signal:provider-stream",
+          "kind": "provider_stream_progress",
+          "value": {"thinking_chars_delta": 0, "completed_tool_calls_delta": 0, "tool_argument_bytes_delta": 18342},
+          "provenance": "correlated provider stream lifecycle"
+        }
+      ],
+      "observation": {
+        "action": "CONTINUE",
+        "summary": "Flat completed-call counters do not mean silence because the tool payload is advancing.",
+        "evidence": [
+          {"source_id": "signal:provider-stream", "observation": "Tool-argument bytes advanced by 18342 while the coarse counters stayed flat."}
+        ]
+      }
+    },
+    {
+      "id": "advancing-but-wrong-work",
+      "source_fixture": null,
+      "expected_action": "NUDGE",
+      "task_id": "cli-entry",
+      "source_revision": 4902,
+      "goal": "Expose the frozen build and sync subcommands",
+      "task_contract": "The CLI accepts positional build and sync commands exactly as specified",
+      "acceptance": [
+        {"id": "build-command", "text": "The advertised build command accepts the frozen positional shape"},
+        {"id": "sync-command", "text": "The advertised sync command accepts the frozen positional shape"}
+      ],
+      "allowed_finding_routes": ["integrate-verify"],
+      "artifacts": [
+        {"source_id": "artifact:cli", "path": "src/cli.py", "excerpt": "parser.add_argument('--build')\nparser.add_argument('--sync')", "complete": true}
+      ],
+      "trace": {
+        "recent_reasoning": "Both flags are implemented and the help text is now polished.",
+        "recent_actions": ["edited src/cli.py", "ran --help"],
+        "prior_intervention": null,
+        "response_to_prior_intervention": null
+      },
+      "neutral_signals": [
+        {"source_id": "signal:progress", "kind": "stream_progress_observation", "value": {"actions_delta": 2}, "provenance": "versioned activity trace"}
+      ],
+      "observation": {
+        "action": "NUDGE",
+        "summary": "The worker is advancing, but it changed positional subcommands into flags and is solving the wrong interface.",
+        "evidence": [
+          {"source_id": "contract:contract-v1", "observation": "The frozen contract requires positional build and sync commands."},
+          {"source_id": "artifact:cli", "observation": "The current CLI implements --build and --sync flags instead."}
+        ],
+        "guidance": "Keep the existing implementation work, but restore build and sync as positional subcommands matching the frozen command shapes."
+      }
+    },
+    {
+      "id": "genuinely-complete-work",
+      "source_fixture": null,
+      "expected_action": "ACCEPT_CANDIDATE",
+      "task_id": "store",
+      "source_revision": 881,
+      "goal": "Implement atomic idempotent payment storage",
+      "task_contract": "The store atomically upserts payments and returns them by UTC instant",
+      "acceptance": [
+        {"id": "atomic-upsert", "text": "A failed batch leaves the prior store unchanged"},
+        {"id": "utc-order", "text": "Rows are ordered by UTC instant rather than timestamp text"}
+      ],
+      "allowed_finding_routes": ["integrate-verify"],
+      "artifacts": [
+        {"source_id": "artifact:store-proof", "path": "reports/store-proof.txt", "excerpt": "atomic-upsert: PASS\nutc-order: PASS", "complete": true}
+      ],
+      "trace": {
+        "recent_reasoning": "Both frozen acceptance cases passed against the owned artifact.",
+        "recent_actions": ["ran atomic rollback case", "ran mixed-offset UTC ordering case"],
+        "prior_intervention": null,
+        "response_to_prior_intervention": null
+      },
+      "neutral_signals": [],
+      "observation": {
+        "action": "ACCEPT_CANDIDATE",
+        "summary": "Every frozen acceptance criterion has direct artifact evidence.",
+        "evidence": [
+          {"source_id": "artifact:store-proof", "observation": "The hermetic report records both exact cases passing."},
+          {"source_id": "acceptance:atomic-upsert", "observation": "Atomic rollback is explicitly covered."},
+          {"source_id": "acceptance:utc-order", "observation": "Mixed-offset UTC ordering is explicitly covered."}
+        ],
+        "covered_requirements": ["atomic-upsert", "utc-order"]
+      }
+    },
+    {
+      "id": "uncertain-missing-evidence",
+      "source_fixture": null,
+      "expected_action": "REQUEST_EVIDENCE",
+      "task_id": "web",
+      "source_revision": 318,
+      "goal": "Render every payment state",
+      "task_contract": "The UI distinguishes pending, delivered, failed, and reversed payments",
+      "acceptance": [
+        {"id": "all-states", "text": "Every frozen payment state has a visible rendering"}
+      ],
+      "allowed_finding_routes": ["verify::web"],
+      "artifacts": [
+        {"source_id": "artifact:web-excerpt", "path": "web/app.js", "excerpt": "renderPayment(payment)", "complete": false}
+      ],
+      "trace": {
+        "recent_reasoning": "The excerpt ends before the status mapping.",
+        "recent_actions": ["read first excerpt"],
+        "prior_intervention": null,
+        "response_to_prior_intervention": null
+      },
+      "neutral_signals": [],
+      "observation": {
+        "action": "REQUEST_EVIDENCE",
+        "summary": "The available excerpt does not show whether all frozen states are rendered.",
+        "evidence": [
+          {"source_id": "artifact:web-excerpt", "observation": "The incomplete excerpt ends before the status mapping."},
+          {"source_id": "acceptance:all-states", "observation": "The criterion requires evidence for four states."}
+        ],
+        "requests": ["Provide the complete status-to-rendering mapping or a hermetic four-state probe result."]
+      }
+    },
+    {
+      "id": "historical-fable-task-position-correction",
+      "source_fixture": null,
+      "expected_action": "NUDGE",
+      "task_id": "verify-e2e::1",
+      "source_revision": 3801,
+      "goal": "Partition and run the frozen end-to-end oracle",
+      "task_contract": "Shard 1 owns the cursor pagination and cursor-expiry cases, not the summary command",
+      "acceptance": [
+        {"id": "cursor-all-pages", "text": "All cursor pages are consumed once"},
+        {"id": "cursor-expiry", "text": "An expired cursor restarts from page one without duplicates"}
+      ],
+      "allowed_finding_routes": ["integrate-verify"],
+      "artifacts": [
+        {"source_id": "artifact:fable-report", "path": "reports/verify-e2e-1.txt", "excerpt": "Checked the summary command and payment count.", "complete": true}
+      ],
+      "trace": {
+        "recent_reasoning": "The summary command passed, so this shard is complete.",
+        "recent_actions": ["ran summary command"],
+        "prior_intervention": null,
+        "response_to_prior_intervention": null
+      },
+      "neutral_signals": [],
+      "observation": {
+        "action": "NUDGE",
+        "summary": "The shard tested the wrong task position and has not exercised either assigned pagination case.",
+        "evidence": [
+          {"source_id": "contract:contract-v1", "observation": "Shard 1 owns cursor pagination and cursor-expiry."},
+          {"source_id": "artifact:fable-report", "observation": "The report only checks the summary command."}
+        ],
+        "guidance": "Preserve the current session and run the all-pages and expired-cursor cases assigned to shard 1."
+      }
+    },
+    {
+      "id": "f163-flat-counters-before-write",
+      "source_fixture": null,
+      "expected_action": "CONTINUE",
+      "task_id": "test-meridian",
+      "source_revision": 234,
+      "goal": "Write the Meridian test artifact",
+      "task_contract": "Produce tests for retry, pagination, and UTC ordering",
+      "acceptance": [
+        {"id": "meridian-tests", "text": "The owned test artifact covers the frozen cases"}
+      ],
+      "allowed_finding_routes": [],
+      "artifacts": [],
+      "trace": {
+        "recent_reasoning": "The coarse counters read calls=0 and thinking=1209 at 105s, 174s, and 234s, while provider activity continued; the file was written at 294s.",
+        "recent_actions": [],
+        "prior_intervention": null,
+        "response_to_prior_intervention": null
+      },
+      "neutral_signals": [
+        {
+          "source_id": "signal:f163-activity",
+          "kind": "provider_stream_progress",
+          "value": {"thinking_chars": 1209, "tool_calls": 0, "any_owned_written": false, "provider_events_advanced": true},
+          "provenance": "F163 archived observations at 105s, 174s, and 234s; the artifact appeared at 294s"
+        }
+      ],
+      "observation": {
+        "action": "CONTINUE",
+        "summary": "Flat thinking and completed-call counters are not proof of a frozen worker while provider events still advance.",
+        "evidence": [
+          {"source_id": "signal:f163-activity", "observation": "The physically correlated stream remains active despite flat coarse counters."}
+        ]
+      }
+    },
+    {
+      "id": "r1-parser-negative-keyword-false-positive",
+      "source_fixture": null,
+      "expected_action": "ABSTAIN",
+      "task_id": "integrate-verify",
+      "source_revision": 148,
+      "goal": "Verify the assembled app",
+      "task_contract": "Map the frozen contract against the assembled program",
+      "acceptance": [
+        {"id": "assembled-oracle", "text": "The assembled program passes the frozen integration oracle"}
+      ],
+      "allowed_finding_routes": [],
+      "artifacts": [],
+      "trace": {
+        "recent_reasoning": "The worker is still mapping the contract.",
+        "recent_actions": ["mapped first integration clause"],
+        "prior_intervention": null,
+        "response_to_prior_intervention": null
+      },
+      "neutral_signals": [],
+      "raw_reply": "VERDICT|OK|HIGH|The worker is healthy; there is no looping or drift."
+    }
+  ]
+}
