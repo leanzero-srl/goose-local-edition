@@ -10,13 +10,18 @@ use crate::broker::{
     WorkRole,
 };
 use fs2::FileExt;
+use goose_provider_types::base::{
+    scope_provider_http_exposure, ProviderHttpExposureBoundary, ProviderHttpProtocol,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
+use std::future::Future;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 const WAL_SCHEMA_VERSION: u32 = 1;
 const GENESIS_HASH: &str = "genesis";
@@ -26,7 +31,6 @@ const CHECKPOINT_FILE_NAME: &str = "authority.checkpoint";
 const AUTHORITY_DIRECTORY_NAME: &str = "physical-provider-authority-v1";
 const INITIALIZATION_LOCK_SUFFIX: &str = ".init.lock";
 const INITIALIZATION_READY: &[u8] = b"provider-authority-ready-v1\n";
-const LM_STUDIO_PROVIDER_PROTOCOL_ID: &str = "openai.chat_completions.v1";
 #[cfg(test)]
 const CHECKPOINT_KILL_POINT_ENV: &str = "GOOSE_PROVIDER_LEASE_CHECKPOINT_KILL_POINT";
 
@@ -138,13 +142,46 @@ impl From<&HostCapacityEvidence> for LeaseHostCapacityEvidence {
 #[derive(Debug, Eq, PartialEq)]
 pub struct SealedProviderLeaseAuthority {
     fleet_snapshot_id: String,
-    provider_protocol_id: String,
     lanes_by_logical_device: HashMap<String, VerifiedPhysicalLane>,
+    protocol_by_transport: HashMap<String, ProviderHttpProtocol>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedProviderProtocolRoute {
+    provider_transport_id: String,
+    protocol: ProviderHttpProtocol,
+}
+
+impl VerifiedProviderProtocolRoute {
+    pub fn new(
+        provider_transport_id: impl Into<String>,
+        protocol: ProviderHttpProtocol,
+    ) -> Result<Self, ProviderLeaseError> {
+        let provider_transport_id = provider_transport_id.into();
+        if !is_canonical_digest(&provider_transport_id) {
+            return Err(ProviderLeaseError::InvalidClaim(
+                "provider protocol route transport is not a canonical sha256 digest".to_string(),
+            ));
+        }
+        Ok(Self {
+            provider_transport_id,
+            protocol,
+        })
+    }
+
+    pub fn provider_transport_id(&self) -> &str {
+        &self.provider_transport_id
+    }
+
+    pub fn protocol(&self) -> ProviderHttpProtocol {
+        self.protocol
+    }
 }
 
 impl SealedProviderLeaseAuthority {
     pub fn from_fleet_snapshot(
         snapshot: &PhysicalFleetSnapshot,
+        protocol_routes: impl IntoIterator<Item = VerifiedProviderProtocolRoute>,
     ) -> Result<Self, ProviderLeaseError> {
         let validated =
             PhysicalFleetSnapshot::new(snapshot.snapshot_id.clone(), snapshot.lanes.clone())
@@ -157,11 +194,39 @@ impl SealedProviderLeaseAuthority {
             .lanes
             .into_iter()
             .map(|lane| (lane.logical_device_id.clone(), lane))
-            .collect();
+            .collect::<HashMap<_, _>>();
+        let lane_transports = lanes_by_logical_device
+            .values()
+            .map(|lane| lane.provider_transport_id.as_str())
+            .collect::<HashSet<_>>();
+        let mut protocol_by_transport = HashMap::new();
+        for route in protocol_routes {
+            if !lane_transports.contains(route.provider_transport_id.as_str()) {
+                return Err(ProviderLeaseError::InvalidClaim(
+                    "provider protocol route is absent from the sealed fleet snapshot".to_string(),
+                ));
+            }
+            if protocol_by_transport
+                .insert(route.provider_transport_id, route.protocol)
+                .is_some()
+            {
+                return Err(ProviderLeaseError::InvalidClaim(
+                    "provider transport has duplicate protocol routes".to_string(),
+                ));
+            }
+        }
+        if lane_transports
+            .iter()
+            .any(|transport| !protocol_by_transport.contains_key(*transport))
+        {
+            return Err(ProviderLeaseError::InvalidClaim(
+                "sealed fleet transport has no verified provider protocol route".to_string(),
+            ));
+        }
         Ok(Self {
             fleet_snapshot_id: validated.snapshot_id,
-            provider_protocol_id: LM_STUDIO_PROVIDER_PROTOCOL_ID.to_string(),
             lanes_by_logical_device,
+            protocol_by_transport,
         })
     }
 
@@ -194,6 +259,20 @@ impl SealedProviderLeaseAuthority {
             ));
         }
         Ok(lane)
+    }
+
+    fn protocol_for_lane(
+        &self,
+        lane: &VerifiedPhysicalLane,
+    ) -> Result<ProviderHttpProtocol, ProviderLeaseError> {
+        self.protocol_by_transport
+            .get(&lane.provider_transport_id)
+            .copied()
+            .ok_or_else(|| {
+                ProviderLeaseError::InvalidClaim(
+                    "admission transport has no sealed provider protocol".to_string(),
+                )
+            })
     }
 }
 
@@ -309,6 +388,7 @@ impl ProviderLeaseClaim {
         request: &ProviderRequestReceipt,
     ) -> Result<Self, ProviderLeaseError> {
         let lane = authority.lane_for_admission(admission)?;
+        let protocol = authority.protocol_for_lane(lane)?;
         let claim = Self {
             admission_id: admission.admission_id.clone(),
             admission_sequence: admission.admission_sequence,
@@ -323,7 +403,7 @@ impl ProviderLeaseClaim {
             physical_host_id: admission.physical_host_id.clone(),
             model_instance_id: admission.model_instance_id.clone(),
             provider_transport_id: admission.provider_transport_id.clone(),
-            provider_protocol_id: authority.provider_protocol_id.clone(),
+            provider_protocol_id: protocol.authority_id().to_string(),
             route_evidence_id: admission.route_evidence_id.clone(),
             host_capacity_evidence: (&admission.capacity_evidence).into(),
             advertised_instance_capacity: lane.advertised_instance_capacity,
@@ -359,8 +439,17 @@ impl ProviderLeaseClaim {
         &self.model_instance_id
     }
 
+    pub fn provider_transport_id(&self) -> &str {
+        &self.provider_transport_id
+    }
+
     pub fn provider_protocol_id(&self) -> &str {
         &self.provider_protocol_id
+    }
+
+    pub fn provider_http_protocol(&self) -> ProviderHttpProtocol {
+        ProviderHttpProtocol::from_authority_id(&self.provider_protocol_id)
+            .expect("validated provider lease claims carry a known protocol")
     }
 
     pub fn advertised_instance_capacity(&self) -> u32 {
@@ -389,6 +478,11 @@ impl ProviderLeaseClaim {
         if !is_canonical_digest(&self.provider_transport_id) {
             return Err(ProviderLeaseError::InvalidClaim(
                 "provider transport id is not a canonical sha256 digest".to_string(),
+            ));
+        }
+        if ProviderHttpProtocol::from_authority_id(&self.provider_protocol_id).is_none() {
+            return Err(ProviderLeaseError::InvalidClaim(
+                "provider protocol is not recognized by the lease authority".to_string(),
             ));
         }
         self.host_capacity_evidence
@@ -633,6 +727,555 @@ pub trait PhysicalProviderLeaseAuthority: Send + Sync {
         exposed: ExposedProviderLease,
         terminal: &ProviderTerminalReceipt,
     ) -> Result<ProviderLeaseReleaseReceipt, ProviderLeaseTransitionError<ExposedProviderLease>>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProviderLeaseWaitPolicy {
+    busy_retry_delay: Duration,
+}
+
+impl ProviderLeaseWaitPolicy {
+    pub const fn new(busy_retry_delay: Duration) -> Self {
+        Self { busy_retry_delay }
+    }
+
+    pub const fn busy_retry_delay(self) -> Duration {
+        self.busy_retry_delay
+    }
+}
+
+impl Default for ProviderLeaseWaitPolicy {
+    fn default() -> Self {
+        Self::new(Duration::from_millis(25))
+    }
+}
+
+#[derive(Clone)]
+pub struct RunScopedProviderLeaseAuthority {
+    inner: Arc<RunScopedProviderLeaseInner>,
+}
+
+struct RunScopedProviderLeaseInner {
+    physical: Arc<dyn PhysicalProviderLeaseAuthority>,
+    sealed: SealedProviderLeaseAuthority,
+    wait_policy: ProviderLeaseWaitPolicy,
+    records: Mutex<HashMap<RequestIdentity, RuntimeLeaseRecord>>,
+}
+
+struct RuntimeLeaseRecord {
+    claim_digest: String,
+    state: RuntimeLeaseState,
+}
+
+enum RuntimeLeaseState {
+    Acquiring,
+    Reserved(ReservedProviderLease),
+    Exposing,
+    Exposed(ExposedProviderLease),
+    Abandoning,
+    Terminalizing,
+    Released(RuntimeLeaseRelease),
+    Failed(ProviderLeaseError),
+}
+
+enum RuntimeLeaseRelease {
+    Abandoned {
+        reason: String,
+        receipt: ProviderLeaseReleaseReceipt,
+    },
+    Terminal {
+        terminal: ProviderTerminalReceipt,
+        receipt: ProviderLeaseReleaseReceipt,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProviderLeaseBoundaryStatus {
+    Reserved,
+    Exposed,
+    Abandoned,
+    Terminal,
+    Transitioning,
+    Failed,
+}
+
+pub struct ProviderLeaseHttpBoundary {
+    authority: RunScopedProviderLeaseAuthority,
+    request_identity: RequestIdentity,
+    claim_digest: String,
+    protocol: ProviderHttpProtocol,
+    transport_identity: String,
+}
+
+impl std::fmt::Debug for ProviderLeaseHttpBoundary {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderLeaseHttpBoundary")
+            .field("request_identity", &self.request_identity)
+            .field("claim_digest", &self.claim_digest)
+            .field("protocol", &self.protocol)
+            .field("transport_identity", &self.transport_identity)
+            .finish_non_exhaustive()
+    }
+}
+
+struct ScopedProviderLeaseExposure {
+    authority: RunScopedProviderLeaseAuthority,
+    request_identity: RequestIdentity,
+    claim_digest: String,
+}
+
+impl ProviderHttpExposureBoundary for ScopedProviderLeaseExposure {
+    fn expose(
+        &self,
+        protocol: ProviderHttpProtocol,
+        transport_identity: &str,
+    ) -> Result<(), String> {
+        self.authority
+            .expose_http_request(
+                &self.request_identity,
+                &self.claim_digest,
+                protocol,
+                transport_identity,
+            )
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl ProviderLeaseHttpBoundary {
+    pub fn protocol(&self) -> ProviderHttpProtocol {
+        self.protocol
+    }
+
+    pub fn transport_identity(&self) -> &str {
+        &self.transport_identity
+    }
+
+    pub fn status(&self) -> Result<ProviderLeaseBoundaryStatus, ProviderLeaseError> {
+        self.authority
+            .boundary_status(&self.request_identity, &self.claim_digest)
+    }
+
+    pub async fn scope_http<F>(&self, future: F) -> F::Output
+    where
+        F: Future,
+    {
+        let exposure = ScopedProviderLeaseExposure {
+            authority: self.authority.clone(),
+            request_identity: self.request_identity.clone(),
+            claim_digest: self.claim_digest.clone(),
+        };
+        scope_provider_http_exposure(Arc::new(exposure), future).await
+    }
+
+    pub(crate) fn abandon_reserved(
+        &self,
+        reason: &str,
+    ) -> Result<ProviderLeaseReleaseReceipt, ProviderLeaseError> {
+        self.authority
+            .abandon_reserved(&self.request_identity, &self.claim_digest, reason)
+    }
+
+    pub(crate) fn provider_terminal(
+        &self,
+        terminal: &ProviderTerminalReceipt,
+    ) -> Result<ProviderLeaseReleaseReceipt, ProviderLeaseError> {
+        self.authority
+            .provider_terminal(&self.request_identity, &self.claim_digest, terminal)
+    }
+}
+
+impl RunScopedProviderLeaseAuthority {
+    pub fn new(
+        physical: Arc<dyn PhysicalProviderLeaseAuthority>,
+        sealed: SealedProviderLeaseAuthority,
+    ) -> Self {
+        Self::new_with_wait_policy(physical, sealed, ProviderLeaseWaitPolicy::default())
+    }
+
+    pub fn new_with_wait_policy(
+        physical: Arc<dyn PhysicalProviderLeaseAuthority>,
+        sealed: SealedProviderLeaseAuthority,
+        wait_policy: ProviderLeaseWaitPolicy,
+    ) -> Self {
+        Self {
+            inner: Arc::new(RunScopedProviderLeaseInner {
+                physical,
+                sealed,
+                wait_policy,
+                records: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+
+    pub async fn reserve_provider_request(
+        &self,
+        admission: &AdmissionReceipt,
+        request: &ProviderRequestReceipt,
+    ) -> Result<ProviderLeaseHttpBoundary, ProviderLeaseError> {
+        let claim = ProviderLeaseClaim::from_authority(&self.inner.sealed, admission, request)?;
+        let request_identity = claim.request_identity();
+        let claim_digest = claim.digest()?;
+        let protocol = claim.provider_http_protocol();
+        let transport_identity = claim.provider_transport_id().to_string();
+        {
+            let mut records = lock_runtime_records(&self.inner.records);
+            if records.contains_key(&request_identity) {
+                return Err(ProviderLeaseError::InvalidTransition(
+                    "provider request already has a run-scoped lease record".to_string(),
+                ));
+            }
+            records.insert(
+                request_identity.clone(),
+                RuntimeLeaseRecord {
+                    claim_digest: claim_digest.clone(),
+                    state: RuntimeLeaseState::Acquiring,
+                },
+            );
+        }
+
+        let mut acquisition = RuntimeAcquisitionGuard {
+            inner: self.inner.clone(),
+            request_identity: request_identity.clone(),
+            claim_digest: claim_digest.clone(),
+            armed: true,
+        };
+        loop {
+            match self.inner.physical.try_reserve(claim.clone()) {
+                Ok(ProviderLeaseTry::Acquired(reserved)) => {
+                    let mut records = lock_runtime_records(&self.inner.records);
+                    let record = matching_runtime_record_mut(
+                        &mut records,
+                        &request_identity,
+                        &claim_digest,
+                    )?;
+                    if !matches!(record.state, RuntimeLeaseState::Acquiring) {
+                        return Err(ProviderLeaseError::ConflictingEvidence(
+                            "run-scoped reservation state changed during acquisition".to_string(),
+                        ));
+                    }
+                    record.state = RuntimeLeaseState::Reserved(reserved);
+                    acquisition.armed = false;
+                    return Ok(ProviderLeaseHttpBoundary {
+                        authority: self.clone(),
+                        request_identity,
+                        claim_digest,
+                        protocol,
+                        transport_identity,
+                    });
+                }
+                Ok(ProviderLeaseTry::Busy(busy)) => match busy.kind {
+                    ProviderLeaseBusyKind::AuthorityLock => tokio::task::yield_now().await,
+                    ProviderLeaseBusyKind::HostCapacity
+                    | ProviderLeaseBusyKind::InstanceCapacity => {
+                        let delay = self.inner.wait_policy.busy_retry_delay();
+                        if delay.is_zero() {
+                            tokio::task::yield_now().await;
+                        } else {
+                            tokio::time::sleep(delay).await;
+                        }
+                    }
+                },
+                Err(error) => {
+                    let mut records = lock_runtime_records(&self.inner.records);
+                    if let Ok(record) =
+                        matching_runtime_record_mut(&mut records, &request_identity, &claim_digest)
+                    {
+                        record.state = RuntimeLeaseState::Failed(error.clone());
+                    }
+                    acquisition.armed = false;
+                    return Err(error);
+                }
+            }
+        }
+    }
+
+    fn expose_http_request(
+        &self,
+        request_identity: &RequestIdentity,
+        claim_digest: &str,
+        protocol: ProviderHttpProtocol,
+        transport_identity: &str,
+    ) -> Result<(), ProviderLeaseError> {
+        let reserved = {
+            let mut records = lock_runtime_records(&self.inner.records);
+            let record = matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+            let expected = match &record.state {
+                RuntimeLeaseState::Reserved(reserved) => reserved.claim(),
+                RuntimeLeaseState::Failed(error) => return Err(error.clone()),
+                RuntimeLeaseState::Exposed(_) => {
+                    return Err(ProviderLeaseError::InvalidTransition(
+                        "provider request was already exposed; a second POST is unsafe".to_string(),
+                    ));
+                }
+                RuntimeLeaseState::Released(_) => {
+                    return Err(ProviderLeaseError::InvalidTransition(
+                        "provider request was already released".to_string(),
+                    ));
+                }
+                RuntimeLeaseState::Acquiring
+                | RuntimeLeaseState::Exposing
+                | RuntimeLeaseState::Abandoning
+                | RuntimeLeaseState::Terminalizing => {
+                    return Err(ProviderLeaseError::AuthorityContended);
+                }
+            };
+            if protocol != expected.provider_http_protocol() {
+                return Err(ProviderLeaseError::ReceiptMismatch(
+                    "actual HTTP protocol differs from the sealed provider route".to_string(),
+                ));
+            }
+            if transport_identity != expected.provider_transport_id() {
+                return Err(ProviderLeaseError::ReceiptMismatch(
+                    "actual HTTP transport differs from the sealed provider route".to_string(),
+                ));
+            }
+            match std::mem::replace(&mut record.state, RuntimeLeaseState::Exposing) {
+                RuntimeLeaseState::Reserved(reserved) => reserved,
+                _ => unreachable!("reserved state was matched before transition"),
+            }
+        };
+
+        match self.inner.physical.expose(reserved) {
+            Ok(exposed) => {
+                let mut records = lock_runtime_records(&self.inner.records);
+                let record =
+                    matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+                if !matches!(record.state, RuntimeLeaseState::Exposing) {
+                    record.state =
+                        RuntimeLeaseState::Failed(ProviderLeaseError::ConflictingEvidence(
+                            "run-scoped exposure state changed during transition".to_string(),
+                        ));
+                    return Err(ProviderLeaseError::ConflictingEvidence(
+                        "run-scoped exposure state changed during transition".to_string(),
+                    ));
+                }
+                record.state = RuntimeLeaseState::Exposed(exposed);
+                Ok(())
+            }
+            Err(ProviderLeaseTransitionError::Retryable { error, handle }) => {
+                let mut records = lock_runtime_records(&self.inner.records);
+                let record =
+                    matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+                record.state = RuntimeLeaseState::Reserved(*handle);
+                Err(error)
+            }
+            Err(ProviderLeaseTransitionError::Fatal(error)) => {
+                let mut records = lock_runtime_records(&self.inner.records);
+                let record =
+                    matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+                record.state = RuntimeLeaseState::Failed(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn abandon_reserved(
+        &self,
+        request_identity: &RequestIdentity,
+        claim_digest: &str,
+        reason: &str,
+    ) -> Result<ProviderLeaseReleaseReceipt, ProviderLeaseError> {
+        let reserved = {
+            let mut records = lock_runtime_records(&self.inner.records);
+            let record = matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+            match &record.state {
+                RuntimeLeaseState::Released(RuntimeLeaseRelease::Abandoned {
+                    reason: recorded,
+                    receipt,
+                }) if recorded == reason => return Ok(receipt.clone()),
+                RuntimeLeaseState::Released(_) => {
+                    return Err(ProviderLeaseError::InvalidTransition(
+                        "provider request already has a different release".to_string(),
+                    ));
+                }
+                RuntimeLeaseState::Failed(error) => return Err(error.clone()),
+                RuntimeLeaseState::Exposed(_) => {
+                    return Err(ProviderLeaseError::InvalidTransition(
+                        "an exposed provider request cannot be abandoned as reserved".to_string(),
+                    ));
+                }
+                RuntimeLeaseState::Acquiring
+                | RuntimeLeaseState::Exposing
+                | RuntimeLeaseState::Abandoning
+                | RuntimeLeaseState::Terminalizing => {
+                    return Err(ProviderLeaseError::AuthorityContended);
+                }
+                RuntimeLeaseState::Reserved(_) => {}
+            }
+            match std::mem::replace(&mut record.state, RuntimeLeaseState::Abandoning) {
+                RuntimeLeaseState::Reserved(reserved) => reserved,
+                _ => unreachable!("reserved state was matched before abandon"),
+            }
+        };
+
+        match self.inner.physical.abandon_reserved(reserved, reason) {
+            Ok(receipt) => {
+                let mut records = lock_runtime_records(&self.inner.records);
+                let record =
+                    matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+                record.state = RuntimeLeaseState::Released(RuntimeLeaseRelease::Abandoned {
+                    reason: reason.to_string(),
+                    receipt: receipt.clone(),
+                });
+                Ok(receipt)
+            }
+            Err(ProviderLeaseTransitionError::Retryable { error, handle }) => {
+                let mut records = lock_runtime_records(&self.inner.records);
+                let record =
+                    matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+                record.state = RuntimeLeaseState::Reserved(*handle);
+                Err(error)
+            }
+            Err(ProviderLeaseTransitionError::Fatal(error)) => {
+                let mut records = lock_runtime_records(&self.inner.records);
+                let record =
+                    matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+                record.state = RuntimeLeaseState::Failed(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn provider_terminal(
+        &self,
+        request_identity: &RequestIdentity,
+        claim_digest: &str,
+        terminal: &ProviderTerminalReceipt,
+    ) -> Result<ProviderLeaseReleaseReceipt, ProviderLeaseError> {
+        let exposed = {
+            let mut records = lock_runtime_records(&self.inner.records);
+            let record = matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+            match &record.state {
+                RuntimeLeaseState::Released(RuntimeLeaseRelease::Terminal {
+                    terminal: recorded,
+                    receipt,
+                }) if recorded == terminal => return Ok(receipt.clone()),
+                RuntimeLeaseState::Released(_) => {
+                    return Err(ProviderLeaseError::ReceiptMismatch(
+                        "provider request already has a different release receipt".to_string(),
+                    ));
+                }
+                RuntimeLeaseState::Failed(error) => return Err(error.clone()),
+                RuntimeLeaseState::Reserved(_) => {
+                    return Err(ProviderLeaseError::InvalidTransition(
+                        "provider terminal cannot release a request before HTTP exposure"
+                            .to_string(),
+                    ));
+                }
+                RuntimeLeaseState::Acquiring
+                | RuntimeLeaseState::Exposing
+                | RuntimeLeaseState::Abandoning
+                | RuntimeLeaseState::Terminalizing => {
+                    return Err(ProviderLeaseError::AuthorityContended);
+                }
+                RuntimeLeaseState::Exposed(_) => {}
+            }
+            match std::mem::replace(&mut record.state, RuntimeLeaseState::Terminalizing) {
+                RuntimeLeaseState::Exposed(exposed) => exposed,
+                _ => unreachable!("exposed state was matched before terminal"),
+            }
+        };
+
+        match self.inner.physical.provider_terminal(exposed, terminal) {
+            Ok(receipt) => {
+                let mut records = lock_runtime_records(&self.inner.records);
+                let record =
+                    matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+                record.state = RuntimeLeaseState::Released(RuntimeLeaseRelease::Terminal {
+                    terminal: terminal.clone(),
+                    receipt: receipt.clone(),
+                });
+                Ok(receipt)
+            }
+            Err(ProviderLeaseTransitionError::Retryable { error, handle }) => {
+                let mut records = lock_runtime_records(&self.inner.records);
+                let record =
+                    matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+                record.state = RuntimeLeaseState::Exposed(*handle);
+                Err(error)
+            }
+            Err(ProviderLeaseTransitionError::Fatal(error)) => {
+                let mut records = lock_runtime_records(&self.inner.records);
+                let record =
+                    matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+                record.state = RuntimeLeaseState::Failed(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn boundary_status(
+        &self,
+        request_identity: &RequestIdentity,
+        claim_digest: &str,
+    ) -> Result<ProviderLeaseBoundaryStatus, ProviderLeaseError> {
+        let mut records = lock_runtime_records(&self.inner.records);
+        let record = matching_runtime_record_mut(&mut records, request_identity, claim_digest)?;
+        Ok(match &record.state {
+            RuntimeLeaseState::Reserved(_) => ProviderLeaseBoundaryStatus::Reserved,
+            RuntimeLeaseState::Exposed(_) => ProviderLeaseBoundaryStatus::Exposed,
+            RuntimeLeaseState::Released(RuntimeLeaseRelease::Abandoned { .. }) => {
+                ProviderLeaseBoundaryStatus::Abandoned
+            }
+            RuntimeLeaseState::Released(RuntimeLeaseRelease::Terminal { .. }) => {
+                ProviderLeaseBoundaryStatus::Terminal
+            }
+            RuntimeLeaseState::Failed(_) => ProviderLeaseBoundaryStatus::Failed,
+            RuntimeLeaseState::Acquiring
+            | RuntimeLeaseState::Exposing
+            | RuntimeLeaseState::Abandoning
+            | RuntimeLeaseState::Terminalizing => ProviderLeaseBoundaryStatus::Transitioning,
+        })
+    }
+}
+
+struct RuntimeAcquisitionGuard {
+    inner: Arc<RunScopedProviderLeaseInner>,
+    request_identity: RequestIdentity,
+    claim_digest: String,
+    armed: bool,
+}
+
+impl Drop for RuntimeAcquisitionGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut records = lock_runtime_records(&self.inner.records);
+        if records.get(&self.request_identity).is_some_and(|record| {
+            record.claim_digest == self.claim_digest
+                && matches!(record.state, RuntimeLeaseState::Acquiring)
+        }) {
+            records.remove(&self.request_identity);
+        }
+    }
+}
+
+fn lock_runtime_records(
+    records: &Mutex<HashMap<RequestIdentity, RuntimeLeaseRecord>>,
+) -> MutexGuard<'_, HashMap<RequestIdentity, RuntimeLeaseRecord>> {
+    records
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn matching_runtime_record_mut<'a>(
+    records: &'a mut HashMap<RequestIdentity, RuntimeLeaseRecord>,
+    request_identity: &RequestIdentity,
+    claim_digest: &str,
+) -> Result<&'a mut RuntimeLeaseRecord, ProviderLeaseError> {
+    let record = records.get_mut(request_identity).ok_or_else(|| {
+        ProviderLeaseError::InvalidTransition(
+            "provider request has no run-scoped lease record".to_string(),
+        )
+    })?;
+    if record.claim_digest != claim_digest {
+        return Err(ProviderLeaseError::ConflictingEvidence(
+            "provider request lease claim digest changed".to_string(),
+        ));
+    }
+    Ok(record)
 }
 
 /// One process-local handle onto the shared, fixed-root WAL authority.
@@ -2301,7 +2944,15 @@ mod tests {
             }],
         )
         .unwrap();
-        let authority = SealedProviderLeaseAuthority::from_fleet_snapshot(&fleet).unwrap();
+        let authority = SealedProviderLeaseAuthority::from_fleet_snapshot(
+            &fleet,
+            [VerifiedProviderProtocolRoute::new(
+                TRANSPORT,
+                ProviderHttpProtocol::OpenAiChatCompletions,
+            )
+            .unwrap()],
+        )
+        .unwrap();
         ProviderLeaseClaim::from_authority(&authority, &admission, &request).unwrap()
     }
 
@@ -3182,7 +3833,16 @@ mod tests {
             }],
         )
         .unwrap();
-        let authority = SealedProviderLeaseAuthority::from_fleet_snapshot(&fleet).unwrap();
+        let authority =
+            SealedProviderLeaseAuthority::from_fleet_snapshot(
+                &fleet,
+                [VerifiedProviderProtocolRoute::new(
+                    TRANSPORT,
+                    ProviderHttpProtocol::OpenAiResponses,
+                )
+                .unwrap()],
+            )
+            .unwrap();
         let request = ProviderRequestReceipt {
             admission_id: "other-admission".to_string(),
             key: ProviderRequestKey {
@@ -3208,7 +3868,10 @@ mod tests {
         };
         let claim =
             ProviderLeaseClaim::from_authority(&authority, &admission, &matching_request).unwrap();
-        assert_eq!(claim.provider_protocol_id(), LM_STUDIO_PROVIDER_PROTOCOL_ID);
+        assert_eq!(
+            claim.provider_protocol_id(),
+            ProviderHttpProtocol::OpenAiResponses.authority_id()
+        );
         assert_eq!(claim.advertised_instance_capacity(), 3);
 
         let mut forged_admission = admission;

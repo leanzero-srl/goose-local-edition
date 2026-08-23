@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::{
     atomic::{AtomicU8, Ordering},
@@ -393,6 +394,79 @@ pub enum SingleAttemptStreamOutcome {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ProviderHttpProtocol {
+    OpenAiChatCompletions,
+    OpenAiResponses,
+}
+
+impl ProviderHttpProtocol {
+    pub const fn authority_id(self) -> &'static str {
+        match self {
+            Self::OpenAiChatCompletions => "openai.chat_completions.v1",
+            Self::OpenAiResponses => "openai.responses.v1",
+        }
+    }
+
+    pub fn from_authority_id(id: &str) -> Option<Self> {
+        match id {
+            "openai.chat_completions.v1" => Some(Self::OpenAiChatCompletions),
+            "openai.responses.v1" => Some(Self::OpenAiResponses),
+            _ => None,
+        }
+    }
+
+    pub fn from_openai_path(path: &str) -> Option<Self> {
+        let path = path
+            .split_once('?')
+            .map_or(path, |(without_query, _)| without_query)
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
+        if path.ends_with("/chat/completions") || path == "chat/completions" {
+            Some(Self::OpenAiChatCompletions)
+        } else if path.ends_with("/responses") || path == "responses" {
+            Some(Self::OpenAiResponses)
+        } else {
+            None
+        }
+    }
+}
+
+pub trait ProviderHttpExposureBoundary: Send + Sync {
+    fn expose(
+        &self,
+        protocol: ProviderHttpProtocol,
+        transport_identity: &str,
+    ) -> Result<(), String>;
+}
+
+tokio::task_local! {
+    static ACTIVE_PROVIDER_HTTP_EXPOSURE: Arc<dyn ProviderHttpExposureBoundary>;
+}
+
+pub async fn scope_provider_http_exposure<F>(
+    boundary: Arc<dyn ProviderHttpExposureBoundary>,
+    future: F,
+) -> F::Output
+where
+    F: Future,
+{
+    ACTIVE_PROVIDER_HTTP_EXPOSURE.scope(boundary, future).await
+}
+
+pub fn expose_current_provider_http_request(
+    protocol: ProviderHttpProtocol,
+    transport_identity: &str,
+) -> Result<(), String> {
+    ACTIVE_PROVIDER_HTTP_EXPOSURE
+        .try_with(|boundary| boundary.expose(protocol, transport_identity))
+        .unwrap_or(Ok(()))
+}
+
+pub fn provider_http_exposure_active() -> bool {
+    ACTIVE_PROVIDER_HTTP_EXPOSURE.try_with(|_| ()).is_ok()
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SingleAttemptTerminalProof {
     state: Arc<AtomicU8>,
@@ -472,6 +546,12 @@ pub trait Provider: Send + Sync {
     /// call. Admission-sensitive callers fail closed when a provider does not expose one rather
     /// than inferring an endpoint from ambient configuration.
     fn transport_identity(&self, _model_name: &str) -> Option<String> {
+        None
+    }
+
+    /// Exact externally visible HTTP protocol route for this model. A lifecycle authority compares
+    /// this preflight value with the path observed immediately before the request is sent.
+    fn provider_http_protocol(&self, _model_name: &str) -> Option<ProviderHttpProtocol> {
         None
     }
 

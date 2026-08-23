@@ -1,8 +1,8 @@
 use super::api_client::ApiClient;
 use super::base::{
-    ConfigKey, ModelInfo, Provider, ProviderMetadata, SingleAttemptFailureProvenance,
-    SingleAttemptStream, SingleAttemptStreamOutcome, SingleAttemptTerminalProof,
-    SingleAttemptTerminalReporter,
+    ConfigKey, ModelInfo, Provider, ProviderHttpProtocol, ProviderMetadata,
+    SingleAttemptFailureProvenance, SingleAttemptStream, SingleAttemptStreamOutcome,
+    SingleAttemptTerminalProof, SingleAttemptTerminalReporter,
 };
 use super::retry::ProviderRetry;
 use crate::api_client::{AuthMethod, TlsConfig};
@@ -745,6 +745,10 @@ impl Provider for OpenAiProvider {
             .transport_identity(&self.request_path_for_model(model_name))
     }
 
+    fn provider_http_protocol(&self, model_name: &str) -> Option<ProviderHttpProtocol> {
+        ProviderHttpProtocol::from_openai_path(&self.request_path_for_model(model_name))
+    }
+
     fn skip_canonical_filtering(&self) -> bool {
         self.skip_canonical_filtering
     }
@@ -1198,6 +1202,15 @@ mod tests {
         let provider = make_provider("openai");
         let chat = provider.transport_identity("gpt-4o").unwrap();
         let responses = provider.transport_identity("gpt-5.4").unwrap();
+
+        assert_eq!(
+            provider.provider_http_protocol("gpt-4o"),
+            Some(ProviderHttpProtocol::OpenAiChatCompletions)
+        );
+        assert_eq!(
+            provider.provider_http_protocol("gpt-5.4"),
+            Some(ProviderHttpProtocol::OpenAiResponses)
+        );
 
         assert_eq!(
             chat,
