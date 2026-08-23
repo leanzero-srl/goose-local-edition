@@ -11,7 +11,7 @@ This distinguishes the defect from a timeout or token-cap problem. Stopping that
 Branch `codex/research-saturation-pod` replaces the single model-owned ledger call with a capacity-derived pod:
 
 1. Authored semantic boundaries are partitioned by the same cost-aware splitter used by the seed fan. The desired queue depth comes from distinct hosts plus configured execution slots and is bounded only by the number of requirements.
-2. Each packet contains disjoint immutable requirement authority and only evidence records bound to those requirements.
+2. Each packet contains disjoint immutable requirement authority and only evidence records bound to those requirements. If a large authored section is split for load balance, every sibling requirement in that section is included as read-only context so local cross-references are not severed; the compiler still forbids output authority for context-only ids.
 3. Packets work-steal across distinct physical hosts and retry a failed typed packet only on a different host.
 4. Every packet is independently compiled against its exact requirement and evidence authority. Invalid-ledger correction still terminates on repeated canonical semantic state, not time, tokens, or attempt count.
 5. The engine—not another model—restores authored requirement order, namespaces locally generated question IDs, applies the existing global blocked/continue/saturated rules, and recompiles the merged ledger against the complete authority set.
