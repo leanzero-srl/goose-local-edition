@@ -4,6 +4,10 @@
 //! device pool with the goose-swarm weighted work-queue scheduler. `goose swarm pool` manages the
 //! pool (devices, weights, enable/disable) via an interactive menu, persisted in the Goose config.
 
+mod repair;
+
+use self::repair::{build_defect_ledger, CandidateDelta, DefectLedger, FindingBatch, GateId};
+
 use super::swarm_control_registry::{
     apply_uncapped_effective_values, control_registry_export, merge_effective_config_controls,
     resolve_control_precedence,
@@ -28,13 +32,13 @@ use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
-    deterministic_verdict, is_split_candidate, AdmissionReceipt, ChildSpec, Dag, DeviceCfg,
-    DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig,
-    JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalAdmissionControl,
+    artifact_hashes_at, deterministic_verdict, is_split_candidate, AdmissionReceipt, ChildSpec,
+    Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge,
+    JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalAdmissionControl,
     PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle,
     ProviderLifecycleDispatcher, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext,
-    Replanner, Scheduler, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord,
-    Verdict, VerifiedPhysicalIdentity,
+    Replanner, SalvageReason, Scheduler, SwarmEvent, TaskCompletionDisposition, TaskDispatcher,
+    TaskRunOutput, TaskSpec, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -350,9 +354,9 @@ pub struct SwarmConfig {
     /// tokens, and those all made periodic tool calls, so their longest thinking-only stretch was far under
     /// 15 min. MEASURED h1-e2e-6: a test-cli task streamed 45,026 thinking chars over 26 min with only 5 tool
     /// calls, on ONE node while the other two idled — the exact "streams reasoning forever" pathology this
-    /// bounds. A cut routes through the existing salvage path: a file-owning worker whose files are already
-    /// written is accepted as DONE (the extra thinking produces no more file), else it retries — so this
-    /// cannot ship a truncated deliverable. env overrides; 0 disables.
+    /// bounds. A cut routes through the existing salvage path: a file-owning worker whose complete eligible
+    /// artifacts already exist is retained as explicit provisional work, else it retries. Only the full repair
+    /// ruler can later close that provisional defect. env overrides; 0 disables.
     #[serde(default = "default_progress_watchdog_secs")]
     pub progress_watchdog_secs: u64,
     /// ⚠️ BAKED ON — the golden formula sets this in `Default for SwarmConfig`. Any
@@ -30790,7 +30794,7 @@ impl GooseAgentDispatcher {
             output: compiled,
             session_id: Some(session_id),
             tool_calls,
-            salvaged: false,
+            completion: TaskCompletionDisposition::Complete,
         })
     }
 
@@ -32182,7 +32186,7 @@ impl GooseAgentDispatcher {
                     output,
                     session_id: Some(out.session_id),
                     tool_calls: out.tool_calls,
-                    salvaged: false,
+                    completion: TaskCompletionDisposition::Complete,
                 })
             }
             Err(e) => {
@@ -32203,8 +32207,8 @@ impl GooseAgentDispatcher {
                     if transient { " — will retry" } else { "" }
                 );
                 // #sink-time (progress-watchdog): if the watchdog cut this worker for a thinking-only spiral but
-                // its owned files are ALREADY written non-empty, the deliverable is done — salvage it as done
-                // instead of re-dispatching (which re-runs the whole task up to max_attempts, and typically
+                // its owned files are ALREADY written non-empty, preserve them provisionally instead of
+                // re-dispatching (which re-runs the whole task up to max_attempts, and typically
                 // re-spirals the same way, wasting fleet time). Sound because the watchdog only fires after the
                 // FULL budget elapsed with NO productive event since the last one: a mid-write worker would have
                 // interspersed tool calls (each resets the clock), so a full-budget thinking-only stall AFTER a
@@ -32223,16 +32227,25 @@ impl GooseAgentDispatcher {
                                             || f.ends_with("py.typed");
                                     }
                                     // F884: an untouched engine skeleton is not a finished
-                                    // deliverable — salvaging it as done would replay the
+                                    // deliverable — preserving it provisionally would replay the
                                     // run-10 laundering through the watchdog path.
                                     !std::fs::read_to_string(cwd.join(f.as_str()))
                                         .is_ok_and(|c| goose_swarm::judge::skeleton_only(&c))
                                 }
                                 Err(_) => false,
                             });
-                    if all_written {
+                    let artifact_hashes = all_written
+                        .then(|| {
+                            goose_swarm::salvage_artifact_hashes_at(
+                                &root,
+                                &req.task_id,
+                                &req.owned_files,
+                            )
+                        })
+                        .flatten();
+                    if let Some(artifact_hashes) = artifact_hashes {
                         eprintln!(
-                            "  {} {} on {} ({:.1}s) — progress-watchdog stall, but all owned files already written; accepting as done (not re-dispatching)",
+                            "  {} {} on {} ({:.1}s) — progress-watchdog stall, but all owned files are present; releasing them provisionally for full-ruler verification",
                             style("✓").green().bold(),
                             style(&req.task_id).bold(),
                             req.device_id,
@@ -32242,7 +32255,10 @@ impl GooseAgentDispatcher {
                             output: "(progress-watchdog: thinking-only spiral stopped; owned files already written)".to_string(),
                             session_id: None,
                             tool_calls: Vec::new(),
-                            salvaged: true,
+                            completion: TaskCompletionDisposition::salvaged(
+                                SalvageReason::ProgressWatchdog,
+                                artifact_hashes,
+                            ),
                         });
                     }
                 }
@@ -35914,6 +35930,7 @@ fn swarm_repeat_penalty_resolved(cfg: Option<f32>) -> Option<f32> {
 
 struct CompleteRulerResult {
     verdict: SmokeResult,
+    ledger: DefectLedger,
     missing: Vec<String>,
     cross_module_enabled: bool,
     drift: DriftResult,
@@ -35922,6 +35939,12 @@ struct CompleteRulerResult {
     dom: DriftResult,
     css: DriftResult,
     spec_contract: Option<SpecContractResult>,
+}
+
+#[derive(Clone)]
+struct ProvisionalTaskReceipt {
+    task_id: String,
+    artifact_hashes: std::collections::BTreeMap<String, String>,
 }
 
 fn missing_source_deliverables_for(
@@ -35967,6 +35990,7 @@ fn missing_source_deliverables_for(
 /// post-floor verification, and restored ship-best trees all call this function. Keeping collection
 /// here makes it impossible for a candidate to be promoted with a cheaper subset of the checks that
 /// decide the final result.
+#[allow(clippy::too_many_arguments)]
 async fn run_complete_ruler(
     root: &std::path::Path,
     prompt: &str,
@@ -35974,14 +35998,15 @@ async fn run_complete_ruler(
     all_files: &[String],
     composite: bool,
     missing_gate: bool,
-    blind_failed_findings: &[String],
+    failed_task_findings: &[String],
+    provisional_tasks: &[ProvisionalTaskReceipt],
 ) -> CompleteRulerResult {
     let mut verdict = run_smoke_gate(root, lang).await;
-    if !verdict.ran {
-        verdict
-            .findings
-            .extend(blind_failed_findings.iter().cloned());
-    }
+    let smoke_findings = verdict.findings.clone();
+    let smoke_inconclusive = verdict.inconclusive.clone();
+    verdict
+        .findings
+        .extend(failed_task_findings.iter().cloned());
 
     let missing = missing_source_deliverables_for(root, lang, all_files, missing_gate);
     verdict.findings.extend(missing.iter().cloned());
@@ -36023,8 +36048,123 @@ async fn run_complete_ruler(
         None
     };
 
+    // Salvage is dependency release, not acceptance. The provisional defect closes only when the
+    // complete ruler established every applicable leg and found no other defect on the exact tree.
+    // Task completion remains `salvaged` in RunReport forever; this ledger transition is the sole
+    // authority that lets its artifacts contribute to a green tree.
+    let provisional_receipts: Vec<(String, bool)> = provisional_tasks
+        .iter()
+        .map(|receipt| {
+            let paths: Vec<String> = receipt.artifact_hashes.keys().cloned().collect();
+            let still_exact = !paths.is_empty()
+                && artifact_hashes_at(root, &paths).as_ref() == Some(&receipt.artifact_hashes);
+            (receipt.task_id.clone(), still_exact)
+        })
+        .collect();
+    let provisional_findings: Vec<String> = provisional_receipts
+        .iter()
+        .filter(|(_, still_exact)| {
+            !*still_exact || !verdict.established() || !verdict.findings.is_empty()
+        })
+        .map(|(task_id, still_exact)| {
+            if *still_exact {
+                format!(
+                    "planned task `{task_id}` is SALVAGED, not accepted — its exact artifacts remain provisional until this full ruler is clean and established"
+                )
+            } else {
+                format!(
+                    "planned task `{task_id}` is SALVAGED with a STALE OR INVALID artifact receipt — current bytes do not match the provisional completion evidence"
+                )
+            }
+        })
+        .collect();
+    verdict
+        .findings
+        .extend(provisional_findings.iter().cloned());
+
+    let tree_snapshot = repair_tree_snapshot(root);
+    let tree_hash = tree_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.sha256.as_str())
+        .unwrap_or("tree-snapshot-unavailable");
+    let mut batches = vec![
+        FindingBatch {
+            gate: GateId::Smoke,
+            findings: &smoke_findings,
+            established: verdict.ran,
+        },
+        FindingBatch {
+            gate: GateId::Smoke,
+            findings: &smoke_inconclusive,
+            established: smoke_inconclusive.is_empty(),
+        },
+        FindingBatch {
+            gate: GateId::FailedTask,
+            findings: failed_task_findings,
+            established: true,
+        },
+        FindingBatch {
+            gate: GateId::ProvisionalTask,
+            findings: &provisional_findings,
+            established: true,
+        },
+        FindingBatch {
+            gate: GateId::MissingDeliverable,
+            findings: &missing,
+            established: true,
+        },
+    ];
+    if cross_module_enabled && matches!(lang, TargetLang::Python) {
+        batches.push(FindingBatch {
+            gate: GateId::CrossModule,
+            findings: &drift.findings,
+            established: drift.ran && !drift.partial,
+        });
+    }
+    if matches!(lang, TargetLang::Python) {
+        batches.push(FindingBatch {
+            gate: GateId::HttpTimeout,
+            findings: &no_timeout.findings,
+            established: no_timeout.ran && !no_timeout.partial,
+        });
+    }
+    if dom.ran || !dom.findings.is_empty() {
+        batches.push(FindingBatch {
+            gate: GateId::DomId,
+            findings: &dom.findings,
+            established: dom.ran && !dom.partial,
+        });
+    }
+    if css.ran || !css.findings.is_empty() {
+        batches.push(FindingBatch {
+            gate: GateId::CssCoherence,
+            findings: &css.findings,
+            established: css.ran && !css.partial,
+        });
+    }
+    if let Some(contract) = &spec_contract {
+        batches.push(FindingBatch {
+            gate: GateId::SpecContract,
+            findings: &contract.findings,
+            established: contract.inconclusive.is_empty(),
+        });
+        batches.push(FindingBatch {
+            gate: GateId::SpecContract,
+            findings: &contract.inconclusive,
+            established: contract.inconclusive.is_empty(),
+        });
+    }
+    let ledger = build_defect_ledger(
+        root,
+        tree_hash,
+        all_files,
+        &batches,
+        tree_snapshot.is_ok() && verdict.established(),
+    );
+
     CompleteRulerResult {
         verdict,
+        ledger,
         missing,
         cross_module_enabled,
         drift,
@@ -36042,6 +36182,30 @@ fn emit_complete_ruler_observations(
     lang: TargetLang,
     result: &CompleteRulerResult,
 ) {
+    sink.write_value(serde_json::json!({
+        "event": "repair_ledger_opened",
+        "round": round,
+        "ledger_hash": result.ledger.hash,
+        "established": result.ledger.established,
+        "defects": result.ledger.observations.len(),
+        "blocking": result.ledger.blocking_ids().len(),
+    }));
+    for observation in result.ledger.observations.values() {
+        sink.write_value(serde_json::json!({
+            "event": "repair_defect_observed",
+            "round": round,
+            "ledger_hash": result.ledger.hash,
+            "defect_id": observation.id,
+            "gate": observation.gate,
+            "requirements": &observation.requirement_ids,
+            "subjects": &observation.subjects,
+            "kind": observation.kind,
+            "impact": &observation.impact,
+            "evidence_refs": &observation.evidence,
+            "first_seen_tree": observation.first_seen_tree,
+            "last_seen_tree": observation.last_seen_tree,
+        }));
+    }
     if !result.missing.is_empty() {
         sink.write_value(serde_json::json!({
             "event": "complete_missing_deliverables",
@@ -36134,6 +36298,28 @@ fn emit_complete_ruler_observations(
     }
 }
 
+fn emit_repair_ledger_delta(
+    sink: &dyn EventSink,
+    round: u32,
+    base: &DefectLedger,
+    candidate: &DefectLedger,
+) {
+    let delta = CandidateDelta::between(base, candidate);
+    let introduced_blockers = delta.introduced_blockers(candidate);
+    sink.write_value(serde_json::json!({
+        "event": "repair_ledger_delta",
+        "round": round,
+        "base_ledger_hash": base.hash,
+        "candidate_ledger_hash": candidate.hash,
+        "closed": &delta.closed,
+        "persisted": &delta.persisted,
+        "introduced": &delta.introduced,
+        "changed_evidence": &delta.changed_evidence,
+        "introduced_blockers": introduced_blockers,
+        "established": delta.established,
+    }));
+}
+
 fn emit_complete_verify(
     sink: &dyn EventSink,
     round: u32,
@@ -36157,6 +36343,7 @@ fn emit_complete_verify(
         "authoritative": authoritative,
         "reason": reason,
         "tree_hash": tree_hash,
+        "ledger_hash": result.ledger.hash,
     }));
 }
 
@@ -36278,6 +36465,7 @@ struct RepairCandidateToken {
 struct RepairTreeRuling {
     epoch: u64,
     tree_hash: String,
+    ledger_hash: String,
     passed: bool,
     verified: bool,
     remaining_findings: usize,
@@ -36354,8 +36542,9 @@ impl OpenRepairTree {
     ) -> Result<RepairTreeRuling> {
         self.record_ruling_values(
             result.verdict.findings.is_empty(),
-            result.verdict.established(),
+            result.verdict.established() && result.ledger.established,
             result.verdict.findings.len(),
+            result.ledger.hash.clone(),
             reason,
             sink,
         )
@@ -36366,6 +36555,7 @@ impl OpenRepairTree {
         passed: bool,
         verified: bool,
         remaining_findings: usize,
+        ledger_hash: String,
         reason: &str,
         sink: &dyn EventSink,
     ) -> Result<RepairTreeRuling> {
@@ -36373,6 +36563,7 @@ impl OpenRepairTree {
         let ruling = RepairTreeRuling {
             epoch: self.epoch,
             tree_hash: snapshot.sha256,
+            ledger_hash,
             passed,
             verified,
             remaining_findings,
@@ -36382,6 +36573,7 @@ impl OpenRepairTree {
             "reason": reason,
             "epoch": ruling.epoch,
             "tree_hash": ruling.tree_hash,
+            "ledger_hash": ruling.ledger_hash,
             "passed": ruling.passed,
             "verified": ruling.verified,
             "remaining_findings": ruling.remaining_findings,
@@ -36432,6 +36624,7 @@ impl OpenRepairTree {
             root: self.root,
             epoch: ruling.epoch,
             tree_hash: ruling.tree_hash,
+            ledger_hash: ruling.ledger_hash,
             entries: current.entries,
             passed: ruling.passed,
             verified: ruling.verified && !force_unverified,
@@ -36442,6 +36635,7 @@ impl OpenRepairTree {
             "event": "repair_tree_sealed",
             "epoch": sealed.epoch,
             "tree_hash": sealed.tree_hash,
+            "ledger_hash": sealed.ledger_hash,
             "passed": sealed.passed,
             "verified": sealed.verified,
             "remaining_findings": sealed.remaining_findings,
@@ -36455,6 +36649,7 @@ struct SealedCompleteTree {
     root: PathBuf,
     epoch: u64,
     tree_hash: String,
+    ledger_hash: String,
     entries: std::collections::BTreeMap<String, String>,
     passed: bool,
     verified: bool,
@@ -36492,6 +36687,10 @@ impl SealedCompleteTree {
                 serde_json::json!(self.tree_hash),
             );
             object.insert(
+                "complete_ledger_hash".to_string(),
+                serde_json::json!(self.ledger_hash),
+            );
+            object.insert(
                 "complete_tree_epoch".to_string(),
                 serde_json::json!(self.epoch),
             );
@@ -36503,6 +36702,7 @@ impl SealedCompleteTree {
             "remaining_findings": self.remaining_findings,
             "shipped": self.shipped,
             "tree_hash": self.tree_hash,
+            "ledger_hash": self.ledger_hash,
             "tree_epoch": self.epoch,
         }));
         sink.write_value(run_finished);
@@ -36725,6 +36925,7 @@ mod repair_tree_seal_tests {
                     .collect(),
                 inconclusive: Vec::new(),
             },
+            ledger: DefectLedger::from_observations(Vec::new(), true),
             missing: Vec::new(),
             cross_module_enabled: false,
             drift: DriftResult::default(),
@@ -36983,12 +37184,21 @@ async fn one_ruler_grade(
     composite: bool,
     missing_gate: bool,
 ) -> (Option<usize>, bool) {
-    let result =
-        run_complete_ruler(root, prompt, lang, all_files, composite, missing_gate, &[]).await;
+    let result = run_complete_ruler(
+        root,
+        prompt,
+        lang,
+        all_files,
+        composite,
+        missing_gate,
+        &[],
+        &[],
+    )
+    .await;
     if result.verdict.ran {
         (
             Some(result.verdict.findings.len()),
-            result.verdict.established(),
+            result.verdict.established() && result.ledger.established,
         )
     } else {
         (None, false)
@@ -38468,7 +38678,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "split_inherit_spec": split_inherit_spec_enabled(),
             // Enumerated rather than fixed one at a time: these are every OTHER lever read from env
             // inside crates/goose-swarm and therefore missing from this map for the same reason.
-            // salvage_spin turns a terminal finalize-spin failure into Done — it decides whether a
+            // salvage_spin turns a terminal finalize-spin failure into explicit provisional completion — it decides whether a
             // WORKING app is reported as FAILED — and it defaults ON, so a run that never echoed it
             // could not say whether a green owed itself to a salvage. Parsed exactly as the engine
             // parses each one (spin is on unless 0/off/false/no; require_critical is off unless
@@ -40096,7 +40306,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     }
     // GOOSE_SWARM_DEGRADE_ON_STALL (#134/#132, BAKED ON): at transient-retry exhaustion (a mid-generation
     // model hang), if the stalled task already wrote its critical owned file — or owns no files at all —
-    // mark it Done(degraded) + relax dependents instead of fail_descendants killing the capstone.
+    // mark it Salvaged + relax dependents instead of fail_descendants killing the capstone.
     // Config-reachable (env > config > default) so the desktop toggle reaches it. A transient fault is not
     // a verdict on the work: the alternative was to throw the task away and start it again, which on the
     // owns-nothing sink meant restarting the whole join from zero after a dropped socket.
@@ -40191,6 +40401,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // Off by default => this block never runs and the exit path stays byte-identical.
     let complete_on = swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete);
     let mut complete_failed = false;
+    let mut complete_provisionals_verified = false;
     let mut sealed_complete: Option<SealedCompleteTree> = None;
     // Hoisted for the end-of-run OVERVIEW: whether the verify oracle actually RAN the built app green (not
     // just that workers reported "done"). Only this licenses the overview's confident (non-hedged) layout.
@@ -40409,11 +40620,49 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         } else {
             Vec::new()
         };
+        let provisional_task_findings: Vec<String> = report
+            .salvaged
+            .iter()
+            .map(|task_id| {
+                format!(
+                    "planned task `{task_id}` is SALVAGED, not accepted — its artifacts were released to dependents provisionally and require the full repair ruler before they can support a green claim"
+                )
+            })
+            .collect();
+        let provisional_task_receipts: Vec<ProvisionalTaskReceipt> = report
+            .salvaged
+            .iter()
+            .map(|task_id| {
+                let artifact_hashes = report
+                    .tasks
+                    .iter()
+                    .find(|outcome| &outcome.task_id == task_id)
+                    .and_then(|outcome| match &outcome.completion {
+                        Some(TaskCompletionDisposition::Salvaged {
+                            artifact_hashes, ..
+                        }) => Some(artifact_hashes.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                ProvisionalTaskReceipt {
+                    task_id: task_id.clone(),
+                    artifact_hashes,
+                }
+            })
+            .collect();
         if !failed_task_findings.is_empty() {
             sink.write_value(serde_json::json!({
                 "event": "complete_failed_tasks",
                 "failed": failed_planned,
                 "detail": "failed planned tasks are blocking the green claim and driving the fix loop",
+            }));
+        }
+        if !provisional_task_findings.is_empty() {
+            sink.write_value(serde_json::json!({
+                "event": "complete_provisional_tasks",
+                "tasks": report.salvaged,
+                "required_verification": "full_repair_ruler",
+                "detail": "salvaged tasks released dependents but remain explicit provisional defects",
             }));
         }
         // Missing deliverables are re-statted by the canonical ruler on every tree. A frozen pre-loop
@@ -40434,6 +40683,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // next wave. MEASURED stakes: a flat wave costs 1,599-2,400s; a cut converting run costs the
         // rounds it was denied.
         let mut round: u32 = 0;
+        let mut previous_complete_ledger: Option<DefectLedger> = None;
         // ONE STRATEGY SWITCH (r5 postmortem): the detectors now produce precise, actionable
         // findings, and the loss moved to FIX CONVERSION — r5's single sched round promoted
         // nothing against 7 named findings and converged at 0.017. A zero-promotion round may
@@ -40444,7 +40694,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut force_shard_next = false;
         let mut strategy_switched = false;
         loop {
-            let ruler = run_complete_ruler(
+            let mut ruler = run_complete_ruler(
                 &cwd,
                 &opts.prompt,
                 complete_lang,
@@ -40452,9 +40702,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 delivery_on || spec_contract_enabled(),
                 missing_deliverable_gate,
                 &failed_task_findings,
+                &provisional_task_receipts,
             )
             .await;
+            if let Some(previous) = &previous_complete_ledger {
+                ruler.ledger.reconcile(previous);
+                emit_repair_ledger_delta(sink.as_ref(), round, previous, &ruler.ledger);
+            }
             emit_complete_ruler_observations(sink.as_ref(), round, complete_lang, &ruler);
+            previous_complete_ledger = Some(ruler.ledger.clone());
             // GOLDEN CHECK (ADVISORY ONLY): when goals are on, run each distilled pillar's runnable check
             // against the advertised interface and SURFACE any failure as an event — but do NOT gate or fix
             // on it. A distilled check whose arg-shape mismatches how the app was actually built would else
@@ -41502,6 +41758,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             last_verify_count == 0,
             last_verify_established,
             last_verify_count,
+            "unstructured:repair-loop-final".to_string(),
             "repair-loop-final",
             sink.as_ref(),
         )?;
@@ -41702,7 +41959,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // This is the first authoritative decision: every boot/wire candidate is now behind us,
         // and the exact same ruler used at the loop head and in promotion previews judges the tree.
         let authoritative_round = round.saturating_add(1);
-        let authoritative = run_complete_ruler(
+        let mut authoritative = run_complete_ruler(
             &cwd,
             &opts.prompt,
             complete_lang,
@@ -41710,8 +41967,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             delivery_on || spec_contract_enabled(),
             missing_deliverable_gate,
             &failed_task_findings,
+            &provisional_task_receipts,
         )
         .await;
+        if let Some(previous) = &previous_complete_ledger {
+            authoritative.ledger.reconcile(previous);
+            emit_repair_ledger_delta(
+                sink.as_ref(),
+                authoritative_round,
+                previous,
+                &authoritative.ledger,
+            );
+        }
         emit_complete_ruler_observations(
             sink.as_ref(),
             authoritative_round,
@@ -41720,6 +41987,21 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         );
         let ruling =
             repair_tree.record_ruling(&authoritative, "post-repair-floor", sink.as_ref())?;
+        complete_provisionals_verified = authoritative.ledger.established
+            && !authoritative
+                .ledger
+                .observations
+                .values()
+                .any(|observation| observation.gate == GateId::ProvisionalTask);
+        if !report.salvaged.is_empty() && complete_provisionals_verified {
+            sink.write_value(serde_json::json!({
+                "event": "repair_provisional_verified",
+                "tasks": &report.salvaged,
+                "tree_hash": ruling.tree_hash,
+                "ledger_hash": ruling.ledger_hash,
+                "detail": "task states remain salvaged; their exact tree closed the provisional defects through the full ruler",
+            }));
+        }
         emit_complete_verify(
             sink.as_ref(),
             authoritative_round,
@@ -41738,7 +42020,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }));
         }
         let sealed = repair_tree.seal(shipped_desc, force_unverified, sink.as_ref())?;
-        complete_failed = !sealed.passed;
+        complete_failed = !sealed.passed || !sealed.verified;
         ov_verified = sealed.verified;
         let final_passed = sealed.passed;
         let final_verified = sealed.verified;
@@ -41837,11 +42119,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }
             }
         }
-        if !final_passed {
+        if !final_passed || !final_verified {
             eprintln!(
                 "{}",
                 style(format!(
-                    "complete: STILL RED after {rounds} fix round(s) — the run will NOT report success ({} finding(s) remain)",
+                    "complete: NOT ACCEPTED after {rounds} fix round(s) — the run will NOT report success ({} finding(s) remain; verified={final_verified})",
                     final_remaining_findings
                 ))
                 .red()
@@ -42196,6 +42478,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             total_m
         );
         println!("done   ({}): {}", report.done.len(), report.done.join(", "));
+        if !report.salvaged.is_empty() {
+            println!(
+                "{} ({}): {}  (provisional — full repair ruler required)",
+                style("SALVAGED").yellow().bold(),
+                report.salvaged.len(),
+                report.salvaged.join(", ")
+            );
+        }
         let core_failed: Vec<&String> = report
             .failed
             .iter()
@@ -42293,6 +42583,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         .iter()
         .filter(|id| !report.bonus.contains(*id))
         .count();
+    let core_salvaged = report
+        .salvaged
+        .iter()
+        .filter(|id| !report.bonus.contains(*id))
+        .count();
     // GOOSE_SWARM_COMPLETE: a still-red app (verify-by-running never went green within the fix budget) must
     // NOT report success, even if every planned subtask "completed" — this is the never-ship-broken gate.
     // When the flag is off, `complete_on && complete_failed` is false and the exit path is byte-identical.
@@ -42305,9 +42600,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 String::new()
             }
         ))
-    } else if core_failed == 0 {
+    } else if core_failed == 0
+        && (core_salvaged == 0 || (complete_on && complete_provisionals_verified))
+    {
         Ok(())
     } else {
-        Err(anyhow!("{} core subtask(s) failed", core_failed))
+        Err(anyhow!(
+            "{} core subtask(s) failed; {} core subtask(s) remain salvaged/provisional",
+            core_failed,
+            core_salvaged
+        ))
     }
 }

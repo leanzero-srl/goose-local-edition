@@ -4,7 +4,10 @@
 
 use crate::dag::ReplanAuthorityReceipt;
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::path::{Component, Path};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -43,20 +46,153 @@ pub struct TaskRunOutput {
     pub output: String,
     pub session_id: Option<String>,
     pub tool_calls: Vec<ToolCallRecord>,
-    /// The task did NOT finish — it stalled in a thinking-only spiral and was accepted because its
-    /// owned files were already on disk.
-    ///
-    /// The salvage itself is right: files written is files written, and re-dispatching would spend a
-    /// slot redoing finished work. What was wrong is that it was INVISIBLE. MEASURED across the four
-    /// archived 3-node cells: 11 of 79 completed tasks — 14% — took this path and were recorded as
-    /// plain `done`, indistinguishable in the log from a task that ran to completion. Every score and
-    /// every occupancy figure the campaign has produced silently mixes the two populations, and the
-    /// only reason the split was found at all is that this path also blanks `session_id` and
-    /// `tool_calls`, which showed up while chasing an unrelated missing transcript.
-    ///
-    /// A stalled task that happens to have written its files is not the same event as a task that
-    /// worked, and an engine that cannot tell them apart cannot be tuned on either.
-    pub salvaged: bool,
+    pub completion: TaskCompletionDisposition,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SalvageReason {
+    ProgressWatchdog,
+    StallExhausted,
+    FinalizeSpin,
+    DeterministicAccept,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequiredVerification {
+    FullRepairRuler,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskCompletionDisposition {
+    Complete,
+    Salvaged {
+        reason: SalvageReason,
+        artifact_hashes: BTreeMap<String, String>,
+        required_verification: RequiredVerification,
+    },
+}
+
+impl Default for TaskCompletionDisposition {
+    fn default() -> Self {
+        Self::Complete
+    }
+}
+
+impl TaskCompletionDisposition {
+    pub fn salvaged(reason: SalvageReason, artifact_hashes: BTreeMap<String, String>) -> Self {
+        Self::Salvaged {
+            reason,
+            artifact_hashes,
+            required_verification: RequiredVerification::FullRepairRuler,
+        }
+    }
+
+    pub fn is_salvaged(&self) -> bool {
+        matches!(self, Self::Salvaged { .. })
+    }
+}
+
+fn looks_like_test_file(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    let base = lower.rsplit('/').next().unwrap_or(lower.as_str());
+    base.starts_with("test_")
+        || base.ends_with("_test.py")
+        || base.ends_with("_test.rs")
+        || base.ends_with("_test.go")
+        || base.contains(".test.")
+        || base.contains(".spec.")
+        || base == "conftest.py"
+        || lower.contains("/tests/")
+        || lower.contains("/test/")
+}
+
+fn looks_like_manifest_file(path: &str) -> bool {
+    let base = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+    matches!(
+        base.as_str(),
+        "go.mod"
+            | "go.sum"
+            | "package.json"
+            | "package-lock.json"
+            | "cargo.toml"
+            | "cargo.lock"
+            | "requirements.txt"
+            | "setup.py"
+            | "setup.cfg"
+            | "pyproject.toml"
+            | "__init__.py"
+            | "tsconfig.json"
+            | "gemfile"
+    )
+}
+
+fn artifact_sha256(path: &Path) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() == 0 {
+        return None;
+    }
+    let digest = Sha256::digest(std::fs::read(path).ok()?);
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push(DIGITS[(byte >> 4) as usize] as char);
+        hex.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    Some(format!("sha256:{hex}"))
+}
+
+/// Captures the exact artifacts that can justify provisional dependency release. It deliberately
+/// refuses tests, owns-nothing verification, manifest-only work, unsafe paths, and partial multi-file
+/// output. Those cases may be retried or fail, but cannot be laundered into accepted completion.
+pub fn artifact_hashes_at(root: &Path, owned_files: &[String]) -> Option<BTreeMap<String, String>> {
+    if owned_files.is_empty() {
+        return None;
+    }
+
+    let canonical_root = root.canonicalize().ok()?;
+    let mut hashes = BTreeMap::new();
+    for path in owned_files {
+        let relative = Path::new(path);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+        {
+            return None;
+        }
+        let artifact = root.join(relative);
+        if !artifact.canonicalize().ok()?.starts_with(&canonical_root) {
+            return None;
+        }
+        hashes.insert(path.clone(), artifact_sha256(&artifact)?);
+    }
+    Some(hashes)
+}
+
+pub fn salvage_artifact_hashes_at(
+    root: &Path,
+    task_id: &str,
+    owned_files: &[String],
+) -> Option<BTreeMap<String, String>> {
+    if task_id.to_lowercase().contains("test")
+        || owned_files.iter().all(|path| looks_like_test_file(path))
+        || owned_files
+            .iter()
+            .all(|path| looks_like_manifest_file(path))
+    {
+        return None;
+    }
+    artifact_hashes_at(root, owned_files)
+}
+
+pub fn salvage_artifact_hashes(
+    task_id: &str,
+    owned_files: &[String],
+) -> Option<BTreeMap<String, String>> {
+    salvage_artifact_hashes_at(Path::new("."), task_id, owned_files)
 }
 
 impl From<String> for TaskRunOutput {
@@ -65,7 +201,7 @@ impl From<String> for TaskRunOutput {
             output,
             session_id: None,
             tool_calls: Vec::new(),
-            salvaged: false,
+            completion: TaskCompletionDisposition::Complete,
         }
     }
 }
