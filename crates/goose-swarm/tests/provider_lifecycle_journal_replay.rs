@@ -1,6 +1,6 @@
 use goose_swarm::{
-    BrokerError, HostCapacityEvidence, NullSink, PhysicalAdmissionControl, PhysicalFleetSnapshot,
-    ProviderLifecycleJournal, ProviderRequestReceipt, ProviderTerminalKind,
+    AuthorityScope, BrokerError, HostCapacityEvidence, NullSink, PhysicalAdmissionControl,
+    PhysicalFleetSnapshot, ProviderLifecycleJournal, ProviderRequestReceipt, ProviderTerminalKind,
     ProviderTerminalReceipt, SourceRevisionKind, TaskVersion, VerifiedPhysicalLane,
     WorkOpportunity, WorkPriority, WorkRole,
 };
@@ -63,6 +63,8 @@ fn control(journal: Arc<dyn ProviderLifecycleJournal>) -> PhysicalAdmissionContr
 
 fn source(task_id: &str) -> TaskVersion {
     TaskVersion {
+        authority_scope: AuthorityScope::new("journal-replay", "main"),
+        phase_epoch: 0,
         task_id: task_id.to_string(),
         attempt: 0,
         revision: 1,

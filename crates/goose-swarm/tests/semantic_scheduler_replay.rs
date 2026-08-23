@@ -1,14 +1,14 @@
 use async_trait::async_trait;
 use goose_swarm::{
     AdmissionReceipt, AdmittedSemanticObservationRequest, AdmittedSemanticObservationReviewer,
-    AdmittedSemanticReviewError, Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest,
-    EventSink, HostCapacityEvidence, PhysicalAdmissionControl, PhysicalFleetSnapshot,
-    ProviderLifecycle, ProviderLifecycleDispatcher, ProviderTerminalKind, Scheduler,
-    SemanticObservationCapture, SemanticObservationCaptureRequest,
-    SemanticObservationSnapshotDraft, SemanticObservationSnapshotProducer,
-    SemanticObservationSummonsSignal, SemanticTraceSnapshot, SwarmEvent, TaskRunOutput, TaskSpec,
-    TraceStateMeasurement, VerifiedPhysicalLane, SEMANTIC_OBSERVATION_PROTOCOL,
-    SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+    AdmittedSemanticReviewError, AuthorityScope, Dag, DeviceCfg, Difficulty, DispatchError,
+    DispatchRequest, EventSink, HostCapacityEvidence, PhysicalAdmissionControl,
+    PhysicalExecutionAuthority, PhysicalFleetSnapshot, ProviderLifecycle,
+    ProviderLifecycleDispatcher, ProviderTerminalKind, Scheduler, SemanticObservationCapture,
+    SemanticObservationCaptureRequest, SemanticObservationSnapshotDraft,
+    SemanticObservationSnapshotProducer, SemanticObservationSummonsSignal, SemanticTraceSnapshot,
+    SwarmEvent, TaskRunOutput, TaskSpec, TraceStateMeasurement, VerifiedPhysicalLane, WorkRole,
+    SEMANTIC_OBSERVATION_PROTOCOL, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -114,6 +114,14 @@ fn control(
     .unwrap()
 }
 
+fn execution() -> PhysicalExecutionAuthority {
+    PhysicalExecutionAuthority::new(
+        AuthorityScope::new("semantic-scheduler-replay", "execute"),
+        0,
+        WorkRole::Build,
+    )
+}
+
 struct FixedSnapshotProducer {
     calls: AtomicUsize,
     changed: Notify,
@@ -169,6 +177,8 @@ impl SemanticObservationSnapshotProducer for FixedSnapshotProducer {
         };
         let snapshot = SemanticObservationSnapshotDraft {
             schema_version: SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+            authority_scope: request.activity_publisher.source.authority_scope.clone(),
+            phase_epoch: request.activity_publisher.source.phase_epoch,
             task_id: request.task_id,
             attempt: request.attempt,
             source_revision: 1,
@@ -336,6 +346,7 @@ async fn scheduler_uses_one_idle_route_for_one_trace_revision_and_never_delivers
                 Dag::from_specs(vec![task("a-long")]).unwrap(),
                 dispatcher,
                 control,
+                execution(),
                 "Build the exact replay fixture".to_string(),
                 String::new(),
             )
@@ -390,6 +401,7 @@ async fn scheduler_fails_closed_when_the_only_verified_route_is_the_observed_wor
                     Dag::from_specs(vec![task("a-long")]).unwrap(),
                     dispatcher,
                     control,
+                    execution(),
                     "Build the exact no-route fixture".to_string(),
                     String::new(),
                 )
@@ -469,6 +481,7 @@ async fn scheduler_never_admits_an_idle_lane_without_a_verified_reviewer_provide
                 Dag::from_specs(vec![task("a-long")]).unwrap(),
                 dispatcher,
                 control,
+                execution(),
                 "Build the exact provider-binding fixture".to_string(),
                 String::new(),
             )

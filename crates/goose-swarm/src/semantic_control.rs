@@ -301,7 +301,7 @@ impl BrokeredSemanticObservationPlane {
             },
         );
 
-        let task_lane = self.task_lane(snapshot.task_id()).await;
+        let task_lane = self.task_lane(&source.authority_key()).await;
         self.control
             .set_source_revision(source.clone())
             .await
@@ -452,6 +452,8 @@ pub fn semantic_observation_task_version(
     snapshot: &SealedSemanticObservationSnapshot,
 ) -> TaskVersion {
     TaskVersion {
+        authority_scope: snapshot.authority_scope().clone(),
+        phase_epoch: snapshot.phase_epoch(),
         task_id: snapshot.task_id().to_string(),
         attempt: snapshot.attempt(),
         revision: snapshot.source_revision(),

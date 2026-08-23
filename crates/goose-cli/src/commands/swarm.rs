@@ -34,13 +34,14 @@ use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
-    deterministic_verdict, is_split_candidate, AdmissionReceipt, ChildSpec, Dag, DeviceCfg,
-    DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig,
+    deterministic_verdict, is_split_candidate, AdmissionReceipt, AuthorityScope, ChildSpec, Dag,
+    DeviceCfg, DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig,
     JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalAdmissionControl,
-    PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle,
-    ProviderLifecycleDispatcher, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext,
-    Replanner, Scheduler, SemanticActivityPublisher, SwarmEvent, TaskDispatcher, TaskRunOutput,
-    TaskSpec, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
+    PhysicalExecutionAuthority, PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest,
+    PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher, ReplanAuthorityFact,
+    ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler, SemanticActivityPublisher,
+    SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
+    VerifiedPhysicalIdentity, WorkRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -40532,6 +40533,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 dag,
                 dispatcher.clone() as Arc<dyn ProviderLifecycleDispatcher>,
                 control,
+                PhysicalExecutionAuthority::new(
+                    AuthorityScope::new(run_id.clone(), "execute"),
+                    0,
+                    WorkRole::Build,
+                ),
                 opts.prompt.clone(),
                 user_decisions.clone(),
             )

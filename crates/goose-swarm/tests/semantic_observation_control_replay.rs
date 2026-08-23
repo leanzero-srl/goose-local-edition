@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use goose_swarm::{
     AcceptanceCriterionSnapshot, AdmittedSemanticObservationRequest,
-    AdmittedSemanticObservationReviewer, AdmittedSemanticReviewError, BrokerError,
+    AdmittedSemanticObservationReviewer, AdmittedSemanticReviewError, AuthorityScope, BrokerError,
     BrokeredSemanticObservationPlane, EventSink, HostCapacityEvidence, LocalCompletionKind,
     NeutralJudgeSignal, PhysicalAdmissionControl, PhysicalFleetSnapshot, ProviderTerminalKind,
     SemanticJudgeAction, SemanticObservationAdmissionError, SemanticObservationAdmissionPolicy,
@@ -139,8 +139,26 @@ fn snapshot(
     revision: u64,
     reasoning: &str,
 ) -> goose_swarm::SealedSemanticObservationSnapshot {
+    scoped_snapshot(
+        AuthorityScope::new("semantic-observation-control-replay", "observe"),
+        0,
+        task_id,
+        revision,
+        reasoning,
+    )
+}
+
+fn scoped_snapshot(
+    authority_scope: AuthorityScope,
+    phase_epoch: u64,
+    task_id: &str,
+    revision: u64,
+    reasoning: &str,
+) -> goose_swarm::SealedSemanticObservationSnapshot {
     SemanticObservationSnapshotDraft {
         schema_version: SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
+        authority_scope,
+        phase_epoch,
         task_id: task_id.into(),
         attempt: 0,
         source_revision: revision,
@@ -172,6 +190,17 @@ fn snapshot(
     }
     .seal()
     .unwrap()
+}
+
+fn blocker_source() -> TaskVersion {
+    TaskVersion {
+        authority_scope: AuthorityScope::new("semantic-observation-control-replay", "build"),
+        phase_epoch: 0,
+        task_id: "blocker".into(),
+        attempt: 0,
+        revision: 1,
+        kind: SourceRevisionKind::TaskAttempt,
+    }
 }
 
 fn continue_reply(request: &AdmittedSemanticObservationRequest) -> String {
@@ -416,6 +445,108 @@ async fn one_trace_revision_calls_the_provider_once_and_rejects_replays_before_t
     assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
 }
 
+#[tokio::test]
+async fn identical_semantic_revisions_in_separate_run_or_phase_scopes_do_not_dedupe() {
+    let sink = Arc::new(RecordingSink::default());
+    let event_sink: Arc<dyn EventSink> = sink.clone();
+    let control = control("semantic-scope-isolation", event_sink.clone());
+    let plane = BrokeredSemanticObservationPlane::new(control.clone(), event_sink).unwrap();
+    let reviewer = Arc::new(ContinueReviewer::default());
+    let snapshots = vec![
+        scoped_snapshot(
+            AuthorityScope::new("run-a", "build"),
+            0,
+            "same-task",
+            7,
+            "run a build trace",
+        ),
+        scoped_snapshot(
+            AuthorityScope::new("run-b", "build"),
+            0,
+            "same-task",
+            7,
+            "run b build trace",
+        ),
+        scoped_snapshot(
+            AuthorityScope::new("run-a", "repair"),
+            0,
+            "same-task",
+            7,
+            "run a repair trace",
+        ),
+    ];
+
+    for snapshot in snapshots {
+        let handle = match plane
+            .submit(
+                snapshot,
+                SemanticObservationAdmissionPolicy::default(),
+                reviewer.clone(),
+            )
+            .await
+            .unwrap()
+        {
+            SemanticObservationAdmissionSubmission::Started(handle) => handle,
+            SemanticObservationAdmissionSubmission::Rejected(_) => {
+                panic!("independent authority scope was deduplicated")
+            }
+        };
+        let receipt = handle.wait().await.unwrap();
+        assert!(!receipt.observation.stale);
+    }
+
+    assert_eq!(reviewer.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(event_count(&sink, "broker_provider_request_permitted"), 3);
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
+#[tokio::test]
+async fn a_new_phase_epoch_supersedes_every_revision_from_the_prior_epoch() {
+    let sink = Arc::new(RecordingSink::default());
+    let event_sink: Arc<dyn EventSink> = sink.clone();
+    let control = control("semantic-epoch-supersession", event_sink.clone());
+    let plane = BrokeredSemanticObservationPlane::new(control.clone(), event_sink).unwrap();
+    let reviewer = Arc::new(ContinueReviewer::default());
+    let scope = AuthorityScope::new("run-a", "build");
+
+    for sealed in [
+        scoped_snapshot(scope.clone(), 0, "same-task", 100, "old epoch"),
+        scoped_snapshot(scope.clone(), 1, "same-task", 1, "new epoch"),
+    ] {
+        let handle = match plane
+            .submit(
+                sealed,
+                SemanticObservationAdmissionPolicy::default(),
+                reviewer.clone(),
+            )
+            .await
+            .unwrap()
+        {
+            SemanticObservationAdmissionSubmission::Started(handle) => handle,
+            SemanticObservationAdmissionSubmission::Rejected(_) => panic!("new epoch rejected"),
+        };
+        let receipt = handle.wait().await.unwrap();
+        assert!(!receipt.observation.stale);
+    }
+
+    let rollback = scoped_snapshot(scope, 0, "same-task", 101, "late old epoch");
+    assert!(matches!(
+        plane
+            .submit(
+                rollback,
+                SemanticObservationAdmissionPolicy::default(),
+                reviewer.clone(),
+            )
+            .await,
+        Err(SemanticObservationAdmissionError::Broker {
+            stage: SemanticObservationAdmissionStage::PublishSource,
+            error: BrokerError::SourceRevisionRollback { .. }
+        })
+    ));
+    assert_eq!(reviewer.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancelling_a_pre_call_rejection_cannot_cancel_its_admission_cleanup() {
     let sink = Arc::new(CleanupRaceSink::default());
@@ -567,12 +698,7 @@ async fn queued_old_trace_is_pruned_before_admission_and_never_calls_the_provide
     let plane = BrokeredSemanticObservationPlane::new(control.clone(), event_sink).unwrap();
     let reviewer = Arc::new(ContinueReviewer::default());
 
-    let blocker_source = TaskVersion {
-        task_id: "blocker".into(),
-        attempt: 0,
-        revision: 1,
-        kind: SourceRevisionKind::TaskAttempt,
-    };
+    let blocker_source = blocker_source();
     control
         .set_source_revision(blocker_source.clone())
         .await
@@ -646,12 +772,7 @@ async fn cancelling_a_queued_submission_withdraws_it_and_allows_one_exact_retry(
     let plane = BrokeredSemanticObservationPlane::new(control.clone(), event_sink).unwrap();
     let reviewer = Arc::new(ContinueReviewer::default());
 
-    let blocker_source = TaskVersion {
-        task_id: "blocker".into(),
-        attempt: 0,
-        revision: 1,
-        kind: SourceRevisionKind::TaskAttempt,
-    };
+    let blocker_source = blocker_source();
     control
         .set_source_revision(blocker_source.clone())
         .await
@@ -718,12 +839,7 @@ async fn immediate_idle_submission_never_waits_behind_build_work_and_can_retry_t
     let plane = BrokeredSemanticObservationPlane::new(control.clone(), event_sink).unwrap();
     let reviewer = Arc::new(ContinueReviewer::default());
 
-    let blocker_source = TaskVersion {
-        task_id: "blocker".into(),
-        attempt: 0,
-        revision: 1,
-        kind: SourceRevisionKind::TaskAttempt,
-    };
+    let blocker_source = blocker_source();
     control
         .set_source_revision(blocker_source.clone())
         .await

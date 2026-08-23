@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use goose_swarm::{
-    AdmissionReceipt, AdmittedWork, BrokerError, Dag, DeviceCfg, Difficulty, DispatchError,
-    DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig, JudgeOutcome,
-    JudgeRequest, LocalCompletionKind, PhysicalAdmissionControl, PhysicalFleetSnapshot,
-    ProviderDispatchClass, ProviderLifecycle, ProviderLifecycleDispatcher, ProviderRequestKey,
-    ProviderTerminalKind, Scheduler, SourceRevisionKind, SwarmEvent, TaskRunOutput, TaskSpec,
-    TaskVersion, VerifiedPhysicalLane, WorkOpportunity, WorkPriority, WorkRole,
+    AdmissionReceipt, AdmittedWork, AuthorityScope, BrokerError, Dag, DeviceCfg, Difficulty,
+    DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig,
+    JudgeOutcome, JudgeRequest, LocalCompletionKind, PhysicalAdmissionControl,
+    PhysicalExecutionAuthority, PhysicalFleetSnapshot, ProviderDispatchClass, ProviderLifecycle,
+    ProviderLifecycleDispatcher, ProviderRequestKey, ProviderTerminalKind, Scheduler,
+    SourceRevisionKind, SwarmEvent, TaskRunOutput, TaskSpec, TaskVersion, VerifiedPhysicalLane,
+    WorkOpportunity, WorkPriority, WorkRole,
 };
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -89,6 +90,8 @@ fn spec(id: &str, deps: &[&str]) -> TaskSpec {
 
 fn repair(task: &str, attempt: u32) -> TaskVersion {
     TaskVersion {
+        authority_scope: fixture_scope(),
+        phase_epoch: 0,
         task_id: task.to_string(),
         attempt,
         revision: u64::from(attempt) + 1,
@@ -98,6 +101,8 @@ fn repair(task: &str, attempt: u32) -> TaskVersion {
 
 fn build(task: &str) -> TaskVersion {
     TaskVersion {
+        authority_scope: fixture_scope(),
+        phase_epoch: 0,
         task_id: task.to_string(),
         attempt: 0,
         revision: 1,
@@ -107,6 +112,8 @@ fn build(task: &str) -> TaskVersion {
 
 fn artifact(task: &str, revision: u64) -> TaskVersion {
     TaskVersion {
+        authority_scope: fixture_scope(),
+        phase_epoch: 0,
         task_id: task.to_string(),
         attempt: 0,
         revision,
@@ -114,6 +121,29 @@ fn artifact(task: &str, revision: u64) -> TaskVersion {
             snapshot_hash: format!("sha256:{task}:{revision}"),
         },
     }
+}
+
+fn fixture_scope() -> AuthorityScope {
+    AuthorityScope::new("physical-control-replay", "main")
+}
+
+fn scoped_build(scope: AuthorityScope, phase_epoch: u64, task: &str) -> TaskVersion {
+    TaskVersion {
+        authority_scope: scope,
+        phase_epoch,
+        task_id: task.to_string(),
+        attempt: 0,
+        revision: 1,
+        kind: SourceRevisionKind::TaskAttempt,
+    }
+}
+
+fn execution(role: WorkRole) -> PhysicalExecutionAuthority {
+    PhysicalExecutionAuthority::new(
+        AuthorityScope::new("physical-scheduler-replay", "execute"),
+        0,
+        role,
+    )
 }
 
 fn opportunity(
@@ -356,6 +386,52 @@ impl ProviderLifecycleDispatcher for RecoveredTerminalDispatcher {
     }
 }
 
+struct AdmissionRoleRecorder {
+    seen: Mutex<Vec<(WorkRole, u32, AuthorityScope, u64)>>,
+    transient_first: bool,
+}
+
+impl AdmissionRoleRecorder {
+    fn new(transient_first: bool) -> Self {
+        Self {
+            seen: Mutex::new(Vec::new()),
+            transient_first,
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderLifecycleDispatcher for AdmissionRoleRecorder {
+    async fn run_admitted(
+        &self,
+        req: DispatchRequest,
+        admission: AdmissionReceipt,
+        lifecycle: ProviderLifecycle,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        self.seen.lock().unwrap().push((
+            admission.role,
+            admission.source.attempt,
+            admission.source.authority_scope.clone(),
+            admission.source.phase_epoch,
+        ));
+        let key = lifecycle
+            .provider_request_started(format!("provider:role:{}", req.attempt))
+            .await
+            .unwrap();
+        lifecycle
+            .provider_terminal(key, ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        if self.transient_first && req.attempt == 0 {
+            Err(DispatchError::Transient(
+                "role-preserving retry fixture".to_string(),
+            ))
+        } else {
+            Ok("role-recorded".to_string().into())
+        }
+    }
+}
+
 struct LateStartDispatcher {
     gate: Arc<Notify>,
     result: Mutex<Option<oneshot::Sender<Result<(), String>>>>,
@@ -500,6 +576,7 @@ async fn scheduled_dag_and_provider_calls_are_identical_on_one_physical_host() {
             dag,
             dispatcher,
             control.clone(),
+            execution(WorkRole::Build),
             String::new(),
             String::new(),
         )
@@ -543,6 +620,150 @@ async fn scheduled_dag_and_provider_calls_are_identical_on_one_physical_host() {
 }
 
 #[tokio::test]
+async fn explicit_scheduler_role_survives_retries_and_does_not_depend_on_attempt_number() {
+    let build_sink = Arc::new(RecordingSink::default());
+    let build_control = control(
+        "explicit-build-role",
+        vec![lane("lane-a", "model-a", "host-a", "instance-a", 1)],
+        build_sink.clone(),
+    );
+    let build_dispatcher = Arc::new(AdmissionRoleRecorder::new(true));
+    let build_report = Scheduler::new(vec![device("lane-a", "model-a", 1)], 2)
+        .with_sink(build_sink)
+        .run_with_physical_admission(
+            Dag::from_specs(vec![spec("task", &[])]).unwrap(),
+            build_dispatcher.clone(),
+            build_control,
+            execution(WorkRole::Build),
+            String::new(),
+            String::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(build_report.done, vec!["task".to_string()]);
+    assert_eq!(
+        *build_dispatcher.seen.lock().unwrap(),
+        vec![
+            (
+                WorkRole::Build,
+                0,
+                AuthorityScope::new("physical-scheduler-replay", "execute"),
+                0,
+            ),
+            (
+                WorkRole::Build,
+                1,
+                AuthorityScope::new("physical-scheduler-replay", "execute"),
+                0,
+            ),
+        ]
+    );
+
+    let repair_sink = Arc::new(RecordingSink::default());
+    let repair_control = control(
+        "explicit-repair-role",
+        vec![lane("lane-a", "model-a", "host-a", "instance-a", 1)],
+        repair_sink.clone(),
+    );
+    let repair_dispatcher = Arc::new(AdmissionRoleRecorder::new(false));
+    let repair_report = Scheduler::new(vec![device("lane-a", "model-a", 1)], 1)
+        .with_sink(repair_sink)
+        .run_with_physical_admission(
+            Dag::from_specs(vec![spec("task", &[])]).unwrap(),
+            repair_dispatcher.clone(),
+            repair_control,
+            execution(WorkRole::Repair),
+            String::new(),
+            String::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repair_report.done, vec!["task".to_string()]);
+    assert_eq!(
+        *repair_dispatcher.seen.lock().unwrap(),
+        vec![(
+            WorkRole::Repair,
+            0,
+            AuthorityScope::new("physical-scheduler-replay", "execute"),
+            0,
+        )]
+    );
+}
+
+#[tokio::test]
+async fn identical_task_ids_in_separate_run_or_phase_scopes_do_not_collide() {
+    let sink = Arc::new(RecordingSink::default());
+    let control = control(
+        "authority-scope-isolation",
+        vec![lane("lane-a", "model-a", "host-a", "instance-a", 3)],
+        sink,
+    );
+    let sources = [
+        scoped_build(AuthorityScope::new("run-a", "build"), 0, "same-task"),
+        scoped_build(AuthorityScope::new("run-b", "build"), 0, "same-task"),
+        scoped_build(AuthorityScope::new("run-a", "repair"), 0, "same-task"),
+    ];
+    let mut admitted = Vec::new();
+    for (index, source) in sources.iter().cloned().enumerate() {
+        control.set_source_revision(source.clone()).await.unwrap();
+        admitted.push(
+            control
+                .admit(opportunity(
+                    &format!("scoped:{index}"),
+                    WorkRole::Build,
+                    WorkPriority::Implementation,
+                    source,
+                ))
+                .await
+                .unwrap(),
+        );
+    }
+    assert_eq!(control.occupancy().await, (0, 3));
+    for (index, work) in admitted.iter().enumerate() {
+        assert_eq!(work.receipt().source, sources[index]);
+        finish(work, &format!("provider:scoped:{index}")).await;
+    }
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
+#[tokio::test]
+async fn newer_phase_epoch_supersedes_an_older_version_in_the_same_lineage() {
+    let control = control(
+        "phase-epoch-supersession",
+        vec![lane("lane-a", "model-a", "host-a", "instance-a", 1)],
+        Arc::new(RecordingSink::default()),
+    );
+    let scope = AuthorityScope::new("run-a", "build");
+    let old = scoped_build(scope.clone(), 0, "same-task");
+    let current = scoped_build(scope, 1, "same-task");
+    control.set_source_revision(old.clone()).await.unwrap();
+    control.set_source_revision(current.clone()).await.unwrap();
+
+    assert!(matches!(
+        control
+            .admit(opportunity(
+                "old-epoch",
+                WorkRole::Build,
+                WorkPriority::Implementation,
+                old,
+            ))
+            .await,
+        Err(BrokerError::StaleOpportunity { .. })
+    ));
+    let admitted = control
+        .admit(opportunity(
+            "current-epoch",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            current.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(admitted.receipt().source, current);
+    finish(&admitted, "provider:current-epoch").await;
+}
+
+#[tokio::test]
 async fn typed_provider_free_work_bypasses_admission_while_default_work_stays_brokered() {
     let sink = Arc::new(RecordingSink::default());
     let control = control(
@@ -559,6 +780,7 @@ async fn typed_provider_free_work_bypasses_admission_while_default_work_stays_br
             dag,
             dispatcher.clone(),
             control.clone(),
+            execution(WorkRole::Build),
             String::new(),
             String::new(),
         )
@@ -623,7 +845,14 @@ async fn two_logical_lanes_on_one_host_never_enter_two_provider_dispatches() {
         2,
     )
     .with_sink(sink)
-    .run_with_physical_admission(dag, dispatcher, control, String::new(), String::new())
+    .run_with_physical_admission(
+        dag,
+        dispatcher,
+        control,
+        execution(WorkRole::Build),
+        String::new(),
+        String::new(),
+    )
     .await
     .unwrap();
 
@@ -651,7 +880,14 @@ async fn terminal_not_yet_observed_blocks_the_next_scheduled_provider_call() {
     let run = tokio::spawn(async move {
         Scheduler::new(vec![device("lane-a", "model-a", 1)], 2)
             .with_sink(run_sink)
-            .run_with_physical_admission(dag, dispatcher, run_control, String::new(), String::new())
+            .run_with_physical_admission(
+                dag,
+                dispatcher,
+                run_control,
+                execution(WorkRole::Build),
+                String::new(),
+                String::new(),
+            )
             .await
     });
 
@@ -665,7 +901,7 @@ async fn terminal_not_yet_observed_blocks_the_next_scheduled_provider_call() {
         loop {
             if sink.events.lock().unwrap().iter().any(|event| {
                 event["event"] == "broker_drain_pending"
-                    && event["unresolved"][0]["admission"]["work_id"] == "task:first:attempt:0"
+                    && event["unresolved"][0]["admission"]["source"]["task_id"] == "first"
             }) {
                 break;
             }
@@ -819,6 +1055,7 @@ async fn physical_mode_rejects_legacy_judge_and_reserved_supervision_lanes() {
             dag,
             dispatcher.clone(),
             control.clone(),
+            execution(WorkRole::Build),
             String::new(),
             String::new(),
         )
@@ -830,7 +1067,14 @@ async fn physical_mode_rejects_legacy_judge_and_reserved_supervision_lanes() {
     supervision.supervision = true;
     let dag = Dag::from_specs(vec![spec("task", &[])]).unwrap();
     let supervision_error = Scheduler::new(vec![device("lane-a", "model-a", 1), supervision], 2)
-        .run_with_physical_admission(dag, dispatcher, control, String::new(), String::new())
+        .run_with_physical_admission(
+            dag,
+            dispatcher,
+            control,
+            execution(WorkRole::Build),
+            String::new(),
+            String::new(),
+        )
         .await
         .unwrap_err();
     assert!(supervision_error
@@ -862,7 +1106,14 @@ async fn tool_gap_releases_the_host_and_a_later_turn_reacquires_through_the_queu
     let run = tokio::spawn(async move {
         Scheduler::new(vec![device("lane-a", "model-a", 4)], 2)
             .with_sink(run_sink)
-            .run_with_physical_admission(dag, dispatcher, run_control, String::new(), String::new())
+            .run_with_physical_admission(
+                dag,
+                dispatcher,
+                run_control,
+                execution(WorkRole::Build),
+                String::new(),
+                String::new(),
+            )
             .await
     });
 
@@ -919,7 +1170,14 @@ async fn broker_routes_across_verified_hosts_instead_of_pinning_scheduler_placeh
         2,
     )
     .with_sink(sink.clone())
-    .run_with_physical_admission(dag, dispatcher, control, String::new(), String::new())
+    .run_with_physical_admission(
+        dag,
+        dispatcher,
+        control,
+        execution(WorkRole::Build),
+        String::new(),
+        String::new(),
+    )
     .await
     .unwrap();
 
@@ -960,7 +1218,14 @@ async fn fan_out_rank_reaches_the_capacity_one_broker_before_lower_ranked_ready_
     .unwrap();
     Scheduler::new(vec![device("lane-a", "model-a", 8)], 2)
         .with_sink(sink)
-        .run_with_physical_admission(dag, dispatcher, control, String::new(), String::new())
+        .run_with_physical_admission(
+            dag,
+            dispatcher,
+            control,
+            execution(WorkRole::Build),
+            String::new(),
+            String::new(),
+        )
         .await
         .unwrap();
     assert_eq!(recorder.calls.lock().unwrap().first().unwrap(), "high");
@@ -1201,6 +1466,7 @@ async fn provider_failure_cannot_be_reported_as_a_successful_scheduler_task() {
             Dag::from_specs(vec![spec("task", &[])]).unwrap(),
             Arc::new(FailedTerminalDispatcher),
             control,
+            execution(WorkRole::Build),
             String::new(),
             String::new(),
         )
@@ -1224,6 +1490,7 @@ async fn later_correlated_provider_success_recovers_the_scheduler_task() {
             Dag::from_specs(vec![spec("task", &[])]).unwrap(),
             Arc::new(RecoveredTerminalDispatcher),
             control,
+            execution(WorkRole::Build),
             String::new(),
             String::new(),
         )
@@ -1304,6 +1571,7 @@ async fn lifecycle_clone_cannot_start_a_request_after_dispatch_return_closed_the
             Dag::from_specs(vec![spec("task", &[])]).unwrap(),
             dispatcher,
             control,
+            execution(WorkRole::Build),
             String::new(),
             String::new(),
         )
@@ -1351,6 +1619,7 @@ async fn closing_provider_starts_rejects_a_clone_already_queued_for_physical_cap
                     signals: run_signals,
                 }),
                 run_control,
+                execution(WorkRole::Build),
                 String::new(),
                 String::new(),
             )
