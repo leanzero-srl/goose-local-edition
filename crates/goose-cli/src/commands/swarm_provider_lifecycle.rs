@@ -7,7 +7,7 @@ use goose::providers::base::{
     SingleAttemptFailureProvenance, SingleAttemptStream, SingleAttemptStreamOutcome,
 };
 use goose_provider_types::base::{
-    scope_provider_stream_progress, ProviderStreamChunkKind, ProviderStreamProgressSink,
+    ProviderStreamChunkKind, ProviderStreamProgressSink, scope_provider_stream_progress,
 };
 use goose_provider_types::errors::ProviderError;
 use goose_provider_types::model::ModelConfig;
@@ -45,6 +45,162 @@ pub(crate) trait ProviderNudgeDeliveryFactory: Send + Sync {
     fn open(&self) -> Arc<dyn ProviderNudgeDelivery>;
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PreSchedulerProviderTerminalKind {
+    Finished,
+    Failed,
+    Cancelled,
+    Unproven,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PreSchedulerProviderLifecyclePhase {
+    Started,
+    Terminal,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct PreSchedulerProviderLifecycleEvent {
+    pub(crate) generation: u64,
+    pub(crate) phase: PreSchedulerProviderLifecyclePhase,
+    pub(crate) terminal: Option<PreSchedulerProviderTerminalKind>,
+    pub(crate) successful: bool,
+    pub(crate) physical_broker_accounting: &'static str,
+    pub(crate) payload_logged: bool,
+}
+
+struct PreSchedulerActiveProviderRequest {
+    generation: u64,
+    delivery: Arc<dyn ProviderNudgeDelivery>,
+}
+
+#[derive(Default)]
+struct PreSchedulerProviderControlState {
+    next_generation: u64,
+    active: Option<PreSchedulerActiveProviderRequest>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PreSchedulerNudgeCapture {
+    pub(crate) generation: u64,
+    structured_output_bytes: u64,
+}
+
+pub(crate) struct PreSchedulerProviderControl {
+    state: Mutex<PreSchedulerProviderControlState>,
+    observer: Arc<dyn Fn(PreSchedulerProviderLifecycleEvent) + Send + Sync>,
+}
+
+impl PreSchedulerProviderControl {
+    pub(crate) fn new(
+        observer: Arc<dyn Fn(PreSchedulerProviderLifecycleEvent) + Send + Sync>,
+    ) -> Self {
+        Self {
+            state: Mutex::new(PreSchedulerProviderControlState::default()),
+            observer,
+        }
+    }
+
+    fn state(&self) -> MutexGuard<'_, PreSchedulerProviderControlState> {
+        self.state.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn begin(&self, delivery: Arc<dyn ProviderNudgeDelivery>) -> u64 {
+        let generation = {
+            let mut state = self.state();
+            state.next_generation = state.next_generation.saturating_add(1);
+            let generation = state.next_generation;
+            state.active = Some(PreSchedulerActiveProviderRequest {
+                generation,
+                delivery,
+            });
+            generation
+        };
+        (self.observer)(PreSchedulerProviderLifecycleEvent {
+            generation,
+            phase: PreSchedulerProviderLifecyclePhase::Started,
+            terminal: None,
+            successful: false,
+            physical_broker_accounting: "unavailable_pre_scheduler",
+            payload_logged: false,
+        });
+        generation
+    }
+
+    fn finish(&self, generation: u64, terminal: PreSchedulerProviderTerminalKind) {
+        let admitted = {
+            let mut state = self.state();
+            if state.active.as_ref().map(|active| active.generation) != Some(generation) {
+                false
+            } else {
+                state.active = None;
+                true
+            }
+        };
+        if admitted {
+            (self.observer)(PreSchedulerProviderLifecycleEvent {
+                generation,
+                phase: PreSchedulerProviderLifecyclePhase::Terminal,
+                terminal: Some(terminal),
+                successful: terminal == PreSchedulerProviderTerminalKind::Finished,
+                physical_broker_accounting: "unavailable_pre_scheduler",
+                payload_logged: false,
+            });
+        }
+    }
+
+    pub(crate) fn capture(
+        &self,
+        progress: ProviderStreamProgressSnapshot,
+    ) -> Option<PreSchedulerNudgeCapture> {
+        self.state()
+            .active
+            .as_ref()
+            .map(|active| PreSchedulerNudgeCapture {
+                generation: active.generation,
+                structured_output_bytes: progress.structured_output_bytes,
+            })
+    }
+
+    pub(crate) fn try_enqueue_nudge(
+        &self,
+        capture: PreSchedulerNudgeCapture,
+        progress: ProviderStreamProgressSnapshot,
+        guidance: String,
+    ) -> std::result::Result<(), String> {
+        if progress.structured_output_active
+            || progress.structured_output_bytes > capture.structured_output_bytes
+        {
+            return Err(
+                "provider is decoding structured output; supervision remains observational"
+                    .to_string(),
+            );
+        }
+        let delivery = self
+            .state()
+            .active
+            .as_ref()
+            .filter(|active| active.generation == capture.generation)
+            .map(|active| active.delivery.clone())
+            .ok_or_else(|| "captured provider request is no longer active".to_string())?;
+        delivery.try_enqueue(guidance)
+    }
+}
+
+pub(crate) fn bind_pre_scheduler_provider_lifecycle(
+    provider: Arc<dyn Provider>,
+    nudge_factory: Arc<dyn ProviderNudgeDeliveryFactory>,
+    control: Arc<PreSchedulerProviderControl>,
+) -> Arc<dyn Provider> {
+    Arc::new(PreSchedulerLifecycleProvider {
+        inner: provider,
+        nudge_factory,
+        control,
+    })
+}
+
 pub(crate) fn bind_current_provider_lifecycle(
     provider: Arc<dyn Provider>,
     nudge_factory: Option<Arc<dyn ProviderNudgeDeliveryFactory>>,
@@ -72,6 +228,12 @@ struct LifecycleProvider {
     inner: Arc<dyn Provider>,
     lifecycle: ProviderLifecycle,
     nudge_factory: Option<Arc<dyn ProviderNudgeDeliveryFactory>>,
+}
+
+struct PreSchedulerLifecycleProvider {
+    inner: Arc<dyn Provider>,
+    nudge_factory: Arc<dyn ProviderNudgeDeliveryFactory>,
+    control: Arc<PreSchedulerProviderControl>,
 }
 
 struct StreamProgressProvider {
@@ -295,6 +457,268 @@ impl Provider for StreamProgressProvider {
         Ok(SingleAttemptStream::new(
             observe_provider_stream(attempt.stream, self.progress.clone()),
             attempt.terminal,
+        ))
+    }
+
+    async fn get_context_limit(&self, model_config: &ModelConfig) -> Result<usize, ProviderError> {
+        self.inner.get_context_limit(model_config).await
+    }
+
+    fn retry_config(&self) -> RetryConfig {
+        self.inner.retry_config()
+    }
+
+    async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
+        self.inner.fetch_supported_models().await
+    }
+
+    async fn fetch_supported_model_info(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        self.inner.fetch_supported_model_info().await
+    }
+
+    async fn fetch_model_info(&self, model_name: &str) -> Result<ModelInfo, ProviderError> {
+        self.inner.fetch_model_info(model_name).await
+    }
+
+    fn skip_canonical_filtering(&self) -> bool {
+        self.inner.skip_canonical_filtering()
+    }
+
+    async fn fetch_recommended_models(&self, toolshim: bool) -> Result<Vec<String>, ProviderError> {
+        self.inner.fetch_recommended_models(toolshim).await
+    }
+
+    async fn fetch_recommended_model_info(
+        &self,
+        toolshim: bool,
+    ) -> Result<Vec<ModelInfo>, ProviderError> {
+        self.inner.fetch_recommended_model_info(toolshim).await
+    }
+
+    async fn map_to_canonical_model(
+        &self,
+        provider_model: &str,
+    ) -> Result<Option<String>, ProviderError> {
+        self.inner.map_to_canonical_model(provider_model).await
+    }
+
+    fn manages_own_context(&self) -> bool {
+        self.inner.manages_own_context()
+    }
+
+    async fn configure_oauth(&self) -> Result<(), ProviderError> {
+        self.inner.configure_oauth().await
+    }
+
+    async fn refresh_credentials(&self) -> Result<(), ProviderError> {
+        self.inner.refresh_credentials().await
+    }
+
+    async fn update_mode(&self, session_id: &str, mode: GooseMode) -> Result<(), ProviderError> {
+        self.inner.update_mode(session_id, mode).await
+    }
+
+    fn permission_routing(&self) -> PermissionRouting {
+        self.inner.permission_routing()
+    }
+
+    async fn handle_permission_confirmation(
+        &self,
+        request_id: &str,
+        confirmation: &PermissionConfirmation,
+    ) -> bool {
+        self.inner
+            .handle_permission_confirmation(request_id, confirmation)
+            .await
+    }
+}
+
+async fn finish_pre_scheduler_naturally(
+    control: &PreSchedulerProviderControl,
+    generation: u64,
+    requested: PreSchedulerProviderTerminalKind,
+    delivery: &Arc<dyn ProviderNudgeDelivery>,
+) -> PreSchedulerProviderTerminalKind {
+    let terminal = if delivery.natural_terminal_allowed() {
+        requested
+    } else {
+        delivery.cancelled().await;
+        PreSchedulerProviderTerminalKind::Cancelled
+    };
+    control.finish(generation, terminal);
+    terminal
+}
+
+#[async_trait]
+impl Provider for PreSchedulerLifecycleProvider {
+    fn get_name(&self) -> &str {
+        self.inner.get_name()
+    }
+
+    fn transport_identity(&self, model_name: &str) -> Option<String> {
+        self.inner.transport_identity(model_name)
+    }
+
+    fn provider_http_protocol(&self, model_name: &str) -> Option<ProviderHttpProtocol> {
+        self.inner.provider_http_protocol(model_name)
+    }
+
+    fn supports_single_attempt_streaming(&self) -> bool {
+        self.inner.supports_single_attempt_streaming()
+    }
+
+    fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+        self.inner
+            .supports_terminal_proven_single_attempt_streaming()
+    }
+
+    fn single_attempt_failure_provenance(
+        &self,
+        error: &ProviderError,
+    ) -> SingleAttemptFailureProvenance {
+        self.inner.single_attempt_failure_provenance(error)
+    }
+
+    async fn stream(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        if !self
+            .inner
+            .supports_terminal_proven_single_attempt_streaming()
+        {
+            return Err(ProviderError::NotImplemented(format!(
+                "provider `{}` has no terminal-proven single-attempt stream boundary for pre-scheduler supervision",
+                self.inner.get_name()
+            )));
+        }
+
+        let delivery = self.nudge_factory.open();
+        let generation = self.control.begin(delivery.clone());
+        let attempt = tokio::select! {
+            biased;
+            _ = delivery.cancelled() => None,
+            result = self.inner.stream_once_with_terminal_proof(
+                model_config,
+                system,
+                messages,
+                tools,
+            ) => Some(result),
+        };
+        let Some(attempt) = attempt else {
+            self.control
+                .finish(generation, PreSchedulerProviderTerminalKind::Cancelled);
+            return Ok(Box::pin(futures::stream::empty()));
+        };
+        let attempt = match attempt {
+            Ok(attempt) => attempt,
+            Err(error) => {
+                let requested = if self.inner.single_attempt_failure_provenance(&error)
+                    == SingleAttemptFailureProvenance::TerminalResponse
+                {
+                    PreSchedulerProviderTerminalKind::Failed
+                } else {
+                    PreSchedulerProviderTerminalKind::Unproven
+                };
+                let terminal =
+                    finish_pre_scheduler_naturally(&self.control, generation, requested, &delivery)
+                        .await;
+                if terminal == PreSchedulerProviderTerminalKind::Cancelled {
+                    return Ok(Box::pin(futures::stream::empty()));
+                }
+                return Err(error);
+            }
+        };
+        let control = self.control.clone();
+        Ok(Box::pin(async_stream::stream! {
+            let mut stream = attempt.stream;
+            let terminal_proof = attempt.terminal;
+            loop {
+                let next = tokio::select! {
+                    biased;
+                    _ = delivery.cancelled() => {
+                        control.finish(generation, PreSchedulerProviderTerminalKind::Cancelled);
+                        return;
+                    }
+                    item = stream.next() => item,
+                };
+                let Some(item) = next else { break; };
+                let proven = match terminal_proof.outcome() {
+                    SingleAttemptStreamOutcome::Finished => {
+                        Some(PreSchedulerProviderTerminalKind::Finished)
+                    }
+                    SingleAttemptStreamOutcome::Failed => {
+                        Some(PreSchedulerProviderTerminalKind::Failed)
+                    }
+                    SingleAttemptStreamOutcome::Pending => None,
+                };
+                if let Some(requested) = proven {
+                    let terminal = finish_pre_scheduler_naturally(
+                        &control,
+                        generation,
+                        requested,
+                        &delivery,
+                    )
+                    .await;
+                    if terminal == PreSchedulerProviderTerminalKind::Cancelled {
+                        return;
+                    }
+                }
+                yield item;
+                if proven.is_some() {
+                    return;
+                }
+            }
+
+            let requested = match terminal_proof.outcome() {
+                SingleAttemptStreamOutcome::Finished => {
+                    PreSchedulerProviderTerminalKind::Finished
+                }
+                SingleAttemptStreamOutcome::Failed => PreSchedulerProviderTerminalKind::Failed,
+                SingleAttemptStreamOutcome::Pending => {
+                    control.finish(generation, PreSchedulerProviderTerminalKind::Unproven);
+                    yield Err(ProviderError::ExecutionError(
+                        "pre-scheduler single-attempt stream ended without explicit provider terminal proof"
+                            .to_string(),
+                    ));
+                    return;
+                }
+            };
+            let terminal = finish_pre_scheduler_naturally(
+                &control,
+                generation,
+                requested,
+                &delivery,
+            )
+            .await;
+            if terminal == PreSchedulerProviderTerminalKind::Cancelled {
+                return;
+            }
+        }))
+    }
+
+    async fn stream_once(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        self.stream(model_config, system, messages, tools).await
+    }
+
+    async fn stream_once_with_terminal_proof(
+        &self,
+        _model_config: &ModelConfig,
+        _system: &str,
+        _messages: &[Message],
+        _tools: &[Tool],
+    ) -> Result<SingleAttemptStream, ProviderError> {
+        Err(ProviderError::NotImplemented(
+            "nested pre-scheduler lifecycle wrapping is forbidden".to_string(),
         ))
     }
 
@@ -704,6 +1128,7 @@ mod tests {
         ProviderStartLookupError, SourceRevisionKind, TaskVersion, VerifiedPhysicalIdentity,
         WorkOpportunity, WorkRole,
     };
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     const TRANSPORT_A: &str =
@@ -731,6 +1156,112 @@ mod tests {
     struct WrongTransportProvider;
 
     struct ProgressOnlyProvider;
+
+    #[derive(Default)]
+    struct TestNudgeDelivery {
+        guidance: Mutex<Vec<String>>,
+        cancelled: tokio::sync::Notify,
+        is_cancelled: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait]
+    impl ProviderNudgeDelivery for TestNudgeDelivery {
+        fn try_enqueue(&self, guidance: String) -> std::result::Result<(), String> {
+            self.guidance.lock().unwrap().push(guidance);
+            self.is_cancelled.store(true, Ordering::Release);
+            self.cancelled.notify_waiters();
+            Ok(())
+        }
+
+        fn natural_terminal_allowed(&self) -> bool {
+            !self.is_cancelled.load(Ordering::Acquire)
+        }
+
+        async fn cancelled(&self) {
+            while !self.is_cancelled.load(Ordering::Acquire) {
+                self.cancelled.notified().await;
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct TestNudgeFactory {
+        deliveries: Mutex<Vec<Arc<TestNudgeDelivery>>>,
+    }
+
+    impl TestNudgeFactory {
+        fn latest(&self) -> Arc<TestNudgeDelivery> {
+            self.deliveries
+                .lock()
+                .unwrap()
+                .last()
+                .cloned()
+                .expect("provider request opened a nudge delivery")
+        }
+    }
+
+    impl ProviderNudgeDeliveryFactory for TestNudgeFactory {
+        fn open(&self) -> Arc<dyn ProviderNudgeDelivery> {
+            let delivery = Arc::new(TestNudgeDelivery::default());
+            self.deliveries.lock().unwrap().push(delivery.clone());
+            delivery
+        }
+    }
+
+    struct PendingThenFinishedProvider {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for PendingThenFinishedProvider {
+        fn get_name(&self) -> &str {
+            "pending-then-finished"
+        }
+
+        fn supports_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Err(ProviderError::ExecutionError(
+                "supervised provider must use one-attempt streaming".to_string(),
+            ))
+        }
+
+        async fn stream_once_with_terminal_proof(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<SingleAttemptStream, ProviderError> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(SingleAttemptStream::new(
+                    Box::pin(stream::pending()),
+                    goose::providers::base::SingleAttemptTerminalProof::default(),
+                ))
+            } else {
+                Ok(SingleAttemptStream::finished(Box::pin(stream::once(
+                    async {
+                        Ok((
+                            Some(Message::assistant().with_text("restarted")),
+                            Some(ProviderUsage::new("mock".to_string(), Usage::default())),
+                        ))
+                    },
+                ))))
+            }
+        }
+    }
 
     #[async_trait]
     impl Provider for ProgressOnlyProvider {
@@ -993,6 +1524,140 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn zero_byte_dead_call_is_nudged_then_restarted_after_cancel_terminal_proof() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let recorded = events.clone();
+        let control = Arc::new(PreSchedulerProviderControl::new(Arc::new(move |event| {
+            recorded.lock().unwrap().push(event);
+        })));
+        let factory = Arc::new(TestNudgeFactory::default());
+        let provider = bind_pre_scheduler_provider_lifecycle(
+            Arc::new(PendingThenFinishedProvider {
+                calls: AtomicUsize::new(0),
+            }),
+            factory.clone(),
+            control.clone(),
+        );
+        let progress = ProviderStreamProgressSnapshot::default();
+        let mut first = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .unwrap();
+        let capture = control
+            .capture(progress)
+            .expect("the zero-byte request is active");
+        control
+            .try_enqueue_nudge(
+                capture,
+                progress,
+                "continue from the same session".to_string(),
+            )
+            .unwrap();
+        assert!(first.next().await.is_none());
+
+        let cancellation_index = events
+            .lock()
+            .unwrap()
+            .iter()
+            .position(|event| event.terminal == Some(PreSchedulerProviderTerminalKind::Cancelled))
+            .expect("cancellation terminal proof precedes continuation");
+        let mut restarted = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .unwrap();
+        let item = restarted.next().await.unwrap().unwrap();
+        assert_eq!(item.0.unwrap().as_concat_text(), "restarted");
+        let second_start_index = events
+            .lock()
+            .unwrap()
+            .iter()
+            .rposition(|event| event.phase == PreSchedulerProviderLifecyclePhase::Started)
+            .unwrap();
+        assert!(cancellation_index < second_start_index);
+        assert_eq!(factory.latest().guidance.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn growing_structured_output_cannot_be_interrupted_by_a_stale_judge_capture() {
+        let control = Arc::new(PreSchedulerProviderControl::new(Arc::new(|_| {})));
+        let factory = Arc::new(TestNudgeFactory::default());
+        let provider = bind_pre_scheduler_provider_lifecycle(
+            Arc::new(MockProvider {
+                behavior: Behavior::Pending,
+            }),
+            factory.clone(),
+            control.clone(),
+        );
+        let _stream = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .unwrap();
+        let before = ProviderStreamProgressSnapshot::default();
+        let capture = control.capture(before).unwrap();
+        let growing = ProviderStreamProgressSnapshot {
+            revision: 1,
+            chunks: 1,
+            bytes: 4096,
+            structured_output_chunks: 1,
+            structured_output_bytes: 4096,
+            last_progress_elapsed_ms: 1,
+            structured_output_active: true,
+        };
+        let error = control
+            .try_enqueue_nudge(capture, growing, "must not interrupt".to_string())
+            .unwrap_err();
+        assert!(error.contains("structured output"));
+        assert!(factory.latest().guidance.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelled_pre_scheduler_request_never_emits_false_success() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let recorded = events.clone();
+        let control = Arc::new(PreSchedulerProviderControl::new(Arc::new(move |event| {
+            recorded.lock().unwrap().push(event);
+        })));
+        let factory = Arc::new(TestNudgeFactory::default());
+        let provider = bind_pre_scheduler_provider_lifecycle(
+            Arc::new(MockProvider {
+                behavior: Behavior::Pending,
+            }),
+            factory,
+            control.clone(),
+        );
+        let progress = ProviderStreamProgressSnapshot::default();
+        let mut stream = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .unwrap();
+        control
+            .try_enqueue_nudge(
+                control.capture(progress).unwrap(),
+                progress,
+                "retry".to_string(),
+            )
+            .unwrap();
+        assert!(stream.next().await.is_none());
+        let terminal = events
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|event| event.phase == PreSchedulerProviderLifecyclePhase::Terminal)
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            terminal.terminal,
+            Some(PreSchedulerProviderTerminalKind::Cancelled)
+        );
+        assert!(!terminal.successful);
+        assert_eq!(
+            terminal.physical_broker_accounting,
+            "unavailable_pre_scheduler"
+        );
+        assert!(!terminal.payload_logged);
+    }
+
+    #[tokio::test]
     async fn lifecycle_scope_is_visible_only_while_admitted() {
         let (_, work) = admitted().await;
         assert!(!provider_lifecycle_active());
@@ -1090,15 +1755,19 @@ mod tests {
             .await
             .unwrap();
         let error = output.next().await.unwrap().unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("without explicit provider terminal"));
-        assert!(tokio::time::timeout(
-            Duration::from_millis(50),
-            work.complete_local(LocalCompletionKind::Error),
-        )
-        .await
-        .is_err());
+        assert!(
+            error
+                .to_string()
+                .contains("without explicit provider terminal")
+        );
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                work.complete_local(LocalCompletionKind::Error),
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(control.occupancy().await, (0, 1));
     }
 
@@ -1106,10 +1775,12 @@ mod tests {
     async fn provider_error_records_failed_terminal() {
         let (control, work) = admitted().await;
         let provider = wrapped_for(Behavior::Failed, work.lifecycle()).await;
-        assert!(provider
-            .stream(&ModelConfig::new("model-a"), "", &[], &[])
-            .await
-            .is_err());
+        assert!(
+            provider
+                .stream(&ModelConfig::new("model-a"), "", &[], &[])
+                .await
+                .is_err()
+        );
         work.complete_local(LocalCompletionKind::Error)
             .await
             .unwrap();
@@ -1120,16 +1791,20 @@ mod tests {
     async fn network_error_before_stream_keeps_provider_claim_unresolved() {
         let (control, work) = admitted().await;
         let provider = wrapped_for(Behavior::NetworkFailed, work.lifecycle()).await;
-        assert!(provider
-            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+        assert!(
+            provider
+                .stream(&ModelConfig::new("model-a"), "", &[], &[])
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                work.complete_local(LocalCompletionKind::Error),
+            )
             .await
-            .is_err());
-        assert!(tokio::time::timeout(
-            Duration::from_millis(50),
-            work.complete_local(LocalCompletionKind::Error),
-        )
-        .await
-        .is_err());
+            .is_err()
+        );
         assert_eq!(control.occupancy().await, (0, 1));
     }
 
@@ -1142,12 +1817,14 @@ mod tests {
             .await
             .unwrap();
         assert!(output.next().await.unwrap().is_err());
-        assert!(tokio::time::timeout(
-            Duration::from_millis(50),
-            work.complete_local(LocalCompletionKind::StreamDropped),
-        )
-        .await
-        .is_err());
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                work.complete_local(LocalCompletionKind::StreamDropped),
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(control.occupancy().await, (0, 1));
     }
 
@@ -1160,12 +1837,14 @@ mod tests {
             .await
             .unwrap();
         drop(output);
-        assert!(tokio::time::timeout(
-            Duration::from_millis(50),
-            work.complete_local(LocalCompletionKind::StreamDropped),
-        )
-        .await
-        .is_err());
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                work.complete_local(LocalCompletionKind::StreamDropped),
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(control.occupancy().await, (0, 1));
     }
 
@@ -1194,12 +1873,14 @@ mod tests {
             control.provider_start_registry().query(&provider_start),
             Err(ProviderStartLookupError::NotLive { .. })
         ));
-        assert!(tokio::time::timeout(
-            Duration::from_millis(50),
-            work.complete_local(LocalCompletionKind::CancellationRequested),
-        )
-        .await
-        .is_err());
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                work.complete_local(LocalCompletionKind::CancellationRequested),
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(control.occupancy().await, (0, 1));
     }
 }
