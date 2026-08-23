@@ -98,6 +98,9 @@ ORCHESTRATOR_RECOVERY_RECEIPT = "orchestrator-recovery-receipt.json"
 ORCHESTRATOR_RECOVERY_SEAL = "orchestrator-recovery-seal.json"
 ORCHESTRATOR_RECOVERY_EVIDENCE = "orchestrator-recovery-evidence"
 ORCHESTRATOR_RECOVERY_PATH = "recovery/orchestrator-recovery.json"
+PRE_SMOKE_INSTRUMENT_REPAIR_SCHEMA = 1
+PRE_SMOKE_INSTRUMENT_REPAIR_PATH = "lineage/pre-smoke-instrument-repair"
+COORDINATOR_INSTRUMENT_PATH = "evals/swarm-bench/bench/cloud_sb7.py"
 ORCHESTRATOR_MONITOR_FAILURE = (
     "cloud campaign lineage refused execution: unstarted entrant acquired or "
     "reset attempts: deepseek-v4-flash\n"
@@ -125,7 +128,7 @@ ORCHESTRATOR_RECOVERY_INCIDENT = {
     ),
 }
 SUPERSESSION_ALLOWED_INSTRUMENT_CHANGES = {
-    "evals/swarm-bench/bench/cloud_sb7.py",
+    COORDINATOR_INSTRUMENT_PATH,
 }
 QUALIFICATION_ALLOWED_INSTRUMENT_CHANGES = {
     "evals/swarm-bench/bench/cloud_sb7.py",
@@ -6552,6 +6555,11 @@ def lineage_failure(
             return "campaign lineage schema is not supported"
         if lineage.get("generation") != 1:
             return "campaign lineage has an invalid generation"
+        repair_problem = pre_smoke_instrument_repair_failure(
+            root, campaign, lineage
+        )
+        if repair_problem:
+            return repair_problem
         smoke_lineage = validated_campaign_lineage(campaign)
         if (
             smoke_lineage["generation"] != 1
@@ -13753,6 +13761,528 @@ def wait_for_smokes(
         time.sleep(poll_seconds)
 
 
+def full_build_activity_before_smoke(
+    root: Path,
+    campaign: Mapping[str, Any],
+    build_states: Iterable[Mapping[str, Any]],
+) -> list[str]:
+    lineage = validated_campaign_lineage(campaign)
+    generation = lineage["generation"]
+    planned_entrants: set[str]
+    attempt_baselines: Mapping[str, Any]
+    states = list(build_states)
+    if generation == 0:
+        planned_entrants = {str(state["entrant"]) for state in states}
+        attempt_baselines = {}
+    elif generation == 1:
+        successor = load_json(root / "lineage/lineage.json")
+        affected = successor.get("affected_entrants")
+        unstarted = successor.get("unstarted_entrants")
+        attempts = successor.get("predecessor_episode_attempts")
+        if not all(isinstance(value, list) for value in (affected, unstarted)) or not isinstance(
+            attempts, dict
+        ):
+            raise SystemExit("supersession smoke baseline is malformed")
+        planned_entrants = {str(value) for value in affected + unstarted}
+        attempt_baselines = attempts
+    elif generation == 2:
+        recovery = load_json(root / ORCHESTRATOR_RECOVERY_PATH)
+        attempts = recovery.get("source_episode_attempts")
+        if not isinstance(attempts, dict):
+            raise SystemExit("orchestrator recovery smoke has no episode baseline")
+        planned_entrants = {str(state["entrant"]) for state in states}
+        attempt_baselines = attempts
+    else:
+        raise SystemExit("cloud smoke lineage generation is unsupported")
+    return [
+        entrant_id
+        for state in states
+        if (entrant_id := str(state["entrant"])) in planned_entrants
+        and (
+            state.get("status") != "PLANNED"
+            or int(state.get("provider_episode_attempts", 0))
+            != int(attempt_baselines.get(entrant_id, 0))
+            or int(state.get("admitted_requests", 0)) != 0
+        )
+    ]
+
+
+def pre_smoke_instrument_repair_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    lineage: Mapping[str, Any],
+) -> str | None:
+    pointer = lineage.get("pre_smoke_instrument_repair")
+    if pointer is None:
+        return None
+    if not isinstance(pointer, dict) or set(pointer) != {"path", "sha256"}:
+        return "pre-smoke instrument repair pointer is malformed"
+    if pointer.get("path") != f"{PRE_SMOKE_INSTRUMENT_REPAIR_PATH}/receipt.json":
+        return "pre-smoke instrument repair path is not frozen"
+    bundle = root / PRE_SMOKE_INSTRUMENT_REPAIR_PATH
+    receipt_path = bundle / "receipt.json"
+    if (
+        not receipt_path.is_file()
+        or receipt_path.is_symlink()
+        or sha256_file(receipt_path) != pointer.get("sha256")
+    ):
+        return "pre-smoke instrument repair receipt is missing or changed"
+    receipt = load_json(receipt_path)
+    expected = {
+        "schema_version",
+        "kind",
+        "transition_id",
+        "repaired_at",
+        "root",
+        "campaign_id",
+        "source_commit",
+        "source_branch",
+        "source_campaign_sha256",
+        "source_lineage_sha256",
+        "source_coordinator_sha256",
+        "target_coordinator_sha256",
+        "source_instrument_set_sha256",
+        "target_instrument_set_sha256",
+        "source_smoke_contract_sha256",
+        "target_smoke_contract_sha256",
+        "observed_smoke_failure",
+        "build_state_sha256",
+        "smoke_state_sha256",
+        "smoke_manager_sha256",
+        "no_smoke_provider_activity",
+        "no_successor_full_activity",
+    }
+    if (
+        set(receipt) != expected
+        or receipt.get("schema_version") != PRE_SMOKE_INSTRUMENT_REPAIR_SCHEMA
+        or receipt.get("kind") != "pre_smoke_instrument_repair"
+        or receipt.get("root") != str(root.resolve())
+        or receipt.get("campaign_id") != campaign.get("campaign_id")
+        or receipt.get("no_smoke_provider_activity") is not True
+        or receipt.get("no_successor_full_activity") is not True
+        or campaign.get("pre_smoke_instrument_repair_transition_id")
+        != receipt.get("transition_id")
+        or campaign.get("source_commit") != receipt.get("source_commit")
+        or campaign.get("source_branch") != receipt.get("source_branch")
+        or campaign.get("instrument_set_sha256")
+        != receipt.get("target_instrument_set_sha256")
+        or campaign.get("smoke_contract_sha256")
+        != receipt.get("target_smoke_contract_sha256")
+        or lineage.get("successor_smoke_contract_sha256")
+        != receipt.get("target_smoke_contract_sha256")
+    ):
+        return "pre-smoke instrument repair receipt is bound to another transition"
+    source_files = {
+        "source-campaign.json": receipt.get("source_campaign_sha256"),
+        "source-lineage.json": receipt.get("source_lineage_sha256"),
+        "source-coordinator.py": receipt.get("source_coordinator_sha256"),
+        "source-smoke-manager.json": receipt.get("smoke_manager_sha256"),
+    }
+    for name, expected_sha in source_files.items():
+        path = bundle / name
+        if (
+            not isinstance(expected_sha, str)
+            or not path.is_file()
+            or path.is_symlink()
+            or sha256_file(path) != expected_sha
+        ):
+            return f"pre-smoke instrument repair source changed: {name}"
+    for collection, directory in (
+        (receipt.get("build_state_sha256"), bundle / "build-states"),
+        (receipt.get("smoke_state_sha256"), bundle / "smoke-states"),
+    ):
+        if not isinstance(collection, dict) or not directory.is_dir() or directory.is_symlink():
+            return "pre-smoke instrument repair state evidence is malformed"
+        for entrant_id, expected_sha in collection.items():
+            path = directory / f"{entrant_id}.json"
+            if (
+                not isinstance(entrant_id, str)
+                or not isinstance(expected_sha, str)
+                or not path.is_file()
+                or path.is_symlink()
+                or sha256_file(path) != expected_sha
+            ):
+                return f"pre-smoke instrument repair state changed: {entrant_id}"
+    coordinator = campaign_instrument_path(campaign, COORDINATOR_INSTRUMENT_PATH)
+    hashes = campaign.get("instrument_hashes")
+    if (
+        not isinstance(hashes, dict)
+        or hashes.get(COORDINATOR_INSTRUMENT_PATH)
+        != receipt.get("target_coordinator_sha256")
+        or not coordinator.is_file()
+        or coordinator.is_symlink()
+        or sha256_file(coordinator) != receipt.get("target_coordinator_sha256")
+    ):
+        return "pre-smoke repaired coordinator identity drifted"
+    return None
+
+
+def apply_pre_smoke_instrument_repair(
+    root: Path,
+    bundle: Path,
+    coordinator_source: Path,
+) -> Dict[str, Any]:
+    receipt = load_json(bundle / "receipt.json")
+    source_campaign = load_json(bundle / "source-campaign.json")
+    source_lineage = load_json(bundle / "source-lineage.json")
+    if sha256_file(coordinator_source) != receipt.get("target_coordinator_sha256"):
+        raise SystemExit("pre-smoke repair coordinator changed after evidence commit")
+    hashes = dict(source_campaign["instrument_hashes"])
+    hashes[COORDINATOR_INSTRUMENT_PATH] = receipt["target_coordinator_sha256"]
+    campaign = dict(source_campaign)
+    campaign.update(
+        {
+            "source_commit": receipt["source_commit"],
+            "source_branch": receipt["source_branch"],
+            "instrument_hashes": hashes,
+            "instrument_set_sha256": receipt["target_instrument_set_sha256"],
+            "smoke_status": "PLANNED",
+            "smoke_failure": None,
+            "pre_smoke_instrument_repair_transition_id": receipt["transition_id"],
+            "updated_at": receipt["repaired_at"],
+        }
+    )
+    for key in (
+        "smoke_started_at",
+        "smoke_finished_at",
+        "smoke_raw_tree_sha256_before",
+        "smoke_raw_tree_sha256_after",
+        "smoke_proof_sha256",
+    ):
+        campaign.pop(key, None)
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    rows = entrants(manifest)
+    campaign = bind_smoke_contract(campaign, rows)
+    if campaign["smoke_contract_sha256"] != receipt["target_smoke_contract_sha256"]:
+        raise SystemExit("pre-smoke repair contract changed after evidence commit")
+    repair_pointer = {
+        "path": f"{PRE_SMOKE_INSTRUMENT_REPAIR_PATH}/receipt.json",
+        "sha256": sha256_file(bundle / "receipt.json"),
+    }
+    lineage = dict(source_lineage)
+    lineage.update(
+        {
+            "successor_smoke_contract_sha256": campaign[
+                "smoke_contract_sha256"
+            ],
+            "pre_smoke_instrument_repair": repair_pointer,
+        }
+    )
+    atomic_copy(
+        coordinator_source,
+        campaign_instrument_path(campaign, COORDINATOR_INSTRUMENT_PATH),
+        0o600,
+    )
+    for row in rows:
+        entrant_id = str(row["id"])
+        state = load_json(bundle / "smoke-states" / f"{entrant_id}.json")
+        state.update(
+            {
+                "status": "PLANNED",
+                "launch_attempts": 0,
+                "admitted_episodes": 0,
+                "active_attempt": False,
+                "attempt_evidence_sha256": {},
+                "smoke_contract_sha256": campaign["smoke_contract_sha256"],
+                "failure": None,
+                "updated_at": receipt["repaired_at"],
+            }
+        )
+        atomic_json(smoke_state_file(root, entrant_id), state)
+    lineage_path = root / "lineage/lineage.json"
+    atomic_json(lineage_path, lineage)
+    campaign["lineage"] = {
+        **dict(campaign["lineage"]),
+        "sha256": sha256_file(lineage_path),
+    }
+    atomic_json(campaign_file(root), campaign)
+    smoke_manager = load_json(bundle / "source-smoke-manager.json")
+    smoke_manager.update(
+        {
+            "status": "IDLE",
+            "pid": None,
+            "pgid": None,
+            "sid": None,
+            "identity": None,
+            "failure": None,
+            "exit_code": None,
+            "finished_at": None,
+            "updated_at": receipt["repaired_at"],
+        }
+    )
+    atomic_json(root / "smoke-manager.json", smoke_manager)
+    problem = lineage_failure(root)
+    if problem:
+        raise SystemExit(f"pre-smoke instrument repair failed lineage validation: {problem}")
+    problem = instrument_mismatch(campaign)
+    if problem:
+        raise SystemExit(f"pre-smoke instrument repair failed freeze validation: {problem}")
+    return load_json(campaign_file(root))
+
+
+def repair_pre_smoke_instrument(
+    root: Path,
+    coordinator_source: Path | None = None,
+    source_commit: str | None = None,
+    source_branch: str | None = None,
+) -> Dict[str, Any]:
+    root = root.resolve()
+    coordinator_source = (coordinator_source or Path(__file__)).resolve()
+    if not coordinator_source.is_file() or coordinator_source.is_symlink():
+        raise SystemExit("pre-smoke repair coordinator is missing or linked")
+    require_clean_source_worktree()
+    source_commit = source_commit or git_value("rev-parse", "HEAD")
+    source_branch = source_branch or git_value("branch", "--show-current")
+    bundle = root / PRE_SMOKE_INSTRUMENT_REPAIR_PATH
+    with exclusive_claim(
+        root / "locks/pre-smoke-instrument-repair.claim", blocking=True
+    ) as repair_claimed:
+        if not repair_claimed:
+            raise SystemExit("cannot claim pre-smoke instrument repair")
+        with exclusive_claim(root / "locks/smoke-launch.claim", blocking=True) as launch_claimed:
+            if not launch_claimed:
+                raise SystemExit("cannot freeze smoke launch for instrument repair")
+            with exclusive_claim(root / "locks/smoke-run.claim", blocking=True) as smoke_claimed:
+                if not smoke_claimed:
+                    raise SystemExit("cannot freeze smoke run for instrument repair")
+                campaign = load_json(campaign_file(root))
+                if bundle.exists():
+                    receipt = load_json(bundle / "receipt.json")
+                    if campaign.get("pre_smoke_instrument_repair_transition_id") == receipt.get(
+                        "transition_id"
+                    ):
+                        problem = lineage_failure(root)
+                        if problem:
+                            raise SystemExit(
+                                "committed pre-smoke instrument repair is invalid: "
+                                + problem
+                            )
+                        return campaign
+                    return apply_pre_smoke_instrument_repair(
+                        root, bundle, coordinator_source
+                    )
+                require_lineage(root)
+                lineage = validated_campaign_lineage(campaign)
+                if lineage["generation"] != 1:
+                    raise SystemExit(
+                        "pre-smoke instrument repair requires a supersession successor"
+                    )
+                if campaign.get("status") != "INITIALIZED" or campaign.get(
+                    "smoke_status"
+                ) != "ATTENTION":
+                    raise SystemExit(
+                        "pre-smoke instrument repair requires an unstarted ATTENTION smoke"
+                    )
+                if instrument_mismatch(campaign):
+                    raise SystemExit("pre-smoke repair source instrument is already changed")
+                manifest = load_json(Path(str(campaign["entrant_manifest"])))
+                rows = entrants(manifest)
+                build_states = [read_state(root, str(row["id"])) for row in rows]
+                if full_build_activity_before_smoke(root, campaign, build_states):
+                    raise SystemExit(
+                        "pre-smoke instrument repair is forbidden after successor build activity"
+                    )
+                for runtime_name, runtime in (
+                    ("manager", load_json(root / "manager.json")),
+                    ("monitor", read_monitor_state(root)),
+                    ("smoke manager", read_smoke_manager_state(root)),
+                ):
+                    if process_alive(runtime.get("pid"), runtime.get("identity")):
+                        raise SystemExit(f"pre-smoke repair {runtime_name} is still alive")
+                    pgid = int(runtime.get("pgid") or 0)
+                    if pgid and process_group_members(pgid):
+                        raise SystemExit(
+                            f"pre-smoke repair {runtime_name} process group is not clean"
+                        )
+                busy = [
+                    str(row["vendor_port"])
+                    for row in rows
+                    if not port_is_free(int(row["vendor_port"]))
+                ]
+                if busy:
+                    raise SystemExit(
+                        "pre-smoke repair vendor ports are occupied: " + ", ".join(busy)
+                    )
+                smoke_states: Dict[str, Dict[str, Any]] = {}
+                for row in rows:
+                    entrant_id = str(row["id"])
+                    state = read_smoke_state(root, entrant_id)
+                    smoke_states[entrant_id] = state
+                    attempts_root = root / "smoke" / entrant_id / "attempts"
+                    outstanding, settled, budget_problem = current_smoke_budget_requests(
+                        campaign, row
+                    )
+                    if (
+                        state.get("status") != "PLANNED"
+                        or int(state.get("launch_attempts", 0)) != 0
+                        or int(state.get("admitted_episodes", 0)) != 0
+                        or state.get("active_attempt") is not False
+                        or state.get("attempt_evidence_sha256") != {}
+                        or not attempts_root.is_dir()
+                        or any(attempts_root.iterdir())
+                        or budget_problem is not None
+                        or outstanding
+                        or settled
+                    ):
+                        raise SystemExit(
+                            f"pre-smoke repair has provider activity: {entrant_id}"
+                        )
+                current_hashes = instrument_hashes()
+                current_hashes[COORDINATOR_INSTRUMENT_PATH] = sha256_file(
+                    coordinator_source
+                )
+                changed = {
+                    key
+                    for key in set(campaign["instrument_hashes"]) | set(current_hashes)
+                    if campaign["instrument_hashes"].get(key) != current_hashes.get(key)
+                }
+                if changed != {COORDINATOR_INSTRUMENT_PATH}:
+                    raise SystemExit(
+                        "pre-smoke repair must change exactly the frozen coordinator"
+                    )
+                target_instrument_set = sha256_bytes(
+                    json.dumps(current_hashes, sort_keys=True).encode()
+                )
+                candidate = {
+                    **campaign,
+                    "source_commit": source_commit,
+                    "source_branch": source_branch,
+                    "instrument_hashes": current_hashes,
+                    "instrument_set_sha256": target_instrument_set,
+                }
+                predecessor_lineage = load_json(root / "lineage/lineage.json")
+                predecessor = load_json(
+                    campaign_file(Path(str(predecessor_lineage["predecessor_root"])))
+                )
+                candidate_problem = supersession_instrument_failure(
+                    predecessor, candidate
+                )
+                if candidate_problem:
+                    raise SystemExit(candidate_problem)
+                repaired_at = utc_now()
+                candidate.update(
+                    {
+                        "smoke_status": "PLANNED",
+                        "smoke_failure": None,
+                        "pre_smoke_instrument_repair_transition_id": "pending",
+                        "updated_at": repaired_at,
+                    }
+                )
+                candidate = bind_smoke_contract(candidate, rows)
+                transition_id = sha256_bytes(
+                    json.dumps(
+                        {
+                            "kind": "pre_smoke_instrument_repair",
+                            "root": str(root),
+                            "campaign_id": campaign["campaign_id"],
+                            "source_campaign_sha256": sha256_file(campaign_file(root)),
+                            "source_coordinator_sha256": campaign["instrument_hashes"]
+                            [COORDINATOR_INSTRUMENT_PATH],
+                            "target_coordinator_sha256": current_hashes[
+                                COORDINATOR_INSTRUMENT_PATH
+                            ],
+                            "source_commit": source_commit,
+                        },
+                        sort_keys=True,
+                    ).encode()
+                )
+                candidate["pre_smoke_instrument_repair_transition_id"] = transition_id
+                staging = Path(
+                    tempfile.mkdtemp(prefix=".pre-smoke-instrument-repair-", dir=root / "lineage")
+                )
+                try:
+                    atomic_copy(campaign_file(root), staging / "source-campaign.json", 0o600)
+                    atomic_copy(
+                        root / "lineage/lineage.json",
+                        staging / "source-lineage.json",
+                        0o600,
+                    )
+                    atomic_copy(
+                        campaign_instrument_path(campaign, COORDINATOR_INSTRUMENT_PATH),
+                        staging / "source-coordinator.py",
+                        0o600,
+                    )
+                    atomic_copy(
+                        root / "smoke-manager.json",
+                        staging / "source-smoke-manager.json",
+                        0o600,
+                    )
+                    (staging / "build-states").mkdir()
+                    (staging / "smoke-states").mkdir()
+                    for row in rows:
+                        entrant_id = str(row["id"])
+                        atomic_copy(
+                            state_file(root, entrant_id),
+                            staging / "build-states" / f"{entrant_id}.json",
+                            0o600,
+                        )
+                        atomic_copy(
+                            smoke_state_file(root, entrant_id),
+                            staging / "smoke-states" / f"{entrant_id}.json",
+                            0o600,
+                        )
+                    receipt = {
+                        "schema_version": PRE_SMOKE_INSTRUMENT_REPAIR_SCHEMA,
+                        "kind": "pre_smoke_instrument_repair",
+                        "transition_id": transition_id,
+                        "repaired_at": repaired_at,
+                        "root": str(root),
+                        "campaign_id": campaign["campaign_id"],
+                        "source_commit": source_commit,
+                        "source_branch": source_branch,
+                        "source_campaign_sha256": sha256_file(
+                            staging / "source-campaign.json"
+                        ),
+                        "source_lineage_sha256": sha256_file(
+                            staging / "source-lineage.json"
+                        ),
+                        "source_coordinator_sha256": sha256_file(
+                            staging / "source-coordinator.py"
+                        ),
+                        "target_coordinator_sha256": current_hashes[
+                            COORDINATOR_INSTRUMENT_PATH
+                        ],
+                        "source_instrument_set_sha256": campaign[
+                            "instrument_set_sha256"
+                        ],
+                        "target_instrument_set_sha256": target_instrument_set,
+                        "source_smoke_contract_sha256": campaign[
+                            "smoke_contract_sha256"
+                        ],
+                        "target_smoke_contract_sha256": candidate[
+                            "smoke_contract_sha256"
+                        ],
+                        "observed_smoke_failure": campaign.get("smoke_failure"),
+                        "build_state_sha256": {
+                            str(row["id"]): sha256_file(
+                                staging / "build-states" / f"{row['id']}.json"
+                            )
+                            for row in rows
+                        },
+                        "smoke_state_sha256": {
+                            str(row["id"]): sha256_file(
+                                staging / "smoke-states" / f"{row['id']}.json"
+                            )
+                            for row in rows
+                        },
+                        "smoke_manager_sha256": sha256_file(
+                            staging / "source-smoke-manager.json"
+                        ),
+                        "no_smoke_provider_activity": True,
+                        "no_successor_full_activity": True,
+                    }
+                    atomic_json(staging / "receipt.json", receipt)
+                    fsync_directory(staging)
+                    os.replace(staging, bundle)
+                    fsync_directory(bundle.parent)
+                finally:
+                    if staging.exists():
+                        shutil.rmtree(staging)
+                return apply_pre_smoke_instrument_repair(
+                    root, bundle, coordinator_source
+                )
+
+
 def smoke(root: Path) -> int:
     with exclusive_claim(root / "locks/smoke-run.claim", blocking=True) as claimed:
         if not claimed:
@@ -13764,22 +14294,7 @@ def smoke(root: Path) -> int:
         if len(rows) != 5:
             raise SystemExit("cloud SB7 smoke requires exactly five frozen entrants")
         build_states = [read_state(root, str(row["id"])) for row in rows]
-        lineage = validated_campaign_lineage(campaign)
-        recovery_attempts: Mapping[str, Any] = {}
-        if lineage["generation"] == 2:
-            recovery = load_json(root / ORCHESTRATOR_RECOVERY_PATH)
-            candidate_attempts = recovery.get("source_episode_attempts")
-            if not isinstance(candidate_attempts, dict):
-                raise SystemExit("orchestrator recovery smoke has no episode baseline")
-            recovery_attempts = candidate_attempts
-        dirty_builds = [
-            str(state["entrant"])
-            for state in build_states
-            if state.get("status") != "PLANNED"
-            or int(state.get("provider_episode_attempts", 0))
-            != int(recovery_attempts.get(str(state["entrant"]), 0))
-            or int(state.get("admitted_requests", 0)) != 0
-        ]
+        dirty_builds = full_build_activity_before_smoke(root, campaign, build_states)
         if dirty_builds:
             raise SystemExit(
                 "contract smoke must precede every raw benchmark build: "
@@ -19369,6 +19884,9 @@ def main() -> int:
         "--regression-test", type=Path, required=True
     )
 
+    p_pre_smoke_repair = sub.add_parser("repair-pre-smoke-instrument")
+    root_arg(p_pre_smoke_repair)
+
     p_gated_exec = sub.add_parser("_gated_exec")
     p_gated_exec.add_argument("--gate", type=Path, required=True)
     p_gated_exec.add_argument("--token", required=True)
@@ -19480,6 +19998,13 @@ def main() -> int:
             args.regression_test,
         )
         print(json.dumps(value, indent=2, sort_keys=True))
+        return 0
+    if args.command == "repair-pre-smoke-instrument":
+        value = repair_pre_smoke_instrument(args.root)
+        print(
+            f"repaired pre-smoke instrument for {value['campaign_id']} "
+            f"at {args.root.resolve()}"
+        )
         return 0
     if args.command == "_gated_exec":
         return gated_exec(args.gate.resolve(), args.token, args.exec_command)

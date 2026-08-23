@@ -1811,6 +1811,86 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 or "",
             )
 
+    def test_supersession_smoke_accepts_fresh_replacement_baselines(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+            campaign = self.supersede_fixture(fixture)
+            root = Path(str(fixture["successor"]))
+            manifest = cloud_sb7.load_json(Path(str(campaign["entrant_manifest"])))
+            states = [
+                cloud_sb7.read_state(root, str(row["id"]))
+                for row in cloud_sb7.entrants(manifest)
+            ]
+
+            self.assertEqual(
+                cloud_sb7.full_build_activity_before_smoke(root, campaign, states),
+                [],
+            )
+
+            affected_id = str(fixture["failed_id"])
+            cloud_sb7.update_state(root, affected_id, admitted_requests=1)
+            states = [
+                cloud_sb7.read_state(root, str(row["id"]))
+                for row in cloud_sb7.entrants(manifest)
+            ]
+            self.assertEqual(
+                cloud_sb7.full_build_activity_before_smoke(root, campaign, states),
+                [affected_id],
+            )
+
+    def test_pre_smoke_instrument_repair_preserves_carried_outcome(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+            self.supersede_fixture(fixture)
+            root = Path(str(fixture["successor"]))
+            carried_id = str(fixture["carried_id"])
+            carried_before = cloud_sb7.read_state(root, carried_id)
+            cloud_sb7.update_campaign(
+                root,
+                smoke_status="ATTENTION",
+                smoke_failure="SystemExit: stale coordinator rejected fresh baselines",
+            )
+            cloud_sb7.smoke_manager_state(
+                root,
+                status="ATTENTION",
+                pid=None,
+                pgid=None,
+                identity=None,
+                failure="stale coordinator rejected fresh baselines",
+            )
+            coordinator = Path(raw) / "repaired-cloud-sb7.py"
+            coordinator.write_text("# reviewed replacement coordinator\n")
+
+            with mock.patch.object(cloud_sb7, "require_clean_source_worktree"):
+                repaired = cloud_sb7.repair_pre_smoke_instrument(
+                    root,
+                    coordinator,
+                    source_commit="repair-commit",
+                    source_branch="repair-branch",
+                )
+
+            self.assertEqual(repaired["smoke_status"], "PLANNED")
+            self.assertEqual(repaired["source_commit"], "repair-commit")
+            self.assertIsNone(cloud_sb7.lineage_failure(root))
+            self.assertIsNone(cloud_sb7.instrument_mismatch(repaired))
+            carried_after = cloud_sb7.read_state(root, carried_id)
+            self.assertEqual(carried_after["status"], carried_before["status"])
+            self.assertEqual(
+                cloud_sb7.hash_tree(Path(str(carried_after["tree"]))),
+                cloud_sb7.hash_tree(Path(str(carried_before["tree"]))),
+            )
+            with mock.patch.object(cloud_sb7, "require_clean_source_worktree"):
+                repeated = cloud_sb7.repair_pre_smoke_instrument(
+                    root,
+                    coordinator,
+                    source_commit="repair-commit",
+                    source_branch="repair-branch",
+                )
+            self.assertEqual(
+                repeated["pre_smoke_instrument_repair_transition_id"],
+                repaired["pre_smoke_instrument_repair_transition_id"],
+            )
+
     def test_supersession_is_idempotent_and_rejects_forks_and_second_hops(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_supersession_fixture(Path(raw))
