@@ -266,6 +266,57 @@ impl PhysicalAdmissionControl {
         self.queue_admission(opportunity).await?.wait().await
     }
 
+    /// Atomically admit work only when the common broker can grant it in the current pump.
+    /// Auxiliary work uses this to consume genuinely spare verified capacity without sitting in
+    /// front of a later implementation request. A miss leaves no queued work and creates no
+    /// admission or provider lifecycle receipt.
+    pub async fn try_admit_idle(
+        &self,
+        opportunity: WorkOpportunity,
+    ) -> Result<Option<AdmittedWork>, BrokerError> {
+        let work_id = opportunity.work_id.clone();
+        let (sender, receiver) = oneshot::channel();
+        {
+            let mut state = self.inner.state.lock().await;
+            match state.broker.enqueue(opportunity) {
+                Ok(receipt) => self
+                    .inner
+                    .sink
+                    .emit(&SwarmEvent::BrokerWorkQueued { receipt }),
+                Err(error) => {
+                    self.emit_rejection(None, Some(work_id), None, "queue", &error);
+                    return Err(error);
+                }
+            }
+            state.admission_waiters.insert(work_id.clone(), sender);
+            state.pump(self.inner.sink.as_ref());
+            if state.admission_waiters.remove(&work_id).is_some() {
+                let receipt = state
+                    .broker
+                    .withdraw_pending_work(&work_id)
+                    .expect("an ungranted immediate admission remains queued");
+                self.inner
+                    .sink
+                    .emit(&SwarmEvent::BrokerWorkWithdrawn { receipt });
+                drop(state);
+                self.inner.changed.notify_waiters();
+                return Ok(None);
+            }
+        }
+        self.inner.changed.notify_waiters();
+        let receipt = receiver
+            .await
+            .map_err(|_| BrokerError::AdmissionWaiterClosed(work_id))??;
+        Ok(Some(AdmittedWork {
+            lifecycle: ProviderLifecycle {
+                control: self.clone(),
+                admission: receipt.clone(),
+                next_ordinal: Arc::new(AtomicU32::new(0)),
+            },
+            receipt,
+        }))
+    }
+
     pub(crate) async fn queue_admission(
         &self,
         opportunity: WorkOpportunity,
