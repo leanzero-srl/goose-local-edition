@@ -3771,6 +3771,14 @@ fn should_run_backbone_round2(backbone_on: bool, skip_confident: bool, conf1: u8
     backbone_on && !(skip_confident && conf1 >= BACKBONE_SKIP_CONF_FLOOR)
 }
 
+fn should_adjudicate_canonical_plan(canonical_on: bool, valid_first_round_drafts: usize) -> bool {
+    canonical_on && valid_first_round_drafts > 0
+}
+
+fn has_independent_round1_agreement(valid_first_round_drafts: usize) -> bool {
+    valid_first_round_drafts > 1
+}
+
 /// #135: resolve the straggler grace window (seconds). An EXPLICIT env or config value wins and is
 /// used fixed, exactly as before; None means DERIVE it from the round's own timings at arming
 /// (G1 — a constant grace cannot fit a fleet whose calls span 30-900s: 45s was a fraction of one
@@ -3965,7 +3973,7 @@ fn strip_integrate_verify_test_deps(plan: &mut serde_json::Value, lang: TargetLa
             .unwrap_or_default();
         // was `lang.is_test_file(f)` — a FULL PATH into a BASENAME predicate, so every
         // `tests/test_*.py` read as NOT-a-test. Six sibling sites already used `base_of`.
-        id.contains("test") || (!files.is_empty() && files.iter().all(|f| is_test_path(lang, f)))
+        id_names_a_test(id) || (!files.is_empty() && files.iter().all(|f| is_test_path(lang, f)))
     };
     let test_ids: std::collections::HashSet<String> = arr
         .iter()
@@ -4039,7 +4047,7 @@ fn relax_test_module_deps(plan: &mut serde_json::Value, lang: TargetLang) -> usi
         // is_test_file takes a BASE name (the Python arm matches the `test_` prefix), so a full path like
         // `tests/test_core.py` returned FALSE and the file-based branch never fired. The sibling
         // relax_contracted_module_deps gets this right via base_of; this one did not.
-        id.contains("test")
+        id_names_a_test(&id)
             || (!files.is_empty()
                 && files
                     .iter()
@@ -4147,7 +4155,7 @@ fn relax_contracted_module_deps(plan: &mut serde_json::Value, lang: TargetLang) 
             return false;
         }
         let files = files_of(s);
-        id.contains("test")
+        id_names_a_test(&id)
             || (!files.is_empty() && files.iter().all(|f| lang.is_test_file(base_of(f))))
     };
     let Some(arr) = plan.get("subtasks").and_then(|s| s.as_array()) else {
@@ -5186,6 +5194,19 @@ mod tests {
                                                              // Backbone off => never runs regardless of the skip lever/confidence.
         assert!(!should_run_backbone_round2(false, false, 100));
         assert!(!should_run_backbone_round2(false, true, 50));
+    }
+
+    #[test]
+    fn canonical_adjudication_runs_for_every_nonempty_valid_first_round() {
+        assert!(should_adjudicate_canonical_plan(true, 1));
+        assert!(should_adjudicate_canonical_plan(true, 6));
+        assert!(!should_adjudicate_canonical_plan(true, 0));
+        assert!(!should_adjudicate_canonical_plan(false, 6));
+        assert!(!has_independent_round1_agreement(1));
+        assert!(has_independent_round1_agreement(2));
+        assert!(!legacy_round2_allowed(PlanAdjudication::Accepted));
+        assert!(legacy_round2_allowed(PlanAdjudication::Fallback));
+        assert!(legacy_round2_allowed(PlanAdjudication::NotRun));
     }
 
     #[test]
@@ -8486,6 +8507,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             final_conf: Some(43),
             agreement: Some(53),
             agreement_reason: "3 drafts agree: count spread 1, file-overlap 24%".into(),
+            adjudication: PlanAdjudication::NotRun,
             spec_clarity: Some(43),
             spec_clarity_reason: "product is pinned; 1 material open decision".into(),
             product_specified: true,
@@ -8528,6 +8550,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             final_conf: None,
             agreement: a,
             agreement_reason: String::new(),
+            adjudication: PlanAdjudication::NotRun,
             spec_clarity: c,
             spec_clarity_reason: String::new(),
             product_specified: prod,
@@ -8567,11 +8590,35 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn canonical_accepted_semantic_adjudication_preserves_raw_agreement_and_uses_clarity() {
+        let final_conf = resolved_plan_confidence(PlanAdjudication::Accepted, Some(42), Some(91));
+        let pc = PlanConf {
+            final_conf,
+            agreement: Some(42),
+            agreement_reason: "independent drafts diverged".to_string(),
+            adjudication: PlanAdjudication::Accepted,
+            spec_clarity: Some(91),
+            spec_clarity_reason: "spec is pinned".to_string(),
+            product_specified: true,
+            open_decisions: Vec::new(),
+            delegated_decisions: Vec::new(),
+        };
+        assert_eq!(pc.agreement, Some(42));
+        assert_eq!(pc.final_conf, Some(91));
+        assert_eq!(pc.gate_confidence(), Some(91));
+        assert_eq!(pc.binding_signal(), Some(BindingSignal::SpecClarity));
+        let breakdown = breakdown_json(&pc).unwrap();
+        assert_eq!(breakdown["semantic_adjudication"], "accepted");
+        assert_eq!(breakdown["gate_confidence"], 91);
+    }
+
+    #[test]
     fn retarget_action_routes_by_signal_and_product() {
         let mk = |a: Option<u8>, c: Option<u8>, prod: bool, dec: Vec<String>| PlanConf {
             final_conf: None,
             agreement: a,
             agreement_reason: String::new(),
+            adjudication: PlanAdjudication::NotRun,
             spec_clarity: c,
             spec_clarity_reason: String::new(),
             product_specified: prod,
@@ -10493,29 +10540,56 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         Vec<RequirementRecord>,
         Vec<EvidenceRecord>,
         serde_json::Value,
+        Vec<String>,
     ) {
         let (plan, requirements, evidence, _) = requirement_binding_fixture();
         let decision = serde_json::json!({
             "selected_candidate": 0,
-            "requirement_coverage": [
-                {"requirement_id":"REQ-route", "task_id":"api", "evidence_ids":["EVID-route"]},
-                {"requirement_id":"REQ-header", "task_id":"api", "evidence_ids":["EVID-header"]},
-                {"requirement_id":"REQ-test", "task_id":"test-api", "evidence_ids":[]}
+            "task_coverage": [
+                {
+                    "task_id":"api",
+                    "owns_requirement_ids":["REQ-route","REQ-header"],
+                    "applies_requirement_ids":[],
+                    "verifies_requirement_ids":[],
+                    "evidence_ids":["EVID-route","EVID-header"]
+                },
+                {
+                    "task_id":"test-api",
+                    "owns_requirement_ids":["REQ-test"],
+                    "applies_requirement_ids":[],
+                    "verifies_requirement_ids":["REQ-route","REQ-header"],
+                    "evidence_ids":[]
+                },
+                {
+                    "task_id":"integrate-verify",
+                    "owns_requirement_ids":[],
+                    "applies_requirement_ids":[],
+                    "verifies_requirement_ids":["REQ-route","REQ-header","REQ-test"],
+                    "evidence_ids":[]
+                }
             ],
             "material_conflicts": [],
             "canonical_plan": serde_json::from_str::<serde_json::Value>(&plan).unwrap()
         });
-        (vec![plan], requirements, evidence, decision)
+        (
+            vec![plan],
+            requirements,
+            evidence,
+            decision,
+            vec!["qwen".to_string()],
+        )
     }
 
     #[test]
     fn canonical_plan_compiler_accepts_complete_spec_bound_adjudication() {
-        let (candidates, requirements, evidence, decision) = canonical_plan_fixture();
+        let (candidates, requirements, evidence, decision, runtime_models) =
+            canonical_plan_fixture();
         let compiled = compile_canonical_plan_adjudication(
             &decision.to_string(),
             &requirements,
             &evidence,
             &candidates,
+            &runtime_models,
         )
         .unwrap();
         assert_eq!(compiled.selected_candidate, 0);
@@ -10531,35 +10605,35 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn canonical_plan_compiler_rejects_coverage_evidence_and_model_inventions() {
-        let (candidates, requirements, evidence, original) = canonical_plan_fixture();
+        let (candidates, requirements, evidence, original, runtime_models) =
+            canonical_plan_fixture();
 
         let mut missing = original.clone();
-        missing["requirement_coverage"]
-            .as_array_mut()
-            .unwrap()
-            .pop();
+        missing["task_coverage"][0]["owns_requirement_ids"] = serde_json::json!(["REQ-route"]);
         assert!(compile_canonical_plan_adjudication(
             &missing.to_string(),
             &requirements,
             &evidence,
             &candidates,
+            &runtime_models,
         )
         .unwrap_err()
         .to_string()
         .contains("uncovered"));
 
         let mut invented_evidence = original.clone();
-        invented_evidence["requirement_coverage"][0]["evidence_ids"] =
+        invented_evidence["task_coverage"][0]["evidence_ids"] =
             serde_json::json!(["EVID-invented"]);
         assert!(compile_canonical_plan_adjudication(
             &invented_evidence.to_string(),
             &requirements,
             &evidence,
             &candidates,
+            &runtime_models,
         )
         .unwrap_err()
         .to_string()
-        .contains("unknown advisory evidence"));
+        .contains("canonical.evidence_ids"));
 
         let mut invented_model = original;
         invented_model["canonical_plan"]["subtasks"][0]["model"] =
@@ -10569,6 +10643,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &requirements,
             &evidence,
             &candidates,
+            &runtime_models,
         )
         .unwrap_err()
         .to_string()
@@ -10577,25 +10652,29 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn canonical_plan_compiler_rejects_production_makework_and_malformed_conflicts() {
-        let (candidates, requirements, evidence, original) = canonical_plan_fixture();
+        let (candidates, requirements, evidence, original, runtime_models) =
+            canonical_plan_fixture();
 
         let mut makework = original.clone();
         makework["canonical_plan"]["subtasks"]
             .as_array_mut()
             .unwrap()
             .push(serde_json::json!({
-                "id":"extra-dashboard", "description":"Occupy an idle node", "difficulty":"easy",
-                "model":"qwen", "depends_on":[], "files":["src/dashboard.py"]
+                "id":"test-dashboard", "description":"Occupy an idle node", "difficulty":"easy",
+                "model":"qwen", "depends_on":["api"], "files":["src/dashboard.py"]
             }));
+        makework["canonical_plan"]["subtasks"][2]["depends_on"] =
+            serde_json::json!(["api", "test-api", "test-dashboard"]);
         assert!(compile_canonical_plan_adjudication(
             &makework.to_string(),
             &requirements,
             &evidence,
             &candidates,
+            &runtime_models,
         )
         .unwrap_err()
         .to_string()
-        .contains("no requirement ownership"));
+        .contains("no requirement role"));
 
         let mut bad_conflict = original;
         bad_conflict["material_conflicts"] = serde_json::json!([{
@@ -10607,10 +10686,143 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &requirements,
             &evidence,
             &candidates,
+            &runtime_models,
         )
         .unwrap_err()
         .to_string()
         .contains("unknown requirement"));
+    }
+
+    #[test]
+    fn canonical_plan_coverage_supports_owner_consumer_and_verifier_topology() {
+        let (candidates, mut requirements, evidence, mut decision, runtime_models) =
+            canonical_plan_fixture();
+        requirements.retain(|requirement| requirement.id == "REQ-route");
+        decision["task_coverage"] = serde_json::json!([
+            {
+                "task_id":"api",
+                "owns_requirement_ids":["REQ-route"],
+                "applies_requirement_ids":[],
+                "verifies_requirement_ids":[],
+                "evidence_ids":["EVID-route"]
+            },
+            {
+                "task_id":"test-api",
+                "owns_requirement_ids":[],
+                "applies_requirement_ids":[],
+                "verifies_requirement_ids":["REQ-route"],
+                "evidence_ids":[]
+            },
+            {
+                "task_id":"integrate-verify",
+                "owns_requirement_ids":[],
+                "applies_requirement_ids":["REQ-route"],
+                "verifies_requirement_ids":[],
+                "evidence_ids":[]
+            }
+        ]);
+        let compiled = compile_canonical_plan_adjudication(
+            &decision.to_string(),
+            &requirements,
+            &evidence,
+            &candidates,
+            &runtime_models,
+        )
+        .unwrap();
+        assert_eq!(compiled.requirement_coverage, 1);
+    }
+
+    #[test]
+    fn canonical_plan_compiler_rejects_duplicate_primary_owner_and_poisoned_candidate_model() {
+        let (candidates, requirements, evidence, mut decision, runtime_models) =
+            canonical_plan_fixture();
+        decision["task_coverage"][1]["owns_requirement_ids"] =
+            serde_json::json!(["REQ-test", "REQ-route"]);
+        decision["task_coverage"][1]["verifies_requirement_ids"] =
+            serde_json::json!(["REQ-header"]);
+        assert!(compile_canonical_plan_adjudication(
+            &decision.to_string(),
+            &requirements,
+            &evidence,
+            &candidates,
+            &runtime_models,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("more than one primary owner"));
+
+        let (_, _, _, decision, _) = canonical_plan_fixture();
+        let mut poisoned: serde_json::Value = serde_json::from_str(&candidates[0]).unwrap();
+        poisoned["subtasks"][0]["model"] = serde_json::json!("candidate-invented-model");
+        assert!(compile_canonical_plan_adjudication(
+            &decision.to_string(),
+            &requirements,
+            &evidence,
+            &[poisoned.to_string()],
+            &runtime_models,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("outside the resolved runtime roster"));
+    }
+
+    #[test]
+    fn canonical_plan_compiler_rejects_unsafe_overlap_and_disconnected_closure() {
+        let (candidates, requirements, evidence, original, runtime_models) =
+            canonical_plan_fixture();
+
+        let mut unsafe_path = original.clone();
+        unsafe_path["canonical_plan"]["subtasks"][0]["files"] = serde_json::json!(["../api.py"]);
+        assert!(compile_canonical_plan_adjudication(
+            &unsafe_path.to_string(),
+            &requirements,
+            &evidence,
+            &candidates,
+            &runtime_models,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("not project-relative"));
+
+        let mut overlap = original.clone();
+        overlap["canonical_plan"]["subtasks"][1]["files"] = serde_json::json!(["src/api.py"]);
+        assert!(compile_canonical_plan_adjudication(
+            &overlap.to_string(),
+            &requirements,
+            &evidence,
+            &candidates,
+            &runtime_models,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("overlaps tasks"));
+
+        let mut disconnected = original;
+        disconnected["canonical_plan"]["subtasks"][1]["files"] =
+            serde_json::json!(["src/second.py"]);
+        disconnected["canonical_plan"]["subtasks"][2]["depends_on"] = serde_json::json!(["api"]);
+        assert!(compile_canonical_plan_adjudication(
+            &disconnected.to_string(),
+            &requirements,
+            &evidence,
+            &candidates,
+            &runtime_models,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("disconnected completion closures"));
+    }
+
+    #[test]
+    fn canonical_binding_spec_excludes_research_defaults_and_keeps_user_decisions() {
+        let raw = "Build the exact CSV export.";
+        let mutable_prompt =
+            format!("{raw}\n\n[Defaults a research pass chose]\n- Use JSON instead.");
+        let decisions = format!("{USER_DECISIONS_HEADER}- Keep CSV and use `|`.\n");
+        let binding = binding_spec_with_user_decisions(raw, &decisions);
+        assert_ne!(binding, mutable_prompt);
+        assert!(!binding.contains("research pass"));
+        assert!(binding.contains("Keep CSV and use `|`"));
     }
 
     #[test]
@@ -14524,6 +14736,14 @@ const USER_DECISIONS_HEADER: &str = "\n\n## USER DECISIONS — BINDING\n\
      default, or an order, use THAT one verbatim. These override any conflicting habit or default you \
      would otherwise pick:\n";
 
+fn binding_spec_with_user_decisions(raw_user_spec: &str, user_decisions: &str) -> String {
+    if user_decisions.trim().is_empty() {
+        raw_user_spec.to_string()
+    } else {
+        format!("{}{}", raw_user_spec.trim_end(), user_decisions)
+    }
+}
+
 /// The last `max` characters of `s` (char-wise, never a byte slice — these are model tokens).
 fn tail_chars(s: &str, max: usize) -> String {
     let n = s.chars().count();
@@ -15211,11 +15431,34 @@ fn select_lenses(is_amendment: bool, max: u32) -> Vec<&'static ScoutLens> {
 /// The full plan-confidence breakdown behind the single `final_conf` scalar, exposed (via an additive
 /// `plan_confidence_breakdown` event key) so the UI can show WHICH signal is low and what would raise it.
 /// `agreement`/`spec_clarity` are `None` where that signal wasn't computed (solo plan / cloud path).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PlanAdjudication {
+    #[default]
+    NotRun,
+    Accepted,
+    Fallback,
+}
+
+impl PlanAdjudication {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRun => "not_run",
+            Self::Accepted => "accepted",
+            Self::Fallback => "fallback",
+        }
+    }
+}
+
+fn legacy_round2_allowed(adjudication: PlanAdjudication) -> bool {
+    adjudication != PlanAdjudication::Accepted
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PlanConf {
     final_conf: Option<u8>,
     agreement: Option<u8>,
     agreement_reason: String,
+    adjudication: PlanAdjudication,
     spec_clarity: Option<u8>,
     spec_clarity_reason: String,
     product_specified: bool,
@@ -15233,9 +15476,40 @@ enum BindingSignal {
     SpecClarity,
 }
 
+fn resolved_plan_confidence(
+    adjudication: PlanAdjudication,
+    agreement: Option<u8>,
+    spec_clarity: Option<u8>,
+) -> Option<u8> {
+    if adjudication == PlanAdjudication::Accepted {
+        return spec_clarity;
+    }
+    match (agreement, spec_clarity) {
+        (Some(agreement), Some(clarity)) => Some(agreement.min(clarity)),
+        (Some(agreement), None) => Some(agreement),
+        (None, Some(clarity)) => Some(clarity),
+        (None, None) => None,
+    }
+}
+
 impl PlanConf {
+    /// The scalar used only to decide whether another planning/ASK action is needed. Semantic adjudication
+    /// resolves structural draft disagreement without rewriting the raw agreement metric; an accepted plan is
+    /// therefore gated only by measured spec clarity. `None` keeps the existing fail-open behavior when the
+    /// optional clarity probe produced no evidence.
+    fn gate_confidence(&self) -> Option<u8> {
+        if self.adjudication == PlanAdjudication::Accepted {
+            self.spec_clarity
+        } else {
+            self.final_conf
+        }
+    }
+
     /// The lower of the two computed sub-signals; `None` when neither was computed (retarget is then inert).
     fn binding_signal(&self) -> Option<BindingSignal> {
+        if self.adjudication == PlanAdjudication::Accepted {
+            return self.spec_clarity.map(|_| BindingSignal::SpecClarity);
+        }
         match (self.agreement, self.spec_clarity) {
             (Some(a), Some(c)) if a < c => Some(BindingSignal::Agreement),
             (Some(a), Some(c)) if c < a => Some(BindingSignal::SpecClarity),
@@ -15682,7 +15956,10 @@ fn post_answer_action(
 }
 
 fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
-    if pc.agreement.is_none() && pc.spec_clarity.is_none() {
+    if pc.agreement.is_none()
+        && pc.spec_clarity.is_none()
+        && pc.adjudication == PlanAdjudication::NotRun
+    {
         return None;
     }
     // #136: the delegated list is INSERTED below only when non-empty. A `"delegated_decisions": null` key
@@ -15697,6 +15974,10 @@ fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
         "product_specified": pc.product_specified,
         "open_decisions": pc.open_decisions,
     });
+    if pc.adjudication != PlanAdjudication::NotRun {
+        out["semantic_adjudication"] = serde_json::json!(pc.adjudication.as_str());
+        out["gate_confidence"] = serde_json::json!(pc.gate_confidence());
+    }
     if !pc.delegated_decisions.is_empty() {
         out["delegated_decisions"] = serde_json::json!(pc.delegated_decisions);
     }
@@ -15723,18 +16004,31 @@ fn canonical_role(file: &str) -> String {
     }
 }
 
-/// A deterministically-injected or uniform SCAFFOLDING task (the integrate-verify sink, or a test module):
-/// excluded from cross-draft agreement under `converge`, because it reflects the harness (it is injected/
-/// uniform), not the model's decomposition choices — counting it inflates measured divergence.
+fn is_structural_test_path(file: &str) -> bool {
+    let lower = file.to_ascii_lowercase().replace('\\', "/");
+    let base = lower.rsplit('/').next().unwrap_or(lower.as_str());
+    lower
+        .split('/')
+        .any(|part| matches!(part, "test" | "tests"))
+        || base.starts_with("test_")
+        || base.contains(".test.")
+        || base.contains("_test.")
+        || base.contains(".spec.")
+        || base.contains("_spec.")
+        || base == "conftest.py"
+}
+
+/// A deterministically-injected or structurally test-only SCAFFOLDING task, excluded from cross-draft
+/// agreement under `converge`. Task prose and IDs are untrusted: only the exact engine sink ID or ownership
+/// consisting entirely of test paths can grant this classification.
 fn is_scaffolding_task(t: &goose_swarm::TaskSpec) -> bool {
-    if t.id == "integrate-verify" || t.id.contains("test") {
+    if t.id == "integrate-verify" {
         return true;
     }
     !t.owned_files.is_empty()
-        && t.owned_files.iter().all(|f| {
-            let b = f.rsplit(['/', '\\']).next().unwrap_or(f).to_lowercase();
-            b.starts_with("test_") || b.ends_with("_test.py") || b == "conftest.py"
-        })
+        && t.owned_files
+            .iter()
+            .all(|file| is_structural_test_path(file))
 }
 
 /// Cross-draft plan self-consistency (0-100 + a one-line reason). `converge` (GOOSE_SWARM_CONVERGE) switches
@@ -16296,6 +16590,31 @@ fn score_skeleton(specs: &[goose_swarm::TaskSpec]) -> Option<i64> {
     }
     let overlap_penalty: i64 = files.values().map(|count| (count - 1).max(0)).sum();
     Some(-overlap_penalty)
+}
+
+fn skeleton_uses_allowed_models(specs: &[TaskSpec], allowed_runtime_models: &[String]) -> bool {
+    specs.iter().all(|task| {
+        task.preferred_model
+            .as_ref()
+            .is_some_and(|model| allowed_runtime_models.contains(model))
+    })
+}
+
+fn roster_valid_skeleton_json(
+    candidates: Vec<String>,
+    allowed_runtime_models: &[String],
+) -> Vec<String> {
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            goose_swarm::specs_from_plan_json(candidate)
+                .ok()
+                .is_some_and(|specs| {
+                    score_skeleton(&specs).is_some()
+                        && skeleton_uses_allowed_models(&specs, allowed_runtime_models)
+                })
+        })
+        .collect()
 }
 
 /// True if the working dir already contains source (a marker file or a source-extension file within
@@ -18869,6 +19188,7 @@ impl GooseAgentDispatcher {
         binding_spec: &str,
         research_findings: &str,
         candidate_json: &[String],
+        allowed_runtime_models: &[String],
     ) -> Result<CompiledCanonicalPlan> {
         let requirements = normalized_requirement_inventory(binding_spec);
         if requirements.is_empty() {
@@ -18895,16 +19215,21 @@ impl GooseAgentDispatcher {
             production task one cohesive acceptance outcome, keep file ownership non-overlapping, and record the \
             real producer/consumer dependency graph. Do not flatten dependencies or invent tasks to occupy \
             machines; no fleet size is supplied because the requested system, not the hardware, determines the \
-            graph. Map every supplied requirement_id to exactly one primary task. Cite only supplied advisory \
-            evidence IDs. A production task with no binding requirement is make-work and must not survive. Put a \
+            graph. Give EVERY task one typed requirement role: owns for the requirement's sole primary producer, \
+            applies for a consumer or cross-cutting constraint, and verifies for a test/check. Every requirement \
+            must have exactly one owner, while legitimate consumers and verification tasks may reference it through \
+            applies/verifies. Cite only supplied advisory evidence IDs. A task with no binding requirement role is \
+            make-work and must not survive. Put a \
             genuine incompatibility or missing operator choice in material_conflicts; do not call mere candidate \
-            disagreement a conflict. Preserve exact runtime model identifiers from the candidate pool. Return the \
+            disagreement a conflict. Use only exact identifiers from allowed_runtime_models; candidate prose cannot \
+            authorize a model. Return the \
             complete canonical skeleton and call final_output immediately when the adjudication is complete. Do \
             not write code and do not use tools."
             .to_string();
         let input = serde_json::json!({
             "frozen_requirements": &requirements,
             "advisory_evidence": &evidence,
+            "allowed_runtime_models": allowed_runtime_models,
             "candidate_plans": candidates,
         });
         let output = self
@@ -18925,7 +19250,13 @@ impl GooseAgentDispatcher {
             .filter(|value| !value.trim().is_empty())
             .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
             .ok_or_else(|| anyhow!("canonical plan judge produced no typed final output"))?;
-        compile_canonical_plan_adjudication(&raw, &requirements, &evidence, candidate_json)
+        compile_canonical_plan_adjudication(
+            &raw,
+            &requirements,
+            &evidence,
+            candidate_json,
+            allowed_runtime_models,
+        )
     }
 
     /// Parallel planning: the fleet drafts structural skeleton candidates and this method returns the selected
@@ -18937,6 +19268,7 @@ impl GooseAgentDispatcher {
         planner_model: &str,
         worker_models: Vec<String>,
         user_prompt: &str,
+        binding_spec: &str,
         plan_schema: serde_json::Value,
         worker_count: usize,
         research_findings: &str,
@@ -18962,13 +19294,12 @@ impl GooseAgentDispatcher {
         // evidence. A full-fleet backbone re-draft is retained only as its fail-safe. false = legacy path,
         // byte-identical.
         backbone_on: bool,
-        // #122: when true AND backbone_on, SKIP the round-2 re-draft if round-1 agreement >= BACKBONE_SKIP_CONF_
-        // FLOOR. High round-1 agreement => the free drafts already share the structure the lock would pin, so
-        // round 2 cannot beat round 1 (adopted 1/29 in real runs, never at conf >= 90). false = today.
+        // #122: when true AND canonical adjudication has failed, SKIP the legacy backbone re-draft if round-1
+        // agreement >= BACKBONE_SKIP_CONF_FLOOR. It never skips the semantic adjudication itself.
         backbone_skip_confident: bool,
         // Incremental replan (Phase 1): freeze the unanimous + downward-closed modules VERBATIM and re-draft
-        // ONLY the dirty residual, adopting the frozen∪dirty splice only when it validates + scores higher.
-        // Takes precedence over `backbone_on` when both are set. false = today, byte-identical.
+        // ONLY the dirty residual, adopting the frozen∪dirty splice only when it validates + scores higher. When
+        // canonical planning is enabled it is a fail-safe after adjudication, never a pre-judge round.
         incremental_on: bool,
         // #133 DIVERSE PLAN: when the parallel drafts STRUCTURALLY converge (>= struct_stop), lift agreement
         // confidence to skip the sequential retarget ladder. false = today (shadow-log only), byte-identical.
@@ -19025,7 +19356,8 @@ impl GooseAgentDispatcher {
         let mut roster_models = std::iter::once(planner_model.to_string())
             .chain(worker_models.iter().cloned())
             .collect::<Vec<_>>();
-        roster_models.dedup();
+        let mut seen_roster_models = HashSet::new();
+        roster_models.retain(|model| seen_roster_models.insert(model.clone()));
         let roster_json =
             serde_json::to_string(&roster_models).unwrap_or_else(|_| "[]".to_string());
         let model_directive = format!(
@@ -19407,33 +19739,108 @@ impl GooseAgentDispatcher {
             "chars": candidates.iter().map(|c| c.chars().count()).collect::<Vec<_>>(),
             "worker_count": worker_count,
         }));
-        // Pick the best skeleton with a PURE-RUST structural scorer (validity borrowed from the same
-        // Dag::from_specs the live path uses) — no LLM in the merge/select path. n==1 keeps the old
-        // behavior exactly (use the single draft as-is). On no valid candidate, Err -> solo plan().
-        let (skeleton, agreement_conf, agreement_reason): (String, Option<u8>, String) = if n == 1 {
-            (
-                candidates
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| anyhow!("architect produced no skeleton"))?,
-                None,
-                String::new(),
-            )
+        // Candidate prose cannot authorize a runtime model. Filter by the resolved roster before either the
+        // structural selector or semantic judge sees a draft, so a poisoned candidate cannot become the seed or
+        // the round-1 fallback.
+        let valid_candidate_json = roster_valid_skeleton_json(candidates, &roster_models);
+        if valid_candidate_json.is_empty() {
+            return Err(anyhow!("no roster-valid skeleton among {n} candidates"));
+        }
+
+        // Pick the best skeleton with a PURE-RUST structural scorer. Semantic adjudication runs once after every
+        // valid first round when enabled, including a one-candidate topology; only the raw agreement signal remains
+        // absent there because one draft is not independent corroboration.
+        let (skeleton, agreement_conf, agreement_reason, adjudication): (
+            String,
+            Option<u8>,
+            String,
+            PlanAdjudication,
+        ) = if !has_independent_round1_agreement(valid_candidate_json.len()) {
+            let candidate = valid_candidate_json[0].clone();
+            if should_adjudicate_canonical_plan(backbone_on, valid_candidate_json.len()) {
+                let adjudication_started = std::time::Instant::now();
+                match self
+                    .adjudicate_canonical_plan(
+                        planner_model,
+                        binding_spec,
+                        research_findings,
+                        &valid_candidate_json,
+                        &roster_models,
+                    )
+                    .await
+                {
+                    Ok(result) if result.material_conflicts.is_empty() => {
+                        self.events.write_value(serde_json::json!({
+                            "event": "canonical_plan_adjudicated",
+                            "accepted": true,
+                            "selected_candidate": result.selected_candidate,
+                            "requirement_coverage": result.requirement_coverage,
+                            "valid_candidates": 1,
+                            "secs": adjudication_started.elapsed().as_secs(),
+                            "confidence_authority": "semantic-adjudication",
+                            "raw_agreement": serde_json::Value::Null,
+                            "full_fleet_redraft": false,
+                        }));
+                        (
+                            result.plan_json,
+                            None,
+                            "single draft — no cross-check; canonical semantic adjudication accepted"
+                                .to_string(),
+                            PlanAdjudication::Accepted,
+                        )
+                    }
+                    Ok(result) => {
+                        self.events.write_value(serde_json::json!({
+                            "event": "canonical_plan_adjudicated",
+                            "accepted": false,
+                            "selected_candidate": result.selected_candidate,
+                            "requirement_coverage": result.requirement_coverage,
+                            "material_conflicts": result.material_conflicts,
+                            "valid_candidates": 1,
+                            "secs": adjudication_started.elapsed().as_secs(),
+                            "fallback": "round1-single-candidate",
+                        }));
+                        (
+                            candidate,
+                            None,
+                            "single draft — semantic adjudication reported a conflict; kept round 1"
+                                .to_string(),
+                            PlanAdjudication::Fallback,
+                        )
+                    }
+                    Err(error) => {
+                        self.events.write_value(serde_json::json!({
+                            "event": "canonical_plan_adjudicated",
+                            "accepted": false,
+                            "error": error.to_string(),
+                            "valid_candidates": 1,
+                            "secs": adjudication_started.elapsed().as_secs(),
+                            "fallback": "round1-single-candidate",
+                        }));
+                        (
+                            candidate,
+                            None,
+                            format!(
+                                "single draft — semantic adjudication failed ({error:#}); kept round 1"
+                            ),
+                            PlanAdjudication::Fallback,
+                        )
+                    }
+                }
+            } else {
+                (
+                    candidate,
+                    None,
+                    "single draft — no cross-check".to_string(),
+                    PlanAdjudication::NotRun,
+                )
+            }
         } else {
             // ROUND 1: pick the structurally-best of the genuinely-independent drafts + measure agreement.
             // M6: plan confidence from cross-draft AGREEMENT (self-consistency is calibrated where verbalized
             // confidence is overconfident). Low agreement = the model doesn't really know how to decompose
             // this — a signal to research more before committing (M6 step 3).
-            let valid_candidate_json = candidates
-                .iter()
-                .filter(|candidate| {
-                    goose_swarm::specs_from_plan_json(candidate)
-                        .ok()
-                        .is_some_and(|specs| score_skeleton(&specs).is_some())
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            let (best1, valid1) = select_best_skeleton(candidates, "");
+            let (best1, valid1) = select_best_skeleton(valid_candidate_json.clone(), "");
             let (score1, json1) = match best1 {
                 Some(b) => b,
                 None => return Err(anyhow!("no valid skeleton among {n} candidates")),
@@ -19540,10 +19947,11 @@ impl GooseAgentDispatcher {
             // ⚠️ CORRECTED: this said "one node drafts 2". It does not — all 11 one-node runs on record
             // show `skeleton_drafts` requested=1/returned=1, because `n = requested_n.min(distinct
             // draft models)` and this fleet's planner and worker share a model string. The no-op holds
-            // by a STRONGER route: at n==1 `agreement_conf` is None, so the confidence gate is never
-            // entered at all. The cap is DISTINCT DRAFT MODELS, not node count — a one-node fleet with
-            // a separate planner model WOULD draft two and could ladder. The raw `agreement_conf` and `pool_penalty` are emitted ABOVE, before this
-            // runs, so the diagnostic keeps its old meaning and `pool_invariant_applied` says when it bit.
+            // by a STRONGER route: the n==1 control path never enters this cross-draft calculation. It now still
+            // receives semantic adjudication and a spec-clarity check, but correctly records agreement as absent.
+            // The cap is DISTINCT DRAFT MODELS, not node count — a one-node fleet with a separate planner model
+            // WOULD draft two. The raw `agreement_conf` and `pool_penalty` are emitted ABOVE, before this runs, so
+            // the diagnostic keeps its old meaning and `pool_invariant_applied` says when it bit.
             //
             // ⚠️ WHAT THIS DOES NOT CLAIM: runs are not randomised into laddering — the ladder fires when the
             // drafts disagree, so laddering runs may be the ones facing a harder decomposition. The evidence
@@ -19592,14 +20000,116 @@ impl GooseAgentDispatcher {
                 "  {} picked best skeleton (score {score1}) — plan confidence {conf1}/100 ({reason1})",
                 style("✓").green().bold()
             );
+            // The semantic judge is the primary second-stage planner whenever canonical planning is enabled.
+            // It runs before any incremental/backbone round, regardless of agreement confidence. Those expensive
+            // full-fleet rounds remain available only when this typed adjudication fails or reports a conflict.
+            let canonical = if should_adjudicate_canonical_plan(
+                backbone_on,
+                valid_candidate_json.len(),
+            ) {
+                let adjudication_started = std::time::Instant::now();
+                match self
+                    .adjudicate_canonical_plan(
+                        planner_model,
+                        binding_spec,
+                        research_findings,
+                        &valid_candidate_json,
+                        &roster_models,
+                    )
+                    .await
+                {
+                    Ok(result) if result.material_conflicts.is_empty() => {
+                        self.events.write_value(serde_json::json!({
+                            "event": "canonical_plan_adjudicated",
+                            "accepted": true,
+                            "selected_candidate": result.selected_candidate,
+                            "requirement_coverage": result.requirement_coverage,
+                            "valid_candidates": valid_candidate_json.len(),
+                            "secs": adjudication_started.elapsed().as_secs(),
+                            "confidence_authority": "semantic-adjudication",
+                            "raw_agreement": conf1,
+                            "full_fleet_redraft": false,
+                        }));
+                        Some(result)
+                    }
+                    Ok(result) => {
+                        self.events.write_value(serde_json::json!({
+                            "event": "canonical_plan_adjudicated",
+                            "accepted": false,
+                            "selected_candidate": result.selected_candidate,
+                            "requirement_coverage": result.requirement_coverage,
+                            "material_conflicts": &result.material_conflicts,
+                            "valid_candidates": valid_candidate_json.len(),
+                            "secs": adjudication_started.elapsed().as_secs(),
+                            "fallback": if incremental_on {
+                                "legacy_incremental_round2"
+                            } else {
+                                "legacy_backbone_round2"
+                            },
+                        }));
+                        eprintln!(
+                            "  {} canonical plan judge found {} material conflict(s); retaining the legacy fail-safe",
+                            style("!").yellow(),
+                            result.material_conflicts.len()
+                        );
+                        None
+                    }
+                    Err(error) => {
+                        self.events.write_value(serde_json::json!({
+                            "event": "canonical_plan_adjudicated",
+                            "accepted": false,
+                            "error": error.to_string(),
+                            "valid_candidates": valid_candidate_json.len(),
+                            "secs": adjudication_started.elapsed().as_secs(),
+                            "fallback": if incremental_on {
+                                "legacy_incremental_round2"
+                            } else {
+                                "legacy_backbone_round2"
+                            },
+                        }));
+                        eprintln!(
+                            "  {} canonical plan adjudication failed ({error:#}); retaining the legacy fail-safe",
+                            style("!").yellow()
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let adjudication_state = if canonical.is_some() {
+                PlanAdjudication::Accepted
+            } else if backbone_on {
+                PlanAdjudication::Fallback
+            } else {
+                PlanAdjudication::NotRun
+            };
             // INCREMENTAL REPLAN (Phase 1) — freeze the unanimous + dependency-downward-closed modules VERBATIM
             // from ONE source draft (the best round-1 skeleton) and re-draft ONLY the dirty residual against
             // that frozen interface, then splice frozen∪dirty. Adopt ONLY when the splice is a valid DAG that
             // passes the interface gate AND scores strictly higher than round 1; confidence stays conf1 (the
             // round-1 free-draft agreement) in EVERY branch, so the freeze fraction can never inflate the ask-
-            // floor number (P0-2). Takes precedence over backbone. Off ⇒ this whole block is skipped, byte-
-            // identical. On any failure it falls back to round 1 — it can never ship a broken/worse plan.
-            if incremental_on && valid1.len() >= 2 {
+            // floor number (P0-2). It runs only as the semantic judge's fail-safe when canonical planning is on.
+            // On any failure it falls back to round 1 — it can never ship a broken/worse plan.
+            let selected = if let Some(canonical) = canonical {
+                eprintln!(
+                    "  {} canonical plan accepted: {}/{} frozen requirements have primary task ownership — skipped the full-fleet re-draft",
+                    style("✓").green().bold(),
+                    canonical.requirement_coverage,
+                    normalized_requirement_inventory(binding_spec).len()
+                );
+                (
+                    canonical.plan_json,
+                    Some(conf1),
+                    format!(
+                        "{reason1} [canonical adjudication: {} requirements bound; raw cross-draft agreement preserved]",
+                        canonical.requirement_coverage
+                    ),
+                )
+            } else if legacy_round2_allowed(adjudication_state)
+                && incremental_on
+                && valid1.len() >= 2
+            {
                 let votes = module_votes(&valid1);
                 let source_specs = goose_swarm::specs_from_plan_json(&json1).unwrap_or_default();
                 let (frozen, dirty_roles) = partition_frozen_dirty(&votes, &source_specs);
@@ -19660,10 +20170,13 @@ impl GooseAgentDispatcher {
                     // name its own occupant.
                     let r2_started = std::time::Instant::now();
                     let (candidates2, _dead2, _deferred2) = draft_round(system2, draft_temp).await;
+                    let returned2 = candidates2.len();
+                    let candidates2 = roster_valid_skeleton_json(candidates2, &roster_models);
                     self.events.write_value(serde_json::json!({
                         "event": "skeleton_drafts_round2",
                         "path": "incremental",
-                        "returned": candidates2.len(),
+                        "returned": returned2,
+                        "roster_valid": candidates2.len(),
                         "dead": _dead2,
                         "secs": r2_started.elapsed().as_secs(),
                     }));
@@ -19724,117 +20237,40 @@ impl GooseAgentDispatcher {
                     eprintln!("  · incremental replan: no freezable core (kept round 1)");
                     (json1, Some(conf1), reason1)
                 }
-            // CANONICAL PLAN ADJUDICATION — use one semantic pass to combine the independent drafts against the
-            // frozen requirements and advisory evidence. This is deliberately not another vote or a numerical
-            // confidence trick: the typed compiler requires a valid DAG, exact once-only requirement ownership,
-            // valid evidence references, and no production make-work. A successful, conflict-free adjudication
-            // becomes the confidence authority, so structural variation between otherwise useful drafts cannot
-            // trigger the sequential retarget ladder. If semantic adjudication fails or exposes a material
-            // requirement conflict, retain the old backbone re-draft as a fail-safe rather than weakening the
-            // plan. Off ⇒ this whole block is skipped, byte-identical.
-            } else if should_run_backbone_round2(backbone_on, backbone_skip_confident, conf1) {
-                let adjudication_started = std::time::Instant::now();
-                let adjudication = self
-                    .adjudicate_canonical_plan(
-                        planner_model,
-                        user_prompt,
-                        research_findings,
-                        &valid_candidate_json,
-                    )
-                    .await;
-                let canonical = match adjudication {
-                    Ok(result) if result.material_conflicts.is_empty() => {
-                        self.events.write_value(serde_json::json!({
-                            "event": "canonical_plan_adjudicated",
-                            "accepted": true,
-                            "selected_candidate": result.selected_candidate,
-                            "requirement_coverage": result.requirement_coverage,
-                            "valid_candidates": valid_candidate_json.len(),
-                            "secs": adjudication_started.elapsed().as_secs(),
-                            "confidence_authority": "semantic-coverage-and-spec-clarity",
-                            "full_fleet_redraft": false,
-                        }));
-                        Some(result)
-                    }
-                    Ok(result) => {
-                        self.events.write_value(serde_json::json!({
-                            "event": "canonical_plan_adjudicated",
-                            "accepted": false,
-                            "selected_candidate": result.selected_candidate,
-                            "requirement_coverage": result.requirement_coverage,
-                            "material_conflicts": &result.material_conflicts,
-                            "valid_candidates": valid_candidate_json.len(),
-                            "secs": adjudication_started.elapsed().as_secs(),
-                            "fallback": "legacy_backbone_round2",
-                        }));
-                        eprintln!(
-                            "  {} canonical plan judge found {} material conflict(s); retaining the backbone fail-safe",
-                            style("!").yellow(),
-                            result.material_conflicts.len()
-                        );
-                        None
-                    }
-                    Err(error) => {
-                        self.events.write_value(serde_json::json!({
-                            "event": "canonical_plan_adjudicated",
-                            "accepted": false,
-                            "error": error.to_string(),
-                            "valid_candidates": valid_candidate_json.len(),
-                            "secs": adjudication_started.elapsed().as_secs(),
-                            "fallback": "legacy_backbone_round2",
-                        }));
-                        eprintln!(
-                            "  {} canonical plan adjudication failed ({error:#}); retaining the backbone fail-safe",
-                            style("!").yellow()
-                        );
-                        None
-                    }
-                };
-                if let Some(canonical) = canonical {
+            } else if legacy_round2_allowed(adjudication_state)
+                && should_run_backbone_round2(backbone_on, backbone_skip_confident, conf1)
+            {
+                let backbone = consensus_backbone(&valid1);
+                if backbone.len() >= 2 {
                     eprintln!(
-                        "  {} canonical plan accepted: {}/{} frozen requirements have primary task ownership — skipped the full-fleet re-draft",
-                        style("✓").green().bold(),
-                        canonical.requirement_coverage,
-                        normalized_requirement_inventory(user_prompt).len()
-                    );
-                    (
-                        canonical.plan_json,
-                        None,
-                        format!(
-                            "{reason1} [canonical adjudication: {} requirements bound; semantic coverage plus spec clarity replaces cross-draft structural agreement]",
-                            canonical.requirement_coverage
-                        ),
-                    )
-                } else {
-                    let backbone = consensus_backbone(&valid1);
-                    if backbone.len() >= 2 {
-                        eprintln!(
                             "  {} backbone fail-safe: {} consensus module(s) [{}] — re-drafting round 2",
                             style("◆").cyan(),
                             backbone.len(),
                             backbone.join(", ")
                         );
-                        let system2 = build_system(&backbone_clause(&backbone));
-                        let r2_started = std::time::Instant::now();
-                        let (candidates2, _dead2, _deferred2) =
-                            draft_round(system2, draft_temp).await;
-                        self.events.write_value(serde_json::json!({
-                            "event": "skeleton_drafts_round2",
-                            "path": "backbone-fallback",
-                            "returned": candidates2.len(),
-                            "dead": _dead2,
-                            "secs": r2_started.elapsed().as_secs(),
-                        }));
-                        let (best2, _valid2) = select_best_skeleton(candidates2, "round2 ");
-                        match best2 {
-                            Some((score2, json2))
-                                if score2 > score1 && plan_covers_backbone(&json2, &backbone) =>
-                            {
-                                eprintln!(
+                    let system2 = build_system(&backbone_clause(&backbone));
+                    let r2_started = std::time::Instant::now();
+                    let (candidates2, _dead2, _deferred2) = draft_round(system2, draft_temp).await;
+                    let returned2 = candidates2.len();
+                    let candidates2 = roster_valid_skeleton_json(candidates2, &roster_models);
+                    self.events.write_value(serde_json::json!({
+                        "event": "skeleton_drafts_round2",
+                        "path": "backbone-fallback",
+                        "returned": returned2,
+                        "roster_valid": candidates2.len(),
+                        "dead": _dead2,
+                        "secs": r2_started.elapsed().as_secs(),
+                    }));
+                    let (best2, _valid2) = select_best_skeleton(candidates2, "round2 ");
+                    match best2 {
+                        Some((score2, json2))
+                            if score2 > score1 && plan_covers_backbone(&json2, &backbone) =>
+                        {
+                            eprintln!(
                                     "  {} backbone fail-safe skeleton adopted (score {score1}→{score2}); confidence unchanged (round-1 free drafts)",
                                     style("✓").green().bold()
                                 );
-                                (
+                            (
                                     json2,
                                     Some(conf1),
                                     format!(
@@ -19842,18 +20278,15 @@ impl GooseAgentDispatcher {
                                         backbone.len()
                                     ),
                                 )
-                            }
-                            _ => {
-                                eprintln!(
-                                    "  · backbone fail-safe round 2 not adopted (kept round 1)"
-                                );
-                                (json1, Some(conf1), reason1)
-                            }
                         }
-                    } else {
-                        eprintln!("  · backbone fail-safe: no shared core (kept round 1)");
-                        (json1, Some(conf1), reason1)
+                        _ => {
+                            eprintln!("  · backbone fail-safe round 2 not adopted (kept round 1)");
+                            (json1, Some(conf1), reason1)
+                        }
                     }
+                } else {
+                    eprintln!("  · backbone fail-safe: no shared core (kept round 1)");
+                    (json1, Some(conf1), reason1)
                 }
             } else if backbone_on {
                 // #122 skip: round-1 agreement is already high, so the free drafts share the structure the lock
@@ -19866,7 +20299,8 @@ impl GooseAgentDispatcher {
                 (json1, Some(conf1), reason1)
             } else {
                 (json1, Some(conf1), reason1)
-            }
+            };
+            (selected.0, selected.1, selected.2, adjudication_state)
         };
         // Second confidence signal: SPEC CLARITY. Cross-draft agreement measures whether the drafts
         // CONVERGED, which is noisy — a genuinely ambiguous request ("build something useful") can score high
@@ -19874,14 +20308,14 @@ impl GooseAgentDispatcher {
         // spec scored 51 then 95). So agreement alone is not the right gate for the ASK feature. The old
         // verbalized self-rating was meant to fix this but a weak model can't calibrate a 0-100 number (usable
         // in only ~6/102 runs). We instead ENUMERATE the material open product-decisions — a task the model
-        // does reliably — and derive a confidence from the count. Combined with agreement via MIN: the run
-        // proceeds only when BOTH the drafts converged AND the spec pins the product down, so a
-        // vague-but-convergent spec now asks. Only on the best-of-N + ask-floor path (`need_confidence`); the
-        // default/cloud path skips it entirely (plan_conf = agreement_conf), so plan CONTENT is byte-identical.
-        // The enumerated decisions are RETURNED as `uncertainties` and seed the clarify questions.
-        let (plan_conf, uncertainties): (PlanConf, String) = if n > 1 && need_confidence {
+        // does reliably — and derive a confidence from the count. Without accepted adjudication, final confidence
+        // remains the MIN of measured scalars. Accepted semantic adjudication resolves structural disagreement, so
+        // spec clarity becomes final/action confidence while raw agreement remains separately visible and unchanged.
+        // The enumerated decisions are RETURNED as `uncertainties` and seed the clarify questions. A one-candidate
+        // topology still gets this spec-authority check even though it has no cross-draft agreement signal.
+        let (plan_conf, uncertainties): (PlanConf, String) = if need_confidence {
             let clarity = self
-                .spec_clarity_confidence(planner_model, user_prompt, &skeleton)
+                .spec_clarity_confidence(planner_model, binding_spec, &skeleton)
                 .await;
             // A DEAD PROBE IS NOT A CLEAR SPEC. The default keeps `product_specified: true` and drops clarity
             // from the min — an assertion the engine has no evidence for (it is what the probe was supposed to
@@ -19900,17 +20334,6 @@ impl GooseAgentDispatcher {
                     "GOOSE_SWARM_CLARITY_FAIL_CLOSED",
                     load_config().clarity_fail_closed,
                 );
-            let final_conf = match (agreement_conf, clarity.as_ref()) {
-                // Proceed only when BOTH signals are confident — the lower one governs.
-                (Some(a), Some((c, _, _))) => Some(a.min(*c)),
-                (Some(a), None) => Some(if fail_closed {
-                    a.min(CLARITY_FAILCLOSED)
-                } else {
-                    a
-                }),
-                (None, Some((c, _, _))) => Some(*c),
-                (None, None) => Some(if fail_closed { CLARITY_FAILCLOSED } else { 60 }),
-            };
             let (spec_clarity, open_decisions, product_specified) = match &clarity {
                 Some((c, d, p)) => (Some(*c), d.clone(), *p),
                 // (delegated split happens below, once, so the None arms stay byte-identical)
@@ -19950,6 +20373,13 @@ impl GooseAgentDispatcher {
                 }
                 (other, _) => other,
             };
+            let final_conf = resolved_plan_confidence(adjudication, agreement_conf, spec_clarity)
+                .or_else(|| {
+                    (adjudication != PlanAdjudication::Accepted
+                        && agreement_conf.is_none()
+                        && spec_clarity.is_none())
+                    .then_some(60)
+                });
             if !delegated_decisions.is_empty() {
                 eprintln!(
                     "  {} {} decision(s) are DELEGATED by the spec (\"your call\") — recorded as design \
@@ -19972,8 +20402,13 @@ impl GooseAgentDispatcher {
             }
             if let Some(fc) = final_conf {
                 eprintln!(
-                    "  {} final plan confidence {fc}/100 (min of agreement + spec-clarity)",
-                    style("◆").cyan()
+                    "  {} final plan confidence {fc}/100 ({})",
+                    style("◆").cyan(),
+                    if adjudication == PlanAdjudication::Accepted {
+                        "semantic adjudication accepted; spec clarity governs"
+                    } else {
+                        "min of agreement + spec-clarity"
+                    },
                 );
             }
             // A human-readable derivation of the spec-clarity number, so it reads as a computed signal, not a
@@ -20022,6 +20457,7 @@ impl GooseAgentDispatcher {
                 final_conf,
                 agreement: agreement_conf,
                 agreement_reason,
+                adjudication,
                 spec_clarity,
                 spec_clarity_reason,
                 product_specified,
@@ -20031,9 +20467,10 @@ impl GooseAgentDispatcher {
             (pc, unc)
         } else {
             let pc = PlanConf {
-                final_conf: agreement_conf,
+                final_conf: resolved_plan_confidence(adjudication, agreement_conf, None),
                 agreement: agreement_conf,
                 agreement_reason,
+                adjudication,
                 spec_clarity: None,
                 spec_clarity_reason: String::new(),
                 product_specified: true,
@@ -33360,19 +33797,24 @@ fn canonical_plan_adjudication_schema() -> serde_json::Value {
         "type": "object",
         "additionalProperties": false,
         "required": [
-            "selected_candidate", "requirement_coverage", "material_conflicts", "canonical_plan"
+            "selected_candidate", "task_coverage", "material_conflicts", "canonical_plan"
         ],
         "properties": {
             "selected_candidate": {"type": "integer", "minimum": 0},
-            "requirement_coverage": {
+            "task_coverage": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["requirement_id", "task_id", "evidence_ids"],
+                    "required": [
+                        "task_id", "owns_requirement_ids", "applies_requirement_ids",
+                        "verifies_requirement_ids", "evidence_ids"
+                    ],
                     "properties": {
-                        "requirement_id": {"type": "string"},
                         "task_id": {"type": "string"},
+                        "owns_requirement_ids": {"type": "array", "items": {"type": "string"}},
+                        "applies_requirement_ids": {"type": "array", "items": {"type": "string"}},
+                        "verifies_requirement_ids": {"type": "array", "items": {"type": "string"}},
                         "evidence_ids": {"type": "array", "items": {"type": "string"}}
                     }
                 }
@@ -33769,26 +34211,12 @@ fn artifact_evidence_candidates(requirements: &[RequirementRecord]) -> Vec<Artif
 }
 
 fn structural_test_task(spec: &TaskSpec) -> bool {
-    let id_is_test = spec
-        .id
-        .to_ascii_lowercase()
-        .split(|character: char| !character.is_ascii_alphanumeric())
-        .any(|part| matches!(part, "test" | "tests" | "testing"));
-    if spec.id != "integrate-verify" && id_is_test {
-        return true;
-    }
-    !spec.owned_files.is_empty()
-        && spec.owned_files.iter().all(|file| {
-            let lower = file.to_ascii_lowercase();
-            let base = lower.rsplit('/').next().unwrap_or(lower.as_str());
-            lower
-                .split('/')
-                .any(|part| matches!(part, "test" | "tests"))
-                || base.starts_with("test_")
-                || base.contains(".test.")
-                || base.contains("_test.")
-                || base == "conftest.py"
-        })
+    spec.id != "integrate-verify"
+        && !spec.owned_files.is_empty()
+        && spec
+            .owned_files
+            .iter()
+            .all(|file| is_structural_test_path(file))
 }
 
 fn validate_integration_closure(specs: &[TaskSpec]) -> Result<()> {
@@ -34518,9 +34946,11 @@ struct RequirementRecord {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CanonicalPlanCoverageDraft {
-    requirement_id: String,
+struct CanonicalPlanTaskCoverageDraft {
     task_id: String,
+    owns_requirement_ids: Vec<String>,
+    applies_requirement_ids: Vec<String>,
+    verifies_requirement_ids: Vec<String>,
     evidence_ids: Vec<String>,
 }
 
@@ -34535,7 +34965,7 @@ struct CanonicalPlanConflictDraft {
 #[serde(deny_unknown_fields)]
 struct CanonicalPlanAdjudicationDraft {
     selected_candidate: usize,
-    requirement_coverage: Vec<CanonicalPlanCoverageDraft>,
+    task_coverage: Vec<CanonicalPlanTaskCoverageDraft>,
     material_conflicts: Vec<CanonicalPlanConflictDraft>,
     canonical_plan: serde_json::Value,
 }
@@ -34548,15 +34978,52 @@ struct CompiledCanonicalPlan {
     material_conflicts: Vec<String>,
 }
 
+fn validate_canonical_skeleton_structure(specs: &[TaskSpec]) -> Result<()> {
+    if specs.is_empty() {
+        bail!("canonical plan contained no tasks");
+    }
+    goose_swarm::Dag::from_specs(specs.to_vec())
+        .map_err(|error| anyhow!("canonical plan was not a valid DAG: {error}"))?;
+    let mut file_owners = HashMap::<&str, &str>::new();
+    for task in specs {
+        let mut task_paths = HashSet::<&str>::new();
+        for file in &task.owned_files {
+            validate_project_relative_owned_path(&task.id, file)?;
+            if !task_paths.insert(file.as_str()) {
+                bail!(
+                    "canonical plan task `{}` repeated owned path `{file}`",
+                    task.id
+                );
+            }
+            if let Some(previous) = file_owners.insert(file.as_str(), task.id.as_str()) {
+                bail!(
+                    "canonical plan owned file `{file}` overlaps tasks `{previous}` and `{}`",
+                    task.id
+                );
+            }
+        }
+    }
+    validate_integration_closure(specs)
+        .map_err(|error| anyhow!("canonical plan had invalid integration topology: {error}"))
+}
+
 fn compile_canonical_plan_adjudication(
     raw: &str,
     requirements: &[RequirementRecord],
     evidence: &[EvidenceRecord],
     candidate_json: &[String],
+    allowed_runtime_models: &[String],
 ) -> Result<CompiledCanonicalPlan> {
     let candidate_count = candidate_json.len();
     if candidate_count == 0 {
         bail!("canonical plan adjudication had no valid candidates");
+    }
+    for (index, candidate) in candidate_json.iter().enumerate() {
+        let specs = goose_swarm::specs_from_plan_json(candidate)
+            .map_err(|error| anyhow!("canonical candidate {index} did not parse: {error}"))?;
+        if !skeleton_uses_allowed_models(&specs, allowed_runtime_models) {
+            bail!("canonical candidate {index} used a model outside the resolved runtime roster");
+        }
     }
     let draft: CanonicalPlanAdjudicationDraft = serde_json::from_str(raw).map_err(|error| {
         anyhow!("canonical plan adjudication was not valid typed JSON: {error}")
@@ -34571,23 +35038,15 @@ fn compile_canonical_plan_adjudication(
     let plan_json = serde_json::to_string(&draft.canonical_plan)?;
     let specs = goose_swarm::specs_from_plan_json(&plan_json)
         .map_err(|error| anyhow!("canonical plan did not parse as a task skeleton: {error}"))?;
-    goose_swarm::Dag::from_specs(specs.clone())
-        .map_err(|error| anyhow!("canonical plan was not a valid DAG: {error}"))?;
-    if specs.is_empty() {
-        bail!("canonical plan contained no tasks");
-    }
-    let candidate_models = candidate_json
+    validate_canonical_skeleton_structure(&specs)?;
+    let allowed_models = allowed_runtime_models
         .iter()
-        .map(|candidate| goose_swarm::specs_from_plan_json(candidate))
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .flatten()
-        .filter_map(|task| task.preferred_model)
+        .map(String::as_str)
         .collect::<HashSet<_>>();
     let invented_models = specs
         .iter()
         .filter_map(|task| task.preferred_model.as_ref())
-        .filter(|model| !candidate_models.contains(*model))
+        .filter(|model| !allowed_models.contains(model.as_str()))
         .map(String::as_str)
         .collect::<Vec<_>>();
     if !invented_models.is_empty() {
@@ -34596,50 +35055,79 @@ fn compile_canonical_plan_adjudication(
             invented_models.join(", ")
         );
     }
-    let task_ids: HashSet<&str> = specs.iter().map(|task| task.id.as_str()).collect();
-    let requirement_ids: HashSet<&str> = requirements
+    let task_ids = specs
         .iter()
-        .map(|record| record.id.as_str())
-        .collect();
-    let evidence_ids: HashSet<&str> = evidence.iter().map(|record| record.id.as_str()).collect();
-    let mut covered_requirements = HashSet::<&str>::new();
-    let mut covered_tasks = HashSet::<&str>::new();
-    for coverage in &draft.requirement_coverage {
-        if !requirement_ids.contains(coverage.requirement_id.as_str()) {
+        .map(|task| task.id.clone())
+        .collect::<HashSet<_>>();
+    let requirement_ids = requirements
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<HashSet<_>>();
+    let evidence_ids = evidence
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<HashSet<_>>();
+    let mut covered_requirements = HashSet::<String>::new();
+    let mut covered_tasks = HashSet::<String>::new();
+    for coverage in &draft.task_coverage {
+        if !task_ids.contains(&coverage.task_id) {
             bail!(
-                "canonical plan coverage referenced unknown requirement `{}`",
-                coverage.requirement_id
-            );
-        }
-        if !covered_requirements.insert(coverage.requirement_id.as_str()) {
-            bail!(
-                "canonical plan covered requirement `{}` more than once",
-                coverage.requirement_id
-            );
-        }
-        if !task_ids.contains(coverage.task_id.as_str()) {
-            bail!(
-                "canonical plan assigned requirement `{}` to unknown task `{}`",
-                coverage.requirement_id,
+                "canonical plan coverage referenced unknown task `{}`",
                 coverage.task_id
             );
         }
-        covered_tasks.insert(coverage.task_id.as_str());
-        let mut seen_evidence = HashSet::<&str>::new();
-        for evidence_id in &coverage.evidence_ids {
-            if !evidence_ids.contains(evidence_id.as_str()) {
+        if !covered_tasks.insert(coverage.task_id.clone()) {
+            bail!(
+                "canonical plan coverage repeated task `{}`",
+                coverage.task_id
+            );
+        }
+        let owns = require_unique_known_ids(
+            "canonical.owns_requirement_ids",
+            &coverage.owns_requirement_ids,
+            &requirement_ids,
+        )?;
+        let applies = require_unique_known_ids(
+            "canonical.applies_requirement_ids",
+            &coverage.applies_requirement_ids,
+            &requirement_ids,
+        )?;
+        let verifies = require_unique_known_ids(
+            "canonical.verifies_requirement_ids",
+            &coverage.verifies_requirement_ids,
+            &requirement_ids,
+        )?;
+        if !owns.is_disjoint(&applies)
+            || !owns.is_disjoint(&verifies)
+            || !applies.is_disjoint(&verifies)
+        {
+            bail!(
+                "canonical plan task `{}` assigns one requirement more than one semantic role",
+                coverage.task_id
+            );
+        }
+        if owns.is_empty() && applies.is_empty() && verifies.is_empty() {
+            bail!(
+                "canonical plan task `{}` has no requirement role",
+                coverage.task_id
+            );
+        }
+        for requirement_id in owns {
+            if !covered_requirements.insert(requirement_id.clone()) {
                 bail!(
-                    "canonical plan coverage referenced unknown advisory evidence `{evidence_id}`"
+                    "canonical plan requirement `{requirement_id}` has more than one primary owner"
                 );
             }
-            if !seen_evidence.insert(evidence_id.as_str()) {
-                bail!("canonical plan coverage repeated advisory evidence `{evidence_id}`");
-            }
         }
+        require_unique_known_ids(
+            "canonical.evidence_ids",
+            &coverage.evidence_ids,
+            &evidence_ids,
+        )?;
     }
     let missing_requirements = requirements
         .iter()
-        .filter(|record| !covered_requirements.contains(record.id.as_str()))
+        .filter(|record| !covered_requirements.contains(&record.id))
         .map(|record| record.id.as_str())
         .collect::<Vec<_>>();
     if !missing_requirements.is_empty() {
@@ -34650,13 +35138,12 @@ fn compile_canonical_plan_adjudication(
     }
     let orphan_tasks = specs
         .iter()
-        .filter(|task| !is_scaffolding_task(task))
-        .filter(|task| !covered_tasks.contains(task.id.as_str()))
+        .filter(|task| !covered_tasks.contains(&task.id))
         .map(|task| task.id.as_str())
         .collect::<Vec<_>>();
     if !orphan_tasks.is_empty() {
         bail!(
-            "canonical plan introduced production task(s) with no requirement ownership: {}",
+            "canonical plan introduced task(s) with no requirement role: {}",
             orphan_tasks.join(", ")
         );
     }
@@ -39507,8 +39994,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let backbone_on = swarm_gate_cfg("GOOSE_SWARM_BACKBONE", cfg.backbone);
     // #122: skip the backbone round-2 re-draft when round-1 agreement is already high. Read once outside the loop.
     let backbone_skip_confident = backbone_skip_confident_enabled(cfg.backbone_skip_confident);
-    // Incremental replan (Phase 1): config default OFF unless env overrides. Read once outside the loop. Takes
-    // precedence over backbone_on inside parallel_plan when both are set.
+    // Incremental replan (Phase 1): config default OFF unless env overrides. With canonical planning enabled it
+    // is retained only as an adjudication-failure path.
     let incremental_on = swarm_gate_cfg("GOOSE_SWARM_INCREMENTAL_REPLAN", cfg.incremental_replan);
     // #133 DIVERSE PLAN (default OFF): skip the sequential retarget ladder when the parallel drafts
     // structurally converge. Read once outside the loop, mirroring the levers above.
@@ -39606,11 +40093,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 );
                 eprintln!("  architecting skeleton on {} ...", cfg.planner_model);
                 let wm: Vec<String> = fleet_slot_models(&devices);
+                let binding_spec =
+                    binding_spec_with_user_decisions(&raw_user_spec, &user_decisions);
                 match dispatcher
                     .parallel_plan(
                         &cfg.planner_model,
                         wm,
                         &opts.prompt,
+                        &binding_spec,
                         plan_schema(),
                         // SLOTS, NOT DEVICES. A device's `weight` is how many tasks it runs AT ONCE (baked
                         // default 2), so a 3-device fleet holds 6. Passing `devices.len()` told the planner
@@ -39742,13 +40232,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .map_err(|e| anyhow!("invalid plan from planner: {e}\nplan was: {pj}"))?;
             eprintln!("  plan: {} subtask(s)", dag.tasks.len());
             // CONFIDENCE GATE: retarget to raise confidence, then ask the user once if still below the floor.
-            if let (Some(floor), Some(conf)) = (ask_floor, plan_conf.final_conf) {
+            if let (Some(floor), Some(conf)) = (ask_floor, plan_conf.gate_confidence()) {
                 // Monotonic best (retarget only): remember the highest-confidence plan so a re-draft that happens
                 // to diverge can never ship worse than the best already measured.
                 if retarget_on
                     && best_plan
                         .as_ref()
-                        .is_none_or(|(_, b)| conf > b.final_conf.unwrap_or(0))
+                        .is_none_or(|(_, b)| conf > b.gate_confidence().unwrap_or(0))
                 {
                     best_plan = Some((pj.clone(), plan_conf.clone()));
                 }
@@ -40211,16 +40701,14 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                             plan_conf.open_decisions.split_off(
                                                 answered.min(plan_conf.open_decisions.len()),
                                             );
-                                        // final = min(agreement, clarity), the SAME expression the first score
-                                        // used. agreement is untouched: it describes the DAG that actually
-                                        // ships, and that plan is genuinely the pre-answer one.
-                                        plan_conf.final_conf =
-                                            match (plan_conf.agreement, plan_conf.spec_clarity) {
-                                                (Some(a), Some(c)) => Some(a.min(c)),
-                                                (Some(a), None) => Some(a),
-                                                (None, Some(c)) => Some(c),
-                                                (None, None) => None,
-                                            };
+                                        // Reuse the same typed rule as the first score. Accepted semantic
+                                        // adjudication keeps raw agreement for telemetry but lets the answered
+                                        // spec-clarity score govern the action/final confidence.
+                                        plan_conf.final_conf = resolved_plan_confidence(
+                                            plan_conf.adjudication,
+                                            plan_conf.agreement,
+                                            plan_conf.spec_clarity,
+                                        );
                                         sink.write_value(serde_json::json!({
                                             "event": "confidence_rescored",
                                             "reason": "user answered the open decisions",
@@ -40286,7 +40774,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // — byte-identical to the original `if ask_replan || lang_changed ||
                                 // product_defined_by_answer { continue }` + keep notice.
                                 let structural = lang_changed || product_defined_by_answer;
-                                let post_conf = plan_conf.final_conf.unwrap_or(0);
+                                let post_conf = plan_conf.gate_confidence().unwrap_or(0);
                                 match post_answer_action(
                                     answers_win_floor,
                                     ask_replan,
@@ -40361,7 +40849,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // spent, ask the NEXT batch inline (no re-draft between batches, per #129). An
                                 // empty batch or an exhausted queue falls through to the break below.
                                 if ask_away
-                                    && plan_conf.final_conf.unwrap_or(0) < floor
+                                    && plan_conf.gate_confidence().unwrap_or(0) < floor
                                     && !plan_conf.open_decisions.is_empty()
                                     && ask_round + 1 < ask_rounds_max
                                 {
@@ -40370,7 +40858,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         "event": "ask_away_round",
                                         "round": ask_round,
                                         "rounds_max": ask_rounds_max,
-                                        "conf": plan_conf.final_conf,
+                                        "conf": plan_conf.gate_confidence(),
                                         "floor": floor,
                                         "open_decisions_remaining": plan_conf.open_decisions.len(),
                                     }));
@@ -40396,7 +40884,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // ask-only path leaves best_plan None, so it falls through to the current plan exactly as before.
             if retarget_on {
                 if let Some((bpj, bpc)) = best_plan.take() {
-                    if bpc.final_conf.unwrap_or(0) >= plan_conf.final_conf.unwrap_or(0) {
+                    if bpc.gate_confidence().unwrap_or(0)
+                        >= plan_conf.gate_confidence().unwrap_or(0)
+                    {
                         let bdag = Dag::from_planner_json(&bpj)
                             .map_err(|e| anyhow!("invalid best retarget plan: {e}"))?;
                         // A banked plan is ALWAYS parallel-origin: best_plan is only ever set under a
@@ -40421,11 +40911,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // loop-resident survives past this point.
     let (plan_json, dag) = if plan_needs_detail {
         let wm: Vec<String> = fleet_slot_models(&devices);
-        let binding_spec = if user_decisions.trim().is_empty() {
-            raw_user_spec.clone()
-        } else {
-            format!("{}{}", raw_user_spec.trim_end(), user_decisions)
-        };
+        let binding_spec = binding_spec_with_user_decisions(&raw_user_spec, &user_decisions);
         dispatcher
             .detail_plan(
                 &cfg.planner_model,
