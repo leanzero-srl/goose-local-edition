@@ -2,7 +2,7 @@
 //! write a structured per-run JSONL log without this model-agnostic core knowing about IO. All
 //! emits happen under the scheduler's state lock, so a sink need only be `Send + Sync`.
 
-use crate::dispatch::ToolCallRecord;
+use crate::{dag::TaskSpec, dispatch::ToolCallRecord};
 use serde::Serialize;
 
 #[derive(Serialize, Debug)]
@@ -61,11 +61,14 @@ pub enum SwarmEvent {
     RunPaused,
     /// The pause sentinel was cleared; the scheduler resumed claiming ready tasks (re-runs nothing).
     RunUnpaused,
-    /// A dynamic replan round: `added` are the spliced task ids; `stopped` means the replanner
-    /// declined (empty/invalid) and no further replans will run.
+    /// A dynamic replan round. `tasks` are the exact admitted specs and `dag` is the complete DAG
+    /// after the splice, including the review-to-sink edges. This is the resume and audit authority:
+    /// `added` remains as a compact compatibility index, never as a second plan representation.
     Replanned {
         round: u32,
         added: Vec<String>,
+        tasks: Vec<TaskSpec>,
+        dag: Vec<TaskSpec>,
         stopped: bool,
     },
     /// A judge-side SPLIT was applied: one task became `children`. Emitted because it was previously

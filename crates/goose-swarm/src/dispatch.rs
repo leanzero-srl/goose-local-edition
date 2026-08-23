@@ -2,6 +2,7 @@
 //! [`TaskDispatcher::run`]; the real implementation (in goose-cli) drives a Goose Agent bound to a
 //! device's LM Link model id, while tests use a mock. This keeps the concurrency core testable.
 
+use crate::dag::ReplanAuthorityReceipt;
 use async_trait::async_trait;
 use serde::Serialize;
 
@@ -73,6 +74,9 @@ pub struct DispatchRequest {
     pub model_id: String,
     /// The relevant slice of shared context (dependency outputs) for this task.
     pub context_slice: String,
+    /// Exact files owned by this task's completed dependencies. Runtime acceptance reviews use this
+    /// read-only source set; ordinary workers ignore it.
+    pub dependency_files: Vec<String>,
     /// 0-based attempt number (incremented on re-dispatch).
     pub attempt: u32,
     /// The EXACT files this task must create/own (plan paths). The worker is told to write only these.
@@ -120,6 +124,9 @@ pub struct DispatchRequest {
     /// full unscoped bundle, so a fix/sink/mock dispatch with no neighborhood is byte-identical to before
     /// this field existed.
     pub neighborhood: Vec<String>,
+    /// Binder/compiler authority for a dynamically admitted read-only acceptance review. The
+    /// dispatcher fails closed if a review-shaped task reaches it without this receipt.
+    pub replan_authority: Option<ReplanAuthorityReceipt>,
 }
 
 /// Outcome of a failed dispatch. `Transient` is re-dispatched (and steered to a different device);

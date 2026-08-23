@@ -4,9 +4,10 @@
 
 use async_trait::async_trait;
 use goose_swarm::{
-    ChildSpec, Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, Judge, JudgeConfig,
-    JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanContext,
-    Replanner, Scheduler, TaskDispatcher, TaskRunOutput, TaskSpec, Verdict,
+    ChildSpec, Dag, DeviceCfg, Difficulty, DispatchError, DispatchRequest, EventSink, Judge,
+    JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer,
+    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler, SwarmEvent,
+    TaskDispatcher, TaskRunOutput, TaskSpec, Verdict,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -119,6 +120,71 @@ fn spec(id: &str, deps: &[&str], files: &[&str]) -> TaskSpec {
         owned_files: files.iter().map(|s| s.to_string()).collect(),
         deps: deps.iter().map(|s| s.to_string()).collect(),
         subsplit: Vec::new(),
+        replan_authority: None,
+    }
+}
+
+fn review_spec(id: &str, source_task_id: &str, source_file: &str) -> TaskSpec {
+    let task_id = format!("replan-review::{id}");
+    let requirement_id = format!("REQ-{id}");
+    let requirement = format!("The completed `{source_file}` must satisfy acceptance slice {id}.");
+    let evidence_id = format!("EVID-{id}");
+    let evidence = format!("Review evidence for {source_file}.");
+    let interface_id = format!("IFACE-{id}");
+    let interface = format!("{source_file} preserves interface {id}.");
+    let objective = format!("Review acceptance slice {id} without modifying files");
+    let acceptance = format!("Record file evidence for {requirement_id}");
+    let description = format!(
+        "RUNTIME ACCEPTANCE REVIEW\nObjective: {objective}\nRead-only source files:\n- {source_file}\n\
+         REQUIREMENT [{requirement_id}] SOURCE: {requirement}\nEVIDENCE [{evidence_id}] SOURCE: {evidence}\n\
+         INTERFACE [{interface_id}] CONTRACT: {interface}\nRequired acceptance evidence:\n- {acceptance}"
+    );
+    TaskSpec {
+        id: task_id,
+        description,
+        difficulty: Difficulty::Hard,
+        preferred_model: None,
+        owned_files: Vec::new(),
+        deps: vec![source_task_id.to_string()],
+        subsplit: Vec::new(),
+        replan_authority: Some(ReplanAuthorityReceipt {
+            source_task_id: source_task_id.to_string(),
+            binding_task_id: source_task_id.to_string(),
+            slice_id: id.to_string(),
+            source_files: vec![source_file.to_string()],
+            objective,
+            requirements: vec![ReplanAuthorityFact {
+                id: requirement_id,
+                text: requirement,
+            }],
+            evidence: vec![ReplanAuthorityFact {
+                id: evidence_id,
+                text: evidence,
+            }],
+            interfaces: vec![ReplanAuthorityFact {
+                id: interface_id,
+                text: interface,
+            }],
+            acceptance_evidence: vec![acceptance],
+        }),
+    }
+}
+
+#[derive(Default)]
+struct RecordingEventSink {
+    events: Mutex<Vec<serde_json::Value>>,
+}
+
+impl EventSink for RecordingEventSink {
+    fn emit(&self, event: &SwarmEvent) {
+        self.events
+            .lock()
+            .unwrap()
+            .push(serde_json::to_value(event).unwrap());
+    }
+
+    fn write_value(&self, value: serde_json::Value) {
+        self.events.lock().unwrap().push(value);
     }
 }
 
@@ -487,19 +553,26 @@ fn slow_dispatcher(
 async fn idle_triggers_replan_and_fills_nodes() {
     // `slow` runs long while `fast` finishes and frees nodes -> idle window -> replan adds b,c.
     let rec = Arc::new(Mutex::new(Recorder::default()));
-    let dag = Dag::from_specs(vec![spec("slow", &[], &[]), spec("fast", &[], &[])]).unwrap();
+    let dag = Dag::from_specs(vec![
+        spec("slow", &[], &["slow.py"]),
+        spec("fast", &[], &["fast.py"]),
+        spec("integrate-verify", &["slow", "fast"], &[]),
+    ])
+    .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let replanner = Arc::new(MockReplanner {
         rounds: Mutex::new(VecDeque::from(vec![vec![
-            spec("b", &[], &[]),
-            spec("c", &[], &[]),
+            review_spec("b", "fast", "fast.py"),
+            review_spec("c", "fast", "fast.py"),
         ]])),
         calls: calls.clone(),
     });
+    let event_sink = Arc::new(RecordingEventSink::default());
     let sched = Scheduler::new(
         vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)],
         3,
     )
+    .with_sink(event_sink.clone())
     .with_replanner(replanner, 3);
     let report = sched
         .run(dag, slow_dispatcher(&rec, 30, &["slow"]), "goal".into())
@@ -507,7 +580,15 @@ async fn idle_triggers_replan_and_fills_nodes() {
         .unwrap();
     let done: HashSet<_> = report.done.iter().cloned().collect();
     assert!(
-        ["slow", "fast", "b", "c"].iter().all(|t| done.contains(*t)),
+        [
+            "slow",
+            "fast",
+            "replan-review::b",
+            "replan-review::c",
+            "integrate-verify",
+        ]
+        .iter()
+        .all(|t| done.contains(*t)),
         "replan-added tasks must run: done={:?}",
         report.done
     );
@@ -515,6 +596,86 @@ async fn idle_triggers_replan_and_fills_nodes() {
         calls.load(Ordering::SeqCst) >= 1,
         "the replanner was invoked while nodes idled"
     );
+    let events = event_sink.events.lock().unwrap();
+    let replanned = events
+        .iter()
+        .find(|event| {
+            event["event"] == "replanned" && event["stopped"] == serde_json::Value::Bool(false)
+        })
+        .expect("successful replan event");
+    let advertised: HashSet<String> = replanned["dag"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|task| task["id"].as_str().map(str::to_string))
+        .collect();
+    let scheduled: HashSet<String> = report
+        .tasks
+        .iter()
+        .map(|task| task.task_id.clone())
+        .collect();
+    assert_eq!(advertised, scheduled, "advertised DAG != scheduled DAG");
+    let sink = replanned["dag"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["id"] == "integrate-verify")
+        .unwrap();
+    let sink_deps: HashSet<&str> = sink["depends_on"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert!(sink_deps.contains("replan-review::b"));
+    assert!(sink_deps.contains("replan-review::c"));
+    assert!(
+        sink["depends_on"][0]
+            .as_str()
+            .is_some_and(|id| id.starts_with("replan-review::")),
+        "runtime evidence was appended behind the sink's capped legacy context"
+    );
+}
+
+#[tokio::test]
+async fn two_idle_nodes_reject_raw_generic_and_path_invalid_bonus_tasks() {
+    let mut path_invalid = review_spec("path-invalid", "fast", "fast.py");
+    path_invalid.replan_authority.as_mut().unwrap().source_files = vec!["../fast.py".to_string()];
+    let cases = vec![
+        ("raw-generic", spec("generic-hardening", &["fast"], &[])),
+        ("path-invalid", path_invalid),
+    ];
+    for (case, candidate) in cases {
+        let candidate_id = candidate.id.clone();
+        let dag = Dag::from_specs(vec![
+            spec("slow", &[], &["slow.py"]),
+            spec("fast", &[], &["fast.py"]),
+            spec("integrate-verify", &["slow", "fast"], &[]),
+        ])
+        .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let replanner = Arc::new(MockReplanner {
+            rounds: Mutex::new(VecDeque::from(vec![vec![candidate]])),
+            calls: calls.clone(),
+        });
+        let rec = Arc::new(Mutex::new(Recorder::default()));
+        let report = Scheduler::new(
+            vec![dev("d0", "m0", 1), dev("d1", "m1", 1), dev("d2", "m2", 1)],
+            3,
+        )
+        .with_replanner(replanner, 1)
+        .run(dag, slow_dispatcher(&rec, 30, &["slow"]), "goal".into())
+        .await
+        .unwrap();
+        assert!(
+            calls.load(Ordering::SeqCst) >= 1,
+            "{case}: idle_capacity >= 2 never exercised the admission gate"
+        );
+        assert!(
+            !report.done.contains(&candidate_id) && !report.bonus.contains(&candidate_id),
+            "{case}: unbound dynamic task entered the scheduled DAG"
+        );
+    }
 }
 
 #[tokio::test]
@@ -562,16 +723,20 @@ async fn an_empty_replan_answer_does_not_disable_the_replanner_for_a_smaller_dag
     // dispatch; `y` finishing is the completion edge that produces the SECOND window, now with only
     // `dep` outstanding (incomplete == 1) -> strictly fewer, so the replanner is asked again.
     let dag = Dag::from_specs(vec![
-        spec("slow", &[], &[]),
+        spec("slow", &[], &["slow.py"]),
         spec("dep", &["slow"], &[]),
-        spec("y", &["slow"], &[]),
+        spec("y", &["slow"], &["y.py"]),
         spec("x", &[], &[]),
+        spec("integrate-verify", &["dep", "y", "x"], &[]),
     ])
     .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let replanner = Arc::new(MockReplanner {
         // First answer EMPTY (the honest decline), then real work once the DAG has shrunk.
-        rounds: Mutex::new(VecDeque::from(vec![vec![], vec![spec("late", &[], &[])]])),
+        rounds: Mutex::new(VecDeque::from(vec![
+            vec![],
+            vec![review_spec("late", "y", "y.py")],
+        ])),
         calls: calls.clone(),
     });
     let sched = Scheduler::new(
@@ -588,7 +753,7 @@ async fn an_empty_replan_answer_does_not_disable_the_replanner_for_a_smaller_dag
         .unwrap();
     let done: std::collections::HashSet<_> = report.done.iter().cloned().collect();
     assert!(
-        done.contains("late"),
+        done.contains("replan-review::late"),
         "an early decline burned the whole replan budget, so the tail never got its ask: done={:?}",
         report.done
     );
@@ -603,13 +768,18 @@ async fn an_empty_replan_answer_does_not_disable_the_replanner_for_a_smaller_dag
 async fn replan_respects_max_replans() {
     // The replanner keeps offering NEW slow tasks; the budget must cap the rounds.
     let rec = Arc::new(Mutex::new(Recorder::default()));
-    let dag = Dag::from_specs(vec![spec("slow", &[], &[]), spec("fast", &[], &[])]).unwrap();
+    let dag = Dag::from_specs(vec![
+        spec("slow", &[], &["slow.py"]),
+        spec("fast", &[], &["fast.py"]),
+        spec("integrate-verify", &["slow", "fast"], &[]),
+    ])
+    .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let replanner = Arc::new(MockReplanner {
         rounds: Mutex::new(VecDeque::from(vec![
-            vec![spec("r1", &[], &[])],
-            vec![spec("r2", &[], &[])],
-            vec![spec("r3", &[], &[])],
+            vec![review_spec("r1", "fast", "fast.py")],
+            vec![review_spec("r2", "fast", "fast.py")],
+            vec![review_spec("r3", "fast", "fast.py")],
         ])),
         calls: calls.clone(),
     });
@@ -621,7 +791,16 @@ async fn replan_respects_max_replans() {
     let report = sched
         .run(
             dag,
-            slow_dispatcher(&rec, 25, &["slow", "r1", "r2", "r3"]),
+            slow_dispatcher(
+                &rec,
+                25,
+                &[
+                    "slow",
+                    "replan-review::r1",
+                    "replan-review::r2",
+                    "replan-review::r3",
+                ],
+            ),
             "g".into(),
         )
         .await
@@ -631,7 +810,7 @@ async fn replan_respects_max_replans() {
         "replan rounds must not exceed max_replans"
     );
     assert!(
-        !report.done.contains(&"r3".to_string()),
+        !report.done.contains(&"replan-review::r3".to_string()),
         "r3 must never be requested once the cap is hit"
     );
 }

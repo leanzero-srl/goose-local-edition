@@ -433,6 +433,8 @@ Gate: a corpus covers true long recurrence, slow healthy reasoning, tool-payload
 3. Admit split proposals only with task-specific contracts, dependency edges, acceptance closure, and non-overlap proof; resource availability never invents architecture.
 4. Route late findings through current-snapshot revalidation and exact ownership.
 
+Current safety state: judge splitting is guarded off because `ChildSpec` carries only ids, files, and sibling dependencies. This is an Engine 5 implementation gap, not a permanent prohibition; semantic judge observation and nudging remain enabled, and splitting may return only after children pass the same requirement/evidence/interface/acceptance compiler as ordinary tasks.
+
 Gate: intervention fixtures prove request non-overlap, retained session context, corrective next action, artifact/evidence delta, semantic coverage, and objective oracle results. Slow healthy and uncertain cases continue. A useful nudge must beat observation-only on matched cases before production enablement.
 
 ### Engine 6 — artifact truth and causal repair

@@ -9,7 +9,7 @@
 //! (unlocking the DAG), merge output into the shared context, and free device capacity.
 
 use crate::context::SharedContext;
-use crate::dag::{Dag, Difficulty, TaskId, TaskState};
+use crate::dag::{Dag, Difficulty, TaskId, TaskSpec, TaskState};
 use crate::dispatch::{
     DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput, ToolCallRecord,
 };
@@ -409,6 +409,127 @@ fn observed_hint_worth_keeping(still_live: bool, verdict: Verdict, hint: &str) -
 /// cannot make a run longer.
 fn replan_has_enough_dag_left(mandatory_incomplete: usize, mandatory_total: usize) -> bool {
     mandatory_total == 0 || mandatory_incomplete * 4 >= mandatory_total
+}
+
+fn project_relative_runtime_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.trim() == path
+        && !path.contains('\\')
+        && !path.starts_with('/')
+        && !path
+            .as_bytes()
+            .get(1)
+            .is_some_and(|byte| *byte == b':' && path.as_bytes()[0].is_ascii_alphabetic())
+        && path
+            .split('/')
+            .all(|segment| !segment.is_empty() && !matches!(segment, "." | ".."))
+}
+
+/// Runtime replanning is not a second raw planner. Only a binder/compiler receipt can admit a
+/// read-only acceptance review, and every authority fact must survive verbatim into its payload.
+fn validate_runtime_replan_specs(dag: &Dag, specs: &[TaskSpec]) -> Result<()> {
+    for spec in specs {
+        let receipt = spec.replan_authority.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "dynamic task `{}` has no binder/compiler authority receipt",
+                spec.id
+            )
+        })?;
+        if !spec.id.starts_with("replan-review::") {
+            bail!(
+                "dynamic task `{}` is not a runtime acceptance review",
+                spec.id
+            );
+        }
+        if !spec.owned_files.is_empty() || !spec.subsplit.is_empty() {
+            bail!(
+                "dynamic review `{}` attempted write ownership or a build split",
+                spec.id
+            );
+        }
+        if spec.deps != [receipt.source_task_id.clone()] {
+            bail!(
+                "dynamic review `{}` is not bound exclusively to source task `{}`",
+                spec.id,
+                receipt.source_task_id
+            );
+        }
+        let source = dag.tasks.get(&receipt.source_task_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "dynamic review `{}` references missing source task `{}`",
+                spec.id,
+                receipt.source_task_id
+            )
+        })?;
+        if source.state != TaskState::Done {
+            bail!(
+                "dynamic review `{}` source task `{}` is not completed",
+                spec.id,
+                receipt.source_task_id
+            );
+        }
+        let mut source_files = source.spec.owned_files.clone();
+        source_files.sort();
+        source_files.dedup();
+        let mut receipt_files = receipt.source_files.clone();
+        receipt_files.sort();
+        receipt_files.dedup();
+        if receipt_files.is_empty()
+            || receipt_files != source_files
+            || receipt_files
+                .iter()
+                .any(|path| !project_relative_runtime_path(path))
+        {
+            bail!(
+                "dynamic review `{}` source-file receipt does not match its completed dependency",
+                spec.id
+            );
+        }
+        if receipt.binding_task_id.trim().is_empty()
+            || receipt.slice_id.trim().is_empty()
+            || receipt.objective.trim().is_empty()
+            || receipt.requirements.is_empty()
+            || receipt.acceptance_evidence.is_empty()
+        {
+            bail!(
+                "dynamic review `{}` has an incomplete authority receipt",
+                spec.id
+            );
+        }
+        let mut fact_ids = HashSet::new();
+        for fact in receipt
+            .requirements
+            .iter()
+            .chain(receipt.evidence.iter())
+            .chain(receipt.interfaces.iter())
+        {
+            if fact.id.trim().is_empty()
+                || fact.text.trim().is_empty()
+                || !fact_ids.insert(fact.id.as_str())
+                || !spec.description.contains(&fact.id)
+                || !spec.description.contains(&fact.text)
+            {
+                bail!(
+                    "dynamic review `{}` lost or duplicated authority fact `{}`",
+                    spec.id,
+                    fact.id
+                );
+            }
+        }
+        if !spec.description.contains(&receipt.objective)
+            || receipt
+                .source_files
+                .iter()
+                .chain(receipt.acceptance_evidence.iter())
+                .any(|fact| fact.trim().is_empty() || !spec.description.contains(fact))
+        {
+            bail!(
+                "dynamic review `{}` payload erased authoritative paths, objective, or acceptance evidence",
+                spec.id
+            );
+        }
+    }
+    Ok(())
 }
 
 /// A2: the ranking key for a HARD task's device choice — min() wins. IDLE beats busier (first
@@ -944,6 +1065,17 @@ impl State {
         }
     }
 
+    fn dag_specs_snapshot(&self) -> Vec<TaskSpec> {
+        let mut specs: Vec<TaskSpec> = self
+            .dag
+            .tasks
+            .values()
+            .map(|node| node.spec.clone())
+            .collect();
+        specs.sort_by(|left, right| left.id.cmp(&right.id));
+        specs
+    }
+
     fn files_conflict(&self, tid: &str) -> bool {
         self.dag.tasks[tid]
             .spec
@@ -1122,9 +1254,34 @@ impl State {
 
     fn do_claim(&mut self, tid: TaskId, dev: usize, out: &mut Vec<Assignment>) {
         let deps = self.dag.tasks[&tid].spec.deps.clone();
+        let mut dependency_files: Vec<String> = deps
+            .iter()
+            .filter_map(|dep| self.dag.tasks.get(dep))
+            .flat_map(|node| node.spec.owned_files.iter().cloned())
+            .collect();
+        dependency_files.sort();
+        dependency_files.dedup();
         let neighborhood = self.neighborhood_of(&tid, &deps);
-        let slice = self.ctx.slice_for(&deps);
-        let (files, description, attempt, subsplit) = {
+        let slice = if tid == "integrate-verify" {
+            let (runtime_reviews, ordinary): (Vec<TaskId>, Vec<TaskId>) =
+                deps.iter().cloned().partition(|dep| {
+                    self.dag
+                        .tasks
+                        .get(dep)
+                        .is_some_and(|node| node.spec.replan_authority.is_some())
+                });
+            [
+                self.ctx.slice_for_unbounded(&runtime_reviews),
+                self.ctx.slice_for(&ordinary),
+            ]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+        } else {
+            self.ctx.slice_for(&deps)
+        };
+        let (files, description, attempt, subsplit, replan_authority) = {
             let n = self.dag.tasks.get_mut(&tid).unwrap();
             n.state = TaskState::Claimed;
             (
@@ -1132,6 +1289,7 @@ impl State {
                 n.spec.description.clone(),
                 n.attempts,
                 n.spec.subsplit.clone(),
+                n.spec.replan_authority.clone(),
             )
         };
         for f in &files {
@@ -1176,7 +1334,7 @@ impl State {
         // THE SINK INHERITS EVERY JUDGE FINDING, because it is the only task that can act on them and
         // the judge is a source of findings it otherwise cannot see. A task that owns no files and
         // joins the graph is the sink; ordinary workers keep the existing one-shot behaviour.
-        if owned_files.is_empty() && !self.judge_notes.is_empty() {
+        if owned_files.is_empty() && replan_authority.is_none() && !self.judge_notes.is_empty() {
             let notes = self
                 .judge_notes
                 .iter()
@@ -1201,6 +1359,7 @@ impl State {
                 device_id,
                 model_id,
                 context_slice: slice,
+                dependency_files,
                 attempt,
                 owned_files,
                 all_files,
@@ -1212,6 +1371,7 @@ impl State {
                 user_decisions: self.user_decisions.clone(),
                 doc_facts: self.doc_facts.clone(),
                 neighborhood,
+                replan_authority,
             },
         });
     }
@@ -1907,6 +2067,14 @@ impl State {
         }
         let (tid, _elapsed) = best?;
         let deps = self.dag.tasks[&tid].spec.deps.clone();
+        let mut dependency_files: Vec<String> = deps
+            .iter()
+            .filter_map(|dep| self.dag.tasks.get(dep))
+            .flat_map(|node| node.spec.owned_files.iter().cloned())
+            .collect();
+        dependency_files.sort();
+        dependency_files.dedup();
+        let replan_authority = self.dag.tasks[&tid].spec.replan_authority.clone();
         let neighborhood = self.neighborhood_of(&tid, &deps);
         let slice = self.ctx.slice_for(&deps);
         let (owned_files, description, attempt) = {
@@ -1938,6 +2106,7 @@ impl State {
             device_id,
             model_id,
             context_slice: slice,
+            dependency_files,
             attempt,
             owned_files,
             all_files,
@@ -1947,6 +2116,7 @@ impl State {
             user_decisions: self.user_decisions.clone(),
             doc_facts: self.doc_facts.clone(),
             neighborhood,
+            replan_authority,
         };
         Some((req, dev))
     }
@@ -2506,6 +2676,7 @@ impl State {
                     owned_files: c.files.clone(),
                     deps,
                     subsplit: Vec::new(),
+                    replan_authority: None,
                 }
             })
             .collect();
@@ -3090,9 +3261,12 @@ impl Scheduler {
                         return Ok(s.build_report());
                     }
                     if specs.is_empty() {
+                        let dag = s.dag_specs_snapshot();
                         s.sink.emit(&SwarmEvent::Replanned {
                             round,
                             added: Vec::new(),
+                            tasks: Vec::new(),
+                            dag,
                             stopped: true,
                         });
                         // REFUND the round and remember the state instead of burning the budget. An
@@ -3104,9 +3278,29 @@ impl Scheduler {
                     } else {
                         // Replanner-added tasks are OPPORTUNISTIC (idle-fill) — record them as bonus so a
                         // bonus failure cannot fail an otherwise-complete run (run success = core plan).
+                        if let Err(error) = validate_runtime_replan_specs(&s.dag, &specs) {
+                            let dag = s.dag_specs_snapshot();
+                            s.sink.write_value(serde_json::json!({
+                                "event": "dynamic_replan_rejected",
+                                "round": round,
+                                "reason": error.to_string(),
+                                "candidate_count": specs.len(),
+                            }));
+                            s.sink.emit(&SwarmEvent::Replanned {
+                                round,
+                                added: Vec::new(),
+                                tasks: Vec::new(),
+                                dag,
+                                stopped: true,
+                            });
+                            s.replans_done = self.max_replans;
+                            continue;
+                        }
                         let spliced_ids: Vec<TaskId> =
                             specs.iter().map(|sp| sp.id.clone()).collect();
-                        match s.dag.splice_specs(specs) {
+                        let mut admitted_tasks = specs.clone();
+                        admitted_tasks.sort_by(|left, right| left.id.cmp(&right.id));
+                        match s.dag.splice_specs_before(specs, "integrate-verify") {
                             Ok(new_ready) => {
                                 // `added` must be what was ADDED, not what happened to become READY.
                                 // A spliced task whose deps are not yet satisfied is in the DAG and
@@ -3126,18 +3320,30 @@ impl Scheduler {
                                     let fan_out = s.dag.tasks[&id].fan_out;
                                     s.ready.push(Ranked { fan_out, id });
                                 }
+                                let dag = s.dag_specs_snapshot();
                                 s.sink.emit(&SwarmEvent::Replanned {
                                     round,
                                     added,
+                                    tasks: admitted_tasks,
+                                    dag,
                                     stopped: false,
                                 });
                                 drop(s);
                                 continue;
                             }
-                            Err(_) => {
+                            Err(error) => {
+                                let dag = s.dag_specs_snapshot();
+                                s.sink.write_value(serde_json::json!({
+                                    "event": "dynamic_replan_rejected",
+                                    "round": round,
+                                    "reason": error.to_string(),
+                                    "candidate_count": admitted_tasks.len(),
+                                }));
                                 s.sink.emit(&SwarmEvent::Replanned {
                                     round,
                                     added: Vec::new(),
+                                    tasks: Vec::new(),
+                                    dag,
                                     stopped: true,
                                 });
                                 s.replans_done = self.max_replans;

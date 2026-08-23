@@ -28,8 +28,9 @@ use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
     deterministic_verdict, is_split_candidate, ChildSpec, Dag, DeviceCfg, DispatchError,
     DispatchRequest, EventSink, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
-    NullSink, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanContext, Replanner, Scheduler,
-    SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
+    NullSink, PreReviewOutput, PreReviewRequest, PreReviewer, ReplanAuthorityFact,
+    ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler, SwarmEvent, TaskDispatcher,
+    TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -8167,6 +8168,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             owned_files: files.iter().map(|s| s.to_string()).collect(),
             deps: deps.iter().map(|s| s.to_string()).collect(),
             subsplit: Vec::new(),
+            replan_authority: None,
         }
     }
 
@@ -8550,6 +8552,56 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         let v2: serde_json::Value = serde_json::from_str(&r2.plan_json).unwrap();
         assert_eq!(v2["tasks"].as_array().unwrap().len(), 2);
         assert_eq!(v2["tasks"][0]["id"], "new-a");
+
+        // A runtime replan's full post-splice DAG supersedes plan_loaded and retains the typed receipt
+        // needed to dispatch an interrupted read-only review safely after restart.
+        let authority = runtime_replan_authority_fixture();
+        let review_raw = serde_json::json!({
+            "reviews": [{
+                "binding_task_id": "api",
+                "slice_id": "route-acceptance",
+                "requirement_citations": [{
+                    "requirement_id": "REQ-route",
+                    "applies_as": "Check the exact route contract."
+                }],
+                "implementation_steps": ["Inspect the completed handler."],
+                "edge_cases": [],
+                "acceptance_checks": ["Check the missing-header status."]
+            }]
+        })
+        .to_string();
+        let review = compile_runtime_replan(
+            &review_raw,
+            &authority,
+            &HashSet::from(["api".to_string()]),
+            &HashSet::from(["api".to_string(), "integrate-verify".to_string()]),
+        )
+        .unwrap()
+        .remove(0);
+        let review_id = review.id.clone();
+        let exact_dag = vec![
+            serde_json::json!({"id":"api","description":"build api","difficulty":"hard","files":["src/api.py"],"depends_on":[]}),
+            serde_json::to_value(&review).unwrap(),
+            serde_json::json!({"id":"integrate-verify","description":"verify","difficulty":"hard","files":[],"depends_on":["api", review_id]}),
+        ];
+        let runtime_log = [
+            serde_json::json!({"event":"plan_loaded","tasks":[{"id":"api","files":["src/api.py"],"deps":[]},{"id":"integrate-verify","files":[],"deps":["api"]}]}).to_string(),
+            serde_json::json!({"event":"replanned","round":0,"added":[review.id],"tasks":[review],"dag":exact_dag,"stopped":false}).to_string(),
+        ]
+        .join("\n");
+        let runtime_resume = resume_state_from_log(&runtime_log).unwrap();
+        let resumed_specs = goose_swarm::specs_from_plan_json(&runtime_resume.plan_json).unwrap();
+        assert_eq!(resumed_specs.len(), 3);
+        let resumed_review = resumed_specs
+            .iter()
+            .find(|spec| spec.id.starts_with("replan-review::"))
+            .unwrap();
+        assert!(resumed_review.replan_authority.is_some());
+        let resumed_sink = resumed_specs
+            .iter()
+            .find(|spec| spec.id == "integrate-verify")
+            .unwrap();
+        assert!(resumed_sink.deps.contains(&resumed_review.id));
 
         assert!(resume_state_from_log("").is_none());
     }
@@ -9859,6 +9911,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             slice_count: 1,
             brief: "Build payments".to_string(),
             owned_files: vec!["app/api.py".to_string()],
+            read_files: Vec::new(),
             requirements: vec![requirement],
             evidence: Vec::new(),
             interfaces: vec![RequirementInterfaceDraft {
@@ -9898,6 +9951,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             slice_count: 1,
             brief: "Build events".to_string(),
             owned_files: vec!["web/events.js".to_string()],
+            read_files: Vec::new(),
             requirements: vec![RequirementRecord {
                 id: "REQ-events".to_string(),
                 section: "Events".to_string(),
@@ -9942,6 +9996,171 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }
     }
 
+    fn runtime_replan_authority_fixture() -> RuntimeReplanAuthority {
+        RuntimeReplanAuthority {
+            tasks: HashMap::from([(
+                "api".to_string(),
+                CompiledTaskBinding {
+                    task_id: "api".to_string(),
+                    owns_requirement_ids: vec!["REQ-route".to_string()],
+                    applies_requirement_ids: Vec::new(),
+                    verifies_requirement_ids: Vec::new(),
+                    depends_on: Vec::new(),
+                    owned_files: vec!["src/api.py".to_string()],
+                    slices: vec![RequirementSliceDraft {
+                        id: "route-acceptance".to_string(),
+                        objective: "Verify the exact GET /v1/payments behavior".to_string(),
+                        requirement_ids: vec!["REQ-route".to_string()],
+                        evidence_ids: vec!["EVID-vendor".to_string()],
+                        acceptance_evidence: vec![
+                            "A missing X-Trace header returns status 400".to_string()
+                        ],
+                    }],
+                },
+            )]),
+            requirements: vec![RequirementRecord {
+                id: "REQ-route".to_string(),
+                section: "API".to_string(),
+                quote: "Expose GET /v1/payments and require X-Trace.".to_string(),
+            }],
+            evidence: vec![EvidenceRecord {
+                id: "EVID-vendor".to_string(),
+                quote: "Vendor reference fixes the missing-header status at 400.".to_string(),
+                authority: "advisory-research",
+            }],
+            interfaces: vec![RequirementInterfaceDraft {
+                id: "IFACE-route".to_string(),
+                producer_task_id: "api".to_string(),
+                consumer_task_ids: vec!["integrate-verify".to_string()],
+                requirement_ids: vec!["REQ-route".to_string()],
+                contract: "GET /v1/payments -> payments JSON or exact 400".to_string(),
+                requires_completed_artifact: true,
+            }],
+        }
+    }
+
+    #[test]
+    fn runtime_replan_is_binder_compiled_and_idle_capacity_cannot_shape_it() {
+        let authority = runtime_replan_authority_fixture();
+        let raw = serde_json::json!({
+            "reviews": [{
+                "binding_task_id": "api",
+                "slice_id": "route-acceptance",
+                "requirement_citations": [{
+                    "requirement_id": "REQ-route",
+                    "applies_as": "Check the completed handler against the exact route and header contract."
+                }],
+                "implementation_steps": ["Review the completed source."],
+                "edge_cases": [],
+                "acceptance_checks": ["Check it."]
+            }]
+        })
+        .to_string();
+        let context = |idle_capacity| ReplanContext {
+            goal: "ignored frozen goal".to_string(),
+            existing_ids: vec!["api".to_string(), "integrate-verify".to_string()],
+            completed: vec![("api".to_string(), "done".to_string())],
+            failed: Vec::new(),
+            incomplete: vec!["integrate-verify".to_string()],
+            idle_capacity,
+            round: 0,
+        };
+        let compile_for = |ctx: ReplanContext| {
+            let completed: HashSet<String> = ctx.completed.into_iter().map(|(id, _)| id).collect();
+            let existing: HashSet<String> = ctx.existing_ids.into_iter().collect();
+            compile_runtime_replan(&raw, &authority, &completed, &existing).unwrap()
+        };
+        let two = compile_for(context(2));
+        let eight = compile_for(context(8));
+        assert_eq!(
+            serde_json::to_value(&two).unwrap(),
+            serde_json::to_value(&eight).unwrap(),
+            "idle capacity changed the runtime task shape"
+        );
+        assert_eq!(two.len(), 1);
+        let spec = &two[0];
+        assert!(spec.owned_files.is_empty());
+        assert_eq!(spec.deps, ["api"]);
+        for authoritative in [
+            "src/api.py",
+            "Verify the exact GET /v1/payments behavior",
+            "Expose GET /v1/payments and require X-Trace.",
+            "Vendor reference fixes the missing-header status at 400.",
+            "GET /v1/payments -> payments JSON or exact 400",
+            "A missing X-Trace header returns status 400",
+        ] {
+            assert!(
+                spec.description.contains(authoritative),
+                "runtime compiler erased binder fact: {authoritative}"
+            );
+        }
+        assert!(spec.replan_authority.is_some());
+    }
+
+    #[test]
+    fn runtime_replan_rejects_raw_generic_and_path_authoring() {
+        let authority = runtime_replan_authority_fixture();
+        let completed = HashSet::from(["api".to_string()]);
+        let existing = HashSet::new();
+        for raw in [
+            r#"{"subtasks":[{"id":"generic-hardening","description":"add tests","files":[]}]}"#,
+            r#"{"reviews":"add generic tests"}"#,
+            r#"{"reviews":[{"binding_task_id":"api","slice_id":"route-acceptance","owned_files":["../escape.py"],"requirement_citations":[],"implementation_steps":["test"],"edge_cases":[],"acceptance_checks":["test"]}]}"#,
+        ] {
+            assert!(
+                compile_runtime_replan(raw, &authority, &completed, &existing).is_err(),
+                "unbound runtime proposal was admitted: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_review_paths_follow_the_final_entry_injected_dag() {
+        let mut authority = runtime_replan_authority_fixture();
+        let dag = Dag::from_specs(vec![
+            spec("api", &["src/api.py", "src/__main__.py"], &[]),
+            spec("integrate-verify", &[], &["api"]),
+        ])
+        .unwrap();
+        reconcile_runtime_replan_authority(&mut authority, &dag);
+        let raw = serde_json::json!({
+            "reviews": [{
+                "binding_task_id": "api",
+                "slice_id": "route-acceptance",
+                "requirement_citations": [{
+                    "requirement_id": "REQ-route",
+                    "applies_as": "Check the exact route contract."
+                }],
+                "implementation_steps": ["Inspect both final source artifacts."],
+                "edge_cases": [],
+                "acceptance_checks": ["Check the advertised entry path."]
+            }]
+        })
+        .to_string();
+        let specs = compile_runtime_replan(
+            &raw,
+            &authority,
+            &HashSet::from(["api".to_string()]),
+            &HashSet::from(["api".to_string(), "integrate-verify".to_string()]),
+        )
+        .unwrap();
+        assert_eq!(
+            specs[0].replan_authority.as_ref().unwrap().source_files,
+            ["src/api.py", "src/__main__.py"]
+        );
+        assert!(specs[0].description.contains("src/__main__.py"));
+    }
+
+    #[test]
+    fn judge_split_fails_closed_until_children_carry_typed_authority() {
+        assert!(!contract_bound_child_split_enabled(true, false));
+        assert!(!contract_bound_child_split_enabled(false, false));
+        assert!(
+            contract_bound_child_split_enabled(true, true),
+            "Engine 5 must be able to re-enable split after ChildSpec becomes contract-complete"
+        );
+    }
+
     #[test]
     fn typed_task_detail_rejects_missing_authoritative_acceptance_evidence() {
         let input = TaskDetailInput {
@@ -9952,6 +10171,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             slice_count: 1,
             brief: String::new(),
             owned_files: vec!["src/api.py".to_string()],
+            read_files: Vec::new(),
             requirements: vec![RequirementRecord {
                 id: "REQ-route".to_string(),
                 section: String::new(),
@@ -9998,6 +10218,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             slice_count: 1,
             brief: String::new(),
             owned_files: vec!["app/api.py".to_string()],
+            read_files: Vec::new(),
             requirements: vec![RequirementRecord {
                 id: "REQ-payments".to_string(),
                 section: "API".to_string(),
@@ -10586,6 +10807,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                 owned_files: vec!["src/api.py".to_string()],
                 deps: Vec::new(),
                 subsplit: Vec::new(),
+                replan_authority: None,
             },
             TaskSpec {
                 id: "web".to_string(),
@@ -10595,6 +10817,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                 owned_files: vec!["web/app.js".to_string()],
                 deps: Vec::new(),
                 subsplit: Vec::new(),
+                replan_authority: None,
             },
             TaskSpec {
                 id: "assemble-api".to_string(),
@@ -10604,6 +10827,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                 owned_files: Vec::new(),
                 deps: vec!["api".to_string()],
                 subsplit: Vec::new(),
+                replan_authority: None,
             },
             TaskSpec {
                 id: "release-web".to_string(),
@@ -10613,6 +10837,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                 owned_files: Vec::new(),
                 deps: vec!["web".to_string()],
                 subsplit: Vec::new(),
+                replan_authority: None,
             },
         ];
         let error = validate_integration_closure(&disconnected).unwrap_err();
@@ -10631,6 +10856,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             owned_files: Vec::new(),
             deps: vec!["assemble-api".to_string(), "release-web".to_string()],
             subsplit: Vec::new(),
+            replan_authority: None,
         });
         validate_integration_closure(&connected).unwrap();
     }
@@ -16079,6 +16305,10 @@ pub struct GooseAgentDispatcher {
     detail_memo: Mutex<HashMap<String, String>>,
     /// #122: gate for `detail_memo`. Resolved once at construction (env > config > default OFF).
     detail_memo_on: bool,
+    /// Frozen binder authority used by runtime replanning. The live replanner can select an already-bound
+    /// semantic slice for read-only review, but cannot author a new objective, path, interface, or acceptance
+    /// condition after planning has closed.
+    replan_authority: Mutex<Option<RuntimeReplanAuthority>>,
     /// #136: gate for the repeated-identical-tool-call breaker. Resolved once at construction (default OFF).
     repeat_break: bool,
     /// The run's event stream. The dispatcher is the ONLY place that knows what a worker prompt actually
@@ -16096,6 +16326,17 @@ impl GooseAgentDispatcher {
     /// Consumed by run_swarm's post-sink REVIEW block (drain + re-verify against the final tree).
     fn drain_sink_review(&self) -> Vec<String> {
         std::mem::take(&mut *self.sink_review_findings.lock().unwrap())
+    }
+
+    /// Package-entry validation is the last deterministic plan mutation. Keep runtime review paths on
+    /// that same final DAG so the binder receipt cannot advertise the pre-injection file set while the
+    /// scheduler runs a different one.
+    fn reconcile_replan_authority_with_final_dag(&self, dag: &Dag) {
+        let mut guard = self.replan_authority.lock().unwrap();
+        let Some(authority) = guard.as_mut() else {
+            return;
+        };
+        reconcile_runtime_replan_authority(authority, dag);
     }
 
     /// Provider NAME serving this model id ("lmstudio" unless the pool declared it cloud).
@@ -16191,6 +16432,7 @@ impl GooseAgentDispatcher {
             straggler_stop_degrade,
             detail_memo: Mutex::new(HashMap::new()),
             detail_memo_on,
+            replan_authority: Mutex::new(None),
             repeat_break,
         })
     }
@@ -19550,6 +19792,12 @@ impl GooseAgentDispatcher {
             plan_json,
             &detail_task_ids,
         )?;
+        *self.replan_authority.lock().unwrap() = Some(RuntimeReplanAuthority {
+            tasks: binding.tasks.clone(),
+            requirements: requirements.clone(),
+            evidence: evidence.clone(),
+            interfaces: binding.interfaces.clone(),
+        });
         let mut task_slice_summary = binding
             .tasks
             .values()
@@ -25654,6 +25902,27 @@ fn me_events_skip(events: &Arc<dyn EventSink>, task_id: &str, reason: &str) {
     }));
 }
 
+fn judge_split_requested() -> bool {
+    !uncapped()
+        && std::env::var("GOOSE_SWARM_SPLIT")
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.trim().to_lowercase().as_str(),
+                    "1" | "on" | "true" | "yes"
+                )
+            })
+            .unwrap_or_else(|| load_config().split.unwrap_or(true))
+}
+
+/// Engine 5 admission seam. A `ChildSpec` currently carries only ids/files/deps, so it cannot preserve
+/// requirement, evidence, interface, or acceptance authority. Requested splitting therefore fails closed
+/// until the child type and compiler carry the same contract as runtime reviews; semantic judge/nudge
+/// behavior is otherwise unchanged.
+fn contract_bound_child_split_enabled(requested: bool, child_contract_complete: bool) -> bool {
+    requested && child_contract_complete
+}
+
 #[async_trait]
 impl Judge for GooseAgentDispatcher {
     async fn judge(&self, req: JudgeRequest) -> JudgeOutcome {
@@ -25663,11 +25932,7 @@ impl Judge for GooseAgentDispatcher {
             // UNCAPPED: the split trip is elapsed-wall on a PRODUCTIVE task — exactly the class the
             // regime removes; the spiral kill is a volume threshold. Both forced off; the judge's
             // content-based LOOPING verdicts stay.
-            split_enabled: !uncapped()
-                && std::env::var("GOOSE_SWARM_SPLIT")
-                    .ok()
-                    .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
-                    .unwrap_or_else(|| load_config().split.unwrap_or(true)),
+            split_enabled: contract_bound_child_split_enabled(judge_split_requested(), false),
             // GOOSE_SWARM_SPLIT_SECS overrides the too-big threshold (default 900s) so a live M4 proof can
             // trigger a split on a moderate task without waiting ~15 min for one to cross the default.
             split_threshold_secs: std::env::var("GOOSE_SWARM_SPLIT_SECS")
@@ -28275,6 +28540,16 @@ fn resume_state_from_log(text: &str) -> Option<ResumeState> {
                     plan_json = Some(serde_json::json!({ "subtasks": t, "tasks": t }).to_string());
                 }
             }
+            // Runtime replanning emits the COMPLETE post-splice DAG, not only added ids. It supersedes
+            // plan_loaded for both audit and resume so an interrupted review/sink edge is never lost.
+            Some("replanned") => {
+                if let Some(t) = e.get("dag").and_then(|value| value.as_array()) {
+                    if !t.is_empty() {
+                        plan_json =
+                            Some(serde_json::json!({ "subtasks": t, "tasks": t }).to_string());
+                    }
+                }
+            }
             Some("task_completed") => {
                 if let Some(id) = e.get("task_id").and_then(|x| x.as_str()) {
                     completed.insert(id.to_string());
@@ -29314,6 +29589,7 @@ fn fix_round_specs(
             owned_files: shard_owned_files(&g.file, all_files, &taken),
             deps: Vec::new(),
             subsplit: Vec::new(),
+            replan_authority: None,
         })
         .collect();
     if !unassigned.is_empty() {
@@ -29325,6 +29601,7 @@ fn fix_round_specs(
             owned_files: all_files.to_vec(),
             deps: fix_ids,
             subsplit: Vec::new(),
+            replan_authority: None,
         });
     }
     specs
@@ -30296,6 +30573,111 @@ impl GooseAgentDispatcher {
             )
             .into()),
         }
+    }
+
+    async fn run_runtime_replan_review(
+        &self,
+        req: DispatchRequest,
+    ) -> Result<TaskRunOutput, DispatchError> {
+        let receipt = req.replan_authority.clone().ok_or_else(|| {
+            DispatchError::Terminal(format!(
+                "runtime review `{}` reached dispatch without binder authority",
+                req.task_id
+            ))
+        })?;
+        if !req.task_id.starts_with("replan-review::") || !req.owned_files.is_empty() {
+            return Err(DispatchError::Terminal(format!(
+                "runtime review `{}` is not read-only",
+                req.task_id
+            )));
+        }
+        let mut dependency_files = req.dependency_files.clone();
+        dependency_files.sort();
+        dependency_files.dedup();
+        let mut source_files = receipt.source_files.clone();
+        source_files.sort();
+        source_files.dedup();
+        if dependency_files != source_files {
+            return Err(DispatchError::Terminal(format!(
+                "runtime review `{}` source files diverged from its completed dependency",
+                req.task_id
+            )));
+        }
+        let mut files_block = String::new();
+        for file in &source_files {
+            validate_project_relative_owned_path(&req.task_id, file)
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            let path = self.working_dir.join(file);
+            let body = match std::fs::read(&path) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(error) => format!("[MISSING OR UNREADABLE: {error}]"),
+            };
+            files_block.push_str(&format!("### {file}\n```text\n{body}\n```\n\n"));
+        }
+        let system = "Perform one READ-ONLY acceptance review against the exact frozen contract and source \
+            files supplied. You have no filesystem or shell tools and must never propose or perform edits. Check \
+            every listed requirement exactly once against concrete file evidence. Use `violated` only for a \
+            locatable defect, `satisfied` only for locatable supporting evidence, and `inconclusive` when these \
+            files cannot establish it. Every violated check needs a finding naming the same requirement and file. \
+            Do not reward generic plausibility or internal consistency. Then call final_output."
+            .to_string();
+        let retry_note = req
+            .prior_hint
+            .as_deref()
+            .map(|hint| format!("\n\nPREVIOUS RESULT WAS REJECTED: {hint}"))
+            .unwrap_or_default();
+        let user = format!(
+            "AUTHORITATIVE REVIEW CONTRACT:\n{}\n\nCOMPLETED DEPENDENCY OUTPUT:\n{}\n\nACTUAL SOURCE FILES:\n{}{}",
+            req.description, req.context_slice, files_block, retry_note
+        );
+        let output = self
+            .run_response_only_agent(
+                &req.model_id,
+                system,
+                user,
+                Some(Response {
+                    json_schema: Some(runtime_review_result_schema(&receipt)),
+                }),
+                0,
+                Some(&req.task_id),
+            )
+            .await
+            .map_err(|error| DispatchError::Transient(error.to_string()))?;
+        if self.stream_decode_retry && is_stream_decode_interrupt(&output.text) {
+            return Err(DispatchError::Transient(format!(
+                "stream decode error during runtime review {}",
+                req.task_id
+            )));
+        }
+        let session_id = output.session_id;
+        let tool_calls = output.tool_calls;
+        let raw = output
+            .final_output
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+            .ok_or_else(|| {
+                DispatchError::ContentRetry(
+                    "Return the required typed verdict with one check per requirement.".to_string(),
+                )
+            })?;
+        let compiled = compile_runtime_review_result(&raw, &receipt)
+            .map_err(|error| DispatchError::ContentRetry(error.to_string()))?;
+        self.events.write_value(serde_json::json!({
+            "event": "dynamic_replan_review_completed",
+            "task_id": req.task_id,
+            "source_task_id": receipt.source_task_id,
+            "binding_task_id": receipt.binding_task_id,
+            "slice_id": receipt.slice_id,
+            "requirements": receipt.requirements.len(),
+            "source_files": receipt.source_files,
+            "tool_surface": "response-only",
+        }));
+        Ok(TaskRunOutput {
+            output: compiled,
+            session_id: Some(session_id),
+            tool_calls,
+            salvaged: false,
+        })
     }
 
     /// The ordinary task body — everything run() did after kind-normalization, extracted verbatim
@@ -31770,6 +32152,9 @@ impl GooseAgentDispatcher {
 #[async_trait]
 impl TaskDispatcher for GooseAgentDispatcher {
     async fn run(&self, req: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+        if req.replan_authority.is_some() || req.task_id.starts_with("replan-review::") {
+            return self.run_runtime_replan_review(req).await;
+        }
         // S3 FILL FAN (GOOSE_SWARM_FILL_FAN): the two DETERMINISTIC task kinds and the fill
         // normalization. Gate first so a coincidentally-named plan task can never trip these
         // paths on an ordinary run — with the gate off this block is byte-identical to absent.
@@ -32031,54 +32416,88 @@ impl TaskDispatcher for GooseAgentDispatcher {
 #[async_trait]
 impl Replanner for GooseAgentDispatcher {
     async fn replan(&self, ctx: ReplanContext) -> Result<Vec<TaskSpec>> {
-        let done = ctx
-            .completed
-            .iter()
-            .map(|(id, out)| format!("- {id}: {}", out.chars().take(160).collect::<String>()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let cap = ctx.idle_capacity.max(1);
-        let system = format!(
-            "You are the PLANNER continuing an in-progress local AI swarm. {cap} worker(s) just went IDLE while \
-             other tasks finish and the goal is not fully done. Propose UP TO {cap} NEW INDEPENDENT subtasks that \
-             add REAL value NOW — more tests, edge-case coverage, input validation, error handling, or hardening \
-             on the COMPLETED work — they run in parallel on the idle workers. FUNCTIONALITY, TESTS, and \
-             VALIDATION ONLY: do NOT propose README/docs, CI/workflow, packaging, LICENSE, or any \
-             project-scaffolding subtask — they waste the run's tail for zero functional value. If nothing useful \
-             remains, return an EMPTY subtasks list (do NOT invent make-work). Rules: every id MUST be new (never \
-             reuse an existing id); depends_on may reference DONE ids but NEVER a failed id; files must not overlap \
-             work still in progress. Give id/description/difficulty/model/depends_on/files, then call the \
-             final_output tool."
-        );
-        let user = format!(
-            "Goal: {}\n\nAlready created (do NOT reuse these ids): {}\n\nDone so far:\n{}\n\nFailed (do not depend on): {}\n\nStill running: {}",
-            ctx.goal,
-            ctx.existing_ids.join(", "),
-            done,
-            ctx.failed.join(", "),
-            ctx.incomplete.join(", "),
-        );
-        let response = Some(Response {
-            json_schema: Some(plan_schema()),
-        });
-        let out = match self
-            .run_agent_timed(&self.planner_model, system, user, response, 10, &[])
-            .await
-        {
-            Ok(o) => o,
-            Err(_) => return Ok(Vec::new()),
-        };
-        let Some(fo) = out.final_output else {
+        let Some(authority) = self.replan_authority.lock().unwrap().clone() else {
+            self.events.write_value(serde_json::json!({
+                "event": "dynamic_replan_rejected",
+                "round": ctx.round,
+                "reason": "authoritative binder context is unavailable",
+            }));
             return Ok(Vec::new());
         };
-        let mut specs = match goose_swarm::specs_from_plan_json(&fo) {
-            Ok(s) => s,
-            Err(_) => return Ok(Vec::new()),
+        let completed: HashSet<String> = ctx.completed.iter().map(|(id, _)| id.clone()).collect();
+        let existing: HashSet<String> = ctx.existing_ids.iter().cloned().collect();
+        let candidates = runtime_replan_candidates(&authority, &completed, &existing);
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let candidate_count = candidates.len();
+        let system = "Select zero or more completed semantic acceptance slices for a READ-ONLY runtime \
+            review before the integration sink. This is not a second architect pass. You cannot create task \
+            ids, files, dependencies, objectives, requirements, evidence, interfaces, or acceptance conditions; \
+            the engine derives every one from the frozen binder. Select a slice only when reviewing its actual \
+            completed source can produce evidence that may change the final integration judgement. Do not select \
+            documentation polish or generic make-work. For each selected slice, supply concrete review steps, \
+            edge cases, checks, and exactly one citation for every listed requirement. The amount of hardware and \
+            number of idle workers are intentionally unavailable and must never determine how many reviews exist. \
+            Return an empty reviews list when no candidate can add evidence, then call final_output."
+            .to_string();
+        let user = serde_json::to_string_pretty(&serde_json::json!({
+            "candidate_acceptance_slices": candidates,
+            "already_scheduled_task_ids": ctx.existing_ids,
+        }))?;
+        let activity_key = format!("runtime-replan-{}", ctx.round);
+        let output = match self
+            .run_response_only_agent(
+                &self.planner_model,
+                system,
+                user,
+                Some(Response {
+                    json_schema: Some(runtime_replan_schema()),
+                }),
+                0,
+                Some(&activity_key),
+            )
+            .await
+        {
+            Ok(output) => output,
+            Err(error) => {
+                self.events.write_value(serde_json::json!({
+                    "event": "dynamic_replan_rejected",
+                    "round": ctx.round,
+                    "reason": format!("runtime review selector failed: {error}"),
+                }));
+                return Ok(Vec::new());
+            }
         };
-        let existing: std::collections::HashSet<&str> =
-            ctx.existing_ids.iter().map(|s| s.as_str()).collect();
-        specs.retain(|s| !existing.contains(s.id.as_str()));
-        Ok(specs)
+        let Some(raw) = output
+            .final_output
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+        else {
+            return Ok(Vec::new());
+        };
+        match compile_runtime_replan(&raw, &authority, &completed, &existing) {
+            Ok(specs) => {
+                self.events.write_value(serde_json::json!({
+                    "event": "dynamic_replan_compiled",
+                    "round": ctx.round,
+                    "candidate_slices": candidate_count,
+                    "admitted_reviews": specs.len(),
+                    "task_count_source": "frozen-semantic-slices",
+                    "idle_capacity_used_for_shape": false,
+                    "tool_surface": "response-only",
+                }));
+                Ok(specs)
+            }
+            Err(error) => {
+                self.events.write_value(serde_json::json!({
+                    "event": "dynamic_replan_rejected",
+                    "round": ctx.round,
+                    "reason": error.to_string(),
+                }));
+                Ok(Vec::new())
+            }
+        }
     }
 }
 
@@ -33235,6 +33654,7 @@ fn build_task_detail_inputs(
                 slice_count,
                 brief: brief.clone(),
                 owned_files: task_binding.owned_files.clone(),
+                read_files: Vec::new(),
                 requirements: slice_requirements,
                 evidence: slice_evidence,
                 interfaces,
@@ -33246,20 +33666,79 @@ fn build_task_detail_inputs(
     Ok(items)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TaskDetailCitation {
     requirement_id: String,
     applies_as: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TaskDetailDraft {
     requirement_citations: Vec<TaskDetailCitation>,
     implementation_steps: Vec<String>,
     edge_cases: Vec<String>,
     acceptance_checks: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeReviewDraft {
+    binding_task_id: String,
+    slice_id: String,
+    requirement_citations: Vec<TaskDetailCitation>,
+    implementation_steps: Vec<String>,
+    edge_cases: Vec<String>,
+    acceptance_checks: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeReviewEnvelope {
+    reviews: Vec<RuntimeReviewDraft>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum RuntimeReviewVerdict {
+    Clean,
+    Findings,
+    Incomplete,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum RuntimeRequirementStatus {
+    Satisfied,
+    Violated,
+    Inconclusive,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeRequirementCheck {
+    requirement_id: String,
+    status: RuntimeRequirementStatus,
+    file: String,
+    evidence: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeReviewFinding {
+    requirement_id: String,
+    file: String,
+    evidence: String,
+    impact: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeReviewResult {
+    verdict: RuntimeReviewVerdict,
+    checks: Vec<RuntimeRequirementCheck>,
+    findings: Vec<RuntimeReviewFinding>,
 }
 
 #[derive(Clone, Debug)]
@@ -33382,6 +33861,23 @@ struct CompiledRequirementBinding {
 }
 
 #[derive(Clone, Debug)]
+struct RuntimeReplanAuthority {
+    tasks: HashMap<String, CompiledTaskBinding>,
+    requirements: Vec<RequirementRecord>,
+    evidence: Vec<EvidenceRecord>,
+    interfaces: Vec<RequirementInterfaceDraft>,
+}
+
+fn reconcile_runtime_replan_authority(authority: &mut RuntimeReplanAuthority, dag: &Dag) {
+    for (task_id, binding) in &mut authority.tasks {
+        if let Some(node) = dag.tasks.get(task_id) {
+            binding.owned_files = node.spec.owned_files.clone();
+            binding.depends_on = node.spec.deps.clone();
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct TaskDetailInput {
     index: usize,
     id: String,
@@ -33390,6 +33886,7 @@ struct TaskDetailInput {
     slice_count: usize,
     brief: String,
     owned_files: Vec<String>,
+    read_files: Vec<String>,
     requirements: Vec<RequirementRecord>,
     evidence: Vec<EvidenceRecord>,
     interfaces: Vec<RequirementInterfaceDraft>,
@@ -33489,6 +33986,80 @@ fn task_detail_schema() -> serde_json::Value {
     })
 }
 
+fn runtime_replan_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reviews"],
+        "properties": {
+            "reviews": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "binding_task_id",
+                        "slice_id",
+                        "requirement_citations",
+                        "implementation_steps",
+                        "edge_cases",
+                        "acceptance_checks"
+                    ],
+                    "properties": {
+                        "binding_task_id": {"type": "string"},
+                        "slice_id": {"type": "string"},
+                        "requirement_citations": task_detail_schema()["properties"]["requirement_citations"].clone(),
+                        "implementation_steps": {"type": "array", "items": {"type": "string"}},
+                        "edge_cases": {"type": "array", "items": {"type": "string"}},
+                        "acceptance_checks": {"type": "array", "items": {"type": "string"}}
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn runtime_review_result_schema(receipt: &ReplanAuthorityReceipt) -> serde_json::Value {
+    let requirement_ids: Vec<&str> = receipt
+        .requirements
+        .iter()
+        .map(|fact| fact.id.as_str())
+        .collect();
+    let source_files: Vec<&str> = receipt.source_files.iter().map(String::as_str).collect();
+    let check = serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requirement_id", "status", "file", "evidence"],
+        "properties": {
+            "requirement_id": {"type": "string", "enum": requirement_ids},
+            "status": {"type": "string", "enum": ["satisfied", "violated", "inconclusive"]},
+            "file": {"type": "string", "enum": source_files},
+            "evidence": {"type": "string"}
+        }
+    });
+    let finding = serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requirement_id", "file", "evidence", "impact"],
+        "properties": {
+            "requirement_id": {"type": "string", "enum": requirement_ids},
+            "file": {"type": "string", "enum": source_files},
+            "evidence": {"type": "string"},
+            "impact": {"type": "string"}
+        }
+    });
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["verdict", "checks", "findings"],
+        "properties": {
+            "verdict": {"type": "string", "enum": ["clean", "findings", "incomplete"]},
+            "checks": {"type": "array", "items": check},
+            "findings": {"type": "array", "items": finding}
+        }
+    })
+}
+
 fn compile_task_detail(raw: &str, input: &TaskDetailInput) -> Result<CompiledTaskDetail> {
     let raw = strip_code_fences(raw);
     let detail: TaskDetailDraft = serde_json::from_str(raw.trim())
@@ -33505,6 +34076,15 @@ fn compile_task_detail(raw: &str, input: &TaskDetailInput) -> Result<CompiledTas
     }
     if input.owned_files.iter().any(|file| file.trim().is_empty()) {
         bail!("authoritative task file ownership contains an empty path");
+    }
+    if input.read_files.iter().any(|file| file.trim().is_empty()) {
+        bail!("authoritative read-only source contains an empty path");
+    }
+    if !input.owned_files.is_empty() && !input.read_files.is_empty() {
+        bail!("a typed task cannot own and read-review files in the same contract");
+    }
+    for file in input.owned_files.iter().chain(input.read_files.iter()) {
+        validate_project_relative_owned_path(&input.id, file)?;
     }
     require_nonempty(
         "authoritative acceptance_evidence",
@@ -33551,16 +34131,29 @@ fn compile_task_detail(raw: &str, input: &TaskDetailInput) -> Result<CompiledTas
         }
     };
     let mut rendered = format!(
-        "ACCEPTANCE SLICE [{}/{}]\nObjective: {}\nOwned files (exclusive):\n",
+        "ACCEPTANCE SLICE [{}/{}]\nObjective: {}\n",
         input.id, input.slice_id, input.objective,
     );
-    if input.owned_files.is_empty() {
-        rendered.push_str("- (read-only; no file ownership)\n");
-    } else {
-        for file in &input.owned_files {
+    if !input.read_files.is_empty() {
+        rendered.push_str(
+            "Mode: READ-ONLY ACCEPTANCE REVIEW; inspect these files but never create, edit, or delete anything.\n\
+             Read-only source files:\n",
+        );
+        for file in &input.read_files {
             rendered.push_str("- ");
             rendered.push_str(file);
             rendered.push('\n');
+        }
+    } else {
+        rendered.push_str("Owned files (exclusive):\n");
+        if input.owned_files.is_empty() {
+            rendered.push_str("- (read-only; no file ownership)\n");
+        } else {
+            for file in &input.owned_files {
+                rendered.push_str("- ");
+                rendered.push_str(file);
+                rendered.push('\n');
+            }
         }
     }
     rendered.push_str("\nRequirement trace:\n");
@@ -33578,6 +34171,18 @@ fn compile_task_detail(raw: &str, input: &TaskDetailInput) -> Result<CompiledTas
         rendered.push('\n');
     }
     rendered.push('\n');
+
+    if !input.evidence.is_empty() {
+        rendered.push_str("Advisory evidence trace (never overrides a requirement):\n");
+        for evidence in &input.evidence {
+            rendered.push_str("- EVIDENCE [");
+            rendered.push_str(&evidence.id);
+            rendered.push_str("] SOURCE: ");
+            rendered.push_str(&evidence.quote);
+            rendered.push('\n');
+        }
+        rendered.push('\n');
+    }
 
     if !input.interfaces.is_empty() {
         rendered.push_str("Authoritative interfaces and invariants:\n");
@@ -33625,6 +34230,324 @@ fn compile_task_detail(raw: &str, input: &TaskDetailInput) -> Result<CompiledTas
         interfaces: input.interfaces.len(),
         acceptance_checks: input.acceptance_evidence.len() + detail.acceptance_checks.len(),
     })
+}
+
+fn runtime_review_id(binding_task_id: &str, slice_id: &str) -> String {
+    let material = format!("{binding_task_id}\0{slice_id}");
+    format!(
+        "replan-review::{}",
+        stable_inventory_id("review", &material, 0).to_lowercase()
+    )
+}
+
+fn completed_runtime_source(binding_task_id: &str, completed: &HashSet<String>) -> Option<String> {
+    if completed.contains(binding_task_id) {
+        Some(binding_task_id.to_string())
+    } else {
+        let joined = format!("join::{binding_task_id}");
+        completed.contains(&joined).then_some(joined)
+    }
+}
+
+fn runtime_replan_candidates(
+    authority: &RuntimeReplanAuthority,
+    completed: &HashSet<String>,
+    existing: &HashSet<String>,
+) -> Vec<serde_json::Value> {
+    let requirements: HashMap<&str, &RequirementRecord> = authority
+        .requirements
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect();
+    let evidence: HashMap<&str, &EvidenceRecord> = authority
+        .evidence
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect();
+    let mut out = Vec::new();
+    for (binding_task_id, task) in &authority.tasks {
+        let Some(source_task_id) = completed_runtime_source(binding_task_id, completed) else {
+            continue;
+        };
+        if task.owned_files.is_empty() {
+            continue;
+        }
+        for slice in &task.slices {
+            if existing.contains(&runtime_review_id(binding_task_id, &slice.id)) {
+                continue;
+            }
+            let requirement_set: HashSet<&str> =
+                slice.requirement_ids.iter().map(String::as_str).collect();
+            let interfaces: Vec<&RequirementInterfaceDraft> = authority
+                .interfaces
+                .iter()
+                .filter(|interface| {
+                    interface
+                        .requirement_ids
+                        .iter()
+                        .any(|id| requirement_set.contains(id.as_str()))
+                        && (interface.producer_task_id == *binding_task_id
+                            || interface
+                                .consumer_task_ids
+                                .iter()
+                                .any(|id| id == binding_task_id))
+                })
+                .collect();
+            out.push(serde_json::json!({
+                "binding_task_id": binding_task_id,
+                "source_task_id": source_task_id,
+                "slice_id": slice.id,
+                "objective": slice.objective,
+                "read_only_source_files": task.owned_files,
+                "requirements": slice.requirement_ids.iter().filter_map(|id| requirements.get(id.as_str())).collect::<Vec<_>>(),
+                "advisory_evidence": slice.evidence_ids.iter().filter_map(|id| evidence.get(id.as_str())).collect::<Vec<_>>(),
+                "interfaces": interfaces,
+                "required_acceptance_evidence": slice.acceptance_evidence,
+            }));
+        }
+    }
+    out.sort_by(|left, right| {
+        left["binding_task_id"]
+            .as_str()
+            .cmp(&right["binding_task_id"].as_str())
+            .then_with(|| left["slice_id"].as_str().cmp(&right["slice_id"].as_str()))
+    });
+    out
+}
+
+fn compile_runtime_replan(
+    raw: &str,
+    authority: &RuntimeReplanAuthority,
+    completed: &HashSet<String>,
+    existing: &HashSet<String>,
+) -> Result<Vec<TaskSpec>> {
+    let raw = strip_code_fences(raw);
+    let envelope: RuntimeReviewEnvelope = serde_json::from_str(raw.trim())
+        .map_err(|error| anyhow!("typed runtime-review JSON did not parse: {error}"))?;
+    let requirements: HashMap<&str, &RequirementRecord> = authority
+        .requirements
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect();
+    let evidence: HashMap<&str, &EvidenceRecord> = authority
+        .evidence
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect();
+    let mut selected = HashSet::new();
+    let mut specs = Vec::new();
+    for review in envelope.reviews {
+        let selection = (review.binding_task_id.clone(), review.slice_id.clone());
+        if !selected.insert(selection.clone()) {
+            bail!(
+                "runtime replan repeats acceptance slice `{}/{}`",
+                selection.0,
+                selection.1
+            );
+        }
+        let task = authority
+            .tasks
+            .get(&review.binding_task_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "runtime replan references unknown bound task `{}`",
+                    review.binding_task_id
+                )
+            })?;
+        let source_task_id = completed_runtime_source(&review.binding_task_id, completed)
+            .ok_or_else(|| {
+                anyhow!(
+                    "runtime replan source `{}` has not completed",
+                    review.binding_task_id
+                )
+            })?;
+        if task.owned_files.is_empty() {
+            bail!(
+                "runtime replan source `{}` has no reviewable artifact path",
+                review.binding_task_id
+            );
+        }
+        for file in &task.owned_files {
+            validate_project_relative_owned_path(&review.binding_task_id, file)?;
+        }
+        let slice = task
+            .slices
+            .iter()
+            .find(|slice| slice.id == review.slice_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "runtime replan references unknown slice `{}/{}`",
+                    review.binding_task_id,
+                    review.slice_id
+                )
+            })?;
+        let slice_requirements = slice
+            .requirement_ids
+            .iter()
+            .map(|id| {
+                requirements
+                    .get(id.as_str())
+                    .map(|record| (*record).clone())
+                    .ok_or_else(|| anyhow!("runtime replan lost requirement `{id}`"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let slice_evidence = slice
+            .evidence_ids
+            .iter()
+            .map(|id| {
+                evidence
+                    .get(id.as_str())
+                    .map(|record| (*record).clone())
+                    .ok_or_else(|| anyhow!("runtime replan lost evidence `{id}`"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let requirement_set: HashSet<&str> =
+            slice.requirement_ids.iter().map(String::as_str).collect();
+        let interfaces: Vec<RequirementInterfaceDraft> = authority
+            .interfaces
+            .iter()
+            .filter(|interface| {
+                interface
+                    .requirement_ids
+                    .iter()
+                    .any(|id| requirement_set.contains(id.as_str()))
+                    && (interface.producer_task_id == review.binding_task_id
+                        || interface
+                            .consumer_task_ids
+                            .iter()
+                            .any(|id| id == &review.binding_task_id))
+            })
+            .cloned()
+            .collect();
+        let id = runtime_review_id(&review.binding_task_id, &review.slice_id);
+        if existing.contains(&id) {
+            continue;
+        }
+        let detail_raw = serde_json::to_string(&TaskDetailDraft {
+            requirement_citations: review.requirement_citations,
+            implementation_steps: review.implementation_steps,
+            edge_cases: review.edge_cases,
+            acceptance_checks: review.acceptance_checks,
+        })?;
+        let compiled = compile_task_detail(
+            &detail_raw,
+            &TaskDetailInput {
+                index: 0,
+                id: id.clone(),
+                slice_id: slice.id.clone(),
+                slice_index: 0,
+                slice_count: 1,
+                brief: String::new(),
+                owned_files: Vec::new(),
+                read_files: task.owned_files.clone(),
+                requirements: slice_requirements.clone(),
+                evidence: slice_evidence.clone(),
+                interfaces: interfaces.clone(),
+                objective: slice.objective.clone(),
+                acceptance_evidence: slice.acceptance_evidence.clone(),
+            },
+        )?;
+        let description = format!(
+            "RUNTIME ACCEPTANCE REVIEW\nBinding source task: {}\nScheduled completed source: {}\n\n{}",
+            review.binding_task_id, source_task_id, compiled.rendered
+        );
+        let receipt = ReplanAuthorityReceipt {
+            source_task_id: source_task_id.clone(),
+            binding_task_id: review.binding_task_id,
+            slice_id: slice.id.clone(),
+            source_files: task.owned_files.clone(),
+            objective: slice.objective.clone(),
+            requirements: slice_requirements
+                .into_iter()
+                .map(|record| ReplanAuthorityFact {
+                    id: record.id,
+                    text: record.quote,
+                })
+                .collect(),
+            evidence: slice_evidence
+                .into_iter()
+                .map(|record| ReplanAuthorityFact {
+                    id: record.id,
+                    text: record.quote,
+                })
+                .collect(),
+            interfaces: interfaces
+                .into_iter()
+                .map(|interface| ReplanAuthorityFact {
+                    id: interface.id,
+                    text: interface.contract,
+                })
+                .collect(),
+            acceptance_evidence: slice.acceptance_evidence.clone(),
+        };
+        specs.push(TaskSpec {
+            id,
+            description,
+            difficulty: goose_swarm::Difficulty::Hard,
+            preferred_model: None,
+            owned_files: Vec::new(),
+            deps: vec![source_task_id],
+            subsplit: Vec::new(),
+            replan_authority: Some(receipt),
+        });
+    }
+    Ok(specs)
+}
+
+fn compile_runtime_review_result(raw: &str, receipt: &ReplanAuthorityReceipt) -> Result<String> {
+    let raw = strip_code_fences(raw);
+    let result: RuntimeReviewResult = serde_json::from_str(raw.trim())
+        .map_err(|error| anyhow!("typed runtime-review result did not parse: {error}"))?;
+    let known_requirements: HashSet<&str> = receipt
+        .requirements
+        .iter()
+        .map(|fact| fact.id.as_str())
+        .collect();
+    let known_files: HashSet<&str> = receipt.source_files.iter().map(String::as_str).collect();
+    let mut checked = HashSet::new();
+    let mut violated = HashSet::new();
+    let mut inconclusive = false;
+    for check in &result.checks {
+        if !known_requirements.contains(check.requirement_id.as_str())
+            || !checked.insert(check.requirement_id.as_str())
+            || !known_files.contains(check.file.as_str())
+            || check.evidence.trim().is_empty()
+        {
+            bail!("runtime review returned an unknown, duplicate, or empty requirement check");
+        }
+        if check.status == RuntimeRequirementStatus::Violated {
+            violated.insert(check.requirement_id.as_str());
+        }
+        inconclusive |= check.status == RuntimeRequirementStatus::Inconclusive;
+    }
+    if checked != known_requirements {
+        bail!("runtime review did not check every authoritative requirement exactly once");
+    }
+    let mut finding_requirements = HashSet::new();
+    for finding in &result.findings {
+        if !known_requirements.contains(finding.requirement_id.as_str())
+            || !known_files.contains(finding.file.as_str())
+            || finding.evidence.trim().is_empty()
+            || finding.impact.trim().is_empty()
+        {
+            bail!("runtime review returned a finding outside its authoritative slice");
+        }
+        finding_requirements.insert(finding.requirement_id.as_str());
+    }
+    if !violated.is_subset(&finding_requirements) {
+        bail!("runtime review marked a requirement violated without an evidence finding");
+    }
+    let consistent = match result.verdict {
+        RuntimeReviewVerdict::Clean => {
+            violated.is_empty() && !inconclusive && result.findings.is_empty()
+        }
+        RuntimeReviewVerdict::Findings => !violated.is_empty() && !result.findings.is_empty(),
+        RuntimeReviewVerdict::Incomplete => inconclusive,
+    };
+    if !consistent {
+        bail!("runtime review verdict contradicts its requirement checks");
+    }
+    Ok(serde_json::to_string_pretty(&result)?)
 }
 
 fn merge_compiled_task_slices(
@@ -37524,6 +38447,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // below is the only plan contracts, sink setup, plan_loaded, fill-fan expansion, and Scheduler::run see.
     let (plan_json, dag, package_entries) =
         finalize_advertised_entry_plan(plan_json, dag, &opts.prompt)?;
+    dispatcher.reconcile_replan_authority_with_final_dag(&dag);
     if !package_entries.is_empty() {
         eprintln!(
             "  · package-entry: spec-advertised `python -m` entry file(s) nobody owned, injected into the plan: {}",
@@ -37936,6 +38860,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let judge_on = idle_judge_enabled();
     if judge_on {
         eprintln!("idle-model judge: on (GOOSE_SWARM_JUDGE=0 to disable)");
+        if judge_split_requested() {
+            sink.write_value(serde_json::json!({
+                "event": "judge_split_guarded_off",
+                "reason": "ChildSpec has no requirement/evidence/interface/acceptance authority",
+                "semantic_judge_preserved": true,
+                "next_engine": "engine-5-contract-complete-children",
+            }));
+            eprintln!(
+                "judge split: guarded OFF until split children carry the full typed task contract; semantic nudges remain on"
+            );
+        }
         scheduler =
             scheduler.with_judge(dispatcher.clone() as Arc<dyn Judge>, JudgeConfig::default());
     }
@@ -38994,6 +39929,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 device_id: dev,
                                 model_id: model.clone(),
                                 context_slice: String::new(),
+                                dependency_files: Vec::new(),
                                 attempt: round,
                                 // The twin owns EVERY app file: which file the fix needs is exactly what is
                                 // unknown, and a promote copies only owned files. Its shadow is a cp -r of the
@@ -39006,6 +39942,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 user_decisions: decisions,
                                 doc_facts: facts,
                                 neighborhood: Vec::new(),
+                                replan_authority: None,
                             };
                             // F781/#15: the repair-phase observer. Samples the twin's shadow
                             // fingerprint once a minute while the attempt runs and reports the
@@ -39390,6 +40327,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     device_id: dev,
                                     model_id: model.clone(),
                                     context_slice: String::new(),
+                                    dependency_files: Vec::new(),
                                     attempt: round,
                                     owned_files: shard_owned_files(&g.file, &all_files, &taken),
                                     all_files,
@@ -39406,6 +40344,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     doc_facts: facts.clone(),
                                     // Per-file fix shard: no DAG neighborhood → contract bundle unscoped.
                                     neighborhood: Vec::new(),
+                                    replan_authority: None,
                                 };
                                 // ONE rule, one implementation. This was a bare `from_secs(1200)`
                                 // while its sibling — the serial fix on the other branch of this same
@@ -39533,6 +40472,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         device_id: dev_id,
                         model_id: model_id.clone(),
                         context_slice: String::new(),
+                        dependency_files: Vec::new(),
                         attempt: round,
                         // Whole-tree twin semantics: which file a cross-file fix needs is exactly
                         // what is unknown, so it owns everything and its shadow (cp -r of the
@@ -39549,6 +40489,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         doc_facts: doc_facts.clone(),
                         // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                         neighborhood: Vec::new(),
+                        replan_authority: None,
                     };
                     let ran = tokio::time::timeout(
                         std::time::Duration::from_secs(fix_cap_eff),
@@ -39594,6 +40535,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     device_id: dev_id,
                     model_id,
                     context_slice: String::new(),
+                    dependency_files: Vec::new(),
                     attempt: round,
                     owned_files: vec![],
                     all_files: smoke_all_files.clone(),
@@ -39606,6 +40548,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     doc_facts: doc_facts.clone(),
                     // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                     neighborhood: Vec::new(),
+                    replan_authority: None,
                 };
                 // THE TAIL'S DISPATCH EVENTS BELONG ON *THIS* PATH, the default one.
                 //
@@ -39816,6 +40759,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         device_id: dev_id,
                         model_id,
                         context_slice: String::new(),
+                        dependency_files: Vec::new(),
                         attempt: 0,
                         owned_files: vec![],
                         all_files: smoke_all_files.clone(),
@@ -39825,6 +40769,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         user_decisions: user_decisions.clone(),
                         doc_facts: doc_facts.clone(),
                         neighborhood: Vec::new(),
+                        replan_authority: None,
                     };
                     let _ = tokio::time::timeout(
                         std::time::Duration::from_secs(fix_cap_eff),
@@ -39993,6 +40938,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     device_id: dev_id,
                     model_id,
                     context_slice: String::new(),
+                    dependency_files: Vec::new(),
                     attempt: 0,
                     owned_files: vec![],
                     all_files: smoke_all_files.clone(),
@@ -40005,6 +40951,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     doc_facts: doc_facts.clone(),
                     // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                     neighborhood: Vec::new(),
+                    replan_authority: None,
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs_scaled(
@@ -40204,6 +41151,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     device_id: dev_id,
                     model_id,
                     context_slice: String::new(),
+                    dependency_files: Vec::new(),
                     attempt: 0,
                     owned_files: vec![],
                     all_files: smoke_all_files.clone(),
@@ -40216,6 +41164,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     doc_facts: doc_facts.clone(),
                     // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
                     neighborhood: Vec::new(),
+                    replan_authority: None,
                 };
                 let _ = tokio::time::timeout(
                     std::time::Duration::from_secs(fix_cap_secs_scaled(
