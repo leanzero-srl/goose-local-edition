@@ -2112,6 +2112,14 @@ def parse_smoke_stream(
                 if role == "assistant":
                     assistant_text.append((position, value))
                     allowed_marker_paths.add(("message", "content", index, "text"))
+            elif (
+                item_type == "thinking"
+                and role == "assistant"
+                and isinstance(item.get("thinking"), str)
+            ):
+                allowed_marker_paths.add(
+                    ("message", "content", index, "thinking")
+                )
         for string_path, value in _walk_strings(event):
             if expected_marker in value and string_path not in allowed_marker_paths:
                 errors.append(

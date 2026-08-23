@@ -2350,6 +2350,57 @@ class CloudSb7HarnessTest(unittest.TestCase):
             valid = self.smoke_stream_events(state)
             self.assertIs(parse(valid)["valid"], True)
 
+            marker = str(state["final_marker"])
+            first = len(marker) // 3
+            second = 2 * len(marker) // 3
+            thinking_and_chunked_final = [
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "thinking",
+                                "thinking": (
+                                    "I must return " + marker + " after the tool succeeds"
+                                ),
+                                "signature": "",
+                            }
+                        ],
+                    },
+                },
+                *json.loads(json.dumps(valid[:2])),
+                *[
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": fragment}],
+                        },
+                    }
+                    for fragment in (
+                        marker[:first],
+                        marker[first:second],
+                        marker[second:],
+                    )
+                ],
+                json.loads(json.dumps(valid[-1])),
+            ]
+            chunked = parse(thinking_and_chunked_final)
+            self.assertIs(chunked["valid"], True)
+            self.assertIs(chunked["final_text_exact"], True)
+
+            thinking_without_final = json.loads(
+                json.dumps(thinking_and_chunked_final)
+            )
+            del thinking_without_final[3:6]
+            reasoning_only = parse(thinking_without_final)
+            self.assertIs(reasoning_only["valid"], False)
+            self.assertIn(
+                "final assistant text after the tool response was not exact",
+                reasoning_only["errors"],
+            )
+
             cases: dict[str, list[dict[str, object]]] = {}
             mismatched = json.loads(json.dumps(valid))
             mismatched[1]["message"]["content"][0]["id"] = "wrong-id"
