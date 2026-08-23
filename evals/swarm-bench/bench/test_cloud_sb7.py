@@ -206,6 +206,12 @@ class CloudSb7HarnessTest(unittest.TestCase):
     ) -> dict[str, object]:
         entrant_id = str(row["id"])
         state = cloud_sb7.prepare_smoke_attempt(root, entrant_id, row)
+        with mock.patch.object(
+            cloud_sb7, "snapshot_listening_tcp_ports", return_value=[43210]
+        ):
+            state = cloud_sb7.persist_listener_isolation(
+                root, row, state, smoke=True
+            )
         Path(str(state["log"])).write_text(
             "\n".join(map(json.dumps, self.smoke_stream_events(state))) + "\n"
         )
@@ -358,6 +364,27 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
     def make_scored_campaign(self, root: Path) -> tuple[Path, dict[str, object]]:
         entrant_id = "fixture-model"
+        row = {
+            "id": entrant_id,
+            "provider": "fixture",
+            "model": entrant_id,
+            "accepted_reported_models": [entrant_id],
+            "secret_env": "FIXTURE_API_KEY",
+            "provider_lane": "fixture",
+            "endpoint_family": "fixture",
+            "thinking_effort": "medium",
+            "context_limit": 100,
+            "max_output_tokens": 20,
+            "vendor_port": 9999,
+            "pricing": {
+                "input_per_million": 1,
+                "output_per_million": 1,
+                "source": "https://example.invalid",
+                "verified_at": "now",
+            },
+        }
+        entrant_manifest = root / "entrant-manifest.json"
+        entrant_manifest.write_text(json.dumps({"entrants": [row]}))
         secret_file = root / "cloud-providers.env"
         secret_file.write_text("FIXTURE_API_KEY=fixture-provider-secret\n")
         secret_file.chmod(0o600)
@@ -385,6 +412,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "calibration": verdict["calibration"],
                 "fixture_seed": "fixture-seed",
                 "vendor_port": 9999,
+                "tree": str(root / "entrants" / entrant_id / "tree"),
             },
         )
         publisher = {
@@ -415,11 +443,22 @@ class CloudSb7HarnessTest(unittest.TestCase):
             },
             "binary_sha256": "binary",
             "instrument_set_sha256": "instrument",
+            "entrant_manifest": str(entrant_manifest),
+            "entrant_manifest_sha256": cloud_sb7.sha256_file(entrant_manifest),
             "secret_file": str(secret_file),
             "publisher": publisher,
         }
         cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
         cloud_sb7.atomic_json(root / "manager.json", {"status": "IDLE"})
+        with mock.patch.object(
+            cloud_sb7, "snapshot_listening_tcp_ports", return_value=[]
+        ):
+            cloud_sb7.persist_listener_isolation(
+                root,
+                row,
+                cloud_sb7.read_state(root, entrant_id),
+                smoke=False,
+            )
         return verdict_path, verdict
 
     def publisher_campaign(
@@ -1009,6 +1048,12 @@ class CloudSb7HarnessTest(unittest.TestCase):
             smoke = cloud_sb7.prepare_smoke_attempt(
                 predecessor, failed_id, failed_row
             )
+            with mock.patch.object(
+                cloud_sb7, "snapshot_listening_tcp_ports", return_value=[43210]
+            ):
+                smoke = cloud_sb7.persist_listener_isolation(
+                    predecessor, failed_row, smoke, smoke=True
+                )
             request_id = "smoke-terminal-before-settlement"
             usage = {
                 "reported_model": failed_row["model"],
@@ -1180,6 +1225,12 @@ class CloudSb7HarnessTest(unittest.TestCase):
             root = Path(raw)
             row = self.make_smoke_campaign(root, entrant_count=1)[0]
             state = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+            with mock.patch.object(
+                cloud_sb7, "snapshot_listening_tcp_ports", return_value=[43210]
+            ):
+                state = cloud_sb7.persist_listener_isolation(
+                    root, row, state, smoke=True
+                )
             with mock.patch.dict(os.environ, {"PATH": "/bin"}, clear=True):
                 env = cloud_sb7.child_env(row, state, "active-secret")
             self.assertEqual(env["GOOSE_BENCH_CAMPAIGN"], str(root))
@@ -1190,6 +1241,81 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(env["GOOSE_PATH_ROOT"], state["profile"])
             self.assertEqual(env["GOOSE_BENCH_TOOL_ALLOWLIST"], "developer")
             self.assertEqual(env["GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES"], "true")
+            self.assertEqual(
+                env["GOOSE_TOOL_SANDBOX_DENY_LOCAL_PORTS"],
+                ",".join(map(str, state["sandbox_denied_local_ports"])),
+            )
+
+    def test_listener_snapshot_denies_preexisting_and_peer_ports_not_own(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            rows = self.make_smoke_campaign(root, entrant_count=2)
+            row = rows[0]
+            peer_port = int(rows[1]["vendor_port"])
+            own_port = int(row["vendor_port"])
+            state = cloud_sb7.read_state(root, str(row["id"]))
+            with mock.patch.object(
+                cloud_sb7,
+                "snapshot_listening_tcp_ports",
+                return_value=[1234, own_port, 54321],
+            ):
+                state = cloud_sb7.persist_listener_isolation(
+                    root, row, state, smoke=False
+                )
+            self.assertEqual(
+                state["sandbox_denied_local_ports"],
+                sorted({1234, 54321, peer_port}),
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            self.assertIsNone(
+                cloud_sb7.listener_isolation_failure(
+                    campaign, row, state, smoke=False
+                )
+            )
+
+            snapshot = Path(str(state["sandbox_listener_snapshot"]))
+            snapshot.write_text("{}\n")
+            self.assertIn(
+                "hash changed",
+                cloud_sb7.listener_isolation_failure(
+                    campaign, row, state, smoke=False
+                )
+                or "",
+            )
+
+    def test_smoke_listener_snapshot_denies_every_manifest_vendor_port(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            rows = self.make_smoke_campaign(root, entrant_count=2)
+            row = rows[0]
+            state = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+            with mock.patch.object(
+                cloud_sb7, "snapshot_listening_tcp_ports", return_value=[1234]
+            ):
+                state = cloud_sb7.persist_listener_isolation(
+                    root, row, state, smoke=True
+                )
+            self.assertEqual(
+                state["sandbox_denied_local_ports"],
+                sorted({1234, *(int(value["vendor_port"]) for value in rows)}),
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            self.assertIsNone(
+                cloud_sb7.listener_isolation_failure(
+                    campaign, row, state, smoke=True
+                )
+            )
+
+    def test_lsof_listener_parser_rejects_ambiguous_endpoints(self) -> None:
+        self.assertEqual(
+            cloud_sb7.parse_lsof_listener_ports(
+                "p1\nf2\nn*:1234\nn127.0.0.1:1234\nn[::1]:43210\n"
+            ),
+            [1234, 43210],
+        )
+        for malformed in ("nlocalhost:http\n", "nmissing-port\n", "n*:0\n"):
+            with self.subTest(malformed=malformed), self.assertRaises(SystemExit):
+                cloud_sb7.parse_lsof_listener_ports(malformed)
 
     def test_smoke_stream_requires_exact_structural_contract(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -2008,6 +2134,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "tree": "/tmp/campaign/entrant/tree",
             "provider_lifecycle": "/tmp/campaign/entrant/provider-lifecycle.jsonl",
             "budget_config_sha256": "abc123",
+            "sandbox_denied_local_ports": [9999, 43210],
         }
         with mock.patch.dict(
             os.environ,
@@ -2026,8 +2153,14 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(env["GOOSE_PROVIDER_LIFECYCLE_STRICT"], "true")
         self.assertEqual(env["GOOSE_PROVIDER_TERMINAL_SAFE_RETRIES"], "true")
         self.assertEqual(env["GOOSE_BENCH_BUDGET_CONFIG_SHA256"], "abc123")
+        self.assertEqual(
+            env["GOOSE_TOOL_SANDBOX_DENY_LOCAL_PORTS"], "9999,43210"
+        )
         self.assertEqual(env["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")
         self.assertEqual(env["TMPDIR"], "/tmp/profile/tool-home/tmp")
+        del state["sandbox_denied_local_ports"]
+        with self.assertRaisesRegex(SystemExit, "listener isolation is required"):
+            cloud_sb7.child_env(row, state, "active-secret")
 
     def test_admitted_failure_is_never_retryable(self) -> None:
         self.assertEqual(cloud_sb7.classify_build_exit(0, 3), ("BUILD_COMPLETE", None))
@@ -2053,6 +2186,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "tree": "/tmp/campaign/entrants/glm/tree",
             "provider_lifecycle": "/tmp/campaign/entrants/glm/provider-lifecycle.jsonl",
             "budget_config_sha256": "def456",
+            "sandbox_denied_local_ports": [9999, 43210],
         }
         with mock.patch.dict(os.environ, {"PATH": "/bin"}, clear=True):
             env = cloud_sb7.child_env(row, state, "secret")
