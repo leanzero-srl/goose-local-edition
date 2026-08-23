@@ -46,11 +46,13 @@ DEFAULT_SECRET_FILE = (
     Path.home() / ".agents/skills/goose-benchmark-iteration/secrets/cloud-providers.env"
 )
 DEFAULT_ROOT = Path.home() / "goose-builds/cloud-sb7-20260823"
+TRANSPORT_UNKNOWN_STATUS = "TRANSPORT_UNKNOWN"
 TERMINAL_BUILD_STATES = {
     "BUILD_COMPLETE",
     "INCOMPLETE",
     "PRE_ADMISSION_FAILURE",
     "STOPPED",
+    TRANSPORT_UNKNOWN_STATUS,
 }
 RETRYABLE_BUILD_STATES = {"PLANNED", "PRE_ADMISSION_FAILURE"}
 RESTARTABLE_CAMPAIGN_STATES = {
@@ -99,6 +101,8 @@ ORCHESTRATOR_RECOVERY_RECEIPT = "orchestrator-recovery-receipt.json"
 ORCHESTRATOR_RECOVERY_SEAL = "orchestrator-recovery-seal.json"
 ORCHESTRATOR_RECOVERY_EVIDENCE = "orchestrator-recovery-evidence"
 ORCHESTRATOR_RECOVERY_PATH = "recovery/orchestrator-recovery.json"
+TRANSPORT_UNKNOWN_SCHEMA = 1
+TRANSPORT_UNKNOWN_PATH = "lineage/transport-unknown"
 PRE_SMOKE_INSTRUMENT_REPAIR_SCHEMA = 1
 PRE_SMOKE_INSTRUMENT_REPAIR_PATH = "lineage/pre-smoke-instrument-repair"
 BUDGET_BLOCKED_CARRIED_SMOKE_SCHEMA = 1
@@ -4020,6 +4024,17 @@ def current_full_episode_outstanding_reservations(
         generation = validated_campaign_lineage(campaign)["generation"]
     except SystemExit as lineage_error:
         return [], f"campaign lineage is invalid: {lineage_error}"
+    carried_transport = transport_unknown_carried_request_ids(
+        root, campaign, str(row.get("id", ""))
+    )
+    if carried_transport:
+        missing = sorted(carried_transport - set(outstanding))
+        if missing:
+            return [], (
+                f"{row.get('id')} transport-unknown reservations disappeared: "
+                + ", ".join(missing)
+            )
+        outstanding = sorted(set(outstanding) - carried_transport)
     if generation != 2:
         return outstanding, None
 
@@ -4048,6 +4063,606 @@ def current_full_episode_outstanding_reservations(
             + ", ".join(missing)
         )
     return sorted(set(outstanding) - set(baseline)), None
+
+
+def canonical_json_sha256(value: Any) -> str:
+    return sha256_bytes(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    )
+
+
+def transport_unknown_bundle(root: Path, entrant_id: str) -> Path:
+    return root / TRANSPORT_UNKNOWN_PATH / entrant_id
+
+
+def transport_unknown_entry(
+    campaign: Mapping[str, Any], entrant_id: str
+) -> Mapping[str, Any] | None:
+    registry = campaign.get("transport_unknown")
+    if not isinstance(registry, dict):
+        return None
+    entry = registry.get(entrant_id)
+    return entry if isinstance(entry, dict) else None
+
+
+def transport_unknown_pointer(
+    root: Path, entrant_id: str, name: str
+) -> Dict[str, str]:
+    relative = (
+        Path(TRANSPORT_UNKNOWN_PATH)
+        / entrant_id
+        / ("isolation.json" if name == "isolation" else "successor-run/receipt.json")
+    )
+    path = root / relative
+    receipt = load_json(path)
+    return {
+        "path": str(relative),
+        "sha256": sha256_file(path),
+        "transition_id": str(receipt["transition_id"]),
+    }
+
+
+def transport_unknown_carried_request_ids(
+    root: Path, campaign: Mapping[str, Any], entrant_id: str
+) -> set[str]:
+    entry = transport_unknown_entry(campaign, entrant_id)
+    successor = entry.get("successor") if entry is not None else None
+    if not isinstance(successor, dict):
+        return set()
+    expected = (
+        Path(TRANSPORT_UNKNOWN_PATH) / entrant_id / "successor-run/receipt.json"
+    )
+    if successor.get("path") != str(expected):
+        return set()
+    path = root / expected
+    try:
+        if path.is_symlink() or not path.is_file():
+            return set()
+        if sha256_file(path) != successor.get("sha256"):
+            return set()
+        receipt = load_json(path)
+        request_ids = receipt.get("carried_request_ids")
+        if (
+            receipt.get("transition_id") != successor.get("transition_id")
+            or receipt.get("entrant") != entrant_id
+            or receipt.get("adjudication") != "carry_as_budget_exposure"
+            or not isinstance(request_ids, list)
+            or request_ids != sorted(set(request_ids))
+            or not request_ids
+        ):
+            return set()
+        return set(request_ids)
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return set()
+
+
+def transport_unknown_episode_limit(
+    root: Path,
+    campaign: Mapping[str, Any],
+    entrant_id: str,
+    default_limit: int,
+) -> int:
+    entry = transport_unknown_entry(campaign, entrant_id)
+    successor = entry.get("successor") if entry is not None else None
+    if not isinstance(successor, dict):
+        return default_limit
+    path = root / str(successor.get("path", ""))
+    try:
+        if path.is_symlink() or not path.is_file():
+            return default_limit
+        if sha256_file(path) != successor.get("sha256"):
+            return default_limit
+        receipt = load_json(path)
+        baseline = receipt.get("provider_episode_attempts")
+        limit = receipt.get("successor_episode_limit")
+        if (
+            receipt.get("entrant") != entrant_id
+            or receipt.get("transition_id") != successor.get("transition_id")
+            or receipt.get("adjudication") != "carry_as_budget_exposure"
+            or isinstance(baseline, bool)
+            or not isinstance(baseline, int)
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit != baseline + 1
+        ):
+            return default_limit
+        return max(default_limit, limit)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return default_limit
+
+
+def transport_unknown_budget_descendant_failure(
+    source: Mapping[str, Any], current: Mapping[str, Any]
+) -> str | None:
+    source_settled = {
+        str(row.get("request_id")): row
+        for row in source.get("settled", [])
+        if isinstance(row, dict)
+    }
+    current_settled = {
+        str(row.get("request_id")): row
+        for row in current.get("settled", [])
+        if isinstance(row, dict)
+    }
+    for request_id, settlement in source_settled.items():
+        if current_settled.get(request_id) != settlement:
+            return f"settled evidence changed after transport isolation: {request_id}"
+    if float(current.get("spent_upper_bound", -1)) < float(
+        source.get("spent_upper_bound", 0)
+    ):
+        return "cumulative spend decreased after transport isolation"
+    source_provider = source.get("provider_spent_upper_bound")
+    current_provider = current.get("provider_spent_upper_bound")
+    if not isinstance(source_provider, dict) or not isinstance(current_provider, dict):
+        return "provider spend evidence is malformed after transport isolation"
+    for provider, amount in source_provider.items():
+        if float(current_provider.get(provider, -1)) < float(amount):
+            return f"provider spend decreased after transport isolation: {provider}"
+    return None
+
+
+def transport_unknown_isolation_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    entrant_id: str,
+    pointer: Mapping[str, Any],
+) -> str | None:
+    try:
+        relative = Path(TRANSPORT_UNKNOWN_PATH) / entrant_id / "isolation.json"
+        receipt_path = root / relative
+        bundle = receipt_path.parent
+        if (
+            set(pointer) != {"path", "sha256", "transition_id"}
+            or pointer.get("path") != str(relative)
+            or receipt_path.is_symlink()
+            or not receipt_path.is_file()
+            or sha256_file(receipt_path) != pointer.get("sha256")
+        ):
+            return f"transport-unknown isolation pointer is malformed: {entrant_id}"
+        receipt = load_json(receipt_path)
+        expected_keys = {
+            "schema_version",
+            "kind",
+            "transition_id",
+            "isolated_at",
+            "root",
+            "campaign_id",
+            "entrant",
+            "provider",
+            "model",
+            "source_campaign_sha256",
+            "source_state_sha256",
+            "source_ledger_sha256",
+            "source_state_copy_sha256",
+            "source_ledger_copy_sha256",
+            "lifecycle_path",
+            "lifecycle_sha256",
+            "request_ids",
+            "request_event_sha256",
+            "reservations",
+            "reservations_sha256",
+            "provider_episode_attempts",
+            "provider_launch_attempts",
+            "settled_sha256",
+            "spent_upper_bound",
+            "provider_spent_upper_bound",
+            "scores_sha256",
+            "publish_sha256",
+            "transport_never_left_proven",
+        }
+        if (
+            set(receipt) != expected_keys
+            or receipt.get("schema_version") != TRANSPORT_UNKNOWN_SCHEMA
+            or receipt.get("kind") != "provider_transport_unknown_isolation"
+            or receipt.get("transition_id") != pointer.get("transition_id")
+            or receipt.get("root") != str(root.resolve())
+            or receipt.get("campaign_id") != campaign.get("campaign_id")
+            or receipt.get("entrant") != entrant_id
+            or receipt.get("transport_never_left_proven") is not False
+        ):
+            return f"transport-unknown isolation receipt is malformed: {entrant_id}"
+        source_state_path = bundle / "source-state.json"
+        source_ledger_path = bundle / "source-budget-ledger.json"
+        if (
+            source_state_path.is_symlink()
+            or not source_state_path.is_file()
+            or source_ledger_path.is_symlink()
+            or not source_ledger_path.is_file()
+            or sha256_file(source_state_path)
+            != receipt.get("source_state_copy_sha256")
+            or sha256_file(source_ledger_path)
+            != receipt.get("source_ledger_copy_sha256")
+            or sha256_file(source_state_path) != receipt.get("source_state_sha256")
+            or sha256_file(source_ledger_path) != receipt.get("source_ledger_sha256")
+        ):
+            return f"transport-unknown source evidence changed: {entrant_id}"
+        source_state = load_json(source_state_path)
+        source_ledger = load_json(source_ledger_path)
+        row = manifest_row(root, entrant_id)
+        if (
+            source_state.get("entrant") != entrant_id
+            or receipt.get("provider") != row.get("provider")
+            or receipt.get("model") != row.get("model")
+            or source_state.get("provider") != row.get("provider")
+            or source_state.get("model") != row.get("model")
+            or source_state.get("provider_episode_attempts")
+            != receipt.get("provider_episode_attempts")
+            or source_state.get("provider_launch_attempts")
+            != receipt.get("provider_launch_attempts")
+        ):
+            return f"transport-unknown source identity changed: {entrant_id}"
+        lifecycle_path = Path(str(receipt.get("lifecycle_path", "")))
+        lifecycle_path.resolve().relative_to(
+            (root / "entrants" / entrant_id / "attempts").resolve()
+        )
+        lifecycle = lifecycle_summary(
+            lifecycle_path,
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        request_ids = receipt.get("request_ids")
+        request_digests = receipt.get("request_event_sha256")
+        if (
+            lifecycle_path.is_symlink()
+            or not lifecycle_path.is_file()
+            or sha256_file(lifecycle_path) != receipt.get("lifecycle_sha256")
+            or not isinstance(request_ids, list)
+            or request_ids != sorted(set(request_ids))
+            or not request_ids
+            or lifecycle.get("request_states")
+            != {request_id: ["queued"] for request_id in request_ids}
+            or lifecycle.get("request_event_sha256") != request_digests
+            or lifecycle.get("admitted") != 0
+            or lifecycle.get("terminal") != 0
+            or lifecycle.get("malformed_lines") != 0
+            or lifecycle.get("transition_errors")
+        ):
+            return f"transport-unknown lifecycle evidence changed: {entrant_id}"
+        reservations = receipt.get("reservations")
+        if (
+            not isinstance(reservations, dict)
+            or sorted(reservations) != request_ids
+            or canonical_json_sha256(reservations)
+            != receipt.get("reservations_sha256")
+        ):
+            return f"transport-unknown reservation evidence is malformed: {entrant_id}"
+        config = load_json(Path(str(campaign["budget_config"])))
+        current_ledger = load_json(Path(str(campaign["budget_ledger"])))
+        ledger_problem = budget_ledger_failure(current_ledger, config)
+        if ledger_problem:
+            return ledger_problem
+        for request_id, reservation in reservations.items():
+            if current_ledger["outstanding"].get(request_id) != reservation:
+                return (
+                    f"transport-unknown reserve changed or disappeared: "
+                    f"{entrant_id}/{request_id}"
+                )
+            if any(
+                row.get("request_id") == request_id
+                for row in current_ledger["settled"]
+            ):
+                return f"transport-unknown request was falsely settled: {entrant_id}"
+        descendant_problem = transport_unknown_budget_descendant_failure(
+            source_ledger, current_ledger
+        )
+        if descendant_problem:
+            return descendant_problem
+        if (
+            canonical_json_sha256(source_ledger.get("settled"))
+            != receipt.get("settled_sha256")
+            or source_ledger.get("spent_upper_bound")
+            != receipt.get("spent_upper_bound")
+            or source_ledger.get("provider_spent_upper_bound")
+            != receipt.get("provider_spent_upper_bound")
+        ):
+            return f"transport-unknown accounting snapshot changed: {entrant_id}"
+        occurrences = {request_id: 0 for request_id in request_ids}
+        for path in full_episode_lifecycle_paths(
+            root, entrant_id, read_state(root, entrant_id)
+        ):
+            summary = lifecycle_summary(
+                path,
+                expected_provider=str(row["provider"]),
+                expected_model=str(row["model"]),
+            )
+            for request_id in request_ids:
+                if request_id in summary.get("request_states", {}):
+                    occurrences[request_id] += 1
+                    if path.resolve() != lifecycle_path.resolve():
+                        return (
+                            "transport-unknown request id was reused in a successor "
+                            f"attempt: {entrant_id}/{request_id}"
+                        )
+        if any(value != 1 for value in occurrences.values()):
+            return f"transport-unknown request evidence is not unique: {entrant_id}"
+        state = read_state(root, entrant_id)
+        if state.get("transport_unknown_isolation") != dict(pointer):
+            return f"transport-unknown state pointer differs: {entrant_id}"
+        successor = transport_unknown_entry(campaign, entrant_id)
+        successor_pointer = successor.get("successor") if successor else None
+        if successor_pointer is None:
+            if (
+                state.get("status") != TRANSPORT_UNKNOWN_STATUS
+                or state.get("transport_unknown_successor") is not None
+                or state.get("provider_episode_attempts")
+                != receipt.get("provider_episode_attempts")
+                or optional_artifact_tree_sha256(root / "scores" / entrant_id)
+                != receipt.get("scores_sha256")
+                or optional_artifact_tree_sha256(root / "publish" / entrant_id)
+                != receipt.get("publish_sha256")
+            ):
+                return f"transport-unknown isolated state drifted: {entrant_id}"
+        return None
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ) as error:
+        return f"transport-unknown isolation cannot be verified: {entrant_id}: {error}"
+
+
+def transport_unknown_successor_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    entrant_id: str,
+    isolation: Mapping[str, Any],
+    pointer: Mapping[str, Any],
+) -> str | None:
+    try:
+        relative = (
+            Path(TRANSPORT_UNKNOWN_PATH)
+            / entrant_id
+            / "successor-run/receipt.json"
+        )
+        receipt_path = root / relative
+        workspace = receipt_path.parent
+        if (
+            set(pointer) != {"path", "sha256", "transition_id"}
+            or pointer.get("path") != str(relative)
+            or receipt_path.is_symlink()
+            or not receipt_path.is_file()
+            or sha256_file(receipt_path) != pointer.get("sha256")
+        ):
+            return f"transport-unknown successor pointer is malformed: {entrant_id}"
+        receipt = load_json(receipt_path)
+        expected_keys = {
+            "schema_version",
+            "kind",
+            "transition_id",
+            "adjudicated_at",
+            "adjudication",
+            "root",
+            "campaign_id",
+            "entrant",
+            "provider",
+            "model",
+            "isolation_transition_id",
+            "isolation_receipt_sha256",
+            "source_state_sha256",
+            "source_ledger_sha256",
+            "carried_request_ids",
+            "carried_reservations",
+            "carried_reservations_sha256",
+            "provider_episode_attempts",
+            "successor_episode_limit",
+            "workspace_root",
+            "tree",
+            "profile",
+            "build_log",
+            "vendor_trace",
+            "settled_sha256",
+            "spent_upper_bound",
+            "provider_spent_upper_bound",
+            "scores_sha256",
+            "publish_sha256",
+            "reservation_released",
+            "settled_or_spend_rewritten",
+        }
+        if (
+            set(receipt) != expected_keys
+            or receipt.get("schema_version") != TRANSPORT_UNKNOWN_SCHEMA
+            or receipt.get("kind") != "provider_transport_unknown_successor"
+            or receipt.get("transition_id") != pointer.get("transition_id")
+            or receipt.get("adjudication") != "carry_as_budget_exposure"
+            or receipt.get("root") != str(root.resolve())
+            or receipt.get("campaign_id") != campaign.get("campaign_id")
+            or receipt.get("entrant") != entrant_id
+            or receipt.get("isolation_transition_id")
+            != isolation.get("transition_id")
+            or receipt.get("isolation_receipt_sha256")
+            != isolation.get("sha256")
+            or receipt.get("reservation_released") is not False
+            or receipt.get("settled_or_spend_rewritten") is not False
+        ):
+            return f"transport-unknown successor receipt is malformed: {entrant_id}"
+        source_state_path = workspace / "source-state.json"
+        source_ledger_path = workspace / "source-budget-ledger.json"
+        if (
+            source_state_path.is_symlink()
+            or not source_state_path.is_file()
+            or source_ledger_path.is_symlink()
+            or not source_ledger_path.is_file()
+            or sha256_file(source_state_path) != receipt.get("source_state_sha256")
+            or sha256_file(source_ledger_path) != receipt.get("source_ledger_sha256")
+        ):
+            return f"transport-unknown successor source evidence changed: {entrant_id}"
+        source_state = load_json(source_state_path)
+        source_ledger = load_json(source_ledger_path)
+        request_ids = receipt.get("carried_request_ids")
+        reservations = receipt.get("carried_reservations")
+        if (
+            source_state.get("status") != TRANSPORT_UNKNOWN_STATUS
+            or source_state.get("transport_unknown_isolation") != dict(isolation)
+            or not isinstance(request_ids, list)
+            or request_ids != sorted(set(request_ids))
+            or not request_ids
+            or not isinstance(reservations, dict)
+            or sorted(reservations) != request_ids
+            or canonical_json_sha256(reservations)
+            != receipt.get("carried_reservations_sha256")
+            or source_state.get("provider_episode_attempts")
+            != receipt.get("provider_episode_attempts")
+            or receipt.get("successor_episode_limit")
+            != int(receipt.get("provider_episode_attempts", -2)) + 1
+        ):
+            return f"transport-unknown successor provenance is malformed: {entrant_id}"
+        exact_paths = {
+            "workspace_root": str(workspace),
+            "tree": str(workspace / "tree"),
+            "profile": str(workspace / "profile"),
+            "build_log": str(workspace / "logs/build.log"),
+            "vendor_trace": str(workspace / "vendor-trace-build.jsonl"),
+        }
+        if any(receipt.get(key) != value for key, value in exact_paths.items()):
+            return f"transport-unknown successor workspace escaped: {entrant_id}"
+        for directory in (workspace / "tree", workspace / "profile", workspace / "logs"):
+            if directory.is_symlink() or not directory.is_dir():
+                return f"transport-unknown successor workspace is missing: {entrant_id}"
+        current_ledger = load_json(Path(str(campaign["budget_ledger"])))
+        config = load_json(Path(str(campaign["budget_config"])))
+        ledger_problem = budget_ledger_failure(current_ledger, config)
+        if ledger_problem:
+            return ledger_problem
+        for request_id, reservation in reservations.items():
+            if current_ledger["outstanding"].get(request_id) != reservation:
+                return f"carried transport exposure changed: {entrant_id}/{request_id}"
+        descendant_problem = transport_unknown_budget_descendant_failure(
+            source_ledger, current_ledger
+        )
+        if descendant_problem:
+            return descendant_problem
+        if (
+            canonical_json_sha256(source_ledger.get("settled"))
+            != receipt.get("settled_sha256")
+            or source_ledger.get("spent_upper_bound")
+            != receipt.get("spent_upper_bound")
+            or source_ledger.get("provider_spent_upper_bound")
+            != receipt.get("provider_spent_upper_bound")
+        ):
+            return f"transport-unknown successor accounting snapshot changed: {entrant_id}"
+        state = read_state(root, entrant_id)
+        attempts = int(state.get("provider_episode_attempts", -1))
+        if (
+            state.get("transport_unknown_successor") != dict(pointer)
+            or state.get("transport_unknown_isolation") != dict(isolation)
+            or state.get("status") == TRANSPORT_UNKNOWN_STATUS
+            or attempts < int(receipt["provider_episode_attempts"])
+            or attempts > int(receipt["successor_episode_limit"])
+            or state.get("tree") != receipt.get("tree")
+            or state.get("profile") != receipt.get("profile")
+            or state.get("build_log") != receipt.get("build_log")
+            or state.get("vendor_trace") != receipt.get("vendor_trace")
+        ):
+            return f"transport-unknown successor state drifted: {entrant_id}"
+        if state.get("status") in {
+            "PLANNED",
+            "PRE_ADMISSION_FAILURE",
+            "WAITING_PROVIDER_LANE",
+            "BUILD_RUNNING",
+        } and (
+            optional_artifact_tree_sha256(root / "scores" / entrant_id)
+            != receipt.get("scores_sha256")
+            or optional_artifact_tree_sha256(root / "publish" / entrant_id)
+            != receipt.get("publish_sha256")
+        ):
+            return f"transport-unknown successor gained premature score evidence: {entrant_id}"
+        return None
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ) as error:
+        return f"transport-unknown successor cannot be verified: {entrant_id}: {error}"
+
+
+def transport_unknown_registry_failure(
+    root: Path, campaign: Mapping[str, Any]
+) -> str | None:
+    try:
+        registry = campaign.get("transport_unknown")
+        registry_root = root / TRANSPORT_UNKNOWN_PATH
+        disk_entrants = set()
+        if registry_root.exists():
+            if registry_root.is_symlink() or not registry_root.is_dir():
+                return "transport-unknown registry is missing or linked"
+            disk_entrants = {
+                path.name
+                for path in registry_root.iterdir()
+                if path.is_dir() and not path.is_symlink()
+            }
+            if any(not path.is_dir() or path.is_symlink() for path in registry_root.iterdir()):
+                return "transport-unknown registry contains an unexpected entry"
+        if registry is None:
+            if disk_entrants:
+                return "transport-unknown isolation is pending application"
+            for state in status_rows(root):
+                if state.get("transport_unknown_isolation") is not None:
+                    return "entrant has an unregistered transport-unknown isolation"
+            return None
+        if not isinstance(registry, dict) or not registry:
+            return "transport-unknown campaign registry is malformed"
+        if set(registry) != disk_entrants:
+            return "transport-unknown campaign and disk registries differ"
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        row_ids = {str(row["id"]) for row in entrants(manifest)}
+        if not set(registry).issubset(row_ids):
+            return "transport-unknown registry names an unknown entrant"
+        for entrant_id, entry in registry.items():
+            if (
+                not isinstance(entry, dict)
+                or set(entry) != {"isolation", "successor"}
+                or not isinstance(entry.get("isolation"), dict)
+                or (
+                    entry.get("successor") is not None
+                    and not isinstance(entry.get("successor"), dict)
+                )
+            ):
+                return f"transport-unknown registry entry is malformed: {entrant_id}"
+            bundle = transport_unknown_bundle(root, entrant_id)
+            allowed = {"isolation.json", "source-state.json", "source-budget-ledger.json"}
+            if entry.get("successor") is not None:
+                allowed.add("successor-run")
+            if {path.name for path in bundle.iterdir()} != allowed:
+                return f"transport-unknown bundle contains unexpected files: {entrant_id}"
+            problem = transport_unknown_isolation_failure(
+                root, campaign, entrant_id, entry["isolation"]
+            )
+            if problem:
+                return problem
+            if entry.get("successor") is not None:
+                problem = transport_unknown_successor_failure(
+                    root,
+                    campaign,
+                    entrant_id,
+                    entry["isolation"],
+                    entry["successor"],
+                )
+                if problem:
+                    return problem
+        for state in status_rows(root):
+            entrant_id = str(state["entrant"])
+            if entrant_id not in registry and (
+                state.get("status") == TRANSPORT_UNKNOWN_STATUS
+                or state.get("transport_unknown_isolation") is not None
+                or state.get("transport_unknown_successor") is not None
+            ):
+                return f"unregistered transport-unknown state exists: {entrant_id}"
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ) as error:
+        return f"transport-unknown registry cannot be verified: {error}"
+    return None
 
 
 def json_payload_sha256(value: Mapping[str, Any]) -> str:
@@ -4097,6 +4712,8 @@ def dead_pre_admission_reconciliation_plan(
         != sorted(probe_request_states)
     ):
         return None
+    if probe_request_states:
+        return None
     attempt = state.get("provider_attempt")
     launch_attempts = state.get("provider_launch_attempts")
     episode_attempts = state.get("provider_episode_attempts")
@@ -4143,6 +4760,7 @@ def dead_pre_admission_reconciliation_plan(
         or int(lifecycle.get("admitted", 0)) != 0
         or int(lifecycle.get("terminal", 0)) != 0
         or not isinstance(request_states, dict)
+        or bool(request_states)
         or any(states != ["queued"] for states in request_states.values())
         or not isinstance(request_digests, dict)
         or set(request_digests) != set(request_states)
@@ -7552,6 +8170,9 @@ def lineage_failure(
         qualification_problem = qualification_history_failure(root, campaign)
         if qualification_problem:
             return qualification_problem
+        transport_problem = transport_unknown_registry_failure(root, campaign)
+        if transport_problem:
+            return transport_problem
         lineage_pointer = campaign.get("lineage")
         receipt_at_root = root / SUPERSESSION_RECEIPT
         if not isinstance(lineage_pointer, dict):
@@ -7814,7 +8435,10 @@ def lineage_failure(
             if entrant_id in affected:
                 if state.get("lineage_role") != "infrastructure_defect_restart":
                     return f"affected entrant lineage role drifted: {entrant_id}"
-                if current_attempts < expected_attempts or current_attempts > max_episodes:
+                attempt_limit = transport_unknown_episode_limit(
+                    root, campaign, entrant_id, max_episodes
+                )
+                if current_attempts < expected_attempts or current_attempts > attempt_limit:
                     return f"affected entrant attempt count reset or exceeded: {entrant_id}"
             elif entrant_id in unstarted:
                 if state.get("lineage_role") != "unstarted_after_infrastructure_defect":
@@ -11513,7 +12137,16 @@ def require_smoke_proofs(
     for entrant_id in [pristine_entrant] if pristine_entrant is not None else []:
         if entrant_id not in raw_before:
             raise SystemExit(f"smoke raw-tree evidence has no entrant: {entrant_id}")
-        current_hash = sha256_tree_exact(root / "entrants" / entrant_id / "tree")
+        entrant_state = read_state(root, entrant_id)
+        successor_ids = transport_unknown_carried_request_ids(
+            root, campaign, entrant_id
+        )
+        current_tree = (
+            Path(str(entrant_state["tree"]))
+            if successor_ids
+            else root / "entrants" / entrant_id / "tree"
+        )
+        current_hash = sha256_tree_exact(current_tree)
         if current_hash != raw_before[entrant_id]:
             raise SystemExit(f"raw benchmark tree changed before build: {entrant_id}")
     proof_hashes = campaign.get("smoke_proof_sha256")
@@ -12029,7 +12662,12 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         telemetry.parent.mkdir(parents=True, exist_ok=True)
         telemetry.write_text("")
         manifest = load_json(Path(str(campaign["entrant_manifest"])))
-        max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
+        max_episodes = transport_unknown_episode_limit(
+            root,
+            campaign,
+            entrant_id,
+            int(manifest["spend_policy"]["max_full_episodes_per_model"]),
+        )
         previous_attempt = int(state.get("provider_episode_attempts", 0))
         episode_attempt = previous_attempt + 1
         if episode_attempt > max_episodes:
@@ -12341,6 +12979,11 @@ def launch_detached(
 def launch_supervisor(root: Path, entrant_id: str) -> subprocess.Popen[Any]:
     unit = root / "entrants" / entrant_id
     campaign = load_json(campaign_file(root))
+    state = read_state(root, entrant_id)
+    if state.get("status") not in RETRYABLE_BUILD_STATES:
+        raise SystemExit(
+            f"build supervisor cannot launch {entrant_id} from {state.get('status')}"
+        )
     def started(proc: subprocess.Popen[Any]) -> None:
         update_state(
             root,
@@ -12864,9 +13507,16 @@ def monitor_progress_observation(root: Path, entrant_id: str) -> Dict[str, Any]:
     row = manifest_row(root, entrant_id)
     state = read_state(root, entrant_id)
     unit = root / "entrants" / entrant_id
+    successor_ids = transport_unknown_carried_request_ids(
+        root, campaign, entrant_id
+    )
     expected_paths = {
-        "tree": unit / "tree",
-        "build_log": unit / "logs/build.log",
+        "tree": Path(str(state["tree"])) if successor_ids else unit / "tree",
+        "build_log": (
+            Path(str(state["build_log"]))
+            if successor_ids
+            else unit / "logs/build.log"
+        ),
     }
     for key, expected in expected_paths.items():
         if str(state.get(key)) != str(expected):
@@ -17011,6 +17661,8 @@ def post_smoke_coordinator_repair_failure(
         "runtime_source_branch",
     }
     if pointer is None and lineage_pointer is None:
+        if (root / POST_SMOKE_COORDINATOR_REPAIR_PATH).exists():
+            return "post-smoke coordinator repair is pending application"
         if any(field in campaign for field in repair_fields):
             return "campaign has unproven post-smoke runtime fields"
         try:
@@ -17458,8 +18110,18 @@ def post_smoke_runtime_quiescence_failure(
             (
                 f"build {entrant_id}",
                 read_state(root, entrant_id),
-                (("supervisor_pid", "supervisor_identity"), ("goose_pid", "goose_identity")),
-                ("supervisor_pgid", "process_group"),
+                (
+                    ("supervisor_pid", "supervisor_identity"),
+                    ("goose_pid", "goose_identity"),
+                    ("score_pid", "score_identity"),
+                    ("publisher_pid", "publisher_identity"),
+                ),
+                (
+                    "supervisor_pgid",
+                    "process_group",
+                    "score_pgid",
+                    "publisher_pgid",
+                ),
             )
         )
         runtime_records.append(
@@ -17473,11 +18135,57 @@ def post_smoke_runtime_quiescence_failure(
     for name, state, processes, groups in runtime_records:
         for pid_key, identity_key in processes:
             if process_alive(state.get(pid_key), state.get(identity_key)):
-                return f"post-smoke coordinator repair {name} process is alive"
+                process_name = (
+                    name
+                    if pid_key == "pid"
+                    else f"{name} "
+                    + {
+                        "score_pid": "scorer",
+                        "publisher_pid": "publisher",
+                    }.get(
+                        pid_key,
+                        pid_key.removesuffix("_pid").replace("_", " "),
+                    )
+                )
+                return (
+                    f"post-smoke coordinator repair {process_name} process is alive"
+                )
         for group_key in groups:
             group = int(state.get(group_key) or 0)
             if group > 1 and process_group_members(group):
                 return f"post-smoke coordinator repair {name} group is alive"
+        if name.startswith("build "):
+            score_inventory = refreshed_process_inventory(
+                state.get("score_process_inventory")
+            )
+            if score_inventory:
+                return f"post-smoke coordinator repair {name} scorer is alive"
+            score_marker = state.get("score_ownership_marker")
+            if score_marker is not None:
+                score_marked, score_scan_proven = scorer_marker_process_records(
+                    score_marker
+                )
+                if not score_scan_proven:
+                    return (
+                        f"post-smoke coordinator repair {name} scorer ownership "
+                        "cannot be proven quiescent"
+                    )
+                if score_marked:
+                    return f"post-smoke coordinator repair {name} scorer is alive"
+            publisher_marker = state.get("publisher_ownership_marker")
+            if publisher_marker is not None:
+                publisher_marked, publisher_scan_proven = (
+                    ownership_marker_process_records(
+                        PUBLISHER_OWNERSHIP_ENV, publisher_marker
+                    )
+                )
+                if not publisher_scan_proven:
+                    return (
+                        f"post-smoke coordinator repair {name} publisher ownership "
+                        "cannot be proven quiescent"
+                    )
+                if publisher_marked:
+                    return f"post-smoke coordinator repair {name} publisher is alive"
     busy = [
         str(row["vendor_port"])
         for row in rows
@@ -17486,6 +18194,543 @@ def post_smoke_runtime_quiescence_failure(
     if busy:
         return "post-smoke coordinator repair vendor ports are occupied: " + ", ".join(busy)
     return None
+
+
+def transport_unknown_fault(_stage: str) -> None:
+    return None
+
+
+def transport_unknown_quiescence_failure(
+    root: Path, campaign: Mapping[str, Any]
+) -> str | None:
+    problem = post_smoke_runtime_quiescence_failure(root, campaign)
+    if problem:
+        return problem.replace(
+            "post-smoke coordinator repair", "transport-unknown transition"
+        )
+    return None
+
+
+def apply_transport_unknown_isolation(
+    root: Path, entrant_id: str
+) -> Dict[str, Any]:
+    campaign = load_json(campaign_file(root))
+    bundle = transport_unknown_bundle(root, entrant_id)
+    receipt_path = bundle / "isolation.json"
+    source_state_path = bundle / "source-state.json"
+    source_ledger_path = bundle / "source-budget-ledger.json"
+    if any(
+        path.is_symlink() or not path.is_file()
+        for path in (receipt_path, source_state_path, source_ledger_path)
+    ):
+        raise SystemExit("transport-unknown isolation bundle is incomplete")
+    receipt = load_json(receipt_path)
+    if (
+        receipt.get("root") != str(root.resolve())
+        or receipt.get("campaign_id") != campaign.get("campaign_id")
+        or receipt.get("entrant") != entrant_id
+        or sha256_file(source_state_path) != receipt.get("source_state_sha256")
+        or sha256_file(source_ledger_path) != receipt.get("source_ledger_sha256")
+    ):
+        raise SystemExit("transport-unknown isolation bundle belongs to another source")
+    pointer = transport_unknown_pointer(root, entrant_id, "isolation")
+    state = read_state(root, entrant_id)
+    if state.get("transport_unknown_isolation") != pointer:
+        if sha256_file(state_file(root, entrant_id)) != receipt.get(
+            "source_state_sha256"
+        ):
+            raise SystemExit(
+                "transport-unknown isolation state changed before application"
+            )
+        update_state(
+            root,
+            entrant_id,
+            status=TRANSPORT_UNKNOWN_STATUS,
+            failure=(
+                "provider transport is unproven; the exact reservation remains "
+                "budget exposure and this entrant cannot retry, score, or publish"
+            ),
+            transport_unknown_isolation=pointer,
+            transport_unknown_successor=None,
+            transport_unknown_request_ids=receipt["request_ids"],
+            budget_outstanding_request_ids=receipt["request_ids"],
+            supervisor_pid=None,
+            supervisor_pgid=None,
+            supervisor_identity=None,
+            goose_pid=None,
+            process_group=None,
+            goose_identity=None,
+            goose_process_inventory=[],
+        )
+    transport_unknown_fault("isolation_state_committed")
+    current = load_json(campaign_file(root))
+    registry = current.get("transport_unknown")
+    expected_entry = {"isolation": pointer, "successor": None}
+    if registry is None:
+        registry = {}
+    if not isinstance(registry, dict):
+        raise SystemExit("transport-unknown campaign registry is malformed")
+    existing = registry.get(entrant_id)
+    if existing is None:
+        update_campaign(
+            root,
+            transport_unknown={**registry, entrant_id: expected_entry},
+        )
+    elif existing != expected_entry:
+        raise SystemExit("transport-unknown campaign entry differs")
+    transport_unknown_fault("isolation_campaign_committed")
+    problem = lineage_failure(root)
+    if problem:
+        raise SystemExit("transport-unknown isolation failed validation: " + problem)
+    return load_json(campaign_file(root))
+
+
+def isolate_transport_unknown(root: Path, entrant_id: str) -> Dict[str, Any]:
+    root = root.resolve()
+    with contextlib.ExitStack() as locks:
+        for relative in (
+            "locks/manager-launch.claim",
+            "locks/supersession.claim",
+            "locks/monitor-launch.claim",
+            "locks/resume.claim",
+            "locks/smoke-launch.claim",
+            "locks/smoke-run.claim",
+            "locks/transport-unknown.claim",
+        ):
+            if not locks.enter_context(exclusive_claim(root / relative, blocking=True)):
+                raise SystemExit("cannot claim transport-unknown isolation boundary")
+        for relative in ("locks/manager-run.claim", "locks/monitor-run.claim"):
+            if not locks.enter_context(exclusive_claim(root / relative)):
+                raise SystemExit(
+                    "transport-unknown isolation runtime claim is held: " + relative
+                )
+        campaign = load_json(campaign_file(root))
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        for lane in sorted({str(row["provider_lane"]) for row in entrants(manifest)}):
+            locks.enter_context(provider_lane(root, lane))
+        ledger_path = Path(str(campaign["budget_ledger"]))
+        if not locks.enter_context(
+            exclusive_claim(ledger_path.with_suffix(".lock"), blocking=True)
+        ):
+            raise SystemExit("cannot claim transport-unknown budget boundary")
+        bundle = transport_unknown_bundle(root, entrant_id)
+        if bundle.exists():
+            return apply_transport_unknown_isolation(root, entrant_id)
+        require_lineage(root)
+        campaign = load_json(campaign_file(root))
+        if campaign.get("status") != "ATTENTION":
+            raise SystemExit(
+                "transport-unknown isolation requires an ATTENTION campaign"
+            )
+        row = manifest_row(root, entrant_id)
+        state = read_state(root, entrant_id)
+        if state.get("status") != "BUILD_RUNNING":
+            raise SystemExit(
+                "transport-unknown isolation requires an interrupted BUILD_RUNNING entrant"
+            )
+        quiescence_problem = transport_unknown_quiescence_failure(root, campaign)
+        if quiescence_problem:
+            raise SystemExit(quiescence_problem)
+        if state.get("score") is not None or state.get("verdict") not in {None, ""}:
+            raise SystemExit("scored evidence cannot be transport-isolated")
+        lifecycle_path = Path(str(state.get("provider_lifecycle", "")))
+        lifecycle = lifecycle_summary(
+            lifecycle_path,
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        request_states = lifecycle.get("request_states")
+        request_ids = (
+            sorted(request_states)
+            if isinstance(request_states, dict)
+            else []
+        )
+        if (
+            not request_ids
+            or any(request_states[request_id] != ["queued"] for request_id in request_ids)
+            or lifecycle.get("admitted") != 0
+            or lifecycle.get("terminal") != 0
+            or lifecycle.get("malformed_lines") != 0
+            or lifecycle.get("transition_errors")
+        ):
+            raise SystemExit(
+                "transport-unknown isolation requires an exact queued-only lifecycle"
+            )
+        ledger = load_json(ledger_path)
+        config = load_json(Path(str(campaign["budget_config"])))
+        ledger_problem = budget_ledger_failure(ledger, config)
+        if ledger_problem:
+            raise SystemExit(ledger_problem)
+        reservations = {
+            request_id: ledger["outstanding"].get(request_id)
+            for request_id in request_ids
+        }
+        if any(
+            not isinstance(reservation, dict)
+            or reservation.get("provider") != row["provider"]
+            or reservation.get("model") != row["model"]
+            for reservation in reservations.values()
+        ):
+            raise SystemExit(
+                "queued transport lifecycle and outstanding reservations differ"
+            )
+        entrant_outstanding, outstanding_problem = entrant_outstanding_reservations(
+            campaign, row
+        )
+        if outstanding_problem or entrant_outstanding != request_ids:
+            raise SystemExit(
+                "transport-unknown isolation requires the exact entrant reserve set"
+            )
+        registry_root = root / TRANSPORT_UNKNOWN_PATH
+        registry_root.mkdir(parents=True, exist_ok=True)
+        staging = Path(
+            tempfile.mkdtemp(prefix=f".{entrant_id}-isolation-", dir=registry_root)
+        )
+        try:
+            atomic_copy(state_file(root, entrant_id), staging / "source-state.json", 0o600)
+            atomic_copy(ledger_path, staging / "source-budget-ledger.json", 0o600)
+            transition_id = sha256_bytes(
+                json.dumps(
+                    {
+                        "kind": "provider_transport_unknown_isolation",
+                        "root": str(root),
+                        "campaign_id": campaign["campaign_id"],
+                        "entrant": entrant_id,
+                        "source_state_sha256": sha256_file(staging / "source-state.json"),
+                        "source_ledger_sha256": sha256_file(
+                            staging / "source-budget-ledger.json"
+                        ),
+                        "request_ids": request_ids,
+                    },
+                    sort_keys=True,
+                ).encode()
+            )
+            receipt = {
+                "schema_version": TRANSPORT_UNKNOWN_SCHEMA,
+                "kind": "provider_transport_unknown_isolation",
+                "transition_id": transition_id,
+                "isolated_at": utc_now(),
+                "root": str(root),
+                "campaign_id": campaign["campaign_id"],
+                "entrant": entrant_id,
+                "provider": row["provider"],
+                "model": row["model"],
+                "source_campaign_sha256": sha256_file(campaign_file(root)),
+                "source_state_sha256": sha256_file(staging / "source-state.json"),
+                "source_ledger_sha256": sha256_file(
+                    staging / "source-budget-ledger.json"
+                ),
+                "source_state_copy_sha256": sha256_file(
+                    staging / "source-state.json"
+                ),
+                "source_ledger_copy_sha256": sha256_file(
+                    staging / "source-budget-ledger.json"
+                ),
+                "lifecycle_path": str(lifecycle_path),
+                "lifecycle_sha256": sha256_file(lifecycle_path),
+                "request_ids": request_ids,
+                "request_event_sha256": lifecycle["request_event_sha256"],
+                "reservations": reservations,
+                "reservations_sha256": canonical_json_sha256(reservations),
+                "provider_episode_attempts": int(
+                    state.get("provider_episode_attempts", 0)
+                ),
+                "provider_launch_attempts": int(
+                    state.get("provider_launch_attempts", 0)
+                ),
+                "settled_sha256": canonical_json_sha256(ledger["settled"]),
+                "spent_upper_bound": ledger["spent_upper_bound"],
+                "provider_spent_upper_bound": ledger[
+                    "provider_spent_upper_bound"
+                ],
+                "scores_sha256": optional_artifact_tree_sha256(
+                    root / "scores" / entrant_id
+                ),
+                "publish_sha256": optional_artifact_tree_sha256(
+                    root / "publish" / entrant_id
+                ),
+                "transport_never_left_proven": False,
+            }
+            atomic_json(staging / "isolation.json", receipt)
+            fsync_directory(staging)
+            if (
+                sha256_file(state_file(root, entrant_id))
+                != receipt["source_state_sha256"]
+                or sha256_file(ledger_path) != receipt["source_ledger_sha256"]
+            ):
+                raise SystemExit(
+                    "transport-unknown evidence changed while staging isolation"
+                )
+            os.replace(staging, bundle)
+            fsync_directory(registry_root)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+        transport_unknown_fault("isolation_receipt_committed")
+        return apply_transport_unknown_isolation(root, entrant_id)
+
+
+def apply_transport_unknown_successor(
+    root: Path, entrant_id: str
+) -> Dict[str, Any]:
+    campaign = load_json(campaign_file(root))
+    entry = transport_unknown_entry(campaign, entrant_id)
+    if entry is None or not isinstance(entry.get("isolation"), dict):
+        raise SystemExit("transport-unknown successor has no isolation ancestry")
+    workspace = transport_unknown_bundle(root, entrant_id) / "successor-run"
+    receipt_path = workspace / "receipt.json"
+    source_state_path = workspace / "source-state.json"
+    source_ledger_path = workspace / "source-budget-ledger.json"
+    if any(
+        path.is_symlink() or not path.is_file()
+        for path in (receipt_path, source_state_path, source_ledger_path)
+    ):
+        raise SystemExit("transport-unknown successor bundle is incomplete")
+    receipt = load_json(receipt_path)
+    pointer = transport_unknown_pointer(root, entrant_id, "successor")
+    if (
+        receipt.get("root") != str(root.resolve())
+        or receipt.get("campaign_id") != campaign.get("campaign_id")
+        or receipt.get("entrant") != entrant_id
+        or receipt.get("isolation_transition_id")
+        != entry["isolation"].get("transition_id")
+    ):
+        raise SystemExit("transport-unknown successor belongs to another isolation")
+    state = read_state(root, entrant_id)
+    if state.get("transport_unknown_successor") != pointer:
+        if sha256_file(state_file(root, entrant_id)) != receipt.get(
+            "source_state_sha256"
+        ):
+            raise SystemExit(
+                "transport-unknown isolated state changed before successor application"
+            )
+        update_state(
+            root,
+            entrant_id,
+            status="PLANNED",
+            failure=None,
+            tree=receipt["tree"],
+            profile=receipt["profile"],
+            build_log=receipt["build_log"],
+            vendor_trace=receipt["vendor_trace"],
+            campaign_root=str(root),
+            budget_config=str(campaign["budget_config"]),
+            budget_ledger=str(campaign["budget_ledger"]),
+            transport_unknown_successor=pointer,
+            transport_unknown_carried_request_ids=receipt["carried_request_ids"],
+            admitted_requests=0,
+            provider_terminal_requests=0,
+            lifecycle_events=0,
+            lifecycle_malformed_lines=0,
+            lifecycle_transition_errors=[],
+            lifecycle_ambiguous_request_ids=[],
+            budget_outstanding_request_ids=[],
+            supervisor_pid=None,
+            supervisor_pgid=None,
+            supervisor_identity=None,
+            goose_pid=None,
+            process_group=None,
+            goose_identity=None,
+            goose_process_inventory=[],
+            started_at=None,
+            finished_at=None,
+            exit_code=None,
+            elapsed_seconds=None,
+            prompt_sha256=None,
+            command=None,
+            raw_tree_sha256=None,
+        )
+    transport_unknown_fault("successor_state_committed")
+    current = load_json(campaign_file(root))
+    registry = current.get("transport_unknown")
+    if not isinstance(registry, dict) or entrant_id not in registry:
+        raise SystemExit("transport-unknown successor campaign ancestry disappeared")
+    expected_entry = {**dict(registry[entrant_id]), "successor": pointer}
+    if registry[entrant_id].get("successor") is None:
+        update_campaign(
+            root,
+            transport_unknown={**registry, entrant_id: expected_entry},
+        )
+    elif registry[entrant_id] != expected_entry:
+        raise SystemExit("transport-unknown successor campaign entry differs")
+    transport_unknown_fault("successor_campaign_committed")
+    problem = lineage_failure(root)
+    if problem:
+        raise SystemExit("transport-unknown successor failed validation: " + problem)
+    return load_json(campaign_file(root))
+
+
+def adjudicate_transport_unknown_successor(
+    root: Path, entrant_id: str
+) -> Dict[str, Any]:
+    root = root.resolve()
+    with contextlib.ExitStack() as locks:
+        for relative in (
+            "locks/manager-launch.claim",
+            "locks/supersession.claim",
+            "locks/monitor-launch.claim",
+            "locks/resume.claim",
+            "locks/smoke-launch.claim",
+            "locks/smoke-run.claim",
+            "locks/transport-unknown.claim",
+        ):
+            if not locks.enter_context(exclusive_claim(root / relative, blocking=True)):
+                raise SystemExit("cannot claim transport-unknown successor boundary")
+        for relative in ("locks/manager-run.claim", "locks/monitor-run.claim"):
+            if not locks.enter_context(exclusive_claim(root / relative)):
+                raise SystemExit(
+                    "transport-unknown successor runtime claim is held: " + relative
+                )
+        campaign = load_json(campaign_file(root))
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        for lane in sorted({str(row["provider_lane"]) for row in entrants(manifest)}):
+            locks.enter_context(provider_lane(root, lane))
+        ledger_path = Path(str(campaign["budget_ledger"]))
+        if not locks.enter_context(
+            exclusive_claim(ledger_path.with_suffix(".lock"), blocking=True)
+        ):
+            raise SystemExit("cannot claim transport-unknown successor budget boundary")
+        workspace = transport_unknown_bundle(root, entrant_id) / "successor-run"
+        if workspace.exists():
+            return apply_transport_unknown_successor(root, entrant_id)
+        require_lineage(root)
+        campaign = load_json(campaign_file(root))
+        if campaign.get("status") != "ATTENTION":
+            raise SystemExit(
+                "transport-unknown successor requires an ATTENTION campaign"
+            )
+        quiescence_problem = transport_unknown_quiescence_failure(root, campaign)
+        if quiescence_problem:
+            raise SystemExit(quiescence_problem)
+        state = read_state(root, entrant_id)
+        if state.get("status") != TRANSPORT_UNKNOWN_STATUS:
+            raise SystemExit(
+                "transport-unknown successor requires an isolated entrant"
+            )
+        for other in status_rows(root):
+            if (
+                other["entrant"] != entrant_id
+                and other["status"] not in BUILD_SUCCESS_STATES
+            ):
+                raise SystemExit(
+                    "transport-unknown successor waits for every unrelated entrant "
+                    "to finish successfully"
+                )
+        row = manifest_row(root, entrant_id)
+        ledger = load_json(ledger_path)
+        config = load_json(Path(str(campaign["budget_config"])))
+        ledger_problem = budget_ledger_failure(ledger, config)
+        if ledger_problem:
+            raise SystemExit(ledger_problem)
+        reserve_problem = replacement_reserve_failure(ledger, config, [row])
+        if reserve_problem:
+            raise SystemExit(reserve_problem)
+        entry = transport_unknown_entry(campaign, entrant_id)
+        assert entry is not None
+        isolation_receipt = load_json(
+            root / str(entry["isolation"]["path"])
+        )
+        request_ids = isolation_receipt["request_ids"]
+        reservations = isolation_receipt["reservations"]
+        if any(
+            ledger["outstanding"].get(request_id) != reservations[request_id]
+            for request_id in request_ids
+        ):
+            raise SystemExit("transport-unknown reserve changed before adjudication")
+        bundle = transport_unknown_bundle(root, entrant_id)
+        staging = Path(
+            tempfile.mkdtemp(prefix=".successor-run-", dir=bundle)
+        )
+        try:
+            (staging / "tree").mkdir()
+            (staging / "profile").mkdir()
+            (staging / "logs").mkdir()
+            atomic_copy(state_file(root, entrant_id), staging / "source-state.json", 0o600)
+            atomic_copy(ledger_path, staging / "source-budget-ledger.json", 0o600)
+            transition_id = sha256_bytes(
+                json.dumps(
+                    {
+                        "kind": "provider_transport_unknown_successor",
+                        "root": str(root),
+                        "campaign_id": campaign["campaign_id"],
+                        "entrant": entrant_id,
+                        "isolation_transition_id": entry["isolation"][
+                            "transition_id"
+                        ],
+                        "source_state_sha256": sha256_file(
+                            staging / "source-state.json"
+                        ),
+                        "source_ledger_sha256": sha256_file(
+                            staging / "source-budget-ledger.json"
+                        ),
+                    },
+                    sort_keys=True,
+                ).encode()
+            )
+            target = bundle / "successor-run"
+            receipt = {
+                "schema_version": TRANSPORT_UNKNOWN_SCHEMA,
+                "kind": "provider_transport_unknown_successor",
+                "transition_id": transition_id,
+                "adjudicated_at": utc_now(),
+                "adjudication": "carry_as_budget_exposure",
+                "root": str(root),
+                "campaign_id": campaign["campaign_id"],
+                "entrant": entrant_id,
+                "provider": row["provider"],
+                "model": row["model"],
+                "isolation_transition_id": entry["isolation"]["transition_id"],
+                "isolation_receipt_sha256": entry["isolation"]["sha256"],
+                "source_state_sha256": sha256_file(staging / "source-state.json"),
+                "source_ledger_sha256": sha256_file(
+                    staging / "source-budget-ledger.json"
+                ),
+                "carried_request_ids": request_ids,
+                "carried_reservations": reservations,
+                "carried_reservations_sha256": canonical_json_sha256(reservations),
+                "provider_episode_attempts": int(
+                    state["provider_episode_attempts"]
+                ),
+                "successor_episode_limit": int(
+                    state["provider_episode_attempts"]
+                )
+                + 1,
+                "workspace_root": str(target),
+                "tree": str(target / "tree"),
+                "profile": str(target / "profile"),
+                "build_log": str(target / "logs/build.log"),
+                "vendor_trace": str(target / "vendor-trace-build.jsonl"),
+                "settled_sha256": canonical_json_sha256(ledger["settled"]),
+                "spent_upper_bound": ledger["spent_upper_bound"],
+                "provider_spent_upper_bound": ledger[
+                    "provider_spent_upper_bound"
+                ],
+                "scores_sha256": optional_artifact_tree_sha256(
+                    root / "scores" / entrant_id
+                ),
+                "publish_sha256": optional_artifact_tree_sha256(
+                    root / "publish" / entrant_id
+                ),
+                "reservation_released": False,
+                "settled_or_spend_rewritten": False,
+            }
+            atomic_json(staging / "receipt.json", receipt)
+            fsync_directory(staging)
+            if (
+                sha256_file(state_file(root, entrant_id))
+                != receipt["source_state_sha256"]
+                or sha256_file(ledger_path) != receipt["source_ledger_sha256"]
+            ):
+                raise SystemExit(
+                    "transport-unknown evidence changed while staging successor"
+                )
+            os.replace(staging, workspace)
+            fsync_directory(bundle)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+        transport_unknown_fault("successor_receipt_committed")
+        return apply_transport_unknown_successor(root, entrant_id)
 
 
 def repair_post_smoke_coordinator(
@@ -17526,6 +18771,16 @@ def repair_post_smoke_coordinator(
             )
             if not claimed:
                 raise SystemExit("cannot claim post-smoke coordinator repair boundary")
+        for relative in (
+            "locks/manager-run.claim",
+            "locks/monitor-run.claim",
+        ):
+            claimed = locks.enter_context(exclusive_claim(root / relative))
+            if not claimed:
+                raise SystemExit(
+                    "post-smoke coordinator repair runtime claim is held: "
+                    + relative
+                )
         campaign = load_json(campaign_file(root))
         manifest = load_json(Path(str(campaign["entrant_manifest"])))
         for lane in sorted({str(row["provider_lane"]) for row in entrants(manifest)}):
@@ -18025,7 +19280,12 @@ def durable_smoke(root: Path, poll_seconds: float = 1.0) -> int:
 
 
 def clone_for_score(root: Path, entrant_id: str, attempt: int) -> Path:
-    raw = root / "entrants" / entrant_id / "tree"
+    state_path = state_file(root, entrant_id)
+    raw = (
+        Path(str(read_state(root, entrant_id)["tree"]))
+        if state_path.is_file() and not state_path.is_symlink()
+        else root / "entrants" / entrant_id / "tree"
+    )
     hash_tree(raw)
     dest = root / "scores" / entrant_id / f"attempt-{attempt}" / "tree"
     if dest.exists():
@@ -18412,10 +19672,18 @@ def manager_restart_mismatch(root: Path) -> str | None:
             and state.get("provider_episode_attempts")
             == reconciliation.get("episode_attempt_after")
         )
+        pending_transport_successor = bool(
+            status == "PLANNED"
+            and transport_unknown_carried_request_ids(root, campaign, entrant_id)
+        )
         reasons = []
         if lifecycle.get("admitted"):
             reasons.append(f"{lifecycle['admitted']} provider request(s) admitted")
-        if lifecycle_failure(lifecycle) and not reconciliation_is_current:
+        if (
+            lifecycle_failure(lifecycle)
+            and not reconciliation_is_current
+            and not pending_transport_successor
+        ):
             reasons.append(f"lifecycle is ambiguous: {lifecycle_failure(lifecycle)}")
         if outstanding:
             reasons.append(
@@ -18426,7 +19694,10 @@ def manager_restart_mismatch(root: Path) -> str | None:
         if accounting_error:
             reasons.append(accounting_error)
         attempts = int(state.get("provider_episode_attempts", 0))
-        if could_relaunch and attempts >= max_episodes:
+        episode_limit = transport_unknown_episode_limit(
+            root, campaign, entrant_id, max_episodes
+        )
+        if could_relaunch and attempts >= episode_limit:
             reasons.append("provider episode allowance is exhausted")
         if reasons:
             return f"{entrant_id} is not pre-admission restart-safe: " + "; ".join(
@@ -18645,6 +19916,12 @@ def normalize_interrupted_builds(
             interrupted_status, lifecycle
         ) or reconciliation is not None
         lifecycle_problem = lifecycle_failure(lifecycle)
+        request_states = lifecycle.get("request_states")
+        queued_transport_unproven = bool(
+            reconciliation is None
+            and isinstance(request_states, dict)
+            and any(states == ["queued"] for states in request_states.values())
+        )
         safe_pre_admission = bool(
             topology_clean
             and not outstanding
@@ -18658,7 +19935,10 @@ def normalize_interrupted_builds(
             if reconciliation is not None
             else int(state.get("provider_episode_attempts", 0))
         )
-        if safe_pre_admission and attempts < max_episodes:
+        episode_limit = transport_unknown_episode_limit(
+            root, campaign, entrant_id, max_episodes
+        )
+        if safe_pre_admission and attempts < episode_limit:
             update_state(
                 root,
                 entrant_id,
@@ -18696,6 +19976,11 @@ def normalize_interrupted_builds(
             )
         if lifecycle_problem and reconciliation is None:
             reasons.append(f"lifecycle is ambiguous: {lifecycle_problem}")
+        if queued_transport_unproven:
+            reasons.append(
+                "queued provider request has no independent proof that transport "
+                "never left"
+            )
         if not pre_admission_proven:
             reasons.append("pre-admission termination is not explicitly proven")
         if outstanding:
@@ -18708,11 +19993,15 @@ def normalize_interrupted_builds(
             reasons.append(accounting_error)
         if not topology_clean:
             reasons.append("owned provider process topology survived cleanup")
-        if safe_pre_admission and attempts >= max_episodes:
+        if safe_pre_admission and attempts >= episode_limit:
             reasons.append("provider episode allowance is exhausted")
         failure = "; ".join(reasons)
         changes: Dict[str, Any] = {
-            "status": "INCOMPLETE",
+            "status": (
+                interrupted_status
+                if queued_transport_unproven
+                else "INCOMPLETE"
+            ),
             "failure": failure,
             f"{normalized_field_prefix}_normalized_from": interrupted_status,
             f"{normalized_field_prefix}_normalized_at": utc_now(),
@@ -18921,7 +20210,13 @@ def resume_campaign_with_runtime_claims(root: Path) -> int:
                     reasons.append(accounting_error)
                 if not topology_clean:
                     reasons.append("owned provider process topology survived cleanup")
-                if attempts >= max_episodes:
+                episode_limit = transport_unknown_episode_limit(
+                    root,
+                    campaign,
+                    str(state["entrant"]),
+                    max_episodes,
+                )
+                if attempts >= episode_limit:
                     reasons.append("provider episode allowance is exhausted")
                 if reasons:
                     failure = (
@@ -23720,6 +25015,13 @@ def main() -> int:
     p_post_smoke_repair = sub.add_parser("repair-post-smoke-coordinator")
     root_arg(p_post_smoke_repair)
 
+    p_transport_isolate = sub.add_parser("isolate-transport-unknown")
+    root_arg(p_transport_isolate)
+    p_transport_isolate.add_argument("--entrant", required=True)
+    p_transport_successor = sub.add_parser("adjudicate-transport-successor")
+    root_arg(p_transport_successor)
+    p_transport_successor.add_argument("--entrant", required=True)
+
     p_gated_exec = sub.add_parser("_gated_exec")
     p_gated_exec.add_argument("--gate", type=Path, required=True)
     p_gated_exec.add_argument("--token", required=True)
@@ -23851,6 +25153,20 @@ def main() -> int:
         print(
             f"repaired post-smoke runtime coordinator for {value['campaign_id']} "
             f"at {args.root.resolve()}"
+        )
+        return 0
+    if args.command == "isolate-transport-unknown":
+        value = isolate_transport_unknown(args.root, args.entrant)
+        print(
+            f"isolated transport-unknown entrant {args.entrant} in "
+            f"{value['campaign_id']}"
+        )
+        return 0
+    if args.command == "adjudicate-transport-successor":
+        value = adjudicate_transport_unknown_successor(args.root, args.entrant)
+        print(
+            f"authorized carried-exposure successor for {args.entrant} in "
+            f"{value['campaign_id']}"
         )
         return 0
     if args.command == "_gated_exec":
