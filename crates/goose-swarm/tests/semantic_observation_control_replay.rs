@@ -236,7 +236,10 @@ impl AdmittedSemanticObservationReviewer for ContinueReviewer {
             request.admission.source.kind,
             SourceRevisionKind::Trace { .. }
         ));
-        assert!(request.provider_request_id.ends_with(":provider:0"));
+        assert!(request
+            .provider_request_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("engine-provider-request:")));
         Ok(continue_reply(&request))
     }
 }
@@ -410,7 +413,10 @@ async fn one_trace_revision_calls_the_provider_once_and_rejects_replays_before_t
         }
     });
     let receipt = first.wait().await.unwrap();
-    assert_eq!(receipt.observation.action(), SemanticJudgeAction::Continue);
+    assert_eq!(
+        receipt.observation().action(),
+        SemanticJudgeAction::Continue
+    );
     assert!(!receipt.has_intervention_authority());
     let rejected = replay.await.unwrap().unwrap();
     match rejected {
@@ -492,7 +498,7 @@ async fn identical_semantic_revisions_in_separate_run_or_phase_scopes_do_not_ded
             }
         };
         let receipt = handle.wait().await.unwrap();
-        assert!(!receipt.observation.stale);
+        assert!(!receipt.observation().stale);
     }
 
     assert_eq!(reviewer.calls.load(Ordering::SeqCst), 3);
@@ -526,7 +532,7 @@ async fn a_new_phase_epoch_supersedes_every_revision_from_the_prior_epoch() {
             SemanticObservationAdmissionSubmission::Rejected(_) => panic!("new epoch rejected"),
         };
         let receipt = handle.wait().await.unwrap();
-        assert!(!receipt.observation.stale);
+        assert!(!receipt.observation().stale);
     }
 
     let rollback = scoped_snapshot(scope, 0, "same-task", 101, "late old epoch");
@@ -669,9 +675,9 @@ async fn newer_trace_supersedes_an_in_flight_result_without_overlapping_calls() 
     reviewer.release_first.notify_one();
 
     let old_receipt = old_handle.wait().await.unwrap();
-    assert!(old_receipt.observation.stale);
+    assert!(old_receipt.observation().stale);
     assert_eq!(
-        old_receipt.observation.action(),
+        old_receipt.observation().action(),
         SemanticJudgeAction::Abstain
     );
     let new_handle = match newer.await.unwrap().unwrap() {
@@ -679,9 +685,9 @@ async fn newer_trace_supersedes_an_in_flight_result_without_overlapping_calls() 
         SemanticObservationAdmissionSubmission::Rejected(_) => panic!("new review rejected"),
     };
     let new_receipt = new_handle.wait().await.unwrap();
-    assert!(!new_receipt.observation.stale);
+    assert!(!new_receipt.observation().stale);
     assert_eq!(
-        new_receipt.observation.action(),
+        new_receipt.observation().action(),
         SemanticJudgeAction::Continue
     );
     assert_eq!(reviewer.calls.load(Ordering::SeqCst), 2);
@@ -922,8 +928,8 @@ async fn provider_preflight_rejection_records_not_started_without_calling_the_ad
 
     assert_eq!(reviewer.preflights.load(Ordering::SeqCst), 1);
     assert_eq!(reviewer.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(receipt.local_completion, LocalCompletionKind::Error);
-    assert_eq!(receipt.observation.action(), SemanticJudgeAction::Abstain);
+    assert_eq!(receipt.local_completion(), LocalCompletionKind::Error);
+    assert_eq!(receipt.observation().action(), SemanticJudgeAction::Abstain);
     assert_eq!(event_count(&sink, "broker_provider_request_queued"), 0);
     assert_eq!(event_count(&sink, "broker_provider_request_permitted"), 0);
     assert_eq!(event_count(&sink, "broker_provider_not_started"), 1);
@@ -955,11 +961,11 @@ async fn definitive_provider_failure_records_failed_terminal_and_releases_admiss
         SemanticObservationAdmissionSubmission::Rejected(_) => panic!("failure review rejected"),
     };
     let receipt = handle.wait().await.unwrap();
-    assert_eq!(receipt.local_completion, LocalCompletionKind::Error);
-    assert_eq!(receipt.observation.action(), SemanticJudgeAction::Abstain);
+    assert_eq!(receipt.local_completion(), LocalCompletionKind::Error);
+    assert_eq!(receipt.observation().action(), SemanticJudgeAction::Abstain);
     assert_eq!(
         receipt
-            .observation
+            .observation()
             .decision
             .failure()
             .map(|failure| &failure.kind),
@@ -987,7 +993,7 @@ async fn definitive_provider_failure_records_failed_terminal_and_releases_admiss
 }
 
 #[tokio::test]
-async fn unresolved_provider_failure_and_panic_keep_the_physical_claim() {
+async fn unresolved_provider_failure_holds_claim_but_owned_panic_terminals_exactly() {
     for (scope, panic, unresolved) in [
         ("semantic-provider-unresolved", false, true),
         ("semantic-provider-panic", true, false),
@@ -1005,7 +1011,7 @@ async fn unresolved_provider_failure_and_panic_keep_the_physical_claim() {
             .submit(
                 snapshot("detail-unresolved", 31, "provider lifecycle lost"),
                 SemanticObservationAdmissionPolicy::default(),
-                reviewer,
+                reviewer.clone(),
             )
             .await
             .unwrap()
@@ -1015,13 +1021,22 @@ async fn unresolved_provider_failure_and_panic_keep_the_physical_claim() {
                 panic!("unresolved review rejected")
             }
         };
-        assert!(matches!(
-            handle.wait().await,
-            Err(SemanticObservationAdmissionError::ProviderLifecycleUnresolved { .. })
-        ));
-        assert_eq!(event_count(&sink, "broker_provider_terminal_observed"), 0);
-        assert_eq!(event_count(&sink, "broker_admission_released"), 0);
-        assert_eq!(control.occupancy().await, (0, 1));
+        if unresolved {
+            assert!(matches!(
+                handle.wait().await,
+                Err(SemanticObservationAdmissionError::ProviderLifecycleUnresolved { .. })
+            ));
+            assert_eq!(event_count(&sink, "broker_provider_terminal_observed"), 0);
+            assert_eq!(event_count(&sink, "broker_admission_released"), 0);
+            assert_eq!(control.occupancy().await, (0, 1));
+        } else {
+            let receipt = handle.wait().await.unwrap();
+            assert_eq!(receipt.local_completion(), LocalCompletionKind::Error);
+            assert_eq!(event_count(&sink, "broker_provider_terminal_observed"), 1);
+            assert_eq!(event_count(&sink, "broker_admission_released"), 1);
+            assert_eq!(control.occupancy().await, (0, 0));
+        }
+        assert_eq!(reviewer.calls.load(Ordering::SeqCst), 1);
     }
 }
 

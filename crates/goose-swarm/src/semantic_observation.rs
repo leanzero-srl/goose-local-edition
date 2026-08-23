@@ -484,7 +484,7 @@ pub fn parse_semantic_observation_reply(
     ParsedSemanticObservation::Parsed { reply }
 }
 
-fn validate_reply(
+pub(crate) fn validate_reply(
     snapshot: &SealedSemanticObservationSnapshot,
     reply: &SemanticObservationReply,
 ) -> Result<()> {
