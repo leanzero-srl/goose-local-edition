@@ -248,6 +248,8 @@ MONITOR_PROGRESS_WINDOW_REPEAT_NUMERATOR = 2
 MONITOR_PROGRESS_WINDOW_REPEAT_DENOMINATOR = 3
 MONITOR_PROGRESS_SENTENCE_REPEAT_NUMERATOR = 1
 MONITOR_PROGRESS_SENTENCE_REPEAT_DENOMINATOR = 4
+BUDGET_HISTORY_SCHEMA = 1
+BUDGET_HISTORY_ROOT = "budget-history"
 
 
 def utc_now() -> str:
@@ -2658,6 +2660,7 @@ def provider_state_observer(root: Path, entrant_id: str):
                 first_output_at=counters["first_output_at"],
                 last_provider_event=event,
             )
+            anchor_budget_ledger(root)
 
     return counters, observe
 
@@ -2718,6 +2721,7 @@ def smoke_state_observer(root: Path, entrant_id: str):
                 first_output_at=counters["first_output_at"],
                 last_provider_event=event,
             )
+            anchor_budget_ledger(root)
 
     return counters, observe
 
@@ -3322,6 +3326,419 @@ def budget_ledger_descendant_failure(
     for request_id, reservation in initial["outstanding"].items():
         if current["outstanding"].get(request_id) != reservation:
             return f"predecessor reservation changed or disappeared: {request_id}"
+    return None
+
+
+def budget_ledger_monotonic_failure(
+    previous: Mapping[str, Any],
+    current: Mapping[str, Any],
+    config: Mapping[str, Any],
+    immutable_outstanding_ids: set[str],
+) -> str | None:
+    for ledger in (previous, current):
+        failure = budget_ledger_failure(ledger, config)
+        if failure:
+            return failure
+    for key in ("schema_version", "currency", "total_cap", "provider_caps"):
+        if current.get(key) != previous.get(key):
+            return f"budget ledger changed immutable field {key}"
+    if float(current["spent_upper_bound"]) < float(previous["spent_upper_bound"]):
+        return "budget ledger cumulative spend decreased across anchored history"
+    for provider, amount in previous["provider_spent_upper_bound"].items():
+        if float(current["provider_spent_upper_bound"].get(provider, -1)) < float(
+            amount
+        ):
+            return f"budget ledger cumulative spend decreased for {provider}"
+
+    current_settled = {
+        str(row["request_id"]): row for row in current["settled"]
+    }
+    for row in previous["settled"]:
+        if current_settled.get(str(row["request_id"])) != row:
+            return f"anchored settlement changed or disappeared: {row['request_id']}"
+    for request_id, reservation in previous["outstanding"].items():
+        current_reservation = current["outstanding"].get(request_id)
+        if current_reservation == reservation:
+            continue
+        if request_id in immutable_outstanding_ids:
+            return f"carried reservation changed or disappeared: {request_id}"
+        settlement = current_settled.get(request_id)
+        if not isinstance(settlement, dict):
+            return f"anchored reservation disappeared without settlement: {request_id}"
+        if (
+            settlement.get("provider") != reservation.get("provider")
+            or settlement.get("model") != reservation.get("model")
+            or not money_equal(
+                float(settlement.get("reserved_usd", -1)),
+                float(reservation.get("reserved_usd", -2)),
+            )
+        ):
+            return f"anchored reservation settled under different terms: {request_id}"
+    return None
+
+
+def budget_history_root(root: Path) -> Path:
+    return root / BUDGET_HISTORY_ROOT
+
+
+def budget_history_entry(root: Path, sequence: int) -> Path:
+    return budget_history_root(root) / "entries" / f"{sequence:08d}"
+
+
+def budget_history_entry_payload(
+    campaign: Mapping[str, Any],
+    transition_id: str,
+    sequence: int,
+    previous_record_sha256: str | None,
+    ledger_sha256: str,
+) -> Dict[str, Any]:
+    return {
+        "schema_version": BUDGET_HISTORY_SCHEMA,
+        "campaign_id": campaign.get("campaign_id"),
+        "transition_id": transition_id,
+        "sequence": sequence,
+        "previous_record_sha256": previous_record_sha256,
+        "ledger_sha256": ledger_sha256,
+        "created_at": utc_now(),
+    }
+
+
+def write_budget_history_entry(
+    root: Path,
+    campaign: Mapping[str, Any],
+    transition_id: str,
+    sequence: int,
+    previous_record_sha256: str | None,
+    ledger: Mapping[str, Any],
+) -> Dict[str, Any]:
+    entries = budget_history_root(root) / "entries"
+    entries.mkdir(parents=True, exist_ok=True)
+    target = budget_history_entry(root, sequence)
+    if target.exists():
+        raise SystemExit(f"budget history sequence already exists: {sequence}")
+    temporary = Path(tempfile.mkdtemp(prefix=f".{sequence:08d}.", dir=entries))
+    try:
+        ledger_path = temporary / "ledger.json"
+        atomic_json(ledger_path, dict(ledger))
+        record = budget_history_entry_payload(
+            campaign,
+            transition_id,
+            sequence,
+            previous_record_sha256,
+            sha256_file(ledger_path),
+        )
+        atomic_json(temporary / "record.json", record)
+        fsync_directory(temporary)
+        os.replace(temporary, target)
+        fsync_directory(entries)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+    record_path = target / "record.json"
+    return {
+        "schema_version": BUDGET_HISTORY_SCHEMA,
+        "sequence": sequence,
+        "record_sha256": sha256_file(record_path),
+        "ledger_sha256": sha256_file(target / "ledger.json"),
+    }
+
+
+def initialize_budget_history(
+    root: Path,
+    campaign: Mapping[str, Any],
+    transition_id: str,
+    ledger: Mapping[str, Any],
+) -> Dict[str, Any]:
+    history = budget_history_root(root)
+    if history.exists():
+        raise SystemExit("budget history already exists")
+    (history / "entries").mkdir(parents=True)
+    head = write_budget_history_entry(
+        root,
+        campaign,
+        transition_id,
+        0,
+        None,
+        ledger,
+    )
+    atomic_json(history / "head.json", head)
+    return head
+
+
+def generation_two_carried_reservation_ids(
+    root: Path, campaign: Mapping[str, Any]
+) -> set[str]:
+    if validated_campaign_lineage(campaign)["generation"] != 2:
+        return set()
+    lineage = load_json(root / ORCHESTRATOR_RECOVERY_PATH)
+    carried = lineage.get("source_ambiguous_request_ids")
+    if not isinstance(carried, dict):
+        raise SystemExit("orchestrator recovery carried reservations are malformed")
+    values: set[str] = set()
+    for request_ids in carried.values():
+        if (
+            not isinstance(request_ids, list)
+            or any(not isinstance(value, str) or not value for value in request_ids)
+            or request_ids != sorted(set(request_ids))
+        ):
+            raise SystemExit("orchestrator recovery carried reservations are malformed")
+        values.update(request_ids)
+    return values
+
+
+def budget_history_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    *,
+    require_current_head: bool = False,
+) -> str | None:
+    try:
+        lineage = load_json(root / ORCHESTRATOR_RECOVERY_PATH)
+        transition_id = lineage.get("transition_id")
+        expected_initial = lineage.get("budget_history_initial_record_sha256")
+        history = budget_history_root(root)
+        entries_root = history / "entries"
+        if (
+            not entries_root.is_dir()
+            or entries_root.is_symlink()
+            or not isinstance(transition_id, str)
+            or not transition_id
+            or not isinstance(expected_initial, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_initial) is None
+        ):
+            return "generation-two budget history identity is malformed"
+        entries = sorted(path for path in entries_root.iterdir() if not path.name.startswith("."))
+        expected_names = [f"{index:08d}" for index in range(len(entries))]
+        if not entries or [path.name for path in entries] != expected_names:
+            return "generation-two budget history sequence is not contiguous"
+        config = load_json(Path(str(campaign["budget_config"])))
+        source_ledger = load_json(root / "recovery/source-budget-ledger.json")
+        carried_ids = generation_two_carried_reservation_ids(root, campaign)
+        previous_record_sha: str | None = None
+        previous_ledger: Dict[str, Any] | None = None
+        latest_head: Dict[str, Any] | None = None
+        for sequence, entry in enumerate(entries):
+            if not entry.is_dir() or entry.is_symlink():
+                return f"budget history entry is not a regular directory: {entry.name}"
+            record_path = entry / "record.json"
+            ledger_path = entry / "ledger.json"
+            if any(
+                path.is_symlink() or not path.is_file()
+                for path in (record_path, ledger_path)
+            ):
+                return f"budget history entry is incomplete: {entry.name}"
+            record = load_json(record_path)
+            expected_record_keys = {
+                "schema_version",
+                "campaign_id",
+                "transition_id",
+                "sequence",
+                "previous_record_sha256",
+                "ledger_sha256",
+                "created_at",
+            }
+            if (
+                set(record) != expected_record_keys
+                or record.get("schema_version") != BUDGET_HISTORY_SCHEMA
+                or record.get("campaign_id") != campaign.get("campaign_id")
+                or record.get("transition_id") != transition_id
+                or record.get("sequence") != sequence
+                or record.get("previous_record_sha256") != previous_record_sha
+                or record.get("ledger_sha256") != sha256_file(ledger_path)
+                or not isinstance(record.get("created_at"), str)
+                or not record.get("created_at")
+            ):
+                return f"budget history record is malformed: {entry.name}"
+            ledger = load_json(ledger_path)
+            ledger_problem = budget_ledger_failure(ledger, config)
+            if ledger_problem:
+                return f"budget history {entry.name} {ledger_problem}"
+            if sequence == 0:
+                if ledger != source_ledger:
+                    return "budget history initial ledger differs from recovery source"
+                if sha256_file(record_path) != expected_initial:
+                    return "budget history initial record differs from lineage"
+            elif previous_ledger is not None:
+                monotonic_problem = budget_ledger_monotonic_failure(
+                    previous_ledger, ledger, config, carried_ids
+                )
+                if monotonic_problem:
+                    return f"budget history {entry.name} is not monotonic: {monotonic_problem}"
+            previous_record_sha = sha256_file(record_path)
+            previous_ledger = ledger
+            latest_head = {
+                "schema_version": BUDGET_HISTORY_SCHEMA,
+                "sequence": sequence,
+                "record_sha256": previous_record_sha,
+                "ledger_sha256": sha256_file(ledger_path),
+            }
+        head_path = history / "head.json"
+        if head_path.is_symlink() or not head_path.is_file():
+            return "budget history has no durable head"
+        if load_json(head_path) != latest_head:
+            return "budget history head does not name the latest committed entry"
+        current = load_json(Path(str(campaign["budget_ledger"])))
+        assert previous_ledger is not None
+        current_problem = budget_ledger_monotonic_failure(
+            previous_ledger, current, config, carried_ids
+        )
+        if current_problem:
+            return f"current budget ledger rolled back behind its durable head: {current_problem}"
+        if require_current_head and current != previous_ledger:
+            return "current budget ledger is not durably anchored"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"budget history cannot be verified: {error}"
+    return None
+
+
+def anchor_budget_ledger(root: Path) -> Dict[str, Any] | None:
+    campaign = load_json(campaign_file(root))
+    if validated_campaign_lineage(campaign)["generation"] != 2:
+        return None
+    with exclusive_claim(root / "locks/budget-history.claim", blocking=True) as claimed:
+        if not claimed:
+            raise SystemExit("cannot claim generation-two budget history")
+        problem = budget_history_failure(root, campaign)
+        if problem:
+            raise SystemExit(problem)
+        history = budget_history_root(root)
+        head = load_json(history / "head.json")
+        last_ledger = load_json(
+            budget_history_entry(root, int(head["sequence"])) / "ledger.json"
+        )
+        current = load_json(Path(str(campaign["budget_ledger"])))
+        if current == last_ledger:
+            return head
+        next_head = write_budget_history_entry(
+            root,
+            campaign,
+            str(load_json(root / ORCHESTRATOR_RECOVERY_PATH)["transition_id"]),
+            int(head["sequence"]) + 1,
+            str(head["record_sha256"]),
+            current,
+        )
+        atomic_json(history / "head.json", next_head)
+        problem = budget_history_failure(root, campaign, require_current_head=True)
+        if problem:
+            raise SystemExit(problem)
+        return next_head
+
+
+def generation_two_entrant_accounting_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    row: Mapping[str, Any],
+) -> str | None:
+    try:
+        if validated_campaign_lineage(campaign)["generation"] != 2:
+            return None
+        entrant_id = str(row["id"])
+        initial = load_json(root / "recovery/source-budget-ledger.json")
+        current = load_json(Path(str(campaign["budget_ledger"])))
+        config = load_json(Path(str(campaign["budget_config"])))
+        for ledger in (initial, current):
+            problem = budget_ledger_failure(ledger, config)
+            if problem:
+                return problem
+        baseline_settled = {
+            str(value["request_id"])
+            for value in initial["settled"]
+            if value.get("provider") == row.get("provider")
+            and value.get("model") == row.get("model")
+        }
+        baseline_outstanding = {
+            str(request_id)
+            for request_id, value in initial["outstanding"].items()
+            if value.get("provider") == row.get("provider")
+            and value.get("model") == row.get("model")
+        }
+        current_settlements = {
+            str(value["request_id"]): value
+            for value in current["settled"]
+            if value.get("provider") == row.get("provider")
+            and value.get("model") == row.get("model")
+            and str(value["request_id"]) not in baseline_settled
+        }
+        current_outstanding = {
+            str(request_id): value
+            for request_id, value in current["outstanding"].items()
+            if value.get("provider") == row.get("provider")
+            and value.get("model") == row.get("model")
+            and str(request_id) not in baseline_outstanding
+        }
+
+        lifecycle_paths: list[Path] = []
+        attempts_root = root / "smoke" / entrant_id / "attempts"
+        if attempts_root.is_dir() and not attempts_root.is_symlink():
+            lifecycle_paths.extend(
+                path / "provider-lifecycle.jsonl"
+                for path in sorted(attempts_root.glob("attempt-*"))
+                if path.is_dir() and not path.is_symlink()
+            )
+        state = read_state(root, entrant_id)
+        full_path_value = state.get("provider_lifecycle")
+        if isinstance(full_path_value, str) and full_path_value:
+            lifecycle_paths.append(Path(full_path_value))
+
+        request_states: Dict[str, list[str]] = {}
+        terminal_usage: Dict[str, Dict[str, Any]] = {}
+        for lifecycle_path in lifecycle_paths:
+            summary = lifecycle_summary(
+                lifecycle_path,
+                expected_provider=str(row["provider"]),
+                expected_model=str(row["model"]),
+            )
+            problem = lifecycle_failure(summary)
+            if problem:
+                return f"{entrant_id} current-generation lifecycle is invalid: {problem}"
+            duplicate = set(request_states) & set(summary["request_states"])
+            if duplicate:
+                return f"{entrant_id} reused request IDs: {', '.join(sorted(duplicate))}"
+            request_states.update(summary["request_states"])
+            terminal_usage.update(summary["terminal_usage"])
+
+        terminal_ids = {
+            request_id
+            for request_id, states in request_states.items()
+            if states and states[-1] == "provider_terminal"
+        }
+        outstanding_ids = {
+            request_id
+            for request_id, states in request_states.items()
+            if not states or states[-1] not in {"provider_terminal", "error"}
+        }
+        if set(current_settlements) != terminal_ids:
+            return (
+                f"{entrant_id} current-generation terminal lifecycle and settlements "
+                "differ exactly"
+            )
+        if set(current_outstanding) != outstanding_ids:
+            return (
+                f"{entrant_id} current-generation nonterminal lifecycle and outstanding "
+                "reservations differ exactly"
+            )
+        for request_id, usage in terminal_usage.items():
+            settlement = current_settlements.get(request_id)
+            if settlement is None or any(
+                settlement.get(key) != usage.get(key)
+                for key in (
+                    "reported_model",
+                    "input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                )
+            ):
+                return f"{entrant_id} settlement differs from terminal usage: {request_id}"
+        for request_id in outstanding_ids:
+            reservation = current_outstanding.get(request_id)
+            if (
+                not isinstance(reservation, dict)
+                or reservation.get("provider") != row.get("provider")
+                or reservation.get("model") != row.get("model")
+            ):
+                return f"{entrant_id} outstanding reservation identity differs: {request_id}"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"generation-two accounting cannot be verified: {error}"
     return None
 
 
@@ -7078,6 +7495,7 @@ def orchestrator_recovery_lineage_failure(
             "source_state_sha256",
             "source_episode_attempts",
             "source_ambiguous_request_ids",
+            "budget_history_initial_record_sha256",
             "fresh_all_entrant_smoke_required",
             "provider_terminal_usage_fabricated",
         }
@@ -7198,6 +7616,9 @@ def orchestrator_recovery_lineage_failure(
         )
         if ledger_problem:
             return ledger_problem
+        history_problem = budget_history_failure(root, campaign)
+        if history_problem:
+            return history_problem
 
         source_evidence = source_root / ORCHESTRATOR_RECOVERY_EVIDENCE
         target_evidence = root / "recovery/evidence"
@@ -7684,6 +8105,12 @@ def orchestrator_recovery_campaign(
                                 smoke_state_file(staged_root, entrant_id), smoke_state
                             )
                         target = remap_paths(target, staged_root, root)
+                        budget_head = initialize_budget_history(
+                            staged_root,
+                            target,
+                            str(receipt["transition_id"]),
+                            source_ledger,
+                        )
                         lineage = {
                             "schema_version": ORCHESTRATOR_RECOVERY_SCHEMA,
                             "kind": "orchestrator_monitor_recovery",
@@ -7724,6 +8151,9 @@ def orchestrator_recovery_campaign(
                             ],
                             "source_ambiguous_request_ids": receipt[
                                 "source_ambiguous_request_ids"
+                            ],
+                            "budget_history_initial_record_sha256": budget_head[
+                                "record_sha256"
                             ],
                             "fresh_all_entrant_smoke_required": True,
                             "provider_terminal_usage_fabricated": False,
@@ -8212,6 +8642,16 @@ def smoke_attempt_evidence(
         reasons.append(
             "terminal lifecycle request IDs are absent from the shared budget ledger"
         )
+    generation_two_accounting = generation_two_entrant_accounting_failure(
+        root, campaign, row
+    )
+    if generation_two_accounting:
+        reasons.append(generation_two_accounting)
+    else:
+        try:
+            anchor_budget_ledger(root)
+        except SystemExit as error:
+            reasons.append(f"generation-two budget anchoring failed: {error}")
 
     try:
         expected_nonce = bytes.fromhex(str(state.get("nonce_hex", "")))
@@ -8682,6 +9122,11 @@ def smoke_proof_mismatch(
     _, settled, budget_error = current_smoke_budget_requests(campaign, row)
     if budget_error:
         return budget_error
+    generation_two_accounting = generation_two_entrant_accounting_failure(
+        root, campaign, row
+    )
+    if generation_two_accounting:
+        return generation_two_accounting
     terminal_ids = evidence.get("terminal_request_ids")
     if not isinstance(terminal_ids, list) or not set(terminal_ids).issubset(
         set(settled)
@@ -9268,6 +9713,9 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         outstanding_ids, budget_error = current_full_episode_outstanding_reservations(
             root, campaign, row
         )
+        generation_two_accounting = generation_two_entrant_accounting_failure(
+            root, campaign, row
+        )
         if budget_error:
             status = "INCOMPLETE"
             failure = budget_error
@@ -9282,6 +9730,10 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         elif lifecycle_failure(lifecycle) is not None:
             status = "INCOMPLETE"
             failure = f"provider lifecycle evidence is invalid: {lifecycle_failure(lifecycle)}"
+            completed = False
+        elif generation_two_accounting:
+            status = "INCOMPLETE"
+            failure = generation_two_accounting
             completed = False
         elif isolation_problem:
             status = "INCOMPLETE"
@@ -9310,6 +9762,13 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
             status = "INCOMPLETE"
             failure = f"campaign lineage changed during build: {lineage_failure(root)}"
             completed = False
+        if not budget_error and not generation_two_accounting:
+            try:
+                anchor_budget_ledger(root)
+            except SystemExit as error:
+                status = "INCOMPLETE"
+                failure = f"generation-two budget anchoring failed: {error}"
+                completed = False
         tree_hash = hash_tree(Path(str(state["tree"])))
         final = update_state(
             root,
@@ -13246,6 +13705,10 @@ def provider_admission_gate_failure(
         return "campaign identity changed before provider admission"
     if current.get("status") != "RUNNING":
         return f"campaign status is {current.get('status')}, not RUNNING"
+    try:
+        anchor_budget_ledger(root)
+    except SystemExit as error:
+        return f"generation-two budget history refused admission: {error}"
     return active_manager_monitor_lease_failure(root, current)
 
 
@@ -13442,6 +13905,12 @@ def monitor_tick(root: Path) -> tuple[bool, int]:
         require_smoke_proofs(root)
     except SystemExit as error:
         return monitor_attention(root, f"smoke proof gate failed: {error}")
+    try:
+        anchor_budget_ledger(root)
+    except SystemExit as error:
+        return monitor_attention(
+            root, f"generation-two budget history failed closed: {error}"
+        )
     if process_alive(manager.get("pid"), manager.get("identity")):
         try:
             progress, progress_failure = monitor_progress_tick(root)

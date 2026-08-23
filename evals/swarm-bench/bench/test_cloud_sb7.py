@@ -5810,6 +5810,126 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(outstanding, [])
             self.assertIn("reservation", error or "")
 
+    def test_generation_two_budget_history_rejects_rollback_of_a_new_head(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+            target_root = Path(str(fixture["target"]))
+            self.orchestrator_recovery_fixture(fixture)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(target_root))
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            original = cloud_sb7.load_json(ledger_path)
+            row = fixture["rows"][0]
+            carried = next(
+                value
+                for value in original["outstanding"].values()
+                if value["provider"] == row["provider"]
+                and value["model"] == row["model"]
+            )
+            current = json.loads(json.dumps(original))
+            request_id = "generation-two-new-reservation"
+            current["outstanding"][request_id] = {
+                **carried,
+                "request_id": request_id,
+                "created_at_unix_ms": 999999,
+            }
+            cloud_sb7.atomic_json(ledger_path, current)
+
+            head = cloud_sb7.anchor_budget_ledger(target_root)
+
+            self.assertEqual(head["sequence"], 1)
+            self.assertIsNone(cloud_sb7.lineage_failure(target_root))
+            cloud_sb7.atomic_json(ledger_path, original)
+            self.assertIn(
+                "rolled back behind its durable head",
+                cloud_sb7.lineage_failure(target_root) or "",
+            )
+
+    def test_generation_two_accounting_requires_exact_terminal_settlement(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+            target_root = Path(str(fixture["target"]))
+            self.orchestrator_recovery_fixture(fixture)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(target_root))
+            row = fixture["rows"][0]
+            entrant_id = str(row["id"])
+            state = cloud_sb7.read_state(target_root, entrant_id)
+            lifecycle_path = Path(str(state["provider_lifecycle"]))
+            request_id = "generation-two-terminal-request"
+            usage = {
+                "reported_model": row["model"],
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "total_tokens": 5,
+            }
+            base = {
+                "schema_version": 1,
+                "timestamp": "now",
+                "request_id": request_id,
+                "provider": row["provider"],
+                "model": row["model"],
+                "session": "generation-two-session",
+            }
+            lifecycle_path.write_text(
+                "\n".join(
+                    map(
+                        json.dumps,
+                        [
+                            {**base, "state": "queued"},
+                            {**base, "state": "admitted"},
+                            {**base, "state": "usage_reported", "usage": usage},
+                            {**base, "state": "provider_terminal", "usage": usage},
+                        ],
+                    )
+                )
+                + "\n"
+            )
+            self.assertIn(
+                "terminal lifecycle and settlements differ exactly",
+                cloud_sb7.generation_two_entrant_accounting_failure(
+                    target_root, campaign, row
+                )
+                or "",
+            )
+
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            config = cloud_sb7.load_json(Path(str(campaign["budget_config"])))
+            profile = cloud_sb7.budget_model_profile(
+                config, str(row["provider"]), str(row["model"])
+            )
+            assert profile is not None
+            reserve = cloud_sb7.budget_price(
+                profile, int(row["context_limit"]), int(row["max_output_tokens"])
+            )
+            charge = cloud_sb7.budget_price(profile, 2, 3)
+            assert reserve is not None and charge is not None
+            ledger["settled"].append(
+                {
+                    "request_id": request_id,
+                    "provider": row["provider"],
+                    "model": row["model"],
+                    "reported_model": row["model"],
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                    "charged_upper_bound_usd": charge,
+                    "reserved_usd": reserve,
+                    "settled_at_unix_ms": 999999,
+                }
+            )
+            ledger["spent_upper_bound"] += charge
+            ledger["provider_spent_upper_bound"][str(row["provider"])] += charge
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            self.assertIsNone(
+                cloud_sb7.generation_two_entrant_accounting_failure(
+                    target_root, campaign, row
+                )
+            )
+
     def test_provider_spawn_failure_reclaims_only_unstarted_episode(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
