@@ -26,6 +26,7 @@ import secrets
 import shutil
 import signal
 import socket
+import stat as stat_module
 import subprocess
 import sys
 import tempfile
@@ -238,6 +239,15 @@ MONITOR_HEARTBEAT_INTERVAL_SECONDS = 10.0
 MONITOR_LEASE_TIMEOUT_SECONDS = 35.0
 MANAGER_WATCH_POLL_SECONDS = 1.0
 GATED_EXEC_RECEIPT_TIMEOUT_SECONDS = 10.0
+MONITOR_PROGRESS_SCHEMA = 1
+MONITOR_PROGRESS_ROOT = "monitor-progress"
+MONITOR_PROGRESS_WINDOW_CHARS = 48
+MONITOR_PROGRESS_MARKER_COUNT = 8
+MONITOR_PROGRESS_MIN_SEMANTIC_WINDOWS = 64
+MONITOR_PROGRESS_WINDOW_REPEAT_NUMERATOR = 2
+MONITOR_PROGRESS_WINDOW_REPEAT_DENOMINATOR = 3
+MONITOR_PROGRESS_SENTENCE_REPEAT_NUMERATOR = 1
+MONITOR_PROGRESS_SENTENCE_REPEAT_DENOMINATOR = 4
 
 
 def utc_now() -> str:
@@ -9227,7 +9237,11 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
                     )
                     return 2
                 update_state(
-                    root, entrant_id, goose_pid=proc.pid, process_group=os.getpgrp()
+                    root,
+                    entrant_id,
+                    goose_pid=proc.pid,
+                    goose_identity=process_identity(proc.pid),
+                    process_group=os.getpgrp(),
                 )
                 assert proc.stdout is not None
                 redacted_copy(proc.stdout, log, secret_values.values(), observe)
@@ -9442,6 +9456,1343 @@ def process_alive(pid: Any, expected_identity: Any = None) -> bool:
     if identity is None:
         return False
     return expected_identity is None or identity == str(expected_identity)
+
+
+def monitor_progress_file_evidence(path: Path) -> Dict[str, Any]:
+    evidence: Dict[str, Any] = {
+        "regular": False,
+        "bytes": 0,
+        "sha256": None,
+        "stable_read": True,
+        "read_error": None,
+    }
+    if path.is_symlink() or not path.is_file():
+        return evidence
+    try:
+        before = path.stat()
+        digest = sha256_file(path)
+        after = path.stat()
+        evidence.update(
+            {
+                "regular": True,
+                "bytes": after.st_size,
+                "sha256": digest,
+                "stable_read": (
+                    before.st_size == after.st_size
+                    and before.st_mtime_ns == after.st_mtime_ns
+                ),
+            }
+        )
+    except OSError as error:
+        evidence["read_error"] = type(error).__name__
+    return evidence
+
+
+def monitor_progress_tree_evidence(root: Path) -> Dict[str, Any]:
+    evidence: Dict[str, Any] = {
+        "directory": False,
+        "files": 0,
+        "bytes": 0,
+        "sha256": None,
+        "read_error": None,
+    }
+    if root.is_symlink() or not root.is_dir():
+        return evidence
+    ignored = {".DS_Store", "telemetry.jsonl"}
+    try:
+        digest = hashlib.sha256()
+        file_count = 0
+        byte_count = 0
+
+        def walk_failed(error: OSError) -> None:
+            raise error
+
+        for directory, names, files in os.walk(
+            root, followlinks=False, onerror=walk_failed
+        ):
+            names.sort()
+            files.sort()
+            base = Path(directory)
+            for name in names:
+                path = base / name
+                if path.is_symlink():
+                    raise OSError(f"symbolic directory: {path}")
+                relative = str(path.relative_to(root)).encode()
+                digest.update(b"D")
+                digest.update(len(relative).to_bytes(8, "big"))
+                digest.update(relative)
+            for name in files:
+                if name in ignored:
+                    continue
+                path = base / name
+                metadata = path.lstat()
+                if not stat_module.S_ISREG(metadata.st_mode):
+                    raise OSError(f"non-regular tree entry: {path}")
+                relative = str(path.relative_to(root)).encode()
+                digest.update(b"F")
+                digest.update(len(relative).to_bytes(8, "big"))
+                digest.update(relative)
+                for value in (
+                    metadata.st_size,
+                    metadata.st_mtime_ns,
+                    metadata.st_ctime_ns,
+                    metadata.st_ino,
+                    metadata.st_mode,
+                ):
+                    digest.update(int(value).to_bytes(16, "big", signed=False))
+                file_count += 1
+                byte_count += metadata.st_size
+        evidence.update(
+            {
+                "directory": True,
+                "files": file_count,
+                "bytes": byte_count,
+                "sha256": digest.hexdigest(),
+            }
+        )
+    except OSError as error:
+        evidence["read_error"] = type(error).__name__
+    return evidence
+
+
+def assistant_semantic_stream(value: str) -> str:
+    fragments: list[str] = []
+    for line in value.splitlines():
+        event = event_from_line(line)
+        if not event or event.get("type") != "message":
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            fragments.append(content)
+            continue
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            kind = item.get("type")
+            field = {
+                "text": "text",
+                "thinking": "thinking",
+                "reasoning": "reasoning",
+            }.get(str(kind))
+            value = item.get(field) if field is not None else None
+            if isinstance(value, str) and value:
+                fragments.append(value)
+    return "\n".join(fragments)
+
+
+def monitor_progress_build_log_evidence(
+    path: Path,
+) -> tuple[Dict[str, Any], str]:
+    evidence: Dict[str, Any] = {
+        "regular": False,
+        "bytes": 0,
+        "sha256": None,
+        "stable_read": True,
+        "read_error": None,
+    }
+    if path.is_symlink() or not path.is_file():
+        return evidence, ""
+    try:
+        before = path.stat()
+        payload = path.read_bytes()
+        after = path.stat()
+        stable = (
+            before.st_size == after.st_size == len(payload)
+            and before.st_mtime_ns == after.st_mtime_ns
+        )
+        evidence.update(
+            {
+                "regular": True,
+                "bytes": len(payload),
+                "sha256": sha256_bytes(payload),
+                "stable_read": stable,
+            }
+        )
+        semantic = assistant_semantic_stream(payload.decode(errors="replace"))
+        return evidence, semantic if stable else ""
+    except OSError as error:
+        evidence["read_error"] = type(error).__name__
+        return evidence, ""
+
+
+def monitor_progress_lifecycle_evidence(
+    path: Path, *, expected_provider: str, expected_model: str
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    before = path.stat() if path.is_file() and not path.is_symlink() else None
+    summary = lifecycle_summary(
+        path,
+        expected_provider=expected_provider,
+        expected_model=expected_model,
+    )
+    evidence = monitor_progress_file_evidence(path)
+    after = path.stat() if path.is_file() and not path.is_symlink() else None
+    if before is not None and after is not None:
+        evidence["stable_read"] = bool(
+            evidence["stable_read"]
+            and before.st_size == after.st_size
+            and before.st_mtime_ns == after.st_mtime_ns
+        )
+    return evidence, summary
+
+
+def monitor_progress_repetition_evidence(value: str) -> Dict[str, Any]:
+    normalized = " ".join(value.split())
+    width = MONITOR_PROGRESS_WINDOW_CHARS
+    window_count = max(0, len(normalized) - width + 1)
+    window_counts: Dict[str, int] = {}
+    for index in range(window_count):
+        window = normalized[index : index + width]
+        window_counts[window] = window_counts.get(window, 0) + 1
+    repeated_windows = sum(count - 1 for count in window_counts.values() if count > 1)
+
+    sentences = [
+        " ".join(sentence.split())
+        for sentence in re.split(r"(?<=[.!?])\s+|[\r\n]+", value)
+    ]
+    sentences = [sentence for sentence in sentences if len(sentence) >= width]
+    sentence_counts: Dict[str, int] = {}
+    for sentence in sentences:
+        sentence_counts[sentence] = sentence_counts.get(sentence, 0) + 1
+    duplicate_sentences = sum(
+        count - 1 for count in sentence_counts.values() if count > 1
+    )
+    peak_sentence_occurrences = max(sentence_counts.values(), default=0)
+
+    window_markers = [
+        sha256_bytes(text.encode())
+        for text, _ in sorted(
+            (
+                (text, count)
+                for text, count in window_counts.items()
+                if count >= 3
+            ),
+            key=lambda item: (-item[1], item[0]),
+        )[:MONITOR_PROGRESS_MARKER_COUNT]
+    ]
+    sentence_markers = [
+        sha256_bytes(text.encode())
+        for text, _ in sorted(
+            (
+                (text, count)
+                for text, count in sentence_counts.items()
+                if count >= 2
+            ),
+            key=lambda item: (-item[1], item[0]),
+        )[:MONITOR_PROGRESS_MARKER_COUNT]
+    ]
+    enough_content = len(normalized) >= width * MONITOR_PROGRESS_MIN_SEMANTIC_WINDOWS
+    window_recurrence = (
+        window_count > 0
+        and repeated_windows * MONITOR_PROGRESS_WINDOW_REPEAT_DENOMINATOR
+        >= window_count * MONITOR_PROGRESS_WINDOW_REPEAT_NUMERATOR
+    )
+    sentence_recurrence = (
+        len(sentences) > 0
+        and duplicate_sentences * MONITOR_PROGRESS_SENTENCE_REPEAT_DENOMINATOR
+        >= len(sentences) * MONITOR_PROGRESS_SENTENCE_REPEAT_NUMERATOR
+    )
+    return {
+        "semantic_chars": len(normalized),
+        "semantic_sha256": sha256_bytes(normalized.encode()),
+        "window_chars": width,
+        "window_count": window_count,
+        "repeated_windows": repeated_windows,
+        "sentence_count": len(sentences),
+        "duplicate_sentences": duplicate_sentences,
+        "peak_sentence_occurrences": peak_sentence_occurrences,
+        "window_markers": window_markers,
+        "sentence_markers": sentence_markers,
+        "detected": bool(
+            enough_content and window_recurrence and sentence_recurrence
+        ),
+    }
+
+
+def monitor_progress_process_generation(
+    state: Mapping[str, Any], processes: Mapping[str, Any]
+) -> str:
+    material = {
+        "provider_episode_attempts": state.get("provider_episode_attempts"),
+        "supervisor_pid": processes.get("supervisor_pid"),
+        "supervisor_identity": processes.get("supervisor_identity"),
+        "goose_pid": processes.get("goose_pid"),
+        "goose_identity": processes.get("goose_identity"),
+    }
+    return sha256_bytes(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    )
+
+
+def monitor_progress_provider_generation(
+    row: Mapping[str, Any],
+    lifecycle: Mapping[str, Any],
+    active_provider_request_ids: list[str],
+) -> str:
+    material = {
+        "provider": row.get("provider"),
+        "model": row.get("model"),
+        "provider_lane": row.get("provider_lane"),
+        "admitted": lifecycle.get("admitted"),
+        "terminal": lifecycle.get("terminal"),
+        "active_provider_request_ids": active_provider_request_ids,
+    }
+    return sha256_bytes(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    )
+
+
+def monitor_progress_observation(root: Path, entrant_id: str) -> Dict[str, Any]:
+    campaign = load_json(campaign_file(root))
+    row = manifest_row(root, entrant_id)
+    state = read_state(root, entrant_id)
+    unit = root / "entrants" / entrant_id
+    expected_paths = {
+        "tree": unit / "tree",
+        "provider_lifecycle": unit / "provider-lifecycle.jsonl",
+        "build_log": unit / "logs/build.log",
+    }
+    for key, expected in expected_paths.items():
+        if str(state.get(key)) != str(expected):
+            raise SystemExit(
+                f"monitor progress {entrant_id} {key} escaped its entrant unit"
+            )
+    tree = expected_paths["tree"]
+    lifecycle_path = expected_paths["provider_lifecycle"]
+    build_log = expected_paths["build_log"]
+    telemetry = tree / ".swarm/telemetry.jsonl"
+    if any(path.is_symlink() for path in (unit, tree, lifecycle_path, build_log)):
+        raise SystemExit(f"monitor progress {entrant_id} evidence path is symbolic")
+    lifecycle_file, lifecycle = monitor_progress_lifecycle_evidence(
+        lifecycle_path,
+        expected_provider=str(row["provider"]),
+        expected_model=str(row["model"]),
+    )
+    active_provider_request_ids = sorted(
+        request_id
+        for request_id, states in lifecycle["request_states"].items()
+        if "admitted" in states
+        and (
+            not states
+            or states[-1]
+            not in {"provider_terminal", "stream_ambiguous", "error"}
+        )
+    )
+    attempts = state.get("provider_episode_attempts", 0)
+    if not monitor_progress_nonnegative_integer(attempts):
+        raise SystemExit(
+            f"monitor progress {entrant_id} provider episode count is malformed"
+        )
+    processes = {
+        "supervisor_pid": state.get("supervisor_pid"),
+        "supervisor_pgid": state.get("supervisor_pgid"),
+        "supervisor_identity": state.get("supervisor_identity"),
+        "supervisor_alive": process_alive(
+            state.get("supervisor_pid"), state.get("supervisor_identity")
+        ),
+        "goose_pid": state.get("goose_pid"),
+        "goose_identity": state.get("goose_identity"),
+        "goose_alive": process_alive(
+            state.get("goose_pid"), state.get("goose_identity")
+        ),
+    }
+    build_log_file, semantic = monitor_progress_build_log_evidence(build_log)
+    return {
+        "schema_version": MONITOR_PROGRESS_SCHEMA,
+        "recorded_at": utc_now(),
+        "campaign_id": campaign.get("campaign_id"),
+        "smoke_contract_sha256": campaign.get("smoke_contract_sha256"),
+        "entrant": entrant_id,
+        "provider": row["provider"],
+        "model": row["model"],
+        "provider_lane": row["provider_lane"],
+        "status": state.get("status"),
+        "provider_episode_attempts": attempts,
+        "process_generation": monitor_progress_process_generation(state, processes),
+        "provider_generation": monitor_progress_provider_generation(
+            row, lifecycle, active_provider_request_ids
+        ),
+        "processes": processes,
+        "evidence": {
+            "lifecycle": {
+                **lifecycle_file,
+                "events": int(lifecycle["events"]),
+                "admitted": int(lifecycle["admitted"]),
+                "terminal": int(lifecycle["terminal"]),
+                "active_provider_request_ids": active_provider_request_ids,
+            },
+            "build_log": build_log_file,
+            "tree": monitor_progress_tree_evidence(tree),
+            "telemetry": monitor_progress_file_evidence(telemetry),
+            "repetition": monitor_progress_repetition_evidence(semantic),
+        },
+    }
+
+
+def monitor_progress_signal_values(
+    record: Mapping[str, Any],
+) -> Dict[str, tuple[Any, ...]]:
+    evidence = record["evidence"]
+    lifecycle = evidence["lifecycle"]
+    build_log = evidence["build_log"]
+    tree = evidence["tree"]
+    telemetry = evidence["telemetry"]
+    return {
+        "lifecycle": (
+            lifecycle["events"],
+            lifecycle["bytes"],
+            lifecycle["sha256"],
+        ),
+        "build_log": (build_log["bytes"], build_log["sha256"]),
+        "tree": (tree["files"], tree["bytes"], tree["sha256"]),
+        "telemetry": (telemetry["bytes"], telemetry["sha256"]),
+    }
+
+
+def monitor_progress_repetition_matches(
+    earlier: Mapping[str, Any], current: Mapping[str, Any]
+) -> bool:
+    old = earlier["evidence"]["repetition"]
+    new = current["evidence"]["repetition"]
+    if not old["detected"] or not new["detected"]:
+        return False
+    if (
+        old["semantic_chars"] >= new["semantic_chars"]
+        or old["semantic_sha256"] == new["semantic_sha256"]
+    ):
+        return False
+    return bool(set(old["window_markers"]) & set(new["window_markers"])) and bool(
+        set(old["sentence_markers"]) & set(new["sentence_markers"])
+    )
+
+
+def monitor_progress_evidence_problems(record: Mapping[str, Any]) -> list[str]:
+    evidence = record["evidence"]
+    problems: list[str] = []
+    for name in ("lifecycle", "build_log", "telemetry"):
+        value = evidence[name]
+        if value["read_error"] is not None:
+            problems.append(f"{name}:{value['read_error']}")
+        elif not value["stable_read"]:
+            problems.append(f"{name}:changed-during-read")
+    if evidence["tree"]["read_error"] is not None:
+        problems.append(f"tree:{evidence['tree']['read_error']}")
+    return problems
+
+
+def evaluate_monitor_progress(
+    history: list[Mapping[str, Any]],
+    observation: Mapping[str, Any],
+    sequence: int,
+    previous_record_sha256: str | None,
+) -> Dict[str, Any]:
+    record = dict(observation)
+    previous = history[-1] if history else None
+    current_signals = monitor_progress_signal_values(record)
+    previous_signals = (
+        monitor_progress_signal_values(previous) if previous is not None else {}
+    )
+    changed = sorted(
+        name
+        for name, values in current_signals.items()
+        if name in previous_signals and values != previous_signals[name]
+    )
+    growing = sorted(
+        name
+        for name, values in current_signals.items()
+        if name in previous_signals
+        and any(
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and isinstance(previous_value, int)
+            and not isinstance(previous_value, bool)
+            and value > previous_value
+            for value, previous_value in zip(values, previous_signals[name])
+        )
+    )
+    regressed = sorted(
+        name
+        for name, values in current_signals.items()
+        if name in previous_signals
+        and any(
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and isinstance(previous_value, int)
+            and not isinstance(previous_value, bool)
+            and value < previous_value
+            for value, previous_value in zip(values, previous_signals[name])
+        )
+    )
+    same_process_generation = bool(
+        previous is not None
+        and previous.get("process_generation") == record.get("process_generation")
+        and previous.get("status") == record.get("status")
+    )
+    same_provider_generation = bool(
+        previous is not None
+        and previous.get("provider_generation")
+        == record.get("provider_generation")
+    )
+    stagnant_observations = (
+        int(previous.get("stagnant_observations", 0)) + 1
+        if same_process_generation and same_provider_generation and not changed
+        else 0
+    )
+
+    repetition = record["evidence"]["repetition"]
+    corroborated_by = None
+    if repetition["detected"]:
+        for candidate in history:
+            if (
+                candidate.get("process_generation") == record["process_generation"]
+                and candidate.get("provider_generation")
+                == record["provider_generation"]
+                and monitor_progress_repetition_matches(candidate, record)
+            ):
+                corroborated_by = candidate.get("sequence")
+                break
+
+    status = str(record.get("status"))
+    processes = record["processes"]
+    active_requests = record["evidence"]["lifecycle"][
+        "active_provider_request_ids"
+    ]
+    evidence_problems = monitor_progress_evidence_problems(record)
+    fail_stop = False
+    if status not in {"WAITING_PROVIDER_LANE", "BUILD_RUNNING"}:
+        classification = "STATE_OBSERVED"
+        reason = f"entrant state is {status}"
+    elif evidence_problems:
+        classification = "EVIDENCE_UNSTABLE"
+        reason = "progress evidence was not stable: " + ", ".join(evidence_problems)
+    elif corroborated_by is not None:
+        classification = "REPETITION_CORROBORATED"
+        fail_stop = True
+        reason = (
+            "exact assistant-stream repetition was independently measured again in "
+            f"the same process generation (earlier observation {corroborated_by}; "
+            f"windows {repetition['repeated_windows']}/{repetition['window_count']}; "
+            f"duplicate sentences {repetition['duplicate_sentences']}/"
+            f"{repetition['sentence_count']})"
+        )
+    elif repetition["detected"]:
+        classification = "REPETITION_SUSPECTED"
+        reason = (
+            "exact window and sentence recurrence crossed the evidence floor once; "
+            "continued semantic growth with the same pattern is required"
+        )
+    elif previous is None or not same_process_generation:
+        classification = "PROCESS_BASELINE"
+        reason = "new process generation baseline recorded"
+    elif changed:
+        classification = "PROGRESSING"
+        reason = "measured artifacts changed: " + ", ".join(changed)
+    elif status == "WAITING_PROVIDER_LANE":
+        classification = "WAITING_PROVIDER_LANE"
+        reason = "provider lane wait is queued work, not a stall"
+    elif active_requests:
+        classification = "PROVIDER_SILENCE_OBSERVED"
+        reason = (
+            "all measured artifacts are unchanged while a provider request remains "
+            "admitted; silence is surfaced but never treated as a duration timeout"
+        )
+    elif processes["goose_alive"]:
+        classification = "LOCAL_SILENCE_OBSERVED"
+        reason = (
+            "all measured artifacts are unchanged while the goose process remains "
+            "alive; "
+            "silence alone is not termination evidence"
+        )
+    else:
+        classification = "SUPERVISION_SILENCE_OBSERVED"
+        reason = (
+            "all measured artifacts are unchanged without a live recorded goose "
+            "process; "
+            "the manager retains process-recovery authority"
+        )
+
+    record.update(
+        {
+            "sequence": sequence,
+            "previous_record_sha256": previous_record_sha256,
+            "delta": {
+                "changed_signals": changed,
+                "growing_signals": growing,
+                "regressed_signals": regressed,
+            },
+            "classification": classification,
+            "stagnant_observations": stagnant_observations,
+            "corroborated_by_sequence": corroborated_by,
+            "fail_stop": fail_stop,
+            "reason": reason,
+        }
+    )
+    record["record_sha256"] = monitor_progress_record_sha256(record)
+    return record
+
+
+def monitor_progress_record_sha256(record: Mapping[str, Any]) -> str:
+    material = dict(record)
+    material.pop("record_sha256", None)
+    return sha256_bytes(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    )
+
+
+def monitor_progress_nonnegative_integer(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
+
+
+def monitor_progress_sha256(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def monitor_progress_optional_sha256(value: Any) -> bool:
+    return value is None or monitor_progress_sha256(value)
+
+
+def monitor_progress_file_failure(value: Any) -> str | None:
+    expected = {
+        "regular",
+        "bytes",
+        "sha256",
+        "stable_read",
+        "read_error",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        return "file evidence schema differs"
+    if (
+        not isinstance(value["regular"], bool)
+        or not monitor_progress_nonnegative_integer(value["bytes"])
+        or not monitor_progress_optional_sha256(value["sha256"])
+        or not isinstance(value["stable_read"], bool)
+        or (
+            value["read_error"] is not None
+            and (
+                not isinstance(value["read_error"], str)
+                or not value["read_error"]
+            )
+        )
+    ):
+        return "file evidence types differ"
+    if value["regular"] != (value["sha256"] is not None):
+        return "file regularity and digest differ"
+    if not value["regular"] and value["bytes"] != 0:
+        return "absent file evidence has bytes"
+    return None
+
+
+def monitor_progress_string_list(
+    value: Any, *, maximum: int | None = None, sorted_values: bool = True
+) -> bool:
+    return bool(
+        isinstance(value, list)
+        and (maximum is None or len(value) <= maximum)
+        and all(isinstance(item, str) and item for item in value)
+        and len(value) == len(set(value))
+        and (not sorted_values or value == sorted(value))
+    )
+
+
+def replay_monitor_progress(
+    observations: Iterable[Mapping[str, Any]],
+) -> list[Dict[str, Any]]:
+    history: list[Dict[str, Any]] = []
+    previous_sha: str | None = None
+    for sequence, observation in enumerate(observations, start=1):
+        record = evaluate_monitor_progress(
+            history, observation, sequence, previous_sha
+        )
+        history.append(record)
+        previous_sha = record["record_sha256"]
+    return history
+
+
+def monitor_progress_observation_from_record(
+    record: Mapping[str, Any],
+) -> Dict[str, Any]:
+    generated = {
+        "sequence",
+        "previous_record_sha256",
+        "delta",
+        "classification",
+        "stagnant_observations",
+        "corroborated_by_sequence",
+        "fail_stop",
+        "reason",
+        "record_sha256",
+    }
+    return {key: value for key, value in record.items() if key not in generated}
+
+
+def monitor_progress_record_failure(
+    record: Mapping[str, Any],
+    *,
+    entrant_id: str,
+    campaign: Mapping[str, Any],
+    row: Mapping[str, Any],
+    sequence: int,
+    previous_record_sha256: str | None,
+) -> str | None:
+    expected_keys = {
+        "schema_version",
+        "sequence",
+        "previous_record_sha256",
+        "recorded_at",
+        "campaign_id",
+        "smoke_contract_sha256",
+        "entrant",
+        "provider",
+        "model",
+        "provider_lane",
+        "status",
+        "provider_episode_attempts",
+        "process_generation",
+        "provider_generation",
+        "processes",
+        "evidence",
+        "delta",
+        "classification",
+        "stagnant_observations",
+        "corroborated_by_sequence",
+        "fail_stop",
+        "reason",
+        "record_sha256",
+    }
+    if set(record) != expected_keys:
+        return "record schema is not closed"
+    if (
+        record.get("schema_version") != MONITOR_PROGRESS_SCHEMA
+        or record.get("sequence") != sequence
+        or record.get("previous_record_sha256") != previous_record_sha256
+        or record.get("entrant") != entrant_id
+        or record.get("campaign_id") != campaign.get("campaign_id")
+        or record.get("smoke_contract_sha256")
+        != campaign.get("smoke_contract_sha256")
+        or record.get("provider") != row.get("provider")
+        or record.get("model") != row.get("model")
+        or record.get("provider_lane") != row.get("provider_lane")
+        or not isinstance(record.get("recorded_at"), str)
+        or not record.get("recorded_at")
+        or not isinstance(record.get("process_generation"), str)
+        or not monitor_progress_sha256(record.get("process_generation"))
+        or not monitor_progress_sha256(record.get("provider_generation"))
+        or not all(
+            isinstance(record.get(name), str) and bool(record.get(name))
+            for name in (
+                "campaign_id",
+                "entrant",
+                "provider",
+                "model",
+                "provider_lane",
+                "status",
+            )
+        )
+        or not monitor_progress_nonnegative_integer(
+            record.get("provider_episode_attempts")
+        )
+        or isinstance(record.get("sequence"), bool)
+        or not isinstance(record.get("sequence"), int)
+        or int(record["sequence"]) <= 0
+        or not monitor_progress_optional_sha256(record.get("previous_record_sha256"))
+        or not isinstance(record.get("reason"), str)
+        or not record.get("reason")
+        or record.get("record_sha256") != monitor_progress_record_sha256(record)
+    ):
+        return "record identity or hash differs"
+    processes = record.get("processes")
+    if not isinstance(processes, dict) or set(processes) != {
+        "supervisor_pid",
+        "supervisor_pgid",
+        "supervisor_identity",
+        "supervisor_alive",
+        "goose_pid",
+        "goose_identity",
+        "goose_alive",
+    }:
+        return "process evidence schema differs"
+    for name in ("supervisor_pid", "supervisor_pgid", "goose_pid"):
+        value = processes[name]
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        ):
+            return "process identifiers differ"
+    for name in ("supervisor_identity", "goose_identity"):
+        value = processes[name]
+        if value is not None and (not isinstance(value, str) or not value):
+            return "process identities differ"
+    for prefix in ("supervisor", "goose"):
+        if not isinstance(processes[f"{prefix}_alive"], bool):
+            return "process liveness types differ"
+        if processes[f"{prefix}_alive"] and (
+            processes[f"{prefix}_pid"] is None
+            or processes[f"{prefix}_identity"] is None
+        ):
+            return "live process has no bound identity"
+    evidence = record.get("evidence")
+    if not isinstance(evidence, dict) or set(evidence) != {
+        "lifecycle",
+        "build_log",
+        "tree",
+        "telemetry",
+        "repetition",
+    }:
+        return "artifact evidence schema differs"
+    file_keys = {
+        "regular",
+        "bytes",
+        "sha256",
+        "stable_read",
+        "read_error",
+    }
+    lifecycle = evidence.get("lifecycle")
+    if not isinstance(lifecycle, dict) or set(lifecycle) != file_keys | {
+        "events",
+        "admitted",
+        "terminal",
+        "active_provider_request_ids",
+    }:
+        return "lifecycle evidence schema differs"
+    lifecycle_file_failure = monitor_progress_file_failure(
+        {key: lifecycle[key] for key in file_keys}
+    )
+    if lifecycle_file_failure:
+        return f"lifecycle {lifecycle_file_failure}"
+    if (
+        any(
+            not monitor_progress_nonnegative_integer(lifecycle[name])
+            for name in ("events", "admitted", "terminal")
+        )
+        or lifecycle["admitted"] > lifecycle["events"]
+        or lifecycle["terminal"] > lifecycle["admitted"]
+        or not monitor_progress_string_list(
+            lifecycle["active_provider_request_ids"]
+        )
+    ):
+        return "lifecycle evidence values differ"
+    if record["process_generation"] != monitor_progress_process_generation(
+        {"provider_episode_attempts": record["provider_episode_attempts"]},
+        processes,
+    ):
+        return "process generation differs from process evidence"
+    if record["provider_generation"] != monitor_progress_provider_generation(
+        row,
+        lifecycle,
+        lifecycle["active_provider_request_ids"],
+    ):
+        return "provider generation differs from lifecycle evidence"
+    for name in ("build_log", "telemetry"):
+        value = evidence.get(name)
+        failure = monitor_progress_file_failure(value)
+        if failure:
+            return f"{name} {failure}"
+    tree = evidence.get("tree")
+    if not isinstance(tree, dict) or set(tree) != {
+        "directory",
+        "files",
+        "bytes",
+        "sha256",
+        "read_error",
+    }:
+        return "tree evidence schema differs"
+    if (
+        not isinstance(tree["directory"], bool)
+        or any(
+            not monitor_progress_nonnegative_integer(tree[name])
+            for name in ("files", "bytes")
+        )
+        or not monitor_progress_optional_sha256(tree["sha256"])
+        or (
+            tree["read_error"] is not None
+            and (
+                not isinstance(tree["read_error"], str)
+                or not tree["read_error"]
+            )
+        )
+        or tree["directory"] != (tree["sha256"] is not None)
+        or (not tree["directory"] and (tree["files"] != 0 or tree["bytes"] != 0))
+    ):
+        return "tree evidence values differ"
+    repetition = evidence.get("repetition")
+    if not isinstance(repetition, dict) or set(repetition) != {
+        "semantic_chars",
+        "semantic_sha256",
+        "window_chars",
+        "window_count",
+        "repeated_windows",
+        "sentence_count",
+        "duplicate_sentences",
+        "peak_sentence_occurrences",
+        "window_markers",
+        "sentence_markers",
+        "detected",
+    }:
+        return "repetition evidence schema differs"
+    count_names = (
+        "semantic_chars",
+        "window_chars",
+        "window_count",
+        "repeated_windows",
+        "sentence_count",
+        "duplicate_sentences",
+        "peak_sentence_occurrences",
+    )
+    if (
+        any(
+            not monitor_progress_nonnegative_integer(repetition[name])
+            for name in count_names
+        )
+        or repetition["window_chars"] != MONITOR_PROGRESS_WINDOW_CHARS
+        or repetition["window_count"]
+        != max(
+            0,
+            repetition["semantic_chars"] - MONITOR_PROGRESS_WINDOW_CHARS + 1,
+        )
+        or repetition["repeated_windows"] > repetition["window_count"]
+        or repetition["duplicate_sentences"] > repetition["sentence_count"]
+        or repetition["peak_sentence_occurrences"] > repetition["sentence_count"]
+        or not monitor_progress_sha256(repetition["semantic_sha256"])
+        or not isinstance(repetition["detected"], bool)
+        or not all(
+            monitor_progress_string_list(
+                repetition[name],
+                maximum=MONITOR_PROGRESS_MARKER_COUNT,
+                sorted_values=False,
+            )
+            and all(monitor_progress_sha256(marker) for marker in repetition[name])
+            for name in ("window_markers", "sentence_markers")
+        )
+    ):
+        return "repetition evidence values differ"
+    expected_repetition = bool(
+        repetition["semantic_chars"]
+        >= MONITOR_PROGRESS_WINDOW_CHARS
+        * MONITOR_PROGRESS_MIN_SEMANTIC_WINDOWS
+        and repetition["window_count"] > 0
+        and repetition["repeated_windows"]
+        * MONITOR_PROGRESS_WINDOW_REPEAT_DENOMINATOR
+        >= repetition["window_count"]
+        * MONITOR_PROGRESS_WINDOW_REPEAT_NUMERATOR
+        and repetition["sentence_count"] > 0
+        and repetition["duplicate_sentences"]
+        * MONITOR_PROGRESS_SENTENCE_REPEAT_DENOMINATOR
+        >= repetition["sentence_count"]
+        * MONITOR_PROGRESS_SENTENCE_REPEAT_NUMERATOR
+    )
+    if repetition["detected"] != expected_repetition or (
+        repetition["detected"]
+        and (
+            not repetition["window_markers"]
+            or not repetition["sentence_markers"]
+        )
+    ):
+        return "repetition classification differs from its measurements"
+    delta = record.get("delta")
+    if not isinstance(delta, dict) or set(delta) != {
+        "changed_signals",
+        "growing_signals",
+        "regressed_signals",
+    }:
+        return "delta evidence schema differs"
+    signal_names = {"lifecycle", "build_log", "tree", "telemetry"}
+    for name in ("changed_signals", "growing_signals", "regressed_signals"):
+        if (
+            not monitor_progress_string_list(delta[name])
+            or not set(delta[name]).issubset(signal_names)
+        ):
+            return "delta evidence values differ"
+    if not (
+        set(delta["growing_signals"]).issubset(delta["changed_signals"])
+        and set(delta["regressed_signals"]).issubset(delta["changed_signals"])
+    ):
+        return "delta evidence changes are inconsistent"
+    classifications = {
+        "STATE_OBSERVED",
+        "EVIDENCE_UNSTABLE",
+        "REPETITION_CORROBORATED",
+        "REPETITION_SUSPECTED",
+        "PROCESS_BASELINE",
+        "PROGRESSING",
+        "WAITING_PROVIDER_LANE",
+        "PROVIDER_SILENCE_OBSERVED",
+        "LOCAL_SILENCE_OBSERVED",
+        "SUPERVISION_SILENCE_OBSERVED",
+    }
+    corroborated = record.get("corroborated_by_sequence")
+    if (
+        record.get("classification") not in classifications
+        or not monitor_progress_nonnegative_integer(
+            record.get("stagnant_observations")
+        )
+        or (
+            corroborated is not None
+            and (
+                isinstance(corroborated, bool)
+                or not isinstance(corroborated, int)
+                or corroborated <= 0
+                or corroborated >= sequence
+            )
+        )
+        or not isinstance(record.get("fail_stop"), bool)
+        or record.get("fail_stop")
+        != (record.get("classification") == "REPETITION_CORROBORATED")
+    ):
+        return "classification evidence differs"
+    return None
+
+
+def monitor_progress_unit(root: Path, entrant_id: str) -> Path:
+    return root / MONITOR_PROGRESS_ROOT / entrant_id
+
+
+def monitor_progress_record_path(root: Path, entrant_id: str, sequence: int) -> Path:
+    return monitor_progress_unit(root, entrant_id) / f"observation-{sequence:08d}.json"
+
+
+def monitor_progress_head_failure(head: Any, *, entrant_id: str) -> str | None:
+    if not isinstance(head, dict) or set(head) != {
+        "schema_version",
+        "entrant",
+        "sequence",
+        "record_sha256",
+        "updated_at",
+    }:
+        return "schema differs"
+    sequence = head.get("sequence")
+    if (
+        head.get("schema_version") != MONITOR_PROGRESS_SCHEMA
+        or head.get("entrant") != entrant_id
+        or isinstance(sequence, bool)
+        or not isinstance(sequence, int)
+        or sequence < 0
+        or not monitor_progress_optional_sha256(head.get("record_sha256"))
+        or (sequence == 0) != (head.get("record_sha256") is None)
+        or not isinstance(head.get("updated_at"), str)
+        or not head.get("updated_at")
+    ):
+        return "values differ"
+    return None
+
+
+def monitor_progress_history(root: Path, entrant_id: str) -> list[Dict[str, Any]]:
+    unit = monitor_progress_unit(root, entrant_id)
+    if not unit.exists():
+        return []
+    if unit.is_symlink() or not unit.is_dir():
+        raise SystemExit(f"monitor progress unit is missing or linked: {entrant_id}")
+    campaign = load_json(campaign_file(root))
+    row = manifest_row(root, entrant_id)
+    paths: list[tuple[int, Path]] = []
+    for path in unit.iterdir():
+        temporary = path.name.startswith(".head.json.") or re.fullmatch(
+            r"\.observation-[0-9]{8,}\.json\..+", path.name
+        )
+        if path.name == "head.json":
+            continue
+        if temporary:
+            if path.is_symlink() or not path.is_file():
+                raise SystemExit(
+                    f"monitor progress ledger has linked temporary debris: {path}"
+                )
+            continue
+        match = re.fullmatch(r"observation-([0-9]{8,})\.json", path.name)
+        if match is None or path.is_symlink() or not path.is_file():
+            raise SystemExit(
+                f"monitor progress ledger has an unexpected entry: {path}"
+            )
+        paths.append((int(match.group(1)), path))
+    records: list[Dict[str, Any]] = []
+    previous_sha: str | None = None
+    for expected_sequence, (sequence, path) in enumerate(sorted(paths), start=1):
+        if sequence != expected_sequence:
+            raise SystemExit(f"monitor progress sequence has a gap: {entrant_id}")
+        record = load_json(path)
+        failure = monitor_progress_record_failure(
+            record,
+            entrant_id=entrant_id,
+            campaign=campaign,
+            row=row,
+            sequence=sequence,
+            previous_record_sha256=previous_sha,
+        )
+        if failure:
+            raise SystemExit(
+                f"monitor progress record {entrant_id}/{sequence} is invalid: {failure}"
+            )
+        replayed = evaluate_monitor_progress(
+            records,
+            monitor_progress_observation_from_record(record),
+            sequence,
+            previous_sha,
+        )
+        if replayed != record:
+            raise SystemExit(
+                f"monitor progress record {entrant_id}/{sequence} does not replay"
+            )
+        records.append(record)
+        previous_sha = str(record["record_sha256"])
+    head_path = unit / "head.json"
+    if head_path.exists():
+        if head_path.is_symlink() or not head_path.is_file():
+            raise SystemExit(f"monitor progress head is linked: {entrant_id}")
+        head = load_json(head_path)
+        head_failure = monitor_progress_head_failure(head, entrant_id=entrant_id)
+        if head_failure:
+            raise SystemExit(
+                f"monitor progress head {head_failure}: {entrant_id}"
+            )
+        if records and int(head["sequence"]) > int(records[-1]["sequence"]):
+            raise SystemExit(f"monitor progress head is ahead or foreign: {entrant_id}")
+        if not records and int(head["sequence"]) != 0:
+            raise SystemExit(f"monitor progress head has no records: {entrant_id}")
+        head_sequence = int(head["sequence"])
+        if head_sequence > 0 and head.get("record_sha256") != records[
+            head_sequence - 1
+        ].get("record_sha256"):
+            raise SystemExit(f"monitor progress head hash differs: {entrant_id}")
+    return records
+
+
+def recover_monitor_progress_tail(
+    root: Path, entrant_id: str
+) -> Dict[str, Any] | None:
+    unit = monitor_progress_unit(root, entrant_id)
+    unit.mkdir(parents=True, exist_ok=True)
+    if unit.is_symlink() or not unit.is_dir():
+        raise SystemExit(f"monitor progress unit is linked: {entrant_id}")
+    head_path = unit / "head.json"
+    campaign = load_json(campaign_file(root))
+    row = manifest_row(root, entrant_id)
+    latest: Dict[str, Any] | None = None
+    if head_path.exists():
+        if head_path.is_symlink() or not head_path.is_file():
+            raise SystemExit(f"monitor progress head is linked: {entrant_id}")
+        head = load_json(head_path)
+        head_failure = monitor_progress_head_failure(head, entrant_id=entrant_id)
+        if head_failure:
+            raise SystemExit(
+                f"monitor progress head {head_failure}: {entrant_id}"
+            )
+        if int(head["sequence"]) > 0:
+            latest = load_json(
+                monitor_progress_record_path(root, entrant_id, int(head["sequence"]))
+            )
+            previous_sha = latest.get("previous_record_sha256")
+            failure = monitor_progress_record_failure(
+                latest,
+                entrant_id=entrant_id,
+                campaign=campaign,
+                row=row,
+                sequence=int(head["sequence"]),
+                previous_record_sha256=(
+                    str(previous_sha) if previous_sha is not None else None
+                ),
+            )
+            if failure or latest.get("record_sha256") != head.get("record_sha256"):
+                raise SystemExit(
+                    f"monitor progress head record is invalid: {entrant_id}: "
+                    f"{failure or 'head hash differs'}"
+                )
+
+    sequence = int(latest["sequence"]) + 1 if latest else 1
+    previous_sha = str(latest["record_sha256"]) if latest else None
+    while monitor_progress_record_path(root, entrant_id, sequence).exists():
+        candidate_path = monitor_progress_record_path(root, entrant_id, sequence)
+        if candidate_path.is_symlink() or not candidate_path.is_file():
+            raise SystemExit(
+                f"monitor progress orphan record is linked: {entrant_id}/{sequence}"
+            )
+        candidate = load_json(candidate_path)
+        failure = monitor_progress_record_failure(
+            candidate,
+            entrant_id=entrant_id,
+            campaign=campaign,
+            row=row,
+            sequence=sequence,
+            previous_record_sha256=previous_sha,
+        )
+        if failure:
+            raise SystemExit(
+                f"monitor progress orphan record is invalid: "
+                f"{entrant_id}/{sequence}: {failure}"
+            )
+        latest = candidate
+        previous_sha = str(candidate["record_sha256"])
+        sequence += 1
+
+    expected_head = {
+        "schema_version": MONITOR_PROGRESS_SCHEMA,
+        "entrant": entrant_id,
+        "sequence": int(latest["sequence"]) if latest else 0,
+        "record_sha256": latest["record_sha256"] if latest else None,
+        "updated_at": utc_now(),
+    }
+    current = (
+        load_json(head_path)
+        if head_path.is_file() and not head_path.is_symlink()
+        else None
+    )
+    if (
+        not isinstance(current, dict)
+        or current.get("schema_version") != expected_head["schema_version"]
+        or current.get("entrant") != expected_head["entrant"]
+        or current.get("sequence") != expected_head["sequence"]
+        or current.get("record_sha256") != expected_head["record_sha256"]
+    ):
+        atomic_json(head_path, expected_head)
+    return latest
+
+
+def monitor_progress_generation_history(
+    root: Path, entrant_id: str, latest: Mapping[str, Any] | None
+) -> list[Dict[str, Any]]:
+    if latest is None:
+        return []
+    generation = latest.get("process_generation")
+    records: list[Dict[str, Any]] = []
+    sequence = int(latest["sequence"])
+    campaign = load_json(campaign_file(root))
+    row = manifest_row(root, entrant_id)
+    expected_sha = str(latest["record_sha256"])
+    while sequence > 0:
+        record_path = monitor_progress_record_path(root, entrant_id, sequence)
+        if sequence == int(latest["sequence"]):
+            record = dict(latest)
+        else:
+            if record_path.is_symlink() or not record_path.is_file():
+                raise SystemExit(
+                    f"monitor progress reverse record is linked: "
+                    f"{entrant_id}/{sequence}"
+                )
+            record = load_json(record_path)
+        if record.get("record_sha256") != expected_sha:
+            raise SystemExit(
+                f"monitor progress reverse chain differs: {entrant_id}/{sequence}"
+            )
+        previous_sha = record.get("previous_record_sha256")
+        failure = monitor_progress_record_failure(
+            record,
+            entrant_id=entrant_id,
+            campaign=campaign,
+            row=row,
+            sequence=sequence,
+            previous_record_sha256=(
+                str(previous_sha) if previous_sha is not None else None
+            ),
+        )
+        if failure:
+            raise SystemExit(
+                f"monitor progress reverse record is invalid: "
+                f"{entrant_id}/{sequence}: {failure}"
+            )
+        if record.get("process_generation") != generation:
+            break
+        records.append(record)
+        expected_sha = str(previous_sha) if previous_sha is not None else ""
+        sequence -= 1
+    records.reverse()
+    return records
+
+
+def append_monitor_progress_observation(
+    root: Path, entrant_id: str, observation: Mapping[str, Any]
+) -> Dict[str, Any]:
+    lock_path = root / "locks" / f"monitor-progress-{entrant_id}.claim"
+    with exclusive_claim(lock_path, blocking=True) as claimed:
+        if not claimed:
+            raise SystemExit(f"cannot claim monitor progress ledger: {entrant_id}")
+        latest = recover_monitor_progress_tail(root, entrant_id)
+        sequence = int(latest["sequence"]) + 1 if latest else 1
+        previous_sha = str(latest["record_sha256"]) if latest else None
+        history = (
+            monitor_progress_generation_history(root, entrant_id, latest)
+            if observation["evidence"]["repetition"]["detected"]
+            else ([latest] if latest is not None else [])
+        )
+        record = evaluate_monitor_progress(
+            history, observation, sequence, previous_sha
+        )
+        campaign = load_json(campaign_file(root))
+        row = manifest_row(root, entrant_id)
+        failure = monitor_progress_record_failure(
+            record,
+            entrant_id=entrant_id,
+            campaign=campaign,
+            row=row,
+            sequence=sequence,
+            previous_record_sha256=previous_sha,
+        )
+        if failure:
+            raise SystemExit(
+                f"monitor progress generated an invalid record: "
+                f"{entrant_id}/{sequence}: {failure}"
+            )
+        write_exclusive_json(
+            monitor_progress_record_path(root, entrant_id, sequence), record
+        )
+        atomic_json(
+            monitor_progress_unit(root, entrant_id) / "head.json",
+            {
+                "schema_version": MONITOR_PROGRESS_SCHEMA,
+                "entrant": entrant_id,
+                "sequence": sequence,
+                "record_sha256": record["record_sha256"],
+                "updated_at": utc_now(),
+            },
+        )
+        return record
+
+
+def validate_monitor_progress_ledger(root: Path) -> None:
+    progress_root = root / MONITOR_PROGRESS_ROOT
+    if not progress_root.exists():
+        return
+    if progress_root.is_symlink() or not progress_root.is_dir():
+        raise SystemExit("monitor progress ledger root is missing or linked")
+    campaign = load_json(campaign_file(root))
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    entrant_ids = {str(row["id"]) for row in entrants(manifest)}
+    found = {path.name for path in progress_root.iterdir()}
+    unexpected = sorted(found - entrant_ids)
+    if unexpected:
+        raise SystemExit(
+            "monitor progress ledger has foreign entrants: " + ", ".join(unexpected)
+        )
+    for entrant_id in sorted(found):
+        monitor_progress_history(root, entrant_id)
+
+
+def monitor_progress_tick(root: Path) -> tuple[list[Dict[str, Any]], str | None]:
+    campaign = load_json(campaign_file(root))
+    manifest = load_json(Path(str(campaign["entrant_manifest"])))
+    summaries: list[Dict[str, Any]] = []
+    failure = None
+    for row in entrants(manifest):
+        entrant_id = str(row["id"])
+        record = append_monitor_progress_observation(
+            root, entrant_id, monitor_progress_observation(root, entrant_id)
+        )
+        summaries.append(
+            {
+                "entrant": entrant_id,
+                "sequence": record["sequence"],
+                "classification": record["classification"],
+                "stagnant_observations": record["stagnant_observations"],
+                "fail_stop": record["fail_stop"],
+                "reason": record["reason"],
+                "record_sha256": record["record_sha256"],
+            }
+        )
+        if record["fail_stop"] and failure is None:
+            failure = (
+                f"{entrant_id} monitor progress fail-stop: {record['reason']} "
+                f"(ledger observation {record['sequence']})"
+            )
+    return summaries, failure
 
 
 def process_group_members(pgid: int) -> list[tuple[int, str]]:
@@ -12092,12 +13443,22 @@ def monitor_tick(root: Path) -> tuple[bool, int]:
     except SystemExit as error:
         return monitor_attention(root, f"smoke proof gate failed: {error}")
     if process_alive(manager.get("pid"), manager.get("identity")):
+        try:
+            progress, progress_failure = monitor_progress_tick(root)
+        except (OSError, ValueError, TypeError, SystemExit) as error:
+            return monitor_attention(
+                root, f"monitor progress supervision failed closed: {error}"
+            )
+        if progress_failure:
+            return monitor_attention(root, progress_failure)
         monitor_state(
             root,
             status="RUNNING",
             manager_pid=manager.get("pid"),
             manager_identity=manager.get("identity"),
             manager_alive=True,
+            progress_ledger=str(root / MONITOR_PROGRESS_ROOT),
+            entrant_progress=progress,
             failure=None,
         )
         return False, 0
@@ -12150,9 +13511,10 @@ def monitor_campaign(
         require_lineage(root)
         campaign = load_json(campaign_file(root))
         try:
+            validate_monitor_progress_ledger(root)
             contract = smoke_contract_identity(campaign)
         except SystemExit as error:
-            monitor_attention(root, f"monitor smoke contract failed: {error}")
+            monitor_attention(root, f"monitor startup evidence failed: {error}")
             return 1
         try:
             parent_pid = wait_for_monitor_detachment()

@@ -230,6 +230,86 @@ class CloudSb7HarnessTest(unittest.TestCase):
             {"type": "complete", "total_tokens": 10},
         ]
 
+    def progress_observation(
+        self,
+        text: str,
+        *,
+        recorded_at: str = "2026-08-23T00:00:00Z",
+        build_log_bytes: int | None = None,
+        tree_bytes: int = 0,
+        telemetry_bytes: int = 0,
+        active_provider: bool = True,
+        process_generation: str = "a" * 64,
+        provider_generation: str = "b" * 64,
+    ) -> dict[str, object]:
+        repetition = cloud_sb7.monitor_progress_repetition_evidence(text)
+        semantic_sha = repetition["semantic_sha256"]
+        build_log_evidence = {
+            "regular": True,
+            "bytes": build_log_bytes if build_log_bytes is not None else len(text),
+            "sha256": semantic_sha,
+            "stable_read": True,
+            "read_error": None,
+        }
+        return {
+            "schema_version": cloud_sb7.MONITOR_PROGRESS_SCHEMA,
+            "recorded_at": recorded_at,
+            "campaign_id": "fixture-campaign",
+            "smoke_contract_sha256": "fixture-contract",
+            "entrant": "fixture-entrant",
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "provider_lane": "fixture-lane",
+            "status": "BUILD_RUNNING",
+            "provider_episode_attempts": 1,
+            "process_generation": process_generation,
+            "provider_generation": provider_generation,
+            "processes": {
+                "supervisor_pid": 101,
+                "supervisor_pgid": 101,
+                "supervisor_identity": "supervisor-generation",
+                "supervisor_alive": True,
+                "goose_pid": 102,
+                "goose_identity": "goose-generation",
+                "goose_alive": True,
+            },
+            "evidence": {
+                "lifecycle": {
+                    "regular": True,
+                    "bytes": 2,
+                    "sha256": cloud_sb7.sha256_bytes(b"lifecycle"),
+                    "stable_read": True,
+                    "read_error": None,
+                    "events": 2,
+                    "admitted": 1,
+                    "terminal": 0,
+                    "active_provider_request_ids": (
+                        ["provider-request"] if active_provider else []
+                    ),
+                },
+                "build_log": build_log_evidence,
+                "tree": {
+                    "directory": True,
+                    "files": 1 if tree_bytes else 0,
+                    "bytes": tree_bytes,
+                    "sha256": cloud_sb7.sha256_bytes(
+                        f"tree:{tree_bytes}".encode()
+                    ),
+                    "read_error": None,
+                },
+                "telemetry": {
+                    "regular": True,
+                    "bytes": telemetry_bytes,
+                    "sha256": cloud_sb7.sha256_bytes(
+                        f"telemetry:{telemetry_bytes}".encode()
+                    ),
+                    "stable_read": True,
+                    "read_error": None,
+                },
+                "repetition": repetition,
+            },
+        }
+
     def test_smoke_attempt_prepares_after_provider_lane_admission(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -3483,6 +3563,432 @@ class CloudSb7HarnessTest(unittest.TestCase):
             cloud_sb7.update_campaign(root, status="STOPPED")
             self.assertEqual(cloud_sb7.monitor_tick(root), (True, 2))
             self.assertEqual(cloud_sb7.read_monitor_state(root)["status"], "STOPPED")
+
+    def test_offline_progress_replay_has_no_duration_cap_and_requires_recurrence_corroboration(
+        self,
+    ) -> None:
+        healthy = " ".join(
+            f"Sentence {index} describes distinct productive work with unique "
+            f"value {index}."
+            for index in range(100)
+        )
+        self.assertIs(
+            cloud_sb7.monitor_progress_repetition_evidence(healthy)["detected"],
+            False,
+        )
+        noisy_user_text = " ".join(
+            ["Repeated tool output must never count as assistant recurrence."] * 100
+        )
+        noisy_stream = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": noisy_user_text}
+                            ],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": healthy}],
+                        },
+                    }
+                ),
+            ]
+        )
+        assistant_only = cloud_sb7.assistant_semantic_stream(noisy_stream)
+        self.assertNotIn("Repeated tool output", assistant_only)
+        self.assertIs(
+            cloud_sb7.monitor_progress_repetition_evidence(assistant_only)[
+                "detected"
+            ],
+            False,
+        )
+        silence = [
+            self.progress_observation(
+                healthy,
+                recorded_at=(
+                    "2026-08-23T00:00:00Z"
+                    if index == 0
+                    else f"2036-08-{index:02d}T00:00:00Z"
+                ),
+            )
+            for index in range(20)
+        ]
+        replayed = cloud_sb7.replay_monitor_progress(silence)
+        self.assertEqual(replayed[0]["classification"], "PROCESS_BASELINE")
+        self.assertTrue(
+            all(
+                record["classification"] == "PROVIDER_SILENCE_OBSERVED"
+                and record["fail_stop"] is False
+                for record in replayed[1:]
+            )
+        )
+        self.assertEqual(replayed[-1]["stagnant_observations"], len(replayed) - 1)
+        local_silence = cloud_sb7.replay_monitor_progress(
+            [
+                self.progress_observation(healthy, active_provider=False),
+                self.progress_observation(healthy, active_provider=False),
+            ]
+        )
+        self.assertEqual(
+            local_silence[-1]["classification"], "LOCAL_SILENCE_OBSERVED"
+        )
+        self.assertIs(local_silence[-1]["fail_stop"], False)
+
+        loop_sentence = (
+            "I am still considering the identical plan and will reconsider it "
+            "again now."
+        )
+        looping = " ".join([loop_sentence] * 80)
+        longer_looping = " ".join([loop_sentence] * 160)
+        repeated = cloud_sb7.replay_monitor_progress(
+            [
+                self.progress_observation(looping),
+                self.progress_observation(looping),
+                self.progress_observation(longer_looping),
+            ]
+        )
+        self.assertEqual(repeated[0]["classification"], "REPETITION_SUSPECTED")
+        self.assertIs(repeated[0]["fail_stop"], False)
+        self.assertEqual(
+            repeated[1]["classification"], "REPETITION_SUSPECTED"
+        )
+        self.assertIs(repeated[1]["fail_stop"], False)
+        self.assertEqual(
+            repeated[2]["classification"], "REPETITION_CORROBORATED"
+        )
+        self.assertIs(repeated[2]["fail_stop"], True)
+        self.assertEqual(repeated[2]["corroborated_by_sequence"], 1)
+
+        restarted = cloud_sb7.replay_monitor_progress(
+            [
+                self.progress_observation(looping),
+                self.progress_observation(
+                    longer_looping,
+                    process_generation="c" * 64,
+                ),
+            ]
+        )
+        self.assertEqual(restarted[-1]["classification"], "REPETITION_SUSPECTED")
+        self.assertIs(restarted[-1]["fail_stop"], False)
+        new_provider_request = cloud_sb7.replay_monitor_progress(
+            [
+                self.progress_observation(looping),
+                self.progress_observation(
+                    longer_looping,
+                    provider_generation="d" * 64,
+                ),
+            ]
+        )
+        self.assertEqual(
+            new_provider_request[-1]["classification"], "REPETITION_SUSPECTED"
+        )
+        self.assertIs(new_provider_request[-1]["fail_stop"], False)
+        unstable = self.progress_observation(longer_looping)
+        unstable["evidence"]["telemetry"]["stable_read"] = False
+        unstable_replay = cloud_sb7.replay_monitor_progress(
+            [self.progress_observation(looping), unstable]
+        )
+        self.assertEqual(
+            unstable_replay[-1]["classification"], "EVIDENCE_UNSTABLE"
+        )
+        self.assertIs(unstable_replay[-1]["fail_stop"], False)
+
+    def test_monitor_progress_real_process_growth_silence_and_durable_orphan_adoption(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            unit = root / "entrants" / entrant_id
+            log = unit / "logs/build.log"
+            log.parent.mkdir()
+            lifecycle = unit / "provider-lifecycle.jsonl"
+            telemetry = unit / "tree/.swarm/telemetry.jsonl"
+            telemetry.parent.mkdir()
+            lifecycle.write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "timestamp": f"2026-08-23T00:00:0{index}Z",
+                            "request_id": "live-request",
+                            "provider": row["provider"],
+                            "model": row["model"],
+                            "session": "real-process-session",
+                            "state": state,
+                        }
+                    )
+                    for index, state in enumerate(("queued", "admitted"))
+                )
+                + "\n"
+            )
+            log.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "thinking",
+                                    "thinking": "I will inspect the repository once.",
+                                }
+                            ],
+                        },
+                    }
+                )
+                + "\n"
+            )
+            telemetry.write_text('{"call":1}\n')
+            supervisor = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            goose = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)"],
+                start_new_session=True,
+            )
+            try:
+                cloud_sb7.update_state(
+                    root,
+                    entrant_id,
+                    status="BUILD_RUNNING",
+                    provider_episode_attempts=1,
+                    provider_lifecycle=str(lifecycle),
+                    build_log=str(log),
+                    supervisor_pid=supervisor.pid,
+                    supervisor_pgid=supervisor.pid,
+                    supervisor_identity=cloud_sb7.process_identity(supervisor.pid),
+                    goose_pid=goose.pid,
+                    goose_identity=cloud_sb7.process_identity(goose.pid),
+                )
+                first = cloud_sb7.append_monitor_progress_observation(
+                    root,
+                    entrant_id,
+                    cloud_sb7.monitor_progress_observation(root, entrant_id),
+                )
+                self.assertEqual(first["classification"], "PROCESS_BASELINE")
+                self.assertIs(first["processes"]["supervisor_alive"], True)
+                self.assertIs(first["processes"]["goose_alive"], True)
+
+                with log.open("a") as stream:
+                    stream.write(
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": (
+                                                "I created one verified output file."
+                                            ),
+                                        }
+                                    ],
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+                (unit / "tree/result.txt").write_text("verified output\n")
+                with telemetry.open("a") as stream:
+                    stream.write('{"call":2}\n')
+                second = cloud_sb7.append_monitor_progress_observation(
+                    root,
+                    entrant_id,
+                    cloud_sb7.monitor_progress_observation(root, entrant_id),
+                )
+                self.assertEqual(second["classification"], "PROGRESSING")
+                self.assertEqual(
+                    set(second["delta"]["growing_signals"]),
+                    {"build_log", "telemetry", "tree"},
+                )
+
+                for _ in range(5):
+                    silent = cloud_sb7.append_monitor_progress_observation(
+                        root,
+                        entrant_id,
+                        cloud_sb7.monitor_progress_observation(root, entrant_id),
+                    )
+                    self.assertEqual(
+                        silent["classification"], "PROVIDER_SILENCE_OBSERVED"
+                    )
+                    self.assertIs(silent["fail_stop"], False)
+
+                latest = cloud_sb7.monitor_progress_history(root, entrant_id)[-1]
+                orphan_observation = cloud_sb7.monitor_progress_observation(
+                    root, entrant_id
+                )
+                orphan = cloud_sb7.evaluate_monitor_progress(
+                    [latest],
+                    orphan_observation,
+                    int(latest["sequence"]) + 1,
+                    str(latest["record_sha256"]),
+                )
+                cloud_sb7.write_exclusive_json(
+                    cloud_sb7.monitor_progress_record_path(
+                        root, entrant_id, int(orphan["sequence"])
+                    ),
+                    orphan,
+                )
+                adopted = cloud_sb7.append_monitor_progress_observation(
+                    root,
+                    entrant_id,
+                    cloud_sb7.monitor_progress_observation(root, entrant_id),
+                )
+                self.assertEqual(adopted["sequence"], orphan["sequence"] + 1)
+                self.assertEqual(
+                    adopted["previous_record_sha256"], orphan["record_sha256"]
+                )
+                (
+                    cloud_sb7.monitor_progress_unit(root, entrant_id)
+                    / ".observation-99999999.json.crash-debris"
+                ).write_text("unlinked temporary payload\n")
+                cloud_sb7.validate_monitor_progress_ledger(root)
+
+                loop_sentence = (
+                    "I am still considering the identical plan and will "
+                    "reconsider it again now."
+                )
+                loop_batch = " ".join([loop_sentence] * 80)
+                recurrence_records = []
+                for _ in range(2):
+                    with log.open("a") as stream:
+                        stream.write(
+                            json.dumps(
+                                {
+                                    "type": "message",
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": [
+                                            {
+                                                "type": "thinking",
+                                                "thinking": loop_batch,
+                                            }
+                                        ],
+                                    },
+                                }
+                            )
+                            + "\n"
+                        )
+                    recurrence_records.append(
+                        cloud_sb7.append_monitor_progress_observation(
+                            root,
+                            entrant_id,
+                            cloud_sb7.monitor_progress_observation(
+                                root, entrant_id
+                            ),
+                        )
+                    )
+                self.assertEqual(
+                    recurrence_records[0]["classification"],
+                    "REPETITION_SUSPECTED",
+                )
+                self.assertIs(recurrence_records[0]["fail_stop"], False)
+                self.assertEqual(
+                    recurrence_records[1]["classification"],
+                    "REPETITION_CORROBORATED",
+                )
+                self.assertIs(recurrence_records[1]["fail_stop"], True)
+                summaries, progress_failure = cloud_sb7.monitor_progress_tick(root)
+                self.assertIs(summaries[0]["fail_stop"], True)
+                self.assertIn("monitor progress fail-stop", progress_failure)
+            finally:
+                if supervisor.poll() is None:
+                    cloud_sb7.stop_group(supervisor.pid, grace_seconds=0.1)
+                    supervisor.wait(timeout=5)
+                if goose.poll() is None:
+                    cloud_sb7.stop_group(goose.pid, grace_seconds=0.1)
+                    goose.wait(timeout=5)
+
+    def test_monitor_progress_corruption_and_corroborated_failure_fail_closed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            unit = root / "entrants" / entrant_id
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                provider_lifecycle=str(unit / "provider-lifecycle.jsonl"),
+                build_log=str(unit / "logs/build.log"),
+            )
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                build_log=str(root / "outside.log"),
+            )
+            with self.assertRaisesRegex(SystemExit, "escaped its entrant unit"):
+                cloud_sb7.monitor_progress_observation(root, entrant_id)
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                build_log=str(unit / "logs/build.log"),
+            )
+            observation = cloud_sb7.monitor_progress_observation(root, entrant_id)
+            record = cloud_sb7.append_monitor_progress_observation(
+                root, entrant_id, observation
+            )
+            record_path = cloud_sb7.monitor_progress_record_path(root, entrant_id, 1)
+            changed = cloud_sb7.load_json(record_path)
+            changed["reason"] = "tampered"
+            cloud_sb7.atomic_json(record_path, changed)
+            with self.assertRaisesRegex(SystemExit, "record identity or hash differs"):
+                cloud_sb7.validate_monitor_progress_ledger(root)
+            self.assertEqual(record["sequence"], 1)
+            changed = dict(record)
+            changed["classification"] = "PROCESS_BASELINE"
+            changed["reason"] = "plausible but false replay classification"
+            changed["record_sha256"] = cloud_sb7.monitor_progress_record_sha256(
+                changed
+            )
+            cloud_sb7.atomic_json(record_path, changed)
+            with self.assertRaisesRegex(SystemExit, "does not replay"):
+                cloud_sb7.validate_monitor_progress_ledger(root)
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            cloud_sb7.manager_state(
+                root,
+                status="RUNNING",
+                pid=os.getpid(),
+                pgid=os.getpgrp(),
+                identity=cloud_sb7.process_identity(os.getpid()),
+            )
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(
+                    cloud_sb7,
+                    "monitor_progress_tick",
+                    return_value=([], "corroborated repetition fixture"),
+                ),
+                mock.patch.object(
+                    cloud_sb7, "stop_runtime_groups_for_attention", return_value=[]
+                ),
+            ):
+                self.assertEqual(cloud_sb7.monitor_tick(root), (True, 1))
+            self.assertEqual(
+                cloud_sb7.load_json(cloud_sb7.campaign_file(root))["status"],
+                "ATTENTION",
+            )
+            self.assertIn(
+                "corroborated repetition",
+                cloud_sb7.read_monitor_state(root)["failure"],
+            )
 
     def test_stop_owns_live_smoke_supervisor_group(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
