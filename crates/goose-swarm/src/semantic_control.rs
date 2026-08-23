@@ -37,6 +37,13 @@ pub struct AdmittedSemanticObservationRequest {
 
 #[async_trait]
 pub trait AdmittedSemanticObservationReviewer: Send + Sync {
+    /// Exact logical lanes for which this reviewer has a provider binding. `None` preserves the
+    /// generic adapter contract and leaves rejection to `verify_admission`; production route-bound
+    /// adapters return `Some` so the scheduler never queues work for a provider it cannot serve.
+    fn eligible_logical_device_ids(&self) -> Option<Vec<String>> {
+        None
+    }
+
     /// Validate that this exact admission can be served by a verified provider without starting a
     /// request. Production adapters use this to fail closed on route/model drift.
     fn verify_admission(
