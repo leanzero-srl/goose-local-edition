@@ -3461,14 +3461,31 @@ class CloudSb7HarnessTest(unittest.TestCase):
         class Launched:
             pid = 24680
 
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def wait(self, timeout: float) -> int:
+                self.timeout = timeout
+                cloud_sb7.monitor_state(
+                    self.root,
+                    status="STARTING",
+                    pid=97531,
+                    pgid=97531,
+                    identity="monitor-process",
+                    launcher_committed_monitor_pid=97531,
+                    launcher_committed_at="now",
+                )
+                return 0
+
         def launch(
             _command: list[str],
             _log_path: Path,
             *,
             on_started: object,
         ) -> Launched:
-            on_started(Launched())
-            return Launched()
+            proc = Launched(root)
+            on_started(proc)
+            return proc
 
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -3495,7 +3512,8 @@ class CloudSb7HarnessTest(unittest.TestCase):
             stop_group.assert_not_called()
             monitor = cloud_sb7.read_monitor_state(root)
             self.assertEqual(monitor["status"], "STARTING")
-            self.assertEqual(monitor["pid"], Launched.pid)
+            self.assertEqual(monitor["pid"], 97531)
+            self.assertEqual(monitor["launcher_pid"], Launched.pid)
 
     def test_monitor_waits_for_ppid_one_before_reporting_running(self) -> None:
         with (
@@ -3505,6 +3523,76 @@ class CloudSb7HarnessTest(unittest.TestCase):
         ):
             self.assertEqual(cloud_sb7.wait_for_monitor_detachment(), 1)
         sleep.assert_called_once_with(0.05)
+
+    def test_monitor_start_reparents_and_authenticates_the_real_monitor(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            rows = self.make_smoke_campaign(root)
+            proof_hashes = {}
+            for row in rows:
+                state = self.complete_smoke_attempt(root, row)
+                proof_hashes[str(row["id"])] = state["proof_sha256"]
+            raw_hashes = {
+                str(row["id"]): cloud_sb7.sha256_tree_exact(
+                    root / "entrants" / str(row["id"]) / "tree"
+                )
+                for row in rows
+            }
+            for row in rows:
+                entrant_id = str(row["id"])
+                unit = root / "entrants" / entrant_id
+                cloud_sb7.update_state(
+                    root,
+                    entrant_id,
+                    provider_lifecycle=str(unit / "provider-lifecycle.jsonl"),
+                    build_log=str(unit / "logs/build.log"),
+                )
+            cloud_sb7.update_campaign(
+                root,
+                status="RUNNING",
+                smoke_status="PASS",
+                smoke_proof_sha256=proof_hashes,
+                smoke_raw_tree_sha256_before=raw_hashes,
+                smoke_raw_tree_sha256_after=raw_hashes,
+                coordinator=str(Path(cloud_sb7.__file__).resolve()),
+            )
+            cloud_sb7.manager_state(
+                root,
+                status="RUNNING",
+                pid=os.getpid(),
+                pgid=None,
+                identity=cloud_sb7.process_identity(os.getpid()),
+            )
+            monitor_pid = 0
+            launcher_pid = 0
+            try:
+                self.assertEqual(cloud_sb7.monitor_start(root), 0)
+                campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+                monitor = cloud_sb7.wait_for_authenticated_monitor(
+                    root, campaign, timeout_seconds=10
+                )
+                monitor_pid = int(monitor["pid"])
+                launcher_pid = int(monitor["launcher_pid"])
+                topology = cloud_sb7.monitor_process_topology(monitor_pid)
+                self.assertEqual(
+                    topology,
+                    {"parent_pid": 1, "pgid": monitor_pid, "session_id": monitor_pid},
+                )
+                self.assertFalse(
+                    cloud_sb7.process_alive(
+                        launcher_pid, monitor.get("launcher_identity")
+                    )
+                )
+                self.assertTrue(
+                    cloud_sb7.exclusive_claim_is_held(
+                        root / "locks/monitor-run.claim"
+                    )
+                )
+            finally:
+                if monitor_pid and cloud_sb7.process_alive(monitor_pid):
+                    cloud_sb7.stop_group(monitor_pid, grace_seconds=0.1)
+                if launcher_pid and cloud_sb7.process_alive(launcher_pid):
+                    cloud_sb7.stop_group(launcher_pid, grace_seconds=0.1)
 
     def test_monitor_refuses_running_state_without_ppid_one(self) -> None:
         with (
@@ -4680,6 +4768,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
             root = Path(raw)
             self.make_recovery_campaign(root, "SCORING")
             child_pid_path = root / "scorer-child.pid"
+            marker = "a" * 64
+            scorer_env = dict(os.environ)
+            scorer_env[cloud_sb7.SCORER_OWNERSHIP_ENV] = marker
             parent = subprocess.Popen(
                 [
                     sys.executable,
@@ -4693,6 +4784,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     ),
                 ],
                 start_new_session=True,
+                env=scorer_env,
             )
             child_pid = 0
             try:
@@ -4709,6 +4801,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     score_pgid=parent.pid,
                     score_identity=cloud_sb7.process_identity(parent.pid),
                     score_process_inventory=[],
+                    score_ownership_marker=marker,
                 )
                 inventory = cloud_sb7.record_scorer_process_inventory(
                     root, "model", parent.pid
@@ -4734,6 +4827,228 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     with contextlib.suppress(ProcessLookupError):
                         os.kill(child_pid, signal.SIGKILL)
 
+    def test_scorer_inventory_follows_a_recorded_reparented_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            helper_pid_path = root / "scorer-helper.pid"
+            daemon_pid_path = root / "scorer-daemon.pid"
+            trigger_path = root / "spawn-daemon"
+            marker = "b" * 64
+            scorer_env = dict(os.environ)
+            scorer_env[cloud_sb7.SCORER_OWNERSHIP_ENV] = marker
+            helper_code = (
+                "import os,pathlib,subprocess,sys,time; "
+                f"pathlib.Path({str(helper_pid_path)!r}).write_text(str(os.getpid())); "
+                f"trigger=pathlib.Path({str(trigger_path)!r}); "
+                "\nwhile not trigger.exists(): time.sleep(0.01)\n"
+                "daemon=subprocess.Popen([sys.executable,'-c',"
+                "'import time; time.sleep(120)'],start_new_session=True); "
+                f"pathlib.Path({str(daemon_pid_path)!r}).write_text(str(daemon.pid)); "
+                "time.sleep(120)"
+            )
+            parent = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import subprocess,sys,time; "
+                        f"helper=subprocess.Popen([sys.executable,'-c',{helper_code!r}],"
+                        "start_new_session=True); time.sleep(120)"
+                    ),
+                ],
+                start_new_session=True,
+                env=scorer_env,
+            )
+            helper_pid = 0
+            daemon_pid = 0
+            try:
+                deadline = time.monotonic() + 5
+                while not helper_pid_path.is_file() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(helper_pid_path.is_file())
+                helper_pid = int(helper_pid_path.read_text())
+                cloud_sb7.update_state(
+                    root,
+                    "model",
+                    status="SCORING",
+                    score_pid=parent.pid,
+                    score_pgid=parent.pid,
+                    score_identity=cloud_sb7.process_identity(parent.pid),
+                    score_process_inventory=[],
+                    score_ownership_marker=marker,
+                )
+                first = cloud_sb7.record_scorer_process_inventory(
+                    root, "model", parent.pid
+                )
+                self.assertIn(helper_pid, {record["pid"] for record in first})
+
+                os.kill(parent.pid, signal.SIGKILL)
+                parent.wait(timeout=5)
+                trigger_path.write_text("go\n")
+                deadline = time.monotonic() + 5
+                while not daemon_pid_path.is_file() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(daemon_pid_path.is_file())
+                daemon_pid = int(daemon_pid_path.read_text())
+
+                os.kill(helper_pid, signal.SIGKILL)
+                deadline = time.monotonic() + 5
+                while cloud_sb7.process_alive(helper_pid) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+
+                recorded = cloud_sb7.read_state(root, "model")[
+                    "score_process_inventory"
+                ]
+                self.assertNotIn(daemon_pid, {record["pid"] for record in recorded})
+
+                cloud_sb7.recover_interrupted_scoring(root)
+
+                deadline = time.monotonic() + 5
+                while cloud_sb7.process_alive(daemon_pid) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertFalse(cloud_sb7.process_alive(daemon_pid))
+                self.assertEqual(
+                    cloud_sb7.read_state(root, "model")["status"], "SCORE_FAILED"
+                )
+            finally:
+                if parent.poll() is None:
+                    cloud_sb7.stop_group(parent.pid, grace_seconds=0.1)
+                for pid in (helper_pid, daemon_pid):
+                    if pid and cloud_sb7.process_alive(pid):
+                        with contextlib.suppress(ProcessLookupError):
+                            os.kill(pid, signal.SIGKILL)
+
+    def test_unmarked_external_scorer_ancestry_never_clears_ownership(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            cloud_sb7.update_state(
+                root,
+                "model",
+                status="SCORING",
+                score_pid=4444,
+                score_pgid=4444,
+                score_identity="dead-scorer",
+                score_ownership_marker=None,
+                score_process_inventory=[
+                    {
+                        "pid": 5555,
+                        "ppid": 1,
+                        "pgid": 5555,
+                        "session_id": 5555,
+                        "identity": "dead-external-helper",
+                    }
+                ],
+            )
+            with (
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(cloud_sb7, "process_group_members", return_value=[]),
+            ):
+                cloud_sb7.recover_interrupted_scoring(root)
+
+            state = cloud_sb7.read_state(root, "model")
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertEqual(state["score_pid"], 4444)
+            self.assertEqual(state["score_pgid"], 4444)
+
+    def test_unattributed_live_scorer_group_never_clears_ownership(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            ready_path = root / "scorer-ready"
+            trigger_path = root / "scorer-trigger"
+            child_pid_path = root / "scrubbed-child.pid"
+            marker = "c" * 64
+            scorer_env = dict(os.environ)
+            scorer_env[cloud_sb7.SCORER_OWNERSHIP_ENV] = marker
+            parent_code = (
+                "import os,pathlib,subprocess,sys,time; "
+                f"ready=pathlib.Path({str(ready_path)!r}); "
+                f"trigger=pathlib.Path({str(trigger_path)!r}); "
+                "ready.write_text('ready'); "
+                "\nwhile not trigger.exists(): time.sleep(0.01)\n"
+                "child=subprocess.Popen([sys.executable,'-c',"
+                "'import time; time.sleep(120)'],"
+                "env={'PATH':os.environ.get('PATH','')}); "
+                f"pathlib.Path({str(child_pid_path)!r}).write_text(str(child.pid)); "
+                "os._exit(0)"
+            )
+            parent = subprocess.Popen(
+                [sys.executable, "-c", parent_code],
+                start_new_session=True,
+                env=scorer_env,
+            )
+            child_pid = 0
+            try:
+                deadline = time.monotonic() + 5
+                while not ready_path.is_file() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(ready_path.is_file())
+                identity = cloud_sb7.process_identity(parent.pid)
+                self.assertIsNotNone(identity)
+                cloud_sb7.update_state(
+                    root,
+                    "model",
+                    status="SCORING",
+                    score_pid=parent.pid,
+                    score_pgid=parent.pid,
+                    score_identity=identity,
+                    score_ownership_marker=marker,
+                    score_process_inventory=[],
+                )
+                trigger_path.write_text("go\n")
+                deadline = time.monotonic() + 5
+                while not child_pid_path.is_file() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(child_pid_path.is_file())
+                child_pid = int(child_pid_path.read_text())
+                parent.wait(timeout=5)
+
+                cloud_sb7.recover_interrupted_scoring(root)
+
+                self.assertTrue(cloud_sb7.process_alive(child_pid))
+                state = cloud_sb7.read_state(root, "model")
+                self.assertEqual(state["status"], "INCOMPLETE")
+                self.assertEqual(state["score_pid"], parent.pid)
+                self.assertEqual(state["score_pgid"], parent.pid)
+                self.assertEqual(state["score_ownership_marker"], marker)
+            finally:
+                if parent.poll() is None:
+                    cloud_sb7.stop_group(parent.pid, grace_seconds=0.1)
+                elif child_pid and cloud_sb7.process_alive(child_pid):
+                    cloud_sb7.stop_group(parent.pid, grace_seconds=0.1)
+
+    def test_failed_scorer_marker_scan_never_clears_ownership(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            cloud_sb7.update_state(
+                root,
+                "model",
+                status="SCORING",
+                score_pid=4444,
+                score_pgid=4444,
+                score_identity="dead-scorer",
+                score_ownership_marker="d" * 64,
+                score_process_inventory=[],
+            )
+            with (
+                mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+                mock.patch.object(cloud_sb7, "process_group_members", return_value=[]),
+                mock.patch.object(
+                    cloud_sb7,
+                    "scorer_marker_process_records",
+                    return_value=([], False),
+                ),
+            ):
+                cloud_sb7.recover_interrupted_scoring(root)
+
+            state = cloud_sb7.read_state(root, "model")
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertEqual(state["score_pid"], 4444)
+            self.assertEqual(state["score_ownership_marker"], "d" * 64)
+
     def test_scorer_ownership_is_not_cleared_when_cleanup_is_unproven(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -4754,6 +5069,248 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(state["status"], "INCOMPLETE")
             self.assertEqual(state["score_pid"], 4444)
             self.assertEqual(state["score_pgid"], 4444)
+
+    def test_completed_scorer_retains_ownership_when_descendants_survive(self) -> None:
+        class Scorer:
+            pid = 4444
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_scored_campaign(root)
+            entrant_id = "fixture-model"
+            state = cloud_sb7.read_state(root, entrant_id)
+            tree = Path(str(state["tree"]))
+            tree.mkdir(parents=True, exist_ok=True)
+            (tree / "fixture.txt").write_text("fixture\n")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_COMPLETE",
+                raw_tree_sha256=cloud_sb7.hash_tree(tree),
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            campaign["instrument_root"] = str(root)
+            cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
+            score_tree = root / "scores" / entrant_id / "attempt-2" / "tree"
+            score_tree.mkdir(parents=True)
+
+            def launch(*_args: object, **kwargs: object) -> Scorer:
+                proc = Scorer()
+                kwargs["on_started"](proc)
+                return proc
+
+            real_process_identity = cloud_sb7.process_identity
+
+            def process_identity(pid: object) -> str | None:
+                if pid == Scorer.pid:
+                    return "scorer-generation"
+                return real_process_identity(pid)
+
+            with (
+                mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+                mock.patch.object(
+                    cloud_sb7, "supersession_smoke_gate_failure", return_value=None
+                ),
+                mock.patch.object(cloud_sb7, "instrument_mismatch", return_value=None),
+                mock.patch.object(
+                    cloud_sb7, "persisted_entrant_secret_hits", return_value=[]
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "campaign_instrument_path",
+                    return_value=root / "score_sb7.py",
+                ),
+                mock.patch.object(
+                    cloud_sb7, "clone_for_score", return_value=score_tree
+                ),
+                mock.patch.object(
+                    cloud_sb7, "launch_after_receipt", side_effect=launch
+                ),
+                mock.patch.object(
+                    cloud_sb7, "process_identity", side_effect=process_identity
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "wait_for_scorer",
+                    return_value=(1, False, True),
+                ),
+            ):
+                self.assertFalse(cloud_sb7.score_one(root, entrant_id))
+
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertEqual(state["score_pid"], 4444)
+            self.assertEqual(state["score_pgid"], 4444)
+            self.assertIn("ownership is retained", state["failure"])
+
+    def test_scorer_receipt_failure_recovers_persisted_ownership(self) -> None:
+        class Scorer:
+            pid = 4444
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_scored_campaign(root)
+            entrant_id = "fixture-model"
+            state = cloud_sb7.read_state(root, entrant_id)
+            tree = Path(str(state["tree"]))
+            tree.mkdir(parents=True, exist_ok=True)
+            (tree / "fixture.txt").write_text("fixture\n")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_COMPLETE",
+                raw_tree_sha256=cloud_sb7.hash_tree(tree),
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            campaign["instrument_root"] = str(root)
+            cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
+            score_tree = root / "scores" / entrant_id / "attempt-2" / "tree"
+            score_tree.mkdir(parents=True)
+
+            def launch(*_args: object, **kwargs: object) -> None:
+                kwargs["on_started"](Scorer())
+                raise RuntimeError("receipt persistence failed")
+
+            real_process_identity = cloud_sb7.process_identity
+
+            def process_identity(pid: object) -> str | None:
+                if pid == Scorer.pid:
+                    return "scorer-generation"
+                return real_process_identity(pid)
+
+            with (
+                mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+                mock.patch.object(
+                    cloud_sb7, "supersession_smoke_gate_failure", return_value=None
+                ),
+                mock.patch.object(cloud_sb7, "instrument_mismatch", return_value=None),
+                mock.patch.object(
+                    cloud_sb7, "persisted_entrant_secret_hits", return_value=[]
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "campaign_instrument_path",
+                    return_value=root / "score_sb7.py",
+                ),
+                mock.patch.object(
+                    cloud_sb7, "clone_for_score", return_value=score_tree
+                ),
+                mock.patch.object(
+                    cloud_sb7, "launch_after_receipt", side_effect=launch
+                ),
+                mock.patch.object(
+                    cloud_sb7, "process_identity", side_effect=process_identity
+                ),
+                mock.patch.object(
+                    cloud_sb7, "stop_scorer_runtime", return_value=(False, True)
+                ) as stop_runtime,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "receipt persistence"):
+                    cloud_sb7.score_one(root, entrant_id)
+
+            stop_runtime.assert_called_once_with(root, entrant_id)
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertEqual(state["score_pid"], 4444)
+            self.assertEqual(state["score_pgid"], 4444)
+
+    def test_scorer_cleanup_rechecks_monitor_lease_before_returning(self) -> None:
+        class Scorer:
+            pid = 4444
+
+            @staticmethod
+            def poll() -> int:
+                return 0
+
+            @staticmethod
+            def wait() -> int:
+                return 0
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_recovery_campaign(root, "SCORING")
+            with (
+                mock.patch.object(cloud_sb7, "record_scorer_process_inventory"),
+                mock.patch.object(
+                    cloud_sb7, "stop_scorer_runtime", return_value=(True, False)
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "active_manager_monitor_lease_failure",
+                    return_value="fixture lease loss",
+                ),
+                self.assertRaisesRegex(RuntimeError, "after scorer cleanup"),
+            ):
+                cloud_sb7.wait_for_scorer(
+                    root,
+                    "model",
+                    cloud_sb7.load_json(cloud_sb7.campaign_file(root)),
+                    Scorer(),
+                )
+
+    def test_score_rechecks_monitor_lease_at_scored_commit(self) -> None:
+        class Scorer:
+            pid = 4444
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _, verdict = self.make_scored_campaign(root)
+            entrant_id = "fixture-model"
+            state = cloud_sb7.read_state(root, entrant_id)
+            tree = Path(str(state["tree"]))
+            tree.mkdir(parents=True, exist_ok=True)
+            (tree / "fixture.txt").write_text("fixture\n")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_COMPLETE",
+                raw_tree_sha256=cloud_sb7.hash_tree(tree),
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            campaign["instrument_root"] = str(root)
+            cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
+            score_tree = root / "scores" / entrant_id / "attempt-2" / "tree"
+            score_tree.mkdir(parents=True)
+            (score_tree.parent / "verdict.json").write_text(json.dumps(verdict))
+            lease_results = iter([None, None, "fixture lease loss"])
+
+            with (
+                mock.patch.object(
+                    cloud_sb7,
+                    "active_manager_monitor_lease_failure",
+                    side_effect=lambda *_args: next(lease_results),
+                ),
+                mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+                mock.patch.object(
+                    cloud_sb7, "supersession_smoke_gate_failure", return_value=None
+                ),
+                mock.patch.object(cloud_sb7, "instrument_mismatch", return_value=None),
+                mock.patch.object(
+                    cloud_sb7, "persisted_entrant_secret_hits", return_value=[]
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "campaign_instrument_path",
+                    return_value=root / "score_sb7.py",
+                ),
+                mock.patch.object(
+                    cloud_sb7, "clone_for_score", return_value=score_tree
+                ),
+                mock.patch.object(
+                    cloud_sb7, "launch_after_receipt", return_value=Scorer()
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "wait_for_scorer",
+                    return_value=(0, True, False),
+                ),
+            ):
+                self.assertFalse(cloud_sb7.score_one(root, entrant_id))
+
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "SCORE_FAILED")
+            self.assertIn("before score commit", state["failure"])
+            self.assertIsNone(state["score_ownership_marker"])
 
     def test_campaign_stop_terminates_the_recorded_scorer_group(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -5151,6 +5708,44 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
         fetch.assert_not_called()
 
+    def test_rendered_verification_rechecks_lease_after_matching_html(self) -> None:
+        verdict = self.fixture_verdict()
+        campaign = self.public_identity_campaign(verdict)
+        campaign["publisher"].update(
+            {
+                "website_base_url": "https://example.invalid",
+                "verify_timeout_seconds": 1,
+                "verify_interval_seconds": 0.01,
+            }
+        )
+        entry = {
+            "label": "Fixture Model",
+            "model": "fixture-model",
+            "doc_id": "brun-baseline-fixture-model-sb70",
+        }
+        lease_results = iter([None, "fixture lease loss"])
+        with (
+            mock.patch.object(
+                cloud_sb7,
+                "fetch_rendered_page",
+                side_effect=[(200, "board", {}), (200, "run", {})],
+            ),
+            mock.patch.object(
+                cloud_sb7,
+                "rendered_publication_matches",
+                return_value=(True, {"board_item_exact": True}),
+            ),
+            self.assertRaisesRegex(
+                cloud_sb7.MonitorLeaseError, "rendered verification match"
+            ),
+        ):
+            cloud_sb7.verify_rendered_publication(
+                campaign,
+                entry,
+                verdict,
+                lease_probe=lambda: next(lease_results),
+            )
+
     def test_rendered_verification_requires_exact_board_and_run_evidence(self) -> None:
         verdict = self.fixture_verdict()
         campaign = self.public_identity_campaign(verdict)
@@ -5547,6 +6142,60 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(final["status"], "PUBLISHED")
             self.assertTrue(final["publisher_write_adopted"])
             self.assertEqual(final["score_attempts"], 1)
+
+    def test_publish_rechecks_monitor_lease_at_published_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_scored_campaign(root)
+            runs = cloud_sb7.publication_stage(root, "fixture-model")
+            state = cloud_sb7.read_state(root, "fixture-model")
+            cloud_sb7.update_state(
+                root,
+                "fixture-model",
+                status="PUBLISH_FAILED",
+                publisher_plan=[
+                    {
+                        "name": "loaded",
+                        "caption": "Final render",
+                        "source": str(
+                            runs / "fixture-model-r0/sb7-shots/100-loaded.png"
+                        ),
+                        "sha1": "a" * 40,
+                        "sha256": "b" * 64,
+                    }
+                ],
+                score_attempts=state["score_attempts"],
+            )
+            lease_results = iter([None, "fixture lease loss"])
+            with (
+                mock.patch.object(
+                    cloud_sb7,
+                    "active_manager_monitor_lease_failure",
+                    side_effect=lambda *_args: next(lease_results),
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "remote_publication_receipt",
+                    return_value={"matched": True, "document_sha256": "remote"},
+                ),
+                mock.patch.object(cloud_sb7, "run_publisher") as publisher,
+                mock.patch.object(
+                    cloud_sb7,
+                    "revalidate_publication",
+                    return_value={"status": 200},
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "verify_rendered_publication",
+                    return_value={"run_url": "https://example.invalid/run"},
+                ),
+            ):
+                self.assertFalse(cloud_sb7.publish_one(root, "fixture-model"))
+
+            publisher.assert_not_called()
+            final = cloud_sb7.read_state(root, "fixture-model")
+            self.assertEqual(final["status"], "PUBLISH_FAILED")
+            self.assertIn("rendered publication commit", final["failure"])
 
     def test_ambiguous_publisher_exit_is_accepted_only_with_matching_receipt(
         self,
@@ -6054,6 +6703,75 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.lineage_failure(target_root) or "",
             )
 
+    def test_generation_two_budget_history_serializes_ledger_and_readers(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+            target_root = Path(str(fixture["target"]))
+            self.orchestrator_recovery_fixture(fixture)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(target_root))
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            current = cloud_sb7.load_json(ledger_path)
+            row = fixture["rows"][0]
+            carried = next(
+                value
+                for value in current["outstanding"].values()
+                if value["provider"] == row["provider"]
+                and value["model"] == row["model"]
+            )
+            request_id = "concurrent-generation-two-reservation"
+            current["outstanding"][request_id] = {
+                **carried,
+                "request_id": request_id,
+                "created_at_unix_ms": 999999,
+            }
+            anchor_result: list[dict[str, object]] = []
+            anchor_errors: list[BaseException] = []
+
+            def anchor() -> None:
+                try:
+                    value = cloud_sb7.anchor_budget_ledger(target_root)
+                    assert value is not None
+                    anchor_result.append(value)
+                except BaseException as error:
+                    anchor_errors.append(error)
+
+            ledger_lock = ledger_path.with_suffix(".lock")
+            with ledger_lock.open("a+") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                worker = threading.Thread(target=anchor)
+                worker.start()
+                worker.join(timeout=0.1)
+                self.assertTrue(worker.is_alive())
+                cloud_sb7.atomic_json(ledger_path, current)
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            worker.join(timeout=5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(anchor_errors, [])
+            self.assertEqual(anchor_result[0]["sequence"], 1)
+            anchored = cloud_sb7.load_json(
+                cloud_sb7.budget_history_entry(target_root, 1) / "ledger.json"
+            )
+            self.assertEqual(anchored, current)
+
+            reader_result: list[str | None] = []
+            history_lock = target_root / "locks/budget-history.claim"
+            with history_lock.open("a+") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                reader = threading.Thread(
+                    target=lambda: reader_result.append(
+                        cloud_sb7.budget_history_failure(target_root, campaign)
+                    )
+                )
+                reader.start()
+                reader.join(timeout=0.1)
+                self.assertTrue(reader.is_alive())
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            reader.join(timeout=5)
+            self.assertFalse(reader.is_alive())
+            self.assertEqual(reader_result, [None])
+
     def test_generation_two_accounting_requires_exact_terminal_settlement(
         self,
     ) -> None:
@@ -6136,6 +6854,94 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.generation_two_entrant_accounting_failure(
                     target_root, campaign, row
                 )
+            )
+
+    def test_generation_two_resume_refuses_settlement_without_lifecycle(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_orchestrator_recovery_fixture(Path(raw))
+            target_root = Path(str(fixture["target"]))
+            self.orchestrator_recovery_fixture(fixture)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(target_root))
+            row = fixture["rows"][0]
+            entrant_id = str(row["id"])
+            state = cloud_sb7.read_state(target_root, entrant_id)
+            lifecycle_path = Path(str(state["provider_lifecycle"]))
+            lifecycle_path.write_text("")
+            cloud_sb7.update_state(
+                target_root,
+                entrant_id,
+                status="PRE_ADMISSION_FAILURE",
+                provider_lifecycle=str(lifecycle_path),
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+                goose_pid=None,
+                process_group=None,
+                goose_identity=None,
+            )
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            config = cloud_sb7.load_json(Path(str(campaign["budget_config"])))
+            profile = cloud_sb7.budget_model_profile(
+                config, str(row["provider"]), str(row["model"])
+            )
+            assert profile is not None
+            reserve = cloud_sb7.budget_price(
+                profile, int(row["context_limit"]), int(row["max_output_tokens"])
+            )
+            charge = cloud_sb7.budget_price(profile, 2, 3)
+            assert reserve is not None and charge is not None
+            request_id = "settled-without-generation-two-lifecycle"
+            ledger["settled"].append(
+                {
+                    "request_id": request_id,
+                    "provider": row["provider"],
+                    "model": row["model"],
+                    "reported_model": row["model"],
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                    "charged_upper_bound_usd": charge,
+                    "reserved_usd": reserve,
+                    "settled_at_unix_ms": 999999,
+                }
+            )
+            ledger["spent_upper_bound"] += charge
+            ledger["provider_spent_upper_bound"][str(row["provider"])] += charge
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            cloud_sb7.update_campaign(
+                target_root, status="ATTENTION", failure="fixture"
+            )
+            cloud_sb7.manager_state(
+                target_root,
+                status="ATTENTION",
+                pid=None,
+                pgid=None,
+                identity=None,
+            )
+
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(
+                    cloud_sb7, "recover_dead_manager", return_value=True
+                ),
+                mock.patch.object(cloud_sb7, "recover_interrupted_publication"),
+                mock.patch.object(cloud_sb7, "monitor_start") as monitor_start,
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit,
+                    "terminal lifecycle and settlements differ exactly",
+                ):
+                    cloud_sb7.resume_campaign(target_root)
+
+            monitor_start.assert_not_called()
+            state = cloud_sb7.read_state(target_root, entrant_id)
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertIn(
+                "terminal lifecycle and settlements differ exactly",
+                state["failure"],
             )
 
     def test_provider_spawn_failure_reclaims_only_unstarted_episode(self) -> None:
@@ -6239,6 +7045,66 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     cloud_sb7.stop_group(monitor.pid, grace_seconds=0.1)
                 if worker.poll() is None:
                     cloud_sb7.stop_group(worker.pid, grace_seconds=0.1)
+
+    def test_monitor_attention_refuses_empty_build_running_as_pre_admission(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            lifecycle = root / "entrants" / entrant_id / "provider-lifecycle.jsonl"
+            lifecycle.write_text("")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_RUNNING",
+                provider_lifecycle=str(lifecycle),
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_identity=None,
+            )
+
+            cloud_sb7.manager_monitor_attention(root, "fixture lease loss")
+
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertIn(
+                "pre-admission termination is not explicitly proven",
+                state["failure"],
+            )
+
+    def test_dead_supervisor_refuses_empty_build_running_as_pre_admission(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            lifecycle = root / "entrants" / entrant_id / "provider-lifecycle.jsonl"
+            lifecycle.write_text("")
+            cloud_sb7.update_campaign(root, status="RUNNING")
+            self.install_live_monitor_lease(root)
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_RUNNING",
+                provider_lifecycle=str(lifecycle),
+                supervisor_pid=999999,
+                supervisor_pgid=None,
+                supervisor_identity="missing-supervisor",
+            )
+
+            self.assertFalse(
+                cloud_sb7.wait_for_builds(root, [entrant_id], poll_seconds=0)
+            )
+
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertIn(
+                "pre-admission termination is not explicitly proven",
+                state["failure"],
+            )
 
     def test_stale_monitor_lease_blocks_live_publication_before_process(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -6487,6 +7353,48 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.load_json(root / "manager.json")["status"], "IDLE"
             )
 
+    def test_resume_refuses_a_campaign_outside_attention_without_mutation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            cloud_sb7.update_campaign(root, status="RUNNING")
+            campaign_before = cloud_sb7.campaign_file(root).read_bytes()
+            manager_before = (root / "manager.json").read_bytes()
+
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "recover_dead_manager") as recover,
+            ):
+                with self.assertRaisesRegex(SystemExit, "only.*ATTENTION"):
+                    cloud_sb7.resume_campaign(root)
+
+            recover.assert_not_called()
+            self.assertEqual(campaign_before, cloud_sb7.campaign_file(root).read_bytes())
+            self.assertEqual(manager_before, (root / "manager.json").read_bytes())
+
+    def test_resume_refuses_attention_while_manager_ownership_is_live(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            cloud_sb7.update_campaign(root, status="ATTENTION", failure="fixture")
+            campaign_before = cloud_sb7.campaign_file(root).read_bytes()
+            manager_before = (root / "manager.json").read_bytes()
+
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(
+                    cloud_sb7, "recover_dead_manager", return_value=False
+                ) as recover,
+            ):
+                with self.assertRaisesRegex(SystemExit, "manager is still alive"):
+                    cloud_sb7.resume_campaign(root)
+
+            recover.assert_called_once_with(root)
+            self.assertEqual(campaign_before, cloud_sb7.campaign_file(root).read_bytes())
+            self.assertEqual(manager_before, (root / "manager.json").read_bytes())
+
     def test_resume_normalizes_explicit_pre_admission_build_failure(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -6562,6 +7470,10 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 process_group=None,
                 goose_identity=None,
             )
+            cloud_sb7.update_campaign(root, status="ATTENTION", failure="fixture")
+            cloud_sb7.manager_state(
+                root, status="ATTENTION", pid=None, pgid=None, identity=None
+            )
 
             with (
                 mock.patch.object(cloud_sb7, "require_lineage"),
@@ -6621,6 +7533,10 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 goose_pid=None,
                 process_group=None,
                 goose_identity=None,
+            )
+            cloud_sb7.update_campaign(root, status="ATTENTION", failure="fixture")
+            cloud_sb7.manager_state(
+                root, status="ATTENTION", pid=None, pgid=None, identity=None
             )
 
             with (
