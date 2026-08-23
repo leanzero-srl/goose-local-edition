@@ -212,6 +212,23 @@ class EventGateTests(unittest.TestCase):
         )
         self.assertTrue(gate.seed_concurrency_observed)
 
+    def test_lms_processing_prompt_status_variants_prove_seed_occupancy(self):
+        for status in ("processingPrompt", "processing_prompt", "processing-prompt"):
+            with self.subTest(status=status):
+                gate = MONITOR.EventGate(3, True)
+                gate.seed_roles = 9
+                gate.observe_lms(
+                    {
+                        "ok": True,
+                        "models": [
+                            {"status": status},
+                            {"status": "generating"},
+                            {"status": "processingPrompt"},
+                        ],
+                    }
+                )
+                self.assertTrue(gate.seed_concurrency_observed)
+
 
 class ProcessParsingTests(unittest.TestCase):
     def test_rustc_build_is_not_a_live_goose_process(self):
