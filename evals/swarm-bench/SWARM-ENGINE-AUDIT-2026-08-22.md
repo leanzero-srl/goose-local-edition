@@ -1,6 +1,6 @@
 # Goose Local Swarm Engine Audit and Implementation Plan — 2026-08-22
 
-Status: read-only engine audit complete; implementation and paid cloud runs are awaiting approval.
+Status: approved; implementation and cloud qualification are in progress.
 
 This audit did not change SB7, its scorer, LM Studio, a running process, or executable source. The Qwen3.8 r2 engine disappeared before `plan_loaded` and never emitted `run_finished`; this audit did not signal it. Its artifacts are therefore forensic evidence, not a completed or scoreable benchmark. During this audit, a separate Claude Code session committed and pushed `388792522` (F924/F925). Independent review found material evidence, arithmetic, lifecycle, and control-flow defects in that commit. It is quarantined concurrent work, not an accepted engine baseline; the implementation plan begins by preserving it for forensics, reverting it from the implementation line, and reconstructing only the parts that pass review.
 
@@ -34,7 +34,10 @@ The implementation invariants are:
 - Semantic judge interventions remain generic because they reason over generated contracts and evidence, not hardcoded languages, frameworks, filenames, or tool counts.
 - Changes are isolated, committed, and benchmarked one causal lever at a time.
 - Concurrent cloud generation is isolated from engine development by immutable worktrees, a copied release binary, unique state roots and ports, and an exact instrument manifest. Hermetic browser scoring remains serial and quiet.
-- The frozen scorer's own version and calibration state are reported exactly. Current bytes emit `sb-7.0-rc`; the publication layer may not relabel them `sb-7.0`.
+- SB7 and its scorer bytes remain frozen. The scorer's raw version and calibration state stay in the
+  sealed campaign evidence, but the website has one operator-directed public era: `sb-7.0`. Cloud
+  publication must validate the raw verdict and then join that existing board; it must never create
+  a second `sb-7.0-rc` board or move either local-fleet document out of `sb-7.0`.
 
 ## Evidence baseline
 
@@ -373,9 +376,14 @@ After approval, the three supplied secrets are written once to `/Users/mihaiperd
 
 The five raw trees are sealed before scoring. Once builds are finished and a quiet-window lock is held, disposable clones are scored one at a time with the unchanged CLI scorer, exact original seed, and exact advertised port. The scorer is mutating, so originals remain untouched. Any provider-adapter code fix changes the shared binary and invalidates all five publishable entries. Affected-lane-only invalidation is limited to external entitlement/configuration/version drift that leaves every instrument hash unchanged. Common binary/prompt/vendor/runner defects invalidate all five; scoring-only failures rerun scoring; no attempt is overwritten.
 
-There is a publication-integrity defect to correct before launch. Current `score_sb7.py` has `CALIB_SHA256="TBD-AT-FREEZE"`, `CALIBRATED=false`, and emits `sb-7.0-rc` with an explicit uncalibrated warning. The website seed accepts that verdict and hardcodes `sb-7.0`, concealing its status. SB7/scorer bytes stay frozen as instructed; the generic publisher instead preserves the verdict's exact version/calibration state and visibly labels the current era provisional. Existing SB7 rows receive the same truthful metadata treatment so the board has no unlabeled mixed convention.
+The scorer still emits its raw version/calibration evidence and the campaign must preserve and
+validate it without changing scorer bytes. The public website convention is separately frozen by
+the operator: all accepted SB7 results share the existing `sb-7.0` era. The generic publisher maps
+only the public era field to `sb-7.0`, omits a public calibration field, and retains raw evidence in
+the sealed score artifacts. Commit `694927b` enforces this and prevents future cloud publication
+from splitting the board again.
 
-After each serial valid score, the publisher dry-runs, performs idempotent `createOrReplace`, calls the revalidation endpoint, and verifies the rendered leaderboard and run page for exact score, RC label, model/version, wall time, notes, checks, screenshots, and methodology. It does not report “published” until rendered desktop and mobile truth pass. Website code changes generalize “Anthropic baseline” to “cloud baseline” and use data-driven entrant manifests rather than five more hardcoded branches.
+After each serial valid score, the publisher dry-runs, performs idempotent `createOrReplace`, calls the revalidation endpoint, and verifies the rendered leaderboard and run page for exact score, stable `sb-7.0` label, model/version, wall time, notes, checks, screenshots, and methodology. It does not report “published” until rendered desktop and mobile truth pass. Website code changes generalize “Anthropic baseline” to “cloud baseline” and use data-driven entrant manifests rather than five more hardcoded branches.
 
 ## Post-approval execution plan and falsification gates
 
@@ -464,13 +472,13 @@ Gate: a preregistered matched design shows quality non-inferiority and improved 
 
 Provider/harness/site work starts in parallel with Engine 1 after approval. Paid smokes and full episodes depend on Engine 1's correlated provider-terminal admission gate:
 
-1. Store secrets securely, implement Z.AI/Google/DeepSeek conformance fixtures and exact model metadata, generalize the build-only harness and SB7 publisher, and correct the site's RC/cloud-baseline metadata.
+1. Store secrets securely, implement Z.AI/Google/DeepSeek conformance fixtures and exact model metadata, generalize the build-only harness and SB7 publisher, and preserve the site's single `sb-7.0` cloud/local board.
 2. Pass local adapter/harness tests and website dry run; apply and verify the terminal-admission lifecycle patch; force all unproven retry/replacement/timeout redispatch paths off. Only then build once, copy the release binary to the immutable campaign path, and freeze its SHA-256 plus the full instrument manifest.
 3. Against that exact binary, pass golden reference, severity self-test, hermeticity, authenticated model-entitlement discovery, terminal-safe two-step paid tool smoke, coordinator crash/resume, PGID cleanup, and instrument-drift checks. A deliberately dropped admitted stream must not start a replacement without proof that the exact provider request ended.
 4. Start all five supervisors together for GLM-5.3, Gemini 3.7 Flash, Gemini 3.1 Pro Preview, DeepSeek V4 Flash, and DeepSeek V4 Pro. The resource-conflict graph admits all five concurrently only where key quota and local-resource isolation are proven; otherwise same-key or heavy local sections wait while independent provider calls continue. Engine work cannot change their binaries or state.
-5. When all build lanes are terminal, acquire a quiet scoring lock, score disposable clones serially, and directly publish/revalidate/verify each valid RC result. Model-generated failure remains the score; provider/runner defects follow the invalidation policy in Slice 10.
+5. When all build lanes are terminal, acquire a quiet scoring lock, score disposable clones serially, and directly publish/revalidate/verify each valid result on the existing `sb-7.0` board. Model-generated failure remains the score; provider/runner defects follow the invalidation policy in Slice 10.
 
-Approval of this plan authorizes the initial five paid episodes, their minimal capability smokes, one verified-defect restart per model, up to three transient retries per failed request, the USD 400/provider sub-envelopes above, the described provider/site changes, and direct idempotent RC publication. It does not authorize outcome-driven reruns or silent model/endpoint substitution.
+Approval of this plan authorizes the initial five paid episodes, their minimal capability smokes, one verified-defect restart per model, the USD 400/provider sub-envelopes above, the described provider/site changes, and direct idempotent publication onto the existing `sb-7.0` board. The active cloud instrument uses zero transport retries. It does not authorize outcome-driven reruns or silent model/endpoint substitution.
 
 ### Engine 9 — unattended one-lever campaign and autonomous defect loop
 
@@ -514,7 +522,7 @@ High confidence:
 - the F924 narrative overstates duration/idleness and the committed recurrence/nudge control is unsafe;
 - the lever catalog and `levers_resolved` event are incomplete and sometimes disagree with effective runtime behavior;
 - the current Z.AI, Google, and DeepSeek adapter paths cannot produce fair runs for the five requested model IDs without conformance fixes;
-- the website currently hides the scorer's `sb-7.0-rc` calibration state.
+- the website previously split SB7 into a public RC era; commit `694927b` restores one `sb-7.0` board and regression-protects future cloud publication.
 
 Medium confidence:
 
