@@ -75,8 +75,91 @@ BUILD_SUCCESS_STATES = {"BUILD_COMPLETE"} | POST_BUILD_STATES
 CAMPAIGN_SCHEMA = 2
 SUPERSESSION_SCHEMA = 1
 SUPERSESSION_RECEIPT = "supersession-receipt.json"
+QUALIFICATION_RESTART_SCHEMA = 1
+QUALIFICATION_RESTART_RECEIPT = "qualification-restart-receipt.json"
+QUALIFICATION_RESTART_SEAL = "qualification-restart-seal.json"
+QUALIFICATION_RESTART_EVIDENCE = "qualification-restart-evidence"
+QUALIFICATION_HISTORY_PATH = "qualification/qualification-restart.json"
 SUPERSESSION_ALLOWED_INSTRUMENT_CHANGES = {
     "evals/swarm-bench/bench/cloud_sb7.py",
+}
+QUALIFICATION_ALLOWED_INSTRUMENT_CHANGES = {
+    "evals/swarm-bench/bench/cloud_sb7.py",
+    "evals/swarm-bench/bench/cloud-sb7-entrants.json",
+}
+QUALIFICATION_ALLOWED_ENDPOINT_TRANSITIONS = {
+    ("zai_api", "glm-5.3"): {
+        "source": {
+            "endpoint_family": "https://api.z.ai/api/paas/v4",
+            "base_url_env": None,
+        },
+        "target": {
+            "endpoint_family": "https://api.z.ai/api/coding/paas/v4",
+            "base_url_env": "ZAI_API_BASE_URL",
+        },
+    }
+}
+QUALIFICATION_PUBLISHER_RUNTIME_FIELDS = (
+    "mode",
+    "website_base_url",
+    "revalidate_endpoint",
+    "verify_timeout_seconds",
+    "verify_interval_seconds",
+    "process_timeout_seconds",
+)
+QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION = {
+    "source": {
+        "commit": "817b5367bd8a176c45aff1bdc1c0fb2bea32ea4a",
+        "instrument_set_sha256": (
+            "b6ab4f36cd217d491ff1e928059bc74ef67a6361b6be9f7c88df06c705862384"
+        ),
+        "tracked_hashes": {
+            "scripts/seed-baseline-sb7.mjs": (
+                "8ea74cca6f15938245aca72e7abf612c2f203398eb4c1c38639f1ad5a26ff65c"
+            ),
+            "scripts/lib/sb7-cloud-publisher.mjs": (
+                "7f24c787a6d747b137a383f0f5a03112fb32951e522ec1f29965d612847b58a3"
+            ),
+            "scripts/data/sb7-cloud-entrants.json": (
+                "b9768381e373f24cfee7225120923d8b5838fe25725d8f7c7b898beadca70cfa"
+            ),
+            "package.json": (
+                "3129a0f4cac40d2687053ceb7651f24a260af02926cdc9bd4d6d0befe533bb9e"
+            ),
+            "package-lock.json": (
+                "3f1463f43e8a36232fa64796c5a979d8a1a36784c930f6aead92e6d3d212748d"
+            ),
+        },
+    },
+    "target": {
+        "commit": "694927b0b610c93f0c34dee01004c6def367e670",
+        "instrument_set_sha256": (
+            "5bb8138f206aea054076c6100b0f6aa94d82f31e154ddd46babc214a8ddc4de7"
+        ),
+        "tracked_hashes": {
+            "scripts/seed-baseline-sb7.mjs": (
+                "c2a03dea1ba42b64f71350e8c1fc144fe25a8edfedfe51ccb8f6e12453e529de"
+            ),
+            "scripts/lib/sb7-cloud-publisher.mjs": (
+                "c479e4718aa733cf7848ebbbf1ebff2195894fea2a833852632bf729cfc39177"
+            ),
+            "scripts/data/sb7-cloud-entrants.json": (
+                "b9768381e373f24cfee7225120923d8b5838fe25725d8f7c7b898beadca70cfa"
+            ),
+            "package.json": (
+                "3129a0f4cac40d2687053ceb7651f24a260af02926cdc9bd4d6d0befe533bb9e"
+            ),
+            "package-lock.json": (
+                "3f1463f43e8a36232fa64796c5a979d8a1a36784c930f6aead92e6d3d212748d"
+            ),
+        },
+    },
+    "changed_tracked_files": {
+        "scripts/seed-baseline-sb7.mjs",
+        "scripts/lib/sb7-cloud-publisher.mjs",
+    },
+    "raw_scorer_version": "sb-7.0-rc",
+    "public_scorer_version": "sb-7.0",
 }
 REQUIRED_BINARY_MARKERS = (
     "GOOSE_PROVIDER_LIFECYCLE_FILE",
@@ -541,8 +624,46 @@ def validated_campaign_lineage(campaign: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def validated_qualification_history(
+    campaign: Mapping[str, Any],
+) -> Dict[str, Any] | None:
+    history = campaign.get("qualification_history")
+    if history is None:
+        return None
+    expected = {
+        "restart_count",
+        "transition_id",
+        "subject_root",
+        "source_campaign_id",
+        "source_contract_sha256",
+        "path",
+        "sha256",
+    }
+    if not isinstance(history, dict) or set(history) != expected:
+        raise SystemExit("campaign qualification history pointer is malformed")
+    if history.get("restart_count") != 1:
+        raise SystemExit("campaign qualification restart count is not exactly one")
+    if history.get("path") != QUALIFICATION_HISTORY_PATH:
+        raise SystemExit("campaign qualification history path is not frozen")
+    for key in (
+        "transition_id",
+        "subject_root",
+        "source_campaign_id",
+        "source_contract_sha256",
+        "sha256",
+    ):
+        value = history.get(key)
+        if not isinstance(value, str) or not value:
+            raise SystemExit(f"campaign qualification history has no {key}")
+    for key in ("source_contract_sha256", "sha256"):
+        if re.fullmatch(r"[0-9a-f]{64}", str(history[key])) is None:
+            raise SystemExit(f"campaign qualification history has invalid {key}")
+    return dict(history)
+
+
 def smoke_contract_identity(campaign: Mapping[str, Any]) -> str:
     lineage = validated_campaign_lineage(campaign)
+    qualification_history = validated_qualification_history(campaign)
     normalized: Dict[str, Dict[str, list[str]]] = {}
     for field in (
         "smoke_budget_settled_baselines",
@@ -578,6 +699,8 @@ def smoke_contract_identity(campaign: Mapping[str, Any]) -> str:
         "smoke_max_turns": campaign.get("smoke_max_turns"),
         **normalized,
     }
+    if qualification_history is not None:
+        payload["qualification_history"] = qualification_history
     for field in (
         "campaign_id",
         "binary_sha256",
@@ -1386,6 +1509,73 @@ def preflight(
     }
 
 
+def validated_preflight_snapshot(
+    value: Mapping[str, Any],
+    binary: Path,
+    manifest_path: Path,
+    secret_path: Path,
+    publisher_repo: Path,
+) -> Dict[str, Any]:
+    expected_keys = {
+        "checked_at",
+        "binary_sha256",
+        "models",
+        "roster_evidence",
+        "requested_models",
+        "ports_free",
+        "credential_file_mode",
+        "publisher",
+    }
+    if not isinstance(value, Mapping) or set(value) != expected_keys:
+        raise SystemExit("verified preflight snapshot has an invalid schema")
+    checked = dict(value)
+    manifest = load_json(manifest_path)
+    rows = entrants(manifest)
+    requested_models = [str(row["model"]) for row in rows]
+    if checked.get("binary_sha256") != sha256_file(binary):
+        raise SystemExit("verified preflight snapshot binary changed")
+    if checked.get("requested_models") != requested_models:
+        raise SystemExit("verified preflight snapshot model roster changed")
+    if checked.get("ports_free") is not True:
+        raise SystemExit("verified preflight snapshot did not prove free ports")
+    current_mode = f"{secret_path.stat().st_mode & 0o777:04o}"
+    if checked.get("credential_file_mode") != current_mode:
+        raise SystemExit("verified preflight credential mode changed")
+    models = checked.get("models")
+    evidence = checked.get("roster_evidence")
+    if not isinstance(models, dict) or not isinstance(evidence, dict):
+        raise SystemExit("verified preflight roster evidence is malformed")
+    for row in rows:
+        provider = str(row["provider"])
+        model = str(row["model"])
+        provider_models = models.get(provider)
+        provider_evidence = evidence.get(provider)
+        if (
+            not isinstance(provider_models, list)
+            or model not in provider_models
+            or not isinstance(provider_evidence, dict)
+            or model not in provider_evidence
+        ):
+            raise SystemExit(
+                f"verified preflight snapshot does not prove {provider}/{model}"
+            )
+    busy = [
+        str(row["vendor_port"])
+        for row in rows
+        if not port_is_free(int(row["vendor_port"]))
+    ]
+    if busy:
+        raise SystemExit(
+            "vendor ports changed after authenticated preflight: " + ", ".join(busy)
+        )
+    if checked.get("publisher") != publisher_snapshot(publisher_repo, rows):
+        raise SystemExit("publisher changed after authenticated preflight")
+    checked_at = checked.get("checked_at")
+    if not isinstance(checked_at, str) or not checked_at:
+        raise SystemExit("verified preflight snapshot has no timestamp")
+    return checked
+
+
 def init_campaign(
     root: Path,
     binary: Path,
@@ -1397,6 +1587,7 @@ def init_campaign(
     publish_verify_timeout_seconds: float = DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS,
     publish_verify_interval_seconds: float = DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS,
     publish_process_timeout_seconds: float = DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
+    verified_preflight: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     if campaign_file(root).exists():
         existing = load_json(campaign_file(root))
@@ -1426,7 +1617,17 @@ def init_campaign(
             "publisher process and rendered-verification timing must be positive"
         )
 
-    checked = preflight(binary, manifest_path, secret_path, publisher_repo)
+    checked = validated_preflight_snapshot(
+        (
+            verified_preflight
+            if verified_preflight is not None
+            else preflight(binary, manifest_path, secret_path, publisher_repo)
+        ),
+        binary,
+        manifest_path,
+        secret_path,
+        publisher_repo,
+    )
     manifest = load_json(manifest_path)
     rows = entrants(manifest)
     policy = spend_policy(manifest, rows)
@@ -3777,16 +3978,734 @@ def supersession_transition_id(
     return sha256_bytes(json.dumps(material, sort_keys=True).encode())
 
 
-def lineage_failure(root: Path) -> str | None:
+def qualification_manifest_failure(
+    source: Mapping[str, Any], candidate: Mapping[str, Any]
+) -> str | None:
+    def normalized(value: Mapping[str, Any]) -> Dict[str, Any]:
+        copy = json.loads(json.dumps(value))
+        rows = copy.get("entrants")
+        if not isinstance(rows, list):
+            return copy
+        for row in rows:
+            if isinstance(row, dict):
+                row.pop("endpoint_family", None)
+                row.pop("base_url_env", None)
+        return copy
+
+    if normalized(source) != normalized(candidate):
+        return "qualification restart changed benchmark manifest semantics"
+    source_rows = source.get("entrants")
+    candidate_rows = candidate.get("entrants")
+    if not isinstance(source_rows, list) or not isinstance(candidate_rows, list):
+        return "qualification restart entrant manifests are malformed"
+    if len(source_rows) != len(candidate_rows):
+        return "qualification restart changed the entrant roster"
+    for old, new in zip(source_rows, candidate_rows):
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            return "qualification restart entrant manifests are malformed"
+        source_endpoint = {
+            "endpoint_family": old.get("endpoint_family"),
+            "base_url_env": old.get("base_url_env"),
+        }
+        target_endpoint = {
+            "endpoint_family": new.get("endpoint_family"),
+            "base_url_env": new.get("base_url_env"),
+        }
+        if source_endpoint == target_endpoint:
+            continue
+        transition = QUALIFICATION_ALLOWED_ENDPOINT_TRANSITIONS.get(
+            (str(old.get("provider")), str(old.get("model")))
+        )
+        if (
+            transition is None
+            or source_endpoint != transition["source"]
+            or target_endpoint != transition["target"]
+        ):
+            return "qualification restart attempted an unapproved endpoint transition"
+    return None
+
+
+def qualification_publisher_failure(
+    source: Mapping[str, Any], target: Mapping[str, Any]
+) -> str | None:
+    ignored = {"frozen"}
+    release_fields = {"commit", "instrument_set_sha256", "tracked_hashes"}
+    stable_source = {
+        key: value
+        for key, value in source.items()
+        if key not in ignored | release_fields
+    }
+    stable_target = {
+        key: value
+        for key, value in target.items()
+        if key not in ignored | release_fields
+    }
+    if stable_source != stable_target:
+        changed = sorted(
+            key
+            for key in set(stable_source) | set(stable_target)
+            if stable_source.get(key) != stable_target.get(key)
+        )
+        return f"qualification restart changed publisher field {changed[0]}"
+
+    source_release = {
+        key: source.get(key) for key in sorted(release_fields)
+    }
+    target_release = {
+        key: target.get(key) for key in sorted(release_fields)
+    }
+    if source_release == target_release:
+        return None
+
+    allowed_source = QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION["source"]
+    allowed_target = QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION["target"]
+    if source_release != allowed_source or target_release != allowed_target:
+        return "qualification restart attempted an unapproved publisher transition"
+
+    source_hashes = source_release["tracked_hashes"]
+    target_hashes = target_release["tracked_hashes"]
+    changed_hashes = {
+        key
+        for key in set(source_hashes) | set(target_hashes)
+        if source_hashes.get(key) != target_hashes.get(key)
+    }
+    if changed_hashes != QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION[
+        "changed_tracked_files"
+    ]:
+        return "qualification restart publisher transition changed the wrong files"
+    return None
+
+
+def qualification_instrument_failure(
+    source: Mapping[str, Any], target: Mapping[str, Any]
+) -> str | None:
+    if source.get("binary_sha256") != target.get("binary_sha256"):
+        return "qualification restart changed the frozen Goose binary"
+    old_hashes = source.get("instrument_hashes")
+    new_hashes = target.get("instrument_hashes")
+    if not isinstance(old_hashes, dict) or not isinstance(new_hashes, dict):
+        return "qualification restart instrument hashes are missing"
+    changed = {
+        key
+        for key in set(old_hashes) | set(new_hashes)
+        if old_hashes.get(key) != new_hashes.get(key)
+    }
+    unapproved = changed - QUALIFICATION_ALLOWED_INSTRUMENT_CHANGES
+    if unapproved:
+        return (
+            "qualification restart changed frozen benchmark semantics: "
+            + ", ".join(sorted(unapproved))
+        )
+    for key in (
+        "budget_config_sha256",
+        "prompt_source_sha256",
+        "scorer_version",
+        "calibration",
+        "smoke_max_turns",
+        "requested_models",
+    ):
+        if source.get(key) != target.get(key):
+            return f"qualification restart changed immutable benchmark field {key}"
+    try:
+        source_manifest = load_json(Path(str(source["entrant_manifest"])))
+        target_manifest = load_json(Path(str(target["entrant_manifest"])))
+    except (OSError, KeyError, json.JSONDecodeError, SystemExit) as error:
+        return f"qualification restart manifest cannot be compared: {error}"
+    manifest_problem = qualification_manifest_failure(
+        source_manifest, target_manifest
+    )
+    if manifest_problem:
+        return manifest_problem
+    old_publisher = source.get("publisher")
+    new_publisher = target.get("publisher")
+    if not isinstance(old_publisher, dict) or not isinstance(new_publisher, dict):
+        return "qualification restart publisher identity is missing"
+    return qualification_publisher_failure(old_publisher, new_publisher)
+
+
+def qualification_publisher_runtime_failure(
+    source: Mapping[str, Any],
+    publish_live: bool,
+    website_base_url: str,
+    publish_verify_timeout_seconds: float,
+    publish_verify_interval_seconds: float,
+    publish_process_timeout_seconds: float,
+) -> str | None:
+    publisher = source.get("publisher")
+    if not isinstance(publisher, dict):
+        return "qualification source publisher identity is missing"
+    if not publish_live:
+        return "qualification restart must preserve live publication"
+    try:
+        base_url = normalized_website_base_url(website_base_url).rstrip("/")
+    except SystemExit as error:
+        return str(error)
+    if (
+        publish_verify_timeout_seconds <= 0
+        or publish_verify_interval_seconds <= 0
+        or publish_process_timeout_seconds <= 0
+    ):
+        return "qualification restart publisher timing must remain positive"
+    expected = {
+        "mode": "live",
+        "website_base_url": base_url,
+        "revalidate_endpoint": f"{base_url}/api/revalidate-benchmarks",
+        "verify_timeout_seconds": publish_verify_timeout_seconds,
+        "verify_interval_seconds": publish_verify_interval_seconds,
+        "process_timeout_seconds": publish_process_timeout_seconds,
+    }
+    for key, value in expected.items():
+        if publisher.get(key) != value:
+            return f"qualification restart changed publisher field {key}"
+    return None
+
+
+def qualification_transition_id(
+    source_root: Path,
+    target_root: Path,
+    evidence_sha256: str,
+    source: Mapping[str, Any],
+    target_manifest_sha256: str,
+    target_instrument_set_sha256: str,
+) -> str:
+    material = {
+        "kind": "instrument_qualification_restart",
+        "source_root": str(source_root.resolve()),
+        "source_campaign_id": source.get("campaign_id"),
+        "source_smoke_contract_sha256": source.get("smoke_contract_sha256"),
+        "target_root": str(target_root.resolve()),
+        "evidence_sha256": evidence_sha256,
+        "binary_sha256": source.get("binary_sha256"),
+        "target_manifest_sha256": target_manifest_sha256,
+        "target_instrument_set_sha256": target_instrument_set_sha256,
+    }
+    return sha256_bytes(json.dumps(material, sort_keys=True).encode())
+
+
+def qualification_source_seal(
+    root: Path,
+    campaign: Mapping[str, Any],
+    rows: Iterable[Mapping[str, Any]],
+    transition_id: str,
+) -> Dict[str, Any]:
+    seal = predecessor_seal(root, campaign, rows, transition_id)
+    monitor_path = root / "monitor.json"
+    seal.update(
+        {
+            "kind": "instrument_qualification_restart_source",
+            "source_smoke_contract_sha256": campaign.get(
+                "smoke_contract_sha256"
+            ),
+            "monitor_sha256": (
+                sha256_file(monitor_path) if monitor_path.is_file() else None
+            ),
+        }
+    )
+    return seal
+
+
+def qualification_source_seal_failure(
+    root: Path, seal: Mapping[str, Any]
+) -> str | None:
+    if seal.get("kind") != "instrument_qualification_restart_source":
+        return "qualification source seal has the wrong kind"
+    problem = predecessor_seal_failure(root, seal)
+    if problem:
+        return problem
+    monitor_path = root / "monitor.json"
+    current_monitor = sha256_file(monitor_path) if monitor_path.is_file() else None
+    if current_monitor != seal.get("monitor_sha256"):
+        return "qualification source monitor receipt changed"
+    campaign = load_json(campaign_file(root))
+    if campaign.get("smoke_contract_sha256") != seal.get(
+        "source_smoke_contract_sha256"
+    ):
+        return "qualification source smoke contract changed"
+    return None
+
+
+def validate_stopped_qualification_source(
+    root: Path,
+    campaign: Mapping[str, Any],
+    rows: list[Mapping[str, Any]],
+) -> tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
+    if campaign.get("status") != "STOPPED":
+        raise SystemExit("qualification source campaign must be explicitly stopped")
+    if validated_qualification_history(campaign) is not None:
+        raise SystemExit("a qualification restart cannot itself be restarted")
+    source_lineage_problem = lineage_failure(root)
+    if source_lineage_problem:
+        raise SystemExit(
+            f"qualification source lineage is invalid: {source_lineage_problem}"
+        )
+    for label, runtime in (
+        ("manager", load_json(root / "manager.json")),
+        ("monitor", read_monitor_state(root)),
+    ):
+        if runtime.get("status") != "STOPPED":
+            raise SystemExit(f"qualification source {label} is not stopped")
+        if process_alive(runtime.get("pid"), runtime.get("identity")):
+            raise SystemExit(f"qualification source {label} is still alive")
+        pgid = int(runtime.get("pgid") or 0)
+        if pgid and process_group_members(pgid):
+            raise SystemExit(
+                f"qualification source {label} process group is not clean"
+            )
+
+    ledger = load_json(Path(str(campaign["budget_ledger"])))
+    budget_config = load_json(Path(str(campaign["budget_config"])))
+    ledger_problem = budget_ledger_failure(ledger, budget_config)
+    if ledger_problem:
+        raise SystemExit(f"qualification source {ledger_problem}")
+    if ledger["outstanding"]:
+        raise SystemExit("qualification source has outstanding budget reservations")
+
+    states: Dict[str, Dict[str, Any]] = {}
+    smoke_terminal_usage: Dict[str, tuple[Mapping[str, Any], Mapping[str, Any]]] = {}
+    for row in rows:
+        entrant_id = str(row["id"])
+        state = read_state(root, entrant_id)
+        states[entrant_id] = state
+        for pid_key, pgid_key, identity_key in (
+            ("supervisor_pid", "supervisor_pgid", "supervisor_identity"),
+            ("goose_pid", "process_group", "goose_identity"),
+            ("publisher_pid", "publisher_pgid", "publisher_identity"),
+            ("score_pid", "score_pgid", "score_identity"),
+        ):
+            if process_alive(state.get(pid_key), state.get(identity_key)):
+                raise SystemExit(
+                    f"qualification source {entrant_id} still owns {pid_key}"
+                )
+            pgid = int(state.get(pgid_key) or 0)
+            if pgid and process_group_members(pgid):
+                raise SystemExit(
+                    f"qualification source {entrant_id} still owns process group {pgid}"
+                )
+        lifecycle = lifecycle_summary(
+            Path(str(state["provider_lifecycle"])),
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        if not full_entrant_was_never_started(state, lifecycle):
+            raise SystemExit(
+                "qualification restart is forbidden after any full benchmark "
+                f"activity: {entrant_id}"
+            )
+        tree = Path(str(state["tree"]))
+        if not tree.is_dir() or tree.is_symlink() or any(tree.iterdir()):
+            raise SystemExit(
+                f"qualification source full benchmark tree is not empty: {entrant_id}"
+            )
+        if (root / "scores" / entrant_id).exists() or (
+            root / "publish" / entrant_id
+        ).exists():
+            raise SystemExit(
+                f"qualification source has score or publication artifacts: {entrant_id}"
+            )
+        smoke_state = read_smoke_state(root, entrant_id)
+        if process_alive(
+            smoke_state.get("supervisor_pid"), smoke_state.get("supervisor_identity")
+        ):
+            raise SystemExit(
+                f"qualification source {entrant_id} smoke supervisor is still alive"
+            )
+        smoke_pgid = int(smoke_state.get("supervisor_pgid") or 0)
+        if smoke_pgid and process_group_members(smoke_pgid):
+            raise SystemExit(
+                f"qualification source {entrant_id} smoke process group is not clean"
+            )
+        usage, _, smoke_problem = predecessor_smoke_terminal_usage(
+            root, entrant_id, row
+        )
+        if smoke_problem:
+            raise SystemExit(
+                f"qualification source smoke evidence is ambiguous for {entrant_id}: "
+                f"{smoke_problem}"
+            )
+        for request_id, terminal in usage.items():
+            if request_id in smoke_terminal_usage:
+                raise SystemExit(
+                    f"qualification smoke reused request id across entrants: {request_id}"
+                )
+            smoke_terminal_usage[request_id] = (row, terminal)
+
+    settlements = {
+        str(settlement["request_id"]): settlement for settlement in ledger["settled"]
+    }
+    if set(settlements) != set(smoke_terminal_usage):
+        raise SystemExit(
+            "qualification source spend is not explained exactly by sealed smoke calls"
+        )
+    for request_id, (row, usage) in smoke_terminal_usage.items():
+        settlement = settlements[request_id]
+        if (
+            settlement.get("provider") != row["provider"]
+            or settlement.get("model") != row["model"]
+            or any(
+                settlement.get(key) != usage.get(key)
+                for key in (
+                    "reported_model",
+                    "input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                )
+            )
+        ):
+            raise SystemExit(
+                f"qualification smoke settlement differs from terminal usage: {request_id}"
+            )
+    busy = [
+        str(row["vendor_port"])
+        for row in rows
+        if not port_is_free(int(row["vendor_port"]))
+    ]
+    if busy:
+        raise SystemExit(
+            "qualification source vendor ports are still occupied: " + ", ".join(busy)
+        )
+    reserve_problem = replacement_reserve_failure(ledger, budget_config, rows)
+    if reserve_problem:
+        raise SystemExit(reserve_problem)
+    return states, ledger
+
+
+def qualification_receipt_failure(
+    source_root: Path,
+    receipt: Mapping[str, Any],
+    source: Mapping[str, Any],
+) -> str | None:
+    expected_keys = {
+        "schema_version",
+        "kind",
+        "restart_count",
+        "transition_id",
+        "source_campaign_id",
+        "source_smoke_contract_sha256",
+        "source_root",
+        "target_root",
+        "secret_file",
+        "publisher_repo",
+        "defect_evidence_sha256",
+        "defect_artifacts",
+        "binary_sha256",
+        "source_manifest_sha256",
+        "target_manifest_sha256",
+        "source_instrument_set_sha256",
+        "target_instrument_set_sha256",
+        "source_budget_ledger_sha256",
+        "source_seal_sha256",
+        "entrant_ids",
+        "fixture_seeds",
+        "source_state_sha256",
+        "fresh_all_entrant_smoke_required",
+        "full_benchmark_episodes_started",
+    }
+    publisher = source.get("publisher")
+    publisher_repo = publisher.get("repo") if isinstance(publisher, dict) else None
+    if (
+        set(receipt) != expected_keys
+        or receipt.get("schema_version") != QUALIFICATION_RESTART_SCHEMA
+        or receipt.get("kind") != "instrument_qualification_restart"
+        or receipt.get("restart_count") != 1
+        or receipt.get("source_root") != str(source_root.resolve())
+        or receipt.get("source_campaign_id") != source.get("campaign_id")
+        or receipt.get("source_smoke_contract_sha256")
+        != source.get("smoke_contract_sha256")
+        or receipt.get("secret_file")
+        != str(Path(str(source.get("secret_file", ""))).resolve())
+        or receipt.get("publisher_repo")
+        != str(Path(str(publisher_repo or "")).resolve())
+        or receipt.get("binary_sha256") != source.get("binary_sha256")
+        or receipt.get("source_manifest_sha256")
+        != source.get("entrant_manifest_sha256")
+        or receipt.get("source_instrument_set_sha256")
+        != source.get("instrument_set_sha256")
+        or receipt.get("fresh_all_entrant_smoke_required") is not True
+        or receipt.get("full_benchmark_episodes_started") != 0
+    ):
+        return "qualification restart receipt is bound to another source"
+    for key in (
+        "transition_id",
+        "target_root",
+        "target_manifest_sha256",
+        "target_instrument_set_sha256",
+        "source_budget_ledger_sha256",
+        "source_seal_sha256",
+        "defect_evidence_sha256",
+    ):
+        value = receipt.get(key)
+        if not isinstance(value, str) or not value:
+            return f"qualification restart receipt has no {key}"
+    if not isinstance(receipt.get("entrant_ids"), list) or not isinstance(
+        receipt.get("fixture_seeds"), dict
+    ) or not isinstance(receipt.get("source_state_sha256"), dict):
+        return "qualification restart receipt entrant identity is malformed"
+    artifacts = receipt.get("defect_artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        return "qualification restart receipt has no defect artifacts"
+    return None
+
+
+def qualification_fault(_stage: str) -> None:
+    return None
+
+
+def qualification_history_failure(
+    root: Path, campaign: Mapping[str, Any]
+) -> str | None:
+    try:
+        history = validated_qualification_history(campaign)
+        if history is None:
+            return None
+        history_path = root / str(history["path"])
+        if not history_path.is_file() or history_path.is_symlink():
+            return "qualification restart lineage is missing or linked"
+        if sha256_file(history_path) != history["sha256"]:
+            return "qualification restart lineage hash changed"
+        lineage = load_json(history_path)
+        expected_lineage_keys = {
+            "schema_version",
+            "kind",
+            "restart_count",
+            "transition_id",
+            "source_root",
+            "source_campaign_id",
+            "source_smoke_contract_sha256",
+            "source_receipt_sha256",
+            "source_seal_sha256",
+            "source_budget_ledger_sha256",
+            "defect_evidence_sha256",
+            "defect_artifacts",
+            "target_root",
+            "target_campaign_id",
+            "target_binary_sha256",
+            "target_manifest_sha256",
+            "target_instrument_set_sha256",
+            "entrant_ids",
+            "fixture_seeds",
+            "source_state_sha256",
+            "fresh_all_entrant_smoke_required",
+        }
+        if (
+            set(lineage) != expected_lineage_keys
+            or lineage.get("schema_version") != QUALIFICATION_RESTART_SCHEMA
+            or lineage.get("kind") != "instrument_qualification_restart"
+            or lineage.get("restart_count") != 1
+            or lineage.get("transition_id") != history["transition_id"]
+            or lineage.get("source_campaign_id") != history["source_campaign_id"]
+            or lineage.get("source_smoke_contract_sha256")
+            != history["source_contract_sha256"]
+            or lineage.get("target_root") != history["subject_root"]
+            or lineage.get("fresh_all_entrant_smoke_required") is not True
+        ):
+            return "qualification restart lineage is bound to another transition"
+
+        subject_root = Path(str(history["subject_root"])).resolve()
+        if root.resolve() != subject_root:
+            lineage_pointer = campaign.get("lineage")
+            if (
+                not isinstance(lineage_pointer, dict)
+                or lineage_pointer.get("generation") != 1
+            ):
+                return "qualification history was copied outside its one-hop successor"
+            supersession_path = root / str(lineage_pointer.get("path", ""))
+            if not supersession_path.is_file():
+                return "qualification successor has no supersession lineage"
+            supersession = load_json(supersession_path)
+            if supersession.get("predecessor_root") != str(subject_root):
+                return "qualification history subject differs from supersession predecessor"
+            subject_problem = lineage_failure(
+                subject_root, allow_terminal_supersession_receipt=True
+            )
+            if subject_problem:
+                return f"qualification history subject is invalid: {subject_problem}"
+            subject_campaign = load_json(campaign_file(subject_root))
+            if subject_campaign.get("qualification_history") != history:
+                return "qualification history differs from its qualified subject"
+            return None
+
+        if lineage.get("target_campaign_id") != campaign.get("campaign_id"):
+            return "qualification restart target campaign identity drifted"
+        if lineage.get("target_binary_sha256") != campaign.get("binary_sha256"):
+            return "qualification restart target binary identity drifted"
+        if lineage.get("target_manifest_sha256") != campaign.get(
+            "entrant_manifest_sha256"
+        ):
+            return "qualification restart target manifest identity drifted"
+        if lineage.get("target_instrument_set_sha256") != campaign.get(
+            "instrument_set_sha256"
+        ):
+            return "qualification restart target instrument identity drifted"
+
+        source_root = Path(str(lineage.get("source_root", ""))).resolve()
+        source_receipt_path = source_root / QUALIFICATION_RESTART_RECEIPT
+        if not source_receipt_path.is_file() or source_receipt_path.is_symlink():
+            return "qualification source immutable restart receipt is missing"
+        if sha256_file(source_receipt_path) != lineage.get("source_receipt_sha256"):
+            return "qualification source immutable restart receipt changed"
+        source = load_json(campaign_file(source_root))
+        receipt = load_json(source_receipt_path)
+        receipt_problem = qualification_receipt_failure(
+            source_root, receipt, source
+        )
+        if receipt_problem:
+            return receipt_problem
+        if (
+            receipt.get("transition_id") != lineage.get("transition_id")
+            or receipt.get("target_root") != str(root.resolve())
+            or receipt.get("source_seal_sha256")
+            != lineage.get("source_seal_sha256")
+            or receipt.get("source_budget_ledger_sha256")
+            != lineage.get("source_budget_ledger_sha256")
+            or receipt.get("defect_evidence_sha256")
+            != lineage.get("defect_evidence_sha256")
+            or receipt.get("target_manifest_sha256")
+            != lineage.get("target_manifest_sha256")
+            or receipt.get("target_instrument_set_sha256")
+            != lineage.get("target_instrument_set_sha256")
+            or receipt.get("entrant_ids") != lineage.get("entrant_ids")
+            or receipt.get("fixture_seeds") != lineage.get("fixture_seeds")
+            or receipt.get("source_state_sha256")
+            != lineage.get("source_state_sha256")
+        ):
+            return "qualification restart receipt differs from target lineage"
+
+        source_seal_path = source_root / QUALIFICATION_RESTART_SEAL
+        copied_seal_path = root / "qualification/source-seal.json"
+        for candidate in (source_seal_path, copied_seal_path):
+            if (
+                not candidate.is_file()
+                or candidate.is_symlink()
+                or sha256_file(candidate) != lineage.get("source_seal_sha256")
+            ):
+                return "qualification source seal is missing or changed"
+        source_seal = load_json(source_seal_path)
+        seal_problem = qualification_source_seal_failure(source_root, source_seal)
+        if seal_problem:
+            return seal_problem
+        source_lineage_problem = lineage_failure(
+            source_root, allow_terminal_qualification_receipt=True
+        )
+        if source_lineage_problem:
+            return f"qualification source lineage changed: {source_lineage_problem}"
+
+        source_evidence_path = (
+            source_root / QUALIFICATION_RESTART_EVIDENCE / "defect-evidence.json"
+        )
+        target_evidence_path = root / "qualification/evidence/defect-evidence.json"
+        for candidate in (source_evidence_path, target_evidence_path):
+            if (
+                not candidate.is_file()
+                or candidate.is_symlink()
+                or sha256_file(candidate) != lineage.get("defect_evidence_sha256")
+            ):
+                return "qualification defect evidence is missing or changed"
+        source_artifacts = receipt.get("defect_artifacts")
+        target_artifacts = lineage.get("defect_artifacts")
+        if not isinstance(source_artifacts, list) or not isinstance(
+            target_artifacts, list
+        ):
+            return "qualification defect artifact records are malformed"
+        source_identity = [
+            {"role": item.get("role"), "sha256": item.get("sha256")}
+            for item in source_artifacts
+            if isinstance(item, dict)
+        ]
+        target_identity = [
+            {"role": item.get("role"), "sha256": item.get("sha256")}
+            for item in target_artifacts
+            if isinstance(item, dict)
+        ]
+        if source_identity != target_identity or len(source_identity) != len(
+            source_artifacts
+        ) or len(target_identity) != len(target_artifacts):
+            return "qualification defect artifacts differ across the restart"
+        for base, artifacts in (
+            (source_root, source_artifacts),
+            (root / "qualification", target_artifacts),
+        ):
+            for artifact in artifacts:
+                artifact_path = base / str(artifact.get("path", ""))
+                if (
+                    not artifact_path.is_file()
+                    or artifact_path.is_symlink()
+                    or sha256_file(artifact_path) != artifact.get("sha256")
+                ):
+                    return "qualification defect artifact changed"
+
+        source_budget_path = root / "qualification/source-budget-ledger.json"
+        if (
+            not source_budget_path.is_file()
+            or source_budget_path.is_symlink()
+            or sha256_file(source_budget_path)
+            != lineage.get("source_budget_ledger_sha256")
+        ):
+            return "qualification source budget snapshot changed"
+        initial_ledger = load_json(source_budget_path)
+        current_ledger = load_json(Path(str(campaign["budget_ledger"])))
+        budget_config = load_json(Path(str(campaign["budget_config"])))
+        ledger_problem = budget_ledger_descendant_failure(
+            initial_ledger, current_ledger, budget_config
+        )
+        if ledger_problem:
+            return ledger_problem
+        instrument_problem = qualification_instrument_failure(source, campaign)
+        if instrument_problem:
+            return instrument_problem
+
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        rows = entrants(manifest)
+        row_ids = [str(row["id"]) for row in rows]
+        if row_ids != lineage.get("entrant_ids"):
+            return "qualification entrant roster differs from target manifest"
+        fixture_seeds = lineage.get("fixture_seeds")
+        source_hashes = lineage.get("source_state_sha256")
+        if not isinstance(fixture_seeds, dict) or not isinstance(source_hashes, dict):
+            return "qualification entrant provenance is malformed"
+        max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
+        for entrant_id in row_ids:
+            state = read_state(root, entrant_id)
+            attempts = int(state.get("provider_episode_attempts", -1))
+            if (
+                state.get("fixture_seed") != fixture_seeds.get(entrant_id)
+                or state.get("lineage_role") != "qualification_restart"
+                or state.get("qualification_restart_transition_id")
+                != lineage.get("transition_id")
+                or state.get("qualification_source_state_sha256")
+                != source_hashes.get(entrant_id)
+                or attempts < 0
+                or attempts > max_episodes
+            ):
+                return f"qualification entrant provenance drifted: {entrant_id}"
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"qualification restart lineage cannot be verified: {error}"
+    return None
+
+
+def lineage_failure(
+    root: Path,
+    *,
+    allow_terminal_qualification_receipt: bool = False,
+    allow_terminal_supersession_receipt: bool = False,
+) -> str | None:
     try:
         campaign = load_json(campaign_file(root))
+        qualification_receipt = root / QUALIFICATION_RESTART_RECEIPT
+        if qualification_receipt.exists() and not allow_terminal_qualification_receipt:
+            return (
+                "campaign has an immutable qualification restart receipt and cannot "
+                "run again"
+            )
+        qualification_problem = qualification_history_failure(root, campaign)
+        if qualification_problem:
+            return qualification_problem
         lineage_pointer = campaign.get("lineage")
         receipt_at_root = root / SUPERSESSION_RECEIPT
         if not isinstance(lineage_pointer, dict):
             return "campaign lineage pointer is malformed"
         if lineage_pointer.get("generation") == 0:
             validated_campaign_lineage(campaign)
-            if receipt_at_root.exists():
+            if receipt_at_root.exists() and not allow_terminal_supersession_receipt:
                 return "campaign has an immutable supersession receipt and cannot run again"
             return None
         if receipt_at_root.exists():
@@ -4269,6 +5188,10 @@ def supersede_campaign(
                 )
                 supersession_fault("staged_initialized")
                 successor = load_json(campaign_file(staged_root))
+                qualification_history = validated_qualification_history(predecessor)
+                if qualification_history is not None:
+                    successor["qualification_history"] = qualification_history
+                    atomic_json(campaign_file(staged_root), successor)
                 instrument_problem = supersession_instrument_failure(
                     predecessor, successor
                 )
@@ -4284,6 +5207,27 @@ def supersede_campaign(
                     raise SystemExit("cumulative predecessor budget did not copy exactly")
                 lineage_root = staged_root / "lineage"
                 lineage_root.mkdir()
+                if qualification_history is not None:
+                    source_qualification = predecessor_root / "qualification"
+                    target_qualification = staged_root / "qualification"
+                    if (
+                        not source_qualification.is_dir()
+                        or source_qualification.is_symlink()
+                    ):
+                        raise SystemExit(
+                            "qualified predecessor has no immutable qualification bundle"
+                        )
+                    source_qualification_sha = artifact_tree_sha256(
+                        source_qualification
+                    )
+                    shutil.copytree(source_qualification, target_qualification)
+                    if (
+                        artifact_tree_sha256(target_qualification)
+                        != source_qualification_sha
+                    ):
+                        raise SystemExit(
+                            "qualification history changed while carrying supersession"
+                        )
                 atomic_copy(
                     predecessor_root / "supersession-seal.json",
                     lineage_root / "predecessor-seal.json",
@@ -4430,6 +5374,608 @@ def supersede_campaign(
                 with contextlib.suppress(OSError):
                     staging_parent.rmdir()
                 return load_json(campaign_file(root))
+
+
+def qualification_candidate(
+    source: Mapping[str, Any],
+    binary: Path,
+    manifest_path: Path,
+    checked: Mapping[str, Any],
+) -> tuple[Dict[str, Any], Dict[str, str]]:
+    current_hashes = instrument_hashes()
+    checked_publisher = checked.get("publisher")
+    candidate_publisher = (
+        dict(checked_publisher) if isinstance(checked_publisher, dict) else None
+    )
+    source_publisher = source.get("publisher")
+    if isinstance(candidate_publisher, dict) and isinstance(source_publisher, dict):
+        for field in QUALIFICATION_PUBLISHER_RUNTIME_FIELDS:
+            if field in source_publisher:
+                candidate_publisher.setdefault(field, source_publisher[field])
+    candidate = dict(source)
+    candidate.update(
+        {
+            "binary_sha256": sha256_file(binary),
+            "entrant_manifest": str(manifest_path),
+            "entrant_manifest_sha256": sha256_file(manifest_path),
+            "instrument_hashes": current_hashes,
+            "instrument_set_sha256": sha256_bytes(
+                json.dumps(current_hashes, sort_keys=True).encode()
+            ),
+            "publisher": candidate_publisher,
+            "requested_models": checked.get("requested_models"),
+        }
+    )
+    problem = qualification_instrument_failure(source, candidate)
+    if problem:
+        raise SystemExit(problem)
+    return candidate, current_hashes
+
+
+def qualification_source_evidence_failure(
+    source_root: Path, receipt: Mapping[str, Any]
+) -> str | None:
+    evidence_root = source_root / QUALIFICATION_RESTART_EVIDENCE
+    evidence_path = evidence_root / "defect-evidence.json"
+    if (
+        not evidence_path.is_file()
+        or evidence_path.is_symlink()
+        or sha256_file(evidence_path) != receipt.get("defect_evidence_sha256")
+    ):
+        return "qualification source defect evidence changed"
+    artifacts = receipt.get("defect_artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        return "qualification source defect artifact records are missing"
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or set(artifact) != {
+            "role",
+            "path",
+            "sha256",
+        }:
+            return "qualification source defect artifact record is malformed"
+        path = source_root / str(artifact["path"])
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or sha256_file(path) != artifact.get("sha256")
+        ):
+            return "qualification source defect artifact changed"
+    return None
+
+
+@contextlib.contextmanager
+def qualification_source_claim(root: Path) -> Iterator[bool]:
+    with exclusive_claim(
+        root / "locks/supersession.claim", blocking=True
+    ) as stopped_claimed:
+        if not stopped_claimed:
+            yield False
+            return
+        with exclusive_claim(
+            root / "locks/qualification-restart.claim", blocking=True
+        ) as qualification_claimed:
+            yield qualification_claimed
+
+
+def commit_qualification_evidence_bundle(
+    source_root: Path,
+    evidence_path: Path,
+    evidence_sha256: str,
+    artifacts: list[Mapping[str, Any]],
+) -> list[Dict[str, str]]:
+    destination = source_root / QUALIFICATION_RESTART_EVIDENCE
+    expected = [
+        {
+            "role": artifact["role"],
+            "path": str(
+                Path(QUALIFICATION_RESTART_EVIDENCE)
+                / f"artifact-{index:02d}-{artifact['role']}"
+            ),
+            "sha256": artifact["sha256"],
+        }
+        for index, artifact in enumerate(artifacts)
+    ]
+    if destination.exists():
+        if (
+            not destination.is_dir()
+            or destination.is_symlink()
+            or not (destination / "defect-evidence.json").is_file()
+            or sha256_file(destination / "defect-evidence.json")
+            != evidence_sha256
+        ):
+            raise SystemExit("qualification evidence bundle differs")
+        for artifact in expected:
+            path = source_root / artifact["path"]
+            if (
+                not path.is_file()
+                or path.is_symlink()
+                or sha256_file(path) != artifact["sha256"]
+            ):
+                raise SystemExit("qualification defect artifact differs")
+        expected_names = {
+            "defect-evidence.json",
+            *(Path(artifact["path"]).name for artifact in expected),
+        }
+        if {path.name for path in destination.iterdir()} != expected_names:
+            raise SystemExit("qualification evidence bundle has unexpected files")
+        return expected
+
+    staging_parent = Path(
+        tempfile.mkdtemp(prefix=".qualification-evidence-", dir=source_root)
+    )
+    staged = staging_parent / QUALIFICATION_RESTART_EVIDENCE
+    try:
+        copied = copy_evidence_bundle(
+            staged, evidence_path, evidence_sha256, artifacts
+        )
+        if copied != expected:
+            raise SystemExit("staged qualification evidence identity drifted")
+        qualification_fault("evidence_bundle_staged")
+        fsync_directory(staged)
+        os.replace(staged, destination)
+        fsync_directory(source_root)
+        qualification_fault("evidence_bundle_committed")
+        return copied
+    finally:
+        if staged.exists():
+            shutil.rmtree(staged)
+        with contextlib.suppress(OSError):
+            staging_parent.rmdir()
+
+
+def qualification_restart_campaign(
+    source_root: Path,
+    root: Path,
+    binary: Path,
+    manifest_path: Path,
+    secret_path: Path,
+    publisher_repo: Path,
+    evidence_path: Path,
+    publish_live: bool,
+    website_base_url: str = DEFAULT_WEBSITE_BASE_URL,
+    publish_verify_timeout_seconds: float = DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS,
+    publish_verify_interval_seconds: float = DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS,
+    publish_process_timeout_seconds: float = DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
+) -> Dict[str, Any]:
+    source_root = source_root.resolve()
+    root = root.resolve()
+    binary = binary.resolve()
+    manifest_path = manifest_path.resolve()
+    secret_path = secret_path.resolve()
+    publisher_repo = publisher_repo.resolve()
+    evidence_path = evidence_path.resolve()
+    if source_root == root or source_root.parent != root.parent:
+        raise SystemExit(
+            "qualification restart roots must be distinct siblings on one filesystem"
+        )
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise SystemExit("qualification restart binary is missing or not executable")
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise SystemExit("qualification restart manifest is missing or linked")
+    source = load_json(campaign_file(source_root))
+    if secret_path != Path(str(source.get("secret_file", ""))).resolve():
+        raise SystemExit("qualification restart cannot change the credential source")
+    source_publisher = source.get("publisher")
+    if (
+        not isinstance(source_publisher, dict)
+        or publisher_repo
+        != Path(str(source_publisher.get("repo", ""))).resolve()
+    ):
+        raise SystemExit("qualification restart cannot change the publisher repository")
+    if sha256_file(binary) != source.get("binary_sha256"):
+        raise SystemExit("qualification restart must keep the exact frozen Goose binary")
+    publisher_runtime_problem = qualification_publisher_runtime_failure(
+        source,
+        publish_live,
+        website_base_url,
+        publish_verify_timeout_seconds,
+        publish_verify_interval_seconds,
+        publish_process_timeout_seconds,
+    )
+    if publisher_runtime_problem:
+        raise SystemExit(publisher_runtime_problem)
+
+    target_manifest = load_json(manifest_path)
+    target_rows = entrants(target_manifest)
+    local_publisher = publisher_snapshot(publisher_repo, target_rows)
+    candidate, _ = qualification_candidate(
+        source,
+        binary,
+        manifest_path,
+        {
+            "publisher": local_publisher,
+            "requested_models": source.get("requested_models"),
+        },
+    )
+    target_manifest_sha = str(candidate["entrant_manifest_sha256"])
+    target_instrument_sha = str(candidate["instrument_set_sha256"])
+    target_lock = root.parent / f".{root.name}.qualification-restart.claim"
+    with exclusive_claim(target_lock, blocking=True) as target_claimed:
+        if not target_claimed:
+            raise SystemExit("cannot claim qualification restart target")
+        with exclusive_claim(
+            source_root / "locks/manager-launch.claim", blocking=True
+        ) as launch_claimed:
+            if not launch_claimed:
+                raise SystemExit("cannot freeze qualification source manager launch")
+            with qualification_source_claim(source_root) as source_claimed:
+                if not source_claimed:
+                    raise SystemExit("cannot claim qualification source")
+                receipt_path = source_root / QUALIFICATION_RESTART_RECEIPT
+                if receipt_path.exists():
+                    if receipt_path.is_symlink() or not receipt_path.is_file():
+                        raise SystemExit(
+                            "qualification source receipt is not a regular file"
+                        )
+                    receipt = load_json(receipt_path)
+                    receipt_problem = qualification_receipt_failure(
+                        source_root, receipt, source
+                    )
+                    if receipt_problem:
+                        raise SystemExit(receipt_problem)
+                    if (
+                        receipt.get("target_root") != str(root)
+                        or receipt.get("binary_sha256") != sha256_file(binary)
+                        or receipt.get("target_manifest_sha256")
+                        != target_manifest_sha
+                        or receipt.get("target_instrument_set_sha256")
+                        != target_instrument_sha
+                    ):
+                        raise SystemExit(
+                            "qualification source has an immutable receipt for another target"
+                        )
+                    seal_path = source_root / QUALIFICATION_RESTART_SEAL
+                    if (
+                        not seal_path.is_file()
+                        or seal_path.is_symlink()
+                        or sha256_file(seal_path)
+                        != receipt.get("source_seal_sha256")
+                    ):
+                        raise SystemExit("qualification source seal changed")
+                    seal = load_json(seal_path)
+                    seal_problem = qualification_source_seal_failure(
+                        source_root, seal
+                    )
+                    if seal_problem:
+                        raise SystemExit(seal_problem)
+                    evidence_problem = qualification_source_evidence_failure(
+                        source_root, receipt
+                    )
+                    if evidence_problem:
+                        raise SystemExit(evidence_problem)
+                    source_lineage_problem = lineage_failure(
+                        source_root, allow_terminal_qualification_receipt=True
+                    )
+                    if source_lineage_problem:
+                        raise SystemExit(
+                            "qualification source lineage changed after receipt: "
+                            f"{source_lineage_problem}"
+                        )
+                    if root.exists():
+                        if not campaign_file(root).is_file():
+                            raise SystemExit(
+                                "qualification target exists without a campaign receipt"
+                            )
+                        target_problem = lineage_failure(root)
+                        if target_problem:
+                            raise SystemExit(
+                                "existing qualification target is invalid: "
+                                f"{target_problem}"
+                            )
+                        return load_json(campaign_file(root))
+                    checked = preflight(
+                        binary, manifest_path, secret_path, publisher_repo
+                    )
+                    verified_candidate, _ = qualification_candidate(
+                        source, binary, manifest_path, checked
+                    )
+                    if (
+                        verified_candidate["entrant_manifest_sha256"]
+                        != target_manifest_sha
+                        or verified_candidate["instrument_set_sha256"]
+                        != target_instrument_sha
+                    ):
+                        raise SystemExit(
+                            "qualification candidate changed before authenticated preflight"
+                        )
+                    states = {
+                        entrant_id: read_state(source_root, entrant_id)
+                        for entrant_id in receipt["entrant_ids"]
+                    }
+                    source_ledger = load_json(Path(str(source["budget_ledger"])))
+                else:
+                    if root.exists():
+                        raise SystemExit(
+                            "qualification target exists before its source receipt"
+                        )
+                    manifest = load_json(Path(str(source["entrant_manifest"])))
+                    rows = entrants(manifest)
+                    row_ids = {str(row["id"]) for row in rows}
+                    states, source_ledger = validate_stopped_qualification_source(
+                        source_root, source, rows
+                    )
+                    secret_values = parse_secret_file(secret_path)
+                    evidence, artifacts, evidence_sha = validate_defect_evidence(
+                        evidence_path,
+                        source,
+                        binary,
+                        row_ids,
+                        secret_values.values(),
+                    )
+                    if set(evidence["affected_entrants"]) != row_ids:
+                        raise SystemExit(
+                            "qualification restart evidence must name every entrant"
+                        )
+                    checked = preflight(
+                        binary, manifest_path, secret_path, publisher_repo
+                    )
+                    verified_candidate, _ = qualification_candidate(
+                        source, binary, manifest_path, checked
+                    )
+                    if (
+                        verified_candidate["entrant_manifest_sha256"]
+                        != target_manifest_sha
+                        or verified_candidate["instrument_set_sha256"]
+                        != target_instrument_sha
+                    ):
+                        raise SystemExit(
+                            "qualification candidate changed before authenticated preflight"
+                        )
+                    transition_id = qualification_transition_id(
+                        source_root,
+                        root,
+                        evidence_sha,
+                        source,
+                        target_manifest_sha,
+                        target_instrument_sha,
+                    )
+                    seal = qualification_source_seal(
+                        source_root, source, rows, transition_id
+                    )
+                    seal_path = source_root / QUALIFICATION_RESTART_SEAL
+                    write_exclusive_json(seal_path, seal)
+                    copied_artifacts = commit_qualification_evidence_bundle(
+                        source_root, evidence_path, evidence_sha, artifacts
+                    )
+                    receipt = {
+                        "schema_version": QUALIFICATION_RESTART_SCHEMA,
+                        "kind": "instrument_qualification_restart",
+                        "restart_count": 1,
+                        "transition_id": transition_id,
+                        "source_campaign_id": source["campaign_id"],
+                        "source_smoke_contract_sha256": source[
+                            "smoke_contract_sha256"
+                        ],
+                        "source_root": str(source_root),
+                        "target_root": str(root),
+                        "secret_file": str(secret_path),
+                        "publisher_repo": str(publisher_repo),
+                        "defect_evidence_sha256": evidence_sha,
+                        "defect_artifacts": copied_artifacts,
+                        "binary_sha256": source["binary_sha256"],
+                        "source_manifest_sha256": source[
+                            "entrant_manifest_sha256"
+                        ],
+                        "target_manifest_sha256": target_manifest_sha,
+                        "source_instrument_set_sha256": source[
+                            "instrument_set_sha256"
+                        ],
+                        "target_instrument_set_sha256": target_instrument_sha,
+                        "source_budget_ledger_sha256": sha256_file(
+                            Path(str(source["budget_ledger"]))
+                        ),
+                        "source_seal_sha256": sha256_file(seal_path),
+                        "entrant_ids": [str(row["id"]) for row in rows],
+                        "fixture_seeds": {
+                            entrant_id: states[entrant_id]["fixture_seed"]
+                            for entrant_id in sorted(states)
+                        },
+                        "source_state_sha256": {
+                            entrant_id: sha256_file(
+                                state_file(source_root, entrant_id)
+                            )
+                            for entrant_id in sorted(states)
+                        },
+                        "fresh_all_entrant_smoke_required": True,
+                        "full_benchmark_episodes_started": 0,
+                    }
+                    write_exclusive_json(receipt_path, receipt)
+                    qualification_fault("source_receipt_committed")
+
+                staging_parent = Path(
+                    tempfile.mkdtemp(
+                        prefix=f".{root.name}.qualification-restart-",
+                        dir=root.parent,
+                    )
+                )
+                staged_root = staging_parent / root.name
+                try:
+                    init_campaign(
+                        staged_root,
+                        binary,
+                        manifest_path,
+                        secret_path,
+                        publisher_repo,
+                        publish_live,
+                        website_base_url,
+                        publish_verify_timeout_seconds,
+                        publish_verify_interval_seconds,
+                        publish_process_timeout_seconds,
+                        verified_preflight=checked,
+                    )
+                    qualification_fault("staged_initialized")
+                    target = load_json(campaign_file(staged_root))
+                    instrument_problem = qualification_instrument_failure(
+                        source, target
+                    )
+                    if instrument_problem:
+                        raise SystemExit(instrument_problem)
+                    atomic_copy(
+                        Path(str(source["budget_ledger"])),
+                        Path(str(target["budget_ledger"])),
+                        0o600,
+                    )
+                    if load_json(Path(str(target["budget_ledger"]))) != source_ledger:
+                        raise SystemExit(
+                            "qualification cumulative budget did not copy exactly"
+                        )
+                    qualification_root = staged_root / "qualification"
+                    qualification_root.mkdir()
+                    atomic_copy(
+                        source_root / QUALIFICATION_RESTART_SEAL,
+                        qualification_root / "source-seal.json",
+                        0o600,
+                    )
+                    atomic_copy(
+                        Path(str(source["budget_ledger"])),
+                        qualification_root / "source-budget-ledger.json",
+                        0o600,
+                    )
+                    shutil.copytree(
+                        source_root / QUALIFICATION_RESTART_EVIDENCE,
+                        qualification_root / "evidence",
+                    )
+                    target_artifacts = [
+                        {
+                            "role": artifact["role"],
+                            "path": str(
+                                Path("evidence") / Path(str(artifact["path"])).name
+                            ),
+                            "sha256": artifact["sha256"],
+                        }
+                        for artifact in receipt["defect_artifacts"]
+                    ]
+                    lineage = {
+                        "schema_version": QUALIFICATION_RESTART_SCHEMA,
+                        "kind": "instrument_qualification_restart",
+                        "restart_count": 1,
+                        "transition_id": receipt["transition_id"],
+                        "source_root": str(source_root),
+                        "source_campaign_id": source["campaign_id"],
+                        "source_smoke_contract_sha256": source[
+                            "smoke_contract_sha256"
+                        ],
+                        "source_receipt_sha256": sha256_file(receipt_path),
+                        "source_seal_sha256": receipt["source_seal_sha256"],
+                        "source_budget_ledger_sha256": receipt[
+                            "source_budget_ledger_sha256"
+                        ],
+                        "defect_evidence_sha256": receipt[
+                            "defect_evidence_sha256"
+                        ],
+                        "defect_artifacts": target_artifacts,
+                        "target_root": str(root),
+                        "target_campaign_id": target["campaign_id"],
+                        "target_binary_sha256": target["binary_sha256"],
+                        "target_manifest_sha256": target[
+                            "entrant_manifest_sha256"
+                        ],
+                        "target_instrument_set_sha256": target[
+                            "instrument_set_sha256"
+                        ],
+                        "entrant_ids": receipt["entrant_ids"],
+                        "fixture_seeds": receipt["fixture_seeds"],
+                        "source_state_sha256": receipt[
+                            "source_state_sha256"
+                        ],
+                        "fresh_all_entrant_smoke_required": True,
+                    }
+                    qualification_lineage_path = (
+                        staged_root / QUALIFICATION_HISTORY_PATH
+                    )
+                    atomic_json(qualification_lineage_path, lineage)
+                    history = {
+                        "restart_count": 1,
+                        "transition_id": receipt["transition_id"],
+                        "subject_root": str(root),
+                        "source_campaign_id": source["campaign_id"],
+                        "source_contract_sha256": source[
+                            "smoke_contract_sha256"
+                        ],
+                        "path": QUALIFICATION_HISTORY_PATH,
+                        "sha256": sha256_file(qualification_lineage_path),
+                    }
+                    target.update(
+                        {
+                            "status": "INITIALIZED",
+                            "smoke_status": "PLANNED",
+                            "qualification_history": history,
+                        }
+                    )
+                    target = bind_smoke_contract(target, entrants(load_json(manifest_path)))
+                    target_contract = target["smoke_contract_sha256"]
+                    for entrant_id in receipt["entrant_ids"]:
+                        state = remap_paths(
+                            read_state(staged_root, entrant_id), staged_root, root
+                        )
+                        state.update(
+                            {
+                                "status": "PLANNED",
+                                "provider_episode_attempts": 0,
+                                "fixture_seed": receipt["fixture_seeds"][entrant_id],
+                                "admitted_requests": 0,
+                                "provider_terminal_requests": 0,
+                                "score": None,
+                                "verdict": None,
+                                "failure": None,
+                                "lineage_role": "qualification_restart",
+                                "qualification_restart_transition_id": receipt[
+                                    "transition_id"
+                                ],
+                                "qualification_source_state_sha256": receipt[
+                                    "source_state_sha256"
+                                ][entrant_id],
+                                "updated_at": utc_now(),
+                            }
+                        )
+                        atomic_json(state_file(staged_root, entrant_id), state)
+                        smoke_state = remap_paths(
+                            read_smoke_state(staged_root, entrant_id),
+                            staged_root,
+                            root,
+                        )
+                        smoke_state.update(
+                            {
+                                "status": "PLANNED",
+                                "launch_attempts": 0,
+                                "admitted_episodes": 0,
+                                "active_attempt": False,
+                                "attempt_evidence_sha256": {},
+                                "smoke_contract_sha256": target_contract,
+                                "budget_settled_baseline_request_ids": target[
+                                    "smoke_budget_settled_baselines"
+                                ][entrant_id],
+                                "budget_outstanding_baseline_request_ids": target[
+                                    "smoke_budget_outstanding_baselines"
+                                ][entrant_id],
+                                "failure": None,
+                                "updated_at": utc_now(),
+                            }
+                        )
+                        atomic_json(
+                            smoke_state_file(staged_root, entrant_id), smoke_state
+                        )
+                    target = remap_paths(target, staged_root, root)
+                    atomic_json(campaign_file(staged_root), target)
+                    qualification_fault("lineage_staged")
+                    fsync_directory(staged_root)
+                    os.replace(staged_root, root)
+                    fsync_directory(root.parent)
+                    qualification_fault("root_committed")
+                    failure = lineage_failure(root)
+                    if failure:
+                        raise SystemExit(
+                            "committed qualification restart failed validation: "
+                            f"{failure}"
+                        )
+                    return load_json(campaign_file(root))
+                finally:
+                    if staged_root.exists():
+                        shutil.rmtree(staged_root)
+                    with contextlib.suppress(OSError):
+                        staging_parent.rmdir()
+
+
 def entrant_budget_requests(
     campaign: Mapping[str, Any], row: Mapping[str, Any]
 ) -> tuple[list[str], list[str], str | None]:
@@ -5494,6 +7040,7 @@ def smoke_supervise(root: Path, entrant_id: str) -> int:
 
 
 def smoke_supervise_claimed(root: Path, entrant_id: str) -> int:
+    require_lineage(root)
     campaign = load_json(campaign_file(root))
     row = manifest_row(root, entrant_id)
     state = read_smoke_state(root, entrant_id)
@@ -6196,6 +7743,7 @@ def smoke(root: Path) -> int:
     with exclusive_claim(root / "locks/smoke-run.claim", blocking=True) as claimed:
         if not claimed:
             raise SystemExit("cannot claim cloud contract smoke run")
+        require_lineage(root)
         campaign = load_json(campaign_file(root))
         manifest = load_json(Path(str(campaign["entrant_manifest"])))
         rows = entrants(manifest)
@@ -6900,12 +8448,71 @@ def same_number(left: Any, right: Any) -> bool:
         return False
 
 
+def public_publication_identity(
+    campaign: Mapping[str, Any], verdict: Mapping[str, Any]
+) -> Dict[str, Any]:
+    publisher = campaign.get("publisher")
+    target = QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION["target"]
+    if not isinstance(publisher, dict) or any(
+        publisher.get(field) != target[field]
+        for field in ("commit", "instrument_set_sha256", "tracked_hashes")
+    ):
+        raise PublicationError(
+            "publisher is not the exact frozen stable-board correction"
+        )
+    raw_scorer = verdict.get("scorer_version")
+    raw_calibration = verdict.get("calibration")
+    if (
+        raw_scorer
+        != QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION["raw_scorer_version"]
+        or campaign.get("scorer_version") != raw_scorer
+        or not isinstance(raw_calibration, str)
+        or not re.search(r"uncalibrated|rc-grade", raw_calibration, re.IGNORECASE)
+    ):
+        raise PublicationError(
+            "raw hermetic verdict does not match the frozen RC publication mapping"
+        )
+    return {
+        "scorer_version": QUALIFICATION_ALLOWED_PUBLISHER_TRANSITION[
+            "public_scorer_version"
+        ],
+        "calibration_absent": True,
+    }
+
+
+def raw_publication_identity_sha256(verdict: Mapping[str, Any]) -> str:
+    identity = {
+        "scorer_version": verdict.get("scorer_version"),
+        "calibration": verdict.get("calibration"),
+    }
+    return sha256_bytes(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    )
+
+
+def rendered_publication_expected(
+    campaign: Mapping[str, Any],
+    entry: Mapping[str, str],
+    verdict: Mapping[str, Any],
+) -> Dict[str, Any]:
+    public = public_publication_identity(campaign, verdict)
+    return {
+        "doc_id": entry["doc_id"],
+        "label": entry["label"],
+        "model": entry["model"],
+        "score": float(verdict["score"]),
+        **public,
+    }
+
+
 def remote_publication_receipt(
     campaign: Mapping[str, Any],
     entry: Mapping[str, str],
     verdict: Mapping[str, Any],
     screenshot_plan: list[Mapping[str, Any]],
 ) -> Dict[str, Any]:
+    public = public_publication_identity(campaign, verdict)
+    raw_identity_sha256 = raw_publication_identity_sha256(verdict)
     document = sanity_document(campaign, entry["doc_id"])
     if document is None:
         return {
@@ -6913,6 +8520,8 @@ def remote_publication_receipt(
             "doc_id": entry["doc_id"],
             "matched": False,
             "reasons": ["stable document does not exist"],
+            "expected_public_identity": public,
+            "raw_verdict_identity_sha256": raw_identity_sha256,
         }
 
     reasons: list[str] = []
@@ -6922,13 +8531,21 @@ def remote_publication_receipt(
         "label": entry["label"],
         "model": entry["model"],
         "baseline": True,
-        "scorerVersion": str(verdict.get("scorer_version", "")),
-        "calibration": str(verdict.get("calibration", "")),
+        "scorerVersion": public["scorer_version"],
         "excellent": bool(verdict.get("excellent")),
     }
     for field, expected in exact_fields.items():
         if document.get(field) != expected:
             reasons.append(f"document field {field} differs")
+    if "calibration" in document:
+        reasons.append("document field calibration must be absent")
+    notes = document.get("notes")
+    if isinstance(notes, str) and re.search(
+        r"sb-7\.0-rc|\bcalibration\b|\buncalibrated\b|\brc-grade\b",
+        notes,
+        re.IGNORECASE,
+    ):
+        reasons.append("document notes retain forbidden RC/calibration residue")
 
     numeric_fields = {
         "score": verdict.get("score"),
@@ -7083,6 +8700,8 @@ def remote_publication_receipt(
         "updated_at": document.get("_updatedAt"),
         "checks": len(actual_checks) if isinstance(actual_checks, list) else None,
         "screenshots": len(screenshots) if isinstance(screenshots, list) else None,
+        "expected_public_identity": public,
+        "raw_verdict_identity_sha256": raw_identity_sha256,
     }
 
 
@@ -7191,6 +8810,7 @@ def json_ld_objects(parser: RenderedEvidenceParser) -> Iterator[Mapping[str, Any
 
 
 def rendered_publication_matches(
+    campaign: Mapping[str, Any],
     board_html: str,
     run_html: str,
     website_base_url: str,
@@ -7199,8 +8819,8 @@ def rendered_publication_matches(
 ) -> tuple[bool, Dict[str, Any]]:
     score = float(verdict["score"])
     score_text = f"{score:.4f}"
-    scorer = str(verdict["scorer_version"])
-    calibration = str(verdict["calibration"])
+    public = public_publication_identity(campaign, verdict)
+    scorer = str(public["scorer_version"])
     run_url = f"{website_base_url.rstrip('/')}/agentic-benchmarks/run/{entry['doc_id']}"
 
     board_parser = RenderedEvidenceParser()
@@ -7220,9 +8840,18 @@ def rendered_publication_matches(
         f"{entry['label']} — {score_text} on {scorer}",
         entry["model"],
         f"scorer {scorer}",
-        f"Scorer calibration · {calibration}",
     ]
     missing_visible = [value for value in expected_visible if value not in run_text]
+    forbidden_residue = []
+    raw_scorer = str(verdict["scorer_version"])
+    if raw_scorer != scorer and re.search(re.escape(raw_scorer), run_html, re.IGNORECASE):
+        forbidden_residue.append(raw_scorer)
+    if re.search(
+        r"\bcalibration\b|\buncalibrated\b|\brc-grade\b",
+        run_html,
+        re.IGNORECASE,
+    ):
+        forbidden_residue.append("calibration disclosure")
 
     dataset = False
     for item in json_ld_objects(run_parser):
@@ -7247,12 +8876,18 @@ def rendered_publication_matches(
         reasons.append(
             f"run page lacks exact visible fields: {', '.join(missing_visible)}"
         )
+    if forbidden_residue:
+        reasons.append(
+            "run page retains forbidden RC/calibration residue: "
+            + ", ".join(forbidden_residue)
+        )
     if not dataset:
         reasons.append("run Dataset JSON-LD lacks the exact URL, scorer and score")
     return not reasons, {
         "board_item_exact": board_item,
         "run_visible_exact": not missing_visible,
         "run_dataset_exact": dataset,
+        "run_public_identity_exact": not forbidden_residue,
         "reasons": reasons,
     }
 
@@ -7299,7 +8934,7 @@ def verify_rendered_publication(
             board_status, board_html, board_headers = fetch_rendered_page(board_url)
             run_status, run_html, run_headers = fetch_rendered_page(run_url)
             matched, checks = rendered_publication_matches(
-                board_html, run_html, base_url, entry, verdict
+                campaign, board_html, run_html, base_url, entry, verdict
             )
             last = {
                 "attempt": attempts,
@@ -7317,14 +8952,12 @@ def verify_rendered_publication(
                     "verified_at": utc_now(),
                     "board_url": board_url,
                     "run_url": run_url,
-                    "expected": {
-                        "doc_id": entry["doc_id"],
-                        "label": entry["label"],
-                        "model": entry["model"],
-                        "score": float(verdict["score"]),
-                        "scorer_version": str(verdict["scorer_version"]),
-                        "calibration": str(verdict["calibration"]),
-                    },
+                    "expected": rendered_publication_expected(
+                        campaign, entry, verdict
+                    ),
+                    "raw_verdict_identity_sha256": (
+                        raw_publication_identity_sha256(verdict)
+                    ),
                 }
         except Exception as error:
             last = {
@@ -7740,6 +9373,7 @@ def score_one(root: Path, entrant_id: str) -> bool:
 
 
 def score_all(root: Path, row_ids: list[str], finalize_campaign: bool = True) -> bool:
+    require_lineage(root)
     recover_interrupted_scoring(root)
     manager_state(root, status="SCORING", active_entrant=None, failure=None)
     update_campaign(root, status="SCORING", score_started_at=utc_now())
@@ -7978,7 +9612,17 @@ def published_campaign_mismatch(root: Path) -> str | None:
         ):
             return f"{entrant_id} publication artifact manifest differs"
         receipt = state.get("publisher_remote_receipt")
-        if not isinstance(receipt, dict) or receipt.get("matched") is not True:
+        try:
+            public_identity = public_publication_identity(campaign, verdict)
+        except PublicationError as error:
+            return f"{entrant_id} public publication identity is invalid: {error}"
+        if (
+            not isinstance(receipt, dict)
+            or receipt.get("matched") is not True
+            or receipt.get("expected_public_identity") != public_identity
+            or receipt.get("raw_verdict_identity_sha256")
+            != raw_publication_identity_sha256(verdict)
+        ):
             return f"{entrant_id} has no matching stable-document receipt"
         revalidation = state.get("revalidation")
         entry = publish_entry(campaign, entrant_id)
@@ -7992,14 +9636,9 @@ def published_campaign_mismatch(root: Path) -> str | None:
         ):
             return f"{entrant_id} has no complete revalidation receipt"
         rendered = state.get("rendered_verification")
-        expected_rendered = {
-            "doc_id": entry["doc_id"],
-            "label": entry["label"],
-            "model": entry["model"],
-            "score": float(verdict["score"]),
-            "scorer_version": str(verdict["scorer_version"]),
-            "calibration": str(verdict["calibration"]),
-        }
+        expected_rendered = rendered_publication_expected(
+            campaign, entry, verdict
+        )
         if (
             not isinstance(rendered, dict)
             or rendered.get("board_status") != 200
@@ -8007,7 +9646,10 @@ def published_campaign_mismatch(root: Path) -> str | None:
             or rendered.get("board_item_exact") is not True
             or rendered.get("run_visible_exact") is not True
             or rendered.get("run_dataset_exact") is not True
+            or rendered.get("run_public_identity_exact") is not True
             or rendered.get("expected") != expected_rendered
+            or rendered.get("raw_verdict_identity_sha256")
+            != raw_publication_identity_sha256(verdict)
             or state.get("published_url") != rendered.get("run_url")
         ):
             return f"{entrant_id} rendered board/run verification is incomplete"
@@ -8121,6 +9763,7 @@ def monitor_campaign(root: Path, poll_seconds: float = 10.0) -> int:
     with exclusive_claim(root / "locks/monitor-run.claim") as claimed:
         if not claimed:
             return 0
+        require_lineage(root)
         campaign = load_json(campaign_file(root))
         try:
             contract = smoke_contract_identity(campaign)
@@ -8237,7 +9880,9 @@ def stop(root: Path) -> int:
 
 
 def stop_claimed(root: Path) -> int:
-    if (root / SUPERSESSION_RECEIPT).exists():
+    if (root / SUPERSESSION_RECEIPT).exists() or (
+        root / QUALIFICATION_RESTART_RECEIPT
+    ).exists():
         return 0
     campaign = load_json(campaign_file(root))
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
@@ -8467,6 +10112,38 @@ def main() -> int:
         default=DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
     )
 
+    p_qualification_restart = sub.add_parser("qualification-restart")
+    root_arg(p_qualification_restart)
+    p_qualification_restart.add_argument("--from-root", type=Path, required=True)
+    p_qualification_restart.add_argument("--binary", type=Path, required=True)
+    p_qualification_restart.add_argument(
+        "--manifest", type=Path, default=DEFAULT_ENTRANTS
+    )
+    p_qualification_restart.add_argument(
+        "--secrets", type=Path, default=DEFAULT_SECRET_FILE
+    )
+    p_qualification_restart.add_argument("--publisher-repo", type=Path, required=True)
+    p_qualification_restart.add_argument("--defect-evidence", type=Path, required=True)
+    p_qualification_restart.add_argument("--publish-live", action="store_true")
+    p_qualification_restart.add_argument(
+        "--website-base-url", default=DEFAULT_WEBSITE_BASE_URL
+    )
+    p_qualification_restart.add_argument(
+        "--publish-verify-timeout-seconds",
+        type=float,
+        default=DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS,
+    )
+    p_qualification_restart.add_argument(
+        "--publish-verify-interval-seconds",
+        type=float,
+        default=DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS,
+    )
+    p_qualification_restart.add_argument(
+        "--publish-process-timeout-seconds",
+        type=float,
+        default=DEFAULT_PUBLISH_PROCESS_TIMEOUT_SECONDS,
+    )
+
     for name in (
         "smoke",
         "monitor-start",
@@ -8530,6 +10207,26 @@ def main() -> int:
             args.publish_process_timeout_seconds,
         )
         print(f"superseded into {value['campaign_id']} at {args.root.resolve()}")
+        return 0
+    if args.command == "qualification-restart":
+        value = qualification_restart_campaign(
+            args.from_root,
+            args.root,
+            args.binary,
+            args.manifest,
+            args.secrets,
+            args.publisher_repo,
+            args.defect_evidence,
+            args.publish_live,
+            args.website_base_url,
+            args.publish_verify_timeout_seconds,
+            args.publish_verify_interval_seconds,
+            args.publish_process_timeout_seconds,
+        )
+        print(
+            f"qualification restarted into {value['campaign_id']} "
+            f"at {args.root.resolve()}"
+        )
         return 0
     root = args.root.resolve()
     if args.command == "smoke":
