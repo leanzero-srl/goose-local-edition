@@ -16,6 +16,7 @@ pub mod judge;
 pub mod memory_classify;
 pub mod replan;
 pub mod scheduler;
+pub mod semantic_observation;
 
 pub use broker::{
     AdmissionReceipt, BrokerError, BrokerGrant, CapacityUpdateReceipt, HostCapacityEvidence,
@@ -47,4 +48,15 @@ pub use scheduler::{
     qa_enabled, salvage_require_critical, salvage_spin_enabled, sink_review_enabled,
     tail_review_enabled, testgen_enabled, AttemptRecord, DeviceCfg, DeviceSummary, RunReport,
     Scheduler, TaskOutcome,
+};
+pub use semantic_observation::{
+    parse_semantic_observation_reply, semantic_observation_response_schema,
+    AcceptanceCriterionSnapshot, ArtifactExcerptSnapshot, NeutralJudgeSignal,
+    ParsedSemanticObservation, SealedSemanticObservationSnapshot, SemanticEvidenceCitation,
+    SemanticJudgeAction, SemanticObservationBody, SemanticObservationHandle,
+    SemanticObservationPlane, SemanticObservationReceipt, SemanticObservationRejection,
+    SemanticObservationReply, SemanticObservationRequest, SemanticObservationReviewer,
+    SemanticObservationSnapshotDraft, SemanticObservationSubmission, SemanticProtocolFailure,
+    SemanticProtocolFailureKind, SemanticSplitBoundary, SemanticTraceSnapshot,
+    SEMANTIC_OBSERVATION_PROTOCOL, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
