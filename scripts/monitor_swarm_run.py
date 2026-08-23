@@ -133,6 +133,12 @@ def lms_snapshot() -> Dict[str, Any]:
     return {"ok": True, "models": models}
 
 
+def canonical_lms_status(value: Any) -> str:
+    return "".join(
+        character for character in str(value).casefold() if character.isalnum()
+    )
+
+
 def preflight_report(
     forbidden_pids: Iterable[int],
     binary: Optional[pathlib.Path],
@@ -431,10 +437,11 @@ class EventGate:
             return
         active = {
             "processing",
+            "processingprompt",
             "generating",
             "loading",
         }
-        if all(str(model.get("status", "")).lower() in active for model in models):
+        if all(canonical_lms_status(model.get("status", "")) in active for model in models):
             self.seed_concurrency_observed = True
 
     def observe(self, record: EventRecord) -> Optional[Dict[str, Any]]:
