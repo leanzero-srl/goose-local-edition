@@ -219,6 +219,55 @@ pub fn from_custom_config(
     })
 }
 
+fn loopback_lmstudio_config(
+    endpoint: &str,
+    explicit_api_key: bool,
+) -> Result<Option<DeclarativeProviderConfig>> {
+    let mut url = url::Url::parse(endpoint)?;
+    let loopback = match url.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    };
+    if url.scheme() != "http" || !loopback {
+        return Ok(None);
+    }
+
+    let path = url.path().trim_end_matches('/');
+    let chat_path = if path.ends_with("/chat/completions") {
+        path.to_string()
+    } else if path.ends_with("/v1") {
+        format!("{path}/chat/completions")
+    } else if path.is_empty() {
+        "/v1/chat/completions".to_string()
+    } else {
+        format!("{path}/v1/chat/completions")
+    };
+    url.set_path(&chat_path);
+
+    let mut config = crate::config::declarative_providers::fixed_provider_configs()?
+        .into_iter()
+        .find(|config| config.name == "lmstudio")
+        .ok_or_else(|| anyhow::anyhow!("bundled LM Studio provider definition is missing"))?;
+    config.base_url = url.to_string();
+    config.env_vars = None;
+    if !explicit_api_key {
+        config.api_key_env.clear();
+    }
+    Ok(Some(config))
+}
+
+pub fn from_loopback_lmstudio_endpoint(
+    endpoint: &str,
+    tls_config: Option<goose_providers::api_client::TlsConfig>,
+) -> Result<Option<OpenAiProvider>> {
+    let explicit_api_key = std::env::var_os("LMSTUDIO_API_KEY").is_some();
+    loopback_lmstudio_config(endpoint, explicit_api_key)?
+        .map(|config| from_custom_config(config, tls_config))
+        .transpose()
+}
+
 /// Components extracted from an `OPENAI_BASE_URL` value.
 struct ParsedBaseUrl {
     /// The host (scheme + authority + any path prefix before `/v1`).
@@ -296,7 +345,128 @@ fn is_direct_openai_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
+    use goose_providers::base::Provider as _;
+    use goose_providers::conversation::message::Message;
+    use goose_providers::errors::ProviderError;
+    use goose_providers::model::ModelConfig;
+
     use super::*;
+
+    struct EnvRestore {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvRestore {
+        fn set(key: &'static str, value: Option<&str>) -> Self {
+            let previous = std::env::var_os(key);
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn loopback_lmstudio_constructor_skips_config_storage_without_env_key() {
+        let _env = EnvRestore::set("LMSTUDIO_API_KEY", None);
+
+        let provider = from_loopback_lmstudio_endpoint("http://localhost:1234", None)
+            .unwrap()
+            .unwrap();
+
+        assert!(provider.supports_single_attempt_streaming());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn loopback_lmstudio_constructor_sends_explicit_env_bearer_key() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer explicit-key"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let _env = EnvRestore::set("LMSTUDIO_API_KEY", Some("explicit-key"));
+        let provider = from_loopback_lmstudio_endpoint(&server.uri(), None)
+            .unwrap()
+            .unwrap();
+
+        let result = provider
+            .stream_once(
+                &ModelConfig::new("local-model"),
+                "system",
+                &[Message::user().with_text("request")],
+                &[],
+            )
+            .await;
+
+        assert!(matches!(result, Err(ProviderError::ServerError(_))));
+        server.verify().await;
+    }
+
+    #[test]
+    fn loopback_lmstudio_without_explicit_key_has_no_secret_lookup() {
+        let config = loopback_lmstudio_config("http://localhost:1234", false)
+            .unwrap()
+            .unwrap();
+
+        assert!(config.api_key_env.is_empty());
+        assert_eq!(config.base_url, "http://localhost:1234/v1/chat/completions");
+        assert!(config.skip_canonical_filtering);
+        assert_eq!(config.dynamic_models, Some(true));
+    }
+
+    #[test]
+    fn loopback_lmstudio_preserves_explicit_environment_auth() {
+        let config = loopback_lmstudio_config("http://[::1]:1234/v1", true)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(config.api_key_env, "LMSTUDIO_API_KEY");
+        assert_eq!(config.base_url, "http://[::1]:1234/v1/chat/completions");
+    }
+
+    #[test]
+    fn loopback_lmstudio_preserves_endpoint_prefix_and_query() {
+        let config =
+            loopback_lmstudio_config("http://localhost:1234/proxy/v1?tenant=operations", false)
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(
+            config.base_url,
+            "http://localhost:1234/proxy/v1/chat/completions?tenant=operations"
+        );
+    }
+
+    #[test]
+    fn non_loopback_or_tls_endpoint_keeps_registry_auth_semantics() {
+        assert!(loopback_lmstudio_config("http://192.168.8.220:1234", false)
+            .unwrap()
+            .is_none());
+        assert!(loopback_lmstudio_config("https://localhost:1234", false)
+            .unwrap()
+            .is_none());
+    }
 
     #[test]
     fn parse_base_url_strips_v1_from_standard_openai_url() {

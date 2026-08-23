@@ -20456,7 +20456,12 @@ impl GooseAgentDispatcher {
         detail_memo_on: bool,
         repeat_break: bool,
     ) -> Result<Self> {
-        let provider = goose::providers::create("lmstudio", vec![]).await?;
+        let endpoint = load_config().endpoint;
+        let provider: Arc<dyn Provider> =
+            match goose::providers::openai_def::from_loopback_lmstudio_endpoint(&endpoint, None)? {
+                Some(provider) => Arc::new(provider),
+                None => goose::providers::create("lmstudio", vec![]).await?,
+            };
         let activity_sink_health = Arc::new(
             ActivitySinkHealth::new(&working_dir, events.clone()).map_err(anyhow::Error::msg)?,
         );
