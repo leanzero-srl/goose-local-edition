@@ -13,16 +13,17 @@ use super::swarm_provider_lifecycle::{
     bind_current_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
 };
 use super::swarm_semantic::{
-    activity_digest_key, ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
+    ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
     GooseSemanticObservationSnapshotProducer, GooseSemanticProviderRoute, ReasoningRecurrenceMeter,
+    activity_digest_key,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use console::style;
 use futures::{FutureExt, StreamExt};
 use goose::agents::{
-    large_text_threshold, Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform,
-    SessionConfig,
+    Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform, SessionConfig,
+    large_text_threshold,
 };
 use goose::config::permission::PermissionManager;
 use goose::config::{Config, GooseMode};
@@ -30,18 +31,17 @@ use goose::context_mgmt::local_context_cap;
 use goose::conversation::message::{Message, MessageContent};
 use goose::providers::base::Provider;
 use goose::recipe::Response;
-use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
+use goose::session::session_manager::SessionType;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
-    deterministic_verdict, is_split_candidate, AdmissionReceipt, AuthorityScope, ChildSpec, Dag,
-    DeviceCfg, DispatchError, DispatchRequest, EventSink, HostCapacityEvidence, Judge, JudgeConfig,
-    JudgeInput, JudgeOutcome, JudgeRequest, NullSink, PhysicalAdmissionControl,
-    PhysicalExecutionAuthority, PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest,
-    PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher, ReplanAuthorityFact,
-    ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler, SemanticActivityPublisher,
-    SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord, Verdict,
-    VerifiedPhysicalIdentity, WorkRole,
+    AdmissionReceipt, AuthorityScope, ChildSpec, Dag, DeviceCfg, DispatchError, DispatchRequest,
+    EventSink, HostCapacityEvidence, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
+    NullSink, PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
+    PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
+    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler,
+    SemanticActivityPublisher, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, ToolCallRecord,
+    Verdict, VerifiedPhysicalIdentity, WorkRole, deterministic_verdict, is_split_candidate,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -4785,7 +4785,7 @@ fn fan_e2e_split(
     // cannot run concurrently is pure overhead, so never cut more ways than there are slots to run).
     // Below two real pieces there is nothing to fan, so the join keeps the end-to-end run itself.
     let shards = match oracle.len() {
-        0 => shards.clamp(2, 4),
+        0 => return 0,
         n => n.div_ceil(2).clamp(2, 4).min(n).min(shards.max(2)),
     };
     if shards < 2 {
@@ -5044,6 +5044,265 @@ fn fan_verify_split(plan: &mut serde_json::Value, lang: TargetLang) -> usize {
     modules.len()
 }
 
+fn canonical_verifier_only_sink(plan: &serde_json::Value) -> Result<bool> {
+    let Some(sink) = plan
+        .get("subtasks")
+        .and_then(|subtasks| subtasks.as_array())
+        .and_then(|subtasks| {
+            subtasks
+                .iter()
+                .find(|task| task.get("id").and_then(|id| id.as_str()) == Some("integrate-verify"))
+        })
+    else {
+        return Ok(false);
+    };
+    let files_empty = sink
+        .get("files")
+        .and_then(|files| files.as_array())
+        .is_some_and(Vec::is_empty);
+    let Some(coverage) = canonical_task_coverage(sink)? else {
+        return Ok(false);
+    };
+    Ok(files_empty
+        && coverage.owns_requirement_ids.is_empty()
+        && coverage.applies_requirement_ids.is_empty()
+        && !coverage.verifies_requirement_ids.is_empty())
+}
+
+fn manifest_by_id(manifest: &CanonicalPlanManifest) -> HashMap<&str, &CanonicalPlanTaskManifest> {
+    manifest
+        .tasks
+        .iter()
+        .map(|task| (task.id.as_str(), task))
+        .collect()
+}
+
+fn validate_fan_verify_manifest_delta(
+    source: &CanonicalPlanManifest,
+    result: &CanonicalPlanManifest,
+) -> Result<usize> {
+    let source_by_id = manifest_by_id(source);
+    let result_by_id = manifest_by_id(result);
+    let source_sink = source_by_id
+        .get("integrate-verify")
+        .ok_or_else(|| anyhow!("canonical fan-verify source has no integration sink"))?;
+    let result_sink = result_by_id
+        .get("integrate-verify")
+        .ok_or_else(|| anyhow!("canonical fan-verify result lost the integration sink"))?;
+    if !source_sink.files.is_empty()
+        || !source_sink.coverage.owns_requirement_ids.is_empty()
+        || !source_sink.coverage.applies_requirement_ids.is_empty()
+        || source_sink.coverage.verifies_requirement_ids.is_empty()
+    {
+        bail!("canonical fan-verify source sink was not fileless and verifier-only");
+    }
+    for source_task in &source.tasks {
+        let result_task = result_by_id
+            .get(source_task.id.as_str())
+            .ok_or_else(|| anyhow!("canonical fan-verify removed task `{}`", source_task.id))?;
+        if source_task.id != "integrate-verify" && source_task != *result_task {
+            bail!(
+                "canonical fan-verify rewrote accepted task `{}`",
+                source_task.id
+            );
+        }
+    }
+    if source_sink.id != result_sink.id
+        || source_sink.difficulty != result_sink.difficulty
+        || source_sink.model != result_sink.model
+        || source_sink.files != result_sink.files
+        || source_sink.coverage != result_sink.coverage
+    {
+        bail!("canonical fan-verify changed integration authority beyond dependency closure");
+    }
+    let mut verifier_ids = Vec::new();
+    for task in result
+        .tasks
+        .iter()
+        .filter(|task| !source_by_id.contains_key(task.id.as_str()))
+    {
+        let module_id = task.id.strip_prefix("verify::").ok_or_else(|| {
+            anyhow!(
+                "canonical fan-verify introduced non-verifier task `{}`",
+                task.id
+            )
+        })?;
+        let module = source_by_id.get(module_id).ok_or_else(|| {
+            anyhow!(
+                "canonical fan-verify task `{}` has no accepted module",
+                task.id
+            )
+        })?;
+        let mut expected_requirements = coverage_requirement_ids(&module.coverage);
+        expected_requirements.sort();
+        if !task.files.is_empty()
+            || task.depends_on != vec![module_id.to_string()]
+            || task.model != module.model
+            || !task.coverage.owns_requirement_ids.is_empty()
+            || !task.coverage.applies_requirement_ids.is_empty()
+            || task.coverage.verifies_requirement_ids != expected_requirements
+            || !task.coverage.evidence_ids.is_empty()
+        {
+            bail!(
+                "canonical fan-verify task `{}` was not an exact read-only verifier transform",
+                task.id
+            );
+        }
+        verifier_ids.push(task.id.clone());
+    }
+    if verifier_ids.is_empty() {
+        bail!("canonical fan-verify recorded a transform without verifier tasks");
+    }
+    verifier_ids.sort();
+    let verifier_modules = verifier_ids
+        .iter()
+        .filter_map(|id| id.strip_prefix("verify::"))
+        .collect::<HashSet<_>>();
+    let mut expected_sink_deps = source_sink
+        .depends_on
+        .iter()
+        .map(|dependency| {
+            if verifier_modules.contains(dependency.as_str()) {
+                format!("verify::{dependency}")
+            } else {
+                dependency.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    expected_sink_deps.extend(verifier_ids);
+    expected_sink_deps.sort();
+    expected_sink_deps.dedup();
+    if result_sink.depends_on != expected_sink_deps {
+        bail!("canonical fan-verify did not preserve the accepted integration closure");
+    }
+    Ok(result.tasks.len() - source.tasks.len())
+}
+
+fn apply_canonical_fan_verify(plan: &mut serde_json::Value, lang: TargetLang) -> Result<usize> {
+    if !canonical_verifier_only_sink(plan)? {
+        return Ok(0);
+    }
+    let source = canonical_plan_manifest(plan)?;
+    let transformed = fan_verify_split(plan, lang);
+    if transformed == 0 {
+        return Ok(0);
+    }
+    let result = canonical_plan_manifest(plan)?;
+    let verified = validate_fan_verify_manifest_delta(&source, &result)?;
+    if transformed != verified {
+        bail!("canonical fan-verify task count diverged from its verified manifest delta");
+    }
+    record_canonical_engine_transform(plan, &source, "fan_verify_v1")?;
+    Ok(transformed)
+}
+
+fn validate_fan_e2e_manifest_delta(
+    source: &CanonicalPlanManifest,
+    result: &CanonicalPlanManifest,
+    requirement_ids: &[String],
+) -> Result<usize> {
+    let source_by_id = manifest_by_id(source);
+    let result_by_id = manifest_by_id(result);
+    let source_sink = source_by_id
+        .get("integrate-verify")
+        .ok_or_else(|| anyhow!("canonical fan-e2e source has no integration sink"))?;
+    let result_sink = result_by_id
+        .get("integrate-verify")
+        .ok_or_else(|| anyhow!("canonical fan-e2e result lost the integration sink"))?;
+    for source_task in &source.tasks {
+        let result_task = result_by_id
+            .get(source_task.id.as_str())
+            .ok_or_else(|| anyhow!("canonical fan-e2e removed task `{}`", source_task.id))?;
+        if source_task.id != "integrate-verify" && source_task != *result_task {
+            bail!(
+                "canonical fan-e2e rewrote accepted task `{}`",
+                source_task.id
+            );
+        }
+    }
+    if source_sink.id != result_sink.id
+        || source_sink.difficulty != result_sink.difficulty
+        || source_sink.model != result_sink.model
+        || source_sink.files != result_sink.files
+        || source_sink.coverage != result_sink.coverage
+    {
+        bail!("canonical fan-e2e changed integration authority beyond dependency closure");
+    }
+    let verify_deps = source
+        .tasks
+        .iter()
+        .filter(|task| task.id.starts_with("verify::"))
+        .map(|task| task.id.clone())
+        .collect::<Vec<_>>();
+    let mut expected_requirements = requirement_ids.to_vec();
+    expected_requirements.sort();
+    let mut e2e_ids = Vec::new();
+    for task in result
+        .tasks
+        .iter()
+        .filter(|task| !source_by_id.contains_key(task.id.as_str()))
+    {
+        if !task.id.starts_with("verify-e2e::")
+            || !task.files.is_empty()
+            || task.depends_on != verify_deps
+            || task.model != source_sink.model
+            || !task.coverage.owns_requirement_ids.is_empty()
+            || !task.coverage.applies_requirement_ids.is_empty()
+            || task.coverage.verifies_requirement_ids != expected_requirements
+            || !task.coverage.evidence_ids.is_empty()
+        {
+            bail!(
+                "canonical fan-e2e task `{}` was not an exact read-only grounded verifier transform",
+                task.id
+            );
+        }
+        e2e_ids.push(task.id.clone());
+    }
+    if e2e_ids.is_empty() {
+        bail!("canonical fan-e2e recorded a transform without verifier tasks");
+    }
+    e2e_ids.sort();
+    let mut expected_sink_deps = e2e_ids;
+    expected_sink_deps.extend(
+        source_sink
+            .depends_on
+            .iter()
+            .filter(|dependency| !dependency.starts_with("verify::"))
+            .cloned(),
+    );
+    expected_sink_deps.sort();
+    expected_sink_deps.dedup();
+    if result_sink.depends_on != expected_sink_deps {
+        bail!("canonical fan-e2e did not preserve the accepted integration closure");
+    }
+    Ok(result.tasks.len() - source.tasks.len())
+}
+
+fn apply_canonical_fan_e2e(
+    plan: &mut serde_json::Value,
+    lang: TargetLang,
+    slots: usize,
+    oracle: &[String],
+) -> Result<usize> {
+    if oracle.is_empty() {
+        return Ok(0);
+    }
+    let requirement_ids = canonical_plan_requirement_ids(plan)?
+        .ok_or_else(|| anyhow!("canonical fan-e2e lost requirement authority"))?;
+    let source = canonical_plan_manifest(plan)?;
+    let transformed = fan_e2e_split(plan, lang, slots, oracle);
+    if transformed == 0 {
+        return Ok(0);
+    }
+    let result = canonical_plan_manifest(plan)?;
+    let verified = validate_fan_e2e_manifest_delta(&source, &result, &requirement_ids)?;
+    if transformed != verified {
+        bail!("canonical fan-e2e task count diverged from its verified manifest delta");
+    }
+    record_canonical_engine_transform(plan, &source, "fan_e2e_v1")?;
+    Ok(transformed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5073,6 +5332,10 @@ mod tests {
         assert_eq!(post_answer_action(false, false, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, true, true, 90, 85), Replan);
         assert_eq!(post_answer_action(false, false, false, 40, 85), KeepReuse);
+        assert!(!post_answer_action_can_bank(Replan));
+        assert!(post_answer_action_can_bank(KeepRescored));
+        assert!(post_answer_action_can_bank(KeepReuse));
+        assert!(post_answer_action_can_bank(FloorAndRedraft));
     }
 
     #[test]
@@ -5274,7 +5537,7 @@ mod tests {
         )); // 89 -> still runs
         assert!(should_run_backbone_round2(true, true, 85)); // the lone historical adoption -> preserved
         assert!(should_run_backbone_round2(true, true, 53)); // shaky plan -> lock still available
-                                                             // Backbone off => never runs regardless of the skip lever/confidence.
+        // Backbone off => never runs regardless of the skip lever/confidence.
         assert!(!should_run_backbone_round2(false, false, 100));
         assert!(!should_run_backbone_round2(false, true, 50));
     }
@@ -6060,11 +6323,12 @@ mod tests {
         assert!(!out.contains("turn-context"));
         assert!(!out.contains("current-time"));
         // The first 200 chars a research question sees are now ALL spec.
-        assert!(out
-            .chars()
-            .take(200)
-            .collect::<String>()
-            .contains("shared-expense splitter"));
+        assert!(
+            out.chars()
+                .take(200)
+                .collect::<String>()
+                .contains("shared-expense splitter")
+        );
     }
 
     #[test]
@@ -6355,7 +6619,7 @@ mod tests {
         assert!(is_stub_content("// TODO: implement\n"));
         assert!(is_stub_content("import Foundation")); // one meaningful line = trivial
         assert!(is_stub_content("")); // empty
-                                      // Real code is not a stub.
+        // Real code is not a stub.
         assert!(!is_stub_content(
             "func add(a: Int, b: Int) -> Int {\n    return a + b\n}\nlet x = add(1, 2)"
         ));
@@ -8158,8 +8422,7 @@ mod tests {
 
     #[test]
     fn spec_contract_parsing() {
-        let spec =
-            "It runs as `python3 -m quorum` which starts the server. REST: POST /api/polls; \
+        let spec = "It runs as `python3 -m quorum` which starts the server. REST: POST /api/polls; \
                     GET /api/polls/<id>; GET /api/polls/<id>/results; GET /api/polls (list).";
         assert_eq!(spec_python_entry(spec).as_deref(), Some("quorum"));
         let gets = spec_get_endpoints(spec);
@@ -8349,13 +8612,13 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(spec_clarity_score(true, 2), 68);
         assert_eq!(spec_clarity_score(true, 3), 52);
         assert_eq!(spec_clarity_score(true, 9), 30); // floored, count clamped
-                                                     // Undefined product: always LOW (<= 30 so it asks regardless of agreement) but VARIES with how many
-                                                     // axes are open — so vague specs no longer all snap to a flat 20.
+        // Undefined product: always LOW (<= 30 so it asks regardless of agreement) but VARIES with how many
+        // axes are open — so vague specs no longer all snap to a flat 20.
         assert_eq!(spec_clarity_score(false, 0), 30);
         assert_eq!(spec_clarity_score(false, 1), 24);
         assert_eq!(spec_clarity_score(false, 2), 18);
         assert_eq!(spec_clarity_score(false, 9), 8); // floored
-                                                     // Ask boundary vs a ~70 floor preserved: defined+0/1 proceed, defined+2 asks, undefined always asks.
+        // Ask boundary vs a ~70 floor preserved: defined+0/1 proceed, defined+2 asks, undefined always asks.
         assert!(spec_clarity_score(true, 1) >= 70);
         assert!(spec_clarity_score(true, 2) < 70);
         assert!(spec_clarity_score(false, 0) < 70);
@@ -9991,10 +10254,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
 
         // A spec with nothing but GETs discloses nothing — the message must not fire on every run.
-        assert!(spec_unprobed_advertised(
-            "| Method | Path | Response |\n|---|---|---|\n| `GET` | `/api/health` | `{}` |\n"
-        )
-        .is_empty());
+        assert!(
+            spec_unprobed_advertised(
+                "| Method | Path | Response |\n|---|---|---|\n| `GET` | `/api/health` | `{}` |\n"
+            )
+            .is_empty()
+        );
         // And prose with no table stays empty rather than inventing an omission.
         assert!(spec_unprobed_advertised("Build a CLI. It should be fast.").is_empty());
     }
@@ -10233,18 +10498,24 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 requires_completed_artifact: true,
             }],
             objective: "Implement the exact payments read endpoint".to_string(),
-            acceptance_evidence: vec!["GET /v1/payments returns the exact JSON payload".to_string()],
+            acceptance_evidence: vec![
+                "GET /v1/payments returns the exact JSON payload".to_string(),
+            ],
         };
         let compiled = compile_task_detail(&raw, &input).unwrap();
         assert!(compiled.rendered.contains("- app/api.py"));
         assert!(compiled.rendered.contains("GET /v1/payments"));
         assert!(compiled.rendered.contains("X-Trace"));
-        assert!(compiled
-            .rendered
-            .contains("Objective: Implement the exact payments read endpoint"));
-        assert!(compiled
-            .rendered
-            .contains("get_payments(request) -> exact JSON response"));
+        assert!(
+            compiled
+                .rendered
+                .contains("Objective: Implement the exact payments read endpoint")
+        );
+        assert!(
+            compiled
+                .rendered
+                .contains("get_payments(request) -> exact JSON response")
+        );
         assert!(compiled.rendered.contains("Required acceptance evidence:"));
         assert_eq!(compiled.citations, 1);
         assert_eq!(compiled.interfaces, 1);
@@ -10323,7 +10594,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                         requirement_ids: vec!["REQ-route".to_string()],
                         evidence_ids: vec!["EVID-vendor".to_string()],
                         acceptance_evidence: vec![
-                            "A missing X-Trace header returns status 400".to_string()
+                            "A missing X-Trace header returns status 400".to_string(),
                         ],
                     }],
                 },
@@ -10426,12 +10697,49 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn runtime_review_authority_rejects_post_binding_dag_rewrite() {
-        let authority = runtime_replan_authority_fixture();
+        let mut authority = runtime_replan_authority_fixture();
         let original = Dag::from_specs(vec![spec("api", &["src/api.py"], &[])]).unwrap();
         validate_runtime_replan_authority_matches_dag(&authority, &original).unwrap();
         let rewritten =
             Dag::from_specs(vec![spec("api", &["src/api.py", "src/__main__.py"], &[])]).unwrap();
         assert!(validate_runtime_replan_authority_matches_dag(&authority, &rewritten).is_err());
+        let duplicate_file =
+            Dag::from_specs(vec![spec("api", &["src/api.py", "src/api.py"], &[])]).unwrap();
+        let duplicate_error =
+            validate_runtime_replan_authority_matches_dag(&authority, &duplicate_file)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            duplicate_error.contains("repeats an owned file"),
+            "{duplicate_error}"
+        );
+
+        authority.tasks.insert(
+            "base".to_string(),
+            CompiledTaskBinding {
+                task_id: "base".to_string(),
+                owns_requirement_ids: Vec::new(),
+                applies_requirement_ids: vec!["REQ-route".to_string()],
+                verifies_requirement_ids: Vec::new(),
+                depends_on: Vec::new(),
+                owned_files: vec!["src/base.py".to_string()],
+                slices: Vec::new(),
+            },
+        );
+        authority.tasks.get_mut("api").unwrap().depends_on = vec!["base".to_string()];
+        let duplicate_dep = Dag::from_specs(vec![
+            spec("base", &["src/base.py"], &[]),
+            spec("api", &["src/api.py"], &["base", "base"]),
+        ])
+        .unwrap();
+        let duplicate_error =
+            validate_runtime_replan_authority_matches_dag(&authority, &duplicate_dep)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            duplicate_error.contains("repeats a dependency"),
+            "{duplicate_error}"
+        );
         assert_eq!(authority.tasks["api"].owned_files, ["src/api.py"]);
     }
 
@@ -10477,9 +10785,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         })
         .to_string();
         let error = compile_task_detail(&raw, &input).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("authoritative acceptance_evidence"));
+        assert!(
+            error
+                .to_string()
+                .contains("authoritative acceptance_evidence")
+        );
     }
 
     #[test]
@@ -10733,44 +11043,50 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
         let mut missing = original.clone();
         missing["task_coverage"][0]["owns_requirement_ids"] = serde_json::json!(["REQ-route"]);
-        assert!(compile_canonical_plan_adjudication(
-            &missing.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("uncovered"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &missing.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("uncovered")
+        );
 
         let mut invented_evidence = original.clone();
         invented_evidence["task_coverage"][0]["evidence_ids"] =
             serde_json::json!(["EVID-invented"]);
-        assert!(compile_canonical_plan_adjudication(
-            &invented_evidence.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("canonical.evidence_ids"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &invented_evidence.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("canonical.evidence_ids")
+        );
 
         let mut invented_model = original;
         invented_model["canonical_plan"]["subtasks"][0]["model"] =
             serde_json::json!("renamed-model");
-        assert!(compile_canonical_plan_adjudication(
-            &invented_model.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("invented runtime model"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &invented_model.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("invented runtime model")
+        );
     }
 
     #[test]
@@ -10788,32 +11104,36 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             }));
         makework["canonical_plan"]["subtasks"][2]["depends_on"] =
             serde_json::json!(["api", "test-api", "test-dashboard"]);
-        assert!(compile_canonical_plan_adjudication(
-            &makework.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("no requirement role"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &makework.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("no requirement role")
+        );
 
         let mut bad_conflict = original;
         bad_conflict["material_conflicts"] = serde_json::json!([{
             "requirement_ids": ["REQ-invented"],
             "summary": "The operator must choose."
         }]);
-        assert!(compile_canonical_plan_adjudication(
-            &bad_conflict.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("unknown requirement"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &bad_conflict.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("unknown requirement")
+        );
     }
 
     #[test]
@@ -10863,30 +11183,34 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             serde_json::json!(["REQ-test", "REQ-route"]);
         decision["task_coverage"][1]["verifies_requirement_ids"] =
             serde_json::json!(["REQ-header"]);
-        assert!(compile_canonical_plan_adjudication(
-            &decision.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("more than one primary owner"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &decision.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("more than one primary owner")
+        );
 
         let (_, _, _, decision, _) = canonical_plan_fixture();
         let mut poisoned: serde_json::Value = serde_json::from_str(&candidates[0]).unwrap();
         poisoned["subtasks"][0]["model"] = serde_json::json!("candidate-invented-model");
-        assert!(compile_canonical_plan_adjudication(
-            &decision.to_string(),
-            &requirements,
-            &evidence,
-            &[poisoned.to_string()],
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("outside the resolved runtime roster"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &decision.to_string(),
+                &requirements,
+                &evidence,
+                &[poisoned.to_string()],
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("outside the resolved runtime roster")
+        );
     }
 
     #[test]
@@ -10896,44 +11220,50 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
         let mut unsafe_path = original.clone();
         unsafe_path["canonical_plan"]["subtasks"][0]["files"] = serde_json::json!(["../api.py"]);
-        assert!(compile_canonical_plan_adjudication(
-            &unsafe_path.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("not project-relative"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &unsafe_path.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("not project-relative")
+        );
 
         let mut overlap = original.clone();
         overlap["canonical_plan"]["subtasks"][1]["files"] = serde_json::json!(["src/api.py"]);
-        assert!(compile_canonical_plan_adjudication(
-            &overlap.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("overlaps tasks"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &overlap.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("overlaps tasks")
+        );
 
         let mut disconnected = original;
         disconnected["canonical_plan"]["subtasks"][1]["files"] =
             serde_json::json!(["src/second.py"]);
         disconnected["canonical_plan"]["subtasks"][2]["depends_on"] = serde_json::json!(["api"]);
-        assert!(compile_canonical_plan_adjudication(
-            &disconnected.to_string(),
-            &requirements,
-            &evidence,
-            &candidates,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("disconnected completion closures"));
+        assert!(
+            compile_canonical_plan_adjudication(
+                &disconnected.to_string(),
+                &requirements,
+                &evidence,
+                &candidates,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("disconnected completion closures")
+        );
     }
 
     #[test]
@@ -10951,9 +11281,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert_eq!(normalized.len(), 1);
         let value: serde_json::Value = serde_json::from_str(&normalized[0]).unwrap();
         assert!(value.get("poisoned_top_level_authority").is_none());
-        assert!(value["subtasks"][0]
-            .get("poisoned_task_authority")
-            .is_none());
+        assert!(
+            value["subtasks"][0]
+                .get("poisoned_task_authority")
+                .is_none()
+        );
 
         let disconnected = serde_json::json!({"subtasks":[
             {"id":"api", "description":"API", "model":"qwen", "depends_on":[], "files":["src/api.py"]},
@@ -10978,9 +11310,12 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         )
         .unwrap();
         let mut transformed: serde_json::Value = serde_json::from_str(&compiled.plan_json).unwrap();
-        assert_eq!(fan_verify_split(&mut transformed, TargetLang::Python), 1);
         assert_eq!(
-            fan_e2e_split(
+            apply_canonical_fan_verify(&mut transformed, TargetLang::Python).unwrap(),
+            1
+        );
+        assert_eq!(
+            apply_canonical_fan_e2e(
                 &mut transformed,
                 TargetLang::Python,
                 2,
@@ -10988,7 +11323,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                     "GET /v1/payments -> 200".to_string(),
                     "GET /health -> 200".to_string(),
                 ]
-            ),
+            )
+            .unwrap(),
             2
         );
         validate_canonical_authoritative_plan(
@@ -11009,15 +11345,17 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             .as_object_mut()
             .unwrap()
             .remove(CANONICAL_TASK_COVERAGE_FIELD);
-        assert!(validate_canonical_authoritative_plan(
-            &uncovered,
-            &requirements,
-            &evidence,
-            &runtime_models,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("no typed requirement coverage"));
+        assert!(
+            validate_canonical_authoritative_plan(
+                &uncovered,
+                &requirements,
+                &evidence,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("no typed requirement coverage")
+        );
 
         let mut poisoned_model = transformed;
         poisoned_model["subtasks"]
@@ -11026,15 +11364,159 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             .iter_mut()
             .find(|task| task["id"] == "verify::api")
             .unwrap()["model"] = serde_json::json!("invented-model");
-        assert!(validate_canonical_authoritative_plan(
-            &poisoned_model,
+        assert!(
+            validate_canonical_authoritative_plan(
+                &poisoned_model,
+                &requirements,
+                &evidence,
+                &runtime_models,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("outside the resolved runtime roster")
+        );
+    }
+
+    #[test]
+    fn accepted_fan_verify_requires_a_fileless_verifier_only_sink() {
+        let (candidates, requirements, evidence, mut decision, runtime_models) =
+            canonical_plan_fixture();
+        decision["canonical_plan"]["subtasks"][2]["files"] = serde_json::json!(["README.md"]);
+        let compiled = compile_canonical_plan_adjudication(
+            &decision.to_string(),
             &requirements,
             &evidence,
+            &candidates,
             &runtime_models,
         )
-        .unwrap_err()
-        .to_string()
-        .contains("outside the resolved runtime roster"));
+        .unwrap();
+        let mut plan: serde_json::Value = serde_json::from_str(&compiled.plan_json).unwrap();
+        let before = plan.clone();
+        assert_eq!(
+            apply_canonical_fan_verify(&mut plan, TargetLang::Python).unwrap(),
+            0
+        );
+        assert_eq!(
+            plan, before,
+            "accepted sink ownership must never be cleared"
+        );
+
+        let (_, requirements, evidence, mut decision, runtime_models) = canonical_plan_fixture();
+        decision["task_coverage"][1]["owns_requirement_ids"] = serde_json::json!([]);
+        decision["task_coverage"][2]["owns_requirement_ids"] = serde_json::json!(["REQ-test"]);
+        decision["task_coverage"][2]["verifies_requirement_ids"] =
+            serde_json::json!(["REQ-route", "REQ-header"]);
+        let candidate = decision["canonical_plan"].to_string();
+        let compiled = compile_canonical_plan_adjudication(
+            &decision.to_string(),
+            &requirements,
+            &evidence,
+            &[candidate],
+            &runtime_models,
+        )
+        .unwrap();
+        let mut plan: serde_json::Value = serde_json::from_str(&compiled.plan_json).unwrap();
+        let before = plan.clone();
+        assert_eq!(
+            apply_canonical_fan_verify(&mut plan, TargetLang::Python).unwrap(),
+            0
+        );
+        assert_eq!(
+            plan, before,
+            "a primary-owner sink is not a read-only verifier transform"
+        );
+    }
+
+    #[test]
+    fn accepted_e2e_fan_noops_without_an_engine_oracle() {
+        let (candidates, requirements, evidence, decision, runtime_models) =
+            canonical_plan_fixture();
+        let compiled = compile_canonical_plan_adjudication(
+            &decision.to_string(),
+            &requirements,
+            &evidence,
+            &candidates,
+            &runtime_models,
+        )
+        .unwrap();
+        let mut plan: serde_json::Value = serde_json::from_str(&compiled.plan_json).unwrap();
+        assert_eq!(
+            apply_canonical_fan_verify(&mut plan, TargetLang::Python).unwrap(),
+            1
+        );
+        let before = plan.clone();
+        assert_eq!(
+            apply_canonical_fan_e2e(&mut plan, TargetLang::Python, 8, &[]).unwrap(),
+            0
+        );
+        assert_eq!(plan, before);
+        validate_canonical_authoritative_plan(&plan, &requirements, &evidence, &runtime_models)
+            .unwrap();
+    }
+
+    #[test]
+    fn package_entries_are_frozen_before_canonical_authority_and_never_mutated_after() {
+        let (candidates, requirements, evidence, decision, runtime_models) =
+            canonical_plan_fixture();
+        let spec = "Build the service. It runs as `python -m safeapp`.";
+        let with_entry =
+            canonical_adjudication_with_required_entries(&decision.to_string(), spec).unwrap();
+        let compiled = compile_canonical_plan_adjudication(
+            &with_entry,
+            &requirements,
+            &evidence,
+            &candidates,
+            &runtime_models,
+        )
+        .unwrap();
+        let dag = Dag::from_planner_json(&compiled.plan_json).unwrap();
+        let original = compiled.plan_json.clone();
+        let (final_json, _, added) =
+            finalize_advertised_entry_plan(compiled.plan_json, dag, spec).unwrap();
+        assert!(added.is_empty());
+        assert_eq!(final_json, original);
+        assert!(final_json.contains("safeapp/__main__.py"));
+
+        let missing = compile_canonical_plan_adjudication(
+            &decision.to_string(),
+            &requirements,
+            &evidence,
+            &candidates,
+            &runtime_models,
+        )
+        .unwrap();
+        let dag = Dag::from_planner_json(&missing.plan_json).unwrap();
+        let error = finalize_advertised_entry_plan(missing.plan_json, dag, spec)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("accepted canonical plan lost"), "{error}");
+    }
+
+    #[test]
+    fn final_user_decisions_force_canonical_requirement_refresh() {
+        let (candidates, requirements, evidence, decision, runtime_models) =
+            canonical_plan_fixture();
+        let compiled = compile_canonical_plan_adjudication(
+            &decision.to_string(),
+            &requirements,
+            &evidence,
+            &candidates,
+            &runtime_models,
+        )
+        .unwrap();
+        let raw_spec = "Build the exact payments service.";
+        let mut plan: serde_json::Value = serde_json::from_str(&compiled.plan_json).unwrap();
+        plan["canonical_plan_authority"]["requirement_ids"] = serde_json::json!(
+            normalized_requirement_inventory(raw_spec)
+                .into_iter()
+                .map(|requirement| requirement.id)
+                .collect::<Vec<_>>()
+        );
+        let plan = plan.to_string();
+        assert!(!canonical_plan_needs_binding_refresh(&plan, raw_spec).unwrap());
+        let decisions = format!("{USER_DECISIONS_HEADER}- Use `|` as the exact separator.\n");
+        let final_spec = binding_spec_with_user_decisions(raw_spec, &decisions);
+        assert!(canonical_plan_needs_binding_refresh(&plan, &final_spec).unwrap());
     }
 
     #[test]
@@ -11050,26 +11532,40 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         )
         .unwrap();
         let mut injected: serde_json::Value = serde_json::from_str(&compiled.plan_json).unwrap();
+        let mut injected_task = serde_json::json!({
+            "id":"post-adjudication", "description":"Do extra work", "difficulty":"easy",
+            "model":"qwen", "depends_on":["api"], "files":[]
+        });
+        set_canonical_task_coverage(
+            &mut injected_task,
+            engine_verifier_coverage(
+                "post-adjudication",
+                requirements
+                    .iter()
+                    .map(|requirement| requirement.id.clone())
+                    .collect(),
+            ),
+        )
+        .unwrap();
         injected["subtasks"]
             .as_array_mut()
             .unwrap()
-            .push(serde_json::json!({
-                "id":"post-adjudication", "description":"Do extra work", "difficulty":"easy",
-                "model":"qwen", "depends_on":["api"], "files":[]
-            }));
+            .push(injected_task);
         injected["subtasks"]
             .as_array_mut()
             .unwrap()
             .iter_mut()
             .find(|task| task["id"] == "integrate-verify")
             .unwrap()["depends_on"] = serde_json::json!(["api", "test-api", "post-adjudication"]);
-        assert!(validate_canonical_authoritative_plan(
+        let error = validate_canonical_authoritative_plan(
             &injected,
             &requirements,
             &evidence,
             &runtime_models,
         )
-        .is_err());
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("frozen accepted manifest"), "{error}");
         assert!(!engine_integrate_injection_allowed(
             PlanAdjudication::Accepted
         ));
@@ -11108,43 +11604,49 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
         let mut role_poison = binding.clone();
         role_poison["bindings"][0]["applies_requirement_ids"] = serde_json::json!(["REQ-test"]);
-        assert!(compile_requirement_binding(
-            &role_poison.to_string(),
-            &requirements,
-            &evidence,
-            &compiled.plan_json,
-            &ids,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("roles diverged"));
+        assert!(
+            compile_requirement_binding(
+                &role_poison.to_string(),
+                &requirements,
+                &evidence,
+                &compiled.plan_json,
+                &ids,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("roles diverged")
+        );
 
         let mut file_poison = binding.clone();
         file_poison["bindings"][0]["owned_files"] =
             serde_json::json!(["src/api.py", "src/extra.py"]);
-        assert!(compile_requirement_binding(
-            &file_poison.to_string(),
-            &requirements,
-            &evidence,
-            &compiled.plan_json,
-            &ids,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("changed frozen file ownership"));
+        assert!(
+            compile_requirement_binding(
+                &file_poison.to_string(),
+                &requirements,
+                &evidence,
+                &compiled.plan_json,
+                &ids,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("changed frozen file ownership")
+        );
 
         let mut dependency_poison = binding;
         dependency_poison["bindings"][0]["depends_on"] = serde_json::json!(["test-api"]);
-        assert!(compile_requirement_binding(
-            &dependency_poison.to_string(),
-            &requirements,
-            &evidence,
-            &compiled.plan_json,
-            &ids,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("changed frozen dependencies"));
+        assert!(
+            compile_requirement_binding(
+                &dependency_poison.to_string(),
+                &requirements,
+                &evidence,
+                &compiled.plan_json,
+                &ids,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("changed frozen dependencies")
+        );
     }
 
     #[test]
@@ -11165,6 +11667,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         let polluted = format!("{raw_language}\n\n## RESEARCH FINDINGS\nUse Python instead.");
         assert_eq!(detect_language(raw_language, &[]), TargetLang::Go);
         assert_eq!(detect_language(&polluted, &[]), TargetLang::Python);
+        assert_eq!(
+            canonical_planning_language(&polluted, raw_language, &[]),
+            TargetLang::Go,
+            "the production planning selector must ignore mutable research prose"
+        );
 
         let raw_entry = "The advertised entry is `python -m safeapp`.";
         let final_spec = binding_spec_with_user_decisions(raw_entry, "");
@@ -11215,14 +11722,18 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             vec!["REQ-route"]
         );
         assert_eq!(route.evidence[0].id, "EVID-route");
-        assert!(!route
-            .requirements
-            .iter()
-            .any(|requirement| requirement.quote.contains("X-Trace")));
-        assert!(!route
-            .evidence
-            .iter()
-            .any(|record| record.id == "EVID-unrelated"));
+        assert!(
+            !route
+                .requirements
+                .iter()
+                .any(|requirement| requirement.quote.contains("X-Trace"))
+        );
+        assert!(
+            !route
+                .evidence
+                .iter()
+                .any(|record| record.id == "EVID-unrelated")
+        );
     }
 
     #[test]
@@ -11259,9 +11770,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &detail_ids,
         )
         .unwrap_err();
-        assert!(duplicate_error
-            .to_string()
-            .contains("multiple primary owners"));
+        assert!(
+            duplicate_error
+                .to_string()
+                .contains("multiple primary owners")
+        );
 
         let mut overlap = original.clone();
         overlap["bindings"][1]["owned_files"] =
@@ -11290,9 +11803,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &detail_ids,
         )
         .unwrap_err();
-        assert!(edge_error
-            .to_string()
-            .contains("requires completed artifact"));
+        assert!(
+            edge_error
+                .to_string()
+                .contains("requires completed artifact")
+        );
     }
 
     #[test]
@@ -11394,9 +11909,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &detail_ids,
         )
         .unwrap_err();
-        assert!(edge_error
-            .to_string()
-            .contains("removed selected-plan dependencies"));
+        assert!(
+            edge_error
+                .to_string()
+                .contains("removed selected-plan dependencies")
+        );
 
         let mut moved_file = original;
         moved_file["bindings"][0]["owned_files"] = serde_json::json!([]);
@@ -11410,9 +11927,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &detail_ids,
         )
         .unwrap_err();
-        assert!(file_error
-            .to_string()
-            .contains("moved or dropped selected-plan files"));
+        assert!(
+            file_error
+                .to_string()
+                .contains("moved or dropped selected-plan files")
+        );
     }
 
     #[test]
@@ -11456,9 +11975,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         )
         .unwrap();
         assert_eq!(compiled.delivered_artifacts, 1);
-        assert!(compiled.tasks["api"]
-            .owned_files
-            .contains(&"web/app.js".to_string()));
+        assert!(
+            compiled.tasks["api"]
+                .owned_files
+                .contains(&"web/app.js".to_string())
+        );
 
         let (_, ordinary_requirements, _, mut invented) = requirement_binding_fixture();
         invented["bindings"][0]["owned_files"] =
@@ -11471,9 +11992,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             &detail_ids,
         )
         .unwrap_err();
-        assert!(invented_error
-            .to_string()
-            .contains("not classified as delivered artifacts"));
+        assert!(
+            invented_error
+                .to_string()
+                .contains("not classified as delivered artifacts")
+        );
     }
 
     #[test]
@@ -11573,19 +12096,21 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             HashSet::from(["DECISIONS.md", "ledger.db", "notifier.db", "--db-dir"])
         );
         raw["bindings"][0]["owned_files"] = serde_json::json!(["src/api.py", "DECISIONS.md"]);
-        raw["artifact_evidence"] = serde_json::json!(candidates
-            .iter()
-            .map(|candidate| serde_json::json!({
-                "candidate_id": candidate.id,
-                "kind": match candidate.literal.as_str() {
-                    "DECISIONS.md" => "delivered_artifact",
-                    "ledger.db" | "notifier.db" => "runtime_data",
-                    "--db-dir" => "interface",
-                    literal => panic!("unexpected SB7 artifact candidate: {literal}"),
-                },
-                "task_id": "api"
-            }))
-            .collect::<Vec<_>>());
+        raw["artifact_evidence"] = serde_json::json!(
+            candidates
+                .iter()
+                .map(|candidate| serde_json::json!({
+                    "candidate_id": candidate.id,
+                    "kind": match candidate.literal.as_str() {
+                        "DECISIONS.md" => "delivered_artifact",
+                        "ledger.db" | "notifier.db" => "runtime_data",
+                        "--db-dir" => "interface",
+                        literal => panic!("unexpected SB7 artifact candidate: {literal}"),
+                    },
+                    "task_id": "api"
+                }))
+                .collect::<Vec<_>>()
+        );
         let detail_ids = ["api".into(), "test-api".into(), "integrate-verify".into()];
 
         let compiled = compile_requirement_binding(
@@ -11599,12 +12124,16 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert_eq!(compiled.delivered_artifacts, 1);
         assert_eq!(compiled.runtime_data_literals, 2);
         assert_eq!(compiled.interface_literals, 1);
-        assert!(!compiled.tasks["api"]
-            .owned_files
-            .contains(&"ledger.db".to_string()));
-        assert!(!compiled.tasks["api"]
-            .owned_files
-            .contains(&"notifier.db".to_string()));
+        assert!(
+            !compiled.tasks["api"]
+                .owned_files
+                .contains(&"ledger.db".to_string())
+        );
+        assert!(
+            !compiled.tasks["api"]
+                .owned_files
+                .contains(&"notifier.db".to_string())
+        );
 
         let mut missing_evidence = raw.clone();
         missing_evidence["artifact_evidence"]
@@ -11619,9 +12148,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             &detail_ids,
         )
         .unwrap_err();
-        assert!(missing_error
-            .to_string()
-            .contains("does not classify every quoted candidate"));
+        assert!(
+            missing_error
+                .to_string()
+                .contains("does not classify every quoted candidate")
+        );
 
         let mut source_owned_runtime = raw;
         source_owned_runtime["bindings"][0]["owned_files"] =
@@ -11634,9 +12165,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             &detail_ids,
         )
         .unwrap_err();
-        assert!(runtime_error
-            .to_string()
-            .contains("incorrectly source-owned"));
+        assert!(
+            runtime_error
+                .to_string()
+                .contains("incorrectly source-owned")
+        );
     }
 
     #[test]
@@ -11707,9 +12240,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             },
         ];
         let error = validate_integration_closure(&disconnected).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("disconnected completion closures"));
+        assert!(
+            error
+                .to_string()
+                .contains("disconnected completion closures")
+        );
         assert!(error.to_string().contains("assemble-api"));
         assert!(error.to_string().contains("release-web"));
 
@@ -11749,11 +12284,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                 .collect()
         };
 
-        // No oracle: unchanged — the fleet is the only signal there is.
+        // No oracle means there is no engine-proven partition. Do not mint fleet-shaped work from it.
         assert_eq!(
             fan(4, &[]),
-            4,
-            "an empty oracle must behave exactly as before"
+            0,
+            "an empty oracle must leave the irreducible check on the join"
         );
         // F852: the JOB decides the cut at ~2 commands per shard, fleet-blind DOWNWARD (no fleet
         // can mint more pieces than commands/2 — the old fleet-first rule cut the same 4-command
@@ -11859,7 +12394,10 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         )
         .unwrap();
         assert_eq!(fan_verify_split(&mut plan, TargetLang::Python), 2);
-        assert_eq!(fan_e2e_split(&mut plan, TargetLang::Python, 3, &[]), 3);
+        let oracle = (0..6)
+            .map(|index| format!("GET /api/item-{index} -> EXPECT ok"))
+            .collect::<Vec<_>>();
+        assert_eq!(fan_e2e_split(&mut plan, TargetLang::Python, 3, &oracle), 3);
 
         // Three shards exist, own NOTHING (so they co-run race-free), and wait for the per-module verifies.
         for i in 0..3 {
@@ -11992,12 +12530,14 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             command_probe_finding("", "error: 'str' object has no attribute 'mkdir'", Some(1))
                 .is_some()
         );
-        assert!(command_probe_finding(
-            "",
-            "error: unsupported operand type(s) for /: 'str' and 'str'",
-            Some(1)
-        )
-        .is_some());
+        assert!(
+            command_probe_finding(
+                "",
+                "error: unsupported operand type(s) for /: 'str' and 'str'",
+                Some(1)
+            )
+            .is_some()
+        );
         assert!(command_probe_finding("", "Traceback (most recent call last):", Some(1)).is_some());
 
         // HONEST usage errors must NOT be findings — `raftkv set` with no args SHOULD exit nonzero, and
@@ -12670,8 +13210,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         // Python, the user picks Rust, and previously the answer went only into research findings (which
         // detect_language never reads) so the run silently stayed Python. Appending the Q&A block (which
         // embeds "A: Rust ...") must flip the detected language — that flip is what forces the re-plan.
-        let spec =
-            "Build a small command-line developer utility that saves time in day-to-day work. \
+        let spec = "Build a small command-line developer utility that saves time in day-to-day work. \
                     Pick something genuinely useful and make it good.";
         assert_eq!(detect_language(spec, &[]), TargetLang::Python);
         // The real Q&A block shape from ask_clarifying_questions (question + verbatim answer).
@@ -13568,7 +14107,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert!(!resolve_gate(Some("off".to_string()), true, true));
         assert!(resolve_gate(Some("1".to_string()), false, true)); // assured off + explicit on -> on
         assert!(resolve_gate(Some("true".to_string()), false, false)); // explicit on even outside the bundle
-                                                                       // Truthy set matches the shipped pattern; unrecognized -> false (as the old checks did).
+        // Truthy set matches the shipped pattern; unrecognized -> false (as the old checks did).
         assert!(resolve_gate(Some(" YES ".to_string()), false, false)); // trimmed + case-insensitive
         assert!(!resolve_gate(Some("maybe".to_string()), true, true));
     }
@@ -13997,9 +14536,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
     fn generated_tests_extract_fenced_or_bare_but_never_garbage() {
         // Fenced: unchanged behavior.
         let fenced = "here you go\n```python\nimport pytest\n\ndef test_a():\n    assert 1\n```";
-        assert!(extract_generated_tests(fenced)
-            .unwrap()
-            .starts_with("import pytest"));
+        assert!(
+            extract_generated_tests(fenced)
+                .unwrap()
+                .starts_with("import pytest")
+        );
         // F804-batch: a BARE reply (the measured 0/3 class) lands via the fallback — reasoning
         // preamble stripped to the first import/def line.
         let bare = "I'll write the tests now. They cover the happy path.\n\nimport pytest\n\ndef test_b():\n    assert 2";
@@ -14349,7 +14890,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert_eq!(cli.findings.len(), 2);
         assert!(groups.iter().any(|g| g.file == "tests/test_a.py"));
         assert_eq!(unassigned.len(), 1); // the file-less finding
-                                         // Partition invariant: every group names a distinct file.
+        // Partition invariant: every group names a distinct file.
         let files: std::collections::HashSet<_> = groups.iter().map(|g| &g.file).collect();
         assert_eq!(files.len(), groups.len());
     }
@@ -14512,7 +15053,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert_eq!(f(2), "tests/test_stats.py"); // dir-prefixed untouched
         assert_eq!(f(3), "gradebook/__main__.py"); // already-prefixed untouched
         assert_eq!(f(4), "conftest.py"); // root non-collision untouched
-                                         // NO package (greenfield / empty existing set) -> no-op.
+        // NO package (greenfield / empty existing set) -> no-op.
         let mut v2 = serde_json::json!({"subtasks":[{"id":"s","files":["stats.py"]}]});
         assert_eq!(
             normalize_plan_files_to_package(&mut v2, pkg, &HashSet::new()),
@@ -14683,12 +15224,14 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             .map(|f| f.as_str().unwrap())
             .collect();
         assert!(ledgerd_files.contains(&"app/ledgerd/__main__.py"));
-        assert!(v["subtasks"][1]["description"]
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_default()
-            .is_empty()); // no description field on input -> note skipped, never invented
-                          // The verify task (owns nothing) must never be picked.
+        assert!(
+            v["subtasks"][1]["description"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_default()
+                .is_empty()
+        ); // no description field on input -> note skipped, never invented
+        // The verify task (owns nothing) must never be picked.
         assert!(v["subtasks"][3]["files"].as_array().unwrap().is_empty());
 
         // Already satisfied (entry owned) and module form (X.py owned): both no-ops.
@@ -14696,11 +15239,13 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             {"id":"a","files":["app/__main__.py"],"description":"d"},
             {"id":"b","files":["app/ledgerd.py"],"description":"d"}
         ]});
-        assert!(require_advertised_entry_files(
-            &mut sat,
-            "boot `python -m app` and `python -m app.ledgerd`"
-        )
-        .is_empty());
+        assert!(
+            require_advertised_entry_files(
+                &mut sat,
+                "boot `python -m app` and `python -m app.ledgerd`"
+            )
+            .is_empty()
+        );
         assert_eq!(sat["subtasks"][0]["description"].as_str().unwrap(), "d");
 
         // A description that exists gains the note exactly once, with the invocation named.
@@ -14743,10 +15288,12 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         })
         .to_string();
         let stale_dag = Dag::from_planner_json(&plan).unwrap();
-        assert!(!stale_dag.tasks["service"]
-            .spec
-            .owned_files
-            .contains(&"app/__main__.py".to_string()));
+        assert!(
+            !stale_dag.tasks["service"]
+                .spec
+                .owned_files
+                .contains(&"app/__main__.py".to_string())
+        );
 
         let (final_json, dispatch_dag, added) = finalize_advertised_entry_plan(
             plan,
@@ -14759,10 +15306,12 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             vec!["app/__main__.py".to_string()],
             "the existing package already owns a source file, so only its entry is missing"
         );
-        assert!(dispatch_dag.tasks["service"]
-            .spec
-            .owned_files
-            .contains(&"app/__main__.py".to_string()));
+        assert!(
+            dispatch_dag.tasks["service"]
+                .spec
+                .owned_files
+                .contains(&"app/__main__.py".to_string())
+        );
 
         let reparsed = Dag::from_planner_json(&final_json).unwrap();
         for task_id in ["service", "integrate-verify"] {
@@ -14886,20 +15435,24 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         };
         let ambiguous = HashSet::from(["shared-model".to_string()]);
         let served = HashSet::from(["shared-model".to_string()]);
-        assert!(verified_physical_identity(
-            &process,
-            &ambiguous,
-            Some(&served),
-            "http://lm-link.test/v1/chat/completions"
-        )
-        .is_none());
-        assert!(verified_physical_identity(
-            &process,
-            &HashSet::new(),
-            None,
-            "http://lm-link.test/v1/chat/completions"
-        )
-        .is_none());
+        assert!(
+            verified_physical_identity(
+                &process,
+                &ambiguous,
+                Some(&served),
+                "http://lm-link.test/v1/chat/completions"
+            )
+            .is_none()
+        );
+        assert!(
+            verified_physical_identity(
+                &process,
+                &HashSet::new(),
+                None,
+                "http://lm-link.test/v1/chat/completions"
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -14935,10 +15488,11 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert!(s.skipped_existing.is_empty());
         assert!(s.skipped_collision.is_empty());
         assert_eq!(cfg.devices.len(), 5);
-        assert!(cfg
-            .devices
-            .iter()
-            .all(|d| d.weight == 2 && d.host.is_some()));
+        assert!(
+            cfg.devices
+                .iter()
+                .all(|d| d.weight == 2 && d.host.is_some())
+        );
     }
 
     #[test]
@@ -15130,6 +15684,17 @@ fn binding_spec_with_user_decisions(raw_user_spec: &str, user_decisions: &str) -
     } else {
         format!("{}{}", raw_user_spec.trim_end(), user_decisions)
     }
+}
+
+fn canonical_plan_needs_binding_refresh(plan_json: &str, binding_spec: &str) -> Result<bool> {
+    let plan: serde_json::Value = serde_json::from_str(plan_json)?;
+    let authority_ids = canonical_plan_requirement_ids(&plan)?
+        .ok_or_else(|| anyhow!("accepted plan has no canonical requirement authority"))?;
+    let binding_ids = normalized_requirement_inventory(binding_spec)
+        .into_iter()
+        .map(|requirement| requirement.id)
+        .collect::<Vec<_>>();
+    Ok(authority_ids != binding_ids)
 }
 
 /// The last `max` characters of `s` (char-wise, never a byte slice — these are model tokens).
@@ -16415,6 +16980,10 @@ fn post_answer_action(
     } else {
         PostAnswerAction::KeepReuse
     }
+}
+
+fn post_answer_action_can_bank(action: PostAnswerAction) -> bool {
+    !matches!(action, PostAnswerAction::Replan)
 }
 
 fn breakdown_json(pc: &PlanConf) -> Option<serde_json::Value> {
@@ -19713,6 +20282,7 @@ impl GooseAgentDispatcher {
             .filter(|value| !value.trim().is_empty())
             .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
             .ok_or_else(|| anyhow!("canonical plan judge produced no typed final output"))?;
+        let raw = canonical_adjudication_with_required_entries(&raw, binding_spec)?;
         compile_canonical_plan_adjudication(
             &raw,
             &requirements,
@@ -19807,7 +20377,7 @@ impl GooseAgentDispatcher {
             )
         };
         let existing_files = existing_files_manifest(&self.working_dir);
-        let lang = detect_language(user_prompt, &existing_files);
+        let lang = canonical_planning_language(user_prompt, binding_spec, &existing_files);
         let lang_directive = lang.directive();
         let entry_clause = lang.entry_clause();
         let test_cmd = lang.test_cmd();
@@ -20737,11 +21307,11 @@ impl GooseAgentDispatcher {
                 let backbone = consensus_backbone(&valid1);
                 if backbone.len() >= 2 {
                     eprintln!(
-                            "  {} backbone fail-safe: {} consensus module(s) [{}] — re-drafting round 2",
-                            style("◆").cyan(),
-                            backbone.len(),
-                            backbone.join(", ")
-                        );
+                        "  {} backbone fail-safe: {} consensus module(s) [{}] — re-drafting round 2",
+                        style("◆").cyan(),
+                        backbone.len(),
+                        backbone.join(", ")
+                    );
                     let system2 = build_system(&backbone_clause(&backbone));
                     let r2_started = std::time::Instant::now();
                     let (candidates2, _dead2, _deferred2) = draft_round(system2, draft_temp).await;
@@ -20761,17 +21331,17 @@ impl GooseAgentDispatcher {
                             if score2 > score1 && plan_covers_backbone(&json2, &backbone) =>
                         {
                             eprintln!(
-                                    "  {} backbone fail-safe skeleton adopted (score {score1}→{score2}); confidence unchanged (round-1 free drafts)",
-                                    style("✓").green().bold()
-                                );
+                                "  {} backbone fail-safe skeleton adopted (score {score1}→{score2}); confidence unchanged (round-1 free drafts)",
+                                style("✓").green().bold()
+                            );
                             (
-                                    json2,
-                                    Some(conf1),
-                                    format!(
-                                        "{reason1} [backbone fail-safe: {} locked modules; round-2 skeleton adopted score {score1}->{score2}; confidence from round-1 free drafts]",
-                                        backbone.len()
-                                    ),
-                                )
+                                json2,
+                                Some(conf1),
+                                format!(
+                                    "{reason1} [backbone fail-safe: {} locked modules; round-2 skeleton adopted score {score1}->{score2}; confidence from round-1 free drafts]",
+                                    backbone.len()
+                                ),
+                            )
                         }
                         _ => {
                             eprintln!("  · backbone fail-safe round 2 not adopted (kept round 1)");
@@ -21108,7 +21678,11 @@ impl GooseAgentDispatcher {
         // split) — both now live in detail_plan, which re-derives the flag from the `verify::` ids the split
         // installs, so nothing needs threading across the seam.
         if swarm_gate_cfg("GOOSE_SWARM_FAN_VERIFY", load_config().fan_verify) {
-            let fanned = fan_verify_split(&mut v, lang);
+            let fanned = if adjudication == PlanAdjudication::Accepted {
+                apply_canonical_fan_verify(&mut v, lang)?
+            } else {
+                fan_verify_split(&mut v, lang)
+            };
             if fanned > 0 {
                 // Second axis: shard the END-TO-END run by command across the fleet, so the whole-program
                 // check stops being one task on one node while the rest of the fleet idles.
@@ -21126,7 +21700,11 @@ impl GooseAgentDispatcher {
                     } else {
                         Vec::new()
                     };
-                    let shards = fan_e2e_split(&mut v, lang, worker_count, &oracle);
+                    let shards = if adjudication == PlanAdjudication::Accepted {
+                        apply_canonical_fan_e2e(&mut v, lang, worker_count, &oracle)?
+                    } else {
+                        fan_e2e_split(&mut v, lang, worker_count, &oracle)
+                    };
                     if shards > 0 {
                         eprintln!(
                             "  \u{b7} fan-e2e: split the end-to-end run into {shards} command shard(s) across the fleet — integrate-verify now joins them instead of running every command itself"
@@ -21207,7 +21785,19 @@ impl GooseAgentDispatcher {
                 "operator specification has no binding requirement clauses"
             ));
         }
-        let package_entries = require_advertised_entry_files(&mut v, binding_spec);
+        let has_canonical_authority = canonical_plan_requirement_ids(&v)?.is_some();
+        let package_entries = if has_canonical_authority {
+            let missing = missing_advertised_entry_files(&v, binding_spec);
+            if !missing.is_empty() {
+                bail!(
+                    "accepted canonical plan lost spec-advertised package entry artifact(s): {}",
+                    missing.join(", ")
+                );
+            }
+            Vec::new()
+        } else {
+            require_advertised_entry_files(&mut v, binding_spec)
+        };
         if !package_entries.is_empty() {
             self.events.write_value(serde_json::json!({
                 "event": "package_entry_injected",
@@ -24655,6 +25245,37 @@ fn spec_python_invocations(spec: &str) -> Vec<String> {
 /// plus `__init__.py` when the package has no other owned file, and append one sentence to that task's
 /// description saying exactly what the entry must do. Returns the injected paths (empty = no-op,
 /// byte-identical plan).
+fn missing_advertised_entry_files(v: &serde_json::Value, spec: &str) -> Vec<String> {
+    let owned = v
+        .get("subtasks")
+        .and_then(|subtasks| subtasks.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|task| task.get("files").and_then(|files| files.as_array()))
+        .flatten()
+        .filter_map(|file| file.as_str())
+        .collect::<HashSet<_>>();
+    let mut missing = Vec::new();
+    for invocation in spec_python_invocations(spec) {
+        let dir = invocation.replace('.', "/");
+        let entry = format!("{dir}/__main__.py");
+        let module = format!("{dir}.py");
+        if owned.contains(entry.as_str()) || owned.contains(module.as_str()) {
+            continue;
+        }
+        if !owned
+            .iter()
+            .any(|file| file.starts_with(&format!("{dir}/")))
+        {
+            missing.push(format!("{dir}/__init__.py"));
+        }
+        missing.push(entry);
+    }
+    missing.sort();
+    missing.dedup();
+    missing
+}
+
 fn require_advertised_entry_files(v: &mut serde_json::Value, spec: &str) -> Vec<String> {
     let invocations = spec_python_invocations(spec);
     if invocations.is_empty() {
@@ -24736,6 +25357,23 @@ fn require_advertised_entry_files(v: &mut serde_json::Value, spec: &str) -> Vec<
     added
 }
 
+fn canonical_adjudication_with_required_entries(raw: &str, spec: &str) -> Result<String> {
+    let mut envelope: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|error| anyhow!("canonical plan adjudication was not valid JSON: {error}"))?;
+    let plan = envelope
+        .get_mut("canonical_plan")
+        .ok_or_else(|| anyhow!("canonical plan adjudication had no canonical_plan"))?;
+    require_advertised_entry_files(plan, spec);
+    let missing = missing_advertised_entry_files(plan, spec);
+    if !missing.is_empty() {
+        bail!(
+            "canonical plan could not assign spec-advertised package entry artifact(s): {}",
+            missing.join(", ")
+        );
+    }
+    Ok(serde_json::to_string(&envelope)?)
+}
+
 /// Apply package-entry ownership to the final plan and rebuild the exact DAG that every downstream
 /// consumer receives. File ownership is scheduler authority: changing JSON without replacing the DAG
 /// creates two contradictory plans, so a mutated plan that does not validate fails before dispatch.
@@ -24747,6 +25385,16 @@ fn finalize_advertised_entry_plan(
     let mut value: serde_json::Value = serde_json::from_str(&plan_json).map_err(|error| {
         anyhow!("final plan JSON did not parse before package-entry validation: {error}")
     })?;
+    if canonical_plan_requirement_ids(&value)?.is_some() {
+        let missing = missing_advertised_entry_files(&value, spec);
+        if !missing.is_empty() {
+            bail!(
+                "accepted canonical plan lost spec-advertised package entry artifact(s): {}",
+                missing.join(", ")
+            );
+        }
+        return Ok((plan_json, dag, Vec::new()));
+    }
     let added = require_advertised_entry_files(&mut value, spec);
     if added.is_empty() {
         return Ok((plan_json, dag, added));
@@ -26347,10 +26995,12 @@ mod fan_order_tests {
             &mut cache,
         );
         assert_eq!(demand.requested_order, vec!["api", "store", "cli"]);
-        assert!(demand
-            .prefetched_by_id
-            .get("api")
-            .is_some_and(String::is_empty));
+        assert!(
+            demand
+                .prefetched_by_id
+                .get("api")
+                .is_some_and(String::is_empty)
+        );
         assert_eq!(
             demand
                 .missing
@@ -30785,6 +31435,14 @@ fn detect_language(spec: &str, existing_files: &[String]) -> TargetLang {
     TargetLang::Python
 }
 
+fn canonical_planning_language(
+    _mutable_user_prompt: &str,
+    binding_spec: &str,
+    existing_files: &[String],
+) -> TargetLang {
+    detect_language(binding_spec, existing_files)
+}
+
 impl TargetLang {
     fn name(self) -> &'static str {
         match self {
@@ -31461,7 +32119,7 @@ fn legacy_auxiliary_control_enabled(
 
 #[cfg(test)]
 mod legacy_auxiliary_control_tests {
-    use super::{legacy_auxiliary_control_enabled, LegacyAuxiliaryPhase};
+    use super::{LegacyAuxiliaryPhase, legacy_auxiliary_control_enabled};
 
     #[test]
     fn physical_substitution_is_scoped_to_main_execute() {
@@ -34135,10 +34793,7 @@ impl ProviderLifecycleDispatcher for GooseAgentDispatcher {
         if req.device_id != admission.logical_device_id || req.model_id != admission.model_id {
             return Err(DispatchError::Terminal(format!(
                 "physical provider route drifted before dispatch: request `{}`/`{}`, admission `{}`/`{}`",
-                req.device_id,
-                req.model_id,
-                admission.logical_device_id,
-                admission.model_id
+                req.device_id, req.model_id, admission.logical_device_id, admission.model_id
             )));
         }
         scope_provider_lifecycle(lifecycle, TaskDispatcher::run(self, req)).await
@@ -35679,6 +36334,31 @@ struct CanonicalPlanTaskCoverageDraft {
     evidence_ids: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct CanonicalPlanTaskManifest {
+    id: String,
+    difficulty: goose_swarm::Difficulty,
+    model: Option<String>,
+    depends_on: Vec<String>,
+    files: Vec<String>,
+    coverage: CanonicalPlanTaskCoverageDraft,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct CanonicalPlanManifest {
+    tasks: Vec<CanonicalPlanTaskManifest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct CanonicalEngineTransformReceipt {
+    kind: String,
+    source_digest: String,
+    result_digest: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CanonicalPlanConflictDraft {
@@ -35732,6 +36412,160 @@ fn set_canonical_task_coverage(
         );
     }
     task[CANONICAL_TASK_COVERAGE_FIELD] = serde_json::to_value(coverage)?;
+    Ok(())
+}
+
+fn canonical_plan_manifest(plan: &serde_json::Value) -> Result<CanonicalPlanManifest> {
+    let plan_json = serde_json::to_string(plan)?;
+    let specs = goose_swarm::specs_from_plan_json(&plan_json)
+        .map_err(|error| anyhow!("canonical plan manifest did not parse: {error}"))?;
+    goose_swarm::Dag::from_specs(specs.clone())
+        .map_err(|error| anyhow!("canonical plan manifest was not a valid DAG: {error}"))?;
+    let raw_tasks = plan
+        .get("subtasks")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow!("canonical plan manifest has no subtasks"))?;
+    let mut raw_by_id = HashMap::<&str, &serde_json::Value>::new();
+    for task in raw_tasks {
+        let id = task
+            .get("id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("canonical plan manifest contains a task without an id"))?;
+        if raw_by_id.insert(id, task).is_some() {
+            bail!("canonical plan manifest repeated task `{id}`");
+        }
+    }
+    let canonical_vec = |label: &str, task_id: &str, values: &[String]| -> Result<Vec<String>> {
+        let mut canonical = values.to_vec();
+        canonical.sort();
+        if canonical.windows(2).any(|window| window[0] == window[1]) {
+            bail!("canonical plan task `{task_id}` repeats {label}");
+        }
+        Ok(canonical)
+    };
+    let mut tasks = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let raw = raw_by_id
+            .get(spec.id.as_str())
+            .ok_or_else(|| anyhow!("canonical plan manifest lost task `{}`", spec.id))?;
+        let mut coverage = canonical_task_coverage(raw)?.ok_or_else(|| {
+            anyhow!(
+                "canonical authoritative task `{}` has no typed requirement coverage",
+                spec.id
+            )
+        })?;
+        coverage.owns_requirement_ids = canonical_vec(
+            "primary requirement ownership",
+            &spec.id,
+            &coverage.owns_requirement_ids,
+        )?;
+        coverage.applies_requirement_ids = canonical_vec(
+            "applicable requirement coverage",
+            &spec.id,
+            &coverage.applies_requirement_ids,
+        )?;
+        coverage.verifies_requirement_ids = canonical_vec(
+            "verification requirement coverage",
+            &spec.id,
+            &coverage.verifies_requirement_ids,
+        )?;
+        coverage.evidence_ids = canonical_vec(
+            "advisory evidence coverage",
+            &spec.id,
+            &coverage.evidence_ids,
+        )?;
+        tasks.push(CanonicalPlanTaskManifest {
+            id: spec.id.clone(),
+            difficulty: spec.difficulty,
+            model: spec.preferred_model,
+            depends_on: canonical_vec("dependency", &spec.id, &spec.deps)?,
+            files: canonical_vec("owned file", &spec.id, &spec.owned_files)?,
+            coverage,
+        });
+    }
+    tasks.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(CanonicalPlanManifest { tasks })
+}
+
+fn canonical_plan_manifest_digest(manifest: &CanonicalPlanManifest) -> Result<String> {
+    let mut digest = Sha256::new();
+    digest.update(b"goose-canonical-plan-manifest-v1\0");
+    digest.update(serde_json::to_vec(manifest)?);
+    Ok(lowercase_hex(digest.finalize().as_slice()))
+}
+
+fn record_canonical_engine_transform(
+    plan: &mut serde_json::Value,
+    source: &CanonicalPlanManifest,
+    kind: &str,
+) -> Result<()> {
+    let source_digest = canonical_plan_manifest_digest(source)?;
+    let result_digest = canonical_plan_manifest_digest(&canonical_plan_manifest(plan)?)?;
+    if source_digest == result_digest {
+        return Ok(());
+    }
+    let authority = plan
+        .get_mut("canonical_plan_authority")
+        .and_then(|value| value.as_object_mut())
+        .ok_or_else(|| anyhow!("canonical transform lost the accepted authority record"))?;
+    let transforms = authority
+        .entry("engine_transforms")
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .ok_or_else(|| anyhow!("canonical engine transform registry was not an array"))?;
+    transforms.push(serde_json::to_value(CanonicalEngineTransformReceipt {
+        kind: kind.to_string(),
+        source_digest,
+        result_digest,
+    })?);
+    Ok(())
+}
+
+fn validate_canonical_manifest_authority(plan: &serde_json::Value) -> Result<()> {
+    let authority = plan
+        .get("canonical_plan_authority")
+        .ok_or_else(|| anyhow!("canonical plan lost its authority record"))?;
+    let accepted_manifest: CanonicalPlanManifest = serde_json::from_value(
+        authority
+            .get("accepted_manifest")
+            .cloned()
+            .ok_or_else(|| anyhow!("canonical plan authority has no accepted manifest"))?,
+    )
+    .map_err(|error| anyhow!("canonical accepted manifest did not parse: {error}"))?;
+    let accepted_digest = authority
+        .get("accepted_digest")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow!("canonical plan authority has no accepted digest"))?;
+    let computed_accepted_digest = canonical_plan_manifest_digest(&accepted_manifest)?;
+    if accepted_digest != computed_accepted_digest {
+        bail!("canonical accepted manifest digest does not match its frozen manifest");
+    }
+    let current_digest = canonical_plan_manifest_digest(&canonical_plan_manifest(plan)?)?;
+    let transforms = authority
+        .get("engine_transforms")
+        .cloned()
+        .map(serde_json::from_value::<Vec<CanonicalEngineTransformReceipt>>)
+        .transpose()
+        .map_err(|error| anyhow!("canonical engine transform registry did not parse: {error}"))?
+        .unwrap_or_default();
+    let mut expected_source = accepted_digest.to_string();
+    for transform in transforms {
+        if !matches!(transform.kind.as_str(), "fan_verify_v1" | "fan_e2e_v1") {
+            bail!(
+                "canonical plan carried unknown engine transform `{}`",
+                transform.kind
+            );
+        }
+        if transform.source_digest != expected_source {
+            bail!(
+                "canonical engine transform chain does not start at the frozen accepted manifest"
+            );
+        }
+        expected_source = transform.result_digest;
+    }
+    if current_digest != expected_source {
+        bail!("canonical plan structure diverged from the frozen accepted manifest");
+    }
     Ok(())
 }
 
@@ -35946,6 +36780,7 @@ fn validate_canonical_authoritative_plan(
     if !skeleton_uses_allowed_models(&specs, allowed_runtime_models) {
         bail!("canonical authoritative plan used a model outside the resolved runtime roster");
     }
+    validate_canonical_manifest_authority(plan)?;
     let coverages = plan
         .get("subtasks")
         .and_then(|value| value.as_array())
@@ -36059,9 +36894,14 @@ fn compile_canonical_plan_adjudication(
             .ok_or_else(|| anyhow!("canonical normalized task `{task_id}` lost its coverage"))?;
         set_canonical_task_coverage(task, coverage)?;
     }
+    let accepted_manifest = canonical_plan_manifest(&plan)?;
+    let accepted_digest = canonical_plan_manifest_digest(&accepted_manifest)?;
     plan["canonical_plan_authority"] = serde_json::json!({
         "format": CANONICAL_PLAN_AUTHORITY_FORMAT,
         "requirement_ids": requirements.iter().map(|requirement| requirement.id.as_str()).collect::<Vec<_>>(),
+        "accepted_manifest": accepted_manifest,
+        "accepted_digest": accepted_digest,
+        "engine_transforms": [],
     });
     validate_canonical_authoritative_plan(&plan, requirements, evidence, allowed_runtime_models)?;
 
@@ -36187,10 +37027,18 @@ fn validate_runtime_replan_authority_matches_dag(
             .tasks
             .get(task_id)
             .ok_or_else(|| anyhow!("final DAG lost authority task `{task_id}`"))?;
-        let bound_files = binding.owned_files.iter().collect::<HashSet<_>>();
-        let dag_files = node.spec.owned_files.iter().collect::<HashSet<_>>();
-        let bound_deps = binding.depends_on.iter().collect::<HashSet<_>>();
-        let dag_deps = node.spec.deps.iter().collect::<HashSet<_>>();
+        let canonical_exact = |label: &str, values: &[String]| -> Result<Vec<String>> {
+            let mut canonical = values.to_vec();
+            canonical.sort();
+            if canonical.windows(2).any(|window| window[0] == window[1]) {
+                bail!("final DAG task `{task_id}` repeats {label}");
+            }
+            Ok(canonical)
+        };
+        let bound_files = canonical_exact("a bound owned file", &binding.owned_files)?;
+        let dag_files = canonical_exact("an owned file", &node.spec.owned_files)?;
+        let bound_deps = canonical_exact("a bound dependency", &binding.depends_on)?;
+        let dag_deps = canonical_exact("a dependency", &node.spec.deps)?;
         if bound_files != dag_files || bound_deps != dag_deps {
             bail!("final DAG task `{task_id}` diverged from typed requirement authority");
         }
@@ -37655,11 +38503,7 @@ fn anchor_subsplit(stub: &str, names: &[String]) -> Vec<String> {
         .filter(|n| have.contains(n.as_str()))
         .cloned()
         .collect();
-    if kept.len() >= 2 {
-        kept
-    } else {
-        Vec::new()
-    }
+    if kept.len() >= 2 { kept } else { Vec::new() }
 }
 
 /// S3 i3, skeleton half: the stub with every function body replaced by
@@ -39001,9 +39845,11 @@ mod repair_tree_seal_tests {
             .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
             .unwrap();
         std::fs::write(dir.path().join("app.txt"), "v3\n").unwrap();
-        assert!(sealed
-            .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
-            .is_err());
+        assert!(
+            sealed
+                .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
+                .is_err()
+        );
 
         let events = sink.names();
         for required in [
@@ -39088,10 +39934,12 @@ mod repair_tree_seal_tests {
             fixture["source"]["run_log_sha256"],
             "6402923479726a0a1533493955c0b5625caa59661db630e7b903d274dfcdd5b6"
         );
-        assert!(fixture["source"]["run_log_path"]
-            .as_str()
-            .unwrap()
-            .ends_with("swarm-3node-r1/run.jsonl"));
+        assert!(
+            fixture["source"]["run_log_path"]
+                .as_str()
+                .unwrap()
+                .ends_with("swarm-3node-r1/run.jsonl")
+        );
         let changed = fixture["changed_files"].as_array().unwrap();
         assert_eq!(changed.len(), 6);
         assert!(changed.iter().all(|file| {
@@ -39153,10 +40001,12 @@ mod repair_tree_seal_tests {
                 < events.iter().position(|event| *event == "review_after_fix")
         );
         assert_eq!(events.last(), Some(&"run_finished"));
-        assert!(fixture["mtime_caveat"]
-            .as_str()
-            .unwrap()
-            .contains("rsync -a preserves source mtimes"));
+        assert!(
+            fixture["mtime_caveat"]
+                .as_str()
+                .unwrap()
+                .contains("rsync -a preserves source mtimes")
+        );
     }
 }
 
@@ -40432,10 +41282,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }
         }
     }; // clamp so the weak-bump can never dip below the literal floor
-       // Inc3: with a floor set, RAISE the effective floor for a WEAKER planner (fewer ACTIVE params) so a weak
-       // local model asks the user SOONER — "ask more on weaker models". Default-ON when a floor is set;
-       // GOOSE_SWARM_ASK_SCALE=0 disables (then the user's literal floor is used). HEURISTIC (model-id -> active
-       // params is fuzzy); the bump is small + capped at 100.
+    // Inc3: with a floor set, RAISE the effective floor for a WEAKER planner (fewer ACTIVE params) so a weak
+    // local model asks the user SOONER — "ask more on weaker models". Default-ON when a floor is set;
+    // GOOSE_SWARM_ASK_SCALE=0 disables (then the user's literal floor is used). HEURISTIC (model-id -> active
+    // params is fuzzy); the bump is small + capped at 100.
     let ask_scale = base_floor.is_some()
         && std::env::var("GOOSE_SWARM_ASK_SCALE")
             .map(|v| {
@@ -41662,14 +42512,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         };
                                     }
                                 }
-                                // Q5 (ASK-AWAY only): re-bank best_plan from the freshly rescored post-answer plan.
-                                // Answers already nulled the PRE-answer plan above (answers must win); re-banking
-                                // the POST-answer rescored plan restores monotonicity across the Ask boundary so a
-                                // later inline batch or the break can never ship below what this batch measured.
-                                // Cannot resurrect a plan that ignores the answers — it IS the answered plan.
-                                if ask_away && retarget_on {
-                                    best_plan = Some((pj.clone(), plan_conf.clone()));
-                                }
                                 let lang_after = detect_language(&opts.prompt, &[]);
                                 let lang_changed = lang_after != lang_before;
                                 // A product-defining answer is STRUCTURAL like a language change: when the ask fired
@@ -41691,13 +42533,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 // product_defined_by_answer { continue }` + keep notice.
                                 let structural = lang_changed || product_defined_by_answer;
                                 let post_conf = plan_conf.gate_confidence().unwrap_or(0);
-                                match post_answer_action(
+                                let post_action = post_answer_action(
                                     answers_win_floor,
                                     ask_replan,
                                     structural,
                                     post_conf,
                                     floor,
-                                ) {
+                                );
+                                if !post_answer_action_can_bank(post_action) {
+                                    best_plan = None;
+                                }
+                                match post_action {
                                     PostAnswerAction::FloorAndRedraft => {
                                         // Still below the floor after answering: pin THIS rescored plan as the
                                         // monotonic best so a regressing re-draft can never ship below it, then
@@ -41734,6 +42580,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         continue 'plan_loop;
                                     }
                                     PostAnswerAction::KeepRescored => {
+                                        if ask_away && retarget_on {
+                                            best_plan = Some((pj.clone(), plan_conf.clone()));
+                                        }
                                         // Clears the floor: keep the rescored plan. best_plan was nulled when the ask
                                         // was answered (or was never set without retarget), so the break below ships
                                         // THIS plan_conf (the 85), not a fresh draft.
@@ -41749,6 +42598,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         );
                                     }
                                     PostAnswerAction::KeepReuse => {
+                                        if ask_away && retarget_on {
+                                            best_plan = Some((pj.clone(), plan_conf.clone()));
+                                        }
                                         // This line used to claim the answers were "injected into every worker via
                                         // research findings + spec". Both were false — research_findings never leaves
                                         // the planner, and the amended spec stops at Scheduler::goal. It is true now,
@@ -41828,6 +42680,44 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     let final_binding_spec = binding_spec_with_user_decisions(&raw_user_spec, &user_decisions);
     let (plan_json, dag) = if plan_needs_detail {
         let wm: Vec<String> = fleet_slot_models(&devices);
+        let plan_json = if plan_conf.adjudication == PlanAdjudication::Accepted
+            && canonical_plan_needs_binding_refresh(&plan_json, &final_binding_spec)?
+        {
+            let mut allowed_runtime_models = std::iter::once(cfg.planner_model.clone())
+                .chain(wm.iter().cloned())
+                .collect::<Vec<_>>();
+            let mut seen_models = HashSet::new();
+            allowed_runtime_models.retain(|model| seen_models.insert(model.clone()));
+            let refresh_started = std::time::Instant::now();
+            let refreshed = dispatcher
+                .adjudicate_canonical_plan(
+                    &cfg.planner_model,
+                    &final_binding_spec,
+                    &research_findings,
+                    std::slice::from_ref(&plan_json),
+                    &allowed_runtime_models,
+                )
+                .await
+                .map_err(|error| {
+                    anyhow!("canonical plan could not be rebound after user decisions: {error}")
+                })?;
+            if !refreshed.material_conflicts.is_empty() {
+                bail!(
+                    "canonical plan conflicts with the user's final decisions: {}",
+                    refreshed.material_conflicts.join("; ")
+                );
+            }
+            sink.write_value(serde_json::json!({
+                "event": "canonical_plan_rebound",
+                "reason": "final binding requirement registry changed after user decisions",
+                "requirement_coverage": refreshed.requirement_coverage,
+                "secs": refresh_started.elapsed().as_secs(),
+                "authority": "frozen-user-spec-plus-human-decisions",
+            }));
+            refreshed.plan_json
+        } else {
+            plan_json
+        };
         dispatcher
             .detail_plan(
                 &cfg.planner_model,
@@ -42631,10 +43521,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // failure path emitted nothing — also fixed below).
         let ship_best = ship_best_enabled();
         let mut best_verified: Option<(u32, usize)> = None; // (round, findings)
-                                                            // ESTABLISHED-AWARE SHIP CHAIN (contract-gap audit rank 1): a verify that RAN but
-                                                            // established nothing produces a count that is not comparable to an established one —
-                                                            // a blind low count must not capture the best slot, and an established snapshot must
-                                                            // never lose to an unestablished final state.
+        // ESTABLISHED-AWARE SHIP CHAIN (contract-gap audit rank 1): a verify that RAN but
+        // established nothing produces a count that is not comparable to an established one —
+        // a blind low count must not capture the best slot, and an established snapshot must
+        // never lose to an unestablished final state.
         let mut best_established = false;
         // Definite-init by the loop: every exit happens after this round's canonical ruler.
         let mut last_verify_ran;
@@ -44567,7 +45457,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             if crate::edition::resolve_edition(false).is_local() {
                 // Goose Local Edition: render the fleet's execute phase as a formation fan-in — one node
                 // lane per device (solid formation-hue chip), with its task count + avg speed.
-                use crate::theme::formation::{render_fan_in, NodeLane, NodeStatus};
+                use crate::theme::formation::{NodeLane, NodeStatus, render_fan_in};
                 let actions: Vec<String> = speeds
                     .iter()
                     .map(|(d, ms)| {
