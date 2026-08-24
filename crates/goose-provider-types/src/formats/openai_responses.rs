@@ -12,7 +12,7 @@ use async_stream::try_stream;
 use chrono;
 use futures::Stream;
 use rmcp::model::{CallToolRequestParams, ErrorCode, ErrorData, RawContent, Role, Tool};
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -23,6 +23,7 @@ const RESPONSES_REASONING_PASSBACK_PREFIX: &str = "openai-responses-reasoning:";
 pub struct ResponsesApiResponse {
     pub id: String,
     pub object: String,
+    #[serde(deserialize_with = "deserialize_response_created_at")]
     pub created_at: i64,
     pub status: String,
     pub model: String,
@@ -35,6 +36,27 @@ pub struct ResponsesApiResponse {
     pub incomplete_details: Option<ResponseIncompleteDetails>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ResponseErrorInfo>,
+}
+
+fn deserialize_response_created_at<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let number = serde_json::Number::deserialize(deserializer)?;
+    if let Some(seconds) = number.as_i64() {
+        return Ok(seconds);
+    }
+    if let Some(seconds) = number.as_u64() {
+        return i64::try_from(seconds).map_err(de::Error::custom);
+    }
+
+    let seconds = number
+        .as_f64()
+        .filter(|value| {
+            value.is_finite() && *value >= i64::MIN as f64 && *value < -(i64::MIN as f64)
+        })
+        .ok_or_else(|| de::Error::custom(format!("invalid Responses created_at: {number}")))?;
+    Ok(seconds.trunc() as i64)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -397,6 +419,7 @@ fn parse_responses_stream_event(data_line: &str) -> anyhow::Result<Option<Respon
 pub struct ResponseMetadata {
     pub id: String,
     pub object: String,
+    #[serde(deserialize_with = "deserialize_response_created_at")]
     pub created_at: i64,
     pub status: String,
     pub model: String,
@@ -1348,6 +1371,49 @@ mod tests {
     use futures::StreamExt;
     use rmcp::model::CallToolRequestParams;
     use rmcp::object;
+
+    #[tokio::test]
+    async fn responses_stream_accepts_numeric_created_at_from_meta() -> anyhow::Result<()> {
+        let lines = vec![
+            r#"data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_meta_float","object":"response","created_at":1787589643.0,"status":"in_progress","model":"muse-spark-1.2","output":[]}}"#.to_string(),
+            r#"data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_meta_float","output_index":0,"content_index":0,"delta":"ready"}"#.to_string(),
+            r#"data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_meta_float","object":"response","created_at":1787589643.75,"status":"completed","model":"muse-spark-1.2","output":[],"usage":{"input_tokens":12,"output_tokens":3,"total_tokens":15}}}"#.to_string(),
+        ];
+        let stream =
+            responses_api_to_streaming_message(tokio_stream::iter(lines.into_iter().map(Ok)));
+        futures::pin_mut!(stream);
+
+        let (message, usage) = stream.next().await.unwrap()?;
+        assert_eq!(message.unwrap().as_concat_text(), "ready");
+        assert!(usage.is_none());
+
+        let (message, usage) = stream.next().await.unwrap()?;
+        assert!(message.is_none());
+        let usage = usage.expect("terminal usage must survive numeric created_at");
+        assert_eq!(usage.model, "muse-spark-1.2");
+        assert_eq!(usage.usage.total_tokens, Some(15));
+        assert!(stream.next().await.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn nonstream_response_truncates_fractional_created_at_to_unix_seconds() {
+        let response: ResponsesApiResponse = serde_json::from_value(json!({
+            "id": "resp_meta_float",
+            "object": "response",
+            "created_at": 1787589643.75,
+            "status": "completed",
+            "model": "muse-spark-1.2",
+            "output": []
+        }))
+        .unwrap();
+
+        assert_eq!(response.created_at, 1787589643);
+        assert_eq!(
+            serde_json::to_value(response).unwrap()["created_at"],
+            1787589643
+        );
+    }
 
     #[tokio::test]
     async fn test_responses_stream_ignores_keepalive_event() -> anyhow::Result<()> {
