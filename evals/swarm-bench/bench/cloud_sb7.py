@@ -4524,8 +4524,49 @@ def current_full_episode_outstanding_reservations(
             return [], "campaign smoke contract hash is stale"
     except SystemExit as contract_error:
         return [], f"campaign smoke contract is invalid: {contract_error}"
-    baseline_by_entrant = campaign.get("smoke_budget_outstanding_baselines")
+    all_smoke_request_ids: set[str] = set()
+    for field in (
+        "smoke_budget_settled_baselines",
+        "smoke_budget_outstanding_baselines",
+    ):
+        baselines = campaign.get(field)
+        if not isinstance(baselines, dict):
+            return [], f"campaign {field} is malformed"
+        for request_ids in baselines.values():
+            if not isinstance(request_ids, list):
+                return [], f"campaign {field} is malformed"
+            all_smoke_request_ids.update(request_ids)
     entrant_id = str(row.get("id", ""))
+    try:
+        state = read_state(root, entrant_id)
+        full_request_ids: set[str] = set()
+        for lifecycle_path in full_episode_lifecycle_paths(root, entrant_id, state):
+            lifecycle = lifecycle_summary(
+                lifecycle_path,
+                expected_provider=str(row["provider"]),
+                expected_model=str(row["model"]),
+            )
+            if lifecycle["malformed_lines"] or lifecycle["transition_errors"]:
+                return [], f"{entrant_id} full lifecycle is malformed"
+            request_states = lifecycle.get("request_states")
+            if not isinstance(request_states, dict):
+                return [], f"{entrant_id} full lifecycle has no request states"
+            duplicate = full_request_ids & set(request_states)
+            if duplicate:
+                return [], (
+                    f"{entrant_id} reused full-episode request IDs: "
+                    + ", ".join(sorted(duplicate))
+                )
+            full_request_ids.update(request_states)
+    except (OSError, KeyError, json.JSONDecodeError, SystemExit) as lifecycle_error:
+        return [], f"{entrant_id} full lifecycle cannot be verified: {lifecycle_error}"
+    reused_smoke_ids = full_request_ids & all_smoke_request_ids
+    if reused_smoke_ids:
+        return [], (
+            f"{entrant_id} reused smoke baseline request IDs: "
+            + ", ".join(sorted(reused_smoke_ids))
+        )
+    baseline_by_entrant = campaign.get("smoke_budget_outstanding_baselines")
     smoke_baseline = (
         baseline_by_entrant.get(entrant_id)
         if isinstance(baseline_by_entrant, dict)
@@ -8585,6 +8626,12 @@ def predecessor_smoke_terminal_usage(
 ) -> tuple[Dict[str, Dict[str, Any]], list[str], bool, str | None]:
     campaign = load_json(campaign_file(root))
     try:
+        contract = smoke_contract_identity(campaign)
+    except SystemExit as contract_error:
+        return {}, [], False, f"smoke contract cannot be verified: {contract_error}"
+    if campaign.get("smoke_contract_sha256") != contract:
+        return {}, [], False, "smoke contract hash is stale"
+    try:
         state = read_smoke_state(root, entrant_id)
     except (OSError, json.JSONDecodeError, SystemExit) as error:
         return {}, [], False, f"smoke state cannot be read: {error}"
@@ -8593,8 +8640,20 @@ def predecessor_smoke_terminal_usage(
         or state.get("provider") != row.get("provider")
         or state.get("model") != row.get("model")
         or state.get("status") not in SMOKE_TERMINAL_STATES
+        or state.get("smoke_contract_sha256") != contract
     ):
         return {}, [], False, "smoke state identity or stopped status is invalid"
+    settled_baselines = campaign.get("smoke_budget_settled_baselines")
+    outstanding_baselines = campaign.get("smoke_budget_outstanding_baselines")
+    if (
+        not isinstance(settled_baselines, dict)
+        or not isinstance(outstanding_baselines, dict)
+        or state.get("budget_settled_baseline_request_ids")
+        != settled_baselines.get(entrant_id)
+        or state.get("budget_outstanding_baseline_request_ids")
+        != outstanding_baselines.get(entrant_id)
+    ):
+        return {}, [], False, "smoke state budget baselines differ from its contract"
     launch_attempts = state.get("launch_attempts")
     if (
         isinstance(launch_attempts, bool)
@@ -8663,12 +8722,34 @@ def predecessor_smoke_terminal_usage(
                 evidence = load_json(evidence_path)
             except (OSError, json.JSONDecodeError, SystemExit) as error:
                 return {}, [], True, f"{attempt_name} evidence cannot be read: {error}"
-            if evidence.get("lifecycle") != lifecycle:
+            evidence_outstanding = evidence.get("outstanding_request_ids")
+            evidence_settled = evidence.get("settled_request_ids")
+            evidence_terminal = evidence.get("terminal_request_ids")
+            if (
+                evidence.get("entrant") != entrant_id
+                or evidence.get("attempt") != attempt
+                or evidence.get("smoke_contract_sha256") != contract
+                or not isinstance(evidence_outstanding, list)
+                or evidence_outstanding != sorted(set(evidence_outstanding))
+                or not isinstance(evidence_settled, list)
+                or evidence_settled != sorted(set(evidence_settled))
+                or not isinstance(evidence_terminal, list)
+                or evidence_terminal != sorted(set(evidence_terminal))
+            ):
+                return {}, [], True, f"{attempt_name} evidence identity is not bound"
+            if (
+                evidence.get("lifecycle") != lifecycle
+                or not attempt_unknown.issubset(evidence_outstanding)
+                or not set(evidence_outstanding).issubset(request_states)
+                or set(evidence_terminal) != set(lifecycle["terminal_usage"])
+                or not set(evidence_settled).issubset(evidence_terminal)
+                or set(evidence_outstanding) & set(evidence_settled)
+            ):
                 return (
                     {},
                     [],
                     True,
-                    f"{attempt_name} lifecycle differs from sealed evidence",
+                    f"{attempt_name} lifecycle or accounting differs from sealed evidence",
                 )
             isolation = evidence.get("listener_isolation")
             if not isinstance(isolation, dict):
