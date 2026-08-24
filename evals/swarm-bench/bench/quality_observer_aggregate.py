@@ -449,6 +449,7 @@ def correction_events(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if outcome not in {
                 "active",
                 "accepted",
+                "distinct_error_recorrected",
                 "repeated",
                 "repeated_then_rescheduled",
             }:
