@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "controller_sha256": "5e4abcf8533e5131f19e8f366144e235cb78ff9938af842d7cd7e805105acd5e",
+  "controller_sha256": "3b89c8ad01613d4b0b0cc114778d978f48be24e09f22be95d1a5b789edfa71b0",
   "live_root": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17",
   "run_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17/swarm-3node-qwen38-brainwaves-r0",
   "state_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17-terminal-closure",
@@ -64,6 +64,20 @@
     "package_json_sha256": "34aeea73e7ebfdbdb08e8845819034a7afd55706a0796ec4ff86e3fcd05ae513"
   },
   "runtime": {
-    "lsof": "/usr/sbin/lsof"
+    "lsof": "/usr/sbin/lsof",
+    "playwright": {
+      "module_root": "/Users/mihaiperdum/.nvm/versions/node/v22.22.0/lib/node_modules/playwright",
+      "module_tree_sha256": "4d68fed0312075da8d9dfeafadca4741c72479bfb3c8cad94e0554bbfeebf645",
+      "version": "1.57.0",
+      "browsers_json": "node_modules/playwright-core/browsers.json",
+      "browsers_json_sha256": "b509d013de89d621a142818e0937de356fbb0169096922c08581a4f83e463b8e",
+      "browser_name": "chromium-headless-shell",
+      "browser_revision": "1200",
+      "installed_browsers_path": "/Users/mihaiperdum/Library/Caches/ms-playwright",
+      "browser_directory": "chromium_headless_shell-1200",
+      "browser_tree_sha256": "55b4892f42b70576e0ce296bb4f8b49ba5cb5464e548fb07e4cc613027c7196c",
+      "executable": "chrome-headless-shell-mac-arm64/chrome-headless-shell",
+      "executable_sha256": "8d6921aef8cc4c7bc48b03d4e709f9b563f8d1fd1ed08bc7fd5fd9784ffc2545"
+    }
   }
 }

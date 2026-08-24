@@ -24,6 +24,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Any, Iterable, Mapping, Sequence
@@ -40,6 +41,48 @@ SENSITIVE_TEXT_PATTERNS = (
 )
 TERMINAL_PHASES = {"complete", "failed", "stopped"}
 SB7_TIERS = frozenset({"A", "B", "C", "D", "J", "V", "P", "T", "X", "R", "E"})
+PLAYWRIGHT_SMOKE_SOURCE = r"""
+const { createRequire } = require('node:module');
+const { join, sep } = require('node:path');
+
+const moduleRoot = process.argv[1];
+const expectedVersion = process.argv[2];
+const probeScript = process.argv[3];
+const load = createRequire(join(moduleRoot, '__terminal_closure__.cjs'));
+const probeLoad = createRequire(probeScript);
+
+(async () => {
+  const packageJson = load(join(moduleRoot, 'package.json'));
+  if (packageJson.version !== expectedVersion) {
+    throw new Error(`Playwright version ${packageJson.version} differs from ${expectedVersion}`);
+  }
+  const resolvedEntry = probeLoad.resolve('playwright');
+  if (!resolvedEntry.startsWith(`${moduleRoot}${sep}`)) {
+    throw new Error(`probe resolved an unpinned Playwright module: ${resolvedEntry}`);
+  }
+  const playwright = probeLoad('playwright');
+  const browser = await playwright.chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<!doctype html><title>terminal-closure-playwright-smoke</title>');
+    if (await page.title() !== 'terminal-closure-playwright-smoke') {
+      throw new Error('Playwright browser smoke page returned the wrong title');
+    }
+  } finally {
+    await browser.close();
+  }
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    browser: 'chromium',
+    headless: true,
+    pinnedModule: true,
+    version: packageJson.version,
+  }));
+})().catch((error) => {
+  process.stderr.write(`${error && error.message ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+});
+"""
 
 
 class ClosureError(RuntimeError):
@@ -323,6 +366,266 @@ def manifests_equal(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return left.get("tree_sha256") == right.get("tree_sha256") and left.get("entries") == right.get("entries")
 
 
+def validate_playwright_runtime(
+    runtime: Mapping[str, Any], render_node: pathlib.Path, render_node_sha256: str
+) -> dict[str, Any]:
+    required = {
+        "module_root",
+        "module_tree_sha256",
+        "version",
+        "browsers_json",
+        "browsers_json_sha256",
+        "browser_name",
+        "browser_revision",
+        "installed_browsers_path",
+        "browser_directory",
+        "browser_tree_sha256",
+        "executable",
+        "executable_sha256",
+    }
+    if set(runtime) != required:
+        raise ClosureError("Playwright runtime contract fields changed")
+    for field in (
+        "module_tree_sha256",
+        "browsers_json_sha256",
+        "browser_tree_sha256",
+        "executable_sha256",
+    ):
+        if not re.fullmatch(r"[0-9a-f]{64}", str(runtime.get(field, ""))):
+            raise ClosureError(f"Playwright runtime {field} must be a SHA-256")
+    if render_node.is_symlink() or not render_node.is_file():
+        raise ClosureError("Playwright Node runtime is not a regular file")
+    if sha256_file(render_node) != render_node_sha256:
+        raise ClosureError("Playwright Node runtime hash changed")
+
+    configured_module_root = pathlib.Path(str(runtime["module_root"]))
+    if configured_module_root.is_symlink() or not configured_module_root.is_dir():
+        raise ClosureError("Playwright module root is not a real directory")
+    module_root = configured_module_root.resolve()
+    module_manifest = tree_manifest(module_root)
+    if module_manifest["tree_sha256"] != runtime["module_tree_sha256"]:
+        raise ClosureError("Playwright module tree hash changed")
+    package_json_path = module_root / "package.json"
+    if package_json_path.is_symlink() or not package_json_path.is_file():
+        raise ClosureError("Playwright package manifest is missing")
+    package_json = read_json(package_json_path)
+    if package_json.get("version") != runtime["version"]:
+        raise ClosureError("Playwright package version changed")
+
+    browsers_json_relative = pathlib.Path(str(runtime["browsers_json"]))
+    if browsers_json_relative.is_absolute() or ".." in browsers_json_relative.parts:
+        raise ClosureError("Playwright browsers.json path escaped its module root")
+    browsers_json_path = module_root / browsers_json_relative
+    if (
+        browsers_json_path.is_symlink()
+        or not browsers_json_path.is_file()
+        or not path_is_within(browsers_json_path, module_root)
+        or sha256_file(browsers_json_path) != runtime["browsers_json_sha256"]
+    ):
+        raise ClosureError("Playwright browsers.json hash changed")
+    browsers_json = read_json(browsers_json_path)
+    browser_rows = [
+        row
+        for row in browsers_json.get("browsers", [])
+        if isinstance(row, dict) and row.get("name") == runtime["browser_name"]
+    ]
+    if len(browser_rows) != 1 or str(browser_rows[0].get("revision")) != str(
+        runtime["browser_revision"]
+    ):
+        raise ClosureError("Playwright browser revision differs from browsers.json")
+    expected_directory = (
+        str(runtime["browser_name"]).replace("-", "_")
+        + "-"
+        + str(runtime["browser_revision"])
+    )
+    if runtime["browser_directory"] != expected_directory:
+        raise ClosureError("Playwright browser directory differs from its pinned revision")
+
+    configured_browsers_path = pathlib.Path(str(runtime["installed_browsers_path"]))
+    if configured_browsers_path.is_symlink() or not configured_browsers_path.is_dir():
+        raise ClosureError("installed Playwright browser root is not a real directory")
+    installed_browsers_path = configured_browsers_path.resolve()
+    browser_dir = installed_browsers_path / expected_directory
+    if browser_dir.is_symlink() or not browser_dir.is_dir():
+        raise ClosureError("pinned Playwright browser revision is missing")
+    browser_manifest = tree_manifest(browser_dir)
+    if browser_manifest["tree_sha256"] != runtime["browser_tree_sha256"]:
+        raise ClosureError("Playwright browser runtime tree hash changed")
+
+    executable_relative = pathlib.Path(str(runtime["executable"]))
+    if executable_relative.is_absolute() or ".." in executable_relative.parts:
+        raise ClosureError("Playwright executable escaped its pinned browser directory")
+    executable = browser_dir / executable_relative
+    if (
+        executable.is_symlink()
+        or not executable.is_file()
+        or not path_is_within(executable, browser_dir)
+        or not os.access(executable, os.X_OK)
+        or sha256_file(executable) != runtime["executable_sha256"]
+    ):
+        raise ClosureError("Playwright browser executable hash/mode changed")
+    return {
+        "module_root": str(module_root),
+        "module_search_path": str(module_root.parent),
+        "module_tree_sha256": module_manifest["tree_sha256"],
+        "version": runtime["version"],
+        "browser_name": runtime["browser_name"],
+        "browser_revision": str(runtime["browser_revision"]),
+        "browser_directory": expected_directory,
+        "browser_dir": str(browser_dir),
+        "browser_tree_sha256": browser_manifest["tree_sha256"],
+        "executable": str(executable),
+        "executable_sha256": runtime["executable_sha256"],
+    }
+
+
+def prepare_playwright_browser_view(
+    runtime_info: Mapping[str, Any], view_root: pathlib.Path
+) -> pathlib.Path:
+    ensure_secure_dir(view_root)
+    browser_link = view_root / str(runtime_info["browser_directory"])
+    browser_dir = pathlib.Path(str(runtime_info["browser_dir"])).resolve()
+    if os.path.lexists(browser_link):
+        if not browser_link.is_symlink() or browser_link.resolve() != browser_dir:
+            raise ClosureError("private Playwright browser view identity changed")
+    else:
+        os.symlink(browser_dir, browser_link, target_is_directory=True)
+        directory = os.open(view_root, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    return view_root
+
+
+def create_playwright_node_wrapper(
+    wrapper_path: pathlib.Path,
+    render_node: pathlib.Path,
+    runtime_info: Mapping[str, Any],
+    browser_view: pathlib.Path,
+) -> str:
+    payload = (
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "import sys\n"
+        "\n"
+        "environment = dict(os.environ)\n"
+        f"environment['NODE_PATH'] = {str(runtime_info['module_search_path'])!r}\n"
+        f"environment['PLAYWRIGHT_BROWSERS_PATH'] = {str(browser_view)!r}\n"
+        f"node = {str(render_node)!r}\n"
+        "os.execve(node, [node, *sys.argv[1:]], environment)\n"
+    ).encode()
+    if os.path.lexists(wrapper_path):
+        if (
+            wrapper_path.is_symlink()
+            or not wrapper_path.is_file()
+            or wrapper_path.read_bytes() != payload
+        ):
+            raise ClosureError("private Playwright Node wrapper identity changed")
+        wrapper_path.chmod(0o500)
+    else:
+        atomic_write(wrapper_path, payload, 0o500)
+    return sha256_file(wrapper_path)
+
+
+def smoke_playwright_runtime(
+    runtime_info: Mapping[str, Any],
+    render_node: pathlib.Path,
+    runtime_home: pathlib.Path,
+    runtime_tmp: pathlib.Path,
+    browser_view: pathlib.Path,
+    probe_script: pathlib.Path,
+    timeout_seconds: float = 60,
+) -> dict[str, Any]:
+    for directory in (runtime_home, runtime_tmp):
+        ensure_secure_dir(directory)
+    if browser_view.is_symlink() or not browser_view.is_dir():
+        raise ClosureError("private Playwright browser view is not a real directory")
+    if probe_script.is_symlink() or not probe_script.is_file():
+        raise ClosureError("frozen Playwright product probe is not a regular file")
+    inherited_path = safe_environment().get("PATH", "")
+    pinned_path = str(render_node.parent)
+    if inherited_path:
+        pinned_path += os.pathsep + inherited_path
+    environment = safe_environment(
+        {
+            "HOME": str(runtime_home),
+            "TMPDIR": str(runtime_tmp),
+            "NODE_PATH": str(runtime_info["module_search_path"]),
+            "PATH": pinned_path,
+            "PLAYWRIGHT_BROWSERS_PATH": str(browser_view),
+        }
+    )
+    process = subprocess.Popen(
+        [
+            str(render_node),
+            "-e",
+            PLAYWRIGHT_SMOKE_SOURCE,
+            str(runtime_info["module_root"]),
+            str(runtime_info["version"]),
+            str(probe_script),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        terminate_process_group(process.pid)
+        stdout, stderr = process.communicate()
+        raise ClosureError("pinned Playwright browser smoke launch timed out") from error
+    if process.returncode != 0:
+        detail = redact_text(stderr.decode("utf-8", "replace")[:600]).strip()
+        raise ClosureError(
+            "pinned Playwright browser smoke launch failed"
+            + (f": {detail}" if detail else "")
+        )
+    try:
+        receipt = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        raise ClosureError("pinned Playwright browser smoke receipt is malformed") from error
+    if receipt != {
+        "ok": True,
+        "browser": "chromium",
+        "headless": True,
+        "pinnedModule": True,
+        "version": runtime_info["version"],
+    }:
+        raise ClosureError("pinned Playwright browser smoke receipt differs")
+    return receipt
+
+
+def preflight_playwright_runtime(
+    runtime: Mapping[str, Any],
+    render_node: pathlib.Path,
+    render_node_sha256: str,
+    probe_script: pathlib.Path,
+) -> dict[str, Any]:
+    before = validate_playwright_runtime(runtime, render_node, render_node_sha256)
+    with tempfile.TemporaryDirectory(prefix="v17-playwright-preflight-") as temporary:
+        runtime_root = pathlib.Path(temporary)
+        runtime_home = runtime_root / "home"
+        runtime_tmp = runtime_root / "tmp"
+        browser_view = prepare_playwright_browser_view(
+            before, runtime_root / "playwright-browsers"
+        )
+        smoke_playwright_runtime(
+            before,
+            render_node,
+            runtime_home,
+            runtime_tmp,
+            browser_view,
+            probe_script,
+        )
+    after = validate_playwright_runtime(runtime, render_node, render_node_sha256)
+    if before != after:
+        raise ClosureError("Playwright runtime changed during its preflight launch")
+    return before
+
+
 def finite_number(value: Any, minimum: float | None = None, maximum: float | None = None) -> bool:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
@@ -498,6 +801,21 @@ def validate_config(config: dict[str, Any]) -> None:
     for field in ("sha256", "node_sha256", "package_lock_sha256", "package_json_sha256"):
         if not re.fullmatch(r"[0-9a-f]{64}", str(config["publisher"].get(field, ""))):
             raise ClosureError(f"publisher.{field} must be a frozen SHA-256")
+    playwright_runtime = config["runtime"].get("playwright")
+    if not isinstance(playwright_runtime, dict):
+        raise ClosureError("runtime.playwright contract is missing")
+    for field in (
+        "module_tree_sha256",
+        "browsers_json_sha256",
+        "browser_tree_sha256",
+        "executable_sha256",
+    ):
+        if not re.fullmatch(r"[0-9a-f]{64}", str(playwright_runtime.get(field, ""))):
+            raise ClosureError(f"runtime.playwright.{field} must be a frozen SHA-256")
+    for field in ("module_root", "installed_browsers_path"):
+        runtime_path = pathlib.Path(str(playwright_runtime.get(field, ""))).resolve()
+        if path_is_within(runtime_path, live_root):
+            raise ClosureError(f"runtime.playwright.{field} must be outside the live v17 tree")
     if int(config.get("max_score_attempts", 0)) < 1:
         raise ClosureError("max_score_attempts must be positive")
     if int(config.get("max_publish_attempts", 0)) < 1:
@@ -638,6 +956,11 @@ class TerminalClosure:
         node = pathlib.Path(self.config["publisher"]["node"])
         if node.is_symlink() or sha256_file(node) != self.config["publisher"]["node_sha256"]:
             raise ClosureError("publisher/render Node runtime hash changed")
+        validate_playwright_runtime(
+            self.config["runtime"]["playwright"],
+            node,
+            self.config["publisher"]["node_sha256"],
+        )
         package_lock = pathlib.Path(self.config["publisher"]["package_lock"])
         if sha256_file(package_lock) != self.config["publisher"]["package_lock_sha256"]:
             raise ClosureError("publisher dependency lock changed")
@@ -857,7 +1180,11 @@ class TerminalClosure:
         score_path = attempt / "raw-score.json"
         seal_path = attempt / "score-tree-seal.json"
         clone = attempt / "tree"
-        if any(path.is_symlink() for path in (result_path, score_path, seal_path)):
+        render_wrapper = attempt / "runtime" / "playwright-node"
+        if any(
+            path.is_symlink()
+            for path in (result_path, score_path, seal_path, render_wrapper)
+        ):
             raise ClosureError("successful scoring evidence contains a symbolic link")
         if clone.is_symlink() or not clone.is_dir():
             raise ClosureError("successful scoring clone is not a real directory")
@@ -874,6 +1201,16 @@ class TerminalClosure:
             != self.config["expected"]["instrument_files"][
                 "evals/swarm-bench/bench/score_sb7.py"
             ]
+            or result.get("playwright_module_tree_sha256")
+            != self.config["runtime"]["playwright"]["module_tree_sha256"]
+            or result.get("playwright_browser_tree_sha256")
+            != self.config["runtime"]["playwright"]["browser_tree_sha256"]
+            or result.get("playwright_executable_sha256")
+            != self.config["runtime"]["playwright"]["executable_sha256"]
+            or not render_wrapper.is_file()
+            or stat.S_IMODE(render_wrapper.stat().st_mode) != 0o500
+            or sha256_file(render_wrapper)
+            != result.get("playwright_node_wrapper_sha256")
             or result.get("raw_tree_sha256")
             != read_json(self.state_dir / "raw-tree-seal.json").get("tree_sha256")
             or sha256_file(score_path) != result.get("score_sha256")
@@ -931,6 +1268,14 @@ class TerminalClosure:
             "instrument_files": self.config["expected"]["instrument_files"],
             "render_node": self.config["publisher"]["node"],
             "render_node_sha256": self.config["publisher"]["node_sha256"],
+            "playwright_runtime": self.config["runtime"]["playwright"],
+            "playwright_probe": str(
+                self.live_root
+                / "instrument/evals/swarm-bench/bench/product_probe_v3.mjs"
+            ),
+            "playwright_probe_sha256": self.config["expected"]["instrument_files"][
+                "evals/swarm-bench/bench/product_probe_v3.mjs"
+            ],
             "score_contract": {
                 "raw_scorer_version": self.config["expected"]["raw_scorer_version"],
                 "check_count": self.config["expected"]["check_count"],
@@ -1080,6 +1425,18 @@ class TerminalClosure:
                     "raw_tree_sha256": raw_seal["tree_sha256"],
                     "scorer_sha256": worker_result["scorer_sha256"],
                     "score_tree_sha256": worker_result["score_tree_sha256"],
+                    "playwright_module_tree_sha256": worker_result[
+                        "playwright_module_tree_sha256"
+                    ],
+                    "playwright_browser_tree_sha256": worker_result[
+                        "playwright_browser_tree_sha256"
+                    ],
+                    "playwright_executable_sha256": worker_result[
+                        "playwright_executable_sha256"
+                    ],
+                    "playwright_node_wrapper_sha256": worker_result[
+                        "playwright_node_wrapper_sha256"
+                    ],
                     "auto_verdict_sha256": terminal["auto_verdict_sha256"],
                 },
             }
@@ -1092,6 +1449,18 @@ class TerminalClosure:
             "raw_tree_sha256": raw_seal["tree_sha256"],
             "scorer_sha256": worker_result["scorer_sha256"],
             "score_tree_sha256": worker_result["score_tree_sha256"],
+            "playwright_module_tree_sha256": worker_result[
+                "playwright_module_tree_sha256"
+            ],
+            "playwright_browser_tree_sha256": worker_result[
+                "playwright_browser_tree_sha256"
+            ],
+            "playwright_executable_sha256": worker_result[
+                "playwright_executable_sha256"
+            ],
+            "playwright_node_wrapper_sha256": worker_result[
+                "playwright_node_wrapper_sha256"
+            ],
             "candidate_commit": launch["candidate"]["commit"],
             "engine_events": terminal["engine_events"],
             "run_started_at": terminal["run_started_at"],
@@ -1324,6 +1693,18 @@ class TerminalClosure:
             "fixture_seed": terminal["fixture_seed"],
             "scorer_sha256": provenance["scorer_sha256"],
             "score_tree_sha256": provenance["score_tree_sha256"],
+            "playwright_module_tree_sha256": provenance[
+                "playwright_module_tree_sha256"
+            ],
+            "playwright_browser_tree_sha256": provenance[
+                "playwright_browser_tree_sha256"
+            ],
+            "playwright_executable_sha256": provenance[
+                "playwright_executable_sha256"
+            ],
+            "playwright_node_wrapper_sha256": provenance[
+                "playwright_node_wrapper_sha256"
+            ],
         }
         atomic_json(self.state_dir / "result.json", final)
         self.checkpoint("complete", result=final)
@@ -1437,6 +1818,12 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
     render_node = pathlib.Path(str(job["render_node"]))
     if render_node.is_symlink() or sha256_file(render_node) != job["render_node_sha256"]:
         raise ClosureError("score worker render Node runtime changed")
+    playwright_runtime = job.get("playwright_runtime")
+    if not isinstance(playwright_runtime, dict):
+        raise ClosureError("score worker lacks its pinned Playwright runtime contract")
+    playwright_info = validate_playwright_runtime(
+        playwright_runtime, render_node, str(job["render_node_sha256"])
+    )
     if tree_manifest(clone)["tree_sha256"] != job["raw_tree_sha256"]:
         raise ClosureError("score worker clone differs from the raw seal")
     seed = str(job["seed"])
@@ -1470,11 +1857,36 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
         runtime_tmp = runtime_root / "tmp"
         ensure_secure_dir(runtime_home)
         ensure_secure_dir(runtime_tmp)
+        browser_view = prepare_playwright_browser_view(
+            playwright_info, runtime_root / "playwright-browsers"
+        )
+        probe_script = pathlib.Path(str(job["playwright_probe"]))
+        if (
+            probe_script.is_symlink()
+            or not probe_script.is_file()
+            or not path_is_within(
+                probe_script, pathlib.Path(str(job["instrument_root"]))
+            )
+            or sha256_file(probe_script) != job["playwright_probe_sha256"]
+        ):
+            raise ClosureError("score worker frozen Playwright product probe changed")
+        smoke_playwright_runtime(
+            playwright_info,
+            render_node,
+            runtime_home,
+            runtime_tmp,
+            browser_view,
+            probe_script,
+        )
+        render_wrapper = runtime_root / "playwright-node"
+        render_wrapper_sha256 = create_playwright_node_wrapper(
+            render_wrapper, render_node, playwright_info, browser_view
+        )
         score_environment = safe_environment(
             {
                 "HOME": str(runtime_home),
                 "TMPDIR": str(runtime_tmp),
-                "GOOSE_SWARM_RENDER_NODE": str(render_node),
+                "GOOSE_SWARM_RENDER_NODE": str(render_wrapper),
             }
         )
         command = [
@@ -1554,6 +1966,18 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
         verify_instrument_inventory(job)
         if sha256_file(render_node) != job["render_node_sha256"]:
             raise ClosureError("render Node runtime changed during authoritative scoring")
+        playwright_after = validate_playwright_runtime(
+            playwright_runtime, render_node, str(job["render_node_sha256"])
+        )
+        if playwright_after != playwright_info:
+            raise ClosureError("Playwright runtime changed during authoritative scoring")
+        if (
+            render_wrapper.is_symlink()
+            or not render_wrapper.is_file()
+            or stat.S_IMODE(render_wrapper.stat().st_mode) != 0o500
+            or sha256_file(render_wrapper) != render_wrapper_sha256
+        ):
+            raise ClosureError("private Playwright Node wrapper changed during scoring")
         accepted_exit = scorer_exit
         failure = termination_reason
         if termination_reason:
@@ -1583,6 +2007,16 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
             "scorer_exit_code": scorer_exit,
             "failure": failure,
             "scorer_sha256": job["scorer_sha256"],
+            "playwright_module_tree_sha256": playwright_info[
+                "module_tree_sha256"
+            ],
+            "playwright_browser_tree_sha256": playwright_info[
+                "browser_tree_sha256"
+            ],
+            "playwright_executable_sha256": playwright_info[
+                "executable_sha256"
+            ],
+            "playwright_node_wrapper_sha256": render_wrapper_sha256,
             "raw_tree_sha256": job["raw_tree_sha256"],
             "fixture_seed": seed,
             "port": port,
@@ -1804,6 +2238,13 @@ def preflight(config_path: pathlib.Path) -> int:
     audit.live_root = pathlib.Path(config["live_root"]).resolve()
     audit.run_dir = pathlib.Path(config["run_dir"]).resolve()
     launch, manifest = TerminalClosure.validate_frozen_inputs(audit)
+    playwright = preflight_playwright_runtime(
+        config["runtime"]["playwright"],
+        pathlib.Path(config["publisher"]["node"]),
+        config["publisher"]["node_sha256"],
+        audit.live_root
+        / "instrument/evals/swarm-bench/bench/product_probe_v3.mjs",
+    )
     processes = {
         role: validate_authenticated_process(role, launch[role])
         for role in ("harness", "goose", "monitor")
@@ -1819,6 +2260,15 @@ def preflight(config_path: pathlib.Path) -> int:
                 "protected_document_ids": config["publication"]["protected_document_ids"],
                 "vendor_port": config["expected"]["vendor_port"],
                 "instrument_files": len(manifest["files"]),
+                "playwright": {
+                    "version": playwright["version"],
+                    "browser": playwright["browser_name"],
+                    "revision": playwright["browser_revision"],
+                    "module_tree_sha256": playwright["module_tree_sha256"],
+                    "browser_tree_sha256": playwright["browser_tree_sha256"],
+                    "executable_sha256": playwright["executable_sha256"],
+                    "empty_home_smoke": True,
+                },
                 "authenticated_processes_alive": processes,
                 "state_dir": config["state_dir"],
             },

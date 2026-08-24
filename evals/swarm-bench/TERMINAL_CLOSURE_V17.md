@@ -7,7 +7,9 @@ logs, receipts, and frozen control snapshot live under
 `0700` directories, and `0600` receipts/logs.
 
 The frozen config is `terminal-closure-v17.json`. A read-only preflight authenticates the live
-process receipts and every frozen input without creating closure state:
+process receipts and every frozen input without creating closure state. It also hashes the exact
+Playwright 1.57.0 module tree and Chromium headless-shell revision 1200, mounts only that pinned
+revision into an empty-`HOME` temporary view, and proves a real browser page can launch and close:
 
 ```bash
 python3 evals/swarm-bench/terminal_closure.py preflight \
@@ -47,3 +49,13 @@ create/adopt the exact new ID `brun-fleet-qwen38-brainwaves-sb70`; it positively
 both protected IDs before and after, and has no replace path. Completion requires fresh no-cache
 board/run fetches, exact Sanity payload and telemetry, ItemList/Dataset JSON-LD, direct PNG checks,
 rendered screenshot references, and no `-rc` label on either public surface.
+
+The score worker keeps its private empty `HOME` and `TMPDIR`; it does not inherit the operator's
+home or Playwright cache. Instead it creates a private `PLAYWRIGHT_BROWSERS_PATH` view containing a
+single symlink to the pinned headless-shell revision. A private hashed Node wrapper injects that
+view and a `NODE_PATH` containing only the pinned Playwright module root into browser probes, without
+leaking either variable into the entrant processes. The smoke launch resolves Playwright from the
+frozen product probe's own location before invoking the scorer, then the worker re-hashes the
+module/browser/executable and wrapper after scoring and rejects the attempt if the runtime is
+absent, resolves elsewhere, or changes. Those hashes are carried into the worker, provenance, and
+final receipts.
