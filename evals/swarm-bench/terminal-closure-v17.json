@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "controller_sha256": "5e4abcf8533e5131f19e8f366144e235cb78ff9938af842d7cd7e805105acd5e",
+  "live_root": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17",
+  "run_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17/swarm-3node-qwen38-brainwaves-r0",
+  "state_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17-terminal-closure",
+  "score_lock_path": "/Users/mihaiperdum/goose-builds/.sb7-hermetic-score.lock",
+  "poll_seconds": 10,
+  "seal_settle_seconds": 5,
+  "max_score_attempts": 2,
+  "score_timeout_seconds": 21600,
+  "max_publish_attempts": 3,
+  "publish_timeout_seconds": 1800,
+  "expected": {
+    "vendor_port": 18970,
+    "entrant": "swarm-3node-qwen38-brainwaves",
+    "raw_scorer_version": "sb-7.0-rc",
+    "check_count": 91,
+    "telemetry_nodes": [
+      "gabee",
+      "mihai",
+      "workhorse"
+    ],
+    "run_id": "swarm-20260824-204355518",
+    "models": [
+      "mihai-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
+      "workhorse-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
+      "gabee-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx"
+    ],
+    "candidate_commit": "862199208d93d02c26d9f938490037aca3f06f71",
+    "launch_sha256": "e1e5bfca6ed5232b6c847b172225d45935961cf6cf92cc17e7cf8c3bae1a0e36",
+    "instrument_manifest_sha256": "c5e159e9c598381af4230e882126fcaab05701438ae88b31eb058d61668112f5",
+    "binary_sha256": "07ba58ab3b87c7e6cbe0aea7af192e33621050ef60029251330d36c4566a5de3",
+    "instrument_files": {
+      "evals/swarm-bench/spec-build-sb7.md": "56f66c21c3557e9cbf6bccc4d4d01059ad88e4ee610e71f4cf67a8a34c330129",
+      "evals/swarm-bench/bench/run_build.py": "0c5083fca96554af773b16a4f1452bc7bd498c2b71c4d7f721bde5609649f95e",
+      "evals/swarm-bench/bench/score_sb7.py": "3fcfce9d6ea302861d0ed2d956d0ec401adb924021ef9fa0e3d74548f2ed5fea",
+      "evals/swarm-bench/bench/vendor_service_v3.py": "f18979ceeccea722b5f1288912f87ae838c979ac7cb7d52b789f20b09a17ff5f",
+      "evals/swarm-bench/bench/fixtures_v3.py": "40d7415ea8b9851619062c2e64d281c38afe631acca1e0802cf1afb55efbc4a6",
+      "evals/swarm-bench/bench/schedule_sb7.py": "4c765a401db8513f8c1efbf6d4bd210b3527cddecff71192e534cf515d457e86",
+      "evals/swarm-bench/bench/product_probe_v3.mjs": "3b54cdf6fdeca9b45f56725fb01e964dd9ae94a4125ff2210b2b2de99c4d4c7b",
+      "evals/swarm-bench/bench/sb7-thresholds.json": "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3",
+      "scripts/monitor_swarm_run.py": "7f55499f992e47dbe6bf6158977ea78b945f0a5e5c09cebd41511ba7d52fea8c"
+    }
+  },
+  "publication": {
+    "target_document_id": "brun-fleet-qwen38-brainwaves-sb70",
+    "protected_document_ids": [
+      "brun-fleet-qwen38-sb70",
+      "brun-fleet-qwen-sb70"
+    ]
+  },
+  "publisher": {
+    "path": "/Users/mihaiperdum/Projects/LeanZero-website/scripts/seed-fleet-brainwaves-sb70.mjs",
+    "sha256": "ea04d936c22f6908da462f2ca31d6ec83fd74a99597a4631835975b2eae4d0d4",
+    "node": "/Users/mihaiperdum/.nvm/versions/node/v22.22.0/bin/node",
+    "node_sha256": "913b144fdb40638b1acef7974ab3c33fbd527cc0974cb5da467ab1e6ac51b4d4",
+    "site_root": "/Users/mihaiperdum/Projects/LeanZero-website",
+    "env_file": "/Users/mihaiperdum/Projects/LeanZero-website/.env.local",
+    "base_url": "https://leanzero.net",
+    "package_lock": "/Users/mihaiperdum/Projects/LeanZero-website/package-lock.json",
+    "package_lock_sha256": "3f1463f43e8a36232fa64796c5a979d8a1a36784c930f6aead92e6d3d212748d",
+    "package_json": "/Users/mihaiperdum/Projects/LeanZero-website/package.json",
+    "package_json_sha256": "34aeea73e7ebfdbdb08e8845819034a7afd55706a0796ec4ff86e3fcd05ae513"
+  },
+  "runtime": {
+    "lsof": "/usr/sbin/lsof"
+  }
+}
