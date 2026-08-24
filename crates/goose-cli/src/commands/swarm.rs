@@ -6522,149 +6522,6 @@ mod tests {
     }
 
     #[test]
-    fn target_pipeline_window_enqueues_paired_covers_without_a_full_cover_barrier() {
-        assert_eq!(research_target_pipeline_concurrency(3, 26), 2);
-        assert_eq!(research_target_pipeline_concurrency(4, 26), 3);
-        assert_eq!(research_target_pipeline_concurrency(8, 3), 3);
-        assert_eq!(research_target_pipeline_concurrency(3, 1), 1);
-        assert_eq!(research_target_pipeline_concurrency(3, 0), 0);
-    }
-
-    #[tokio::test]
-    async fn paired_jury_starts_second_cover_before_first_cover_drains() {
-        let partition_count = 26usize;
-        let pipeline_concurrency = research_target_pipeline_concurrency(3, partition_count);
-        let lanes = Arc::new(
-            ["host-alpha", "host-beta", "host-gamma"]
-                .into_iter()
-                .enumerate()
-                .map(|(index, host)| ResearchPhysicalLane {
-                    token: format!("lane-{index}"),
-                    model_id: format!("model-{index}"),
-                    physical_host_id: host.to_string(),
-                    routing_weight: 1,
-                })
-                .collect::<Vec<_>>(),
-        );
-        let host_permits = Arc::new(
-            lanes
-                .iter()
-                .map(|lane| {
-                    (
-                        lane.physical_host_id.clone(),
-                        Arc::new(tokio::sync::Semaphore::new(1)),
-                    )
-                })
-                .collect::<HashMap<_, _>>(),
-        );
-        let runtime = Arc::new(ResearchAuthorityRuntime {
-            stage: "generic-target-jury".to_string(),
-            cycle: None,
-            requirements: Arc::new(Vec::new()),
-            sources: Arc::new(Vec::new()),
-            lanes,
-            host_permits,
-            jury_pair_permits: Arc::new(tokio::sync::Semaphore::new(pipeline_concurrency)),
-        });
-        let starts = Arc::new(Mutex::new(Vec::<(usize, &'static str)>::new()));
-        let recorded = starts.clone();
-        let pipeline_runtime = runtime.clone();
-        let mut pipelines = futures::stream::iter((0..partition_count).map(move |partition| {
-            let first_starts = recorded.clone();
-            let second_starts = recorded.clone();
-            let first_runtime = pipeline_runtime.clone();
-            let second_runtime = pipeline_runtime.clone();
-            async move {
-                let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
-                let first_claims = claimed_hosts.clone();
-                let second_claims = claimed_hosts;
-                let partition_id = format!("partition-{partition}");
-                let second_partition_id = partition_id.clone();
-                let first = async move {
-                    let failed_hosts = HashSet::new();
-                    let acquired = acquire_research_target_pair_lane(
-                        &first_runtime,
-                        &first_claims,
-                        &failed_hosts,
-                        &partition_id,
-                        "jury-1",
-                    )
-                    .await?;
-                    first_starts.lock().unwrap().push((partition, "jury-1"));
-                    Ok::<_, anyhow::Error>(acquired)
-                };
-                let second = async move {
-                    let failed_hosts = HashSet::new();
-                    let acquired = acquire_research_target_pair_lane(
-                        &second_runtime,
-                        &second_claims,
-                        &failed_hosts,
-                        &second_partition_id,
-                        "jury-2",
-                    )
-                    .await?;
-                    second_starts.lock().unwrap().push((partition, "jury-2"));
-                    Ok::<_, anyhow::Error>(acquired)
-                };
-                join_research_target_jury_pair(first, second).await
-            }
-        }))
-        .buffer_unordered(pipeline_concurrency);
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while let Some(result) = pipelines.next().await {
-                let ((first_lane, _first_permit), (second_lane, _second_permit)) = result.unwrap();
-                assert_ne!(
-                    first_lane.physical_host_id, second_lane.physical_host_id,
-                    "paired jurors must resolve to distinct physical hosts"
-                );
-            }
-        })
-        .await
-        .expect("sequential jury-1 admission recreates the captured full-cover deadlock");
-
-        {
-            let starts = starts.lock().unwrap();
-            let first_jury_2 = starts
-                .iter()
-                .position(|(_, pass)| *pass == "jury-2")
-                .expect("paired cover omitted jury-2");
-            assert!(
-                starts[..first_jury_2]
-                    .iter()
-                    .filter(|(_, pass)| *pass == "jury-1")
-                    .count()
-                    < partition_count,
-                "the full first cover drained before any jury-2 work started"
-            );
-            for partition in 0..partition_count {
-                assert_eq!(
-                    starts
-                        .iter()
-                        .filter(|(observed, _)| *observed == partition)
-                        .count(),
-                    2,
-                    "every partition must enqueue exactly two cover units"
-                );
-            }
-        }
-
-        let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::from([
-            "host-alpha".to_string()
-        ])));
-        let failed_hosts = HashSet::from(["host-beta".to_string()]);
-        let (fallback, _permit) = acquire_research_target_pair_lane(
-            runtime.as_ref(),
-            &claimed_hosts,
-            &failed_hosts,
-            "partition-fallback",
-            "jury-1",
-        )
-        .await
-        .unwrap();
-        assert_eq!(fallback.physical_host_id, "host-gamma");
-    }
-
-    #[test]
     fn reversed_order_same_vocabulary_mints_distinct_semantic_gap_ids() {
         let first = generic_research_gap("Does alpha precede beta?", "Alpha before beta ordering.");
         let (first_id, first_materialized) =
@@ -17305,7 +17162,6 @@ struct ResearchPhysicalLane {
     token: String,
     model_id: String,
     physical_host_id: String,
-    routing_weight: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -17380,6 +17236,7 @@ struct ResearchClosurePartition {
     candidates: Vec<ResearchClosureCandidate>,
 }
 
+#[derive(Clone)]
 struct CompiledResearchClosurePartition {
     model: String,
     physical_host_id: String,
@@ -17404,49 +17261,295 @@ struct ResearchAuthorityRuntime {
     requirements: Arc<Vec<RequirementRecord>>,
     sources: Arc<Vec<ResearchAuthoritySource>>,
     lanes: Arc<Vec<ResearchPhysicalLane>>,
-    host_permits: Arc<HashMap<String, Arc<tokio::sync::Semaphore>>>,
-    jury_pair_permits: Arc<tokio::sync::Semaphore>,
+    host_scheduler: ResearchHostScheduler,
 }
 
-async fn acquire_research_target_pair_lane(
-    runtime: &ResearchAuthorityRuntime,
-    claimed_hosts: &Arc<tokio::sync::Mutex<HashSet<String>>>,
-    failed_hosts: &HashSet<String>,
-    partition_id: &str,
-    pass: &str,
-) -> Result<(ResearchPhysicalLane, tokio::sync::OwnedSemaphorePermit)> {
-    loop {
-        let already_claimed = claimed_hosts.lock().await.clone();
-        let mut waiters = futures::stream::FuturesUnordered::new();
-        for lane in runtime.lanes.iter().filter(|lane| {
-            !already_claimed.contains(&lane.physical_host_id)
-                && !failed_hosts.contains(&lane.physical_host_id)
-        }) {
-            let lane = lane.clone();
-            let semaphore = runtime.host_permits[&lane.physical_host_id].clone();
-            waiters.push(async move {
-                semaphore
-                    .acquire_owned()
-                    .await
-                    .map(|permit| (lane, permit))
-                    .map_err(|_| anyhow!("target authority host queue closed"))
+#[derive(Clone)]
+struct ResearchHostScheduler {
+    inner: Arc<ResearchHostSchedulerInner>,
+}
+
+struct ResearchHostSchedulerInner {
+    state: Mutex<ResearchHostSchedulerState>,
+}
+
+struct ResearchHostSchedulerState {
+    lanes_by_token: HashMap<String, ResearchPhysicalLane>,
+    token_order: Vec<String>,
+    free_tokens: HashSet<String>,
+    pending: Vec<ResearchHostRequest>,
+    next_ordinal: usize,
+    dispatch_scheduled: bool,
+}
+
+struct ResearchHostRequest {
+    ordinal: usize,
+    priority: usize,
+    unit_rank: usize,
+    eligible_tokens: HashSet<String>,
+    response: tokio::sync::oneshot::Sender<ResearchHostLease>,
+}
+
+struct ResearchHostLease {
+    lane: ResearchPhysicalLane,
+    scheduler: std::sync::Weak<ResearchHostSchedulerInner>,
+    active: bool,
+}
+
+impl Drop for ResearchHostLease {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        let Some(scheduler) = self.scheduler.upgrade() else {
+            return;
+        };
+        {
+            let mut state = scheduler.state.lock().unwrap();
+            if !state.free_tokens.insert(self.lane.token.clone()) {
+                return;
+            }
+        }
+        ResearchHostScheduler::schedule_dispatch(&scheduler);
+    }
+}
+
+impl ResearchHostScheduler {
+    fn new(lanes: Vec<ResearchPhysicalLane>) -> Self {
+        let token_order = lanes
+            .iter()
+            .map(|lane| lane.token.clone())
+            .collect::<Vec<_>>();
+        let lanes_by_token = lanes
+            .into_iter()
+            .map(|lane| (lane.token.clone(), lane))
+            .collect::<HashMap<_, _>>();
+        Self {
+            inner: Arc::new(ResearchHostSchedulerInner {
+                state: Mutex::new(ResearchHostSchedulerState {
+                    free_tokens: token_order.iter().cloned().collect(),
+                    token_order,
+                    lanes_by_token,
+                    pending: Vec::new(),
+                    next_ordinal: 0,
+                    dispatch_scheduled: false,
+                }),
+            }),
+        }
+    }
+
+    async fn acquire(
+        &self,
+        eligible_tokens: Vec<String>,
+        priority: usize,
+        unit_rank: usize,
+        label: String,
+    ) -> Result<ResearchHostLease> {
+        let eligible_tokens = eligible_tokens.into_iter().collect::<HashSet<_>>();
+        if eligible_tokens.is_empty() {
+            bail!("research host scheduler received no eligible physical lane for `{label}`");
+        }
+        let (response, lease) = tokio::sync::oneshot::channel();
+        {
+            let mut state = self.inner.state.lock().unwrap();
+            if eligible_tokens
+                .iter()
+                .any(|token| !state.lanes_by_token.contains_key(token))
+            {
+                bail!("research host scheduler received an unknown physical lane for `{label}`");
+            }
+            let ordinal = state.next_ordinal;
+            state.next_ordinal = state.next_ordinal.saturating_add(1);
+            state.pending.push(ResearchHostRequest {
+                ordinal,
+                priority,
+                unit_rank,
+                eligible_tokens,
+                response,
             });
         }
-        let Some(acquired) = waiters.next().await else {
-            bail!(
-                "target authority partition `{partition_id}` exhausted distinct physical hosts for {pass}"
-            );
-        };
-        let (lane, permit) = acquired?;
-        drop(waiters);
-        if claimed_hosts
-            .lock()
-            .await
-            .insert(lane.physical_host_id.clone())
+        Self::schedule_dispatch(&self.inner);
+        lease.await.map_err(|_| {
+            anyhow!("research host scheduler closed before admitting physical work `{label}`")
+        })
+    }
+
+    fn schedule_dispatch(inner: &Arc<ResearchHostSchedulerInner>) {
         {
-            return Ok((lane, permit));
+            let mut state = inner.state.lock().unwrap();
+            if state.dispatch_scheduled {
+                return;
+            }
+            state.dispatch_scheduled = true;
         }
-        drop(permit);
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            inner.state.lock().unwrap().dispatch_scheduled = false;
+            Self::dispatch(inner);
+            return;
+        };
+        let scheduler = Arc::downgrade(inner);
+        runtime.spawn(async move {
+            tokio::task::yield_now().await;
+            let Some(scheduler) = scheduler.upgrade() else {
+                return;
+            };
+            scheduler.state.lock().unwrap().dispatch_scheduled = false;
+            Self::dispatch(&scheduler);
+        });
+    }
+
+    fn dispatch(inner: &Arc<ResearchHostSchedulerInner>) {
+        loop {
+            let selected = {
+                let mut state = inner.state.lock().unwrap();
+                state
+                    .pending
+                    .retain(|request| !request.response.is_closed());
+                let available_tokens = state
+                    .token_order
+                    .iter()
+                    .filter(|token| state.free_tokens.contains(*token))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let candidates = state
+                    .pending
+                    .iter()
+                    .enumerate()
+                    .map(|(pending_position, request)| FleetDispatchCandidate {
+                        pending_position,
+                        priority: request.priority,
+                        source_index: request.ordinal,
+                        unit_rank: request.unit_rank,
+                        constraint_width: request.eligible_tokens.len(),
+                        eligible_devices: available_tokens
+                            .iter()
+                            .map(|token| request.eligible_tokens.contains(token))
+                            .collect(),
+                        preferred_devices: vec![true; available_tokens.len()],
+                    })
+                    .collect::<Vec<_>>();
+                let assignments =
+                    maximum_cardinality_fleet_dispatch(available_tokens.len(), &candidates);
+                if assignments.is_empty() {
+                    return;
+                }
+                let token_by_pending = assignments
+                    .into_iter()
+                    .map(|(device_index, pending_position)| {
+                        (pending_position, available_tokens[device_index].clone())
+                    })
+                    .collect::<HashMap<_, _>>();
+                let mut selected = Vec::new();
+                let mut retained = Vec::new();
+                for (pending_position, request) in state.pending.drain(..).enumerate() {
+                    if let Some(token) = token_by_pending.get(&pending_position) {
+                        selected.push((request, token.clone()));
+                    } else {
+                        retained.push(request);
+                    }
+                }
+                state.pending = retained;
+                for (_, token) in &selected {
+                    assert!(
+                        state.free_tokens.remove(token),
+                        "research host scheduler assigned a physical lane twice"
+                    );
+                }
+                selected
+                    .into_iter()
+                    .map(|(request, token)| {
+                        let lane = state.lanes_by_token[&token].clone();
+                        (request, lane)
+                    })
+                    .collect::<Vec<_>>()
+            };
+
+            let mut returned_tokens = Vec::new();
+            for (request, lane) in selected {
+                let lease = ResearchHostLease {
+                    lane,
+                    scheduler: Arc::downgrade(inner),
+                    active: true,
+                };
+                if let Err(mut lease) = request.response.send(lease) {
+                    lease.active = false;
+                    returned_tokens.push(lease.lane.token.clone());
+                }
+            }
+            if returned_tokens.is_empty() {
+                return;
+            }
+            let mut state = inner.state.lock().unwrap();
+            state.free_tokens.extend(returned_tokens);
+        }
+    }
+}
+
+async fn acquire_research_host_until_cancelled(
+    scheduler: &ResearchHostScheduler,
+    eligible_tokens: Vec<String>,
+    priority: usize,
+    unit_rank: usize,
+    label: String,
+    admission_stop: &tokio_util::sync::CancellationToken,
+) -> Result<Option<ResearchHostLease>> {
+    let admission = scheduler.acquire(eligible_tokens, priority, unit_rank, label);
+    tokio::pin!(admission);
+    tokio::select! {
+        biased;
+        _ = admission_stop.cancelled() => Ok(None),
+        result = &mut admission => result.map(Some),
+    }
+}
+
+async fn run_research_host_failover<T, F, Fut, ObserveFailure>(
+    scheduler: &ResearchHostScheduler,
+    eligible_tokens: Vec<String>,
+    priority: usize,
+    unit_rank: usize,
+    label: String,
+    mut call: F,
+    mut observe_failure: ObserveFailure,
+) -> Result<T>
+where
+    F: FnMut(ResearchPhysicalLane, usize) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+    ObserveFailure: FnMut(&ResearchPhysicalLane, usize, &anyhow::Error, &[String]),
+{
+    let mut failed_tokens = Vec::<String>::new();
+    let mut failure_history = Vec::new();
+    loop {
+        let remaining_tokens = eligible_tokens
+            .iter()
+            .filter(|token| !failed_tokens.contains(token))
+            .cloned()
+            .collect::<Vec<_>>();
+        if remaining_tokens.is_empty() {
+            bail!(
+                "research host failover `{label}` exhausted every eligible physical host: {}",
+                failure_history.join(" | ")
+            );
+        }
+        let lease = scheduler
+            .acquire(
+                remaining_tokens,
+                priority,
+                unit_rank,
+                format!("{label}:attempt-{}", failed_tokens.len().saturating_add(1)),
+            )
+            .await?;
+        let lane = lease.lane.clone();
+        let attempt = failed_tokens.len().saturating_add(1);
+        let result = call(lane.clone(), attempt).await;
+        drop(lease);
+        match result {
+            Ok(output) => return Ok(output),
+            Err(error) => {
+                failed_tokens.push(lane.token.clone());
+                failure_history.push(format!("{}: {error}", lane.physical_host_id));
+                observe_failure(&lane, attempt, &error, &failed_tokens);
+            }
+        }
     }
 }
 
@@ -17876,37 +17979,6 @@ fn plan_research_closure_section_partitions(
             .then_with(|| left.partition_id.cmp(&right.partition_id))
     });
     partitions
-}
-
-fn research_target_pipeline_concurrency(
-    physical_host_count: usize,
-    partition_count: usize,
-) -> usize {
-    physical_host_count
-        .saturating_sub(1)
-        .max(1)
-        .min(partition_count)
-}
-
-async fn join_research_target_jury_pair<First, Second, FirstOutput, SecondOutput>(
-    first: First,
-    second: Second,
-) -> Result<(FirstOutput, SecondOutput)>
-where
-    First: std::future::Future<Output = Result<FirstOutput>>,
-    Second: std::future::Future<Output = Result<SecondOutput>>,
-{
-    tokio::try_join!(first, second)
-}
-
-fn normalized_lane_load_cmp(
-    left_load: usize,
-    left_weight: u32,
-    right_load: usize,
-    right_weight: u32,
-) -> std::cmp::Ordering {
-    (left_load as u128 * right_weight.max(1) as u128)
-        .cmp(&(right_load as u128 * left_weight.max(1) as u128))
 }
 
 fn research_closure_gap_route_is_valid(
@@ -24407,6 +24479,12 @@ impl GooseAgentDispatcher {
                 let research_extensions = attempt_extensions.clone();
                 let routes = attempt_routes.clone();
                 async move {
+                    let attempt_label = match stage {
+                        DependentRetryingFanStage::Primary => "primary",
+                        DependentRetryingFanStage::Dependent => {
+                            "unavailable-corroboration"
+                        }
+                    };
                     let lane = lanes
                         .get(&lane_token)
                         .cloned()
@@ -24434,13 +24512,14 @@ impl GooseAgentDispatcher {
                             extensions,
                             routes,
                             lane,
-                            stage.as_str(),
+                            attempt_label,
                         )
                         .await
                         .map_err(|error| error.to_string())
                 }
             },
             |finding| finding.disposition == Some(ResearchEvidenceDisposition::Unavailable),
+            Ok,
             move |primary, corroboration| match corroboration.disposition {
                 Some(ResearchEvidenceDisposition::Found) => {
                     merge_events.write_value(serde_json::json!({
@@ -24491,13 +24570,17 @@ impl GooseAgentDispatcher {
             research_question_authored_cost,
             |question| question.id.clone(),
             move |attempt| {
+                let stage = match attempt.stage {
+                    DependentRetryingFanStage::Primary => "primary",
+                    DependentRetryingFanStage::Dependent => "unavailable-corroboration",
+                };
                 attempt_events.write_value(serde_json::json!({
                     "event": "research_evidence_packet_attempt_started",
                     "cycle": cycle,
                     "question_id": attempt.packet,
                     "source_ordinal": attempt.source_index,
                     "lane_token": attempt.device,
-                    "stage": attempt.stage.as_str(),
+                    "stage": stage,
                     "attempt": attempt.attempt,
                     "authored_cost": attempt.priority,
                     "prior_failed_lanes": attempt.failed_devices,
@@ -24510,7 +24593,7 @@ impl GooseAgentDispatcher {
                         "cycle": cycle,
                         "question_id": attempt.packet,
                         "lane_token": attempt.device,
-                        "stage": attempt.stage.as_str(),
+                        "stage": stage,
                         "attempt": attempt.attempt,
                         "prior_failed_lanes": attempt.failed_devices,
                         "retry_basis": "previous-physical-lane-failed-packet-distinct-lane-remained",
@@ -24589,7 +24672,6 @@ impl GooseAgentDispatcher {
                 token: format!("research-physical-lane-{}", index + 1),
                 model_id: lane.model_id,
                 physical_host_id: lane.host_id,
-                routing_weight: lane.routing_weight,
             })
             .collect())
     }
@@ -24760,29 +24842,31 @@ impl GooseAgentDispatcher {
     ) -> Result<CompiledResearchClosurePartition> {
         let mut failed_hosts = HashSet::new();
         loop {
-            let mut waiters = futures::stream::FuturesUnordered::new();
-            for lane in runtime.lanes.iter().filter(|lane| {
-                !excluded_hosts.contains(&lane.physical_host_id)
-                    && !failed_hosts.contains(&lane.physical_host_id)
-            }) {
-                let lane = lane.clone();
-                let semaphore = runtime.host_permits[&lane.physical_host_id].clone();
-                waiters.push(async move {
-                    semaphore
-                        .acquire_owned()
-                        .await
-                        .map(|permit| (lane, permit))
-                        .map_err(|_| anyhow!("target authority host queue closed"))
-                });
-            }
-            let Some(acquired) = waiters.next().await else {
+            let eligible_tokens = runtime
+                .lanes
+                .iter()
+                .filter(|lane| {
+                    !excluded_hosts.contains(&lane.physical_host_id)
+                        && !failed_hosts.contains(&lane.physical_host_id)
+                })
+                .map(|lane| lane.token.clone())
+                .collect::<Vec<_>>();
+            if eligible_tokens.is_empty() {
                 bail!(
                     "target authority partition `{}` exhausted eligible physical hosts for {pass}",
                     partition.partition_id
                 );
-            };
-            let (lane, permit) = acquired?;
-            drop(waiters);
+            }
+            let lease = runtime
+                .host_scheduler
+                .acquire(
+                    eligible_tokens,
+                    research_closure_partition_cost(&partition),
+                    2,
+                    format!("{}:{pass}", partition.partition_id),
+                )
+                .await?;
+            let lane = lease.lane.clone();
             let result = self
                 .run_research_closure_semantic_pass_on_lane(
                     &runtime.stage,
@@ -24794,7 +24878,7 @@ impl GooseAgentDispatcher {
                     lane.clone(),
                 )
                 .await;
-            drop(permit);
+            drop(lease);
             match result {
                 Ok(compiled) => return Ok(compiled),
                 Err(error) => {
@@ -24815,23 +24899,84 @@ impl GooseAgentDispatcher {
         }
     }
 
-    async fn run_research_closure_partition_paired_lane(
+    async fn run_research_closure_partition_pair_unit(
         self: &Arc<Self>,
         runtime: &ResearchAuthorityRuntime,
-        pass: &str,
+        jury_stage: PairedRetryingFanStage,
         partition: ResearchClosurePartition,
         claimed_hosts: Arc<tokio::sync::Mutex<HashSet<String>>>,
-    ) -> Result<CompiledResearchClosurePartition> {
+        admission_stop: &tokio_util::sync::CancellationToken,
+    ) -> Result<Option<CompiledResearchClosurePartition>> {
         let mut failed_hosts = HashSet::new();
+        let mut attempt = 0usize;
         loop {
-            let (lane, permit) = acquire_research_target_pair_lane(
-                runtime,
-                &claimed_hosts,
-                &failed_hosts,
-                &partition.partition_id,
-                pass,
+            if admission_stop.is_cancelled() {
+                return Ok(None);
+            }
+            let current_claims = claimed_hosts.lock().await.clone();
+            let eligible_tokens = runtime
+                .lanes
+                .iter()
+                .filter(|lane| {
+                    !current_claims.contains(&lane.physical_host_id)
+                        && !failed_hosts.contains(&lane.physical_host_id)
+                })
+                .map(|lane| lane.token.clone())
+                .collect::<Vec<_>>();
+            if eligible_tokens.is_empty() {
+                admission_stop.cancel();
+                bail!(
+                    "target authority partition `{}` exhausted distinct physical hosts for {}",
+                    partition.partition_id,
+                    jury_stage.as_str()
+                );
+            }
+            let lease = match acquire_research_host_until_cancelled(
+                &runtime.host_scheduler,
+                eligible_tokens,
+                research_closure_partition_cost(&partition),
+                jury_stage.rank(),
+                format!("{}:{}", partition.partition_id, jury_stage.as_str()),
+                admission_stop,
             )
-            .await?;
+            .await
+            {
+                Ok(Some(lease)) => lease,
+                Ok(None) => return Ok(None),
+                Err(error) => {
+                    admission_stop.cancel();
+                    return Err(error);
+                }
+            };
+            let lane = lease.lane.clone();
+            if !claimed_hosts
+                .lock()
+                .await
+                .insert(lane.physical_host_id.clone())
+            {
+                drop(lease);
+                tokio::task::yield_now().await;
+                continue;
+            }
+            attempt = attempt.saturating_add(1);
+            let pass = match jury_stage {
+                PairedRetryingFanStage::First => "jury-1",
+                PairedRetryingFanStage::Second => "jury-2",
+            };
+            self.events.write_value(serde_json::json!({
+                "event": "research_target_jury_unit_attempt_started",
+                "stage": runtime.stage,
+                "cycle": runtime.cycle,
+                "pass": pass,
+                "partition_id": partition.partition_id,
+                "lane_token": lane.token,
+                "physical_host_id": lane.physical_host_id,
+                "attempt": attempt,
+                "authored_cost": research_closure_partition_cost(&partition),
+                "prior_failed_physical_hosts": failed_hosts,
+                "paired_claimed_physical_hosts": claimed_hosts.lock().await.clone(),
+                "admission_basis": "shared-maximum-cardinality-full-eligible-host-set",
+            }));
             let result = self
                 .run_research_closure_semantic_pass_on_lane(
                     &runtime.stage,
@@ -24843,9 +24988,20 @@ impl GooseAgentDispatcher {
                     lane.clone(),
                 )
                 .await;
-            drop(permit);
+            drop(lease);
+            self.events.write_value(serde_json::json!({
+                "event": "research_target_jury_unit_completed",
+                "stage": runtime.stage,
+                "cycle": runtime.cycle,
+                "pass": pass,
+                "partition_id": partition.partition_id,
+                "lane_token": lane.token,
+                "physical_host_id": lane.physical_host_id,
+                "attempt": attempt,
+                "succeeded": result.is_ok(),
+            }));
             match result {
-                Ok(compiled) => return Ok(compiled),
+                Ok(compiled) => return Ok(Some(compiled)),
                 Err(error) => {
                     claimed_hosts.lock().await.remove(&lane.physical_host_id);
                     failed_hosts.insert(lane.physical_host_id.clone());
@@ -24858,8 +25014,12 @@ impl GooseAgentDispatcher {
                         "failed_physical_host_id": lane.physical_host_id,
                         "failed_hosts": failed_hosts,
                         "paired_claimed_hosts": claimed_hosts.lock().await.clone(),
+                        "retry_basis": "shared-maximum-cardinality-host-scheduler",
                         "error": error.to_string(),
                     }));
+                    if admission_stop.is_cancelled() {
+                        return Ok(None);
+                    }
                 }
             }
         }
@@ -24873,31 +25033,46 @@ impl GooseAgentDispatcher {
         CompiledResearchClosurePartition,
         CompiledResearchClosurePartition,
     )> {
-        let _pair_permit = runtime
-            .jury_pair_permits
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| anyhow!("target authority paired-jury queue closed"))?;
         let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
-        let first_call = self.run_research_closure_partition_paired_lane(
+        let admission_stop = tokio_util::sync::CancellationToken::new();
+        let first = self.run_research_closure_partition_pair_unit(
             runtime,
-            "jury-1",
+            PairedRetryingFanStage::First,
             partition.clone(),
             claimed_hosts.clone(),
+            &admission_stop,
         );
-        let second_call = self.run_research_closure_partition_paired_lane(
+        let second = self.run_research_closure_partition_pair_unit(
             runtime,
-            "jury-2",
+            PairedRetryingFanStage::Second,
             partition.clone(),
             claimed_hosts,
+            &admission_stop,
         );
-        let (first, second) = join_research_target_jury_pair(first_call, second_call).await?;
+        let (first, second) = tokio::join!(first, second);
+        let (first, second) = match (first, second) {
+            (Ok(Some(first)), Ok(Some(second))) => (first, second),
+            (Ok(None), Ok(None)) | (Ok(None), Ok(Some(_))) | (Ok(Some(_)), Ok(None)) => bail!(
+                "target authority pair retired queued juror admission after a terminal sibling failure"
+            ),
+            (Err(first), Err(second)) => bail!(
+                "target authority pair failed after draining both admitted jurors: first={first}; second={second}"
+            ),
+            (Err(error), Ok(_)) | (Ok(_), Err(error)) => bail!(
+                "target authority pair failed after draining both admitted jurors: {error}"
+            ),
+        };
         if first.physical_host_id == second.physical_host_id {
             bail!(
                 "target authority partition `{}` reused physical host `{}`",
                 partition.partition_id,
                 first.physical_host_id
+            );
+        }
+        if first.authority_input_digest != second.authority_input_digest {
+            bail!(
+                "target authority partition `{}` jurors received different immutable decision inputs",
+                partition.partition_id
             );
         }
         Ok((first, second))
@@ -24969,9 +25144,9 @@ impl GooseAgentDispatcher {
         if packets.is_empty() {
             return Ok(Vec::new());
         }
-        let mut groups = HashMap::<String, (ResearchPhysicalLane, Vec<_>, usize)>::new();
+        let mut groups = HashMap::<String, (Vec<String>, Vec<_>, usize)>::new();
         for packet in packets {
-            let eligible = runtime
+            let eligible_tokens = runtime
                 .lanes
                 .iter()
                 .filter(|lane| {
@@ -24979,37 +25154,19 @@ impl GooseAgentDispatcher {
                         .source_physical_host_ids
                         .contains(&lane.physical_host_id)
                 })
+                .map(|lane| lane.token.clone())
                 .collect::<Vec<_>>();
-            let lane = eligible
-                .into_iter()
-                .min_by(|left, right| {
-                    let left_load = groups
-                        .get(&left.physical_host_id)
-                        .map(|group| group.2)
-                        .unwrap_or_default();
-                    let right_load = groups
-                        .get(&right.physical_host_id)
-                        .map(|group| group.2)
-                        .unwrap_or_default();
-                    normalized_lane_load_cmp(
-                        left_load,
-                        left.routing_weight,
-                        right_load,
-                        right.routing_weight,
-                    )
-                    .then_with(|| left.physical_host_id.cmp(&right.physical_host_id))
-                })
-                .cloned()
-                .ok_or_else(|| {
-                    anyhow!(
-                        "target citation `{}` has no physical host independent of every author/endorser",
-                        packet.candidate.requirement_id
-                    )
-                })?;
+            if eligible_tokens.is_empty() {
+                return Err(anyhow!(
+                    "target citation `{}` has no physical host independent of every author/endorser",
+                    packet.candidate.requirement_id
+                ));
+            }
+            let eligibility_key = eligible_tokens.join("\u{1f}");
             let cost = research_closure_candidate_cost(&packet.candidate).max(1);
             let group = groups
-                .entry(lane.physical_host_id.clone())
-                .or_insert_with(|| (lane, Vec::new(), 0));
+                .entry(eligibility_key)
+                .or_insert_with(|| (eligible_tokens, Vec::new(), 0));
             group.1.push(packet);
             group.2 = group.2.saturating_add(cost);
         }
@@ -25017,98 +25174,137 @@ impl GooseAgentDispatcher {
             "COMPLETE IMMUTABLE CANONICAL REQUIREMENT LEDGER (byte-identical leading citation-audit prefix):\n{}",
             serde_json::to_string_pretty(runtime.requirements.as_ref())?
         ));
-        let mut calls = futures::stream::FuturesUnordered::new();
-        for (_, (lane, packets, _)) in groups {
+        let calls = futures::stream::FuturesUnordered::new();
+        for (_, (eligible_tokens, packets, group_cost)) in groups {
             let me = self.clone();
             let stage = runtime.stage.clone();
             let immutable_prefix = immutable_prefix.clone();
-            let host_permits = runtime.host_permits.clone();
+            let host_scheduler = runtime.host_scheduler.clone();
+            let retry_events = self.events.clone();
+            let retry_cycle = runtime.cycle;
             calls.push(async move {
-                let permit = host_permits[&lane.physical_host_id]
-                    .clone()
-                    .acquire_owned()
-                    .await
-                    .map_err(|_| anyhow!("target citation host queue closed"))?;
-                let system = "You are the independent proof-entailment verifier on a physical host that did not author or endorse any assigned whole-target decision. Using the COMPLETE immutable canonical ledger plus each packet's engine-bound Found evidence and exact verified source quotes, decide whether its cited canonical requirement ids and/or evidence ids collectively entail every portion the whole-target assessment marks settled. A target may cite itself when its exact quote contains the fact. Reject unrelated, merely topical, incomplete, stale, or restated canonical citations and real-but-irrelevant Found evidence. Do not add citations, consult model recollection or external sources, change gaps, or draft a plan. Return one supported verdict per assigned requirement_id and call final_output.";
-                let packet_json = serde_json::to_string_pretty(&packets)?;
-                let target_ids = packets
+                let group_label = packets
                     .iter()
-                    .map(|packet| packet.candidate.requirement_id.clone())
-                    .collect::<Vec<_>>();
-                let mut correction_feedback = String::new();
-                let mut correction_states = HashSet::new();
-                let mut correction = 0u64;
-                loop {
-                    let user = format!(
-                        "{}\n\nVARIABLE WHOLE-TARGET CITATION PACKETS:\n{}\n\nCOMPILER FEEDBACK:\n{}",
-                        immutable_prefix,
-                        packet_json,
-                        correction_feedback
-                    );
-                    let activity_key = format!(
-                        "research-target-citation-{}-{}-{}",
-                        stage,
-                        lane.physical_host_id,
-                        correction
-                    );
-                    let output = me
-                        .run_response_only_agent_on_physical_host(
-                            &lane.model_id,
-                            &lane.physical_host_id,
-                            system.to_string(),
-                            user,
-                            Some(Response {
-                                json_schema: Some(research_closure_citation_schema()),
-                            }),
-                            me.planner_timeout_secs,
-                            Some(&activity_key),
-                        )
-                        .await?;
-                    if output.physical_host_id.as_deref()
-                        != Some(lane.physical_host_id.as_str())
-                    {
-                        bail!(
-                            "target citation audit was not proven on physical host `{}`",
-                            lane.physical_host_id
-                        );
-                    }
-                    let raw = output
-                        .final_output
-                        .filter(|value| !value.trim().is_empty())
-                        .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
-                        .ok_or_else(|| anyhow!("target citation audit returned no typed verdict"))?;
-                    match compile_research_closure_citations(
-                        &raw,
-                        &packets,
-                        lane.model_id.clone(),
-                        lane.physical_host_id.clone(),
-                    ) {
-                        Ok(compiled) => {
-                            drop(permit);
-                            return Ok::<_, anyhow::Error>(compiled);
-                        }
-                        Err(error) => {
-                            let message = error.to_string();
-                            let state = research_target_correction_fingerprint(
-                                &raw,
-                                &target_ids,
-                                "verdicts",
-                                &message,
-                            );
-                            if !correction_states.insert(state) {
-                                return Err(error);
+                    .map(|packet| packet.candidate.requirement_id.as_str())
+                    .collect::<Vec<_>>()
+                    .join("+");
+                let system = "You are the independent proof-entailment verifier on a physical host that did not author or endorse any assigned whole-target decision. Using the COMPLETE immutable canonical ledger plus each packet's engine-bound Found evidence and exact verified source quotes, decide whether its cited canonical requirement ids and/or evidence ids collectively entail every portion the whole-target assessment marks settled. A target may cite itself when its exact quote contains the fact. Reject unrelated, merely topical, incomplete, stale, or restated canonical citations and real-but-irrelevant Found evidence. Do not add citations, consult model recollection or external sources, change gaps, or draft a plan. Return one supported verdict per assigned requirement_id and call final_output.";
+                let packets = Arc::new(packets);
+                let packet_json = Arc::new(serde_json::to_string_pretty(packets.as_ref())?);
+                let target_ids = Arc::new(
+                    packets
+                        .iter()
+                        .map(|packet| packet.candidate.requirement_id.clone())
+                        .collect::<Vec<_>>(),
+                );
+                let call_stage = stage.clone();
+                let failure_stage = stage.clone();
+                let failure_label = group_label.clone();
+                run_research_host_failover(
+                    &host_scheduler,
+                    eligible_tokens,
+                    group_cost,
+                    3,
+                    format!("research-target-citation:{group_label}"),
+                    move |lane, _attempt| {
+                        let me = me.clone();
+                        let packets = packets.clone();
+                        let packet_json = packet_json.clone();
+                        let target_ids = target_ids.clone();
+                        let immutable_prefix = immutable_prefix.clone();
+                        let stage = call_stage.clone();
+                        async move {
+                            let mut correction_feedback = String::new();
+                            let mut correction_states = HashSet::new();
+                            let mut correction = 0u64;
+                            loop {
+                                let user = format!(
+                                    "{}\n\nVARIABLE WHOLE-TARGET CITATION PACKETS:\n{}\n\nCOMPILER FEEDBACK:\n{}",
+                                    immutable_prefix,
+                                    packet_json,
+                                    correction_feedback
+                                );
+                                let activity_key = format!(
+                                    "research-target-citation-{}-{}-{}",
+                                    stage, lane.physical_host_id, correction
+                                );
+                                let output = me
+                                    .run_response_only_agent_on_physical_host(
+                                        &lane.model_id,
+                                        &lane.physical_host_id,
+                                        system.to_string(),
+                                        user,
+                                        Some(Response {
+                                            json_schema: Some(research_closure_citation_schema()),
+                                        }),
+                                        me.planner_timeout_secs,
+                                        Some(&activity_key),
+                                    )
+                                    .await?;
+                                if output.physical_host_id.as_deref()
+                                    != Some(lane.physical_host_id.as_str())
+                                {
+                                    bail!(
+                                        "target citation audit was not proven on physical host `{}`",
+                                        lane.physical_host_id
+                                    );
+                                }
+                                let raw = output
+                                    .final_output
+                                    .filter(|value| !value.trim().is_empty())
+                                    .or_else(|| {
+                                        (!output.text.trim().is_empty()).then_some(output.text)
+                                    })
+                                    .ok_or_else(|| {
+                                        anyhow!("target citation audit returned no typed verdict")
+                                    })?;
+                                match compile_research_closure_citations(
+                                    &raw,
+                                    packets.as_ref(),
+                                    lane.model_id.clone(),
+                                    lane.physical_host_id.clone(),
+                                ) {
+                                    Ok(compiled) => return Ok(compiled),
+                                    Err(error) => {
+                                        let message = error.to_string();
+                                        let state = research_target_correction_fingerprint(
+                                            &raw,
+                                            target_ids.as_ref(),
+                                            "verdicts",
+                                            &message,
+                                        );
+                                        if !correction_states.insert(state) {
+                                            return Err(error);
+                                        }
+                                        correction = correction.saturating_add(1);
+                                        correction_feedback = message;
+                                    }
+                                }
                             }
-                            correction = correction.saturating_add(1);
-                            correction_feedback = message;
                         }
-                    }
-                }
+                    },
+                    move |lane, attempt, error, failed_tokens| {
+                        retry_events.write_value(serde_json::json!({
+                            "event": "research_target_citation_reassigned",
+                            "stage": failure_stage,
+                            "cycle": retry_cycle,
+                            "requirement_group": failure_label,
+                            "failed_physical_host_id": lane.physical_host_id,
+                            "attempt": attempt,
+                            "failed_lane_tokens": failed_tokens,
+                            "retry_basis": "independent-eligible-verifier-remains",
+                            "error": error.to_string(),
+                        }));
+                    },
+                )
+                .await
             });
         }
-        let mut compiled = Vec::new();
-        while let Some(result) = calls.next().await {
-            compiled.extend(result?);
-        }
+        let compiled = drain_admitted_fan_results(calls, "target citation audit")
+            .await?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
         self.events.write_value(serde_json::json!({
             "event": "research_target_citation_audit_completed",
             "stage": runtime.stage,
@@ -25433,28 +25629,16 @@ impl GooseAgentDispatcher {
             &lookup_routes,
             requirements.as_ref(),
         ));
-        let partitions = plan_research_closure_section_partitions(&candidates);
-        let pipeline_concurrency =
-            research_target_pipeline_concurrency(lanes.len(), partitions.len());
-        let host_permits = Arc::new(
-            lanes
-                .iter()
-                .map(|lane| {
-                    (
-                        lane.physical_host_id.clone(),
-                        Arc::new(tokio::sync::Semaphore::new(1)),
-                    )
-                })
-                .collect::<HashMap<_, _>>(),
-        );
+        let partitions = Arc::new(plan_research_closure_section_partitions(&candidates));
+        let partition_count = partitions.len();
+        let host_scheduler = ResearchHostScheduler::new(lanes.clone());
         let runtime = Arc::new(ResearchAuthorityRuntime {
             stage: stage.clone(),
             cycle,
             requirements,
             sources,
             lanes: Arc::new(lanes),
-            host_permits,
-            jury_pair_permits: Arc::new(tokio::sync::Semaphore::new(pipeline_concurrency)),
+            host_scheduler,
         });
         let started = std::time::Instant::now();
         self.events.write_value(serde_json::json!({
@@ -25462,34 +25646,115 @@ impl GooseAgentDispatcher {
             "stage": stage,
             "cycle": cycle,
             "targets": candidates.len(),
-            "semantic_section_packets": partitions.len(),
+            "semantic_section_packets": partition_count,
             "verified_physical_hosts": runtime.lanes.iter().map(|lane| lane.physical_host_id.as_str()).collect::<Vec<_>>(),
             "jury_semantic_reviews": candidates.len().saturating_mul(2),
-            "jury_model_calls": partitions.len().saturating_mul(2),
-            "topology": "bounded-authored-section-pipelines-paired-jury-work-steal-adjudication-proof-without-cover-barriers",
-            "pipeline_concurrency": pipeline_concurrency,
-            "review_units_per_pipeline": 2,
-            "pipeline_width_basis": "verified-physical-hosts-minus-one-pair-window-only",
+            "jury_model_calls": partition_count.saturating_mul(2),
+            "topology": "maximum-cardinality-host-aware-individual-juror-work-steal-adjudication-proof-without-cover-barriers",
+            "jury_units_per_packet": 2,
+            "dispatch_basis": "maximum-cardinality-before-authored-cost-and-speed-with-distinct-pair-host-authority",
+            "open_pair_cap": null,
             "fixed_packet_count": null,
             "gap_count_cap": null,
             "elapsed_cap_secs": null,
         }));
 
-        let pair_dispatcher = self.clone();
-        let pair_runtime = runtime.clone();
-        let mut pair_calls = futures::stream::iter(partitions.into_iter().map(move |partition| {
-            let dispatcher = pair_dispatcher.clone();
-            let runtime = pair_runtime.clone();
-            async move {
-                let pair = dispatcher
-                    .run_research_closure_partition_pair(&runtime, partition.clone())
-                    .await?;
-                Ok::<_, anyhow::Error>((partition, pair))
+        let mut jury_unit_specs = Vec::with_capacity(partition_count.saturating_mul(2));
+        for (index, partition) in partitions.iter().cloned().enumerate() {
+            let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
+            let authored_cost = research_closure_partition_cost(&partition);
+            for jury_stage in [
+                PairedRetryingFanStage::First,
+                PairedRetryingFanStage::Second,
+            ] {
+                jury_unit_specs.push((
+                    index,
+                    jury_stage,
+                    partition.clone(),
+                    claimed_hosts.clone(),
+                    authored_cost,
+                ));
             }
-        }))
-        .buffer_unordered(pipeline_concurrency);
-        let mut pair_stream_open = true;
+        }
+        jury_unit_specs.sort_by(
+            |(left_index, left_stage, _, _, left_cost),
+             (right_index, right_stage, _, _, right_cost)| {
+                retrying_fan_priority_cmp(*left_cost, *left_index, *right_cost, *right_index)
+                    .then_with(|| left_stage.rank().cmp(&right_stage.rank()))
+            },
+        );
+        let jury_admission_stop = tokio_util::sync::CancellationToken::new();
+        let jury_calls = futures::stream::FuturesUnordered::new();
+        for (index, jury_stage, partition, claimed_hosts, _) in jury_unit_specs {
+            let dispatcher = self.clone();
+            let jury_runtime = runtime.clone();
+            let admission_stop = jury_admission_stop.clone();
+            jury_calls.push(async move {
+                let result = dispatcher
+                    .run_research_closure_partition_pair_unit(
+                        &jury_runtime,
+                        jury_stage,
+                        partition,
+                        claimed_hosts,
+                        &admission_stop,
+                    )
+                    .await;
+                (index, jury_stage, result)
+            });
+        }
+        let partition_labels = partitions
+            .iter()
+            .map(|partition| partition.partition_id.clone())
+            .collect::<Vec<_>>();
+        let (pair_sender, mut pair_receiver) = tokio::sync::mpsc::unbounded_channel::<(
+            usize,
+            CompiledResearchClosurePartition,
+            CompiledResearchClosurePartition,
+        )>();
+        let retired_events = self.events.clone();
+        let retired_stage = stage.clone();
+        let pair_events = self.events.clone();
+        let pair_stage = stage.clone();
+        let pair_labels = partition_labels.clone();
+        let pair_fan_stop = jury_admission_stop.clone();
+        let pair_fan = drain_research_jury_orchestration(
+            jury_calls,
+            partition_labels,
+            pair_fan_stop,
+            move |index, jury_stage| {
+                retired_events.write_value(serde_json::json!({
+                    "event": "research_target_jury_unit_retired",
+                    "stage": retired_stage,
+                    "cycle": cycle,
+                    "partition_ordinal": index,
+                    "pass": jury_stage.as_str(),
+                    "reason": "terminal-admission-stop-before-provider-call",
+                }));
+            },
+            move |index, first, second| {
+                let partition_id = pair_labels.get(index).ok_or_else(|| {
+                    anyhow!("target jury paired unknown partition ordinal {index}")
+                })?;
+                pair_events.write_value(serde_json::json!({
+                    "event": "research_target_jury_pair_completed",
+                    "stage": pair_stage,
+                    "cycle": cycle,
+                    "partition_id": partition_id,
+                    "jury_1_physical_host_id": first.physical_host_id,
+                    "jury_2_physical_host_id": second.physical_host_id,
+                    "downstream_enqueued_before_next_dispatch_tick": true,
+                }));
+                pair_sender
+                    .send((index, first, second))
+                    .map_err(|_| anyhow!("target jury downstream receiver closed"))
+            },
+        );
+        tokio::pin!(pair_fan);
+        let mut pair_fan_open = true;
+        let mut pair_channel_open = true;
         let mut resolutions = futures::stream::FuturesUnordered::new();
+        let mut lifecycle_failures = Vec::new();
+        let mut terminal_failure = false;
 
         let mut by_requirement = HashMap::new();
         let mut decision_sources = HashMap::new();
@@ -25497,59 +25762,101 @@ impl GooseAgentDispatcher {
         let mut disagreements = 0usize;
         let mut citations_verified = 0usize;
         let mut citations_rejected = 0usize;
-        while pair_stream_open || !resolutions.is_empty() {
+        while pair_fan_open || pair_channel_open || !resolutions.is_empty() {
             tokio::select! {
                 biased;
                 result = resolutions.next(), if !resolutions.is_empty() => {
-                    let resolution: ResearchTargetPartitionResolution = result
-                        .ok_or_else(|| anyhow!("target resolution queue closed unexpectedly"))??;
-                    corrections = corrections.saturating_add(resolution.ledger_corrections);
-                    disagreements = disagreements.saturating_add(resolution.jury_disagreements);
-                    citations_verified = citations_verified.saturating_add(resolution.citations_verified);
-                    citations_rejected = citations_rejected.saturating_add(resolution.citations_rejected);
-                    for decision in resolution.decisions {
-                        if by_requirement
-                            .insert(decision.requirement_id.clone(), decision)
-                            .is_some()
-                        {
-                            bail!("target section pipelines repeated a canonical target");
+                    let result: Result<ResearchTargetPartitionResolution> =
+                        result.expect("a non-empty target resolution queue has a completion");
+                    match result {
+                        Ok(resolution) => {
+                            corrections = corrections.saturating_add(resolution.ledger_corrections);
+                            disagreements = disagreements.saturating_add(resolution.jury_disagreements);
+                            citations_verified = citations_verified.saturating_add(resolution.citations_verified);
+                            citations_rejected = citations_rejected.saturating_add(resolution.citations_rejected);
+                            for decision in resolution.decisions {
+                                match by_requirement.entry(decision.requirement_id.clone()) {
+                                    std::collections::hash_map::Entry::Occupied(_) => {
+                                        terminal_failure = true;
+                                        jury_admission_stop.cancel();
+                                        lifecycle_failures.push(format!(
+                                            "target section pipelines repeated canonical target `{}`",
+                                            decision.requirement_id
+                                        ));
+                                    }
+                                    std::collections::hash_map::Entry::Vacant(entry) => {
+                                        entry.insert(decision);
+                                    }
+                                }
+                            }
+                            for (requirement_id, sources) in resolution.decision_sources {
+                                match decision_sources.entry(requirement_id) {
+                                    std::collections::hash_map::Entry::Occupied(entry) => {
+                                        terminal_failure = true;
+                                        jury_admission_stop.cancel();
+                                        lifecycle_failures.push(format!(
+                                            "target section pipelines repeated decision provenance `{}`",
+                                            entry.key()
+                                        ));
+                                    }
+                                    std::collections::hash_map::Entry::Vacant(entry) => {
+                                        entry.insert(sources);
+                                    }
+                                }
+                            }
                         }
-                    }
-                    for (requirement_id, sources) in resolution.decision_sources {
-                        if decision_sources.insert(requirement_id, sources).is_some() {
-                            bail!("target section pipelines repeated decision provenance");
+                        Err(error) => {
+                            terminal_failure = true;
+                            jury_admission_stop.cancel();
+                            lifecycle_failures.push(format!(
+                                "target partition resolution failed after its admitted work drained: {error}"
+                            ));
                         }
                     }
                 }
-                pair = pair_calls.next(), if pair_stream_open => {
-                    match pair {
-                        Some(result) => {
-                            let (partition, pair) = result?;
-                            self.events.write_value(serde_json::json!({
-                                "event": "research_target_jury_pair_completed",
-                                "stage": stage,
-                                "cycle": cycle,
-                                "partition_id": partition.partition_id,
-                                "jury_1_physical_host_id": pair.0.physical_host_id,
-                                "jury_2_physical_host_id": pair.1.physical_host_id,
-                                "downstream_enqueued_before_next_pair_window": true,
-                            }));
-                            let dispatcher = self.clone();
-                            let resolution_runtime = runtime.clone();
-                            resolutions.push(async move {
-                                dispatcher
-                                    .resolve_research_target_partition_from_pair(
-                                        &resolution_runtime,
-                                        partition,
-                                        pair,
-                                    )
-                                    .await
-                            });
-                        }
-                        None => pair_stream_open = false,
+                pair = pair_receiver.recv(), if pair_channel_open => {
+                    let Some((index, first, second)) = pair else {
+                        pair_channel_open = false;
+                        continue;
+                    };
+                    if terminal_failure || jury_admission_stop.is_cancelled() {
+                        continue;
                     }
+                    let Some(partition) = partitions.get(index).cloned() else {
+                        terminal_failure = true;
+                        jury_admission_stop.cancel();
+                        lifecycle_failures.push(format!(
+                            "target jury handed off unknown partition ordinal {index}"
+                        ));
+                        continue;
+                    };
+                    let dispatcher = self.clone();
+                    let resolution_runtime = runtime.clone();
+                    resolutions.push(async move {
+                        dispatcher
+                            .resolve_research_target_partition_from_pair(
+                                &resolution_runtime,
+                                partition,
+                                (first, second),
+                            )
+                            .await
+                    });
+                }
+                result = &mut pair_fan, if pair_fan_open => {
+                    if let Err(error) = result {
+                        terminal_failure = true;
+                        jury_admission_stop.cancel();
+                        lifecycle_failures.push(error.to_string());
+                    }
+                    pair_fan_open = false;
                 }
             }
+        }
+        if !lifecycle_failures.is_empty() {
+            bail!(
+                "target authority failed after draining all admitted jury and resolution work: {}",
+                lifecycle_failures.join(" | ")
+            );
         }
 
         let decisions = candidates
@@ -33455,7 +33762,7 @@ mod fan_order_tests {
                                 primary_started.add_permits(1);
                                 Ok((packet, true))
                             }
-                            ("gap", DependentRetryingFanStage::UnavailableCorroboration) => {
+                            ("gap", DependentRetryingFanStage::Dependent) => {
                                 corroboration_started.notify_one();
                                 Ok((packet, true))
                             }
@@ -33475,6 +33782,7 @@ mod fan_order_tests {
                 }
             },
             |result| result.1,
+            Ok,
             |primary, corroboration| {
                 if !primary.1 || !corroboration.1 {
                     return Err("expected two Unavailable attestations".to_string());
@@ -33525,7 +33833,7 @@ mod fan_order_tests {
         let corroborating_host = attempts
             .iter()
             .find(|(packet, stage, _)| {
-                packet == "gap" && *stage == DependentRetryingFanStage::UnavailableCorroboration
+                packet == "gap" && *stage == DependentRetryingFanStage::Dependent
             })
             .map(|(_, _, host)| host)
             .unwrap();
@@ -33549,18 +33857,17 @@ mod fan_order_tests {
                                 Err("transient primary transport failure".to_string())
                             }
                             (DependentRetryingFanStage::Primary, "host-b") => Ok((packet, true)),
-                            (DependentRetryingFanStage::UnavailableCorroboration, "host-c") => {
+                            (DependentRetryingFanStage::Dependent, "host-c") => {
                                 Err("transient corroboration transport failure".to_string())
                             }
-                            (DependentRetryingFanStage::UnavailableCorroboration, "host-a") => {
-                                Ok((packet, true))
-                            }
+                            (DependentRetryingFanStage::Dependent, "host-a") => Ok((packet, true)),
                             _ => Err(format!("unexpected {stage:?} attempt on {device}")),
                         }
                     }
                 }
             },
             |result| result.1,
+            Ok,
             |primary, corroboration| {
                 if !primary.1 || !corroboration.1 {
                     return Err("expected two Unavailable attestations".to_string());
@@ -33580,16 +33887,1358 @@ mod fan_order_tests {
             vec![
                 (DependentRetryingFanStage::Primary, "host-a".to_string()),
                 (DependentRetryingFanStage::Primary, "host-b".to_string()),
-                (
-                    DependentRetryingFanStage::UnavailableCorroboration,
-                    "host-c".to_string(),
-                ),
-                (
-                    DependentRetryingFanStage::UnavailableCorroboration,
-                    "host-a".to_string(),
-                ),
+                (DependentRetryingFanStage::Dependent, "host-c".to_string(),),
+                (DependentRetryingFanStage::Dependent, "host-a".to_string(),),
             ]
         );
+    }
+
+    #[test]
+    fn fleet_matching_preserves_full_cover_for_flexible_and_constrained_units() {
+        let candidates = vec![
+            FleetDispatchCandidate {
+                pending_position: 0,
+                priority: 100,
+                source_index: 0,
+                unit_rank: 0,
+                constraint_width: 2,
+                eligible_devices: vec![true, true],
+                preferred_devices: vec![true, true],
+            },
+            FleetDispatchCandidate {
+                pending_position: 1,
+                priority: 1,
+                source_index: 1,
+                unit_rank: 0,
+                constraint_width: 1,
+                eligible_devices: vec![true, false],
+                preferred_devices: vec![true, true],
+            },
+        ];
+        let assignment = maximum_cardinality_fleet_dispatch(2, &candidates)
+            .into_iter()
+            .map(|(device, pending)| (pending, device))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(assignment.len(), 2);
+        assert_eq!(assignment[&0], 1, "the flexible unit must move aside");
+        assert_eq!(assignment[&1], 0, "the constrained unit needs device zero");
+    }
+
+    #[tokio::test]
+    async fn shared_host_scheduler_keeps_a_later_flexible_host_for_constrained_work() {
+        let lanes = ["host-a", "host-b"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, host)| ResearchPhysicalLane {
+                token: format!("lane-{index}"),
+                model_id: format!("model-{index}"),
+                physical_host_id: host.to_string(),
+            })
+            .collect::<Vec<_>>();
+        let scheduler = ResearchHostScheduler::new(lanes);
+        let held_a = scheduler
+            .acquire(vec!["lane-0".to_string()], 1, 0, "held-a".to_string())
+            .await
+            .unwrap();
+        let held_b = scheduler
+            .acquire(vec!["lane-1".to_string()], 1, 0, "held-b".to_string())
+            .await
+            .unwrap();
+        let flexible = tokio::spawn({
+            let scheduler = scheduler.clone();
+            async move {
+                scheduler
+                    .acquire(
+                        vec!["lane-0".to_string(), "lane-1".to_string()],
+                        100,
+                        0,
+                        "flexible".to_string(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        });
+        let constrained = tokio::spawn({
+            let scheduler = scheduler.clone();
+            async move {
+                scheduler
+                    .acquire(vec!["lane-0".to_string()], 1, 0, "constrained".to_string())
+                    .await
+                    .unwrap()
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if scheduler.inner.state.lock().unwrap().pending.len() == 2 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both constrained and flexible requests queued behind held hosts");
+        drop(held_a);
+        let constrained = tokio::time::timeout(std::time::Duration::from_secs(2), constrained)
+            .await
+            .expect("the constrained request received its only eligible host")
+            .unwrap();
+        assert_eq!(constrained.lane.token, "lane-0");
+        assert!(
+            !flexible.is_finished(),
+            "the flexible request must not strand constrained work on the first release"
+        );
+        drop(held_b);
+        let flexible = flexible.await.unwrap();
+        assert_eq!(flexible.lane.token, "lane-1");
+    }
+
+    #[tokio::test]
+    async fn shared_host_scheduler_batches_downstream_before_reassigning_a_released_host() {
+        let lanes = ["host-a", "host-b", "host-c"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, host)| ResearchPhysicalLane {
+                token: format!("lane-{index}"),
+                model_id: format!("model-{index}"),
+                physical_host_id: host.to_string(),
+            })
+            .collect::<Vec<_>>();
+        let scheduler = ResearchHostScheduler::new(lanes);
+        let held_a = scheduler
+            .acquire(vec!["lane-0".to_string()], 1, 0, "held-a".to_string())
+            .await
+            .unwrap();
+        let held_b = scheduler
+            .acquire(vec!["lane-1".to_string()], 1, 0, "held-b".to_string())
+            .await
+            .unwrap();
+        let held_c = scheduler
+            .acquire(vec!["lane-2".to_string()], 1, 0, "held-c".to_string())
+            .await
+            .unwrap();
+        let queued_juror = tokio::spawn({
+            let scheduler = scheduler.clone();
+            async move {
+                scheduler
+                    .acquire(
+                        vec![
+                            "lane-0".to_string(),
+                            "lane-1".to_string(),
+                            "lane-2".to_string(),
+                        ],
+                        100,
+                        0,
+                        "queued-flexible-juror".to_string(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if scheduler.inner.state.lock().unwrap().pending.len() == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the flexible juror queued behind the three occupied hosts");
+
+        drop(held_a);
+        let downstream = scheduler
+            .acquire(
+                vec!["lane-0".to_string()],
+                1,
+                3,
+                "pair-dependent-proof".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(downstream.lane.token, "lane-0");
+        assert!(
+            !queued_juror.is_finished(),
+            "the already queued flexible juror must not consume the proof's only host"
+        );
+
+        drop(held_b);
+        let queued_juror = queued_juror.await.unwrap();
+        assert_eq!(queued_juror.lane.token, "lane-1");
+        drop(held_c);
+    }
+
+    fn research_orchestration_test_lanes(hosts: &[&str]) -> Vec<ResearchPhysicalLane> {
+        hosts
+            .iter()
+            .enumerate()
+            .map(|(index, host)| ResearchPhysicalLane {
+                token: format!("lane-{index}"),
+                model_id: format!("model-{index}"),
+                physical_host_id: (*host).to_string(),
+            })
+            .collect()
+    }
+
+    fn research_orchestration_test_output(
+        lane: &ResearchPhysicalLane,
+    ) -> CompiledResearchClosurePartition {
+        CompiledResearchClosurePartition {
+            model: lane.model_id.clone(),
+            physical_host_id: lane.physical_host_id.clone(),
+            authority_input_digest: "immutable-authority".to_string(),
+            ledger_corrections: 0,
+            assessments: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn citation_failover_uses_a_second_independent_host_in_a_four_host_fleet() {
+        let scheduler = ResearchHostScheduler::new(research_orchestration_test_lanes(&[
+            "author-a",
+            "endorser-b",
+            "verifier-c",
+            "verifier-d",
+        ]));
+        let attempts = Arc::new(Mutex::new(Vec::new()));
+        let failures = Arc::new(Mutex::new(Vec::new()));
+        let selected = run_research_host_failover(
+            &scheduler,
+            vec!["lane-2".to_string(), "lane-3".to_string()],
+            1,
+            3,
+            "citation-group".to_string(),
+            {
+                let attempts = attempts.clone();
+                move |lane, attempt| {
+                    let attempts = attempts.clone();
+                    async move {
+                        attempts.lock().unwrap().push(lane.physical_host_id.clone());
+                        if attempt == 1 {
+                            bail!("injected verifier transport failure");
+                        }
+                        Ok(lane.physical_host_id)
+                    }
+                }
+            },
+            {
+                let failures = failures.clone();
+                move |lane, attempt, _, failed_tokens| {
+                    failures.lock().unwrap().push((
+                        lane.physical_host_id.clone(),
+                        attempt,
+                        failed_tokens.to_vec(),
+                    ));
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            *attempts.lock().unwrap(),
+            vec!["verifier-c".to_string(), "verifier-d".to_string()]
+        );
+        assert_eq!(selected, "verifier-d");
+        assert_eq!(
+            failures.lock().unwrap().as_slice(),
+            &[("verifier-c".to_string(), 1, vec!["lane-2".to_string()])]
+        );
+    }
+
+    #[tokio::test]
+    async fn production_jury_terminal_retires_queued_units_and_drains_active_siblings() {
+        let lanes = research_orchestration_test_lanes(&["host-a", "host-b", "host-c"]);
+        let lane_tokens = lanes
+            .iter()
+            .map(|lane| lane.token.clone())
+            .collect::<Vec<_>>();
+        let scheduler = ResearchHostScheduler::new(lanes);
+        let admission_stop = tokio_util::sync::CancellationToken::new();
+        let partition_count = 8usize;
+        let claims = (0..partition_count)
+            .map(|_| Arc::new(tokio::sync::Mutex::new(HashSet::<String>::new())))
+            .collect::<Vec<_>>();
+        let terminal_gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let active_release = Arc::new(tokio::sync::Semaphore::new(0));
+        let provider_starts = Arc::new(AtomicU64::new(0));
+        let started = Arc::new(tokio::sync::Semaphore::new(0));
+        let calls = futures::stream::FuturesUnordered::new();
+        for (index, claimed_hosts) in claims.iter().cloned().enumerate() {
+            for jury_stage in [
+                PairedRetryingFanStage::First,
+                PairedRetryingFanStage::Second,
+            ] {
+                let scheduler = scheduler.clone();
+                let admission_stop = admission_stop.clone();
+                let lane_tokens = lane_tokens.clone();
+                let claimed_hosts = claimed_hosts.clone();
+                let terminal_gate = terminal_gate.clone();
+                let active_release = active_release.clone();
+                let provider_starts = provider_starts.clone();
+                let started = started.clone();
+                calls.push(async move {
+                    let result: Result<Option<CompiledResearchClosurePartition>> = async {
+                        let current_claims = claimed_hosts.lock().await.clone();
+                        let eligible_tokens = lane_tokens
+                            .iter()
+                            .filter(|token| !current_claims.contains(*token))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        let Some(lease) = acquire_research_host_until_cancelled(
+                            &scheduler,
+                            eligible_tokens,
+                            partition_count.saturating_sub(index),
+                            jury_stage.rank(),
+                            format!("partition-{index}:{}", jury_stage.as_str()),
+                            &admission_stop,
+                        )
+                        .await?
+                        else {
+                            return Ok(None);
+                        };
+                        let lane = lease.lane.clone();
+                        if !claimed_hosts.lock().await.insert(lane.token.clone()) {
+                            bail!("paired test unit reused `{}`", lane.token);
+                        }
+                        provider_starts.fetch_add(1, Ordering::SeqCst);
+                        started.add_permits(1);
+                        let result = if index == 0 && jury_stage == PairedRetryingFanStage::First {
+                            terminal_gate.acquire_owned().await.unwrap().forget();
+                            Err(anyhow!("injected terminal provider failure"))
+                        } else {
+                            active_release.acquire_owned().await.unwrap().forget();
+                            Ok(Some(research_orchestration_test_output(&lane)))
+                        };
+                        drop(lease);
+                        result
+                    }
+                    .await;
+                    (index, jury_stage, result)
+                });
+            }
+        }
+        let retired = Arc::new(AtomicU64::new(0));
+        let pairs = Arc::new(AtomicU64::new(0));
+        let run = tokio::spawn(drain_research_jury_orchestration(
+            calls,
+            (0..partition_count)
+                .map(|index| format!("partition-{index}"))
+                .collect(),
+            admission_stop.clone(),
+            {
+                let retired = retired.clone();
+                move |_, _| {
+                    retired.fetch_add(1, Ordering::SeqCst);
+                }
+            },
+            {
+                let pairs = pairs.clone();
+                move |_, _, _| {
+                    pairs.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+        ));
+        started
+            .clone()
+            .acquire_many_owned(3)
+            .await
+            .unwrap()
+            .forget();
+        terminal_gate.add_permits(1);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            admission_stop.cancelled(),
+        )
+        .await
+        .expect("the first terminal provider failure stopped queued admission");
+        tokio::task::yield_now().await;
+        assert_eq!(provider_starts.load(Ordering::SeqCst), 3);
+        assert!(
+            !run.is_finished(),
+            "the terminal path must still drain the two provider calls holding leases"
+        );
+        active_release.add_permits(3);
+        let error = tokio::time::timeout(std::time::Duration::from_secs(2), run)
+            .await
+            .expect("active provider siblings drained after terminal admission stopped")
+            .unwrap()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("injected terminal provider failure"));
+        assert_eq!(provider_starts.load(Ordering::SeqCst), 3);
+        assert_eq!(retired.load(Ordering::SeqCst), 13);
+        assert_eq!(pairs.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn production_captured_401_117_tail_hands_pair_downstream_before_redispatch() {
+        let lanes = Arc::new(research_orchestration_test_lanes(&[
+            "host-a", "host-b", "host-c",
+        ]));
+        let scheduler = ResearchHostScheduler::new(lanes.as_ref().clone());
+        let admission_stop = tokio_util::sync::CancellationToken::new();
+        let partition_count = 26usize;
+        let claims = (0..partition_count)
+            .map(|_| Arc::new(tokio::sync::Mutex::new(HashSet::<String>::new())))
+            .collect::<Vec<_>>();
+        let gates = Arc::new(
+            (0..partition_count)
+                .flat_map(|index| {
+                    [
+                        PairedRetryingFanStage::First,
+                        PairedRetryingFanStage::Second,
+                    ]
+                    .into_iter()
+                    .map(move |jury_stage| {
+                        (
+                            (index, jury_stage),
+                            Arc::new(tokio::sync::Semaphore::new(0)),
+                        )
+                    })
+                })
+                .collect::<HashMap<_, _>>(),
+        );
+        let (start_sender, mut start_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let calls = futures::stream::FuturesUnordered::new();
+        for index in 0..partition_count {
+            for jury_stage in [
+                PairedRetryingFanStage::First,
+                PairedRetryingFanStage::Second,
+            ] {
+                let scheduler = scheduler.clone();
+                let admission_stop = admission_stop.clone();
+                let lanes = lanes.clone();
+                let claimed_hosts = claims[index].clone();
+                let gate = gates[&(index, jury_stage)].clone();
+                let start_sender = start_sender.clone();
+                calls.push(async move {
+                    let result: Result<Option<CompiledResearchClosurePartition>> = async {
+                        let current_claims = claimed_hosts.lock().await.clone();
+                        let eligible_tokens = lanes
+                            .iter()
+                            .filter(|lane| !current_claims.contains(&lane.physical_host_id))
+                            .map(|lane| lane.token.clone())
+                            .collect::<Vec<_>>();
+                        let Some(lease) = acquire_research_host_until_cancelled(
+                            &scheduler,
+                            eligible_tokens,
+                            partition_count.saturating_sub(index),
+                            jury_stage.rank(),
+                            format!("partition-{index}:{}", jury_stage.as_str()),
+                            &admission_stop,
+                        )
+                        .await?
+                        else {
+                            return Ok(None);
+                        };
+                        let lane = lease.lane.clone();
+                        if !claimed_hosts
+                            .lock()
+                            .await
+                            .insert(lane.physical_host_id.clone())
+                        {
+                            bail!("paired test unit reused `{}`", lane.physical_host_id);
+                        }
+                        start_sender
+                            .send((index, jury_stage, lane.token.clone()))
+                            .unwrap();
+                        gate.acquire_owned().await.unwrap().forget();
+                        let output = research_orchestration_test_output(&lane);
+                        drop(lease);
+                        Ok(Some(output))
+                    }
+                    .await;
+                    (index, jury_stage, result)
+                });
+            }
+        }
+        drop(start_sender);
+        let (pair_sender, mut pair_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let run = tokio::spawn(drain_research_jury_orchestration(
+            calls,
+            (0..partition_count)
+                .map(|index| format!("partition-{index}"))
+                .collect(),
+            admission_stop,
+            |_, _| {},
+            move |index, first, second| {
+                pair_sender
+                    .send((index, first, second))
+                    .map_err(|_| anyhow!("pair receiver closed"))
+            },
+        ));
+
+        let mut initial = Vec::new();
+        for _ in 0..3 {
+            initial.push(
+                tokio::time::timeout(std::time::Duration::from_secs(2), start_receiver.recv())
+                    .await
+                    .expect("three physical hosts received initial jury units")
+                    .unwrap(),
+            );
+        }
+        assert_eq!(
+            initial
+                .iter()
+                .map(|(index, stage, _)| (*index, *stage))
+                .collect::<HashSet<_>>(),
+            HashSet::from([
+                (0, PairedRetryingFanStage::First),
+                (0, PairedRetryingFanStage::Second),
+                (1, PairedRetryingFanStage::First),
+            ])
+        );
+        gates[&(0, PairedRetryingFanStage::First)].add_permits(1);
+        gates[&(0, PairedRetryingFanStage::Second)].add_permits(1);
+        let (pair_index, first, second) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), pair_receiver.recv())
+                .await
+                .expect("the completed pair was handed to downstream orchestration")
+                .unwrap();
+        assert_eq!(pair_index, 0);
+        let verifier_lane = lanes
+            .iter()
+            .find(|lane| {
+                lane.physical_host_id != first.physical_host_id
+                    && lane.physical_host_id != second.physical_host_id
+            })
+            .unwrap()
+            .clone();
+        let downstream = tokio::spawn({
+            let scheduler = scheduler.clone();
+            let verifier_token = verifier_lane.token.clone();
+            async move {
+                scheduler
+                    .acquire(vec![verifier_token], 1, 3, "partition-0-proof".to_string())
+                    .await
+                    .unwrap()
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let expected = HashSet::from([verifier_lane.token.clone()]);
+                if scheduler
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap()
+                    .pending
+                    .iter()
+                    .any(|request| request.eligible_tokens == expected)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the pair-dependent proof entered the shared production scheduler");
+        while start_receiver.try_recv().is_ok() {}
+        let verifier_unit = initial
+            .iter()
+            .find(|(_, _, token)| token == &verifier_lane.token)
+            .map(|(index, stage, _)| (*index, *stage))
+            .unwrap();
+        gates[&verifier_unit].add_permits(1);
+        let downstream = tokio::select! {
+            biased;
+            result = downstream => result.unwrap(),
+            started = start_receiver.recv() => panic!(
+                "a queued juror stole the proof's only released host: {started:?}"
+            ),
+        };
+        assert_eq!(downstream.lane.token, verifier_lane.token);
+        drop(downstream);
+
+        for gate in gates.values() {
+            gate.add_permits(8);
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(2), run)
+            .await
+            .expect("the direct production jury orchestration completed")
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn outer_pair_lifecycle_drains_a_final_buffered_pair_after_fan_ready() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let fan = async move {
+            sender.send("final-pair").unwrap();
+            Ok::<_, anyhow::Error>(())
+        };
+        tokio::pin!(fan);
+        let mut fan_open = true;
+        let mut channel_open = true;
+        let mut pairs = Vec::new();
+        while fan_open || channel_open {
+            tokio::select! {
+                biased;
+                pair = receiver.recv(), if channel_open => {
+                    match pair {
+                        Some(pair) => pairs.push(pair),
+                        None => channel_open = false,
+                    }
+                }
+                result = &mut fan, if fan_open => {
+                    result.unwrap();
+                    fan_open = false;
+                }
+            }
+        }
+        assert_eq!(pairs, vec!["final-pair"]);
+    }
+
+    #[tokio::test]
+    async fn production_jury_survives_all_first_three_completion_and_failure_permutations() {
+        let initial_units = [
+            (0usize, PairedRetryingFanStage::First),
+            (0, PairedRetryingFanStage::Second),
+            (1, PairedRetryingFanStage::First),
+        ];
+        let completion_orders = [
+            [0usize, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        for completion_order in completion_orders {
+            for failure_mask in 0u8..8 {
+                let lanes = Arc::new(research_orchestration_test_lanes(&[
+                    "host-a", "host-b", "host-c",
+                ]));
+                let scheduler = ResearchHostScheduler::new(lanes.as_ref().clone());
+                let admission_stop = tokio_util::sync::CancellationToken::new();
+                let claims = (0..2)
+                    .map(|_| Arc::new(tokio::sync::Mutex::new(HashSet::<String>::new())))
+                    .collect::<Vec<_>>();
+                let gates = Arc::new(
+                    initial_units
+                        .iter()
+                        .map(|unit| (*unit, Arc::new(tokio::sync::Semaphore::new(0))))
+                        .collect::<HashMap<_, _>>(),
+                );
+                let failure_bits = Arc::new(
+                    initial_units
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .map(|(bit, unit)| (unit, bit))
+                        .collect::<HashMap<_, _>>(),
+                );
+                let initial_admissions = Arc::new(Mutex::new(Vec::new()));
+                let started = Arc::new(tokio::sync::Semaphore::new(0));
+                let (completion_sender, mut completion_receiver) =
+                    tokio::sync::mpsc::unbounded_channel();
+                let calls = futures::stream::FuturesUnordered::new();
+                for (index, claimed_hosts) in claims.iter().cloned().enumerate() {
+                    for jury_stage in [
+                        PairedRetryingFanStage::First,
+                        PairedRetryingFanStage::Second,
+                    ] {
+                        let scheduler = scheduler.clone();
+                        let admission_stop = admission_stop.clone();
+                        let lanes = lanes.clone();
+                        let claimed_hosts = claimed_hosts.clone();
+                        let gates = gates.clone();
+                        let failure_bits = failure_bits.clone();
+                        let initial_admissions = initial_admissions.clone();
+                        let started = started.clone();
+                        let completion_sender = completion_sender.clone();
+                        calls.push(async move {
+                            let result: Result<Option<CompiledResearchClosurePartition>> = async {
+                                let mut failed_hosts = HashSet::new();
+                                let mut attempt = 0usize;
+                                loop {
+                                    let current_claims = claimed_hosts.lock().await.clone();
+                                    let eligible_tokens = lanes
+                                        .iter()
+                                        .filter(|lane| {
+                                            !current_claims.contains(&lane.physical_host_id)
+                                                && !failed_hosts.contains(&lane.physical_host_id)
+                                        })
+                                        .map(|lane| lane.token.clone())
+                                        .collect::<Vec<_>>();
+                                    if eligible_tokens.is_empty() {
+                                        admission_stop.cancel();
+                                        bail!(
+                                            "permutation unit {index}:{} exhausted hosts",
+                                            jury_stage.as_str()
+                                        );
+                                    }
+                                    let Some(lease) = acquire_research_host_until_cancelled(
+                                        &scheduler,
+                                        eligible_tokens,
+                                        2usize.saturating_sub(index),
+                                        jury_stage.rank(),
+                                        format!("partition-{index}:{}", jury_stage.as_str()),
+                                        &admission_stop,
+                                    )
+                                    .await?
+                                    else {
+                                        return Ok(None);
+                                    };
+                                    let lane = lease.lane.clone();
+                                    if !claimed_hosts
+                                        .lock()
+                                        .await
+                                        .insert(lane.physical_host_id.clone())
+                                    {
+                                        drop(lease);
+                                        tokio::task::yield_now().await;
+                                        continue;
+                                    }
+                                    attempt = attempt.saturating_add(1);
+                                    if attempt == 1 {
+                                        initial_admissions.lock().unwrap().push((
+                                            index,
+                                            jury_stage,
+                                            lane.physical_host_id.clone(),
+                                        ));
+                                        started.add_permits(1);
+                                    }
+                                    let unit = (index, jury_stage);
+                                    let should_fail = if attempt == 1 {
+                                        if let Some(gate) = gates.get(&unit) {
+                                            gate.clone().acquire_owned().await.unwrap().forget();
+                                            failure_bits
+                                                .get(&unit)
+                                                .is_some_and(|bit| failure_mask & (1 << bit) != 0)
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    };
+                                    if attempt == 1 && failure_bits.contains_key(&unit) {
+                                        completion_sender
+                                            .send((
+                                                unit,
+                                                lane.physical_host_id.clone(),
+                                                should_fail,
+                                            ))
+                                            .unwrap();
+                                    }
+                                    drop(lease);
+                                    if should_fail {
+                                        claimed_hosts.lock().await.remove(&lane.physical_host_id);
+                                        failed_hosts.insert(lane.physical_host_id);
+                                        continue;
+                                    }
+                                    return Ok(Some(research_orchestration_test_output(&lane)));
+                                }
+                            }
+                            .await;
+                            (index, jury_stage, result)
+                        });
+                    }
+                }
+                drop(completion_sender);
+                let formed_pairs = Arc::new(Mutex::new(Vec::new()));
+                let run = tokio::spawn(drain_research_jury_orchestration(
+                    calls,
+                    vec!["partition-0".to_string(), "partition-1".to_string()],
+                    admission_stop,
+                    |_, _| {},
+                    {
+                        let formed_pairs = formed_pairs.clone();
+                        move |index, first, second| {
+                            formed_pairs.lock().unwrap().push((
+                                index,
+                                first.physical_host_id,
+                                second.physical_host_id,
+                            ));
+                            Ok(())
+                        }
+                    },
+                ));
+                started
+                    .clone()
+                    .acquire_many_owned(3)
+                    .await
+                    .unwrap()
+                    .forget();
+                assert_eq!(
+                    initial_admissions
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|(index, stage, _)| (*index, *stage))
+                        .collect::<HashSet<_>>(),
+                    initial_units.iter().copied().collect::<HashSet<_>>()
+                );
+                for unit_index in completion_order {
+                    let expected = initial_units[unit_index];
+                    gates[&expected].add_permits(1);
+                    let (completed, host, failed) = tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        completion_receiver.recv(),
+                    )
+                    .await
+                    .expect("the exact named production completion was acknowledged")
+                    .unwrap();
+                    assert_eq!(completed, expected);
+                    assert!(!host.is_empty());
+                    let failure_bit = failure_bits[&expected];
+                    assert_eq!(failed, failure_mask & (1 << failure_bit) != 0);
+                }
+                tokio::time::timeout(std::time::Duration::from_secs(2), run)
+                    .await
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "production jury stuck for order {completion_order:?} mask {failure_mask:03b}"
+                        )
+                    })
+                    .unwrap()
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "production jury failed for order {completion_order:?} mask {failure_mask:03b}: {error}"
+                        )
+                    });
+                let pairs = formed_pairs.lock().unwrap();
+                assert_eq!(pairs.len(), 2);
+                assert!(pairs.iter().all(|(_, first, second)| first != second));
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct PairedFanTestOutput {
+        packet: String,
+        stage: PairedRetryingFanStage,
+        device: String,
+        authority_digest: &'static str,
+    }
+
+    fn paired_test_gates(
+        packets: &[&str],
+    ) -> Arc<HashMap<(String, PairedRetryingFanStage), Arc<tokio::sync::Semaphore>>> {
+        Arc::new(
+            packets
+                .iter()
+                .flat_map(|packet| {
+                    [
+                        PairedRetryingFanStage::First,
+                        PairedRetryingFanStage::Second,
+                    ]
+                    .into_iter()
+                    .map(move |stage| {
+                        (
+                            ((*packet).to_string(), stage),
+                            Arc::new(tokio::sync::Semaphore::new(0)),
+                        )
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    #[tokio::test]
+    async fn captured_401_117_second_pair_residual_reuses_the_released_host_immediately() {
+        let packet_names = std::iter::once("a".to_string())
+            .chain(std::iter::once("b".to_string()))
+            .chain(std::iter::once("c".to_string()))
+            .chain((3..26).map(|index| format!("packet-{index}")))
+            .collect::<Vec<_>>();
+        let packets = packet_names
+            .iter()
+            .enumerate()
+            .map(|(index, packet)| (packet.clone(), 400usize.saturating_sub(index)))
+            .collect::<Vec<_>>();
+        let gate_names = packet_names.iter().map(String::as_str).collect::<Vec<_>>();
+        let gates = paired_test_gates(&gate_names);
+        let started = Arc::new(tokio::sync::Semaphore::new(0));
+        let admissions = Arc::new(Mutex::new(Vec::new()));
+        let run = tokio::spawn(fanout_paired_retrying_over_fleet(
+            vec!["host-fast".into(), "host-mid".into(), "host-slow".into()],
+            packets,
+            {
+                let gates = gates.clone();
+                let started = started.clone();
+                let admissions = admissions.clone();
+                move |(packet, _): (String, usize), device, stage| {
+                    let gate = gates[&(packet.clone(), stage)].clone();
+                    let started = started.clone();
+                    let admissions = admissions.clone();
+                    async move {
+                        admissions
+                            .lock()
+                            .unwrap()
+                            .push((packet.clone(), stage, device.clone()));
+                        started.add_permits(1);
+                        gate.acquire_owned().await.unwrap().forget();
+                        Ok::<_, String>(PairedFanTestOutput {
+                            packet,
+                            stage,
+                            device,
+                            authority_digest: "immutable-authority",
+                        })
+                    }
+                }
+            },
+            |packet| packet.1,
+            |packet| packet.0.clone(),
+            |_| {},
+            |_| {},
+            |_| {},
+            |_, _, _| {},
+        ));
+
+        started
+            .clone()
+            .acquire_many_owned(3)
+            .await
+            .unwrap()
+            .forget();
+        let initial = admissions.lock().unwrap().clone();
+        assert_eq!(initial.len(), 3);
+        assert_eq!(
+            initial
+                .iter()
+                .map(|(packet, stage, _)| (packet.as_str(), *stage))
+                .collect::<HashSet<_>>(),
+            HashSet::from([
+                ("a", PairedRetryingFanStage::First),
+                ("a", PairedRetryingFanStage::Second),
+                ("b", PairedRetryingFanStage::First),
+            ])
+        );
+        assert!(
+            initial
+                .iter()
+                .any(|(_, stage, _)| *stage == PairedRetryingFanStage::Second),
+            "a second cover unit must start before the 26-partition-style first cover drains"
+        );
+        let released_host = initial
+            .iter()
+            .find(|(packet, stage, _)| packet == "b" && *stage == PairedRetryingFanStage::First)
+            .map(|(_, _, device)| device.clone())
+            .unwrap();
+        gates[&("b".to_string(), PairedRetryingFanStage::First)].add_permits(1);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            started.clone().acquire_owned(),
+        )
+        .await
+        .expect("the released third host was reused without a pair-window barrier")
+        .unwrap()
+        .forget();
+        let fourth = admissions.lock().unwrap()[3].clone();
+        assert_eq!(fourth.0, "c");
+        assert_eq!(fourth.1, PairedRetryingFanStage::First);
+        assert_eq!(fourth.2, released_host);
+
+        for gate in gates.values() {
+            gate.add_permits(16);
+        }
+        let output = tokio::time::timeout(std::time::Duration::from_secs(2), run)
+            .await
+            .expect("the host-aware replay completed")
+            .unwrap()
+            .unwrap();
+        assert_eq!(output.len(), 26);
+        for (first, second) in output {
+            assert_eq!(first.packet, second.packet);
+            assert_eq!(first.stage, PairedRetryingFanStage::First);
+            assert_eq!(second.stage, PairedRetryingFanStage::Second);
+            assert_ne!(first.device, second.device);
+            assert_eq!(first.authority_digest, second.authority_digest);
+        }
+    }
+
+    #[tokio::test]
+    async fn paired_jury_enqueues_downstream_before_its_next_dispatch_tick() {
+        let gates = paired_test_gates(&["a", "b", "c"]);
+        let started = Arc::new(tokio::sync::Semaphore::new(0));
+        let events = Arc::new(Mutex::new(Vec::<String>::new()));
+        let (pair_sender, mut pair_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let pair_fan = fanout_paired_retrying_over_fleet(
+            vec!["host-a".into(), "host-b".into(), "host-c".into()],
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            {
+                let gates = gates.clone();
+                let started = started.clone();
+                move |packet: String, device, stage| {
+                    let gate = gates[&(packet.clone(), stage)].clone();
+                    let started = started.clone();
+                    async move {
+                        started.add_permits(1);
+                        gate.acquire_owned().await.unwrap().forget();
+                        Ok::<_, String>(PairedFanTestOutput {
+                            packet,
+                            stage,
+                            device,
+                            authority_digest: "immutable-authority",
+                        })
+                    }
+                }
+            },
+            |_| 1,
+            String::clone,
+            {
+                let events = events.clone();
+                move |attempt| {
+                    events.lock().unwrap().push(format!(
+                        "attempt:{}:{}",
+                        attempt.packet,
+                        attempt.stage.as_str()
+                    ))
+                }
+            },
+            |_| {},
+            |_| {},
+            {
+                let events = events.clone();
+                move |index, _, _| {
+                    events.lock().unwrap().push(format!("pair:{index}"));
+                    pair_sender.send(index).unwrap();
+                }
+            },
+        );
+        tokio::pin!(pair_fan);
+        let controller = tokio::spawn({
+            let gates = gates.clone();
+            async move {
+                started.acquire_many_owned(3).await.unwrap().forget();
+                gates[&("a".to_string(), PairedRetryingFanStage::First)].add_permits(1);
+                gates[&("a".to_string(), PairedRetryingFanStage::Second)].add_permits(1);
+            }
+        });
+        let pair_index = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            tokio::select! {
+                biased;
+                pair = pair_receiver.recv() => pair.unwrap(),
+                result = &mut pair_fan => panic!("paired fan ended before downstream admission: {result:?}"),
+            }
+        })
+        .await
+        .expect("the first completed pair was handed downstream");
+        assert_eq!(pair_index, 0);
+        events
+            .lock()
+            .unwrap()
+            .push(format!("downstream:{pair_index}"));
+        let snapshot = events.lock().unwrap().clone();
+        let pair_position = snapshot.iter().position(|event| event == "pair:0").unwrap();
+        let downstream_position = snapshot
+            .iter()
+            .position(|event| event == "downstream:0")
+            .unwrap();
+        assert_eq!(downstream_position, pair_position + 1);
+        for gate in gates.values() {
+            gate.add_permits(16);
+        }
+        controller.await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), &mut pair_fan)
+            .await
+            .expect("the paired fan completed after downstream admission")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn paired_jury_survives_every_first_three_completion_and_failure_permutation() {
+        let initial_units = [
+            ("a".to_string(), PairedRetryingFanStage::First),
+            ("a".to_string(), PairedRetryingFanStage::Second),
+            ("b".to_string(), PairedRetryingFanStage::First),
+        ];
+        let completion_orders = [
+            [0usize, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        for completion_order in completion_orders {
+            for failure_mask in 0u8..8 {
+                let gates = paired_test_gates(&["a", "b"]);
+                let started = Arc::new(tokio::sync::Semaphore::new(0));
+                let attempts = Arc::new(Mutex::new(HashMap::<
+                    (String, PairedRetryingFanStage),
+                    usize,
+                >::new()));
+                let initial_failure_bits = Arc::new(
+                    initial_units
+                        .iter()
+                        .cloned()
+                        .enumerate()
+                        .map(|(bit, unit)| (unit, bit))
+                        .collect::<HashMap<_, _>>(),
+                );
+                let admissions = Arc::new(Mutex::new(Vec::new()));
+                let (completion_sender, mut completion_receiver) =
+                    tokio::sync::mpsc::unbounded_channel();
+                let run = tokio::spawn(fanout_paired_retrying_over_fleet(
+                    vec!["host-a".into(), "host-b".into(), "host-c".into()],
+                    vec!["a".to_string(), "b".to_string()],
+                    {
+                        let gates = gates.clone();
+                        let started = started.clone();
+                        let attempts = attempts.clone();
+                        let initial_failure_bits = initial_failure_bits.clone();
+                        let admissions = admissions.clone();
+                        move |packet: String, device, stage| {
+                            let unit = (packet.clone(), stage);
+                            let attempt = {
+                                let mut attempts = attempts.lock().unwrap();
+                                let count = attempts.entry(unit.clone()).or_default();
+                                *count += 1;
+                                *count
+                            };
+                            let initial_bit = initial_failure_bits.get(&unit).copied();
+                            let gate = gates[&unit].clone();
+                            let started = started.clone();
+                            let admissions = admissions.clone();
+                            async move {
+                                admissions
+                                    .lock()
+                                    .unwrap()
+                                    .push((unit.clone(), device.clone()));
+                                started.add_permits(1);
+                                if let Some(initial_bit) =
+                                    (attempt == 1).then_some(initial_bit).flatten()
+                                {
+                                    gate.acquire_owned().await.unwrap().forget();
+                                    if failure_mask & (1 << initial_bit) != 0 {
+                                        return Err(format!(
+                                            "injected first-three failure on {device}"
+                                        ));
+                                    }
+                                }
+                                Ok(PairedFanTestOutput {
+                                    packet,
+                                    stage,
+                                    device,
+                                    authority_digest: "immutable-authority",
+                                })
+                            }
+                        }
+                    },
+                    |_| 1,
+                    String::clone,
+                    |_| {},
+                    |_| {},
+                    move |completion| {
+                        completion_sender.send(completion).unwrap();
+                    },
+                    |_, _, _| {},
+                ));
+                started
+                    .clone()
+                    .acquire_many_owned(3)
+                    .await
+                    .unwrap()
+                    .forget();
+                assert_eq!(
+                    admissions
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .take(3)
+                        .map(|(unit, _)| unit.clone())
+                        .collect::<HashSet<_>>(),
+                    initial_units.iter().cloned().collect::<HashSet<_>>()
+                );
+                for unit_index in completion_order {
+                    let expected = initial_units[unit_index].clone();
+                    gates[&expected].add_permits(1);
+                    let completion =
+                        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                            loop {
+                                let completion = completion_receiver.recv().await.unwrap();
+                                if completion.attempt == 1
+                                    && initial_units
+                                        .contains(&(completion.packet.clone(), completion.stage))
+                                {
+                                    break completion;
+                                }
+                            }
+                        })
+                        .await
+                        .expect("the named first-three completion was consumed");
+                    assert_eq!(
+                        (completion.packet, completion.stage),
+                        expected.clone(),
+                        "the replay must consume the exact requested completion order"
+                    );
+                    assert_eq!(completion.source_index, usize::from(expected.0 == "b"));
+                    assert!(!completion.device.is_empty());
+                    let failure_bit = initial_failure_bits[&expected];
+                    assert_eq!(completion.succeeded, failure_mask & (1 << failure_bit) == 0);
+                }
+                let output = tokio::time::timeout(std::time::Duration::from_secs(2), run)
+                    .await
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "paired fan stuck for completion order {completion_order:?} failure mask {failure_mask:03b}"
+                        )
+                    })
+                    .unwrap()
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "paired fan failed for completion order {completion_order:?} failure mask {failure_mask:03b}: {error}"
+                        )
+                    });
+                assert_eq!(output.len(), 2);
+                for (first, second) in output {
+                    assert_eq!(first.packet, second.packet);
+                    assert_eq!(first.stage, PairedRetryingFanStage::First);
+                    assert_eq!(second.stage, PairedRetryingFanStage::Second);
+                    assert_ne!(first.device, second.device);
+                    assert_eq!(first.authority_digest, second.authority_digest);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn paired_jury_drains_admitted_siblings_after_distinct_host_exhaustion() {
+        let release_b_first = Arc::new(tokio::sync::Semaphore::new(0));
+        let release_b_second = Arc::new(tokio::sync::Semaphore::new(0));
+        let b_second_started = Arc::new(tokio::sync::Notify::new());
+        let final_failure = Arc::new(tokio::sync::Notify::new());
+        let a_second_attempts = Arc::new(AtomicU64::new(0));
+        let pairs_observed = Arc::new(AtomicU64::new(0));
+        let run = tokio::spawn(fanout_paired_retrying_over_fleet(
+            vec!["host-a".into(), "host-b".into(), "host-c".into()],
+            vec![("a".to_string(), 100usize), ("b".to_string(), 1usize)],
+            {
+                let release_b_first = release_b_first.clone();
+                let release_b_second = release_b_second.clone();
+                let b_second_started = b_second_started.clone();
+                let final_failure = final_failure.clone();
+                let a_second_attempts = a_second_attempts.clone();
+                move |(packet, _): (String, usize), device, stage| {
+                    let release_b_first = release_b_first.clone();
+                    let release_b_second = release_b_second.clone();
+                    let b_second_started = b_second_started.clone();
+                    let final_failure = final_failure.clone();
+                    let a_second_attempts = a_second_attempts.clone();
+                    async move {
+                        match (packet.as_str(), stage) {
+                            ("a", PairedRetryingFanStage::First) => Ok(PairedFanTestOutput {
+                                packet,
+                                stage,
+                                device,
+                                authority_digest: "immutable-authority",
+                            }),
+                            ("a", PairedRetryingFanStage::Second) => {
+                                if a_second_attempts.fetch_add(1, Ordering::SeqCst) + 1 == 2 {
+                                    final_failure.notify_one();
+                                }
+                                Err(format!("injected jury failure on {device}"))
+                            }
+                            ("b", PairedRetryingFanStage::First) => {
+                                release_b_first.acquire_owned().await.unwrap().forget();
+                                Ok(PairedFanTestOutput {
+                                    packet,
+                                    stage,
+                                    device,
+                                    authority_digest: "immutable-authority",
+                                })
+                            }
+                            ("b", PairedRetryingFanStage::Second) => {
+                                b_second_started.notify_one();
+                                release_b_second.acquire_owned().await.unwrap().forget();
+                                Ok(PairedFanTestOutput {
+                                    packet,
+                                    stage,
+                                    device,
+                                    authority_digest: "immutable-authority",
+                                })
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            },
+            |packet| packet.1,
+            |packet| packet.0.clone(),
+            |_| {},
+            |_| {},
+            |_| {},
+            {
+                let pairs_observed = pairs_observed.clone();
+                move |_, _, _| {
+                    pairs_observed.fetch_add(1, Ordering::SeqCst);
+                }
+            },
+        ));
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            b_second_started.notified(),
+        )
+        .await
+        .expect("the released failure host admitted the other pair's second juror");
+        release_b_first.add_permits(1);
+        tokio::time::timeout(std::time::Duration::from_secs(2), final_failure.notified())
+            .await
+            .expect("the failed juror exhausted its final distinct host");
+        tokio::task::yield_now().await;
+        assert!(
+            !run.is_finished(),
+            "terminal exhaustion must await the already-admitted sibling juror"
+        );
+        release_b_second.add_permits(1);
+        let error = run.await.unwrap().unwrap_err().to_string();
+        assert!(
+            error.contains("after draining every admitted request"),
+            "{error}"
+        );
+        assert!(
+            error.contains("exhausted every eligible distinct node"),
+            "{error}"
+        );
+        assert_eq!(
+            pairs_observed.load(Ordering::SeqCst),
+            0,
+            "terminal state must not launch fresh downstream pair work while draining"
+        );
+    }
+
+    #[tokio::test]
+    async fn citation_fan_drains_a_blocked_admitted_group_after_a_sibling_fails() {
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let sibling_started = Arc::new(tokio::sync::Notify::new());
+        let release_sibling = Arc::new(tokio::sync::Semaphore::new(0));
+        let calls = futures::stream::FuturesUnordered::new();
+        for should_fail in [true, false] {
+            let barrier = barrier.clone();
+            let sibling_started = sibling_started.clone();
+            let release_sibling = release_sibling.clone();
+            calls.push(async move {
+                barrier.wait().await;
+                if should_fail {
+                    Err(anyhow!("injected citation group failure"))
+                } else {
+                    sibling_started.notify_one();
+                    release_sibling.acquire_owned().await.unwrap().forget();
+                    Ok("citation-group-complete")
+                }
+            });
+        }
+        let run = tokio::spawn(drain_admitted_fan_results(calls, "target citation audit"));
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            sibling_started.notified(),
+        )
+        .await
+        .expect("both citation groups were admitted before the injected failure resolved");
+        tokio::task::yield_now().await;
+        assert!(
+            !run.is_finished(),
+            "citation audit must not cancel a blocked admitted group after its sibling fails"
+        );
+        release_sibling.add_permits(1);
+        let error = run.await.unwrap().unwrap_err().to_string();
+        assert!(
+            error.contains("failed after draining every admitted request"),
+            "{error}"
+        );
+        assert!(error.contains("injected citation group failure"), "{error}");
     }
 }
 
@@ -33639,6 +35288,30 @@ where
         }
     }
     results
+}
+
+async fn drain_admitted_fan_results<R, Fut>(
+    mut calls: futures::stream::FuturesUnordered<Fut>,
+    label: &str,
+) -> Result<Vec<R>>
+where
+    Fut: std::future::Future<Output = Result<R>>,
+{
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+    while let Some(result) = calls.next().await {
+        match result {
+            Ok(result) => results.push(result),
+            Err(error) => failures.push(error.to_string()),
+        }
+    }
+    if !failures.is_empty() {
+        bail!(
+            "{label} failed after draining every admitted request: {}",
+            failures.join(" | ")
+        );
+    }
+    Ok(results)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33907,28 +35580,19 @@ struct RetryingFanCompletion<T, R> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DependentRetryingFanStage {
     Primary,
-    UnavailableCorroboration,
-}
-
-impl DependentRetryingFanStage {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Primary => "primary",
-            Self::UnavailableCorroboration => "unavailable-corroboration",
-        }
-    }
+    Dependent,
 }
 
 enum DependentRetryingFanState<R> {
     Primary,
-    Followup { primary: R },
+    Dependent { primary: R },
 }
 
 impl<R> DependentRetryingFanState<R> {
     fn stage(&self) -> DependentRetryingFanStage {
         match self {
             Self::Primary => DependentRetryingFanStage::Primary,
-            Self::Followup { .. } => DependentRetryingFanStage::UnavailableCorroboration,
+            Self::Dependent { .. } => DependentRetryingFanStage::Dependent,
         }
     }
 }
@@ -33939,6 +35603,7 @@ struct DependentRetryingFanPending<T, R> {
     priority: usize,
     state: DependentRetryingFanState<R>,
     excluded_devices: HashSet<String>,
+    deferred_devices: HashSet<String>,
     attempted_devices: HashSet<String>,
     failures: Vec<(String, String)>,
 }
@@ -33972,13 +35637,116 @@ fn retrying_fan_priority_cmp(
         .then_with(|| left_index.cmp(&right_index))
 }
 
+#[derive(Clone, Debug)]
+struct FleetDispatchCandidate {
+    pending_position: usize,
+    priority: usize,
+    source_index: usize,
+    unit_rank: usize,
+    constraint_width: usize,
+    eligible_devices: Vec<bool>,
+    preferred_devices: Vec<bool>,
+}
+
+fn maximum_cardinality_fleet_dispatch(
+    device_count: usize,
+    candidates: &[FleetDispatchCandidate],
+) -> Vec<(usize, usize)> {
+    fn augment(
+        candidate_index: usize,
+        candidates: &[FleetDispatchCandidate],
+        assigned_candidate_by_device: &mut [Option<usize>],
+        visited_devices: &mut [bool],
+    ) -> bool {
+        for preferred in [true, false] {
+            for device_index in 0..assigned_candidate_by_device.len() {
+                if visited_devices[device_index]
+                    || !candidates[candidate_index].eligible_devices[device_index]
+                    || candidates[candidate_index].preferred_devices[device_index] != preferred
+                {
+                    continue;
+                }
+                visited_devices[device_index] = true;
+                let displaced = assigned_candidate_by_device[device_index];
+                if displaced.is_none_or(|displaced| {
+                    augment(
+                        displaced,
+                        candidates,
+                        assigned_candidate_by_device,
+                        visited_devices,
+                    )
+                }) {
+                    assigned_candidate_by_device[device_index] = Some(candidate_index);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    if device_count == 0 || candidates.is_empty() {
+        return Vec::new();
+    }
+    assert!(
+        candidates.iter().all(|candidate| {
+            candidate.eligible_devices.len() == device_count
+                && candidate.preferred_devices.len() == device_count
+        }),
+        "fleet dispatch eligibility and preference must cover every free device"
+    );
+    let mut ordered_candidates = (0..candidates.len()).collect::<Vec<_>>();
+    ordered_candidates.sort_by(|left, right| {
+        candidates[*left]
+            .constraint_width
+            .cmp(&candidates[*right].constraint_width)
+            .then_with(|| {
+                retrying_fan_priority_cmp(
+                    candidates[*left].priority,
+                    candidates[*left].source_index,
+                    candidates[*right].priority,
+                    candidates[*right].source_index,
+                )
+            })
+            .then_with(|| {
+                candidates[*left]
+                    .unit_rank
+                    .cmp(&candidates[*right].unit_rank)
+            })
+            .then_with(|| {
+                candidates[*left]
+                    .pending_position
+                    .cmp(&candidates[*right].pending_position)
+            })
+    });
+    let mut assigned_candidate_by_device = vec![None; device_count];
+    for candidate_index in ordered_candidates {
+        let mut visited_devices = vec![false; device_count];
+        augment(
+            candidate_index,
+            candidates,
+            &mut assigned_candidate_by_device,
+            &mut visited_devices,
+        );
+    }
+    assigned_candidate_by_device
+        .into_iter()
+        .enumerate()
+        .filter_map(|(device_index, candidate_index)| {
+            candidate_index
+                .map(|candidate_index| (device_index, candidates[candidate_index].pending_position))
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn fanout_dependent_retrying_over_fleet<
     T,
     R,
+    O,
     F,
     Fut,
     NeedsFollowup,
+    FinalizePrimary,
     Merge,
     Priority,
     Label,
@@ -33989,19 +35757,21 @@ async fn fanout_dependent_retrying_over_fleet<
     items: Vec<T>,
     f: F,
     needs_followup: NeedsFollowup,
+    finalize_primary: FinalizePrimary,
     merge: Merge,
     priority: Priority,
     label: Label,
     observe_attempt: ObserveAttempt,
     observe_tail: ObserveTail,
-) -> Result<Vec<R>>
+) -> Result<Vec<O>>
 where
     T: Clone + Send + 'static,
     R: Send + 'static,
     F: Fn(T, String, DependentRetryingFanStage) -> Fut + Clone + Send + 'static,
     Fut: std::future::Future<Output = std::result::Result<R, String>> + Send + 'static,
     NeedsFollowup: Fn(&R) -> bool,
-    Merge: Fn(R, R) -> std::result::Result<R, String>,
+    FinalizePrimary: Fn(R) -> std::result::Result<O, String>,
+    Merge: Fn(R, R) -> std::result::Result<O, String>,
     Priority: Fn(&T) -> usize,
     Label: Fn(&T) -> String,
     ObserveAttempt: Fn(DependentRetryingFanAttemptObservation),
@@ -34028,6 +35798,7 @@ where
             item,
             state: DependentRetryingFanState::Primary,
             excluded_devices: HashSet::new(),
+            deferred_devices: HashSet::new(),
             attempted_devices: HashSet::new(),
             failures: Vec::new(),
         })
@@ -34038,9 +35809,14 @@ where
     };
     pending.sort_by(&order_pending);
 
+    let device_rank = devices
+        .iter()
+        .enumerate()
+        .map(|(rank, device)| (device.clone(), rank))
+        .collect::<HashMap<_, _>>();
     let mut free_devices = devices.into_iter().collect::<VecDeque<_>>();
     let mut completions = futures::stream::FuturesUnordered::new();
-    let mut results: Vec<Option<R>> = (0..item_count).map(|_| None).collect();
+    let mut results: Vec<Option<O>> = (0..item_count).map(|_| None).collect();
     let mut in_flight = HashSet::new();
     let mut completed = 0usize;
     let mut tail_reported = false;
@@ -34048,16 +35824,68 @@ where
 
     loop {
         if terminal_failures.is_empty() {
-            let mut unmatched_devices = VecDeque::new();
-            while let Some(device) = free_devices.pop_front() {
-                let Some(position) = pending.iter().position(|item| {
-                    !item.excluded_devices.contains(&device)
-                        && !item.attempted_devices.contains(&device)
-                }) else {
-                    unmatched_devices.push_back(device);
-                    continue;
-                };
-                let mut pending_item = pending.remove(position);
+            let mut available_devices = free_devices.drain(..).collect::<Vec<_>>();
+            available_devices.sort_by_key(|device| device_rank[device]);
+            let candidates = pending
+                .iter()
+                .enumerate()
+                .map(|(pending_position, item)| FleetDispatchCandidate {
+                    pending_position,
+                    priority: item.priority,
+                    source_index: item.index,
+                    unit_rank: match &item.state {
+                        DependentRetryingFanState::Primary => 0,
+                        DependentRetryingFanState::Dependent { .. } => 1,
+                    },
+                    constraint_width: device_rank
+                        .keys()
+                        .filter(|device| {
+                            !item.excluded_devices.contains(*device)
+                                && !item.attempted_devices.contains(*device)
+                        })
+                        .count(),
+                    eligible_devices: available_devices
+                        .iter()
+                        .map(|device| {
+                            !item.excluded_devices.contains(device)
+                                && !item.attempted_devices.contains(device)
+                        })
+                        .collect(),
+                    preferred_devices: available_devices
+                        .iter()
+                        .map(|device| !item.deferred_devices.contains(device))
+                        .collect(),
+                })
+                .collect::<Vec<_>>();
+            let assignments =
+                maximum_cardinality_fleet_dispatch(available_devices.len(), &candidates);
+            let assigned_device_by_pending = assignments
+                .iter()
+                .map(|(device_index, pending_position)| (*pending_position, *device_index))
+                .collect::<HashMap<_, _>>();
+            let assigned_devices = assignments
+                .iter()
+                .map(|(device_index, _)| *device_index)
+                .collect::<HashSet<_>>();
+            let mut selected = Vec::new();
+            let mut retained = Vec::new();
+            for (pending_position, item) in pending.drain(..).enumerate() {
+                match assigned_device_by_pending.get(&pending_position) {
+                    Some(device_index) => {
+                        selected.push((item, available_devices[*device_index].clone()))
+                    }
+                    None => retained.push(item),
+                }
+            }
+            pending = retained;
+            free_devices = available_devices
+                .iter()
+                .enumerate()
+                .filter(|(device_index, _)| !assigned_devices.contains(device_index))
+                .map(|(_, device)| device.clone())
+                .collect();
+            selected.sort_by(|(left, _), (right, _)| order_pending(left, right));
+            for (mut pending_item, device) in selected {
                 let stage = pending_item.state.stage();
                 let mut failed_devices = pending_item
                     .failures
@@ -34099,7 +35927,6 @@ where
                     }
                 });
             }
-            free_devices = unmatched_devices;
         }
 
         if pending.is_empty() && in_flight.len() == 1 && !tail_reported {
@@ -34157,12 +35984,13 @@ where
             Ok(output) => match pending_item.state {
                 DependentRetryingFanState::Primary if needs_followup(&output) => {
                     pending_item.excluded_devices.insert(device.clone());
+                    pending_item.deferred_devices = pending_item.attempted_devices.clone();
                     pending_item.attempted_devices.clear();
                     pending_item.failures.clear();
-                    pending_item.state = DependentRetryingFanState::Followup { primary: output };
+                    pending_item.state = DependentRetryingFanState::Dependent { primary: output };
                     if pending_item.excluded_devices.len() == device_count {
                         terminal_failures.push(format!(
-                            "packet `{}` requires independent corroboration but primary attempts consumed every distinct node",
+                            "packet `{}` requires dependent work but primary authority consumed every distinct node",
                             labels
                                 .get(pending_item.index)
                                 .map(String::as_str)
@@ -34173,11 +36001,20 @@ where
                         pending.sort_by(&order_pending);
                     }
                 }
-                DependentRetryingFanState::Primary => {
-                    completed = completed.saturating_add(1);
-                    results[pending_item.index] = Some(output);
-                }
-                DependentRetryingFanState::Followup { primary } => match merge(primary, output) {
+                DependentRetryingFanState::Primary => match finalize_primary(output) {
+                    Ok(output) => {
+                        completed = completed.saturating_add(1);
+                        results[pending_item.index] = Some(output);
+                    }
+                    Err(reason) => terminal_failures.push(format!(
+                        "packet `{}` failed primary-result verification: {reason}",
+                        labels
+                            .get(pending_item.index)
+                            .map(String::as_str)
+                            .unwrap_or("unknown")
+                    )),
+                },
+                DependentRetryingFanState::Dependent { primary } => match merge(primary, output) {
                     Ok(output) => {
                         completed = completed.saturating_add(1);
                         results[pending_item.index] = Some(output);
@@ -34210,7 +36047,10 @@ where
                             .get(pending_item.index)
                             .map(String::as_str)
                             .unwrap_or("unknown"),
-                        pending_item.state.stage().as_str(),
+                        match pending_item.state.stage() {
+                            DependentRetryingFanStage::Primary => "primary",
+                            DependentRetryingFanStage::Dependent => "dependent",
+                        },
                     ));
                 } else if terminal_failures.is_empty() {
                     pending.push(pending_item);
@@ -34222,6 +36062,562 @@ where
 
     if results.iter().any(Option::is_none) {
         bail!("dependent retrying fleet fan ended without every source-ordered result");
+    }
+    Ok(results.into_iter().flatten().collect())
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum PairedRetryingFanStage {
+    First,
+    Second,
+}
+
+impl PairedRetryingFanStage {
+    fn rank(self) -> usize {
+        match self {
+            Self::First => 0,
+            Self::Second => 1,
+        }
+    }
+
+    #[cfg(test)]
+    fn other(self) -> Self {
+        match self {
+            Self::First => Self::Second,
+            Self::Second => Self::First,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::First => "first",
+            Self::Second => "second",
+        }
+    }
+}
+
+async fn drain_research_jury_orchestration<Fut, ObserveRetired, ObservePair>(
+    mut jury_calls: futures::stream::FuturesUnordered<Fut>,
+    partition_labels: Vec<String>,
+    admission_stop: tokio_util::sync::CancellationToken,
+    mut observe_retired: ObserveRetired,
+    mut observe_pair: ObservePair,
+) -> Result<()>
+where
+    Fut: std::future::Future<
+        Output = (
+            usize,
+            PairedRetryingFanStage,
+            Result<Option<CompiledResearchClosurePartition>>,
+        ),
+    >,
+    ObserveRetired: FnMut(usize, PairedRetryingFanStage),
+    ObservePair: FnMut(
+        usize,
+        CompiledResearchClosurePartition,
+        CompiledResearchClosurePartition,
+    ) -> Result<()>,
+{
+    let partition_count = partition_labels.len();
+    let expected_units = partition_count.saturating_mul(2);
+    let mut completed_units = (0..partition_count).map(|_| (None, None)).collect::<Vec<(
+        Option<CompiledResearchClosurePartition>,
+        Option<CompiledResearchClosurePartition>,
+    )>>();
+    let mut settled_units = 0usize;
+    let mut pairs_formed = 0usize;
+    let mut terminal_failures = Vec::new();
+
+    while let Some((index, jury_stage, result)) = jury_calls.next().await {
+        settled_units = settled_units.saturating_add(1);
+        let compiled = match result {
+            Ok(Some(compiled)) => compiled,
+            Ok(None) => {
+                observe_retired(index, jury_stage);
+                continue;
+            }
+            Err(error) => {
+                admission_stop.cancel();
+                terminal_failures.push(format!(
+                    "target jury partition ordinal {index} {} failed after admitted work drained: {error}",
+                    jury_stage.as_str()
+                ));
+                continue;
+            }
+        };
+        if admission_stop.is_cancelled() {
+            continue;
+        }
+        let Some(pair) = completed_units.get_mut(index) else {
+            admission_stop.cancel();
+            terminal_failures.push(format!(
+                "target jury completed unknown partition ordinal {index}"
+            ));
+            continue;
+        };
+        let slot = match jury_stage {
+            PairedRetryingFanStage::First => &mut pair.0,
+            PairedRetryingFanStage::Second => &mut pair.1,
+        };
+        if slot.replace(compiled).is_some() {
+            admission_stop.cancel();
+            terminal_failures.push(format!(
+                "target jury completed partition ordinal {index} {} more than once",
+                jury_stage.as_str()
+            ));
+            continue;
+        }
+        if pair.0.is_none() || pair.1.is_none() {
+            continue;
+        }
+        let first = pair.0.take().expect("a formed target pair has jury-1");
+        let second = pair.1.take().expect("a formed target pair has jury-2");
+        let partition_label = partition_labels
+            .get(index)
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        if first.physical_host_id == second.physical_host_id {
+            admission_stop.cancel();
+            terminal_failures.push(format!(
+                "target authority partition `{partition_label}` reused physical host `{}`",
+                first.physical_host_id
+            ));
+            continue;
+        }
+        if first.authority_input_digest != second.authority_input_digest {
+            admission_stop.cancel();
+            terminal_failures.push(format!(
+                "target authority partition `{partition_label}` jurors received different immutable decision inputs"
+            ));
+            continue;
+        }
+        if let Err(error) = observe_pair(index, first, second) {
+            admission_stop.cancel();
+            terminal_failures.push(format!(
+                "target authority partition `{partition_label}` could not hand its pair downstream: {error}"
+            ));
+            continue;
+        }
+        pairs_formed = pairs_formed.saturating_add(1);
+        tokio::task::yield_now().await;
+    }
+
+    if settled_units != expected_units {
+        terminal_failures.push(format!(
+            "target jury settled {settled_units} individual units for {partition_count} partitions"
+        ));
+    }
+    if admission_stop.is_cancelled() && terminal_failures.is_empty() {
+        terminal_failures
+            .push("target jury admission stopped by a downstream terminal failure".to_string());
+    }
+    if pairs_formed != partition_count && terminal_failures.is_empty() {
+        terminal_failures.push(format!(
+            "target jury formed {pairs_formed} pairs for {partition_count} partitions"
+        ));
+    }
+    if !terminal_failures.is_empty() {
+        bail!(
+            "target jury failed after draining admitted provider work and retiring queued units: {}",
+            terminal_failures.join(" | ")
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+struct PairedRetryingFanPending<T> {
+    index: usize,
+    item: T,
+    priority: usize,
+    stage: PairedRetryingFanStage,
+    attempted_devices: HashSet<String>,
+    failures: Vec<(String, String)>,
+}
+
+#[cfg(test)]
+struct PairedRetryingFanCompletion<T, R> {
+    pending: PairedRetryingFanPending<T>,
+    device: String,
+    output: std::result::Result<R, String>,
+}
+
+#[cfg(test)]
+struct PairedRetryingFanCompletedUnit<R> {
+    device: String,
+    output: R,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct PairedRetryingFanAttemptObservation {
+    packet: String,
+    stage: PairedRetryingFanStage,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct PairedRetryingFanCompletionObservation {
+    packet: String,
+    source_index: usize,
+    device: String,
+    stage: PairedRetryingFanStage,
+    attempt: usize,
+    succeeded: bool,
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn fanout_paired_retrying_over_fleet<
+    T,
+    R,
+    F,
+    Fut,
+    Priority,
+    Label,
+    ObserveAttempt,
+    ObserveTail,
+    ObserveCompletion,
+    ObservePair,
+>(
+    devices: Vec<String>,
+    items: Vec<T>,
+    f: F,
+    priority: Priority,
+    label: Label,
+    observe_attempt: ObserveAttempt,
+    observe_tail: ObserveTail,
+    observe_completion: ObserveCompletion,
+    observe_pair: ObservePair,
+) -> Result<Vec<(R, R)>>
+where
+    T: Clone + Send + 'static,
+    R: Send + 'static,
+    F: Fn(T, String, PairedRetryingFanStage) -> Fut + Clone + Send + 'static,
+    Fut: std::future::Future<Output = std::result::Result<R, String>> + Send + 'static,
+    Priority: Fn(&T) -> usize,
+    Label: Fn(&T) -> String,
+    ObserveAttempt: Fn(PairedRetryingFanAttemptObservation),
+    ObserveTail: Fn(StagedFanObservation),
+    ObserveCompletion: Fn(PairedRetryingFanCompletionObservation),
+    ObservePair: Fn(usize, &R, &R),
+{
+    use std::collections::VecDeque;
+
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+    let devices = order_fleet_by_speed(one_lane_per_host(devices), &load_config().speed_weights);
+    if devices.len() < 2 {
+        bail!("paired retrying fleet fan requires at least two distinct nodes");
+    }
+    let device_rank = devices
+        .iter()
+        .enumerate()
+        .map(|(rank, device)| (device.clone(), rank))
+        .collect::<HashMap<_, _>>();
+    let labels = items.iter().map(&label).collect::<Vec<_>>();
+    let item_count = items.len();
+    let mut pending = Vec::with_capacity(item_count.saturating_mul(2));
+    for (index, item) in items.into_iter().enumerate() {
+        let item_priority = priority(&item);
+        pending.push(PairedRetryingFanPending {
+            index,
+            item: item.clone(),
+            priority: item_priority,
+            stage: PairedRetryingFanStage::First,
+            attempted_devices: HashSet::new(),
+            failures: Vec::new(),
+        });
+        pending.push(PairedRetryingFanPending {
+            index,
+            item,
+            priority: item_priority,
+            stage: PairedRetryingFanStage::Second,
+            attempted_devices: HashSet::new(),
+            failures: Vec::new(),
+        });
+    }
+    let order_pending = |left: &PairedRetryingFanPending<T>,
+                         right: &PairedRetryingFanPending<T>| {
+        retrying_fan_priority_cmp(left.priority, left.index, right.priority, right.index)
+            .then_with(|| left.stage.rank().cmp(&right.stage.rank()))
+    };
+    pending.sort_by(&order_pending);
+
+    let mut free_devices = devices.iter().cloned().collect::<VecDeque<_>>();
+    let mut completions = futures::stream::FuturesUnordered::new();
+    let mut in_flight = HashMap::<(usize, PairedRetryingFanStage), String>::new();
+    let mut completed_units = (0..item_count).map(|_| (None, None)).collect::<Vec<(
+        Option<PairedRetryingFanCompletedUnit<R>>,
+        Option<PairedRetryingFanCompletedUnit<R>>,
+    )>>();
+    let mut results = (0..item_count)
+        .map(|_| None)
+        .collect::<Vec<Option<(R, R)>>>();
+    let mut completed_pairs = 0usize;
+    let mut tail_reported = false;
+    let mut terminal_failures = Vec::new();
+
+    loop {
+        if terminal_failures.is_empty() {
+            let mut retained = Vec::new();
+            for item in pending.drain(..) {
+                let completed_counterpart = match item.stage.other() {
+                    PairedRetryingFanStage::First => completed_units[item.index]
+                        .0
+                        .as_ref()
+                        .map(|unit| unit.device.as_str()),
+                    PairedRetryingFanStage::Second => completed_units[item.index]
+                        .1
+                        .as_ref()
+                        .map(|unit| unit.device.as_str()),
+                };
+                let has_future_host = devices.iter().any(|device| {
+                    !item.attempted_devices.contains(device)
+                        && completed_counterpart != Some(device.as_str())
+                });
+                if has_future_host {
+                    retained.push(item);
+                    continue;
+                }
+                let history = item
+                    .failures
+                    .iter()
+                    .map(|(device, reason)| format!("{device}: {reason}"))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                terminal_failures.push(format!(
+                    "paired packet `{}` exhausted every eligible distinct node during {} ({history})",
+                    labels
+                        .get(item.index)
+                        .map(String::as_str)
+                        .unwrap_or("unknown"),
+                    item.stage.as_str(),
+                ));
+            }
+            pending = retained;
+        }
+
+        if terminal_failures.is_empty() {
+            let mut available_devices = free_devices.drain(..).collect::<Vec<_>>();
+            available_devices.sort_by_key(|device| device_rank[device]);
+            let candidates = pending
+                .iter()
+                .enumerate()
+                .map(|(pending_position, item)| {
+                    let counterpart_device = match item.stage.other() {
+                        PairedRetryingFanStage::First => completed_units[item.index]
+                            .0
+                            .as_ref()
+                            .map(|unit| unit.device.as_str()),
+                        PairedRetryingFanStage::Second => completed_units[item.index]
+                            .1
+                            .as_ref()
+                            .map(|unit| unit.device.as_str()),
+                    }
+                    .or_else(|| {
+                        in_flight
+                            .get(&(item.index, item.stage.other()))
+                            .map(String::as_str)
+                    });
+                    FleetDispatchCandidate {
+                        pending_position,
+                        priority: item.priority,
+                        source_index: item.index,
+                        unit_rank: item.stage.rank(),
+                        constraint_width: devices
+                            .iter()
+                            .filter(|device| {
+                                !item.attempted_devices.contains(*device)
+                                    && counterpart_device != Some(device.as_str())
+                            })
+                            .count(),
+                        eligible_devices: available_devices
+                            .iter()
+                            .map(|device| {
+                                !item.attempted_devices.contains(device)
+                                    && counterpart_device != Some(device.as_str())
+                            })
+                            .collect(),
+                        preferred_devices: vec![true; available_devices.len()],
+                    }
+                })
+                .collect::<Vec<_>>();
+            let assignments =
+                maximum_cardinality_fleet_dispatch(available_devices.len(), &candidates);
+            let assigned_device_by_pending = assignments
+                .iter()
+                .map(|(device_index, pending_position)| (*pending_position, *device_index))
+                .collect::<HashMap<_, _>>();
+            let assigned_devices = assignments
+                .iter()
+                .map(|(device_index, _)| *device_index)
+                .collect::<HashSet<_>>();
+            let mut selected = Vec::new();
+            let mut retained = Vec::new();
+            for (pending_position, item) in pending.drain(..).enumerate() {
+                match assigned_device_by_pending.get(&pending_position) {
+                    Some(device_index) => {
+                        selected.push((item, available_devices[*device_index].clone()))
+                    }
+                    None => retained.push(item),
+                }
+            }
+            pending = retained;
+            free_devices = available_devices
+                .iter()
+                .enumerate()
+                .filter(|(device_index, _)| !assigned_devices.contains(device_index))
+                .map(|(_, device)| device.clone())
+                .collect();
+            selected.sort_by(|(left, _), (right, _)| order_pending(left, right));
+            for (mut pending_item, device) in selected {
+                observe_attempt(PairedRetryingFanAttemptObservation {
+                    packet: labels.get(pending_item.index).cloned().unwrap_or_default(),
+                    stage: pending_item.stage,
+                });
+                pending_item.attempted_devices.insert(device.clone());
+                if in_flight
+                    .insert((pending_item.index, pending_item.stage), device.clone())
+                    .is_some()
+                {
+                    bail!("paired retrying fan dispatched the same unit twice");
+                }
+                let call_item = pending_item.item.clone();
+                let call_device = device.clone();
+                let stage = pending_item.stage;
+                let f = f.clone();
+                completions.push(async move {
+                    let output =
+                        std::panic::AssertUnwindSafe(f(call_item, call_device.clone(), stage))
+                            .catch_unwind()
+                            .await
+                            .unwrap_or_else(|payload| Err(panic_payload_message(payload)));
+                    PairedRetryingFanCompletion {
+                        pending: pending_item,
+                        device: call_device,
+                        output,
+                    }
+                });
+            }
+        }
+
+        if pending.is_empty() && in_flight.len() == 1 && !tail_reported {
+            let ((index, _), _) = in_flight
+                .iter()
+                .next()
+                .expect("one paired unit is in flight");
+            observe_tail(StagedFanObservation {
+                kind: StagedFanObservationKind::DetailTailStarted,
+                outstanding_detail: labels.get(*index).cloned().unwrap_or_default(),
+                pending_details: 0,
+                in_flight_details: 1,
+                completed_details: completed_pairs,
+                pending_auxiliary: 0,
+                in_flight_auxiliary: 0,
+                completed_auxiliary: 0,
+                logically_free_lanes: free_devices.len(),
+            });
+            tail_reported = true;
+        }
+
+        if completions.is_empty() {
+            if !terminal_failures.is_empty() {
+                bail!(
+                    "paired retrying fleet fan failed after draining every admitted request: {}",
+                    terminal_failures.join(" | ")
+                );
+            }
+            if pending.is_empty() {
+                break;
+            }
+            let blocked = pending
+                .iter()
+                .map(|item| {
+                    format!(
+                        "{}:{}",
+                        labels
+                            .get(item.index)
+                            .map(String::as_str)
+                            .unwrap_or("unknown"),
+                        item.stage.as_str(),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "paired retrying fleet fan has queued work but no eligible distinct node: {blocked}"
+            );
+        }
+
+        let PairedRetryingFanCompletion {
+            pending: mut pending_item,
+            device,
+            output,
+        } = completions
+            .next()
+            .await
+            .expect("a non-empty paired retrying fan has a completion");
+        let key = (pending_item.index, pending_item.stage);
+        if in_flight.remove(&key).as_deref() != Some(device.as_str()) {
+            bail!("paired retrying fan lost exact in-flight device authority");
+        }
+        observe_completion(PairedRetryingFanCompletionObservation {
+            packet: labels.get(pending_item.index).cloned().unwrap_or_default(),
+            source_index: pending_item.index,
+            device: device.clone(),
+            stage: pending_item.stage,
+            attempt: pending_item.attempted_devices.len(),
+            succeeded: output.is_ok(),
+        });
+        free_devices.push_back(device.clone());
+        match output {
+            Ok(output) => {
+                let completed = PairedRetryingFanCompletedUnit { device, output };
+                let pair = &mut completed_units[pending_item.index];
+                let slot = match pending_item.stage {
+                    PairedRetryingFanStage::First => &mut pair.0,
+                    PairedRetryingFanStage::Second => &mut pair.1,
+                };
+                if slot.replace(completed).is_some() {
+                    bail!("paired retrying fan completed the same unit twice");
+                }
+                if pair.0.is_some() && pair.1.is_some() {
+                    let first = pair.0.take().expect("first paired unit is complete");
+                    let second = pair.1.take().expect("second paired unit is complete");
+                    if first.device == second.device {
+                        bail!(
+                            "paired packet `{}` reused physical device `{}`",
+                            labels
+                                .get(pending_item.index)
+                                .map(String::as_str)
+                                .unwrap_or("unknown"),
+                            first.device,
+                        );
+                    }
+                    if terminal_failures.is_empty() {
+                        observe_pair(pending_item.index, &first.output, &second.output);
+                    }
+                    results[pending_item.index] = Some((first.output, second.output));
+                    completed_pairs = completed_pairs.saturating_add(1);
+                    if terminal_failures.is_empty() {
+                        tokio::task::yield_now().await;
+                    }
+                }
+            }
+            Err(reason) => {
+                pending_item.failures.push((device, reason));
+                if terminal_failures.is_empty() {
+                    pending.push(pending_item);
+                    pending.sort_by(&order_pending);
+                }
+            }
+        }
+    }
+
+    if results.iter().any(Option::is_none) {
+        bail!("paired retrying fleet fan ended without every source-ordered pair");
     }
     Ok(results.into_iter().flatten().collect())
 }
