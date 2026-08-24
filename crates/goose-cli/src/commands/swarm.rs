@@ -18206,7 +18206,7 @@ struct RepeatedResearchCorrection {
 struct ResearchCompilerCorrectionGuard {
     invalid_states: HashMap<String, u64>,
     compiler_errors: HashMap<String, u64>,
-    corrected_request_digests: HashMap<String, u64>,
+    request_input_digests: HashMap<String, u64>,
 }
 
 impl ResearchCompilerCorrectionGuard {
@@ -18215,13 +18215,10 @@ impl ResearchCompilerCorrectionGuard {
         correction: u64,
         request_input_digest: &str,
     ) -> Option<RepeatedResearchCorrection> {
-        if correction == 0 {
-            return None;
-        }
-        self.corrected_request_digests
+        self.request_input_digests
             .insert(request_input_digest.to_string(), correction)
             .map(|first_correction| RepeatedResearchCorrection {
-                kind: "corrected-request-digest",
+                kind: "request-input-digest",
                 first_correction,
                 correction,
                 state: request_input_digest.to_string(),
@@ -18258,6 +18255,30 @@ impl ResearchCompilerCorrectionGuard {
                 correction,
                 state: invalid_state,
             })
+    }
+}
+
+#[derive(Default)]
+struct ResearchPartitionHostState {
+    claimed_hosts: HashSet<String>,
+    failed_hosts: HashSet<String>,
+    compiler_guards: HashMap<String, ResearchCompilerCorrectionGuard>,
+}
+
+impl ResearchPartitionHostState {
+    fn host_is_available(&self, physical_host_id: &str) -> bool {
+        !self.claimed_hosts.contains(physical_host_id)
+            && !self.failed_hosts.contains(physical_host_id)
+    }
+
+    fn claim_host(&mut self, physical_host_id: &str) -> bool {
+        self.host_is_available(physical_host_id)
+            && self.claimed_hosts.insert(physical_host_id.to_string())
+    }
+
+    fn fail_host(&mut self, physical_host_id: &str) {
+        self.claimed_hosts.remove(physical_host_id);
+        self.failed_hosts.insert(physical_host_id.to_string());
     }
 }
 
@@ -24770,6 +24791,7 @@ impl GooseAgentDispatcher {
         requirements: Arc<Vec<RequirementRecord>>,
         sources: Arc<Vec<ResearchAuthoritySource>>,
         lane: ResearchPhysicalLane,
+        partition_host_state: Arc<tokio::sync::Mutex<ResearchPartitionHostState>>,
     ) -> Result<CompiledResearchClosurePartition> {
         let started = std::time::Instant::now();
         let immutable_prefix = format!(
@@ -24790,7 +24812,6 @@ impl GooseAgentDispatcher {
             .collect::<Vec<_>>();
         let system = "You are one host-bound member of a whole-target canonical authority jury. For every assigned canonical target, independently determine the COMPLETE zero/one/many set of material facts still missing after comparing its provisional row, the complete immutable requirement ledger across all sections, its engine registry of prior semantic gaps with attempted and exhausted sources, and its candidate-bound typed evidence. A complete row must cite exact canonical requirement ids and/or exact candidate-bound Found evidence ids whose engine-verified source quotes collectively settle it. An incomplete row must preserve every independent missing fact as one atomic gap; reuse a supplied prior_semantic_gap_id only for the same semantic fact, including a materially refined interrogative, otherwise leave it empty so the engine mints a new identity after two-cover consensus. Preserve engine-supplied attempted_source_ids and exhausted_source_ids exactly. A runnable gap must use kind library_docs, web, or codebase and a specific interrogative. For an unchanged interrogative select every unattempted, non-exhausted universal source plus only semantically relevant unattempted named documents. A materially refined interrogative may retry attempted, non-exhausted sources. The engine rejects exact query replay. unavailable means there is no remaining applicable route and every previously attempted admitted source is engine-proven exhausted; never infer it from a failed call or merely irrelevant Found evidence. Provisional output and model recollection are advisory, not authority. When exactly two prior_jury_assessments are supplied, you are the distinct-host adjudicator: select one entire prior whole-target assessment semantically verbatim and explain why; never synthesize a third target ledger. Return exactly one assessment for every assigned requirement_id. Do not inspect external sources, draft a plan, or create fill work. There is no gap, token, correction, or elapsed-time quota; finish the semantic target ledger, then call final_output.";
         let mut correction_feedback = String::new();
-        let mut correction_guard = ResearchCompilerCorrectionGuard::default();
         let mut correction = 0u64;
         loop {
             let variable_packet = serde_json::to_string_pretty(&serde_json::json!({
@@ -24807,9 +24828,14 @@ impl GooseAgentDispatcher {
                 format!("{immutable_prefix}\n\nVARIABLE WHOLE-TARGET PACKET:\n{variable_packet}");
             let authority_input_chars = user.chars().count();
             let request_input_digest = content_sha256(&user);
-            if let Some(repeat) =
-                correction_guard.observe_request(correction, &request_input_digest)
-            {
+            let request_repeat = partition_host_state
+                .lock()
+                .await
+                .compiler_guards
+                .entry(lane.physical_host_id.clone())
+                .or_default()
+                .observe_request(correction, &request_input_digest);
+            if let Some(repeat) = request_repeat {
                 self.events.write_value(serde_json::json!({
                     "event": "research_target_jury_correction_repeat_detected",
                     "stage": stage,
@@ -24908,13 +24934,14 @@ impl GooseAgentDispatcher {
                 }
                 Err(error) => {
                     let message = error.to_string();
-                    if let Some(repeat) = correction_guard.observe_failure(
-                        &raw,
-                        &target_ids,
-                        "assessments",
-                        &message,
-                        correction,
-                    ) {
+                    let failure_repeat = partition_host_state
+                        .lock()
+                        .await
+                        .compiler_guards
+                        .entry(lane.physical_host_id.clone())
+                        .or_default()
+                        .observe_failure(&raw, &target_ids, "assessments", &message, correction);
+                    if let Some(repeat) = failure_repeat {
                         self.events.write_value(serde_json::json!({
                             "event": "research_target_jury_correction_repeat_detected",
                             "stage": stage,
@@ -24965,6 +24992,9 @@ impl GooseAgentDispatcher {
         excluded_hosts: &HashSet<String>,
     ) -> Result<CompiledResearchClosurePartition> {
         let mut failed_hosts = HashSet::new();
+        let partition_host_state = Arc::new(tokio::sync::Mutex::new(
+            ResearchPartitionHostState::default(),
+        ));
         loop {
             let eligible_tokens = runtime
                 .lanes
@@ -25000,6 +25030,7 @@ impl GooseAgentDispatcher {
                     runtime.requirements.clone(),
                     runtime.sources.clone(),
                     lane.clone(),
+                    partition_host_state.clone(),
                 )
                 .await;
             drop(lease);
@@ -25028,26 +25059,24 @@ impl GooseAgentDispatcher {
         runtime: &ResearchAuthorityRuntime,
         jury_stage: PairedRetryingFanStage,
         partition: ResearchClosurePartition,
-        claimed_hosts: Arc<tokio::sync::Mutex<HashSet<String>>>,
+        partition_host_state: Arc<tokio::sync::Mutex<ResearchPartitionHostState>>,
         admission_stop: &tokio_util::sync::CancellationToken,
     ) -> Result<Option<CompiledResearchClosurePartition>> {
-        let mut failed_hosts = HashSet::new();
         let mut attempt = 0usize;
         loop {
             if admission_stop.is_cancelled() {
                 return Ok(None);
             }
-            let current_claims = claimed_hosts.lock().await.clone();
-            let eligible_tokens = runtime
-                .lanes
-                .iter()
-                .filter(|lane| {
-                    !current_claims.contains(&lane.physical_host_id)
-                        && !failed_hosts.contains(&lane.physical_host_id)
-                })
-                .map(|lane| lane.token.clone())
-                .collect::<Vec<_>>();
-            if eligible_tokens.is_empty() {
+            let eligible_hosts = {
+                let state = partition_host_state.lock().await;
+                runtime
+                    .lanes
+                    .iter()
+                    .filter(|lane| state.host_is_available(&lane.physical_host_id))
+                    .map(|lane| lane.token.clone())
+                    .collect::<Vec<_>>()
+            };
+            if eligible_hosts.is_empty() {
                 admission_stop.cancel();
                 bail!(
                     "target authority partition `{}` exhausted distinct physical hosts for {}",
@@ -25057,7 +25086,7 @@ impl GooseAgentDispatcher {
             }
             let lease = match acquire_research_host_until_cancelled(
                 &runtime.host_scheduler,
-                eligible_tokens,
+                eligible_hosts,
                 research_closure_partition_cost(&partition),
                 jury_stage.rank(),
                 format!("{}:{}", partition.partition_id, jury_stage.as_str()),
@@ -25073,11 +25102,37 @@ impl GooseAgentDispatcher {
                 }
             };
             let lane = lease.lane.clone();
-            if !claimed_hosts
-                .lock()
-                .await
-                .insert(lane.physical_host_id.clone())
-            {
+            let (admitted, rejection_reason, claimed_hosts, failed_hosts) = {
+                let mut state = partition_host_state.lock().await;
+                let rejection_reason = if state.failed_hosts.contains(&lane.physical_host_id) {
+                    Some("failed-while-scheduler-request-was-pending")
+                } else if state.claimed_hosts.contains(&lane.physical_host_id) {
+                    Some("claimed-while-scheduler-request-was-pending")
+                } else {
+                    None
+                };
+                let admitted = state.claim_host(&lane.physical_host_id);
+                (
+                    admitted,
+                    rejection_reason,
+                    state.claimed_hosts.clone(),
+                    state.failed_hosts.clone(),
+                )
+            };
+            if !admitted {
+                self.events.write_value(serde_json::json!({
+                    "event": "research_target_jury_stale_host_admission_rejected",
+                    "stage": runtime.stage,
+                    "cycle": runtime.cycle,
+                    "pass": jury_stage.as_str(),
+                    "partition_id": partition.partition_id,
+                    "lane_token": lane.token,
+                    "physical_host_id": lane.physical_host_id,
+                    "reason": rejection_reason,
+                    "paired_claimed_physical_hosts": claimed_hosts,
+                    "partition_failed_physical_hosts": failed_hosts,
+                    "provider_call_started": false,
+                }));
                 drop(lease);
                 tokio::task::yield_now().await;
                 continue;
@@ -25098,7 +25153,7 @@ impl GooseAgentDispatcher {
                 "attempt": attempt,
                 "authored_cost": research_closure_partition_cost(&partition),
                 "prior_failed_physical_hosts": failed_hosts,
-                "paired_claimed_physical_hosts": claimed_hosts.lock().await.clone(),
+                "paired_claimed_physical_hosts": claimed_hosts,
                 "admission_basis": "shared-maximum-cardinality-full-eligible-host-set",
             }));
             let result = self
@@ -25110,8 +25165,16 @@ impl GooseAgentDispatcher {
                     runtime.requirements.clone(),
                     runtime.sources.clone(),
                     lane.clone(),
+                    partition_host_state.clone(),
                 )
                 .await;
+            let (claimed_hosts, failed_hosts) = {
+                let mut state = partition_host_state.lock().await;
+                if result.is_err() {
+                    state.fail_host(&lane.physical_host_id);
+                }
+                (state.claimed_hosts.clone(), state.failed_hosts.clone())
+            };
             drop(lease);
             self.events.write_value(serde_json::json!({
                 "event": "research_target_jury_unit_completed",
@@ -25123,12 +25186,12 @@ impl GooseAgentDispatcher {
                 "physical_host_id": lane.physical_host_id,
                 "attempt": attempt,
                 "succeeded": result.is_ok(),
+                "paired_claimed_physical_hosts": claimed_hosts,
+                "partition_failed_physical_hosts": failed_hosts,
             }));
             match result {
                 Ok(compiled) => return Ok(Some(compiled)),
                 Err(error) => {
-                    claimed_hosts.lock().await.remove(&lane.physical_host_id);
-                    failed_hosts.insert(lane.physical_host_id.clone());
                     self.events.write_value(serde_json::json!({
                         "event": "research_target_semantic_unit_rescheduled",
                         "stage": runtime.stage,
@@ -25137,7 +25200,7 @@ impl GooseAgentDispatcher {
                         "partition_id": partition.partition_id,
                         "failed_physical_host_id": lane.physical_host_id,
                         "failed_hosts": failed_hosts,
-                        "paired_claimed_hosts": claimed_hosts.lock().await.clone(),
+                        "paired_claimed_hosts": claimed_hosts,
                         "retry_basis": "shared-maximum-cardinality-host-scheduler",
                         "error": error.to_string(),
                     }));
@@ -25157,20 +25220,22 @@ impl GooseAgentDispatcher {
         CompiledResearchClosurePartition,
         CompiledResearchClosurePartition,
     )> {
-        let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
+        let partition_host_state = Arc::new(tokio::sync::Mutex::new(
+            ResearchPartitionHostState::default(),
+        ));
         let admission_stop = tokio_util::sync::CancellationToken::new();
         let first = self.run_research_closure_partition_pair_unit(
             runtime,
             PairedRetryingFanStage::First,
             partition.clone(),
-            claimed_hosts.clone(),
+            partition_host_state.clone(),
             &admission_stop,
         );
         let second = self.run_research_closure_partition_pair_unit(
             runtime,
             PairedRetryingFanStage::Second,
             partition.clone(),
-            claimed_hosts,
+            partition_host_state,
             &admission_stop,
         );
         let (first, second) = tokio::join!(first, second);
@@ -25182,9 +25247,9 @@ impl GooseAgentDispatcher {
             (Err(first), Err(second)) => bail!(
                 "target authority pair failed after draining both admitted jurors: first={first}; second={second}"
             ),
-            (Err(error), Ok(_)) | (Ok(_), Err(error)) => bail!(
-                "target authority pair failed after draining both admitted jurors: {error}"
-            ),
+            (Err(error), Ok(_)) | (Ok(_), Err(error)) => {
+                bail!("target authority pair failed after draining both admitted jurors: {error}")
+            }
         };
         if first.physical_host_id == second.physical_host_id {
             bail!(
@@ -25822,33 +25887,10 @@ impl GooseAgentDispatcher {
             "elapsed_cap_secs": null,
         }));
 
-        let mut jury_unit_specs = Vec::with_capacity(partition_count.saturating_mul(2));
-        for (index, partition) in partitions.iter().cloned().enumerate() {
-            let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
-            let authored_cost = research_closure_partition_cost(&partition);
-            for jury_stage in [
-                PairedRetryingFanStage::First,
-                PairedRetryingFanStage::Second,
-            ] {
-                jury_unit_specs.push((
-                    index,
-                    jury_stage,
-                    partition.clone(),
-                    claimed_hosts.clone(),
-                    authored_cost,
-                ));
-            }
-        }
-        jury_unit_specs.sort_by(
-            |(left_index, left_stage, _, _, left_cost),
-             (right_index, right_stage, _, _, right_cost)| {
-                retrying_fan_priority_cmp(*left_cost, *left_index, *right_cost, *right_index)
-                    .then_with(|| left_stage.rank().cmp(&right_stage.rank()))
-            },
-        );
+        let jury_unit_specs = research_jury_unit_specs(partitions.as_ref());
         let jury_admission_stop = tokio_util::sync::CancellationToken::new();
         let jury_calls = futures::stream::FuturesUnordered::new();
-        for (index, jury_stage, partition, claimed_hosts, _) in jury_unit_specs {
+        for (index, jury_stage, partition, partition_host_state, _) in jury_unit_specs {
             let dispatcher = self.clone();
             let jury_runtime = runtime.clone();
             let admission_stop = jury_admission_stop.clone();
@@ -25858,7 +25900,7 @@ impl GooseAgentDispatcher {
                         &jury_runtime,
                         jury_stage,
                         partition,
-                        claimed_hosts,
+                        partition_host_state,
                         &admission_stop,
                     )
                     .await;
@@ -34325,7 +34367,7 @@ mod fan_order_tests {
         let repeat = guard
             .observe_request(3, "digest-a")
             .expect("an exact corrected prompt cycle cannot reach a provider");
-        assert_eq!(repeat.kind, "corrected-request-digest");
+        assert_eq!(repeat.kind, "request-input-digest");
         assert_eq!(repeat.first_correction, 1);
         assert_eq!(repeat.correction, 3);
         assert_eq!(repeat.state, "digest-a");
@@ -36549,6 +36591,44 @@ impl PairedRetryingFanStage {
             Self::Second => "second",
         }
     }
+}
+
+type ResearchJuryUnitSpec = (
+    usize,
+    PairedRetryingFanStage,
+    ResearchClosurePartition,
+    Arc<tokio::sync::Mutex<ResearchPartitionHostState>>,
+    usize,
+);
+
+fn research_jury_unit_specs(partitions: &[ResearchClosurePartition]) -> Vec<ResearchJuryUnitSpec> {
+    let mut specs = Vec::with_capacity(partitions.len().saturating_mul(2));
+    for (index, partition) in partitions.iter().cloned().enumerate() {
+        let partition_host_state = Arc::new(tokio::sync::Mutex::new(
+            ResearchPartitionHostState::default(),
+        ));
+        let authored_cost = research_closure_partition_cost(&partition);
+        for jury_stage in [
+            PairedRetryingFanStage::First,
+            PairedRetryingFanStage::Second,
+        ] {
+            specs.push((
+                index,
+                jury_stage,
+                partition.clone(),
+                partition_host_state.clone(),
+                authored_cost,
+            ));
+        }
+    }
+    specs.sort_by(
+        |(left_index, left_stage, _, _, left_cost),
+         (right_index, right_stage, _, _, right_cost)| {
+            retrying_fan_priority_cmp(*left_cost, *left_index, *right_cost, *right_index)
+                .then_with(|| left_stage.rank().cmp(&right_stage.rank()))
+        },
+    );
+    specs
 }
 
 async fn drain_research_jury_orchestration<Fut, ObserveRetired, ObservePair>(
@@ -55879,7 +55959,68 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
-    async fn production_jury_repeat_fails_over_without_third_identical_prompt() {
+    async fn production_jury_specs_share_host_history_only_with_partition_sibling() {
+        let partitions = ["REQ-runtime-state-a", "REQ-runtime-state-b"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, requirement_id)| ResearchClosurePartition {
+                partition_id: format!("target-section-runtime-state-{index}"),
+                candidates: vec![correction_runtime_candidate(requirement_id)],
+            })
+            .collect::<Vec<_>>();
+        let specs = research_jury_unit_specs(&partitions);
+        let state_for = |partition_index, jury_stage| {
+            specs
+                .iter()
+                .find(|(index, stage, _, _, _)| *index == partition_index && *stage == jury_stage)
+                .unwrap()
+                .3
+                .clone()
+        };
+        let first_juror = state_for(0, PairedRetryingFanStage::First);
+        let sibling_juror = state_for(0, PairedRetryingFanStage::Second);
+        let other_partition = state_for(1, PairedRetryingFanStage::First);
+        assert!(Arc::ptr_eq(&first_juror, &sibling_juror));
+        assert!(!Arc::ptr_eq(&first_juror, &other_partition));
+
+        let first_request = first_juror
+            .lock()
+            .await
+            .compiler_guards
+            .entry("shared-host-a".to_string())
+            .or_default()
+            .observe_request(0, "immutable-request");
+        assert!(first_request.is_none());
+        let sibling_repeat = sibling_juror
+            .lock()
+            .await
+            .compiler_guards
+            .entry("shared-host-a".to_string())
+            .or_default()
+            .observe_request(0, "immutable-request")
+            .expect("a sibling exact replay on one physical host must share history");
+        assert_eq!(sibling_repeat.kind, "request-input-digest");
+
+        assert!(sibling_juror
+            .lock()
+            .await
+            .compiler_guards
+            .entry("distinct-host-b".to_string())
+            .or_default()
+            .observe_request(0, "immutable-request")
+            .is_none());
+        assert!(other_partition
+            .lock()
+            .await
+            .compiler_guards
+            .entry("shared-host-a".to_string())
+            .or_default()
+            .observe_request(0, "immutable-request")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn production_pair_repeat_retires_failed_host_before_stale_sibling_admission() {
         const PARTITION: &str = "target-section-runtime-alpha";
         const REQUIREMENT: &str = "REQ-runtime-jury";
         const MODEL_A: &str = "runtime-jury-model-a";
@@ -55890,8 +56031,12 @@ mod pre_scheduler_semantic_runtime_tests {
         const HOST_C: &str = "runtime-jury-host-c";
         let mut scripts = HashMap::new();
         scripts.insert(
-            MODEL_B.to_string(),
+            MODEL_A.to_string(),
             invalid_jury_runtime_outputs(PARTITION, REQUIREMENT),
+        );
+        scripts.insert(
+            MODEL_B.to_string(),
+            vec![valid_jury_runtime_output(PARTITION, REQUIREMENT)],
         );
         scripts.insert(
             MODEL_C.to_string(),
@@ -55912,49 +56057,128 @@ mod pre_scheduler_semantic_runtime_tests {
             partition_id: PARTITION.to_string(),
             candidates: vec![correction_runtime_candidate(REQUIREMENT)],
         };
-        let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::from([HOST_A.to_string()])));
-        let result = harness
-            .dispatcher
-            .run_research_closure_partition_pair_unit(
-                harness.runtime.as_ref(),
-                PairedRetryingFanStage::Second,
-                partition,
-                claimed_hosts,
-                &tokio_util::sync::CancellationToken::new(),
+        let scheduler = &harness.runtime.host_scheduler;
+        let held_a = scheduler
+            .acquire(
+                vec!["jury-lane-a".to_string()],
+                1,
+                0,
+                "hold-jury-a".to_string(),
             )
             .await
-            .expect("jury failover returned a terminal error")
-            .expect("jury failover retired without a terminal sibling failure");
-        assert_eq!(result.physical_host_id, HOST_C);
-        assert_eq!(harness.provider.call_count(MODEL_A), 0);
-        assert_eq!(harness.provider.call_count(MODEL_B), 2);
-        assert_eq!(harness.provider.call_count(MODEL_C), 1);
-        let events = harness.sink.values();
-        let repeat = events
-            .iter()
-            .find(|event| event["event"] == "research_target_jury_correction_repeat_detected")
-            .expect("production jury did not detect the normalized compiler repeat");
-        assert_eq!(repeat["physical_host_id"], HOST_B);
+            .unwrap();
+        let held_b = scheduler
+            .acquire(
+                vec!["jury-lane-b".to_string()],
+                1,
+                0,
+                "hold-jury-b".to_string(),
+            )
+            .await
+            .unwrap();
+        let held_c = scheduler
+            .acquire(
+                vec!["jury-lane-c".to_string()],
+                1,
+                0,
+                "hold-jury-c".to_string(),
+            )
+            .await
+            .unwrap();
+        let pair = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            let runtime = harness.runtime.clone();
+            async move {
+                dispatcher
+                    .run_research_closure_partition_pair(runtime.as_ref(), partition)
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if scheduler.inner.state.lock().unwrap().pending.len() == 2 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both sibling jurors did not queue behind the held fleet");
+        drop(held_a);
+        let repeat = harness
+            .sink
+            .wait_for("research_target_jury_correction_repeat_detected")
+            .await;
+        assert_eq!(repeat["physical_host_id"], HOST_A);
         assert_eq!(repeat["repeat_kind"], "normalized-compiler-error");
         assert_eq!(repeat["provider_call_started"], true);
-        assert_eq!(repeat["first_correction"], 0);
-        assert_eq!(repeat["correction"], 1);
+        let stale = harness
+            .sink
+            .wait_for("research_target_jury_stale_host_admission_rejected")
+            .await;
+        assert_eq!(stale["physical_host_id"], HOST_A);
+        assert_eq!(
+            stale["reason"],
+            "failed-while-scheduler-request-was-pending"
+        );
+        assert_eq!(stale["provider_call_started"], false);
+        assert_eq!(harness.provider.call_count(MODEL_A), 2);
+        drop(held_b);
+        drop(held_c);
+        let (first, second) = tokio::time::timeout(Duration::from_secs(5), pair)
+            .await
+            .expect("the production pair did not complete after distinct hosts became free")
+            .unwrap()
+            .expect("the production pair failed after retiring the repeated-error host");
+        assert_eq!(
+            HashSet::from([first.physical_host_id, second.physical_host_id]),
+            HashSet::from([HOST_B.to_string(), HOST_C.to_string()])
+        );
+        assert_eq!(first.authority_input_digest, second.authority_input_digest);
+        assert_eq!(harness.provider.call_count(MODEL_A), 2);
+        assert_eq!(harness.provider.call_count(MODEL_B), 1);
+        assert_eq!(harness.provider.call_count(MODEL_C), 1);
+        let events = harness.sink.values();
         let started = events
             .iter()
-            .filter(|event| {
-                event["event"] == "research_target_jury_packet_started"
-                    && event["physical_host_id"] == HOST_B
-            })
+            .filter(|event| event["event"] == "research_target_jury_packet_started")
             .collect::<Vec<_>>();
-        assert_eq!(started.len(), 2, "host B must not receive a third prompt");
+        assert_eq!(started.len(), 4);
+        assert_eq!(
+            started
+                .iter()
+                .filter(|event| event["physical_host_id"] == HOST_A)
+                .count(),
+            2,
+            "the failed host must receive only its initial call and one correction"
+        );
+        assert_eq!(
+            started
+                .iter()
+                .map(|event| event["authority_input_digest"].as_str().unwrap())
+                .collect::<HashSet<_>>()
+                .len(),
+            1,
+            "every distinct host must receive identical immutable authority input"
+        );
+        assert_eq!(
+            started
+                .iter()
+                .filter(|event| event["correction"] == 0)
+                .map(|event| event["request_input_digest"].as_str().unwrap())
+                .collect::<HashSet<_>>()
+                .len(),
+            1,
+            "both siblings and the distinct-host retry must receive the same initial request"
+        );
         let reassigned = events
             .iter()
             .find(|event| {
                 event["event"] == "research_target_semantic_unit_rescheduled"
-                    && event["failed_physical_host_id"] == HOST_B
+                    && event["failed_physical_host_id"] == HOST_A
             })
             .expect("production jury did not exclude the repeated-error host");
-        assert!(reassigned["paired_claimed_hosts"]
+        assert!(reassigned["failed_hosts"]
             .as_array()
             .unwrap()
             .iter()
