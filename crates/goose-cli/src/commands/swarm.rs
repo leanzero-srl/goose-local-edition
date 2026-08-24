@@ -6480,6 +6480,118 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_whole_target_ledger_with_a_bound_document_gap_compiles_and_queues() {
+        const COMPLETE_ID: &str = "REQ-runtime-complete";
+        const GAP_ID: &str = "REQ-runtime-library-gap";
+        const DOCUMENT_URL: &str = "http://127.0.0.1:18970/v3/docs";
+        let document_source_id = format!("document:{DOCUMENT_URL}");
+        let requirements = vec![
+            RequirementRecord {
+                id: COMPLETE_ID.to_string(),
+                section: "runtime".to_string(),
+                quote: "The runtime must preserve its authored interface.".to_string(),
+            },
+            RequirementRecord {
+                id: GAP_ID.to_string(),
+                section: "library".to_string(),
+                quote: format!("Use the API documented at {DOCUMENT_URL}."),
+            },
+        ];
+        let partition = ResearchClosurePartition {
+            partition_id: "target-section-runtime-valid-incomplete".to_string(),
+            candidates: vec![
+                generic_research_target(COMPLETE_ID, "runtime"),
+                generic_research_target(GAP_ID, "library"),
+            ],
+        };
+        let gap = ResearchAuthorityGap {
+            prior_semantic_gap_id: String::new(),
+            question: "Which exact API symbol does the assigned document require?".to_string(),
+            kind: "library_docs".to_string(),
+            evidence_needed: "The exact API symbol and signature from the assigned document."
+                .to_string(),
+            applicable_source_ids: vec![document_source_id.clone()],
+            attempted_source_ids: Vec::new(),
+            exhausted_source_ids: Vec::new(),
+            unavailable: false,
+        };
+        let draft = ResearchClosureLedgerDraft {
+            partition_id: partition.partition_id.clone(),
+            complete: false,
+            assessments: vec![
+                ResearchClosureAssessment {
+                    requirement_id: COMPLETE_ID.to_string(),
+                    complete: true,
+                    authority_requirement_ids: vec![COMPLETE_ID.to_string()],
+                    evidence_ids: Vec::new(),
+                    gaps: Vec::new(),
+                    rationale: "The authored runtime clause is complete.".to_string(),
+                },
+                ResearchClosureAssessment {
+                    requirement_id: GAP_ID.to_string(),
+                    complete: false,
+                    authority_requirement_ids: Vec::new(),
+                    evidence_ids: Vec::new(),
+                    gaps: vec![gap],
+                    rationale: "The bound API document must still be consulted.".to_string(),
+                },
+            ],
+        };
+        let sources = vec![ResearchAuthoritySource {
+            id: document_source_id.clone(),
+            kinds: vec!["library_docs".to_string(), "web".to_string()],
+            universally_applicable: false,
+            bound_requirement_ids: vec![GAP_ID.to_string()],
+        }];
+        let compiled = compile_research_closure_partition(
+            &serde_json::to_string(&draft).unwrap(),
+            &partition,
+            &requirements,
+            &sources,
+            "runtime-jury-model".to_string(),
+            "runtime-jury-host".to_string(),
+            "runtime-authority-input".to_string(),
+        )
+        .expect("a structurally complete ledger may retain a runnable target gap");
+        assert_eq!(compiled.assessments.len(), 2);
+        let mut ledger =
+            generic_saturation_ledger(&[COMPLETE_ID, GAP_ID], ResearchCoverageState::Unresolved);
+        let mut registry = HashMap::new();
+        let mut history = HashMap::new();
+        apply_research_saturation_target_decisions(
+            &mut ledger,
+            &compiled.assessments,
+            &mut registry,
+            &mut history,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(ledger.status, ResearchSaturationStatus::Continue);
+        assert_eq!(ledger.next_questions.len(), 1);
+        assert_eq!(ledger.next_questions[0].requirement_ids, vec![GAP_ID]);
+        assert_eq!(
+            ledger.next_questions[0].applicable_source_ids,
+            vec![document_source_id]
+        );
+
+        let mut inconsistent = draft;
+        inconsistent.complete = true;
+        let error = compile_research_closure_partition(
+            &serde_json::to_string(&inconsistent).unwrap(),
+            &partition,
+            &requirements,
+            &sources,
+            "runtime-jury-model".to_string(),
+            "runtime-jury-host".to_string(),
+            "runtime-authority-input".to_string(),
+        )
+        .err()
+        .expect("the aggregate bit cannot contradict its target rows")
+        .to_string();
+        assert!(error.contains("aggregate completion"));
+    }
+
+    #[test]
     fn section_partitions_cover_every_target_exactly_once() {
         let candidates = vec![
             generic_research_target("target-a", "transport"),
@@ -18313,9 +18425,9 @@ fn compile_research_closure_partition(
 ) -> Result<CompiledResearchClosurePartition> {
     let draft: ResearchClosureLedgerDraft = serde_json::from_str(strip_code_fences(raw).trim())
         .map_err(|error| anyhow!("target authority ledger was not valid typed JSON: {error}"))?;
-    if draft.partition_id != partition.partition_id || !draft.complete {
+    if draft.partition_id != partition.partition_id {
         bail!(
-            "target authority ledger `{}` did not complete partition `{}`",
+            "target authority ledger `{}` did not match partition `{}`",
             draft.partition_id,
             partition.partition_id
         );
@@ -18440,6 +18552,15 @@ fn compile_research_closure_partition(
             .collect::<Vec<_>>();
         missing.sort();
         bail!("target authority ledger omitted targets {missing:?}");
+    }
+    let rows_complete = draft
+        .assessments
+        .iter()
+        .all(|assessment| assessment.complete);
+    if draft.complete != rows_complete {
+        bail!(
+            "target authority ledger aggregate completion did not match its complete target rows"
+        );
     }
     Ok(CompiledResearchClosurePartition {
         model,
@@ -24830,7 +24951,7 @@ impl GooseAgentDispatcher {
             .iter()
             .map(|candidate| candidate.requirement_id.clone())
             .collect::<Vec<_>>();
-        let system = "You are one host-bound member of a whole-target canonical authority jury. For every assigned canonical target, independently determine the COMPLETE zero/one/many set of material facts still missing after comparing its provisional row, the complete immutable requirement ledger across all sections, its engine registry of prior semantic gaps with attempted and exhausted sources, and its candidate-bound typed evidence. A complete row must cite exact canonical requirement ids and/or exact candidate-bound Found evidence ids whose engine-verified source quotes collectively settle it. An incomplete row must preserve every independent missing fact as one atomic gap; reuse a supplied prior_semantic_gap_id only for the same semantic fact, including a materially refined interrogative, otherwise leave it empty so the engine mints a new identity after two-cover consensus. Preserve engine-supplied attempted_source_ids and exhausted_source_ids exactly. A runnable gap must use kind library_docs, web, or codebase and a specific interrogative. For an unchanged interrogative select every unattempted, non-exhausted universal source plus only semantically relevant unattempted named documents. A materially refined interrogative may retry attempted, non-exhausted sources. The engine rejects exact query replay. unavailable means there is no remaining applicable route and every previously attempted admitted source is engine-proven exhausted; never infer it from a failed call or merely irrelevant Found evidence. Provisional output and model recollection are advisory, not authority. When exactly two prior_jury_assessments are supplied, you are the distinct-host adjudicator: select one entire prior whole-target assessment semantically verbatim and explain why; never synthesize a third target ledger. Return exactly one assessment for every assigned requirement_id. Do not inspect external sources, draft a plan, or create fill work. There is no gap, token, correction, or elapsed-time quota; finish the semantic target ledger, then call final_output.";
+        let system = "You are one host-bound member of a whole-target canonical authority jury. For every assigned canonical target, independently determine the COMPLETE zero/one/many set of material facts still missing after comparing its provisional row, the complete immutable requirement ledger across all sections, its engine registry of prior semantic gaps with attempted and exhausted sources, and its candidate-bound typed evidence. A complete row must cite exact canonical requirement ids and/or exact candidate-bound Found evidence ids whose engine-verified source quotes collectively settle it. An incomplete row must preserve every independent missing fact as one atomic gap; reuse a supplied prior_semantic_gap_id only for the same semantic fact, including a materially refined interrogative, otherwise leave it empty so the engine mints a new identity after two-cover consensus. Preserve engine-supplied attempted_source_ids and exhausted_source_ids exactly. A runnable gap must use kind library_docs, web, or codebase and a specific interrogative. For an unchanged interrogative select every unattempted, non-exhausted universal source plus only semantically relevant unattempted named documents. A materially refined interrogative may retry attempted, non-exhausted sources. The engine rejects exact query replay. unavailable means there is no remaining applicable route and every previously attempted admitted source is engine-proven exhausted; never infer it from a failed call or merely irrelevant Found evidence. The ledger-level complete field is true only when every target row is complete; false is a valid structurally finished ledger carrying one or more runnable or typed-unavailable gaps. Provisional output and model recollection are advisory, not authority. When exactly two prior_jury_assessments are supplied, you are the distinct-host adjudicator: select one entire prior whole-target assessment semantically verbatim and explain why; never synthesize a third target ledger. Return exactly one assessment for every assigned requirement_id. Do not inspect external sources, draft a plan, or create fill work. There is no gap, token, correction, or elapsed-time quota; finish the semantic target ledger, then call final_output.";
         let mut correction_feedback = String::new();
         let mut correction = 0u64;
         loop {
@@ -24839,6 +24960,7 @@ impl GooseAgentDispatcher {
                 "target_candidates": partition.candidates,
                 "compiler_feedback": correction_feedback,
                 "decision_rules": {
+                    "ledger_complete": "true iff every assigned target row is complete; false is required when any valid gap remains",
                     "complete": "gaps empty and exact canonical authority ids and/or engine-verified Found evidence ids non-empty",
                     "incomplete": "gaps contains every atomic missing fact; prior_semantic_gap_id is either an exact supplied lineage or empty",
                     "unavailable": "question and applicable_source_ids empty; every admitted attempted source is engine-exhausted and no unattempted universal route remains"
@@ -56262,7 +56384,7 @@ mod pre_scheduler_semantic_runtime_tests {
 
     fn invalid_jury_runtime_outputs(
         partition_id: &str,
-        requirement_id: &str,
+        _requirement_id: &str,
     ) -> Vec<serde_json::Value> {
         vec![
             serde_json::json!({
@@ -56272,8 +56394,8 @@ mod pre_scheduler_semantic_runtime_tests {
             }),
             serde_json::json!({
                 "partition_id": partition_id,
-                "complete": false,
-                "assessments": [correction_runtime_assessment(requirement_id)]
+                "complete": true,
+                "assessments": []
             }),
         ]
     }
