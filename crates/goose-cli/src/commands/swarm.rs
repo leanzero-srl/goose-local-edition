@@ -37073,7 +37073,7 @@ mod fan_order_tests {
             "citation audit must not cancel a blocked admitted group after its sibling fails"
         );
         release_sibling.add_permits(1);
-        let error = run.await.unwrap().unwrap_err().to_string();
+        let error = format!("{:#}", run.await.unwrap().unwrap_err());
         assert!(
             error.contains("failed after draining every admitted request"),
             "{error}"
