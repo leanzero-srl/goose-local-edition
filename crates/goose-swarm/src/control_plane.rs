@@ -1698,6 +1698,33 @@ impl CapturedProviderRequest {
         self.session.request.is_started_live()
     }
 
+    /// Reserve an action against this exact captured request while it is still live.
+    ///
+    /// The request exposure lock prevents a terminal transition (and therefore a later request)
+    /// from crossing the reservation. The supplied safety gate may hold an independent progress
+    /// lock while it invokes `reserve`, so progress observed before the reservation cannot race the
+    /// action either.
+    pub fn reserve_while_live(
+        &self,
+        safety: &dyn ProviderNudgeSafetyGate,
+        reserve: &mut dyn FnMut() -> Result<(), String>,
+    ) -> Result<(), ProviderLifecycleOperationError> {
+        let state = self
+            .session
+            .request
+            .exposure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.live_use_closed {
+            return Err(ProviderLifecycleOperationError::Unresolved(
+                "captured provider request is no longer live".to_string(),
+            ));
+        }
+        safety
+            .reserve(reserve)
+            .map_err(ProviderLifecycleOperationError::Unresolved)
+    }
+
     pub fn closed(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
         let request = self.session.request.clone();
         async move {
@@ -3134,6 +3161,14 @@ mod provider_start_registry_tests {
         }
     }
 
+    struct RejectReservation;
+
+    impl ProviderNudgeSafetyGate for RejectReservation {
+        fn reserve(&self, _reserve: &mut dyn FnMut() -> Result<(), String>) -> Result<(), String> {
+            Err("structured output advanced before retirement reservation".to_string())
+        }
+    }
+
     fn nudge_control(same_host: bool) -> PhysicalAdmissionControl {
         let host_capacity = if same_host {
             HostCapacityEvidence::MeasuredProfile {
@@ -3256,6 +3291,72 @@ mod provider_start_registry_tests {
             dropped_registry.query(&provider_start),
             Err(ProviderStartLookupError::NotLive { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn captured_request_reservation_rejects_progress_change_and_request_rollover() {
+        let control = nudge_control(false);
+        let source = admit_role(
+            &control,
+            "retirement-source",
+            WorkRole::ResearchEvidence,
+            "source-device",
+        )
+        .await;
+        let lifecycle = source.lifecycle();
+        let first = lifecycle.start_provider_request().await.unwrap();
+        first.publish_for_scheduler().unwrap();
+        let captured = lifecycle
+            .capture_live_provider_request("recurrence-snapshot".to_string())
+            .unwrap();
+
+        let reserved = Arc::new(AtomicBool::new(false));
+        let mark_reserved = reserved.clone();
+        let mut reject_action = || {
+            mark_reserved.store(true, Ordering::SeqCst);
+            Ok(())
+        };
+        assert!(captured
+            .reserve_while_live(&RejectReservation, &mut reject_action)
+            .is_err());
+        assert!(!reserved.load(Ordering::SeqCst));
+
+        let mark_reserved = reserved.clone();
+        let mut accept_action = || {
+            mark_reserved.store(true, Ordering::SeqCst);
+            Ok(())
+        };
+        captured
+            .reserve_while_live(&AllowNudge, &mut accept_action)
+            .unwrap();
+        assert!(reserved.load(Ordering::SeqCst));
+
+        first
+            .provider_terminal(ProviderTerminalKind::Finished)
+            .await
+            .unwrap();
+        let second = lifecycle.start_provider_request().await.unwrap();
+        second.publish_for_scheduler().unwrap();
+        let stale_reserved = Arc::new(AtomicBool::new(false));
+        let mark_stale_reserved = stale_reserved.clone();
+        let mut stale_action = || {
+            mark_stale_reserved.store(true, Ordering::SeqCst);
+            Ok(())
+        };
+        assert!(captured
+            .reserve_while_live(&AllowNudge, &mut stale_action)
+            .is_err());
+        assert!(!stale_reserved.load(Ordering::SeqCst));
+
+        second
+            .provider_terminal(ProviderTerminalKind::Cancelled)
+            .await
+            .unwrap();
+        source
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        assert_eq!(control.occupancy().await, (0, 0));
     }
 
     #[tokio::test]
