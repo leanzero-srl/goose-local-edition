@@ -3,8 +3,11 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 pub(super) const ROOT_ENV: &str = "GOOSE_TOOL_SANDBOX_ROOT";
+#[cfg(target_os = "macos")]
 pub(super) const HOME_ENV: &str = "GOOSE_TOOL_SANDBOX_HOME";
+#[cfg(target_os = "macos")]
 pub(super) const DENY_ROOT_ENV: &str = "GOOSE_TOOL_SANDBOX_DENY_ROOT";
+#[cfg(target_os = "macos")]
 pub(super) const DENY_LOCAL_PORTS_ENV: &str = "GOOSE_TOOL_SANDBOX_DENY_LOCAL_PORTS";
 
 pub(super) fn root() -> Result<Option<PathBuf>, String> {

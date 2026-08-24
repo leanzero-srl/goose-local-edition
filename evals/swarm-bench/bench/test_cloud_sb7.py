@@ -9511,6 +9511,15 @@ class CloudSb7HarnessTest(unittest.TestCase):
                         "encrypted_content": "opaque-fixture-reasoning",
                     },
                     {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "I should inspect the directory.",
+                            }
+                        ],
+                    },
+                    {
                         "type": "function_call",
                         "call_id": "call-fixture-1",
                         "name": "shell",
@@ -9523,10 +9532,64 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     },
                 ],
             }
+            source_reasoning = {
+                "type": "reasoning",
+                "id": "reasoning-fixture-1",
+                "summary": [
+                    {
+                        "type": "summary_text",
+                        "text": "I should inspect the directory.",
+                    }
+                ],
+                "encrypted_content": "opaque-fixture-reasoning",
+            }
+            source_delta = {
+                "data": {
+                    "id": "resp-fixture-1",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "I should inspect the directory.",
+                        }
+                    ],
+                },
+                "usage": None,
+            }
+            source_terminal = {
+                "data": {
+                    "id": "resp-fixture-1",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "redactedThinking",
+                            "data": "openai-responses-reasoning:"
+                            + json.dumps(source_reasoning, separators=(",", ":")),
+                        },
+                        {
+                            "type": "toolRequest",
+                            "id": "call-fixture-1",
+                            "toolCall": {
+                                "status": "success",
+                                "value": {
+                                    "name": "shell",
+                                    "arguments": {"command": "pwd"},
+                                },
+                            },
+                        },
+                    ],
+                },
+                "usage": {"inputTokens": 20, "outputTokens": 8},
+            }
             # RequestLog rotates newest to index 0 and prior requests upward.
             for index, payload in ((1, first), (0, second)):
+                lines = [json.dumps({"input": payload, "model_config": {}})]
+                if index == 1:
+                    lines.extend(
+                        [json.dumps(source_delta), json.dumps(source_terminal)]
+                    )
                 (logs / f"llm_request.{index}.jsonl").write_text(
-                    json.dumps({"input": payload, "model_config": {}}) + "\n"
+                    "\n".join(lines) + "\n"
                 )
 
             contract = cloud_sb7.meta_responses_smoke_contract(profile, row)
@@ -9536,7 +9599,12 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertTrue(contract["sampling_omitted"])
             self.assertEqual(
                 contract["tool_replay"]["order"],
-                ["reasoning", "function_call", "function_call_output"],
+                [
+                    "reasoning",
+                    "assistant_message",
+                    "function_call",
+                    "function_call_output",
+                ],
             )
             serialized = json.dumps(contract, sort_keys=True)
             self.assertNotIn("reasoning-fixture-1", serialized)
@@ -9603,6 +9671,145 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "Meta smoke has no ordered encrypted-reasoning/function/tool-output replay",
                 contract["errors"],
             )
+
+    def test_meta_smoke_contract_binds_replay_to_immediately_prior_response(
+        self,
+    ) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-muse-spark-12-entrant.json"
+            )
+        )[0]
+        common = {
+            "model": "muse-spark-1.2",
+            "stream": True,
+            "store": False,
+            "max_output_tokens": 128_000,
+            "reasoning": {"effort": "high", "summary": "auto"},
+            "include": ["reasoning.encrypted_content"],
+            "instructions": "Use the shell tool.",
+            "tools": [{"type": "function", "name": "shell"}],
+            "tool_choice": "auto",
+            "parallel_tool_calls": False,
+        }
+        source_reasoning = {
+            "type": "reasoning",
+            "id": "source-reasoning-a",
+            "summary": [],
+            "encrypted_content": "source-cipher-a",
+        }
+        source_response = {
+            "data": {
+                "id": "source-response-a",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "redactedThinking",
+                        "data": "openai-responses-reasoning:"
+                        + json.dumps(source_reasoning, separators=(",", ":")),
+                    },
+                    {
+                        "type": "toolRequest",
+                        "id": "source-call-a",
+                        "toolCall": {
+                            "status": "success",
+                            "value": {
+                                "name": "shell",
+                                "arguments": {"command": "pwd"},
+                            },
+                        },
+                    },
+                ],
+            },
+            "usage": {"inputTokens": 10, "outputTokens": 5},
+        }
+
+        cases = {
+            "different_source_identity": [
+                {
+                    "type": "reasoning",
+                    "id": "replayed-reasoning-b",
+                    "summary": [],
+                    "encrypted_content": "replayed-cipher-b",
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "replayed-call-b",
+                    "name": "shell",
+                    "arguments": '{"command":"pwd"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "replayed-call-b",
+                    "output": "/workspace",
+                },
+            ],
+            "assistant_before_reasoning": [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "too early"}],
+                },
+                source_reasoning,
+                {
+                    "type": "function_call",
+                    "call_id": "source-call-a",
+                    "name": "shell",
+                    "arguments": '{"command":"pwd"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "source-call-a",
+                    "output": "/workspace",
+                },
+            ],
+        }
+        for name, replay_items in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as raw:
+                profile = Path(raw) / "profile"
+                logs = profile / "state/logs"
+                logs.mkdir(parents=True)
+                first = {
+                    **common,
+                    "input": [
+                        {
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "Run pwd."}],
+                        }
+                    ],
+                }
+                second = {
+                    **common,
+                    "input": [
+                        {
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "Run pwd."}],
+                        },
+                        *replay_items,
+                    ],
+                }
+                (logs / "llm_request.1.jsonl").write_text(
+                    json.dumps({"input": first, "model_config": {}})
+                    + "\n"
+                    + json.dumps(source_response)
+                    + "\n"
+                )
+                (logs / "llm_request.0.jsonl").write_text(
+                    json.dumps({"input": second, "model_config": {}}) + "\n"
+                )
+
+                contract = cloud_sb7.meta_responses_smoke_contract(profile, row)
+
+                self.assertFalse(contract["valid"])
+                self.assertIsNone(contract["tool_replay"])
+                if name == "different_source_identity":
+                    self.assertTrue(
+                        any("exact prior encrypted reasoning" in error for error in contract["errors"])
+                    )
+                else:
+                    self.assertIn(
+                        "Meta replay assistant message precedes its reasoning",
+                        contract["errors"],
+                    )
 
     def test_keychain_provider_secret_is_memory_only_and_unambiguous(self) -> None:
         row = {
