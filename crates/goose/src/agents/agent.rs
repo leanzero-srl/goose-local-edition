@@ -105,6 +105,144 @@ fn extract_string_arg(input: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
+fn prepare_provider_turn_history(
+    pending: &Conversation,
+    response: &Message,
+) -> (Conversation, Vec<MessageContent>, Vec<MessageContent>) {
+    let is_thinking = |content: &MessageContent| {
+        matches!(
+            content,
+            MessageContent::Thinking(_) | MessageContent::RedactedThinking(_)
+        )
+    };
+    let direct_thinking = response
+        .content
+        .iter()
+        .filter(|content| is_thinking(content))
+        .cloned()
+        .collect::<Vec<_>>();
+    let direct_commentary = response
+        .content
+        .iter()
+        .filter(|content| matches!(content, MessageContent::Text(_)))
+        .cloned()
+        .collect::<Vec<_>>();
+    let response_id = response.id.as_deref();
+    let mut accumulated_prior = Vec::new();
+    let mut streamed_commentary = Vec::new();
+    let rebuilt = pending
+        .messages()
+        .iter()
+        .filter_map(|message| {
+            if message.role != response.role || message.content.is_empty() {
+                return Some(message.clone());
+            }
+            let is_split_request = message
+                .content
+                .iter()
+                .any(|content| matches!(content, MessageContent::ToolRequest(_)));
+            let has_thinking = message.content.iter().any(is_thinking);
+            if has_thinking && !is_split_request {
+                accumulated_prior.extend(
+                    message
+                        .content
+                        .iter()
+                        .filter(|content| is_thinking(content))
+                        .cloned(),
+                );
+            }
+
+            let same_streamed_response =
+                response_id.is_some() && message.id.as_deref() == response_id && !is_split_request;
+            if same_streamed_response {
+                streamed_commentary.extend(
+                    message
+                        .content
+                        .iter()
+                        .filter(|content| matches!(content, MessageContent::Text(_)))
+                        .cloned(),
+                );
+            }
+
+            let mut rebuilt_message = message.clone();
+            if has_thinking && !is_split_request {
+                rebuilt_message
+                    .content
+                    .retain(|content| !is_thinking(content));
+            }
+            if same_streamed_response {
+                rebuilt_message
+                    .content
+                    .retain(|content| !matches!(content, MessageContent::Text(_)));
+            }
+            (!rebuilt_message.content.is_empty()).then_some(rebuilt_message)
+        })
+        .collect::<Vec<_>>();
+
+    let response_thinking = if direct_thinking.is_empty() {
+        accumulated_prior
+    } else if accumulated_prior.is_empty() {
+        direct_thinking
+    } else {
+        accumulated_prior.extend(direct_thinking);
+        accumulated_prior
+    };
+    let commentary_text = |items: &[MessageContent]| {
+        items
+            .iter()
+            .filter_map(|content| match content {
+                MessageContent::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect::<String>()
+    };
+    let response_commentary = if streamed_commentary.is_empty() {
+        direct_commentary
+    } else if direct_commentary.is_empty() {
+        streamed_commentary
+    } else {
+        let streamed_text = commentary_text(&streamed_commentary);
+        let direct_text = commentary_text(&direct_commentary);
+        if direct_text.starts_with(&streamed_text) {
+            direct_commentary
+        } else if streamed_text.starts_with(&direct_text) {
+            streamed_commentary
+        } else {
+            streamed_commentary.extend(direct_commentary);
+            streamed_commentary
+        }
+    };
+
+    (
+        Conversation::new_unvalidated(rebuilt),
+        response_thinking,
+        response_commentary,
+    )
+}
+
+fn prepare_provider_text_turn_history(
+    pending: &Conversation,
+    mut response: Message,
+) -> (Conversation, Message) {
+    let (rebuilt, thinking, commentary) = prepare_provider_turn_history(pending, &response);
+    let remaining = std::mem::take(&mut response.content)
+        .into_iter()
+        .filter(|content| {
+            !matches!(
+                content,
+                MessageContent::Thinking(_)
+                    | MessageContent::RedactedThinking(_)
+                    | MessageContent::Text(_)
+            )
+        });
+    response.content = thinking
+        .into_iter()
+        .chain(commentary)
+        .chain(remaining)
+        .collect();
+    (rebuilt, response)
+}
+
 fn stop_hook_denial_context_message(plugin: &str, reason: &str) -> Message {
     let nudge = format!(
         "Stop hook `{plugin}` blocked ending this turn:
@@ -2132,7 +2270,23 @@ impl Agent {
                                     if !text.is_empty() {
                                         last_assistant_text.push_str(&text);
                                     }
-                                    messages_to_add.push(response);
+                                    if response.content.iter().any(|content| {
+                                        matches!(
+                                            content,
+                                            MessageContent::Thinking(_)
+                                                | MessageContent::RedactedThinking(_)
+                                        )
+                                    }) {
+                                        let (rebuilt, ordered_response) =
+                                            prepare_provider_text_turn_history(
+                                                &messages_to_add,
+                                                response,
+                                            );
+                                        messages_to_add = rebuilt;
+                                        messages_to_add.push(ordered_response);
+                                    } else {
+                                        messages_to_add.push(response);
+                                    }
                                     continue;
                                 }
 
@@ -2316,89 +2470,15 @@ impl Agent {
                                     }
                                 }
 
-                                // Preserve thinking/reasoning content from the original response.
-                                // Gemini (and other thinking models) require thinking to be echoed back.
-                                // Kimi/DeepSeek require reasoning_content on assistant tool call messages.
-                                let direct_thinking: Vec<MessageContent> = response
-                                    .content
-                                    .iter()
-                                    .filter(|c| {
-                                        matches!(
-                                            c,
-                                            MessageContent::Thinking(_)
-                                                | MessageContent::RedactedThinking(_)
-                                        )
-                                    })
-                                    .cloned()
-                                    .collect();
-                                // When thinking arrived in earlier stream chunks it was stored as
-                                // standalone thinking-only messages; reuse that thinking on the
-                                // tool-call messages and drop the standalone messages so the
-                                // thinking isn't duplicated.
-                                // Always accumulate ALL prior thinking — even when
-                                // direct_thinking is non-empty (reasoning arrived on the same
-                                // chunk as tool_calls) — because otherwise only the last chunk's
-                                // reasoning ends up on split tool-call messages.
-                                // Also extract thinking from mixed (thinking+text) messages,
-                                // not just pure-thinking-only ones.
-                                // ADAPTED from upstream 1e03bbb56: our Conversation is a
-                                // validated newtype with no in-place mutation, so the
-                                // accumulate/strip pass rebuilds the list functionally instead
-                                // of using messages_mut()/remove().
-                                let is_thinking = |c: &MessageContent| {
-                                    matches!(
-                                        c,
-                                        MessageContent::Thinking(_)
-                                            | MessageContent::RedactedThinking(_)
-                                    )
-                                };
-                                let mut accumulated_prior: Vec<MessageContent> = Vec::new();
-                                let rebuilt: Vec<Message> = messages_to_add
-                                    .messages()
-                                    .iter()
-                                    .filter_map(|m| {
-                                        if m.role != response.role || m.content.is_empty() {
-                                            return Some(m.clone());
-                                        }
-                                        let thinking_only = m.content.iter().all(is_thinking);
-                                        let has_thinking = m.content.iter().any(is_thinking);
-                                        let is_split_request = m.content.iter().any(|c| {
-                                            matches!(c, MessageContent::ToolRequest(_))
-                                        });
-                                        // Prior-split request_msg items already carry their own
-                                        // thinking copy — never re-accumulate or strip those.
-                                        if has_thinking && !is_split_request {
-                                            accumulated_prior.extend(
-                                                m.content
-                                                    .iter()
-                                                    .filter(|c| is_thinking(c))
-                                                    .cloned(),
-                                            );
-                                        }
-                                        if thinking_only {
-                                            // Dropped: its thinking rides the split tool-call
-                                            // messages below instead of duplicating here.
-                                            None
-                                        } else if has_thinking && !is_split_request {
-                                            let mut m2 = m.clone();
-                                            m2.content.retain(|c| !is_thinking(c));
-                                            Some(m2)
-                                        } else {
-                                            Some(m.clone())
-                                        }
-                                    })
-                                    .collect();
-                                messages_to_add = Conversation::new_unvalidated(rebuilt);
-                                let response_thinking = if direct_thinking.is_empty() {
-                                    accumulated_prior
-                                } else if accumulated_prior.is_empty() {
-                                    direct_thinking
-                                } else {
-                                    let mut merged = accumulated_prior;
-                                    merged.extend(direct_thinking);
-                                    merged
-                                };
+                                // Providers can stream signed reasoning and commentary before the
+                                // terminal tool-call chunk. Rebuild that one response so its
+                                // provider-owned order rides the stored tool request without
+                                // duplicating earlier stream fragments.
+                                let (rebuilt, response_thinking, response_commentary) =
+                                    prepare_provider_turn_history(&messages_to_add, &response);
+                                messages_to_add = rebuilt;
 
+                                let mut commentary_attached = false;
                                 for request in frontend_requests.iter().chain(remaining_requests.iter()) {
                                     let mut request_msg = Message::assistant()
                                         .with_id(format!("msg_{}", Uuid::new_v4()));
@@ -2407,6 +2487,12 @@ impl Agent {
 
                                     for thinking in &response_thinking {
                                         request_msg = request_msg.with_content(thinking.clone());
+                                    }
+                                    if !commentary_attached {
+                                        for commentary in &response_commentary {
+                                            request_msg = request_msg.with_content(commentary.clone());
+                                        }
+                                        commentary_attached = true;
                                     }
 
                                     // For an unparseable tool call (Err), store a valid
@@ -3498,6 +3584,89 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
+
+    #[test]
+    fn streamed_commentary_is_rebound_after_reasoning_before_terminal_tool_call() {
+        let pending = Conversation::new_unvalidated(vec![
+            Message::assistant()
+                .with_id("resp_meta_1")
+                .with_text("I will "),
+            Message::assistant()
+                .with_id("unrelated_response")
+                .with_text("preserve me"),
+            Message::assistant()
+                .with_id("resp_meta_1")
+                .with_text("inspect the workspace."),
+        ]);
+        let terminal = Message::assistant()
+            .with_id("resp_meta_1")
+            .with_redacted_thinking("opaque-reasoning")
+            .with_tool_request(
+                "call_meta_1",
+                Ok(CallToolRequestParams::new("shell").with_arguments(serde_json::Map::new())),
+            );
+
+        let (rebuilt, thinking, commentary) = prepare_provider_turn_history(&pending, &terminal);
+
+        assert_eq!(rebuilt.messages().len(), 1);
+        assert_eq!(
+            rebuilt.messages()[0].id.as_deref(),
+            Some("unrelated_response")
+        );
+        assert_eq!(thinking.len(), 1);
+        assert!(matches!(thinking[0], MessageContent::RedactedThinking(_)));
+        assert_eq!(commentary.len(), 2);
+
+        let mut stored_request = Message::assistant();
+        for content in thinking.into_iter().chain(commentary) {
+            stored_request = stored_request.with_content(content);
+        }
+        stored_request = stored_request.with_tool_request(
+            "call_meta_1",
+            Ok(CallToolRequestParams::new("shell").with_arguments(serde_json::Map::new())),
+        );
+        assert!(matches!(
+            stored_request.content.as_slice(),
+            [
+                MessageContent::RedactedThinking(_),
+                MessageContent::Text(_),
+                MessageContent::Text(_),
+                MessageContent::ToolRequest(_)
+            ]
+        ));
+        assert_eq!(
+            stored_request.as_concat_text(),
+            "I will inspect the workspace."
+        );
+    }
+
+    #[test]
+    fn streamed_text_is_stored_after_terminal_reasoning_for_text_only_turn() {
+        let pending = Conversation::new_unvalidated(vec![
+            Message::assistant()
+                .with_id("resp_meta_text")
+                .with_text("The result "),
+            Message::assistant()
+                .with_id("resp_meta_text")
+                .with_text("is ready."),
+        ]);
+        let terminal = Message::assistant()
+            .with_id("resp_meta_text")
+            .with_redacted_thinking("opaque-text-reasoning");
+
+        let (rebuilt, stored_response) = prepare_provider_text_turn_history(&pending, terminal);
+
+        assert!(rebuilt.messages().is_empty());
+        assert!(matches!(
+            stored_response.content.as_slice(),
+            [
+                MessageContent::RedactedThinking(_),
+                MessageContent::Text(_),
+                MessageContent::Text(_)
+            ]
+        ));
+        assert_eq!(stored_response.as_concat_text(), "The result is ready.");
+    }
 
     #[test]
     fn resolve_use_login_shell_path_defaults_by_platform() {

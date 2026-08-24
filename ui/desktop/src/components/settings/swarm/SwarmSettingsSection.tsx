@@ -461,7 +461,7 @@ function CloudPane({
       if (!r.ok) setError(bedrockErr(r));
       await onChanged();
     },
-    [onChanged]
+    [def.cli, onChanged]
   );
 
   const rmNode = useCallback(
@@ -473,7 +473,7 @@ function CloudPane({
       if (!r.ok) setError(bedrockErr(r));
       await onChanged();
     },
-    [onChanged]
+    [def.cli, onChanged]
   );
 
   const configured = new Set(devices.map((d) => d.model_id));

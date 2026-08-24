@@ -13211,12 +13211,13 @@ def meta_responses_smoke_contract(
     if len(indexed) < 2:
         errors.append("Meta smoke did not record a multi-turn tool replay")
 
-    payloads: list[Dict[str, Any]] = []
+    request_records: list[Dict[str, Any]] = []
     file_hashes: Dict[str, str] = {}
     for _, path in reversed(indexed):
         file_hashes[path.name] = sha256_file(path)
         try:
-            first_line = path.read_text().splitlines()[0]
+            lines = path.read_text().splitlines()
+            first_line = lines[0]
             record = json.loads(first_line, object_pairs_hook=unique_json_object)
             payload = record.get("input") if isinstance(record, dict) else None
         except (IndexError, OSError, ValueError, json.JSONDecodeError) as error:
@@ -13228,7 +13229,41 @@ def meta_responses_smoke_contract(
         if not isinstance(payload, dict):
             errors.append(f"Meta request log has no request payload: {path.name}")
             continue
-        payloads.append(payload)
+        response_messages: list[Dict[str, Any]] = []
+        for line_number, line in enumerate(lines[1:], start=2):
+            try:
+                response_record = json.loads(
+                    line, object_pairs_hook=unique_json_object
+                )
+            except (ValueError, json.JSONDecodeError):
+                errors.append(
+                    f"Meta request log response cannot be decoded: "
+                    f"{path.name}:{line_number}"
+                )
+                continue
+            if not isinstance(response_record, dict):
+                errors.append(
+                    f"Meta request log response is not an object: "
+                    f"{path.name}:{line_number}"
+                )
+                continue
+            data = response_record.get("data")
+            if data is not None and not isinstance(data, dict):
+                errors.append(
+                    f"Meta request log response data is malformed: "
+                    f"{path.name}:{line_number}"
+                )
+            elif isinstance(data, dict):
+                response_messages.append(data)
+        request_records.append(
+            {
+                "name": path.name,
+                "payload": payload,
+                "responses": response_messages,
+            }
+        )
+
+    payloads = [record["payload"] for record in request_records]
 
     unsupported = {
         "temperature",
@@ -13273,57 +13308,230 @@ def meta_responses_smoke_contract(
                 + ", ".join(request_errors)
             )
 
+    reasoning_prefix = "openai-responses-reasoning:"
+
+    def source_turn(record: Mapping[str, Any]) -> Dict[str, Any] | None:
+        responses = record.get("responses")
+        if not isinstance(responses, list):
+            return None
+        for response_index, message in enumerate(responses):
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for reasoning_index, item in enumerate(content):
+                if not isinstance(item, dict) or item.get("type") != "redactedThinking":
+                    continue
+                encoded = item.get("data")
+                if not isinstance(encoded, str) or not encoded.startswith(reasoning_prefix):
+                    errors.append("Meta source response has malformed encrypted reasoning")
+                    continue
+                try:
+                    reasoning = json.loads(
+                        encoded[len(reasoning_prefix) :],
+                        object_pairs_hook=unique_json_object,
+                    )
+                except (ValueError, json.JSONDecodeError):
+                    errors.append("Meta source response reasoning cannot be decoded")
+                    continue
+                if (
+                    not isinstance(reasoning, dict)
+                    or reasoning.get("type") != "reasoning"
+                    or not isinstance(reasoning.get("id"), str)
+                    or not reasoning["id"]
+                    or not isinstance(reasoning.get("summary"), list)
+                    or not isinstance(reasoning.get("encrypted_content"), str)
+                    or not reasoning["encrypted_content"]
+                ):
+                    errors.append("Meta source response reasoning passback is incomplete")
+                    continue
+                if any(
+                    isinstance(prior, dict) and prior.get("type") == "text"
+                    for prior in content[:reasoning_index]
+                ):
+                    errors.append("Meta source response text precedes encrypted reasoning")
+                    continue
+                tool_candidates = [
+                    tool
+                    for tool in content[reasoning_index + 1 :]
+                    if isinstance(tool, dict) and tool.get("type") == "toolRequest"
+                ]
+                if len(tool_candidates) != 1:
+                    errors.append(
+                        "Meta source response must contain one tool request after reasoning"
+                    )
+                    continue
+                tool = tool_candidates[0]
+                tool_call = tool.get("toolCall")
+                value = (
+                    tool_call.get("value")
+                    if isinstance(tool_call, dict)
+                    and tool_call.get("status") == "success"
+                    else None
+                )
+                call_id = tool.get("id")
+                name = value.get("name") if isinstance(value, dict) else None
+                arguments = value.get("arguments") if isinstance(value, dict) else None
+                if arguments is None:
+                    arguments = {}
+                if (
+                    not isinstance(call_id, str)
+                    or not call_id
+                    or not isinstance(name, str)
+                    or not name
+                    or not isinstance(arguments, dict)
+                ):
+                    errors.append("Meta source response tool request is malformed")
+                    continue
+                response_id = message.get("id")
+                commentary: list[str] = []
+                for prior_message in responses[: response_index + 1]:
+                    if (
+                        not isinstance(prior_message, dict)
+                        or prior_message.get("role") != "assistant"
+                        or prior_message.get("id") != response_id
+                        or not isinstance(prior_message.get("content"), list)
+                    ):
+                        continue
+                    for prior_content in prior_message["content"]:
+                        if (
+                            isinstance(prior_content, dict)
+                            and prior_content.get("type") == "text"
+                            and isinstance(prior_content.get("text"), str)
+                        ):
+                            commentary.append(prior_content["text"])
+                return {
+                    "reasoning": reasoning,
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": arguments,
+                    "commentary": commentary,
+                }
+        return None
+
     replay: Dict[str, Any] | None = None
-    for request_index, payload in enumerate(payloads[1:], start=1):
-        input_items = payload.get("input")
+    for source_index, (source_record, replay_record) in enumerate(
+        zip(request_records, request_records[1:])
+    ):
+        source = source_turn(source_record)
+        if source is None:
+            continue
+        input_items = replay_record["payload"].get("input")
         if not isinstance(input_items, list):
+            errors.append("Meta replay request input is not a list")
             continue
-        reasoning_items = [
+        reasoning_matches = [
             (index, item)
             for index, item in enumerate(input_items)
-            if isinstance(item, dict) and item.get("type") == "reasoning"
+            if isinstance(item, dict) and item == source["reasoning"]
         ]
-        function_calls = [
-            (index, item)
-            for index, item in enumerate(input_items)
-            if isinstance(item, dict) and item.get("type") == "function_call"
-        ]
-        function_outputs = [
-            (index, item)
-            for index, item in enumerate(input_items)
-            if isinstance(item, dict) and item.get("type") == "function_call_output"
-        ]
-        if not reasoning_items or not function_calls or not function_outputs:
+        if len(reasoning_matches) != 1:
+            errors.append(
+                "Meta replay does not contain the exact prior encrypted reasoning once"
+            )
             continue
-        reasoning_index, reasoning = reasoning_items[-1]
-        matching = [
-            (call_index, output_index, call)
-            for call_index, call in function_calls
-            for output_index, output in function_outputs
-            if call.get("call_id")
-            and call.get("call_id") == output.get("call_id")
-        ]
-        if not matching:
-            continue
-        call_index, output_index, call = matching[-1]
-        reasoning_id = reasoning.get("id")
-        encrypted = reasoning.get("encrypted_content")
-        summary = reasoning.get("summary")
-        if (
-            not isinstance(reasoning_id, str)
-            or not reasoning_id
-            or not isinstance(encrypted, str)
-            or not encrypted
-            or not isinstance(summary, list)
-            or not reasoning_index < call_index < output_index
+        reasoning_index, _ = reasoning_matches[0]
+        boundary = max(
+            (
+                index
+                for index, item in enumerate(input_items[:reasoning_index])
+                if isinstance(item, dict)
+                and (
+                    item.get("role") == "user"
+                    or item.get("type") == "function_call_output"
+                )
+            ),
+            default=-1,
+        )
+        if any(
+            isinstance(item, dict) and item.get("role") == "assistant"
+            for item in input_items[boundary + 1 : reasoning_index]
         ):
+            errors.append("Meta replay assistant message precedes its reasoning")
             continue
+
+        call_matches: list[tuple[int, Dict[str, Any]]] = []
+        for index, item in enumerate(input_items):
+            if not isinstance(item, dict) or item.get("type") != "function_call":
+                continue
+            try:
+                arguments = json.loads(
+                    item.get("arguments", ""),
+                    object_pairs_hook=unique_json_object,
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if (
+                item.get("call_id") == source["call_id"]
+                and item.get("name") == source["name"]
+                and arguments == source["arguments"]
+            ):
+                call_matches.append((index, item))
+        if len(call_matches) != 1:
+            errors.append("Meta replay does not contain the exact prior function call once")
+            continue
+        call_index, call = call_matches[0]
+        output_matches = [
+            (index, item)
+            for index, item in enumerate(input_items)
+            if isinstance(item, dict)
+            and item.get("type") == "function_call_output"
+            and item.get("call_id") == source["call_id"]
+        ]
+        if len(output_matches) != 1:
+            errors.append("Meta replay has no unique output for the prior function call")
+            continue
+        output_index, output = output_matches[0]
+        if not reasoning_index < call_index < output_index:
+            errors.append("Meta replay reasoning/tool/output order is invalid")
+            continue
+
+        replay_commentary: list[str] = []
+        commentary_valid = True
+        for item in input_items[reasoning_index + 1 : call_index]:
+            if not isinstance(item, dict) or item.get("role") != "assistant":
+                commentary_valid = False
+                break
+            content = item.get("content")
+            if not isinstance(content, list):
+                commentary_valid = False
+                break
+            for content_item in content:
+                if (
+                    not isinstance(content_item, dict)
+                    or content_item.get("type") != "output_text"
+                    or not isinstance(content_item.get("text"), str)
+                ):
+                    commentary_valid = False
+                    break
+                replay_commentary.append(content_item["text"])
+            if not commentary_valid:
+                break
+        if not commentary_valid or replay_commentary != source["commentary"]:
+            errors.append("Meta replay does not preserve prior assistant text exactly")
+            continue
+
+        order = ["reasoning"]
+        if replay_commentary:
+            order.append("assistant_message")
+        order.extend(["function_call", "function_call_output"])
         replay = {
-            "request_index": request_index,
-            "reasoning_id_sha256": sha256_bytes(reasoning_id.encode()),
-            "encrypted_content_sha256": sha256_bytes(encrypted.encode()),
-            "call_id_sha256": sha256_bytes(str(call["call_id"]).encode()),
-            "order": ["reasoning", "function_call", "function_call_output"],
+            "source_request_index": source_index,
+            "replay_request_index": source_index + 1,
+            "source_request_log_sha256": file_hashes[source_record["name"]],
+            "replay_request_log_sha256": file_hashes[replay_record["name"]],
+            "reasoning_id_sha256": sha256_bytes(source["reasoning"]["id"].encode()),
+            "encrypted_content_sha256": sha256_bytes(
+                source["reasoning"]["encrypted_content"].encode()
+            ),
+            "summary_sha256": canonical_json_sha256(source["reasoning"]["summary"]),
+            "call_id_sha256": sha256_bytes(source["call_id"].encode()),
+            "tool_name_sha256": sha256_bytes(source["name"].encode()),
+            "arguments_sha256": canonical_json_sha256(source["arguments"]),
+            "tool_output_sha256": canonical_json_sha256(output.get("output")),
+            "assistant_text_sha256": canonical_json_sha256(source["commentary"]),
+            "order": order,
         }
         break
     if replay is None:
