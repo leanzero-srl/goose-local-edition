@@ -14263,8 +14263,6 @@ def lifecycle_telemetry_evidence(
         )
         if not admitted_at <= first_item_at <= terminal_at:
             raise SystemExit(f"request lifecycle timestamps are not monotonic: {request_id}")
-        ttft_ms = round((first_item_at - admitted_at).total_seconds() * 1000)
-        total_ms = round((terminal_at - admitted_at).total_seconds() * 1000)
         normalized.append(
             {
                 "t": round(terminal_at.timestamp() * 1000),
@@ -14275,8 +14273,8 @@ def lifecycle_telemetry_evidence(
                 "usage": True,
                 "prompt_tokens": usage["input_tokens"],
                 "completion_tokens": usage["output_tokens"],
-                "ttft_ms": ttft_ms,
-                "total_ms": total_ms,
+                "ttft_ms": None,
+                "total_ms": None,
                 "source": "provider_lifecycle_and_budget_ledger",
             }
         )
@@ -14289,7 +14287,7 @@ def lifecycle_telemetry_evidence(
     if not normalized:
         raise SystemExit(f"entrant has no terminal usage to publish: {entrant_id}")
 
-    telemetry_payload = b"".join(
+    lifecycle_payload = b"".join(
         (
             json.dumps(
                 value,
@@ -14302,18 +14300,28 @@ def lifecycle_telemetry_evidence(
         for value in normalized
     )
     raw_telemetry = Path(str(state["tree"])) / ".swarm/telemetry.jsonl"
+    raw_payload: bytes | None = None
+    raw_usage_rows: list[Dict[str, Any]] = []
+    raw_usage_valid = True
     if raw_telemetry.is_symlink() or not raw_telemetry.is_file():
         raw_identity = None
     else:
         raw_payload = raw_telemetry.read_bytes()
-        raw_usage_rows = []
         for line in raw_payload.decode(errors="replace").splitlines():
             try:
                 value = json.loads(line, object_pairs_hook=unique_json_object)
             except (ValueError, json.JSONDecodeError):
+                raw_usage_valid = False
                 continue
             if isinstance(value, dict) and value.get("usage") is True:
                 raw_usage_rows.append(value)
+                if any(
+                    isinstance(value.get(key), bool)
+                    or not isinstance(value.get(key), int)
+                    or value.get(key) < 0
+                    for key in ("prompt_tokens", "completion_tokens")
+                ):
+                    raw_usage_valid = False
         raw_identity = {
             "path": str(raw_telemetry),
             "bytes": len(raw_payload),
@@ -14337,13 +14345,32 @@ def lifecycle_telemetry_evidence(
             value["completion_tokens"] for value in normalized
         ),
     }
+    raw_reconciles = bool(
+        raw_payload
+        and raw_usage_valid
+        and len(raw_usage_rows) == summary["calls"]
+        and raw_identity is not None
+        and raw_identity["prompt_tokens"] == summary["prompt_tokens"]
+        and raw_identity["completion_tokens"] == summary["completion_tokens"]
+    )
+    if raw_identity is not None:
+        raw_identity["reconciles_lifecycle_and_ledger"] = raw_reconciles
+        raw_identity["used_for_score_payload"] = raw_reconciles
+    telemetry_payload = raw_payload if raw_reconciles else lifecycle_payload
+    assert telemetry_payload is not None
     receipt = {
         "schema_version": SCORE_TELEMETRY_EVIDENCE_SCHEMA,
         "kind": "score_informational_telemetry",
         "entrant": entrant_id,
         "provider": provider,
         "model": model,
-        "source": "strict provider lifecycle joined to settled budget requests",
+        "source": (
+            "raw engine telemetry reconciled to strict provider lifecycle and settled "
+            "budget requests"
+            if raw_reconciles
+            else "strict provider lifecycle joined to settled budget requests"
+        ),
+        "timing_source": "raw_engine_telemetry" if raw_reconciles else None,
         "lifecycle_sources": lifecycle_sources,
         "budget_ledger_path": str(ledger_path),
         "budget_ledger_sha256": sha256_bytes(ledger_payload),
@@ -26031,6 +26058,7 @@ def score_telemetry_evidence_seal(
         "provider",
         "model",
         "source",
+        "timing_source",
         "lifecycle_sources",
         "budget_ledger_path",
         "budget_ledger_sha256",
@@ -26083,6 +26111,8 @@ def score_telemetry_evidence_seal(
             "usage_rows",
             "prompt_tokens",
             "completion_tokens",
+            "reconciles_lifecycle_and_ledger",
+            "used_for_score_payload",
         }:
             raise SystemExit("score raw engine telemetry identity is malformed")
         raw_path = Path(str(raw["path"]))
