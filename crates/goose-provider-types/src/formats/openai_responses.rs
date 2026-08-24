@@ -38,7 +38,7 @@ pub struct ResponsesApiResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename = "summary_text")]
 pub struct SummaryText {
     pub text: String,
 }
