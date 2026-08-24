@@ -148,6 +148,16 @@ def safe_source_metadata(source: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def safe_request_key(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    ordinal = value.get("ordinal")
+    request_id = value.get("provider_request_id")
+    if not isinstance(ordinal, int) or not isinstance(request_id, str):
+        return None
+    return f"{ordinal}:{safe_identifier(request_id)}"
+
+
 def highest_classification(values: Iterable[str]) -> str:
     valid = [value for value in values if value in CLASS_RANK]
     return max(valid, key=CLASS_RANK.__getitem__) if valid else "observation"
@@ -285,6 +295,7 @@ def role_rollups(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         reasons: set[str] = set()
         delta_thinking = 0
         delta_structured = 0
+        delta_observed = 0
         delta_repeated = 0
         delta_samples = 0
         for _, rows in activities:
@@ -296,6 +307,9 @@ def role_rollups(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 delta_thinking += max(0, int(number(growth.get("thinking_chars")) or 0))
                 delta_structured += max(
                     0, int(number(growth.get("structured_output_bytes")) or 0)
+                )
+                delta_observed += max(
+                    0, int(number(growth.get("recurrence_observed_windows")) or 0)
                 )
                 delta_repeated += max(
                     0, int(number(growth.get("recurrence_repeated_windows")) or 0)
@@ -344,13 +358,9 @@ def role_rollups(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         provider_request_keys: set[str] = set()
         for row in all_rows:
-            request_key = row.get("provider_request_key")
-            if not isinstance(request_key, dict):
-                continue
-            ordinal = request_key.get("ordinal")
-            request_id = request_key.get("provider_request_id")
-            if isinstance(ordinal, int) and isinstance(request_id, str):
-                provider_request_keys.add(f"{ordinal}:{safe_identifier(request_id)}")
+            request_key = safe_request_key(row.get("provider_request_key"))
+            if request_key is not None:
+                provider_request_keys.add(request_key)
         result.append(
             {
                 "role": role,
@@ -413,6 +423,7 @@ def role_rollups(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "delta_samples": delta_samples,
                     "thinking_chars": delta_thinking,
                     "structured_output_bytes": delta_structured,
+                    "recurrence_observed_windows": delta_observed,
                     "recurrence_repeated_windows": delta_repeated,
                 },
             }
@@ -487,6 +498,74 @@ def correction_events(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [corrections[key] for key in sorted(corrections, key=str)]
 
 
+def terminal_acceptances(ticks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    terminals: dict[tuple[int, str], dict[str, Any]] = {}
+    for tick in ticks:
+        rows = tick.get("recent_terminal_acceptances") or []
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("terminal_seq"), int):
+                continue
+            request_key = safe_request_key(row.get("request_key"))
+            if request_key is None:
+                continue
+            terminals[(row["terminal_seq"], request_key)] = {
+                "terminal_seq": row["terminal_seq"],
+                "request_key": request_key,
+                "activity": safe_identifier(row.get("activity")),
+                "physical_host_id": safe_identifier(row.get("physical_host_id")),
+                "model": safe_identifier(row.get("model")),
+                "role": safe_identifier(row.get("role")),
+                "terminal_kind": safe_identifier(row.get("terminal_kind")),
+                "successful_final_output_calls": (
+                    row.get("successful_final_output_calls")
+                    if isinstance(row.get("successful_final_output_calls"), int)
+                    else None
+                ),
+                "accepted": row.get("accepted")
+                if isinstance(row.get("accepted"), bool)
+                else None,
+                "errors": row.get("errors")
+                if isinstance(row.get("errors"), int)
+                else None,
+                "malformed": row.get("malformed")
+                if isinstance(row.get("malformed"), int)
+                else None,
+            }
+    return [terminals[key] for key in sorted(terminals)]
+
+
+def latest_open_join(ticks: list[dict[str, Any]]) -> dict[str, Any]:
+    latest = ticks[-1]
+    hosts = latest.get("open_hosts") or []
+    request_keys = latest.get("open_request_keys") or []
+    safe_hosts = sorted(
+        {
+            safe_identifier(host)
+            for host in hosts
+            if isinstance(host, str) and host
+        }
+    )
+    safe_keys = sorted(
+        {
+            key
+            for key in (safe_request_key(value) for value in request_keys)
+            if key is not None
+        }
+    )
+    lifecycle = latest.get("lifecycle") if isinstance(latest.get("lifecycle"), dict) else {}
+    active = lifecycle.get("active_provider_requests")
+    return {
+        "hosts": safe_hosts,
+        "request_keys": safe_keys,
+        "active_provider_requests": active if isinstance(active, int) else None,
+        "request_count_matches_lifecycle": (
+            len(safe_keys) == active if isinstance(active, int) else None
+        ),
+    }
+
+
 def build_morning_aggregate(
     ticks: list[dict[str, Any]],
     source: dict[str, Any],
@@ -518,6 +597,15 @@ def build_morning_aggregate(
     ]
     role_summary = role_rollups(morning_ticks)
     corrections = correction_events(morning_ticks)
+    terminals = terminal_acceptances(morning_ticks)
+    rejected_terminals = [row for row in terminals if row["accepted"] is False]
+    unknown_terminals = [row for row in terminals if row["accepted"] is None]
+    cardinality_violations = [
+        row
+        for row in terminals
+        if isinstance(row["successful_final_output_calls"], int)
+        and row["successful_final_output_calls"] != 1
+    ]
     quality_classification = highest_classification(
         [row["classification"] for row in role_summary]
         + [
@@ -526,6 +614,7 @@ def build_morning_aggregate(
             if tick.get("classification") in CLASS_RANK
         ]
         + (["watch"] if corrections else [])
+        + (["proven"] if rejected_terminals or cardinality_violations else [])
     )
     tick_errors = sum(tick.get("event") == "audit_tick_error" for tick in morning_ticks)
     return {
@@ -566,6 +655,15 @@ def build_morning_aggregate(
         "lifecycle": counter_rollup(morning_ticks, "lifecycle", LIFECYCLE_KEYS),
         "progress": counter_rollup(morning_ticks, "progress", PROGRESS_KEYS),
         "same_role_baselines": role_summary,
+        "latest_open_join": latest_open_join(morning_ticks),
+        "terminal_acceptances": {
+            "distinct_seen": len(terminals),
+            "accepted": sum(row["accepted"] is True for row in terminals),
+            "rejected": len(rejected_terminals),
+            "unknown": len(unknown_terminals),
+            "final_output_cardinality_violations": len(cardinality_violations),
+            "recent_events": terminals[-20:],
+        },
         "corrections": {
             "unique_seen": len(corrections),
             "outcome_counts": {

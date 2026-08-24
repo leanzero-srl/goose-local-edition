@@ -115,6 +115,24 @@ class MorningAggregateTests(unittest.TestCase):
                 "compiler_error": "sk_test_should_not_escape",
             }
         ]
+        value["recent_terminal_acceptances"] = [
+            {
+                "terminal_seq": 8,
+                "request_key": {
+                    "ordinal": 0,
+                    "provider_request_id": "sk_test_should_not_escape",
+                },
+                "activity": "sk_test_should_not_escape",
+                "physical_host_id": "Local",
+                "model": "sk_test_should_not_escape",
+                "role": "jury-1",
+                "terminal_kind": "finished",
+                "successful_final_output_calls": 1,
+                "accepted": True,
+                "errors": 0,
+                "malformed": 0,
+            }
+        ]
         result = aggregate.build_morning_aggregate(
             [value],
             {"unknown": "sk_test_should_not_escape"},
@@ -140,9 +158,12 @@ class MorningAggregateTests(unittest.TestCase):
         row["tool_call_names"] = ["recipe__final_output"]
         row["structured_stagnation_secs"] = 41.5
         row["thinking_stagnation_secs"] = 8.0
+        row["growth"]["recurrence_observed_windows"] = 11
         value = tick("2026-08-24T21:00:01+00:00", 2, [row])
         value["schema_version"] = 2
         value["classification"] = "observation"
+        value["lifecycle"]["active_provider_requests"] = 1
+        value["lifecycle"]["unreleased_admissions"] = 1
         value["correction_audits"] = [
             {
                 "started_seq": 12,
@@ -159,6 +180,23 @@ class MorningAggregateTests(unittest.TestCase):
                 "ledger_corrections": 1,
             }
         ]
+        value["open_hosts"] = ["WorksMacStudio.lan"]
+        value["open_request_keys"] = [row["provider_request_key"]]
+        value["recent_terminal_acceptances"] = [
+            {
+                "terminal_seq": 11,
+                "request_key": {"ordinal": 18, "provider_request_id": "request-18"},
+                "activity": "task-completed",
+                "physical_host_id": "Local",
+                "model": "model-a",
+                "role": "jury-1",
+                "terminal_kind": "finished",
+                "successful_final_output_calls": 1,
+                "accepted": True,
+                "errors": 0,
+                "malformed": 0,
+            }
+        ]
         result = aggregate.build_morning_aggregate(
             [value], {}, "Europe/Bucharest", dt.date(2026, 8, 25), NOW
         )
@@ -168,6 +206,12 @@ class MorningAggregateTests(unittest.TestCase):
         self.assertEqual(role["provider_request_keys"], ["19:request-19"])
         self.assertEqual(role["tool_names"], ["recipe__final_output"])
         self.assertEqual(role["stagnation_seconds_max"]["structured"], 41.5)
+        self.assertEqual(result["latest_open_join"]["hosts"], ["WorksMacStudio.lan"])
+        self.assertTrue(result["latest_open_join"]["request_count_matches_lifecycle"])
+        self.assertEqual(result["terminal_acceptances"]["accepted"], 1)
+        self.assertEqual(
+            result["terminal_acceptances"]["final_output_cardinality_violations"], 0
+        )
         self.assertEqual(result["corrections"]["outcome_counts"], {"accepted": 1})
         self.assertEqual(
             result["corrections"]["correction_duration_secs_total"], 12.5
