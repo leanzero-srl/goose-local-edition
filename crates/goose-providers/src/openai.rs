@@ -498,13 +498,17 @@ impl OpenAiProvider {
 
         match self.request_profile {
             OpenAiRequestProfile::AlibabaQwen if model_name == "qwen3.8-max" => {
-                if let Some(value) = payload.remove("max_completion_tokens") {
-                    payload.entry("max_tokens").or_insert(value);
+                if let Some(value) = payload.remove("max_tokens") {
+                    payload.entry("max_completion_tokens").or_insert(value);
                 }
-
                 let disabled = model_config.reasoning == Some(false)
                     || model_config.thinking_effort() == Some(ThinkingEffort::Off);
                 payload.insert("enable_thinking".to_string(), serde_json::json!(!disabled));
+                if disabled {
+                    payload.remove("preserve_thinking");
+                } else {
+                    payload.insert("preserve_thinking".to_string(), serde_json::json!(true));
+                }
                 for unsupported in [
                     "reasoning_effort",
                     "temperature",
@@ -1290,7 +1294,7 @@ mod tests {
                     "parameters": {"type": "object"}
                 }
             }],
-            "max_completion_tokens": 131_072,
+            "max_tokens": 131_072,
             "reasoning_effort": "high",
             "temperature": 0.7,
             "top_p": 0.8,
@@ -1322,8 +1326,9 @@ mod tests {
                         "parameters": {"type": "object"}
                     }
                 }],
-                "max_tokens": 131_072,
+                "max_completion_tokens": 131_072,
                 "enable_thinking": true,
+                "preserve_thinking": true,
                 "stream": true,
                 "stream_options": {"include_usage": true}
             })
@@ -1336,17 +1341,19 @@ mod tests {
         let payload = json!({
             "model": "qwen3.8-max",
             "messages": [],
-            "max_completion_tokens": 1024,
+            "max_tokens": 1024,
             "reasoning_effort": "medium",
-            "temperature": 0.4
+            "temperature": 0.4,
+            "preserve_thinking": true
         });
         let disabled = provider.sanitize_request_for_compat(
             payload,
             &ModelConfig::new("qwen3.8-max").with_thinking_effort(ThinkingEffort::Off),
         );
         assert_eq!(disabled["enable_thinking"], false);
-        assert_eq!(disabled["max_tokens"], 1024);
-        assert!(disabled.get("max_completion_tokens").is_none());
+        assert_eq!(disabled["max_completion_tokens"], 1024);
+        assert!(disabled.get("max_tokens").is_none());
+        assert!(disabled.get("preserve_thinking").is_none());
         assert!(disabled.get("reasoning_effort").is_none());
         assert!(disabled.get("temperature").is_none());
 
