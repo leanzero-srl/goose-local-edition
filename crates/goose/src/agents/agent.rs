@@ -212,6 +212,10 @@ fn prepare_provider_turn_history(
             streamed_commentary
         }
     };
+    let response_commentary = match commentary_text(&response_commentary) {
+        text if text.is_empty() => Vec::new(),
+        text => vec![MessageContent::text(text)],
+    };
 
     (
         Conversation::new_unvalidated(rebuilt),
@@ -3615,7 +3619,7 @@ mod tests {
         );
         assert_eq!(thinking.len(), 1);
         assert!(matches!(thinking[0], MessageContent::RedactedThinking(_)));
-        assert_eq!(commentary.len(), 2);
+        assert_eq!(commentary.len(), 1);
 
         let mut stored_request = Message::assistant();
         for content in thinking.into_iter().chain(commentary) {
@@ -3629,7 +3633,6 @@ mod tests {
             stored_request.content.as_slice(),
             [
                 MessageContent::RedactedThinking(_),
-                MessageContent::Text(_),
                 MessageContent::Text(_),
                 MessageContent::ToolRequest(_)
             ]
@@ -3659,11 +3662,7 @@ mod tests {
         assert!(rebuilt.messages().is_empty());
         assert!(matches!(
             stored_response.content.as_slice(),
-            [
-                MessageContent::RedactedThinking(_),
-                MessageContent::Text(_),
-                MessageContent::Text(_)
-            ]
+            [MessageContent::RedactedThinking(_), MessageContent::Text(_)]
         ));
         assert_eq!(stored_response.as_concat_text(), "The result is ready.");
     }
