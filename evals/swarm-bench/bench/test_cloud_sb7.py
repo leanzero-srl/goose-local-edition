@@ -1067,6 +1067,57 @@ class CloudSb7HarnessTest(unittest.TestCase):
         ):
             yield
 
+    @contextlib.contextmanager
+    def post_smoke_runtime_successor_patches(
+        self, source_root: Path
+    ) -> object:
+        def git_value(*args: str) -> str:
+            if args == ("rev-parse", "HEAD"):
+                return "a" * 40
+            if args == ("branch", "--show-current"):
+                return "codex/runtime-successor-test"
+            raise AssertionError(args)
+
+        with (
+            mock.patch.object(cloud_sb7, "REPO", source_root),
+            mock.patch.object(cloud_sb7, "require_clean_source_worktree"),
+            mock.patch.object(cloud_sb7, "git_value", side_effect=git_value),
+            mock.patch.object(cloud_sb7, "require_lineage"),
+            mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+            mock.patch.object(cloud_sb7, "process_alive", return_value=False),
+            mock.patch.object(
+                cloud_sb7, "process_group_members", return_value=[]
+            ),
+            mock.patch.object(cloud_sb7, "port_is_free", return_value=True),
+        ):
+            yield
+
+    def make_post_smoke_runtime_successor_fixture(
+        self, root: Path
+    ) -> dict[str, object]:
+        fixture = self.make_post_smoke_coordinator_repair_fixture(
+            root / "campaign"
+        )
+        campaign_root = Path(str(fixture["root"]))
+        with self.post_smoke_repair_patches():
+            cloud_sb7.repair_post_smoke_coordinator(
+                campaign_root,
+                Path(cloud_sb7.__file__).resolve(),
+            )
+        source_root = root / "runtime-source"
+        coordinator = source_root / cloud_sb7.COORDINATOR_INSTRUMENT_PATH
+        coordinator.parent.mkdir(parents=True)
+        coordinator.write_bytes(
+            Path(cloud_sb7.__file__).read_bytes()
+            + b"\n# post-smoke runtime successor fixture\n"
+        )
+        return {
+            **fixture,
+            "root": campaign_root,
+            "source_root": source_root,
+            "coordinator": coordinator,
+        }
+
     def make_recovery_campaign(self, root: Path, status: str) -> None:
         root = root.resolve()
         (root / "entrants/model/tree").mkdir(parents=True)
@@ -4119,6 +4170,164 @@ class CloudSb7HarnessTest(unittest.TestCase):
                         other_root,
                         root / cloud_sb7.POST_SMOKE_COORDINATOR_REPAIR_PATH,
                     )
+
+    def test_post_smoke_runtime_successor_preserves_paid_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            source_campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            source_runtime = Path(str(source_campaign["runtime_instrument_root"]))
+            source_runtime_sha = cloud_sb7.sha256_tree_exact(source_runtime)
+            source_budget = Path(str(source_campaign["budget_ledger"])).read_bytes()
+            source_artifacts = cloud_sb7.post_smoke_artifact_seals(
+                root, source_campaign
+            )
+
+            with self.post_smoke_runtime_successor_patches(source_root):
+                upgraded = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+                repeated = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+
+            self.assertEqual(
+                upgraded["post_smoke_runtime_successor_transition_id"],
+                repeated["post_smoke_runtime_successor_transition_id"],
+            )
+            self.assertEqual(
+                cloud_sb7.sha256_tree_exact(source_runtime), source_runtime_sha
+            )
+            self.assertEqual(
+                Path(str(upgraded["budget_ledger"])).read_bytes(), source_budget
+            )
+            self.assertEqual(
+                cloud_sb7.post_smoke_artifact_seals(root, upgraded),
+                source_artifacts,
+            )
+            self.assertEqual(
+                {
+                    key
+                    for key in set(source_campaign["runtime_instrument_hashes"])
+                    | set(upgraded["runtime_instrument_hashes"])
+                    if source_campaign["runtime_instrument_hashes"].get(key)
+                    != upgraded["runtime_instrument_hashes"].get(key)
+                },
+                {cloud_sb7.COORDINATOR_INSTRUMENT_PATH},
+            )
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+            self.assertIsNone(
+                cloud_sb7.post_smoke_coordinator_repair_failure(
+                    root, upgraded, lineage
+                )
+            )
+            self.assertIsNone(
+                cloud_sb7.post_smoke_runtime_successor_failure(
+                    root, upgraded, lineage
+                )
+            )
+            cloud_sb7.require_smoke_proofs(root)
+
+    def test_post_smoke_runtime_successor_replays_every_commit_boundary(
+        self,
+    ) -> None:
+        for stage in (
+            "staging_created",
+            "runtime_staged",
+            "receipt_committed",
+            "lineage_committed",
+            "campaign_committed",
+        ):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_post_smoke_runtime_successor_fixture(
+                    Path(raw)
+                )
+                root = Path(str(fixture["root"]))
+                source_root = Path(str(fixture["source_root"]))
+                coordinator = Path(str(fixture["coordinator"]))
+
+                def crash(observed: str) -> None:
+                    if observed == stage:
+                        raise RuntimeError(f"runtime successor crash at {stage}")
+
+                with (
+                    self.post_smoke_runtime_successor_patches(source_root),
+                    mock.patch.object(
+                        cloud_sb7,
+                        "post_smoke_runtime_successor_fault",
+                        side_effect=crash,
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, stage):
+                        cloud_sb7.repair_post_smoke_runtime_successor(
+                            root, coordinator
+                        )
+
+                with self.post_smoke_runtime_successor_patches(source_root):
+                    recovered = cloud_sb7.repair_post_smoke_runtime_successor(
+                        root, coordinator
+                    )
+                lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+                self.assertIsNone(
+                    cloud_sb7.post_smoke_coordinator_repair_failure(
+                        root, recovered, lineage
+                    )
+                )
+
+    def test_post_smoke_runtime_successor_replays_only_its_orphan(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            _, source_coordinator_sha = cloud_sb7.campaign_runtime_coordinator(
+                campaign
+            )
+            transition_id = (
+                cloud_sb7.post_smoke_runtime_successor_transition_id(
+                    root,
+                    str(campaign["campaign_id"]),
+                    cloud_sb7.sha256_file(cloud_sb7.campaign_file(root)),
+                    source_coordinator_sha,
+                    cloud_sb7.sha256_file(coordinator),
+                    "a" * 40,
+                )
+            )
+            orphan = (
+                root
+                / "lineage"
+                / f".post-smoke-runtime-successor-{transition_id}"
+            )
+            orphan.mkdir()
+            (orphan / "partial").write_text("interrupted", encoding="utf-8")
+            unrelated = (
+                root
+                / "lineage"
+                / f".post-smoke-runtime-successor-{'b' * 64}"
+            )
+            unrelated.mkdir()
+            (unrelated / "owned").write_text("unrelated", encoding="utf-8")
+
+            with self.post_smoke_runtime_successor_patches(source_root):
+                recovered = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+
+            self.assertFalse(orphan.exists())
+            self.assertTrue(unrelated.is_dir())
+            self.assertEqual(
+                (unrelated / "owned").read_text(encoding="utf-8"),
+                "unrelated",
+            )
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+            self.assertIsNone(
+                cloud_sb7.post_smoke_runtime_successor_failure(
+                    root, recovered, lineage
+                )
+            )
 
     def test_detached_children_report_repaired_coordinator_path_and_digest(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
