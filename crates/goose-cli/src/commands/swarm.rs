@@ -6522,6 +6522,149 @@ mod tests {
     }
 
     #[test]
+    fn target_pipeline_window_enqueues_paired_covers_without_a_full_cover_barrier() {
+        assert_eq!(research_target_pipeline_concurrency(3, 26), 2);
+        assert_eq!(research_target_pipeline_concurrency(4, 26), 3);
+        assert_eq!(research_target_pipeline_concurrency(8, 3), 3);
+        assert_eq!(research_target_pipeline_concurrency(3, 1), 1);
+        assert_eq!(research_target_pipeline_concurrency(3, 0), 0);
+    }
+
+    #[tokio::test]
+    async fn paired_jury_starts_second_cover_before_first_cover_drains() {
+        let partition_count = 26usize;
+        let pipeline_concurrency = research_target_pipeline_concurrency(3, partition_count);
+        let lanes = Arc::new(
+            ["host-alpha", "host-beta", "host-gamma"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, host)| ResearchPhysicalLane {
+                    token: format!("lane-{index}"),
+                    model_id: format!("model-{index}"),
+                    physical_host_id: host.to_string(),
+                    routing_weight: 1,
+                })
+                .collect::<Vec<_>>(),
+        );
+        let host_permits = Arc::new(
+            lanes
+                .iter()
+                .map(|lane| {
+                    (
+                        lane.physical_host_id.clone(),
+                        Arc::new(tokio::sync::Semaphore::new(1)),
+                    )
+                })
+                .collect::<HashMap<_, _>>(),
+        );
+        let runtime = Arc::new(ResearchAuthorityRuntime {
+            stage: "generic-target-jury".to_string(),
+            cycle: None,
+            requirements: Arc::new(Vec::new()),
+            sources: Arc::new(Vec::new()),
+            lanes,
+            host_permits,
+            jury_pair_permits: Arc::new(tokio::sync::Semaphore::new(pipeline_concurrency)),
+        });
+        let starts = Arc::new(Mutex::new(Vec::<(usize, &'static str)>::new()));
+        let recorded = starts.clone();
+        let pipeline_runtime = runtime.clone();
+        let mut pipelines = futures::stream::iter((0..partition_count).map(move |partition| {
+            let first_starts = recorded.clone();
+            let second_starts = recorded.clone();
+            let first_runtime = pipeline_runtime.clone();
+            let second_runtime = pipeline_runtime.clone();
+            async move {
+                let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
+                let first_claims = claimed_hosts.clone();
+                let second_claims = claimed_hosts;
+                let partition_id = format!("partition-{partition}");
+                let second_partition_id = partition_id.clone();
+                let first = async move {
+                    let failed_hosts = HashSet::new();
+                    let acquired = acquire_research_target_pair_lane(
+                        &first_runtime,
+                        &first_claims,
+                        &failed_hosts,
+                        &partition_id,
+                        "jury-1",
+                    )
+                    .await?;
+                    first_starts.lock().unwrap().push((partition, "jury-1"));
+                    Ok::<_, anyhow::Error>(acquired)
+                };
+                let second = async move {
+                    let failed_hosts = HashSet::new();
+                    let acquired = acquire_research_target_pair_lane(
+                        &second_runtime,
+                        &second_claims,
+                        &failed_hosts,
+                        &second_partition_id,
+                        "jury-2",
+                    )
+                    .await?;
+                    second_starts.lock().unwrap().push((partition, "jury-2"));
+                    Ok::<_, anyhow::Error>(acquired)
+                };
+                join_research_target_jury_pair(first, second).await
+            }
+        }))
+        .buffer_unordered(pipeline_concurrency);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while let Some(result) = pipelines.next().await {
+                let ((first_lane, _first_permit), (second_lane, _second_permit)) = result.unwrap();
+                assert_ne!(
+                    first_lane.physical_host_id, second_lane.physical_host_id,
+                    "paired jurors must resolve to distinct physical hosts"
+                );
+            }
+        })
+        .await
+        .expect("sequential jury-1 admission recreates the captured full-cover deadlock");
+
+        {
+            let starts = starts.lock().unwrap();
+            let first_jury_2 = starts
+                .iter()
+                .position(|(_, pass)| *pass == "jury-2")
+                .expect("paired cover omitted jury-2");
+            assert!(
+                starts[..first_jury_2]
+                    .iter()
+                    .filter(|(_, pass)| *pass == "jury-1")
+                    .count()
+                    < partition_count,
+                "the full first cover drained before any jury-2 work started"
+            );
+            for partition in 0..partition_count {
+                assert_eq!(
+                    starts
+                        .iter()
+                        .filter(|(observed, _)| *observed == partition)
+                        .count(),
+                    2,
+                    "every partition must enqueue exactly two cover units"
+                );
+            }
+        }
+
+        let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::from([
+            "host-alpha".to_string()
+        ])));
+        let failed_hosts = HashSet::from(["host-beta".to_string()]);
+        let (fallback, _permit) = acquire_research_target_pair_lane(
+            runtime.as_ref(),
+            &claimed_hosts,
+            &failed_hosts,
+            "partition-fallback",
+            "jury-1",
+        )
+        .await
+        .unwrap();
+        assert_eq!(fallback.physical_host_id, "host-gamma");
+    }
+
+    #[test]
     fn reversed_order_same_vocabulary_mints_distinct_semantic_gap_ids() {
         let first = generic_research_gap("Does alpha precede beta?", "Alpha before beta ordering.");
         let (first_id, first_materialized) =
@@ -17262,6 +17405,49 @@ struct ResearchAuthorityRuntime {
     sources: Arc<Vec<ResearchAuthoritySource>>,
     lanes: Arc<Vec<ResearchPhysicalLane>>,
     host_permits: Arc<HashMap<String, Arc<tokio::sync::Semaphore>>>,
+    jury_pair_permits: Arc<tokio::sync::Semaphore>,
+}
+
+async fn acquire_research_target_pair_lane(
+    runtime: &ResearchAuthorityRuntime,
+    claimed_hosts: &Arc<tokio::sync::Mutex<HashSet<String>>>,
+    failed_hosts: &HashSet<String>,
+    partition_id: &str,
+    pass: &str,
+) -> Result<(ResearchPhysicalLane, tokio::sync::OwnedSemaphorePermit)> {
+    loop {
+        let already_claimed = claimed_hosts.lock().await.clone();
+        let mut waiters = futures::stream::FuturesUnordered::new();
+        for lane in runtime.lanes.iter().filter(|lane| {
+            !already_claimed.contains(&lane.physical_host_id)
+                && !failed_hosts.contains(&lane.physical_host_id)
+        }) {
+            let lane = lane.clone();
+            let semaphore = runtime.host_permits[&lane.physical_host_id].clone();
+            waiters.push(async move {
+                semaphore
+                    .acquire_owned()
+                    .await
+                    .map(|permit| (lane, permit))
+                    .map_err(|_| anyhow!("target authority host queue closed"))
+            });
+        }
+        let Some(acquired) = waiters.next().await else {
+            bail!(
+                "target authority partition `{partition_id}` exhausted distinct physical hosts for {pass}"
+            );
+        };
+        let (lane, permit) = acquired?;
+        drop(waiters);
+        if claimed_hosts
+            .lock()
+            .await
+            .insert(lane.physical_host_id.clone())
+        {
+            return Ok((lane, permit));
+        }
+        drop(permit);
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -17690,6 +17876,27 @@ fn plan_research_closure_section_partitions(
             .then_with(|| left.partition_id.cmp(&right.partition_id))
     });
     partitions
+}
+
+fn research_target_pipeline_concurrency(
+    physical_host_count: usize,
+    partition_count: usize,
+) -> usize {
+    physical_host_count
+        .saturating_sub(1)
+        .max(1)
+        .min(partition_count)
+}
+
+async fn join_research_target_jury_pair<First, Second, FirstOutput, SecondOutput>(
+    first: First,
+    second: Second,
+) -> Result<(FirstOutput, SecondOutput)>
+where
+    First: std::future::Future<Output = Result<FirstOutput>>,
+    Second: std::future::Future<Output = Result<SecondOutput>>,
+{
+    tokio::try_join!(first, second)
 }
 
 fn normalized_lane_load_cmp(
@@ -24608,6 +24815,94 @@ impl GooseAgentDispatcher {
         }
     }
 
+    async fn run_research_closure_partition_paired_lane(
+        self: &Arc<Self>,
+        runtime: &ResearchAuthorityRuntime,
+        pass: &str,
+        partition: ResearchClosurePartition,
+        claimed_hosts: Arc<tokio::sync::Mutex<HashSet<String>>>,
+    ) -> Result<CompiledResearchClosurePartition> {
+        let mut failed_hosts = HashSet::new();
+        loop {
+            let (lane, permit) = acquire_research_target_pair_lane(
+                runtime,
+                &claimed_hosts,
+                &failed_hosts,
+                &partition.partition_id,
+                pass,
+            )
+            .await?;
+            let result = self
+                .run_research_closure_semantic_pass_on_lane(
+                    &runtime.stage,
+                    runtime.cycle,
+                    pass,
+                    partition.clone(),
+                    runtime.requirements.clone(),
+                    runtime.sources.clone(),
+                    lane.clone(),
+                )
+                .await;
+            drop(permit);
+            match result {
+                Ok(compiled) => return Ok(compiled),
+                Err(error) => {
+                    claimed_hosts.lock().await.remove(&lane.physical_host_id);
+                    failed_hosts.insert(lane.physical_host_id.clone());
+                    self.events.write_value(serde_json::json!({
+                        "event": "research_target_semantic_unit_rescheduled",
+                        "stage": runtime.stage,
+                        "cycle": runtime.cycle,
+                        "pass": pass,
+                        "partition_id": partition.partition_id,
+                        "failed_physical_host_id": lane.physical_host_id,
+                        "failed_hosts": failed_hosts,
+                        "paired_claimed_hosts": claimed_hosts.lock().await.clone(),
+                        "error": error.to_string(),
+                    }));
+                }
+            }
+        }
+    }
+
+    async fn run_research_closure_partition_pair(
+        self: &Arc<Self>,
+        runtime: &ResearchAuthorityRuntime,
+        partition: ResearchClosurePartition,
+    ) -> Result<(
+        CompiledResearchClosurePartition,
+        CompiledResearchClosurePartition,
+    )> {
+        let _pair_permit = runtime
+            .jury_pair_permits
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| anyhow!("target authority paired-jury queue closed"))?;
+        let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
+        let first_call = self.run_research_closure_partition_paired_lane(
+            runtime,
+            "jury-1",
+            partition.clone(),
+            claimed_hosts.clone(),
+        );
+        let second_call = self.run_research_closure_partition_paired_lane(
+            runtime,
+            "jury-2",
+            partition.clone(),
+            claimed_hosts,
+        );
+        let (first, second) = join_research_target_jury_pair(first_call, second_call).await?;
+        if first.physical_host_id == second.physical_host_id {
+            bail!(
+                "target authority partition `{}` reused physical host `{}`",
+                partition.partition_id,
+                first.physical_host_id
+            );
+        }
+        Ok((first, second))
+    }
+
     async fn run_research_target_citation_audit(
         self: &Arc<Self>,
         runtime: &ResearchAuthorityRuntime,
@@ -24829,10 +25124,14 @@ impl GooseAgentDispatcher {
         Ok(compiled)
     }
 
-    async fn resolve_research_target_partition(
+    async fn resolve_research_target_partition_from_pair(
         self: &Arc<Self>,
         runtime: &ResearchAuthorityRuntime,
         partition: ResearchClosurePartition,
+        initial_pair: (
+            CompiledResearchClosurePartition,
+            CompiledResearchClosurePartition,
+        ),
     ) -> Result<ResearchTargetPartitionResolution> {
         let original_order = partition
             .candidates
@@ -24848,6 +25147,7 @@ impl GooseAgentDispatcher {
         let mut citations_verified = 0usize;
         let mut citations_rejected = 0usize;
         let mut rejury = 0u64;
+        let mut initial_pair = Some(initial_pair);
 
         while !active_candidates.is_empty() {
             let active_partition = ResearchClosurePartition {
@@ -24858,29 +25158,12 @@ impl GooseAgentDispatcher {
                 },
                 candidates: active_candidates.clone(),
             };
-            let first = self
-                .run_research_closure_partition_any_lane(
-                    runtime,
-                    "jury-1",
-                    active_partition.clone(),
-                    &HashSet::new(),
-                )
-                .await?;
-            let second = self
-                .run_research_closure_partition_any_lane(
-                    runtime,
-                    "jury-2",
-                    active_partition.clone(),
-                    &HashSet::from([first.physical_host_id.clone()]),
-                )
-                .await?;
-            if first.physical_host_id == second.physical_host_id {
-                bail!(
-                    "target authority partition `{}` reused physical host `{}`",
-                    active_partition.partition_id,
-                    first.physical_host_id
-                );
-            }
+            let (first, second) = if let Some(pair) = initial_pair.take() {
+                pair
+            } else {
+                self.run_research_closure_partition_pair(runtime, active_partition.clone())
+                    .await?
+            };
             if first.authority_input_digest != second.authority_input_digest {
                 bail!(
                     "target authority partition `{}` jurors received different immutable decision inputs",
@@ -25151,6 +25434,8 @@ impl GooseAgentDispatcher {
             requirements.as_ref(),
         ));
         let partitions = plan_research_closure_section_partitions(&candidates);
+        let pipeline_concurrency =
+            research_target_pipeline_concurrency(lanes.len(), partitions.len());
         let host_permits = Arc::new(
             lanes
                 .iter()
@@ -25169,6 +25454,7 @@ impl GooseAgentDispatcher {
             sources,
             lanes: Arc::new(lanes),
             host_permits,
+            jury_pair_permits: Arc::new(tokio::sync::Semaphore::new(pipeline_concurrency)),
         });
         let started = std::time::Instant::now();
         self.events.write_value(serde_json::json!({
@@ -25180,22 +25466,30 @@ impl GooseAgentDispatcher {
             "verified_physical_hosts": runtime.lanes.iter().map(|lane| lane.physical_host_id.as_str()).collect::<Vec<_>>(),
             "jury_semantic_reviews": candidates.len().saturating_mul(2),
             "jury_model_calls": partitions.len().saturating_mul(2),
-            "topology": "authored-section-pipelines-work-steal-jury1-jury2-adjudication-proof-without-global-phase-barriers",
+            "topology": "bounded-authored-section-pipelines-paired-jury-work-steal-adjudication-proof-without-cover-barriers",
+            "pipeline_concurrency": pipeline_concurrency,
+            "review_units_per_pipeline": 2,
+            "pipeline_width_basis": "verified-physical-hosts-minus-one-pair-window-only",
             "fixed_packet_count": null,
             "gap_count_cap": null,
             "elapsed_cap_secs": null,
         }));
 
-        let mut calls = futures::stream::FuturesUnordered::new();
-        for partition in partitions {
-            let dispatcher = self.clone();
-            let runtime = runtime.clone();
-            calls.push(async move {
-                dispatcher
-                    .resolve_research_target_partition(&runtime, partition)
-                    .await
-            });
-        }
+        let pair_dispatcher = self.clone();
+        let pair_runtime = runtime.clone();
+        let mut pair_calls = futures::stream::iter(partitions.into_iter().map(move |partition| {
+            let dispatcher = pair_dispatcher.clone();
+            let runtime = pair_runtime.clone();
+            async move {
+                let pair = dispatcher
+                    .run_research_closure_partition_pair(&runtime, partition.clone())
+                    .await?;
+                Ok::<_, anyhow::Error>((partition, pair))
+            }
+        }))
+        .buffer_unordered(pipeline_concurrency);
+        let mut pair_stream_open = true;
+        let mut resolutions = futures::stream::FuturesUnordered::new();
 
         let mut by_requirement = HashMap::new();
         let mut decision_sources = HashMap::new();
@@ -25203,23 +25497,57 @@ impl GooseAgentDispatcher {
         let mut disagreements = 0usize;
         let mut citations_verified = 0usize;
         let mut citations_rejected = 0usize;
-        while let Some(result) = calls.next().await {
-            let resolution = result?;
-            corrections = corrections.saturating_add(resolution.ledger_corrections);
-            disagreements = disagreements.saturating_add(resolution.jury_disagreements);
-            citations_verified = citations_verified.saturating_add(resolution.citations_verified);
-            citations_rejected = citations_rejected.saturating_add(resolution.citations_rejected);
-            for decision in resolution.decisions {
-                if by_requirement
-                    .insert(decision.requirement_id.clone(), decision)
-                    .is_some()
-                {
-                    bail!("target section pipelines repeated a canonical target");
+        while pair_stream_open || !resolutions.is_empty() {
+            tokio::select! {
+                biased;
+                result = resolutions.next(), if !resolutions.is_empty() => {
+                    let resolution: ResearchTargetPartitionResolution = result
+                        .ok_or_else(|| anyhow!("target resolution queue closed unexpectedly"))??;
+                    corrections = corrections.saturating_add(resolution.ledger_corrections);
+                    disagreements = disagreements.saturating_add(resolution.jury_disagreements);
+                    citations_verified = citations_verified.saturating_add(resolution.citations_verified);
+                    citations_rejected = citations_rejected.saturating_add(resolution.citations_rejected);
+                    for decision in resolution.decisions {
+                        if by_requirement
+                            .insert(decision.requirement_id.clone(), decision)
+                            .is_some()
+                        {
+                            bail!("target section pipelines repeated a canonical target");
+                        }
+                    }
+                    for (requirement_id, sources) in resolution.decision_sources {
+                        if decision_sources.insert(requirement_id, sources).is_some() {
+                            bail!("target section pipelines repeated decision provenance");
+                        }
+                    }
                 }
-            }
-            for (requirement_id, sources) in resolution.decision_sources {
-                if decision_sources.insert(requirement_id, sources).is_some() {
-                    bail!("target section pipelines repeated decision provenance");
+                pair = pair_calls.next(), if pair_stream_open => {
+                    match pair {
+                        Some(result) => {
+                            let (partition, pair) = result?;
+                            self.events.write_value(serde_json::json!({
+                                "event": "research_target_jury_pair_completed",
+                                "stage": stage,
+                                "cycle": cycle,
+                                "partition_id": partition.partition_id,
+                                "jury_1_physical_host_id": pair.0.physical_host_id,
+                                "jury_2_physical_host_id": pair.1.physical_host_id,
+                                "downstream_enqueued_before_next_pair_window": true,
+                            }));
+                            let dispatcher = self.clone();
+                            let resolution_runtime = runtime.clone();
+                            resolutions.push(async move {
+                                dispatcher
+                                    .resolve_research_target_partition_from_pair(
+                                        &resolution_runtime,
+                                        partition,
+                                        pair,
+                                    )
+                                    .await
+                            });
+                        }
+                        None => pair_stream_open = false,
+                    }
                 }
             }
         }
