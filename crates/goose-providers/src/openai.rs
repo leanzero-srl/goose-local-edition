@@ -15,7 +15,7 @@ use crate::formats::openai_responses::{
 };
 use crate::images::ImageFormat;
 use crate::openai_compatible::{
-    handle_response_openai_compat, handle_status, stream_responses_compat,
+    handle_response_openai_compat, handle_status, stream_responses_compat_timed,
 };
 use crate::request_log::{start_log, LoggerHandleExt};
 use anyhow::Result;
@@ -406,6 +406,85 @@ impl OpenAiProvider {
         payload
     }
 
+    fn sanitize_responses_request_for_compat(
+        &self,
+        mut payload: serde_json::Value,
+        model_config: &ModelConfig,
+    ) -> serde_json::Value {
+        let Some(obj) = payload.as_object_mut() else {
+            return payload;
+        };
+        let model_name = obj
+            .get("model")
+            .and_then(|model| model.as_str())
+            .unwrap_or(&model_config.model_name)
+            .to_ascii_lowercase();
+
+        if self.request_profile != OpenAiRequestProfile::MetaMuse
+            || !model_name.starts_with("muse-spark-")
+        {
+            return payload;
+        }
+
+        for unsupported in [
+            "temperature",
+            "top_p",
+            "presence_penalty",
+            "frequency_penalty",
+            "seed",
+        ] {
+            obj.remove(unsupported);
+        }
+
+        let instructions = obj
+            .get_mut("input")
+            .and_then(serde_json::Value::as_array_mut)
+            .and_then(|input| {
+                let first = input.first()?;
+                if first.get("role").and_then(serde_json::Value::as_str) != Some("system") {
+                    return None;
+                }
+                let text = first
+                    .get("content")?
+                    .as_array()?
+                    .iter()
+                    .filter(|part| {
+                        part.get("type").and_then(serde_json::Value::as_str) == Some("input_text")
+                    })
+                    .filter_map(|part| part.get("text").and_then(serde_json::Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                input.remove(0);
+                (!text.is_empty()).then_some(text)
+            });
+        if let Some(instructions) = instructions {
+            obj.insert("instructions".to_string(), serde_json::json!(instructions));
+        }
+
+        obj.insert("store".to_string(), serde_json::json!(false));
+        obj.insert(
+            "reasoning".to_string(),
+            serde_json::json!({"effort": "high", "summary": "auto"}),
+        );
+        obj.insert(
+            "include".to_string(),
+            serde_json::json!(["reasoning.encrypted_content"]),
+        );
+        if obj
+            .get("tools")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|tools| !tools.is_empty())
+        {
+            obj.insert("tool_choice".to_string(), serde_json::json!("auto"));
+            obj.insert("parallel_tool_calls".to_string(), serde_json::json!(false));
+        } else {
+            obj.remove("tool_choice");
+            obj.remove("parallel_tool_calls");
+        }
+
+        payload
+    }
+
     fn apply_request_profile(
         &self,
         payload: &mut serde_json::Map<String, serde_json::Value>,
@@ -721,8 +800,10 @@ impl Provider for OpenAiProvider {
         if self.should_use_responses_api_for_provider(&model_config.model_name) {
             let mut payload = create_responses_request(model_config, system, messages, tools)?;
             payload["stream"] = serde_json::Value::Bool(self.supports_streaming);
+            let payload = self.sanitize_responses_request_for_compat(payload, model_config);
 
             let mut log = start_log(model_config, &payload)?;
+            let telemetry_t0 = std::time::Instant::now();
 
             let response = self
                 .with_retry(|| async {
@@ -746,7 +827,12 @@ impl Provider for OpenAiProvider {
                 })?;
 
             if self.supports_streaming {
-                stream_responses_compat(response, log)
+                stream_responses_compat_timed(
+                    response,
+                    log,
+                    telemetry_t0,
+                    model_config.model_name.clone(),
+                )
             } else {
                 let json: serde_json::Value = response.json().await.map_err(|e| {
                     ProviderError::RequestFailed(format!("Failed to parse JSON: {}", e))
@@ -762,12 +848,21 @@ impl Provider for OpenAiProvider {
 
                 let message = responses_api_to_message(&responses_api_response)?;
                 let usage_data = get_responses_usage(&responses_api_response);
-                let usage = ProviderUsage::new(model_config.model_name.clone(), usage_data);
+                let usage = ProviderUsage::new(responses_api_response.model.clone(), usage_data);
 
                 log.write(
                     &serde_json::to_value(&message).unwrap_or_default(),
                     Some(&usage_data),
                 )?;
+
+                let elapsed = telemetry_t0.elapsed();
+                super::openai_compatible::telemetry_record(
+                    &usage.model,
+                    elapsed,
+                    elapsed,
+                    Some(usage.usage),
+                    0,
+                );
 
                 Ok(super::base::stream_from_single_message(message, usage))
             }
@@ -1287,6 +1382,103 @@ mod tests {
     }
 
     #[test]
+    fn meta_muse_streaming_payload_matches_native_responses_contract() {
+        let provider = make_profile_provider(OpenAiRequestProfile::MetaMuse);
+        let payload = json!({
+            "model": "muse-spark-1.2",
+            "input": [
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": "system instructions"}]
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "build it"}]
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "shell",
+                "description": "Run a command",
+                "parameters": {"type": "object"},
+                "strict": false
+            }],
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "presence_penalty": 0.1,
+            "frequency_penalty": 0.2,
+            "seed": 7,
+            "store": true,
+            "stream": true,
+            "max_output_tokens": 128_000
+        });
+
+        let result = provider.sanitize_responses_request_for_compat(
+            payload,
+            &ModelConfig::new("muse-spark-1.2").with_thinking_effort(ThinkingEffort::High),
+        );
+
+        assert_eq!(
+            result,
+            json!({
+                "model": "muse-spark-1.2",
+                "instructions": "system instructions",
+                "input": [{
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "build it"}]
+                }],
+                "tools": [{
+                    "type": "function",
+                    "name": "shell",
+                    "description": "Run a command",
+                    "parameters": {"type": "object"},
+                    "strict": false
+                }],
+                "store": false,
+                "stream": true,
+                "max_output_tokens": 128_000,
+                "reasoning": {"effort": "high", "summary": "auto"},
+                "include": ["reasoning.encrypted_content"],
+                "tool_choice": "auto",
+                "parallel_tool_calls": false
+            })
+        );
+    }
+
+    #[test]
+    fn meta_muse_profile_is_scoped_and_omits_tool_controls_without_tools() {
+        let provider = make_profile_provider(OpenAiRequestProfile::MetaMuse);
+        let muse_payload = json!({
+            "model": "muse-spark-1.2",
+            "input": [],
+            "temperature": 0.9,
+            "tool_choice": "required",
+            "parallel_tool_calls": true
+        });
+        let muse = provider.sanitize_responses_request_for_compat(
+            muse_payload,
+            &ModelConfig::new("muse-spark-1.2"),
+        );
+        assert!(muse.get("temperature").is_none());
+        assert!(muse.get("tool_choice").is_none());
+        assert!(muse.get("parallel_tool_calls").is_none());
+        assert_eq!(muse["reasoning"]["effort"], "high");
+
+        let unrelated = json!({
+            "model": "future-model",
+            "input": [],
+            "temperature": 0.9
+        });
+        assert_eq!(
+            provider.sanitize_responses_request_for_compat(
+                unrelated.clone(),
+                &ModelConfig::new("future-model"),
+            ),
+            unrelated
+        );
+    }
+
+    #[test]
     fn request_profiles_are_scoped_to_exact_model_families() {
         let provider = make_profile_provider(OpenAiRequestProfile::DeepseekV4);
         let payload = json!({
@@ -1321,6 +1513,18 @@ mod tests {
                 "unexpected routing for {model_name} via {base_path}"
             );
         }
+    }
+
+    #[test]
+    fn explicit_responses_path_routes_meta_muse_without_openai_model_heuristics() {
+        assert!(OpenAiProvider::should_use_responses_api(
+            "muse-spark-1.2",
+            "v1/responses"
+        ));
+        assert_eq!(
+            OpenAiProvider::map_base_path("v1/responses", "models", "v1/models"),
+            "v1/models"
+        );
     }
 
     #[test]

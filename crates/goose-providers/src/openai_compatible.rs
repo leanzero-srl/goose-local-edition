@@ -322,6 +322,50 @@ pub fn stream_responses_compat(
     }))
 }
 
+pub(crate) fn stream_responses_compat_timed(
+    response: Response,
+    mut log: Option<Box<dyn RequestLogHandle>>,
+    t0: std::time::Instant,
+    configured_model: String,
+) -> Result<MessageStream, ProviderError> {
+    let stream = response.bytes_stream().map_err(std::io::Error::other);
+
+    Ok(Box::pin(try_stream! {
+        let stream_reader = StreamReader::new(stream);
+        let framed = FramedRead::new(stream_reader, LinesCodec::new())
+            .map_err(Error::from);
+
+        let message_stream = responses_api_to_streaming_message(framed);
+        pin!(message_stream);
+        let mut ttft: Option<std::time::Duration> = None;
+        let mut last_usage: Option<crate::conversation::token_usage::Usage> = None;
+        let mut provider_model: Option<String> = None;
+        let mut chunks: u64 = 0;
+        while let Some(message) = message_stream.next().await {
+            let (message, usage) = message.map_err(|e|
+                e.downcast::<ProviderError>()
+                    .unwrap_or_else(ProviderError::stream_decode_error)
+            )?;
+            ttft.get_or_insert_with(|| t0.elapsed());
+            chunks += 1;
+            if let Some(value) = usage.as_ref() {
+                last_usage = Some(value.usage);
+                provider_model = Some(value.model.clone());
+            }
+            log.write(&message, usage.as_ref().map(|value| value.usage).as_ref())?;
+            yield (message, usage);
+        }
+        let total = t0.elapsed();
+        telemetry_record(
+            provider_model.as_deref().unwrap_or(&configured_model),
+            ttft.unwrap_or(total),
+            total,
+            last_usage,
+            chunks,
+        );
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

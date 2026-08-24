@@ -27,6 +27,7 @@ pub(crate) mod declarative_providers {
         inception,
         llama_swap,
         lmstudio,
+        meta,
         minimax,
         mistral,
         moonshot,
@@ -99,6 +100,7 @@ pub enum OpenAiRequestProfile {
     #[default]
     Standard,
     DeepseekV4,
+    MetaMuse,
     ZaiGlm,
 }
 
@@ -444,6 +446,23 @@ mod tests {
             assert_eq!(model.context_limit, 1_000_000);
             assert!(model.reasoning);
         }
+
+        let meta =
+            deserialize_provider_config(include_str!("declarative/definitions/meta.json")).unwrap();
+        assert_eq!(meta.name, "meta");
+        assert_eq!(meta.engine, ProviderEngine::OpenAI);
+        assert_eq!(meta.base_url, "${META_API_BASE_URL}");
+        assert_eq!(meta.base_path.as_deref(), Some("v1/responses"));
+        assert_eq!(
+            meta.env_vars.as_ref().unwrap()[0].default.as_deref(),
+            Some("https://api.meta.ai/v1")
+        );
+        assert_eq!(meta.openai_request_profile, OpenAiRequestProfile::MetaMuse);
+        assert!(meta.preserves_thinking);
+        assert_eq!(meta.models.len(), 1);
+        assert_eq!(meta.models[0].name, "muse-spark-1.2");
+        assert_eq!(meta.models[0].context_limit, 1_007_997);
+        assert!(meta.models[0].reasoning);
     }
 
     fn placeholder_var_names(template: &str) -> Vec<String> {
