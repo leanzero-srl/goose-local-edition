@@ -39,6 +39,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Mapping
 
+sys.dont_write_bytecode = True
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 DEFAULT_ENTRANTS = HERE / "cloud-sb7-entrants.json"
@@ -308,6 +310,8 @@ BUDGET_HISTORY_SCHEMA = 2
 BUDGET_HISTORY_ROOT = "budget-history"
 PRE_ADMISSION_RECONCILIATION_SCHEMA = 1
 PRE_ADMISSION_RECONCILIATION_ROOT = "pre-admission-reconciliation"
+PRE_ADMISSION_WORKSPACE_RECOVERY_SCHEMA = 1
+PRE_ADMISSION_WORKSPACE_RECOVERY_ROOT = "pre-admission-workspace-recovery"
 
 
 class BudgetReleasePending(RuntimeError):
@@ -353,6 +357,30 @@ def sha256_tree_exact(root: Path) -> str:
         if not path.is_file():
             continue
         relative = str(path.relative_to(root)).encode()
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
+
+
+def sha256_tree_exact_without(
+    root: Path, excluded_relative_paths: Iterable[str]
+) -> str:
+    if not root.is_dir() or root.is_symlink():
+        raise SystemExit(f"runtime package is missing or linked: {root}")
+    excluded = {Path(value).as_posix() for value in excluded_relative_paths}
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise SystemExit(f"runtime package contains a symbolic link: {path}")
+        if not path.is_file():
+            continue
+        relative_path = path.relative_to(root)
+        if relative_path.as_posix() in excluded:
+            continue
+        relative = str(relative_path).encode()
         digest.update(len(relative).to_bytes(8, "big"))
         digest.update(relative)
         with path.open("rb") as stream:
@@ -4309,11 +4337,8 @@ def transport_unknown_isolation_failure(
             or not isinstance(request_ids, list)
             or request_ids != sorted(set(request_ids))
             or not request_ids
-            or lifecycle.get("request_states")
-            != {request_id: ["queued"] for request_id in request_ids}
+            or lifecycle.get("ambiguous_request_ids") != request_ids
             or lifecycle.get("request_event_sha256") != request_digests
-            or lifecycle.get("admitted") != 0
-            or lifecycle.get("terminal") != 0
             or lifecycle.get("malformed_lines") != 0
             or lifecycle.get("transition_errors")
         ):
@@ -5289,6 +5314,709 @@ def reconcile_dead_pre_admission_reservations(
         pointer_index[attempt_name] = pointer
         update_state(root, entrant_id, pre_admission_reconciliations=pointer_index)
         pre_admission_reconciliation_fault("state_pointer_committed")
+        return pointer
+
+
+def pre_admission_workspace_recovery_fault(_stage: str) -> None:
+    return None
+
+
+def pre_admission_workspace_topology_failure(
+    state: Mapping[str, Any],
+) -> str | None:
+    for name, pid_key, pgid_key, identity_key in (
+        ("supervisor", "supervisor_pid", "supervisor_pgid", "supervisor_identity"),
+        ("goose", "goose_pid", "process_group", "goose_identity"),
+        ("scorer", "score_pid", "score_pgid", "score_identity"),
+        ("publisher", "publisher_pid", "publisher_pgid", "publisher_identity"),
+    ):
+        if process_alive(state.get(pid_key), state.get(identity_key)):
+            return f"{name} process is alive"
+        group = int(state.get(pgid_key) or 0)
+        if group > 1 and process_group_members(group):
+            return f"{name} process group is alive"
+    if refreshed_process_inventory(state.get("goose_process_inventory")):
+        return "goose process inventory is alive"
+    if refreshed_process_inventory(state.get("score_process_inventory")):
+        return "scorer process inventory is alive"
+    for name, environment_name, marker in (
+        ("scorer", SCORER_OWNERSHIP_ENV, state.get("score_ownership_marker")),
+        (
+            "publisher",
+            PUBLISHER_OWNERSHIP_ENV,
+            state.get("publisher_ownership_marker"),
+        ),
+    ):
+        if marker is None:
+            continue
+        records, proven = ownership_marker_process_records(environment_name, marker)
+        if not proven:
+            return f"{name} ownership scan is not proven"
+        if records:
+            return f"{name} ownership marker is alive"
+    return None
+
+
+def pre_admission_workspace_recovery_bundle_failure(
+    root: Path,
+    entrant_id: str,
+    state: Mapping[str, Any],
+    attempt: int,
+    pointer: Mapping[str, Any],
+) -> str | None:
+    try:
+        attempt_root = (
+            root / "entrants" / entrant_id / "attempts" / f"attempt-{attempt}"
+        )
+        bundle = attempt_root / PRE_ADMISSION_WORKSPACE_RECOVERY_ROOT
+        if bundle.is_symlink() or not bundle.is_dir():
+            return "pre-admission workspace recovery bundle is missing or linked"
+        expected_names = {
+            "budget-ledger.json",
+            "commit.json",
+            "intent.json",
+            "provider-lifecycle.jsonl",
+            "reconciliation-commit.json",
+            "source-state.json",
+        }
+        if {path.name for path in bundle.iterdir()} != expected_names:
+            return "pre-admission workspace recovery bundle is malformed"
+        paths = {name: bundle / name for name in expected_names}
+        if any(path.is_symlink() or not path.is_file() for path in paths.values()):
+            return "pre-admission workspace recovery evidence is missing or linked"
+        intent_path = paths["intent.json"]
+        commit_path = paths["commit.json"]
+        intent = load_json(intent_path)
+        commit = load_json(commit_path)
+        source_state = load_json(paths["source-state.json"])
+        campaign = load_json(campaign_file(root))
+        row = manifest_row(root, entrant_id)
+        baseline = campaign.get("smoke_raw_tree_sha256_before")
+        baseline_after = campaign.get("smoke_raw_tree_sha256_after")
+        reconciliation_index = source_state.get("pre_admission_reconciliations")
+        reconciliation_pointer = (
+            reconciliation_index.get(f"attempt-{attempt}")
+            if isinstance(reconciliation_index, dict)
+            else None
+        )
+        reconciliation_path = attempt_root / PRE_ADMISSION_RECONCILIATION_ROOT / "commit.json"
+        lifecycle_path = attempt_root / "provider-lifecycle.jsonl"
+        intent_fields = {
+            "schema_version",
+            "kind",
+            "campaign_id",
+            "campaign_binary_sha256",
+            "entrant_manifest_sha256",
+            "smoke_contract_sha256",
+            "lineage_generation",
+            "lineage_transition_id",
+            "entrant",
+            "provider",
+            "model",
+            "provider_lane",
+            "attempt",
+            "attempt_root",
+            "tree",
+            "residue",
+            "residue_size",
+            "residue_sha256",
+            "tree_sha256_before",
+            "tree_sha256_after",
+            "source_state_sha256",
+            "budget_ledger_sha256",
+            "provider_lifecycle_sha256",
+            "reconciliation_commit_sha256",
+            "reconciliation_pointer_sha256",
+            "created_at",
+        }
+        lineage = validated_campaign_lineage(campaign)
+        lineage_transition = (
+            campaign.get("lineage", {}).get("transition_id")
+            if isinstance(campaign.get("lineage"), dict)
+            else None
+        )
+        if (
+            set(intent) != intent_fields
+            or intent.get("schema_version")
+            != PRE_ADMISSION_WORKSPACE_RECOVERY_SCHEMA
+            or intent.get("kind") != "pre_admission_workspace_residue_recovery"
+            or intent.get("campaign_id") != campaign.get("campaign_id")
+            or intent.get("campaign_binary_sha256") != campaign.get("binary_sha256")
+            or intent.get("entrant_manifest_sha256")
+            != campaign.get("entrant_manifest_sha256")
+            or intent.get("smoke_contract_sha256")
+            != campaign.get("smoke_contract_sha256")
+            or intent.get("lineage_generation") != lineage.get("generation")
+            or intent.get("lineage_transition_id") != lineage_transition
+            or intent.get("entrant") != entrant_id
+            or intent.get("provider") != row.get("provider")
+            or intent.get("model") != row.get("model")
+            or intent.get("provider_lane") != row.get("provider_lane")
+            or intent.get("attempt") != attempt
+            or intent.get("attempt_root") != str(attempt_root.resolve())
+            or intent.get("tree")
+            != str((root / "entrants" / entrant_id / "tree").resolve())
+            or intent.get("residue") != ".swarm/telemetry.jsonl"
+            or intent.get("residue_size") != 0
+            or intent.get("residue_sha256") != sha256_bytes(b"")
+            or not isinstance(baseline, dict)
+            or baseline != baseline_after
+            or intent.get("tree_sha256_after") != baseline.get(entrant_id)
+            or intent.get("source_state_sha256")
+            != sha256_file(paths["source-state.json"])
+            or intent.get("budget_ledger_sha256")
+            != sha256_file(paths["budget-ledger.json"])
+            or intent.get("provider_lifecycle_sha256")
+            != sha256_file(paths["provider-lifecycle.jsonl"])
+            or intent.get("reconciliation_commit_sha256")
+            != sha256_file(paths["reconciliation-commit.json"])
+            or intent.get("reconciliation_pointer_sha256")
+            != json_payload_sha256(reconciliation_pointer or {})
+            or not isinstance(intent.get("created_at"), str)
+            or not intent.get("created_at")
+            or source_state.get("entrant") != entrant_id
+            or source_state.get("provider_attempt") != attempt
+            or source_state.get("provider_attempt_root") != str(attempt_root)
+            or source_state.get("provider_lifecycle") != str(lifecycle_path)
+            or not isinstance(reconciliation_pointer, dict)
+            or reconciliation_pointer.get("attempt") != attempt
+            or reconciliation_pointer.get("request_ids") != []
+            or reconciliation_pointer.get("sha256")
+            != sha256_file(paths["reconciliation-commit.json"])
+            or lifecycle_path.is_symlink()
+            or not lifecycle_path.is_file()
+            or sha256_file(lifecycle_path)
+            != intent.get("provider_lifecycle_sha256")
+            or reconciliation_path.is_symlink()
+            or not reconciliation_path.is_file()
+            or sha256_file(reconciliation_path)
+            != intent.get("reconciliation_commit_sha256")
+        ):
+            return "pre-admission workspace recovery intent identity changed"
+        commit_fields = {
+            "schema_version",
+            "kind",
+            "campaign_id",
+            "entrant",
+            "attempt",
+            "intent_sha256",
+            "source_state_sha256",
+            "budget_ledger_sha256_before",
+            "budget_ledger_sha256_after",
+            "provider_lifecycle_sha256",
+            "reconciliation_commit_sha256",
+            "tree_sha256_before",
+            "tree_sha256_after",
+            "residue",
+            "committed_at",
+        }
+        if (
+            set(commit) != commit_fields
+            or commit.get("schema_version")
+            != PRE_ADMISSION_WORKSPACE_RECOVERY_SCHEMA
+            or commit.get("kind")
+            != "pre_admission_workspace_residue_recovery_committed"
+            or commit.get("campaign_id") != intent.get("campaign_id")
+            or commit.get("entrant") != entrant_id
+            or commit.get("attempt") != attempt
+            or commit.get("intent_sha256") != sha256_file(intent_path)
+            or commit.get("source_state_sha256")
+            != intent.get("source_state_sha256")
+            or commit.get("budget_ledger_sha256_before")
+            != intent.get("budget_ledger_sha256")
+            or commit.get("budget_ledger_sha256_after")
+            != commit.get("budget_ledger_sha256_before")
+            or commit.get("provider_lifecycle_sha256")
+            != intent.get("provider_lifecycle_sha256")
+            or commit.get("reconciliation_commit_sha256")
+            != intent.get("reconciliation_commit_sha256")
+            or commit.get("tree_sha256_before")
+            != intent.get("tree_sha256_before")
+            or commit.get("tree_sha256_after") != intent.get("tree_sha256_after")
+            or commit.get("residue") != intent.get("residue")
+            or not isinstance(commit.get("committed_at"), str)
+            or not commit.get("committed_at")
+        ):
+            return "pre-admission workspace recovery commit identity changed"
+        expected_pointer = {
+            "schema_version": PRE_ADMISSION_WORKSPACE_RECOVERY_SCHEMA,
+            "attempt": attempt,
+            "path": str(commit_path.resolve().relative_to(root.resolve())),
+            "sha256": sha256_file(commit_path),
+            "intent_sha256": sha256_file(intent_path),
+            "tree_sha256_before": intent["tree_sha256_before"],
+            "tree_sha256_after": intent["tree_sha256_after"],
+            "residue": intent["residue"],
+        }
+        if dict(pointer) != expected_pointer:
+            return "pre-admission workspace recovery state pointer changed"
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ) as error:
+        return f"pre-admission workspace recovery cannot be verified: {error}"
+    return None
+
+
+def pre_admission_workspace_recovery_failure(
+    root: Path, entrant_id: str, state: Mapping[str, Any]
+) -> str | None:
+    try:
+        attempts_root = root / "entrants" / entrant_id / "attempts"
+        disk_attempts: set[str] = set()
+        if attempts_root.exists():
+            if attempts_root.is_symlink() or not attempts_root.is_dir():
+                return "pre-admission workspace recovery attempt root is linked"
+            disk_attempts = {
+                path.name
+                for path in attempts_root.iterdir()
+                if path.is_dir()
+                and not path.is_symlink()
+                and (path / PRE_ADMISSION_WORKSPACE_RECOVERY_ROOT).exists()
+            }
+        index = state.get("pre_admission_workspace_recoveries")
+        if index is None:
+            return (
+                "pre-admission workspace recovery is pending state commit"
+                if disk_attempts
+                else None
+            )
+        if not isinstance(index, dict):
+            return "pre-admission workspace recovery index is malformed"
+        if set(index) != disk_attempts:
+            return "pre-admission workspace recovery index differs from disk"
+        for attempt_name, pointer in index.items():
+            if re.fullmatch(r"attempt-[1-9][0-9]*", attempt_name) is None:
+                return "pre-admission workspace recovery attempt name is malformed"
+            attempt = int(attempt_name.removeprefix("attempt-"))
+            if not isinstance(pointer, dict):
+                return "pre-admission workspace recovery pointer is malformed"
+            problem = pre_admission_workspace_recovery_bundle_failure(
+                root, entrant_id, state, attempt, pointer
+            )
+            if problem:
+                return problem
+    except (OSError, TypeError, ValueError, SystemExit) as error:
+        return f"pre-admission workspace recovery cannot be indexed: {error}"
+    return None
+
+
+def discard_uncommitted_workspace_recovery_staging(
+    attempt_root: Path, bundle: Path
+) -> None:
+    prefix = f".{PRE_ADMISSION_WORKSPACE_RECOVERY_ROOT}."
+    staging_entries = [
+        path for path in attempt_root.iterdir() if path.name.startswith(prefix)
+    ]
+    if not staging_entries:
+        return
+    if bundle.exists() or bundle.is_symlink():
+        raise SystemExit(
+            "pre-admission workspace recovery has staging beside its canonical bundle"
+        )
+    allowed_names = {
+        "budget-ledger.json",
+        "intent.json",
+        "provider-lifecycle.jsonl",
+        "reconciliation-commit.json",
+        "source-state.json",
+    }
+    for staging in staging_entries:
+        if staging.is_symlink() or not staging.is_dir():
+            raise SystemExit(
+                "pre-admission workspace recovery staging is not a directory"
+            )
+        children = list(staging.iterdir())
+        if any(
+            child.name not in allowed_names
+            or child.is_symlink()
+            or not child.is_file()
+            for child in children
+        ):
+            raise SystemExit(
+                "pre-admission workspace recovery staging is not a validated orphan"
+            )
+    for staging in staging_entries:
+        shutil.rmtree(staging)
+    fsync_directory(attempt_root)
+
+
+def recover_pre_admission_workspace(root: Path, entrant_id: str) -> Dict[str, Any]:
+    root = root.resolve()
+    with contextlib.ExitStack() as locks:
+        for relative in (
+            "locks/manager-launch.claim",
+            "locks/supersession.claim",
+            "locks/resume.claim",
+            f"locks/entrant-{entrant_id}.claim",
+            f"locks/pre-admission-workspace-recovery-{entrant_id}.claim",
+        ):
+            claimed = locks.enter_context(
+                exclusive_claim(root / relative, blocking=True)
+            )
+            if not claimed:
+                raise SystemExit(
+                    "cannot claim pre-admission workspace recovery boundary"
+                )
+        require_lineage(root)
+        campaign = load_json(campaign_file(root))
+        if campaign.get("status") not in {"RUNNING", "ATTENTION"}:
+            raise SystemExit(
+                "pre-admission workspace recovery requires RUNNING or ATTENTION"
+            )
+        row = manifest_row(root, entrant_id)
+        locks.enter_context(provider_lane(root, str(row["provider_lane"])))
+        ledger_path = Path(str(campaign.get("budget_ledger", "")))
+        ledger_claimed = locks.enter_context(
+            exclusive_claim(ledger_path.with_suffix(".lock"), blocking=True)
+        )
+        if not ledger_claimed:
+            raise SystemExit(
+                "cannot claim pre-admission workspace recovery budget boundary"
+            )
+        state = read_state(root, entrant_id)
+        if state.get("status") not in RETRYABLE_BUILD_STATES:
+            raise SystemExit(
+                f"{entrant_id} workspace recovery cannot run from "
+                f"{state.get('status')}"
+            )
+        topology_problem = pre_admission_workspace_topology_failure(state)
+        if topology_problem:
+            raise SystemExit(
+                f"{entrant_id} workspace recovery requires clean ownership: "
+                f"{topology_problem}"
+            )
+        attempt = state.get("provider_attempt")
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt <= 0:
+            raise SystemExit(
+                f"{entrant_id} workspace recovery has no exact provider attempt"
+            )
+        attempt_root = (
+            root / "entrants" / entrant_id / "attempts" / f"attempt-{attempt}"
+        )
+        lifecycle_path = attempt_root / "provider-lifecycle.jsonl"
+        reconciliation_pointer = current_pre_admission_reconciliation(
+            root, entrant_id, state
+        )
+        if (
+            reconciliation_pointer is None
+            or reconciliation_pointer.get("request_ids") != []
+            or pre_admission_reconciliation_bundle_failure(
+                root, entrant_id, state, attempt_root, attempt
+            )
+            is not None
+        ):
+            raise SystemExit(
+                f"{entrant_id} workspace residue has no sealed empty "
+                "pre-admission reconciliation"
+            )
+        lifecycle = lifecycle_summary(
+            lifecycle_path,
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        if (
+            lifecycle.get("events") != 0
+            or lifecycle.get("admitted") != 0
+            or lifecycle.get("terminal") != 0
+            or lifecycle_failure(lifecycle)
+        ):
+            raise SystemExit(
+                f"{entrant_id} workspace residue is not bound to an empty lifecycle"
+            )
+        tree = root / "entrants" / entrant_id / "tree"
+        if (
+            state.get("tree") != str(tree)
+            or tree.is_symlink()
+            or not tree.is_dir()
+            or tree.resolve() != tree
+        ):
+            raise SystemExit(f"{entrant_id} workspace tree is missing or linked")
+        baseline_index = campaign.get("smoke_raw_tree_sha256_before")
+        if (
+            not isinstance(baseline_index, dict)
+            or baseline_index != campaign.get("smoke_raw_tree_sha256_after")
+            or not isinstance(baseline_index.get(entrant_id), str)
+        ):
+            raise SystemExit(
+                f"{entrant_id} workspace recovery has no exact smoke baseline"
+            )
+        baseline_sha = str(baseline_index[entrant_id])
+        bundle = attempt_root / PRE_ADMISSION_WORKSPACE_RECOVERY_ROOT
+        intent_path = bundle / "intent.json"
+        commit_path = bundle / "commit.json"
+        telemetry = tree / ".swarm/telemetry.jsonl"
+        ledger_sha = sha256_file(ledger_path)
+
+        discard_uncommitted_workspace_recovery_staging(attempt_root, bundle)
+
+        if bundle.exists() or bundle.is_symlink():
+            if bundle.is_symlink() or not bundle.is_dir():
+                raise SystemExit(
+                    f"{entrant_id} workspace recovery bundle is linked"
+                )
+            allowed = {
+                "budget-ledger.json",
+                "intent.json",
+                "provider-lifecycle.jsonl",
+                "reconciliation-commit.json",
+                "source-state.json",
+            } | ({"commit.json"} if commit_path.exists() else set())
+            if {path.name for path in bundle.iterdir()} != allowed:
+                raise SystemExit(
+                    f"{entrant_id} workspace recovery bundle is malformed"
+                )
+            intent = load_json(intent_path)
+            if (
+                intent.get("campaign_id") != campaign.get("campaign_id")
+                or intent.get("entrant") != entrant_id
+                or intent.get("attempt") != attempt
+                or intent.get("tree_sha256_after") != baseline_sha
+                or intent.get("residue") != ".swarm/telemetry.jsonl"
+                or intent.get("source_state_sha256")
+                != sha256_file(bundle / "source-state.json")
+                or intent.get("budget_ledger_sha256")
+                != sha256_file(bundle / "budget-ledger.json")
+                or intent.get("provider_lifecycle_sha256")
+                != sha256_file(bundle / "provider-lifecycle.jsonl")
+                or intent.get("reconciliation_commit_sha256")
+                != sha256_file(bundle / "reconciliation-commit.json")
+            ):
+                raise SystemExit(
+                    f"{entrant_id} workspace recovery intent changed or was replayed"
+                )
+            tree_before_sha = str(intent["tree_sha256_before"])
+            ledger_before_sha = str(intent["budget_ledger_sha256"])
+        else:
+            swarm = telemetry.parent
+            if (
+                swarm.is_symlink()
+                or not swarm.is_dir()
+                or telemetry.is_symlink()
+                or not telemetry.is_file()
+                or telemetry.stat().st_size != 0
+                or {path.name for path in swarm.iterdir()} != {"telemetry.jsonl"}
+            ):
+                raise SystemExit(
+                    f"{entrant_id} workspace residue is not exactly the zero-byte "
+                    "swarm telemetry file"
+                )
+            tree_before_sha = sha256_tree_exact(tree)
+            if (
+                tree_before_sha == baseline_sha
+                or sha256_tree_exact_without(
+                    tree, {".swarm/telemetry.jsonl"}
+                )
+                != baseline_sha
+            ):
+                raise SystemExit(
+                    f"{entrant_id} workspace contains changes beyond typed telemetry residue"
+                )
+            reconciliation_commit = (
+                attempt_root / PRE_ADMISSION_RECONCILIATION_ROOT / "commit.json"
+            )
+            staging = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{PRE_ADMISSION_WORKSPACE_RECOVERY_ROOT}.",
+                    dir=attempt_root,
+                )
+            )
+            try:
+                atomic_copy(state_file(root, entrant_id), staging / "source-state.json", 0o600)
+                atomic_copy(ledger_path, staging / "budget-ledger.json", 0o600)
+                atomic_copy(lifecycle_path, staging / "provider-lifecycle.jsonl", 0o600)
+                atomic_copy(
+                    reconciliation_commit,
+                    staging / "reconciliation-commit.json",
+                    0o600,
+                )
+                lineage = validated_campaign_lineage(campaign)
+                lineage_transition = (
+                    campaign.get("lineage", {}).get("transition_id")
+                    if isinstance(campaign.get("lineage"), dict)
+                    else None
+                )
+                intent = {
+                    "schema_version": PRE_ADMISSION_WORKSPACE_RECOVERY_SCHEMA,
+                    "kind": "pre_admission_workspace_residue_recovery",
+                    "campaign_id": campaign["campaign_id"],
+                    "campaign_binary_sha256": campaign["binary_sha256"],
+                    "entrant_manifest_sha256": campaign["entrant_manifest_sha256"],
+                    "smoke_contract_sha256": campaign["smoke_contract_sha256"],
+                    "lineage_generation": lineage["generation"],
+                    "lineage_transition_id": lineage_transition,
+                    "entrant": entrant_id,
+                    "provider": row["provider"],
+                    "model": row["model"],
+                    "provider_lane": row["provider_lane"],
+                    "attempt": attempt,
+                    "attempt_root": str(attempt_root.resolve()),
+                    "tree": str(tree),
+                    "residue": ".swarm/telemetry.jsonl",
+                    "residue_size": 0,
+                    "residue_sha256": sha256_bytes(b""),
+                    "tree_sha256_before": tree_before_sha,
+                    "tree_sha256_after": baseline_sha,
+                    "source_state_sha256": sha256_file(staging / "source-state.json"),
+                    "budget_ledger_sha256": sha256_file(staging / "budget-ledger.json"),
+                    "provider_lifecycle_sha256": sha256_file(
+                        staging / "provider-lifecycle.jsonl"
+                    ),
+                    "reconciliation_commit_sha256": sha256_file(
+                        staging / "reconciliation-commit.json"
+                    ),
+                    "reconciliation_pointer_sha256": json_payload_sha256(
+                        reconciliation_pointer
+                    ),
+                    "created_at": utc_now(),
+                }
+                atomic_json(staging / "intent.json", intent)
+                if (
+                    sha256_file(state_file(root, entrant_id))
+                    != intent["source_state_sha256"]
+                    or sha256_file(ledger_path) != intent["budget_ledger_sha256"]
+                    or sha256_tree_exact(tree) != tree_before_sha
+                ):
+                    raise SystemExit(
+                        f"{entrant_id} workspace recovery evidence changed while staging"
+                    )
+                fsync_directory(staging)
+                os.replace(staging, bundle)
+                fsync_directory(attempt_root)
+            finally:
+                if staging.exists():
+                    shutil.rmtree(staging)
+            ledger_before_sha = str(intent["budget_ledger_sha256"])
+        pre_admission_workspace_recovery_fault("intent_committed")
+
+        observed_tree_sha = sha256_tree_exact(tree)
+        if observed_tree_sha == tree_before_sha:
+            swarm = telemetry.parent
+            if (
+                swarm.is_symlink()
+                or not swarm.is_dir()
+                or telemetry.is_symlink()
+                or not telemetry.is_file()
+                or telemetry.stat().st_size != 0
+                or {path.name for path in swarm.iterdir()} != {"telemetry.jsonl"}
+            ):
+                raise SystemExit(
+                    f"{entrant_id} workspace residue changed before commit"
+                )
+            telemetry.unlink()
+            pre_admission_workspace_recovery_fault("residue_unlinked")
+            swarm.rmdir()
+            fsync_directory(tree)
+        elif observed_tree_sha == baseline_sha:
+            swarm = telemetry.parent
+            if swarm.is_symlink():
+                raise SystemExit(
+                    f"{entrant_id} workspace residue directory became linked"
+                )
+            if swarm.exists():
+                if not swarm.is_dir() or any(swarm.iterdir()):
+                    raise SystemExit(
+                        f"{entrant_id} workspace residue changed during replay"
+                    )
+                swarm.rmdir()
+                fsync_directory(tree)
+        else:
+            raise SystemExit(
+                f"{entrant_id} workspace changed across residue recovery"
+            )
+        if telemetry.parent.exists() or telemetry.parent.is_symlink():
+            raise SystemExit(
+                f"{entrant_id} workspace residue directory survived recovery"
+            )
+        fsync_directory(tree)
+        if sha256_tree_exact(tree) != baseline_sha:
+            raise SystemExit(
+                f"{entrant_id} workspace did not return to its smoke baseline"
+            )
+        pre_admission_workspace_recovery_fault("residue_removed")
+
+        if sha256_file(ledger_path) != ledger_sha:
+            raise SystemExit(
+                f"{entrant_id} budget ledger changed across workspace recovery"
+            )
+        expected_commit = {
+            "schema_version": PRE_ADMISSION_WORKSPACE_RECOVERY_SCHEMA,
+            "kind": "pre_admission_workspace_residue_recovery_committed",
+            "campaign_id": campaign["campaign_id"],
+            "entrant": entrant_id,
+            "attempt": attempt,
+            "intent_sha256": sha256_file(intent_path),
+            "source_state_sha256": intent["source_state_sha256"],
+            "budget_ledger_sha256_before": ledger_before_sha,
+            "budget_ledger_sha256_after": ledger_before_sha,
+            "provider_lifecycle_sha256": intent["provider_lifecycle_sha256"],
+            "reconciliation_commit_sha256": intent[
+                "reconciliation_commit_sha256"
+            ],
+            "tree_sha256_before": tree_before_sha,
+            "tree_sha256_after": baseline_sha,
+            "residue": ".swarm/telemetry.jsonl",
+        }
+        if commit_path.exists():
+            commit = load_json(commit_path)
+            if (
+                set(commit) != {*expected_commit, "committed_at"}
+                or any(commit.get(key) != value for key, value in expected_commit.items())
+            ):
+                raise SystemExit(
+                    f"{entrant_id} workspace recovery commit changed or was replayed"
+                )
+        else:
+            write_exclusive_json(
+                commit_path, {**expected_commit, "committed_at": utc_now()}
+            )
+        pre_admission_workspace_recovery_fault("commit_committed")
+        pointer = {
+            "schema_version": PRE_ADMISSION_WORKSPACE_RECOVERY_SCHEMA,
+            "attempt": attempt,
+            "path": str(commit_path.resolve().relative_to(root)),
+            "sha256": sha256_file(commit_path),
+            "intent_sha256": sha256_file(intent_path),
+            "tree_sha256_before": tree_before_sha,
+            "tree_sha256_after": baseline_sha,
+            "residue": ".swarm/telemetry.jsonl",
+        }
+        current = read_state(root, entrant_id)
+        index = current.get("pre_admission_workspace_recoveries")
+        if index is None:
+            index = {}
+        if not isinstance(index, dict):
+            raise SystemExit(
+                f"{entrant_id} workspace recovery state index is malformed"
+            )
+        index = dict(index)
+        attempt_name = f"attempt-{attempt}"
+        if index.get(attempt_name) not in (None, pointer):
+            raise SystemExit(
+                f"{entrant_id} workspace recovery state pointer changed"
+            )
+        index[attempt_name] = pointer
+        ownership = dict.fromkeys(BUILD_RUNTIME_OWNERSHIP_FIELDS, None)
+        ownership["goose_process_inventory"] = []
+        recovered = update_state(
+            root,
+            entrant_id,
+            pre_admission_workspace_recoveries=index,
+            workspace_recovered_at=utc_now(),
+            **ownership,
+        )
+        pre_admission_workspace_recovery_fault("state_pointer_committed")
+        problem = pre_admission_workspace_recovery_failure(
+            root, entrant_id, recovered
+        )
+        if problem:
+            raise SystemExit(
+                f"{entrant_id} workspace recovery failed validation: {problem}"
+            )
         return pointer
 
 
@@ -12134,10 +12862,29 @@ def require_smoke_proofs(
     raw_after = campaign.get("smoke_raw_tree_sha256_after")
     if not isinstance(raw_before, dict) or raw_before != raw_after:
         raise SystemExit("smoke did not preserve all five raw benchmark trees")
+    entrant_states = {
+        str(row["id"]): read_state(root, str(row["id"])) for row in rows
+    }
+    for entrant_id, entrant_state in entrant_states.items():
+        recovery_problem = pre_admission_workspace_recovery_failure(
+            root, entrant_id, entrant_state
+        )
+        if recovery_problem:
+            recovery_claim = (
+                root
+                / "locks"
+                / f"pre-admission-workspace-recovery-{entrant_id}.claim"
+            )
+            if exclusive_claim_is_held(recovery_claim):
+                continue
+            raise SystemExit(
+                f"pre-admission workspace recovery is invalid: {entrant_id}: "
+                f"{recovery_problem}"
+            )
     for entrant_id in [pristine_entrant] if pristine_entrant is not None else []:
         if entrant_id not in raw_before:
             raise SystemExit(f"smoke raw-tree evidence has no entrant: {entrant_id}")
-        entrant_state = read_state(root, entrant_id)
+        entrant_state = entrant_states[entrant_id]
         successor_ids = transport_unknown_carried_request_ids(
             root, campaign, entrant_id
         )
@@ -12529,8 +13276,38 @@ def rollback_provider_episode_before_process(
     )
 
 
+def record_supervisor_pre_admission_gate_failure(
+    root: Path,
+    entrant_id: str,
+    campaign: Mapping[str, Any],
+    error: BaseException,
+) -> None:
+    message = str(error) or type(error).__name__
+    gate_failure = {
+        "schema_version": CAMPAIGN_SCHEMA,
+        "kind": "pre_admission_qualification_gate_failure",
+        "campaign_id": campaign.get("campaign_id"),
+        "entrant": entrant_id,
+        "error_type": type(error).__name__,
+        "message": message,
+        "supervisor_pid": os.getpid(),
+        "supervisor_identity": process_identity(os.getpid()),
+        "recorded_at": utc_now(),
+    }
+    ownership = dict.fromkeys(BUILD_RUNTIME_OWNERSHIP_FIELDS, None)
+    ownership["goose_process_inventory"] = []
+    update_state(
+        root,
+        entrant_id,
+        status="PRE_ADMISSION_FAILURE",
+        failure=f"pre-admission qualification gate failed: {message}",
+        pre_admission_gate_failure=gate_failure,
+        admitted_requests=0,
+        **ownership,
+    )
+
+
 def supervise_claimed(root: Path, entrant_id: str) -> int:
-    require_smoke_proofs(root, pristine_entrant=entrant_id)
     campaign = load_json(campaign_file(root))
     state = read_state(root, entrant_id)
     ownership_problem = launched_child_ownership_failure(
@@ -12546,6 +13323,13 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
     if ownership_problem:
         return 2
     if campaign.get("status") != "RUNNING" or (root / SUPERSESSION_RECEIPT).exists():
+        return 2
+    try:
+        require_smoke_proofs(root, pristine_entrant=entrant_id)
+    except (Exception, SystemExit) as error:
+        record_supervisor_pre_admission_gate_failure(
+            root, entrant_id, campaign, error
+        )
         return 2
     lineage_problem = lineage_failure(root)
     if lineage_problem:
@@ -15422,6 +16206,9 @@ def wait_for_builds(
                         in TERMINAL_BUILD_STATES | POST_BUILD_STATES
                         and group_clean
                     ):
+                        clear_build_runtime_ownership(
+                            root, str(state["entrant"])
+                        )
                         continue
                     row = manifest_row(root, str(state["entrant"]))
                     lifecycle = lifecycle_summary(
@@ -15450,6 +16237,11 @@ def wait_for_builds(
                         or not group_clean
                     )
                     reasons = ["supervisor disappeared; silence is not success"]
+                    prior_failure = state.get("failure")
+                    if isinstance(prior_failure, str) and prior_failure:
+                        reasons.append(
+                            f"last committed supervisor failure: {prior_failure}"
+                        )
                     if lifecycle["admitted"]:
                         reasons.append(
                             f"{lifecycle['admitted']} request(s) were admitted"
@@ -15468,21 +16260,27 @@ def wait_for_builds(
                         )
                     if not group_clean:
                         reasons.append("owned process group survived cleanup")
-                    update_state(
-                        root,
-                        str(state["entrant"]),
-                        status="INCOMPLETE" if ambiguous else "PRE_ADMISSION_FAILURE",
-                        failure="; ".join(reasons),
-                        admitted_requests=lifecycle["admitted"],
-                        provider_terminal_requests=lifecycle["terminal"],
-                        lifecycle_events=lifecycle["events"],
-                        lifecycle_malformed_lines=lifecycle["malformed_lines"],
-                        lifecycle_transition_errors=lifecycle["transition_errors"],
-                        lifecycle_ambiguous_request_ids=lifecycle[
+                    changes: Dict[str, Any] = {
+                        "status": (
+                            "INCOMPLETE" if ambiguous else "PRE_ADMISSION_FAILURE"
+                        ),
+                        "failure": "; ".join(reasons),
+                        "admitted_requests": lifecycle["admitted"],
+                        "provider_terminal_requests": lifecycle["terminal"],
+                        "lifecycle_events": lifecycle["events"],
+                        "lifecycle_malformed_lines": lifecycle["malformed_lines"],
+                        "lifecycle_transition_errors": lifecycle[
+                            "transition_errors"
+                        ],
+                        "lifecycle_ambiguous_request_ids": lifecycle[
                             "ambiguous_request_ids"
                         ],
-                        budget_outstanding_request_ids=outstanding_ids,
-                    )
+                        "budget_outstanding_request_ids": outstanding_ids,
+                    }
+                    if group_clean:
+                        changes.update(dict.fromkeys(BUILD_RUNTIME_OWNERSHIP_FIELDS, None))
+                        changes["goose_process_inventory"] = []
+                    update_state(root, str(state["entrant"]), **changes)
         time.sleep(poll_seconds)
 
 
@@ -18411,20 +19209,19 @@ def isolate_transport_unknown(root: Path, entrant_id: str) -> Dict[str, Any]:
         )
         request_states = lifecycle.get("request_states")
         request_ids = (
-            sorted(request_states)
+            list(lifecycle.get("ambiguous_request_ids") or [])
             if isinstance(request_states, dict)
             else []
         )
         if (
             not request_ids
-            or any(request_states[request_id] != ["queued"] for request_id in request_ids)
-            or lifecycle.get("admitted") != 0
-            or lifecycle.get("terminal") != 0
+            or request_ids != sorted(set(request_ids))
+            or any(request_id not in request_states for request_id in request_ids)
             or lifecycle.get("malformed_lines") != 0
             or lifecycle.get("transition_errors")
         ):
             raise SystemExit(
-                "transport-unknown isolation requires an exact queued-only lifecycle"
+                "transport-unknown isolation requires exact unresolved lifecycle evidence"
             )
         ledger = load_json(ledger_path)
         config = load_json(Path(str(campaign["budget_config"])))
@@ -20820,6 +21617,8 @@ def launch_after_receipt(
     token = secrets.token_hex(16)
     gate_path = gate_dir / f"launch-{token}.json"
     parent_pid = os.getpid()
+    child_env = dict(os.environ if env is None else env)
+    child_env["PYTHONDONTWRITEBYTECODE"] = "1"
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -20833,7 +21632,7 @@ def launch_after_receipt(
             *cmd,
         ],
         cwd=cwd,
-        env=dict(env) if env is not None else None,
+        env=child_env,
         stdin=stdin,
         stdout=stdout,
         stderr=stderr,
@@ -24143,18 +24942,43 @@ def published_campaign_mismatch(root: Path) -> str | None:
 
 
 def monitor_attention(root: Path, failure: str) -> tuple[bool, int]:
-    cleanup_failures = stop_runtime_groups_for_attention(root)
-    if cleanup_failures:
-        failure = failure + "; owned groups survived: " + ", ".join(cleanup_failures)
+    current_monitor = read_monitor_state(root)
+    first_failure = current_monitor.get("first_failure")
+    if (
+        not isinstance(first_failure, dict)
+        or set(first_failure) != {"failure", "recorded_at"}
+        or not isinstance(first_failure.get("failure"), str)
+        or not first_failure.get("failure")
+        or not isinstance(first_failure.get("recorded_at"), str)
+        or not first_failure.get("recorded_at")
+    ):
+        first_failure = {
+            "failure": failure,
+            "recorded_at": utc_now(),
+        }
+    exact_failure = str(first_failure["failure"])
     monitor_state(
         root,
         status="ATTENTION",
-        failure=failure[:4000],
+        failure=exact_failure,
+        first_failure=first_failure,
+        attention_cleanup_failures=[],
+        exit_code=None,
+        finished_at=None,
+    )
+    manager_monitor_attention(root, exact_failure)
+    cleanup_failures = stop_runtime_groups_for_attention(root)
+    monitor_state(
+        root,
+        status="ATTENTION",
+        failure=exact_failure,
+        first_failure=first_failure,
+        attention_cleanup_failures=cleanup_failures,
         exit_code=1,
         finished_at=utc_now(),
     )
-    manager_state(root, status="ATTENTION", failure=failure[:4000])
-    update_campaign(root, status="ATTENTION", failure=failure[:4000])
+    manager_state(root, status="ATTENTION", failure=exact_failure)
+    update_campaign(root, status="ATTENTION", failure=exact_failure)
     return True, 1
 
 
@@ -24468,6 +25292,8 @@ def monitor_launch(root: Path) -> int:
             smoke_contract_sha256=campaign["smoke_contract_sha256"],
             launched_at=utc_now(),
             failure=None,
+            first_failure=None,
+            attention_cleanup_failures=[],
         )
 
     proc = launch_detached(
@@ -25105,6 +25931,9 @@ def main() -> int:
     p_transport_successor = sub.add_parser("adjudicate-transport-successor")
     root_arg(p_transport_successor)
     p_transport_successor.add_argument("--entrant", required=True)
+    p_workspace_recovery = sub.add_parser("recover-pre-admission-workspace")
+    root_arg(p_workspace_recovery)
+    p_workspace_recovery.add_argument("--entrant", required=True)
 
     p_gated_exec = sub.add_parser("_gated_exec")
     p_gated_exec.add_argument("--gate", type=Path, required=True)
@@ -25251,6 +26080,13 @@ def main() -> int:
         print(
             f"authorized carried-exposure successor for {args.entrant} in "
             f"{value['campaign_id']}"
+        )
+        return 0
+    if args.command == "recover-pre-admission-workspace":
+        value = recover_pre_admission_workspace(args.root, args.entrant)
+        print(
+            f"recovered typed pre-admission workspace residue for "
+            f"{args.entrant}: {value['sha256']}"
         )
         return 0
     if args.command == "_gated_exec":

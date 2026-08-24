@@ -2860,6 +2860,59 @@ class CloudSb7HarnessTest(unittest.TestCase):
             with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
                 self.assertIsNone(cloud_sb7.manager_restart_mismatch(root))
 
+    def test_transport_unknown_isolates_admitted_unresolved_request(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            request_id = str(fixture["request_id"])
+            ledger_path = Path(str(fixture["ledger_path"]))
+            ledger_before = ledger_path.read_bytes()
+            state = cloud_sb7.read_state(root, entrant_id)
+            lifecycle_path = Path(str(state["provider_lifecycle"]))
+            lifecycle_path.write_text(
+                "\n".join(
+                    map(
+                        json.dumps,
+                        self.provider_lifecycle_events(
+                            fixture["row"],
+                            ["queued", "admitted", "first_item"],
+                            request_id=request_id,
+                        ),
+                    )
+                )
+                + "\n"
+            )
+            cloud_sb7.update_state(root, entrant_id, admitted_requests=1)
+            cloud_sb7.update_campaign(
+                root,
+                status="ATTENTION",
+                failure="admitted provider transport is unresolved",
+            )
+
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+
+            isolated = cloud_sb7.read_state(root, entrant_id)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            pointer = campaign["transport_unknown"][entrant_id]["isolation"]
+            receipt = cloud_sb7.load_json(root / pointer["path"])
+            self.assertEqual(isolated["status"], cloud_sb7.TRANSPORT_UNKNOWN_STATUS)
+            self.assertEqual(receipt["request_ids"], [request_id])
+            self.assertEqual(
+                receipt["request_event_sha256"],
+                cloud_sb7.lifecycle_summary(
+                    lifecycle_path,
+                    expected_provider=str(fixture["row"]["provider"]),
+                    expected_model=str(fixture["row"]["model"]),
+                )["request_event_sha256"],
+            )
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            self.assertIn(
+                request_id,
+                cloud_sb7.load_json(ledger_path)["outstanding"],
+            )
+            self.assertIsNone(cloud_sb7.lineage_failure(root))
+
     def test_transport_unknown_isolation_recovers_every_commit_boundary(self) -> None:
         for fault_stage in (
             "isolation_receipt_committed",
@@ -3245,6 +3298,224 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(pointer["request_ids"], [])
             with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
                 self.assertIsNone(cloud_sb7.manager_restart_mismatch(root))
+
+    def test_typed_workspace_recovery_removes_real_zero_byte_telemetry_residue(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            ledger_path = Path(str(fixture["ledger_path"]))
+            self.assertEqual(
+                cloud_sb7.normalize_interrupted_builds(root, fixture["campaign"]),
+                [],
+            )
+            cloud_sb7.update_campaign(root, status="RUNNING")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="PRE_ADMISSION_FAILURE",
+                failure="supervisor disappeared; silence is not success",
+                supervisor_pid=54321,
+                supervisor_pgid=54321,
+                supervisor_identity="dead-supervisor",
+            )
+            state = cloud_sb7.read_state(root, entrant_id)
+            tree = Path(str(state["tree"]))
+            baselines = {
+                value["entrant"]: cloud_sb7.sha256_tree_exact(
+                    Path(str(value["tree"]))
+                )
+                for value in cloud_sb7.status_rows(root)
+            }
+            cloud_sb7.update_campaign(
+                root,
+                smoke_raw_tree_sha256_before=baselines,
+                smoke_raw_tree_sha256_after=baselines,
+            )
+            telemetry = tree / ".swarm/telemetry.jsonl"
+            telemetry.parent.mkdir()
+            telemetry.write_text("")
+            ledger_before = ledger_path.read_bytes()
+            tree_before = cloud_sb7.sha256_tree_exact(tree)
+            baseline = baselines[entrant_id]
+            self.assertNotEqual(tree_before, baseline)
+
+            pointer = cloud_sb7.recover_pre_admission_workspace(root, entrant_id)
+
+            recovered = cloud_sb7.read_state(root, entrant_id)
+            self.assertFalse(telemetry.exists())
+            self.assertFalse(telemetry.parent.exists())
+            self.assertEqual(cloud_sb7.sha256_tree_exact(tree), baseline)
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            self.assertEqual(
+                recovered["pre_admission_workspace_recoveries"]["attempt-1"],
+                pointer,
+            )
+            self.assertIsNone(
+                cloud_sb7.pre_admission_workspace_recovery_failure(
+                    root, entrant_id, recovered
+                )
+            )
+            self.assertIsNone(recovered["supervisor_pid"])
+            self.assertEqual(
+                recovered["failure"],
+                "supervisor disappeared; silence is not success",
+            )
+
+    def test_typed_workspace_recovery_replays_after_residue_removal_crash(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            self.assertEqual(
+                cloud_sb7.normalize_interrupted_builds(root, fixture["campaign"]),
+                [],
+            )
+            cloud_sb7.update_campaign(root, status="RUNNING")
+            state = cloud_sb7.read_state(root, entrant_id)
+            baselines = {
+                value["entrant"]: cloud_sb7.sha256_tree_exact(
+                    Path(str(value["tree"]))
+                )
+                for value in cloud_sb7.status_rows(root)
+            }
+            cloud_sb7.update_campaign(
+                root,
+                smoke_raw_tree_sha256_before=baselines,
+                smoke_raw_tree_sha256_after=baselines,
+            )
+            telemetry = Path(str(state["tree"])) / ".swarm/telemetry.jsonl"
+            telemetry.parent.mkdir()
+            telemetry.write_text("")
+            orphan = (
+                Path(str(fixture["attempt_root"]))
+                / ".pre-admission-workspace-recovery.crash-orphan"
+            )
+            orphan.mkdir()
+            (orphan / "source-state.json").write_text("partial evidence")
+
+            with mock.patch.object(
+                cloud_sb7,
+                "pre_admission_workspace_recovery_fault",
+                side_effect=lambda stage: (
+                    (_ for _ in ()).throw(RuntimeError("residue crash"))
+                    if stage == "residue_unlinked"
+                    else None
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "residue crash"):
+                    cloud_sb7.recover_pre_admission_workspace(root, entrant_id)
+            self.assertFalse(telemetry.exists())
+            self.assertTrue(telemetry.parent.is_dir())
+            self.assertFalse(orphan.exists())
+            self.assertNotIn(
+                "pre_admission_workspace_recoveries",
+                cloud_sb7.read_state(root, entrant_id),
+            )
+
+            pointer = cloud_sb7.recover_pre_admission_workspace(root, entrant_id)
+
+            self.assertEqual(pointer["residue"], ".swarm/telemetry.jsonl")
+            self.assertFalse(telemetry.parent.exists())
+            self.assertIsNone(
+                cloud_sb7.pre_admission_workspace_recovery_failure(
+                    root,
+                    entrant_id,
+                    cloud_sb7.read_state(root, entrant_id),
+                )
+            )
+
+    def test_typed_workspace_recovery_rejects_nonzero_or_unrelated_residue(
+        self,
+    ) -> None:
+        for unrelated in (False, True):
+            with self.subTest(unrelated=unrelated), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_dead_empty_reconciliation_fixture(Path(raw))
+                root = Path(str(fixture["root"]))
+                entrant_id = str(fixture["entrant_id"])
+                self.assertEqual(
+                    cloud_sb7.normalize_interrupted_builds(
+                        root, fixture["campaign"]
+                    ),
+                    [],
+                )
+                cloud_sb7.update_campaign(root, status="RUNNING")
+                tree = Path(str(cloud_sb7.read_state(root, entrant_id)["tree"]))
+                baselines = {
+                    value["entrant"]: cloud_sb7.sha256_tree_exact(
+                        Path(str(value["tree"]))
+                    )
+                    for value in cloud_sb7.status_rows(root)
+                }
+                cloud_sb7.update_campaign(
+                    root,
+                    smoke_raw_tree_sha256_before=baselines,
+                    smoke_raw_tree_sha256_after=baselines,
+                )
+                telemetry = tree / ".swarm/telemetry.jsonl"
+                telemetry.parent.mkdir()
+                telemetry.write_text("provider may have started\n" if not unrelated else "")
+                if unrelated:
+                    (telemetry.parent / "other.json").write_text("{}\n")
+
+                with self.assertRaisesRegex(
+                    SystemExit, "not exactly the zero-byte swarm telemetry"
+                ):
+                    cloud_sb7.recover_pre_admission_workspace(root, entrant_id)
+
+                self.assertTrue(telemetry.exists())
+                self.assertNotIn(
+                    "pre_admission_workspace_recoveries",
+                    cloud_sb7.read_state(root, entrant_id),
+                )
+
+    def test_normal_smoke_gate_revalidates_workspace_recovery_receipts(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            rows = self.make_smoke_campaign(root, entrant_count=5)
+            baselines = {
+                str(row["id"]): cloud_sb7.sha256_tree_exact(
+                    root / "entrants" / str(row["id"]) / "tree"
+                )
+                for row in rows
+            }
+            cloud_sb7.update_campaign(
+                root,
+                smoke_status="PASS",
+                smoke_raw_tree_sha256_before=baselines,
+                smoke_raw_tree_sha256_after=baselines,
+            )
+            entrant_id = str(rows[0]["id"])
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                pre_admission_workspace_recoveries={"attempt-1": {}},
+            )
+            recovery_claim = (
+                root
+                / "locks"
+                / f"pre-admission-workspace-recovery-{entrant_id}.claim"
+            )
+            with cloud_sb7.exclusive_claim(
+                recovery_claim, blocking=True
+            ) as claimed:
+                self.assertTrue(claimed)
+                with self.assertRaisesRegex(
+                    SystemExit, "campaign has no sealed smoke proof index"
+                ):
+                    cloud_sb7.require_smoke_proofs(root)
+
+            with self.assertRaisesRegex(
+                SystemExit,
+                "pre-admission workspace recovery is invalid.*index differs from disk",
+            ):
+                cloud_sb7.require_smoke_proofs(root)
 
     def test_reconciled_attempt_remains_valid_after_terminal_successor_attempt(
         self,
@@ -6359,6 +6630,72 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 self.assertTrue(terminal)
                 self.assertEqual(exit_code, expected)
                 self.assertEqual(cloud_sb7.read_monitor_state(root)["status"], status)
+
+    def test_monitor_preserves_first_integrity_failure_and_admitted_episode(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            row = fixture["row"]
+            state = cloud_sb7.read_state(root, entrant_id)
+            lifecycle = Path(str(state["provider_lifecycle"]))
+            lifecycle.write_text(
+                "\n".join(
+                    map(
+                        json.dumps,
+                        self.provider_lifecycle_events(
+                            row,
+                            ["queued", "admitted", "first_item"],
+                            request_id=str(fixture["request_id"]),
+                        ),
+                    )
+                )
+                + "\n"
+            )
+            cloud_sb7.update_campaign(root, status="RUNNING")
+            exact = (
+                "smoke proof gate failed: mixed smoke qualification is invalid: "
+                "post-smoke runtime instrument files or hashes changed"
+            )
+
+            self.assertEqual(cloud_sb7.monitor_attention(root, exact), (True, 1))
+            self.assertEqual(
+                cloud_sb7.monitor_attention(root, "later generic failure"),
+                (True, 1),
+            )
+
+            monitor = cloud_sb7.read_monitor_state(root)
+            recovered = cloud_sb7.read_state(root, entrant_id)
+            ledger = cloud_sb7.load_json(Path(str(fixture["ledger_path"])))
+            self.assertEqual(monitor["failure"], exact)
+            self.assertEqual(monitor["first_failure"]["failure"], exact)
+            self.assertEqual(recovered["status"], "INCOMPLETE")
+            self.assertEqual(recovered["admitted_requests"], 1)
+            self.assertIn(str(fixture["request_id"]), ledger["outstanding"])
+            self.assertIn("retain reserves", recovered["failure"])
+
+    def test_monitor_persists_exact_first_failure_before_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.make_smoke_campaign(root, entrant_count=1)
+            exact = "runtime integrity failure: " + ("x" * 5000)
+
+            with mock.patch.object(
+                cloud_sb7,
+                "manager_monitor_attention",
+                side_effect=RuntimeError("classification crash"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "classification crash"):
+                    cloud_sb7.monitor_attention(root, exact)
+
+            monitor = cloud_sb7.read_monitor_state(root)
+            self.assertEqual(monitor["status"], "ATTENTION")
+            self.assertEqual(monitor["failure"], exact)
+            self.assertEqual(monitor["first_failure"]["failure"], exact)
+            self.assertIsNone(monitor["exit_code"])
+            self.assertIsNone(monitor["finished_at"])
 
     def test_monitor_refuses_manager_relaunch_with_ambiguous_admitted_work(
         self,
@@ -11316,6 +11653,107 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 state["failure"],
             )
 
+    def test_supervisor_preserves_exact_pre_admission_gate_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            cloud_sb7.update_campaign(root, status="RUNNING")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="PLANNED",
+                supervisor_pid=os.getpid(),
+                supervisor_pgid=os.getpgrp(),
+                supervisor_sid=os.getsid(0),
+                supervisor_identity=cloud_sb7.process_identity(os.getpid()),
+                launched_at="fixture-parent-launch",
+            )
+
+            with mock.patch.object(
+                cloud_sb7,
+                "require_smoke_proofs",
+                side_effect=SystemExit(
+                    f"raw benchmark tree changed before build: {entrant_id}"
+                ),
+            ):
+                self.assertEqual(cloud_sb7.supervise_claimed(root, entrant_id), 2)
+
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "PRE_ADMISSION_FAILURE")
+            self.assertEqual(
+                state["failure"],
+                "pre-admission qualification gate failed: raw benchmark tree "
+                f"changed before build: {entrant_id}",
+            )
+            self.assertEqual(
+                state["pre_admission_gate_failure"]["message"],
+                f"raw benchmark tree changed before build: {entrant_id}",
+            )
+            self.assertIsNone(state["supervisor_pid"])
+            self.assertIsNone(state["supervisor_identity"])
+
+    def test_monitor_does_not_overwrite_committed_supervisor_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            cloud_sb7.update_campaign(root, status="RUNNING")
+            self.install_live_monitor_lease(root)
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="WAITING_PROVIDER_LANE",
+                supervisor_pid=999999,
+                supervisor_pgid=999999,
+                supervisor_identity="dead-supervisor",
+                failure=None,
+            )
+            exact = (
+                "pre-admission qualification gate failed: raw benchmark tree "
+                f"changed before build: {entrant_id}"
+            )
+
+            def commit_exact_failure(_state: object) -> bool:
+                cloud_sb7.update_state(
+                    root,
+                    entrant_id,
+                    status="PRE_ADMISSION_FAILURE",
+                    failure=exact,
+                    pre_admission_gate_failure={"message": exact},
+                )
+                return True
+
+            real_process_alive = cloud_sb7.process_alive
+
+            def process_alive(pid: object, identity: object = None) -> bool:
+                if pid == 999999:
+                    return False
+                return real_process_alive(pid, identity)
+
+            with (
+                mock.patch.object(
+                    cloud_sb7,
+                    "process_alive",
+                    side_effect=process_alive,
+                ),
+                mock.patch.object(
+                    cloud_sb7,
+                    "stop_build_runtime_topology",
+                    side_effect=commit_exact_failure,
+                ),
+            ):
+                self.assertFalse(
+                    cloud_sb7.wait_for_builds(
+                        root, [entrant_id], poll_seconds=0
+                    )
+                )
+
+            state = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(state["status"], "PRE_ADMISSION_FAILURE")
+            self.assertEqual(state["failure"], exact)
+            self.assertIsNone(state["supervisor_pid"])
+
     def test_stale_monitor_lease_blocks_live_publication_before_process(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -11985,6 +12423,44 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     cloud_sb7.stop_group(parent.pid, grace_seconds=0.1)
                 if child and cloud_sb7.process_alive(child):
                     cloud_sb7.stop_group(child, grace_seconds=0.1)
+
+    def test_every_gated_python_launch_preserves_frozen_runtime_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            runtime = root / "runtime"
+            runtime.mkdir()
+            module = runtime / "runtime_probe.py"
+            module.write_text("VALUE = 7\n")
+            expected_hashes = {"runtime_probe.py": cloud_sb7.sha256_file(module)}
+            expected_tree = cloud_sb7.sha256_tree_exact(runtime)
+            environment = dict(os.environ)
+            environment.pop("PYTHONDONTWRITEBYTECODE", None)
+
+            proc = cloud_sb7.launch_after_receipt(
+                [
+                    sys.executable,
+                    "-c",
+                    "import runtime_probe; assert runtime_probe.VALUE == 7",
+                ],
+                cwd=runtime,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                gate_dir=root / "gates",
+                on_started=lambda _proc: None,
+                child_role="runtime-import-regression",
+            )
+            output, _ = proc.communicate(timeout=10)
+
+            self.assertEqual(proc.returncode, 0, output)
+            self.assertFalse((runtime / "__pycache__").exists())
+            self.assertEqual(cloud_sb7.sha256_tree_exact(runtime), expected_tree)
+            self.assertIsNone(
+                cloud_sb7.post_smoke_runtime_tree_failure(
+                    runtime, expected_hashes, expected_tree
+                )
+            )
 
     def test_post_exec_launch_capability_accepts_model_ids_and_is_consumed_once(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
