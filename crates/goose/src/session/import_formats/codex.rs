@@ -151,6 +151,8 @@ pub fn convert(content: &str) -> Result<String> {
                 output: vec![item],
                 reasoning: None,
                 usage: None,
+                incomplete_details: None,
+                error: None,
             };
             if let Ok(decoded) =
                 goose_providers::formats::openai_responses::responses_api_to_message(&stub)

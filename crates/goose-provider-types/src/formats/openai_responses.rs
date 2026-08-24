@@ -3,6 +3,7 @@ use crate::conversation::token_usage::{ProviderUsage, Usage};
 use crate::errors::ProviderError;
 use crate::formats::openai::{
     extract_reasoning_effort, is_openai_responses_model, openai_reasoning_effort_for_thinking,
+    OUTPUT_TRUNCATION_MARKER,
 };
 use crate::mcp_utils::extract_text_from_resource;
 use crate::model::ModelConfig;
@@ -10,7 +11,7 @@ use anyhow::{anyhow, Error};
 use async_stream::try_stream;
 use chrono;
 use futures::Stream;
-use rmcp::model::{object, CallToolRequestParams, RawContent, Role, Tool};
+use rmcp::model::{CallToolRequestParams, ErrorCode, ErrorData, RawContent, Role, Tool};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -30,6 +31,10 @@ pub struct ResponsesApiResponse {
     pub reasoning: Option<ResponseReasoningInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<ResponseUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incomplete_details: Option<ResponseIncompleteDetails>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ResponseErrorInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -174,6 +179,19 @@ pub struct ResponseUsage {
     pub input_tokens_details: Option<InputTokensDetails>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResponseIncompleteDetails {
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResponseErrorInfo {
+    #[serde(default)]
+    pub code: Option<String>,
+    pub message: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InputTokensDetails {
     #[serde(default)]
@@ -265,8 +283,16 @@ pub enum ResponsesStreamEvent {
         sequence_number: i32,
         response: ResponseMetadata,
     },
+    #[serde(rename = "response.incomplete")]
+    ResponseIncomplete {
+        sequence_number: i32,
+        response: ResponseMetadata,
+    },
     #[serde(rename = "response.failed")]
-    ResponseFailed { sequence_number: i32, error: Value },
+    ResponseFailed {
+        sequence_number: i32,
+        response: ResponseMetadata,
+    },
     #[serde(rename = "response.function_call_arguments.delta")]
     FunctionCallArgumentsDelta {
         sequence_number: i32,
@@ -300,7 +326,18 @@ pub enum ResponsesStreamEvent {
         refusal: String,
     },
     #[serde(rename = "error")]
-    Error { error: Value },
+    Error {
+        #[serde(default)]
+        sequence_number: Option<i32>,
+        #[serde(default)]
+        code: Option<String>,
+        #[serde(default)]
+        message: Option<String>,
+        #[serde(default)]
+        param: Option<Value>,
+        #[serde(default)]
+        error: Option<ResponseErrorInfo>,
+    },
     #[serde(rename = "keepalive")]
     Keepalive {
         #[serde(default)]
@@ -320,6 +357,7 @@ fn is_known_responses_stream_event_type(event_type: &str) -> bool {
             | "response.content_part.done"
             | "response.output_text.done"
             | "response.completed"
+            | "response.incomplete"
             | "response.failed"
             | "response.function_call_arguments.delta"
             | "response.function_call_arguments.done"
@@ -368,6 +406,10 @@ pub struct ResponseMetadata {
     pub usage: Option<ResponseUsage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ResponseReasoningInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incomplete_details: Option<ResponseIncompleteDetails>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ResponseErrorInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -421,6 +463,122 @@ pub enum ContentPart {
         name: String,
         arguments: String,
     },
+}
+
+fn response_failure_error(
+    context: &str,
+    code: Option<&str>,
+    message: Option<&str>,
+) -> ProviderError {
+    let code = code.filter(|value| !value.is_empty()).unwrap_or("unknown");
+    let message = message
+        .filter(|value| !value.is_empty())
+        .unwrap_or("the provider returned no failure message");
+    let details = format!("{context} (code={code}): {message}");
+
+    match code {
+        "rate_limit_exceeded" | "rate_limit" => ProviderError::RateLimitExceeded {
+            details,
+            retry_delay: None,
+        },
+        "content_filter" | "sensitive" | "bio_policy" | "image_content_policy_violation" => {
+            ProviderError::Refusal {
+                details,
+                category: Some(code.to_string()),
+            }
+        }
+        "context_length_exceeded" | "model_context_window_exceeded" => {
+            ProviderError::ContextLengthExceeded(details)
+        }
+        "network_error" => ProviderError::NetworkError(details),
+        "server_error" | "vector_store_timeout" | "insufficient_system_resource" => {
+            ProviderError::ServerError(details)
+        }
+        _ => ProviderError::RequestFailed(details),
+    }
+}
+
+fn invalid_tool_arguments(message: String) -> ErrorData {
+    ErrorData::new(ErrorCode::INVALID_PARAMS, message, None)
+}
+
+fn json_value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn response_tool_request_from_value(
+    id: String,
+    name: String,
+    input: Value,
+    output_token_limit_reached: bool,
+) -> MessageContent {
+    let tool_call = if output_token_limit_reached {
+        Err(invalid_tool_arguments(format!(
+            "Tool arguments for {name} (id {id}) are not executable because the provider hit its output-token limit before proving this call complete"
+        )))
+    } else {
+        match input {
+            Value::Object(arguments) => {
+                Ok(CallToolRequestParams::new(name).with_arguments(arguments))
+            }
+            other => Err(invalid_tool_arguments(format!(
+                "Tool arguments for {name} (id {id}) must be a JSON object, got {}",
+                json_value_kind(&other)
+            ))),
+        }
+    };
+
+    MessageContent::tool_request(id, tool_call)
+}
+
+fn response_tool_request_from_arguments(
+    id: String,
+    name: String,
+    arguments: &str,
+    output_token_limit_reached: bool,
+) -> MessageContent {
+    if output_token_limit_reached {
+        return response_tool_request_from_value(id, name, Value::Null, true);
+    }
+
+    let parsed = if arguments.trim().is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        match serde_json::from_str(arguments) {
+            Ok(value) => value,
+            Err(error) => {
+                return MessageContent::tool_request(
+                    id.clone(),
+                    Err(invalid_tool_arguments(format!(
+                        "Tool arguments for {name} (id {id}) are not valid JSON: {error}"
+                    ))),
+                );
+            }
+        }
+    };
+
+    response_tool_request_from_value(id, name, parsed, false)
+}
+
+fn response_provider_usage(
+    response: &ResponseMetadata,
+    prior_model: Option<&str>,
+) -> Option<ProviderUsage> {
+    response.usage.as_ref().map(|usage| {
+        let model = if response.model.is_empty() {
+            prior_model.unwrap_or_default()
+        } else {
+            &response.model
+        };
+        ProviderUsage::new(model.to_string(), usage.to_usage())
+    })
 }
 
 fn add_message_items(input_items: &mut Vec<Value>, messages: &[Message]) -> anyhow::Result<()> {
@@ -739,7 +897,50 @@ pub fn create_responses_request(
     Ok(payload)
 }
 
-pub fn responses_api_to_message(response: &ResponsesApiResponse) -> anyhow::Result<Message> {
+pub fn responses_api_to_message(response: &ResponsesApiResponse) -> Result<Message, ProviderError> {
+    let output_token_limit_reached = match response.status.as_str() {
+        "completed" => false,
+        "incomplete" => {
+            let reason = response
+                .incomplete_details
+                .as_ref()
+                .and_then(|details| details.reason.as_deref())
+                .unwrap_or("unknown");
+            match reason {
+                "max_output_tokens" | "max_tokens" => true,
+                "content_filter" => {
+                    return Err(response_failure_error(
+                        "Responses API returned an incomplete response",
+                        Some(reason),
+                        Some("response generation was stopped by the provider"),
+                    ));
+                }
+                _ => {
+                    return Err(response_failure_error(
+                        "Responses API returned an incomplete response",
+                        Some(reason),
+                        Some("response generation did not complete"),
+                    ));
+                }
+            }
+        }
+        "failed" => {
+            let error = response.error.as_ref();
+            return Err(response_failure_error(
+                "Responses API failed",
+                error.and_then(|value| value.code.as_deref()),
+                error.map(|value| value.message.as_str()),
+            ));
+        }
+        status => {
+            return Err(response_failure_error(
+                "Responses API returned a non-terminal response",
+                Some(status),
+                Some("response generation did not reach a successful terminal state"),
+            ));
+        }
+    };
+
     let mut content = Vec::new();
 
     for item in &response.output {
@@ -749,16 +950,17 @@ pub fn responses_api_to_message(response: &ResponsesApiResponse) -> anyhow::Resu
                 summary,
                 encrypted_content,
             } => {
-                content.extend(reasoning_content(
-                    id.as_deref(),
-                    summary,
-                    encrypted_content.as_deref(),
-                )?);
+                content.extend(
+                    reasoning_content(id.as_deref(), summary, encrypted_content.as_deref())
+                        .map_err(|error| ProviderError::ExecutionError(error.to_string()))?,
+                );
             }
             ResponseOutputItem::Message {
+                status,
                 content: msg_content,
                 ..
             } => {
+                let item_incomplete = status.as_deref() == Some("incomplete");
                 for block in msg_content {
                     match block {
                         ResponseContentBlock::OutputText { text, .. } => {
@@ -772,10 +974,11 @@ pub fn responses_api_to_message(response: &ResponsesApiResponse) -> anyhow::Resu
                             }
                         }
                         ResponseContentBlock::ToolCall { id, name, input } => {
-                            content.push(MessageContent::tool_request(
+                            content.push(response_tool_request_from_value(
                                 id.clone(),
-                                Ok(CallToolRequestParams::new(name.clone())
-                                    .with_arguments(object(input.clone()))),
+                                name.clone(),
+                                input.clone(),
+                                output_token_limit_reached || item_incomplete,
                             ));
                         }
                     }
@@ -786,29 +989,32 @@ pub fn responses_api_to_message(response: &ResponsesApiResponse) -> anyhow::Resu
                 call_id,
                 name,
                 arguments,
-                ..
+                status,
             } => {
                 let request_id = call_id.clone().or_else(|| id.clone()).ok_or_else(|| {
-                    anyhow!("Responses function_call output missing call_id and id")
+                    ProviderError::ExecutionError(
+                        "Responses function_call output missing call_id and id".to_string(),
+                    )
                 })?;
-                let parsed_args = if arguments.is_empty() {
-                    json!({})
-                } else {
-                    serde_json::from_str(arguments).unwrap_or_else(|_| json!({}))
-                };
-
-                content.push(MessageContent::tool_request(
+                let item_incomplete = status.as_deref() == Some("incomplete");
+                content.push(response_tool_request_from_arguments(
                     request_id,
-                    Ok(CallToolRequestParams::new(name.clone())
-                        .with_arguments(object(parsed_args))),
+                    name.clone(),
+                    arguments,
+                    output_token_limit_reached || item_incomplete,
                 ));
             }
         }
     }
 
+    if output_token_limit_reached {
+        content.push(MessageContent::text(OUTPUT_TRUNCATION_MARKER));
+    }
+
     let mut message = Message::new(Role::Assistant, chrono::Utc::now().timestamp(), content);
 
     message = message.with_id(response.id.clone());
+    message.metadata.output_token_limit_reached = output_token_limit_reached;
 
     Ok(message)
 }
@@ -823,6 +1029,7 @@ pub fn get_responses_usage(response: &ResponsesApiResponse) -> Usage {
 fn process_streaming_output_items(
     output_items: Vec<ResponseOutputItemInfo>,
     is_text_response: bool,
+    output_token_limit_reached: bool,
 ) -> anyhow::Result<Vec<MessageContent>> {
     let mut content = Vec::new();
 
@@ -839,7 +1046,12 @@ fn process_streaming_output_items(
                     encrypted_content.as_deref(),
                 )?);
             }
-            ResponseOutputItemInfo::Message { content: parts, .. } => {
+            ResponseOutputItemInfo::Message {
+                status,
+                content: parts,
+                ..
+            } => {
+                let item_incomplete = status.as_deref() == Some("incomplete");
                 for part in parts {
                     match part {
                         ContentPart::OutputText { text, .. } => {
@@ -857,16 +1069,11 @@ fn process_streaming_output_items(
                             name,
                             arguments,
                         } => {
-                            let parsed_args = if arguments.is_empty() {
-                                json!({})
-                            } else {
-                                serde_json::from_str(&arguments).unwrap_or_else(|_| json!({}))
-                            };
-
-                            content.push(MessageContent::tool_request(
+                            content.push(response_tool_request_from_arguments(
                                 id,
-                                Ok(CallToolRequestParams::new(name)
-                                    .with_arguments(object(parsed_args))),
+                                name,
+                                &arguments,
+                                output_token_limit_reached || item_incomplete,
                             ));
                         }
                     }
@@ -877,23 +1084,23 @@ fn process_streaming_output_items(
                 call_id,
                 name,
                 arguments,
-                ..
+                status,
             } => {
                 let request_id = call_id.or(id).ok_or_else(|| {
                     anyhow!("Responses function_call output missing call_id and id")
                 })?;
-                let parsed_args = if arguments.is_empty() {
-                    json!({})
-                } else {
-                    serde_json::from_str(&arguments).unwrap_or_else(|_| json!({}))
-                };
-
-                content.push(MessageContent::tool_request(
+                content.push(response_tool_request_from_arguments(
                     request_id,
-                    Ok(CallToolRequestParams::new(name).with_arguments(object(parsed_args))),
+                    name,
+                    &arguments,
+                    output_token_limit_reached || status.as_deref() == Some("incomplete"),
                 ));
             }
         }
+    }
+
+    if output_token_limit_reached {
+        content.push(MessageContent::text(OUTPUT_TRUNCATION_MARKER));
     }
 
     Ok(content)
@@ -914,6 +1121,7 @@ where
         let mut final_usage: Option<ProviderUsage> = None;
         let mut output_items: Vec<ResponseOutputItemInfo> = Vec::new();
         let mut is_text_response = false;
+        let mut output_token_limit_reached = false;
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
@@ -961,19 +1169,15 @@ where
                     if !delta.is_empty() {
                         accumulated_text.push_str(&delta);
 
-                        // Yield incremental text updates for true streaming
-                        let mut msg = Message::new(
+                        let mut message = Message::new(
                             Role::Assistant,
                             chrono::Utc::now().timestamp(),
                             vec![MessageContent::text(&delta)],
                         );
-
-                        // Add ID so desktop client knows these deltas are part of the same message
                         if let Some(id) = &response_id {
-                            msg = msg.with_id(id.clone());
+                            message = message.with_id(id.clone());
                         }
-
-                        yield (Some(msg), None);
+                        yield (Some(message), None);
                     }
                 }
 
@@ -982,16 +1186,21 @@ where
                 }
 
                 ResponsesStreamEvent::OutputTextDone { .. } => {
-                    // Text is already complete from deltas, this is just a summary event
                 }
 
                 ResponsesStreamEvent::ResponseCompleted { response, .. } => {
-                    let model = model_name.as_ref().unwrap_or(&response.model);
+                    let model = if response.model.is_empty() {
+                        model_name.as_deref().unwrap_or_default()
+                    } else {
+                        &response.model
+                    };
                     let usage = response.usage.as_ref().map_or_else(
                         Usage::default,
                         ResponseUsage::to_usage,
                     );
-                    final_usage = Some(ProviderUsage::new(model.clone(), usage));
+                    final_usage = Some(ProviderUsage::new(model.to_string(), usage));
+                    response_id = Some(response.id.clone());
+                    model_name = Some(model.to_string());
 
                     // For complete output, use the response output items
                     if !response.output.is_empty() {
@@ -1001,9 +1210,57 @@ where
                     break 'outer;
                 }
 
+                ResponsesStreamEvent::ResponseIncomplete { response, .. } => {
+                    let reason = response
+                        .incomplete_details
+                        .as_ref()
+                        .and_then(|details| details.reason.as_deref())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let usage = response_provider_usage(&response, model_name.as_deref());
+
+                    match reason.as_str() {
+                        "max_output_tokens" | "max_tokens" => {
+                            let model = if response.model.is_empty() {
+                                model_name.clone().unwrap_or_default()
+                            } else {
+                                response.model.clone()
+                            };
+                            response_id = Some(response.id.clone());
+                            model_name = Some(model.clone());
+                            final_usage = Some(usage.unwrap_or_else(|| {
+                                ProviderUsage::new(model, Usage::default())
+                            }));
+                            if !response.output.is_empty() {
+                                output_items = response.output;
+                            }
+                            output_token_limit_reached = true;
+                            break 'outer;
+                        }
+                        "content_filter" => {
+                            if let Some(usage) = usage {
+                                yield (None, Some(usage));
+                            }
+                            Err::<(), ProviderError>(response_failure_error(
+                                "Responses API returned an incomplete response",
+                                Some(&reason),
+                                Some("response generation was stopped by the provider"),
+                            ))?;
+                        }
+                        _ => {
+                            if let Some(usage) = usage {
+                                yield (None, Some(usage));
+                            }
+                            Err::<(), ProviderError>(response_failure_error(
+                                "Responses API returned an incomplete response",
+                                Some(&reason),
+                                Some("response generation did not complete"),
+                            ))?;
+                        }
+                    }
+                }
+
                 ResponsesStreamEvent::FunctionCallArgumentsDelta { .. } => {
-                    // Function call arguments are being streamed, but we'll get the complete
-                    // arguments in the OutputItemDone event, so we can ignore deltas for now
                 }
 
                 ResponsesStreamEvent::FunctionCallArgumentsDone { .. } => {
@@ -1015,36 +1272,48 @@ where
                     if !delta.is_empty() {
                         accumulated_text.push_str(&delta);
 
-                        let mut msg = Message::new(
+                        let mut message = Message::new(
                             Role::Assistant,
                             chrono::Utc::now().timestamp(),
                             vec![MessageContent::text(&delta)],
                         );
-
                         if let Some(id) = &response_id {
-                            msg = msg.with_id(id.clone());
+                            message = message.with_id(id.clone());
                         }
-
-                        yield (Some(msg), None);
+                        yield (Some(message), None);
                     }
                 }
 
                 ResponsesStreamEvent::RefusalDone { .. } => {
-                    // Refusal text already streamed via deltas
                 }
 
-                ResponsesStreamEvent::ResponseFailed { error, .. } => {
-                    Err::<(), ProviderError>(ProviderError::RequestFailed(format!(
-                        "Responses API failed: {:?}",
-                        error
-                    )))?;
+                ResponsesStreamEvent::ResponseFailed { response, .. } => {
+                    if let Some(usage) = response_provider_usage(&response, model_name.as_deref()) {
+                        yield (None, Some(usage));
+                    }
+                    let error = response.error.as_ref();
+                    Err::<(), ProviderError>(response_failure_error(
+                        "Responses API failed",
+                        error.and_then(|value| value.code.as_deref()),
+                        error.map(|value| value.message.as_str()),
+                    ))?;
                 }
 
-                ResponsesStreamEvent::Error { error } => {
-                    Err::<(), ProviderError>(ProviderError::RequestFailed(format!(
-                        "Responses API error: {:?}",
-                        error
-                    )))?;
+                ResponsesStreamEvent::Error {
+                    code,
+                    message,
+                    error,
+                    ..
+                } => {
+                    let nested = error.as_ref();
+                    Err::<(), ProviderError>(response_failure_error(
+                        "Responses API error",
+                        code.as_deref()
+                            .or_else(|| nested.and_then(|value| value.code.as_deref())),
+                        message
+                            .as_deref()
+                            .or_else(|| nested.map(|value| value.message.as_str())),
+                    ))?;
                 }
 
                 _ => {
@@ -1054,13 +1323,18 @@ where
         }
 
         // Process final output items and yield usage data
-        let content = process_streaming_output_items(output_items, is_text_response)?;
+        let content = process_streaming_output_items(
+            output_items,
+            is_text_response,
+            output_token_limit_reached,
+        )?;
 
         if !content.is_empty() {
             let mut message = Message::new(Role::Assistant, chrono::Utc::now().timestamp(), content);
             if let Some(id) = response_id {
                 message = message.with_id(id);
             }
+            message.metadata.output_token_limit_reached = output_token_limit_reached;
             yield (Some(message), final_usage);
         } else if let Some(usage) = final_usage {
             yield (None, Some(usage));
@@ -1444,6 +1718,8 @@ mod tests {
             }],
             reasoning: None,
             usage: None,
+            incomplete_details: None,
+            error: None,
         };
 
         let message = responses_api_to_message(&response).unwrap();
@@ -1504,8 +1780,11 @@ mod tests {
             .as_array()
             .expect("tools should be an array");
         assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["strict"], json!(false),
-            "Responses API defaults strict to true, but MCP tool schemas are not strict-compatible; must explicitly set strict: false");
+        assert_eq!(
+            tools[0]["strict"],
+            json!(false),
+            "Responses API defaults strict to true, but MCP tool schemas are not strict-compatible; must explicitly set strict: false"
+        );
     }
 
     #[test]
@@ -1986,7 +2265,7 @@ mod tests {
         }"#;
 
         let item: ResponseOutputItemInfo = serde_json::from_str(json).unwrap();
-        let content = process_streaming_output_items(vec![item], false)?;
+        let content = process_streaming_output_items(vec![item], false, false)?;
         assert_eq!(content.len(), 1);
         if let MessageContent::Text(t) = &content[0] {
             assert_eq!(t.text, "I'm unable to assist.");
@@ -2021,13 +2300,13 @@ mod tests {
             }],
         }];
 
-        let content = process_streaming_output_items(output_items.clone(), true)?;
+        let content = process_streaming_output_items(output_items.clone(), true, false)?;
         assert!(
             content.is_empty(),
             "refusal should be suppressed when already streamed"
         );
 
-        let content = process_streaming_output_items(output_items, false)?;
+        let content = process_streaming_output_items(output_items, false, false)?;
         assert_eq!(
             content.len(),
             1,
@@ -2047,7 +2326,7 @@ mod tests {
             arguments: "{}".to_string(),
         }];
 
-        let error = process_streaming_output_items(output_items, false).unwrap_err();
+        let error = process_streaming_output_items(output_items, false, false).unwrap_err();
         assert!(
             error.to_string().contains("missing call_id and id"),
             "unexpected error: {error}"
@@ -2337,25 +2616,31 @@ mod tests {
     async fn streamed_responses_preserve_meta_reasoning_model_and_usage() -> anyhow::Result<()> {
         let lines = vec![
             r#"data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_meta_stream","object":"response","created_at":0,"status":"in_progress","model":"muse-spark-1.2","output":[]}}"#.to_string(),
-            r#"data: {"type":"response.completed","sequence_number":2,"response":{"id":"resp_meta_stream","object":"response","created_at":0,"status":"completed","model":"muse-spark-1.2","output":[{"type":"reasoning","id":"reasoning_stream_1","summary":[],"encrypted_content":"opaque-stream-content"},{"type":"function_call","id":"fc_stream_1","status":"completed","call_id":"call_stream_1","name":"shell","arguments":"{\"command\":\"pwd\"}"}],"usage":{"input_tokens":120,"output_tokens":33,"total_tokens":153,"input_tokens_details":{"cached_tokens":20}}}}"#.to_string(),
+            r#"data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_meta_1","output_index":1,"content_index":0,"delta":"I will inspect the workspace."}"#.to_string(),
+            r#"data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_meta_stream","object":"response","created_at":0,"status":"completed","model":"muse-spark-1.2","output":[{"type":"reasoning","id":"reasoning_stream_1","summary":[],"encrypted_content":"opaque-stream-content"},{"type":"message","id":"msg_meta_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"I will inspect the workspace."}]},{"type":"function_call","id":"fc_stream_1","status":"completed","call_id":"call_stream_1","name":"shell","arguments":"{\"command\":\"pwd\"}"}],"usage":{"input_tokens":120,"output_tokens":33,"total_tokens":153,"input_tokens_details":{"cached_tokens":20}}}}"#.to_string(),
             "data: [DONE]".to_string(),
         ];
         let messages =
             responses_api_to_streaming_message(tokio_stream::iter(lines.into_iter().map(Ok)));
         futures::pin_mut!(messages);
-        let mut final_message = None;
+        let mut delivered = Vec::new();
         let mut final_usage = None;
         while let Some(item) = messages.next().await {
             let (message, usage) = item?;
-            if message.is_some() {
-                final_message = message;
+            if let Some(message) = message {
+                delivered.push(message);
             }
             if usage.is_some() {
                 final_usage = usage;
             }
         }
 
-        let message = final_message.expect("stream should yield terminal message");
+        assert_eq!(delivered.len(), 2);
+        assert_eq!(
+            delivered[0].as_concat_text(),
+            "I will inspect the workspace."
+        );
+        let message = &delivered[1];
         assert!(matches!(
             message.content[0],
             MessageContent::RedactedThinking(_)
@@ -2367,5 +2652,410 @@ mod tests {
         assert_eq!(usage.usage.output_tokens, Some(33));
         assert_eq!(usage.usage.cache_read_input_tokens, Some(20));
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn streamed_text_only_reasoning_keeps_live_delta_and_terminal_reasoning(
+    ) -> anyhow::Result<()> {
+        let lines = vec![
+            r#"data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_meta_text","object":"response","created_at":0,"status":"in_progress","model":"muse-spark-1.2","output":[]}}"#.to_string(),
+            r#"data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_meta_text","output_index":1,"content_index":0,"delta":"The result is ready."}"#.to_string(),
+            r#"data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp_meta_text","object":"response","created_at":0,"status":"completed","model":"muse-spark-1.2","output":[{"type":"reasoning","id":"reasoning_text_1","summary":[],"encrypted_content":"opaque-text-reasoning"},{"type":"message","id":"msg_meta_text","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The result is ready."}]}],"usage":{"input_tokens":40,"output_tokens":8,"total_tokens":48}}}"#.to_string(),
+            "data: [DONE]".to_string(),
+        ];
+        let messages =
+            responses_api_to_streaming_message(tokio_stream::iter(lines.into_iter().map(Ok)));
+        futures::pin_mut!(messages);
+        let mut delivered = Vec::new();
+        while let Some(item) = messages.next().await {
+            let (message, _) = item?;
+            if let Some(message) = message {
+                delivered.push(message);
+            }
+        }
+
+        assert_eq!(delivered.len(), 2);
+        assert_eq!(delivered[0].as_concat_text(), "The result is ready.");
+        assert!(matches!(
+            delivered[1].content.as_slice(),
+            [MessageContent::RedactedThinking(_)]
+        ));
+        Ok(())
+    }
+
+    fn assert_invalid_tool_request(content: &MessageContent, expected_detail: &str) {
+        let MessageContent::ToolRequest(request) = content else {
+            panic!("expected a tool request, got {content:?}");
+        };
+        let error = request
+            .tool_call
+            .as_ref()
+            .expect_err("malformed arguments must not be executable");
+        assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            error.message.contains(expected_detail),
+            "unexpected tool error: {error:?}"
+        );
+    }
+
+    #[test]
+    fn nonstream_max_token_incomplete_preserves_partial_content_usage_and_reasoning() {
+        for reason in ["max_output_tokens", "max_tokens"] {
+            let response: ResponsesApiResponse = serde_json::from_value(json!({
+                "id": "resp_incomplete",
+                "object": "response",
+                "created_at": 0,
+                "status": "incomplete",
+                "model": "muse-spark-1.2",
+                "incomplete_details": { "reason": reason },
+                "output": [
+                    {
+                        "type": "reasoning",
+                        "id": "reasoning_incomplete",
+                        "summary": [],
+                        "encrypted_content": "opaque-incomplete-reasoning"
+                    },
+                    {
+                        "type": "message",
+                        "id": "msg_incomplete",
+                        "status": "incomplete",
+                        "role": "assistant",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "A useful partial answer."
+                        }]
+                    },
+                    {
+                        "type": "function_call",
+                        "id": "fc_incomplete",
+                        "status": "incomplete",
+                        "call_id": "call_incomplete",
+                        "name": "shell",
+                        "arguments": "{\"command\":\"echo unfinished"
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 71,
+                    "output_tokens": 29,
+                    "total_tokens": 100,
+                    "input_tokens_details": { "cached_tokens": 11 }
+                }
+            }))
+            .unwrap();
+
+            let message = responses_api_to_message(&response).unwrap();
+            assert!(message.metadata.output_token_limit_reached);
+            let redacted = message
+                .content
+                .iter()
+                .find_map(|content| match content {
+                    MessageContent::RedactedThinking(redacted) => Some(&redacted.data),
+                    _ => None,
+                })
+                .expect("encrypted reasoning must be retained for replay");
+            let passback = decode_reasoning_passback(redacted)
+                .unwrap()
+                .expect("redacted reasoning must retain Responses replay data");
+            assert_eq!(passback.id, "reasoning_incomplete");
+            assert_eq!(passback.encrypted_content, "opaque-incomplete-reasoning");
+            let text: Vec<_> = message
+                .content
+                .iter()
+                .filter_map(MessageContent::as_text)
+                .collect();
+            assert_eq!(
+                text,
+                vec!["A useful partial answer.", OUTPUT_TRUNCATION_MARKER]
+            );
+            let tool = message
+                .content
+                .iter()
+                .find(|content| matches!(content, MessageContent::ToolRequest(_)))
+                .expect("partial tool call should be retained as a typed error");
+            assert_invalid_tool_request(tool, "output-token limit");
+
+            let usage = get_responses_usage(&response);
+            assert_eq!(usage.input_tokens, Some(71));
+            assert_eq!(usage.output_tokens, Some(29));
+            assert_eq!(usage.total_tokens, Some(100));
+            assert_eq!(usage.cache_read_input_tokens, Some(11));
+        }
+    }
+
+    #[test]
+    fn nonstream_incomplete_content_filter_and_unknown_are_typed_failures() {
+        for (reason, expected_kind) in [
+            ("content_filter", "refusal"),
+            ("provider_specific_stop", "request"),
+        ] {
+            let response: ResponsesApiResponse = serde_json::from_value(json!({
+                "id": "resp_incomplete_failure",
+                "object": "response",
+                "created_at": 0,
+                "status": "incomplete",
+                "model": "muse-spark-1.2",
+                "incomplete_details": { "reason": reason },
+                "output": [{
+                    "type": "message",
+                    "id": "msg_partial",
+                    "status": "incomplete",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "partial"}]
+                }],
+                "usage": {
+                    "input_tokens": 15,
+                    "output_tokens": 3,
+                    "total_tokens": 18
+                }
+            }))
+            .unwrap();
+
+            let error = responses_api_to_message(&response).unwrap_err();
+            match (expected_kind, error) {
+                (
+                    "refusal",
+                    ProviderError::Refusal {
+                        category: Some(category),
+                        ..
+                    },
+                ) => assert_eq!(category, "content_filter"),
+                ("request", ProviderError::RequestFailed(details)) => {
+                    assert!(details.contains("provider_specific_stop"));
+                }
+                (_, other) => panic!("unexpected incomplete-response error: {other:?}"),
+            }
+            assert_eq!(get_responses_usage(&response).total_tokens, Some(18));
+        }
+    }
+
+    #[test]
+    fn nonstream_failed_uses_official_nested_response_error() {
+        let response: ResponsesApiResponse = serde_json::from_value(json!({
+            "id": "resp_failed",
+            "object": "response",
+            "created_at": 0,
+            "status": "failed",
+            "model": "muse-spark-1.2",
+            "output": [],
+            "error": {
+                "code": "server_error",
+                "message": "provider worker failed"
+            },
+            "usage": {
+                "input_tokens": 12,
+                "output_tokens": 0,
+                "total_tokens": 12
+            }
+        }))
+        .unwrap();
+
+        let error = responses_api_to_message(&response).unwrap_err();
+        let ProviderError::ServerError(details) = error else {
+            panic!("expected a server error, got {error:?}");
+        };
+        assert!(details.contains("provider worker failed"));
+        assert_eq!(get_responses_usage(&response).total_tokens, Some(12));
+    }
+
+    #[test]
+    fn malformed_and_non_object_tools_are_never_executable_nonstream_or_stream() {
+        let response: ResponsesApiResponse = serde_json::from_value(json!({
+            "id": "resp_bad_tools",
+            "object": "response",
+            "created_at": 0,
+            "status": "completed",
+            "model": "muse-spark-1.2",
+            "output": [
+                {
+                    "type": "function_call",
+                    "id": "fc_malformed",
+                    "status": "completed",
+                    "call_id": "call_malformed",
+                    "name": "shell",
+                    "arguments": "{not json"
+                },
+                {
+                    "type": "function_call",
+                    "id": "fc_array",
+                    "status": "completed",
+                    "call_id": "call_array",
+                    "name": "shell",
+                    "arguments": "[1,2,3]"
+                },
+                {
+                    "type": "message",
+                    "id": "msg_bad_tool",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_call",
+                        "id": "call_nested",
+                        "name": "shell",
+                        "input": ["not", "an", "object"]
+                    }]
+                }
+            ]
+        }))
+        .unwrap();
+        let message = responses_api_to_message(&response).unwrap();
+        assert_eq!(message.content.len(), 3);
+        assert_invalid_tool_request(&message.content[0], "not valid JSON");
+        assert_invalid_tool_request(&message.content[1], "got array");
+        assert_invalid_tool_request(&message.content[2], "got array");
+
+        let streamed = process_streaming_output_items(
+            vec![
+                ResponseOutputItemInfo::FunctionCall {
+                    id: Some("fc_stream_malformed".to_string()),
+                    status: Some("completed".to_string()),
+                    call_id: Some("call_stream_malformed".to_string()),
+                    name: "shell".to_string(),
+                    arguments: "{not json".to_string(),
+                },
+                ResponseOutputItemInfo::FunctionCall {
+                    id: Some("fc_stream_null".to_string()),
+                    status: Some("completed".to_string()),
+                    call_id: Some("call_stream_null".to_string()),
+                    name: "shell".to_string(),
+                    arguments: "null".to_string(),
+                },
+                ResponseOutputItemInfo::Message {
+                    id: Some("msg_stream_bad_tool".to_string()),
+                    status: Some("completed".to_string()),
+                    role: "assistant".to_string(),
+                    content: vec![ContentPart::ToolCall {
+                        id: "call_stream_nested".to_string(),
+                        name: "shell".to_string(),
+                        arguments: "[]".to_string(),
+                    }],
+                },
+            ],
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(streamed.len(), 3);
+        assert_invalid_tool_request(&streamed[0], "not valid JSON");
+        assert_invalid_tool_request(&streamed[1], "got null");
+        assert_invalid_tool_request(&streamed[2], "got array");
+    }
+
+    #[tokio::test]
+    async fn streamed_max_token_incomplete_keeps_delta_terminal_evidence_and_usage() {
+        for reason in ["max_output_tokens", "max_tokens"] {
+            let lines = vec![
+                r#"data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_stream_incomplete","object":"response","created_at":0,"status":"in_progress","model":"muse-spark-1.2","output":[]}}"#.to_string(),
+                r#"data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_partial","output_index":1,"content_index":0,"delta":"useful partial"}"#.to_string(),
+                format!(
+                    r#"data: {{"type":"response.incomplete","sequence_number":3,"response":{{"id":"resp_stream_incomplete","object":"response","created_at":0,"status":"incomplete","model":"muse-spark-1.2-terminal","incomplete_details":{{"reason":"{reason}"}},"output":[{{"type":"reasoning","id":"reasoning_partial","summary":[],"encrypted_content":"opaque-partial-reasoning"}},{{"type":"message","id":"msg_partial","status":"incomplete","role":"assistant","content":[{{"type":"output_text","text":"useful partial"}}]}},{{"type":"function_call","id":"fc_partial","status":"incomplete","call_id":"call_partial","name":"shell","arguments":"{{\"command\":\"unfinished"}}],"usage":{{"input_tokens":91,"output_tokens":37,"total_tokens":128,"input_tokens_details":{{"cached_tokens":13}}}}}}}}"#
+                ),
+                "data: [DONE]".to_string(),
+            ];
+            let stream =
+                responses_api_to_streaming_message(tokio_stream::iter(lines.into_iter().map(Ok)));
+            futures::pin_mut!(stream);
+
+            let (delta, delta_usage) = stream.next().await.unwrap().unwrap();
+            assert_eq!(delta.unwrap().as_concat_text(), "useful partial");
+            assert!(delta_usage.is_none());
+
+            let (terminal, usage) = stream.next().await.unwrap().unwrap();
+            let terminal = terminal.expect("terminal evidence message should be retained");
+            assert!(terminal.metadata.output_token_limit_reached);
+            assert!(matches!(
+                terminal.content[0],
+                MessageContent::RedactedThinking(_)
+            ));
+            assert_invalid_tool_request(&terminal.content[1], "output-token limit");
+            assert_eq!(
+                terminal.content[2].as_text(),
+                Some(OUTPUT_TRUNCATION_MARKER)
+            );
+            let usage = usage.expect("incomplete response usage must be emitted");
+            assert_eq!(usage.model, "muse-spark-1.2-terminal");
+            assert_eq!(usage.usage.input_tokens, Some(91));
+            assert_eq!(usage.usage.output_tokens, Some(37));
+            assert_eq!(usage.usage.total_tokens, Some(128));
+            assert_eq!(usage.usage.cache_read_input_tokens, Some(13));
+            assert!(stream.next().await.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn streamed_content_filter_keeps_live_partial_text_usage_and_typed_failure() {
+        let lines = vec![
+            r#"data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_filter","object":"response","created_at":0,"status":"in_progress","model":"muse-spark-1.2","output":[]}}"#.to_string(),
+            r#"data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_filter","output_index":0,"content_index":0,"delta":"retained partial"}"#.to_string(),
+            r#"data: {"type":"response.incomplete","sequence_number":3,"response":{"id":"resp_filter","object":"response","created_at":0,"status":"incomplete","model":"muse-spark-1.2","incomplete_details":{"reason":"content_filter"},"output":[],"usage":{"input_tokens":22,"output_tokens":4,"total_tokens":26}}}"#.to_string(),
+        ];
+        let stream =
+            responses_api_to_streaming_message(tokio_stream::iter(lines.into_iter().map(Ok)));
+        futures::pin_mut!(stream);
+
+        let (partial, usage) = stream.next().await.unwrap().unwrap();
+        assert_eq!(partial.unwrap().as_concat_text(), "retained partial");
+        assert!(usage.is_none());
+
+        let (message, usage) = stream.next().await.unwrap().unwrap();
+        assert!(message.is_none());
+        assert_eq!(usage.unwrap().usage.total_tokens, Some(26));
+
+        let error = stream.next().await.unwrap().unwrap_err();
+        let error = error
+            .downcast_ref::<ProviderError>()
+            .expect("stream failure should retain ProviderError type");
+        assert!(matches!(
+            error,
+            ProviderError::Refusal {
+                category: Some(category),
+                ..
+            } if category == "content_filter"
+        ));
+    }
+
+    #[tokio::test]
+    async fn streamed_unknown_incomplete_and_official_failures_are_typed() {
+        let incomplete = vec![
+            r#"data: {"type":"response.incomplete","sequence_number":1,"response":{"id":"resp_unknown","object":"response","created_at":0,"status":"incomplete","model":"muse-spark-1.2","incomplete_details":{"reason":"provider_specific_stop"},"output":[],"usage":{"input_tokens":8,"output_tokens":1,"total_tokens":9}}}"#.to_string(),
+        ];
+        let stream =
+            responses_api_to_streaming_message(tokio_stream::iter(incomplete.into_iter().map(Ok)));
+        futures::pin_mut!(stream);
+        let (_, usage) = stream.next().await.unwrap().unwrap();
+        assert_eq!(usage.unwrap().usage.total_tokens, Some(9));
+        let error = stream.next().await.unwrap().unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<ProviderError>(),
+            Some(ProviderError::RequestFailed(details))
+                if details.contains("provider_specific_stop")
+        ));
+
+        let failed = vec![
+            r#"data: {"type":"response.failed","sequence_number":1,"response":{"id":"resp_failed","object":"response","created_at":0,"status":"failed","model":"muse-spark-1.2","output":[],"error":{"code":"server_error","message":"worker unavailable"},"usage":{"input_tokens":14,"output_tokens":0,"total_tokens":14}}}"#.to_string(),
+        ];
+        let stream =
+            responses_api_to_streaming_message(tokio_stream::iter(failed.into_iter().map(Ok)));
+        futures::pin_mut!(stream);
+        let (_, usage) = stream.next().await.unwrap().unwrap();
+        assert_eq!(usage.unwrap().usage.total_tokens, Some(14));
+        let error = stream.next().await.unwrap().unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<ProviderError>(),
+            Some(ProviderError::ServerError(details)) if details.contains("worker unavailable")
+        ));
+
+        let top_level_error = vec![
+            r#"data: {"type":"error","sequence_number":1,"code":"rate_limit_exceeded","message":"slow down","param":null}"#.to_string(),
+        ];
+        let stream = responses_api_to_streaming_message(tokio_stream::iter(
+            top_level_error.into_iter().map(Ok),
+        ));
+        futures::pin_mut!(stream);
+        let error = stream.next().await.unwrap().unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<ProviderError>(),
+            Some(ProviderError::RateLimitExceeded { details, .. })
+                if details.contains("slow down")
+        ));
     }
 }
