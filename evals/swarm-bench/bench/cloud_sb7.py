@@ -4392,6 +4392,108 @@ def transport_unknown_episode_limit(
         return default_limit
 
 
+def sealed_unstarted_transport_successor(
+    root: Path,
+    campaign: Mapping[str, Any],
+    entrant_id: str,
+    state: Mapping[str, Any],
+    lifecycle: Mapping[str, Any],
+) -> bool:
+    entry = transport_unknown_entry(campaign, entrant_id)
+    successor = entry.get("successor") if entry is not None else None
+    isolation = entry.get("isolation") if entry is not None else None
+    if not isinstance(successor, dict) or not isinstance(isolation, dict):
+        return False
+    receipt_path = root / str(successor.get("path", ""))
+    isolation_path = root / str(isolation.get("path", ""))
+    try:
+        if (
+            receipt_path.is_symlink()
+            or not receipt_path.is_file()
+            or sha256_file(receipt_path) != successor.get("sha256")
+            or isolation_path.is_symlink()
+            or not isolation_path.is_file()
+            or sha256_file(isolation_path) != isolation.get("sha256")
+        ):
+            return False
+        receipt = load_json(receipt_path)
+        isolation_receipt = load_json(isolation_path)
+        workspace = receipt_path.parent
+        source_state_path = workspace / "source-state.json"
+        if (
+            source_state_path.is_symlink()
+            or not source_state_path.is_file()
+            or sha256_file(source_state_path) != receipt.get("source_state_sha256")
+        ):
+            return False
+        source_state = load_json(source_state_path)
+        carried_ids = receipt.get("carried_request_ids")
+        lifecycle_path = Path(str(state.get("provider_lifecycle", "")))
+        no_successor_activity = all(
+            directory.is_dir()
+            and not directory.is_symlink()
+            and not any(directory.iterdir())
+            for directory in (
+                workspace / "tree",
+                workspace / "profile",
+                workspace / "logs",
+            )
+        ) and not (workspace / "vendor-trace-build.jsonl").exists()
+        return bool(
+            receipt.get("kind") == "provider_transport_unknown_successor"
+            and receipt.get("adjudication") == "carry_as_budget_exposure"
+            and receipt.get("transition_id") == successor.get("transition_id")
+            and receipt.get("entrant") == entrant_id
+            and state.get("transport_unknown_successor") == successor
+            and isinstance(carried_ids, list)
+            and carried_ids
+            and set(carried_ids)
+            == transport_unknown_carried_request_ids(root, campaign, entrant_id)
+            and state.get("transport_unknown_carried_request_ids") == carried_ids
+            and lifecycle.get("ambiguous_request_ids") == carried_ids
+            and lifecycle.get("malformed_lines") == 0
+            and not lifecycle.get("transition_errors")
+            and sha256_file(lifecycle_path)
+            == isolation_receipt.get("lifecycle_sha256")
+            and state.get("provider_episode_attempts")
+            == receipt.get("provider_episode_attempts")
+            and state.get("provider_launch_attempts")
+            == source_state.get("provider_launch_attempts")
+            and state.get("provider_attempt") == source_state.get("provider_attempt")
+            and state.get("provider_lifecycle")
+            == source_state.get("provider_lifecycle")
+            and state.get("tree") == receipt.get("tree")
+            and state.get("profile") == receipt.get("profile")
+            and state.get("build_log") == receipt.get("build_log")
+            and state.get("vendor_trace") == receipt.get("vendor_trace")
+            and not any(build_runtime_ownership(state))
+            and all(
+                state.get(field) is None or state.get(field) == ""
+                for field in (
+                    "started_at",
+                    "finished_at",
+                    "command",
+                    "prompt_sha256",
+                    "raw_tree_sha256",
+                )
+            )
+            and no_successor_activity
+            and optional_artifact_tree_sha256(root / "scores" / entrant_id)
+            == receipt.get("scores_sha256")
+            and optional_artifact_tree_sha256(root / "publish" / entrant_id)
+            == receipt.get("publish_sha256")
+        )
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ):
+        return False
+
+
 def transport_unknown_budget_descendant_failure(
     source: Mapping[str, Any], current: Mapping[str, Any]
 ) -> str | None:
@@ -22127,10 +22229,12 @@ def manager_restart_mismatch(root: Path) -> str | None:
         )
         pending_transport_successor = bool(
             status == "PLANNED"
-            and transport_unknown_carried_request_ids(root, campaign, entrant_id)
+            and sealed_unstarted_transport_successor(
+                root, campaign, entrant_id, state, lifecycle
+            )
         )
         reasons = []
-        if lifecycle.get("admitted"):
+        if lifecycle.get("admitted") and not pending_transport_successor:
             reasons.append(f"{lifecycle['admitted']} provider request(s) admitted")
         if (
             lifecycle_failure(lifecycle)
@@ -22514,6 +22618,62 @@ def resume_campaign(root: Path) -> int:
             return 0
 
 
+def recover_false_monitor_attention_for_transport_successor(
+    root: Path,
+    campaign: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> Dict[str, Any]:
+    entrant_id = str(state.get("entrant", ""))
+    failure = str(state.get("failure") or "")
+    if state.get("status") != "INCOMPLETE" or not failure.startswith(
+        f"monitor lease lost: {entrant_id} is not pre-admission restart-safe:"
+    ):
+        return dict(state)
+    entry = transport_unknown_entry(campaign, entrant_id)
+    if entry is None or not isinstance(entry.get("successor"), dict):
+        return dict(state)
+    try:
+        row = manifest_row(root, entrant_id)
+        lifecycle_path = Path(str(state.get("provider_lifecycle", "")))
+        lifecycle = lifecycle_summary(
+            lifecycle_path,
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        exact_ancestry = bool(
+            sealed_unstarted_transport_successor(
+                root, campaign, entrant_id, state, lifecycle
+            )
+            and f"{lifecycle.get('admitted')} provider request(s) admitted" in failure
+        )
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ):
+        return dict(state)
+    if not exact_ancestry:
+        return dict(state)
+    return update_state(
+        root,
+        entrant_id,
+        status="PLANNED",
+        failure=None,
+        admitted_requests=0,
+        provider_terminal_requests=0,
+        lifecycle_events=0,
+        lifecycle_malformed_lines=0,
+        lifecycle_transition_errors=[],
+        lifecycle_ambiguous_request_ids=[],
+        budget_outstanding_request_ids=[],
+        monitor_restart_recovered_from="INCOMPLETE",
+        monitor_restart_recovered_at=utc_now(),
+    )
+
+
 def quiesce_monitor_for_resume(root: Path) -> Dict[str, Any]:
     for _ in range(2):
         state = read_monitor_state(root)
@@ -22609,7 +22769,10 @@ def resume_campaign_with_runtime_claims(root: Path) -> int:
             raise SystemExit(failure)
         manifest = load_json(Path(str(campaign["entrant_manifest"])))
         max_episodes = int(manifest["spend_policy"]["max_full_episodes_per_model"])
-        for state in status_rows(root):
+        for raw_state in status_rows(root):
+            state = recover_false_monitor_attention_for_transport_successor(
+                root, campaign, raw_state
+            )
             if state["status"] == "PRE_ADMISSION_FAILURE":
                 row = manifest_row(root, str(state["entrant"]))
                 topology_clean = stop_build_runtime_topology(state)
@@ -26628,6 +26791,36 @@ def monitor_attention(root: Path, failure: str) -> tuple[bool, int]:
     return True, 1
 
 
+def monitor_live_manager_tick(
+    root: Path,
+    manager: Mapping[str, Any],
+) -> tuple[bool, int]:
+    try:
+        progress = monitor_progress_tick(root)
+    except (OSError, ValueError, TypeError, SystemExit) as error:
+        return monitor_attention(
+            root, f"monitor progress supervision failed closed: {error}"
+        )
+    ledger = ensure_monitor_progress_ledger(root, create=False)
+    if ledger is None:
+        return monitor_attention(
+            root, "monitor progress supervision failed closed: ledger missing"
+        )
+    monitor_state(
+        root,
+        status="RUNNING",
+        manager_pid=manager.get("pid"),
+        manager_identity=manager.get("identity"),
+        manager_alive=True,
+        progress_ledger=str(root / MONITOR_PROGRESS_ROOT),
+        progress_ledger_id=ledger["ledger_id"],
+        progress_ledger_sha256=monitor_progress_ledger_digest(root),
+        entrant_progress=progress,
+        failure=None,
+    )
+    return False, 0
+
+
 def monitor_tick(root: Path) -> tuple[bool, int]:
     campaign = load_json(campaign_file(root))
     manager = load_json(root / "manager.json")
@@ -26672,30 +26865,10 @@ def monitor_tick(root: Path) -> tuple[bool, int]:
             root, f"generation-two budget history failed closed: {error}"
         )
     if process_alive(manager.get("pid"), manager.get("identity")):
-        try:
-            progress = monitor_progress_tick(root)
-        except (OSError, ValueError, TypeError, SystemExit) as error:
-            return monitor_attention(
-                root, f"monitor progress supervision failed closed: {error}"
-            )
-        ledger = ensure_monitor_progress_ledger(root, create=False)
-        if ledger is None:
-            return monitor_attention(
-                root, "monitor progress supervision failed closed: ledger missing"
-            )
-        monitor_state(
-            root,
-            status="RUNNING",
-            manager_pid=manager.get("pid"),
-            manager_identity=manager.get("identity"),
-            manager_alive=True,
-            progress_ledger=str(root / MONITOR_PROGRESS_ROOT),
-            progress_ledger_id=ledger["ledger_id"],
-            progress_ledger_sha256=monitor_progress_ledger_digest(root),
-            entrant_progress=progress,
-            failure=None,
-        )
-        return False, 0
+        return monitor_live_manager_tick(root, manager)
+    manager = load_json(root / "manager.json")
+    if process_alive(manager.get("pid"), manager.get("identity")):
+        return monitor_live_manager_tick(root, manager)
     mismatch = manager_restart_mismatch(root)
     if mismatch:
         return monitor_attention(root, mismatch)
