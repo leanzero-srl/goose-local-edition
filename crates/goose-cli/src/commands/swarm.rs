@@ -5844,808 +5844,720 @@ mod tests {
         }
     }
 
-    #[test]
-    fn research_saturation_accepts_semantic_queue_larger_than_legacy_question_cap() {
-        let requirements = (0..12)
-            .map(|index| RequirementRecord {
-                id: format!("REQ-{index}"),
-                section: "task".to_string(),
-                quote: format!("requirement {index}"),
-            })
-            .collect::<Vec<_>>();
-        let raw = serde_json::json!({
-            "status": "continue",
-            "coverage": requirements.iter().map(|requirement| serde_json::json!({
-                "requirement_id": requirement.id,
-                "state": "unresolved",
-                "evidence_ids": [],
-                "rationale": "A current external fact is required."
-            })).collect::<Vec<_>>(),
-            "next_questions": requirements.iter().enumerate().map(|(index, requirement)| serde_json::json!({
-                "id": format!("fact-{index}"),
-                "question": format!("What exact current fact settles requirement {index}?"),
-                "kind": "web",
-                "requirement_ids": [requirement.id.clone()],
-                "evidence_needed": format!("current fact for requirement {index}")
-            })).collect::<Vec<_>>(),
-            "summary": "Twelve independent evidence slots remain."
-        })
-        .to_string();
-        let unavailable = ResearchSeedLookupRoutes {
-            attached_extensions: Vec::new(),
-            spec_document_urls: Vec::new(),
-            codebase_shell: false,
+    fn generic_research_gap(question: &str, evidence_needed: &str) -> ResearchAuthorityGap {
+        ResearchAuthorityGap {
+            prior_semantic_gap_id: String::new(),
+            question: question.to_string(),
+            kind: "web".to_string(),
+            evidence_needed: evidence_needed.to_string(),
+            applicable_source_ids: vec!["extension:web-search".to_string()],
+            attempted_source_ids: Vec::new(),
+            exhausted_source_ids: Vec::new(),
+            unavailable: false,
+        }
+    }
+
+    fn generic_research_target(requirement_id: &str, section: &str) -> ResearchClosureCandidate {
+        ResearchClosureCandidate {
+            requirement_id: requirement_id.to_string(),
+            authored_section: section.to_string(),
+            provisional_state: ResearchCoverageState::Unresolved,
+            provisional_rationale: "The target still needs an authority decision.".to_string(),
+            provisional_evidence_ids: Vec::new(),
+            mapper_gaps: Vec::new(),
+            prior_gaps: Vec::new(),
+            bound_evidence: Vec::new(),
+            prior_jury_assessments: Vec::new(),
+            prior_jury_physical_hosts: Vec::new(),
+            citation_rejection: String::new(),
+        }
+    }
+
+    fn generic_research_requirement(requirement_id: &str, section: &str) -> RequirementRecord {
+        RequirementRecord {
+            id: requirement_id.to_string(),
+            section: section.to_string(),
+            quote: format!("The authored clause for {requirement_id}."),
+        }
+    }
+
+    fn generic_web_authority_source() -> ResearchAuthoritySource {
+        ResearchAuthoritySource {
+            id: "extension:web-search".to_string(),
+            kinds: vec!["web".to_string()],
+            universally_applicable: true,
+            bound_requirement_ids: Vec::new(),
+        }
+    }
+
+    fn generic_saturation_ledger(
+        requirement_ids: &[&str],
+        state: ResearchCoverageState,
+    ) -> ResearchSaturationDraft {
+        ResearchSaturationDraft {
+            status: ResearchSaturationStatus::Saturated,
+            coverage: requirement_ids
+                .iter()
+                .map(|requirement_id| ResearchCoverageAssessment {
+                    requirement_id: (*requirement_id).to_string(),
+                    state,
+                    evidence_ids: Vec::new(),
+                    rationale: "The provisional row claimed closure.".to_string(),
+                })
+                .collect(),
+            next_questions: Vec::new(),
+            summary: "Provisional closure.".to_string(),
+        }
+    }
+
+    fn generic_found_evidence(evidence_id: &str, requirement_id: &str) -> ResearchEvidenceRecord {
+        ResearchEvidenceRecord {
+            id: evidence_id.to_string(),
+            semantic_gap_id: "gap-earlier".to_string(),
+            question: "Which unrelated field exists?".to_string(),
+            requirement_ids: vec![requirement_id.to_string()],
+            evidence_needed: "An unrelated response field.".to_string(),
+            applicable_source_ids: vec!["extension:web-search".to_string()],
+            findings: "The earlier source proves only that alpha_id exists.".to_string(),
+            grounded: true,
+            disposition: Some(ResearchEvidenceDisposition::Found),
+            verified_quotes: vec![ResearchEvidenceQuote {
+                source_id: "extension:web-search".to_string(),
+                locator: "https://docs.example.test/fields".to_string(),
+                quote: "alpha_id exists".to_string(),
+            }],
+            negative_source_attestations: Vec::new(),
+            source_receipt_evidence: vec![ResearchSourceReceiptEvidence {
+                source_id: "extension:web-search".to_string(),
+                tool_name: "web-search__search".to_string(),
+                resolved_locator: "https://docs.example.test/fields".to_string(),
+                request_digest: "request-digest".to_string(),
+                result_digest: "result-digest".to_string(),
+                result_chars: 64,
+                physical_host_id: "host-alpha".to_string(),
+            }],
+            source_physical_host_ids: vec!["host-alpha".to_string()],
+            lookups: vec!["web-search__search".to_string()],
+        }
+    }
+
+    fn compile_generic_target_decision(
+        candidate: ResearchClosureCandidate,
+        requirements: &[RequirementRecord],
+        sources: &[ResearchAuthoritySource],
+        assessment: ResearchClosureAssessment,
+    ) -> Result<CompiledResearchClosurePartition> {
+        let partition = ResearchClosurePartition {
+            partition_id: "target-partition".to_string(),
+            candidates: vec![candidate],
         };
-        let error =
-            compile_research_saturation(&raw, &requirements, &[], &HashSet::new(), &unavailable)
-                .unwrap_err()
-                .to_string();
-        assert!(
-            error.contains("without a runnable downstream route"),
-            "{error}"
-        );
-        let routes = ResearchSeedLookupRoutes {
-            attached_extensions: vec!["web-search".to_string()],
-            spec_document_urls: Vec::new(),
-            codebase_shell: false,
-        };
-        let compiled =
-            compile_research_saturation(&raw, &requirements, &[], &HashSet::new(), &routes)
-                .unwrap();
-        assert_eq!(compiled.status, ResearchSaturationStatus::Continue);
-        assert_eq!(compiled.next_questions.len(), 12);
+        let raw = serde_json::to_string(&ResearchClosureLedgerDraft {
+            partition_id: partition.partition_id.clone(),
+            complete: true,
+            assessments: vec![assessment],
+        })?;
+        compile_research_closure_partition(
+            &raw,
+            &partition,
+            requirements,
+            sources,
+            "jury-model".to_string(),
+            "jury-host".to_string(),
+            "authority-input-digest".to_string(),
+        )
     }
 
     #[test]
-    fn research_saturation_partitions_exact_authority_and_only_relevant_evidence() {
-        let requirements = (0..12)
-            .map(|index| RequirementRecord {
-                id: format!("REQ-{index}"),
-                section: format!("section-{}", index / 3),
-                quote: format!("requirement {index}"),
+    fn context7_receipts_require_a_document_query_not_resolution() {
+        let args = serde_json::json!({"library": "alpha"});
+        for name in [
+            "context7__resolve-library-id",
+            "mcp__context7__resolve_library_id",
+        ] {
+            assert!(
+                research_source_receipts_for_tool_call(name, &args).is_empty(),
+                "{name} resolves an identifier but reads no documentation"
+            );
+        }
+        for name in ["context7__get-library-docs", "mcp__context7__query_docs"] {
+            assert_eq!(
+                research_source_receipts_for_tool_call(name, &args),
+                vec!["extension:context7".to_string()],
+                "{name} is a documentation-reading operation"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_word_laundering_cannot_mint_source_receipts() {
+        for command in [
+            "echo 'rg alpha src'",
+            "printf '%s' 'cat src/main.rs'",
+            "echo 'curl https://docs.example.test/reference'",
+            "curl https://docs.example.test/reference",
+        ] {
+            assert!(
+                research_source_receipts_for_tool_call(
+                    "developer__shell",
+                    &serde_json::json!({"command": command}),
+                )
+                .is_empty(),
+                "shell text `{command}` must not mint codebase or document provenance"
+            );
+        }
+        assert_eq!(
+            research_source_receipts_for_tool_call(
+                "developer__shell",
+                &serde_json::json!({"command": "rg alpha src"}),
+            ),
+            vec!["codebase:shell".to_string()],
+            "an actual read/search executable remains a valid codebase receipt"
+        );
+    }
+
+    #[test]
+    fn attempted_source_rejects_exact_replay_but_allows_material_refinement() {
+        let source = ResearchAuthoritySource {
+            id: "extension:web-search".to_string(),
+            kinds: vec!["web".to_string()],
+            universally_applicable: true,
+            bound_requirement_ids: Vec::new(),
+        };
+        let mut prior = generic_research_gap(
+            "Which alpha endpoint is active?",
+            "The active alpha endpoint and method.",
+        );
+        prior.prior_semantic_gap_id = "gap-alpha".to_string();
+        prior.applicable_source_ids.clear();
+        prior.attempted_source_ids = vec![source.id.clone()];
+        let mut candidate = generic_research_target("target-alpha", "client");
+        candidate.prior_gaps = vec![prior.clone()];
+
+        let mut replay = prior.clone();
+        replay.applicable_source_ids = vec![source.id.clone()];
+        assert!(
+            !research_closure_gap_route_is_valid(&candidate, &replay, &[source.clone()]),
+            "an unchanged query cannot consume the same attempted source again"
+        );
+
+        let mut refined = replay.clone();
+        refined.question =
+            "Which alpha endpoint accepts signed batch requests in the current release?"
+                .to_string();
+        refined.evidence_needed =
+            "The current signed-batch alpha endpoint, method, and release scope.".to_string();
+        assert!(
+            research_closure_gap_route_is_valid(&candidate, &refined, &[source]),
+            "a materially refined interrogative may revisit a non-exhausted source"
+        );
+
+        let as_question = |gap: &ResearchAuthorityGap| ResearchQuestion {
+            id: "question-alpha".to_string(),
+            semantic_gap_id: gap.prior_semantic_gap_id.clone(),
+            question: gap.question.clone(),
+            kind: gap.kind.clone(),
+            requirement_ids: vec![candidate.requirement_id.clone()],
+            evidence_needed: gap.evidence_needed.clone(),
+            applicable_source_ids: gap.applicable_source_ids.clone(),
+        };
+        assert_ne!(
+            research_question_slot(&as_question(&replay)),
+            research_question_slot(&as_question(&refined)),
+            "material refinement must produce a new dispatch slot without changing semantic identity"
+        );
+    }
+
+    #[test]
+    fn whole_target_closure_reopens_false_spec_sufficient_vendor_fact() {
+        let requirement_id = "target-vendor-contract";
+        let requirement = generic_research_requirement(requirement_id, "client");
+        let mut candidate = generic_research_target(requirement_id, "client");
+        candidate.provisional_state = ResearchCoverageState::SpecSufficient;
+        candidate.provisional_rationale =
+            "The provisional pass incorrectly treated a current vendor fact as authored."
+                .to_string();
+        let gap = generic_research_gap(
+            "Which vendor operation is current for batch requests?",
+            "The current vendor operation, method, and release scope.",
+        );
+        let decision = ResearchClosureAssessment {
+            requirement_id: requirement_id.to_string(),
+            complete: false,
+            authority_requirement_ids: Vec::new(),
+            evidence_ids: Vec::new(),
+            gaps: vec![gap],
+            rationale: "The authored clause does not settle the current vendor operation."
+                .to_string(),
+        };
+        let compiled = compile_generic_target_decision(
+            candidate,
+            &[requirement],
+            &[generic_web_authority_source()],
+            decision,
+        )
+        .unwrap();
+        let mut ledger =
+            generic_saturation_ledger(&[requirement_id], ResearchCoverageState::SpecSufficient);
+        let mut registry = HashMap::new();
+        let mut history = HashMap::new();
+        apply_research_saturation_target_decisions(
+            &mut ledger,
+            &compiled.assessments,
+            &mut registry,
+            &mut history,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(ledger.status, ResearchSaturationStatus::Continue);
+        assert_eq!(ledger.coverage[0].state, ResearchCoverageState::Unresolved);
+        assert_eq!(ledger.next_questions.len(), 1);
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn irrelevant_grounded_evidence_does_not_prevent_target_reopening() {
+        let requirement_id = "target-signing-contract";
+        let requirement = generic_research_requirement(requirement_id, "security");
+        let evidence = generic_found_evidence("evidence-unrelated-field", requirement_id);
+        let mut candidate = generic_research_target(requirement_id, "security");
+        candidate.provisional_state = ResearchCoverageState::Grounded;
+        candidate.provisional_evidence_ids = vec![evidence.id.clone()];
+        candidate.bound_evidence = vec![evidence.clone()];
+        let decision = ResearchClosureAssessment {
+            requirement_id: requirement_id.to_string(),
+            complete: false,
+            authority_requirement_ids: Vec::new(),
+            evidence_ids: Vec::new(),
+            gaps: vec![generic_research_gap(
+                "Which signing scheme is current for batch requests?",
+                "The current batch signing scheme and required parameters.",
+            )],
+            rationale: "The verified field quote is authentic but does not establish signing."
+                .to_string(),
+        };
+        let compiled = compile_generic_target_decision(
+            candidate,
+            &[requirement],
+            &[generic_web_authority_source()],
+            decision,
+        )
+        .unwrap();
+        let mut ledger =
+            generic_saturation_ledger(&[requirement_id], ResearchCoverageState::Grounded);
+        ledger.coverage[0].evidence_ids = vec![evidence.id.clone()];
+        let mut registry = HashMap::new();
+        let mut history = HashMap::new();
+        apply_research_saturation_target_decisions(
+            &mut ledger,
+            &compiled.assessments,
+            &mut registry,
+            &mut history,
+            &[evidence.clone()],
+        )
+        .unwrap();
+        assert_eq!(ledger.coverage[0].state, ResearchCoverageState::Unresolved);
+        assert!(ledger.coverage[0].evidence_ids.is_empty());
+        assert_eq!(ledger.next_questions.len(), 1);
+        assert_eq!(
+            history[requirement_id].observed_found_evidence_ids,
+            vec![evidence.id]
+        );
+    }
+
+    #[test]
+    fn whole_target_closure_preserves_two_independent_gaps() {
+        let requirement_id = "target-dual-contract";
+        let requirement = generic_research_requirement(requirement_id, "integration");
+        let mut candidate = generic_research_target(requirement_id, "integration");
+        candidate.provisional_state = ResearchCoverageState::SpecSufficient;
+        let decision = ResearchClosureAssessment {
+            requirement_id: requirement_id.to_string(),
+            complete: false,
+            authority_requirement_ids: Vec::new(),
+            evidence_ids: Vec::new(),
+            gaps: vec![
+                generic_research_gap(
+                    "Which submission operation is current?",
+                    "The current submission operation and method.",
+                ),
+                generic_research_gap(
+                    "Which retry status is terminal?",
+                    "The terminal retry status and its exact meaning.",
+                ),
+            ],
+            rationale: "Operation selection and retry termination are independent facts."
+                .to_string(),
+        };
+        let compiled = compile_generic_target_decision(
+            candidate,
+            &[requirement],
+            &[generic_web_authority_source()],
+            decision,
+        )
+        .unwrap();
+        assert_eq!(compiled.assessments[0].gaps.len(), 2);
+        let mut ledger =
+            generic_saturation_ledger(&[requirement_id], ResearchCoverageState::SpecSufficient);
+        let mut registry = HashMap::new();
+        let mut history = HashMap::new();
+        apply_research_saturation_target_decisions(
+            &mut ledger,
+            &compiled.assessments,
+            &mut registry,
+            &mut history,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(registry.len(), 2);
+        assert_eq!(ledger.next_questions.len(), 2);
+        assert_eq!(history[requirement_id].accepted_gap_ids.len(), 2);
+    }
+
+    #[test]
+    fn shared_fact_has_one_lineage_and_separate_target_bindings() {
+        let requirement_ids = ["target-reader", "target-writer"];
+        let shared_gap = generic_research_gap(
+            "Which shared envelope version is current?",
+            "The current shared envelope version and compatibility rule.",
+        );
+        let decisions = requirement_ids
+            .iter()
+            .map(|requirement_id| ResearchClosureAssessment {
+                requirement_id: (*requirement_id).to_string(),
+                complete: false,
+                authority_requirement_ids: Vec::new(),
+                evidence_ids: Vec::new(),
+                gaps: vec![shared_gap.clone()],
+                rationale: "Both targets depend on the same external envelope fact.".to_string(),
             })
             .collect::<Vec<_>>();
-        let evidence = vec![
-            ResearchEvidenceRecord {
-                id: "E-first".to_string(),
-                question: "First?".to_string(),
-                requirement_ids: vec!["REQ-0".to_string()],
-                evidence_needed: "first".to_string(),
-                findings: "first finding".to_string(),
-                grounded: true,
-                lookups: vec!["web".to_string()],
+        let mut ledger =
+            generic_saturation_ledger(&requirement_ids, ResearchCoverageState::SpecSufficient);
+        let mut registry = HashMap::new();
+        let mut history = HashMap::new();
+        apply_research_saturation_target_decisions(
+            &mut ledger,
+            &decisions,
+            &mut registry,
+            &mut history,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(registry.len(), 1);
+        let entry = registry.values().next().unwrap();
+        assert_eq!(
+            entry.requirement_ids,
+            vec!["target-reader".to_string(), "target-writer".to_string()]
+        );
+        assert_eq!(ledger.next_questions.len(), 1);
+        assert_eq!(
+            ledger.next_questions[0].requirement_ids,
+            vec!["target-reader".to_string(), "target-writer".to_string()]
+        );
+        assert_eq!(
+            history[requirement_ids[0]].accepted_gap_ids,
+            history[requirement_ids[1]].accepted_gap_ids
+        );
+    }
+
+    #[test]
+    fn target_adjudicator_cannot_invent_a_third_whole_decision() {
+        let target_id = "target-adjudicated";
+        let authority_id = "authority-adjacent";
+        let first = ResearchClosureAssessment {
+            requirement_id: target_id.to_string(),
+            complete: true,
+            authority_requirement_ids: vec![target_id.to_string()],
+            evidence_ids: Vec::new(),
+            gaps: Vec::new(),
+            rationale: "The target's own clause is sufficient.".to_string(),
+        };
+        let second = ResearchClosureAssessment {
+            requirement_id: target_id.to_string(),
+            complete: true,
+            authority_requirement_ids: vec![authority_id.to_string()],
+            evidence_ids: Vec::new(),
+            gaps: Vec::new(),
+            rationale: "The adjacent clause supplies authority.".to_string(),
+        };
+        let mut candidate = generic_research_target(target_id, "client");
+        candidate.prior_jury_assessments = vec![first.clone(), second];
+        candidate.prior_jury_physical_hosts = vec!["host-one".to_string(), "host-two".to_string()];
+        let invented = ResearchClosureAssessment {
+            requirement_id: target_id.to_string(),
+            complete: true,
+            authority_requirement_ids: vec![target_id.to_string(), authority_id.to_string()],
+            evidence_ids: Vec::new(),
+            gaps: Vec::new(),
+            rationale: "A synthesized decision combines both jurors.".to_string(),
+        };
+        let requirements = vec![
+            generic_research_requirement(target_id, "client"),
+            generic_research_requirement(authority_id, "storage"),
+        ];
+        let error =
+            compile_generic_target_decision(candidate.clone(), &requirements, &[], invented)
+                .err()
+                .expect("an adjudicator must not synthesize a third decision")
+                .to_string();
+        assert!(
+            error.contains("invented a third whole-ledger decision"),
+            "{error}"
+        );
+        assert!(compile_generic_target_decision(candidate, &requirements, &[], first).is_ok());
+    }
+
+    #[test]
+    fn unavailable_commit_requires_two_distinct_attested_hosts() {
+        let finding = |hosts: &[&str]| ResearchFinding {
+            question: "Does the assigned reference define alpha mode?".to_string(),
+            semantic_gap_id: "gap-alpha-mode".to_string(),
+            kind: "web".to_string(),
+            requirement_ids: vec!["target-alpha-mode".to_string()],
+            evidence_needed: "The assigned reference's alpha mode definition.".to_string(),
+            applicable_source_ids: vec!["extension:web-search".to_string()],
+            findings: "Each attested lookup returned no alpha mode definition.".to_string(),
+            grounded: false,
+            disposition: Some(ResearchEvidenceDisposition::Unavailable),
+            verified_quotes: Vec::new(),
+            negative_source_attestations: hosts
+                .iter()
+                .map(|host| ResearchNegativeSourceAttestation {
+                    source_id: "extension:web-search".to_string(),
+                    method: "engine-attested-assigned-extension-query".to_string(),
+                    physical_host_id: (*host).to_string(),
+                    scope_digest: format!("scope-{host}"),
+                    query_terms: vec!["alpha".to_string(), "mode".to_string()],
+                    inspected_units: 1,
+                    inspected_chars: 128,
+                    matched_terms: vec!["alpha".to_string()],
+                })
+                .collect(),
+            source_receipt_evidence: hosts
+                .iter()
+                .map(|host| ResearchSourceReceiptEvidence {
+                    source_id: "extension:web-search".to_string(),
+                    tool_name: "web-search__search".to_string(),
+                    resolved_locator: "https://docs.example.test/reference".to_string(),
+                    request_digest: format!("request-{host}"),
+                    result_digest: format!("result-{host}"),
+                    result_chars: 128,
+                    physical_host_id: (*host).to_string(),
+                })
+                .collect(),
+            source_physical_host_ids: hosts.iter().map(|host| (*host).to_string()).collect(),
+            lookups: vec!["web-search__search".to_string()],
+            attempt: ResearchAttempt::Grounded,
+        };
+        let slot = "gap-alpha-mode|extension:web-search|query".to_string();
+        let mut same_host_seen = HashSet::new();
+        assert!(commit_research_queue_batch(
+            &mut same_host_seen,
+            vec![slot.clone()],
+            Ok(vec![finding(&["host-one", "host-one"])]),
+        )
+        .is_err());
+        assert!(same_host_seen.is_empty());
+
+        let mut distinct_host_seen = HashSet::new();
+        assert!(commit_research_queue_batch(
+            &mut distinct_host_seen,
+            vec![slot.clone()],
+            Ok(vec![finding(&["host-one", "host-two"])]),
+        )
+        .is_ok());
+        assert_eq!(distinct_host_seen, HashSet::from([slot]));
+    }
+
+    #[test]
+    fn canonical_context_omits_self_only_edges_and_preserves_cross_target_edges() {
+        let decisions = vec![
+            ResearchClosureAssessment {
+                requirement_id: "target-self".to_string(),
+                complete: true,
+                authority_requirement_ids: vec!["target-self".to_string()],
+                evidence_ids: Vec::new(),
+                gaps: Vec::new(),
+                rationale: "The target is fully authored in its own clause.".to_string(),
             },
-            ResearchEvidenceRecord {
-                id: "E-cross".to_string(),
-                question: "Cross?".to_string(),
-                requirement_ids: vec!["REQ-4".to_string(), "REQ-11".to_string()],
-                evidence_needed: "cross".to_string(),
-                findings: "cross finding".to_string(),
-                grounded: true,
-                lookups: vec!["web".to_string()],
+            ResearchClosureAssessment {
+                requirement_id: "target-client".to_string(),
+                complete: true,
+                authority_requirement_ids: vec![
+                    "target-storage".to_string(),
+                    "target-client".to_string(),
+                    "target-storage".to_string(),
+                ],
+                evidence_ids: Vec::new(),
+                gaps: Vec::new(),
+                rationale: "The client target is constrained by the storage section.".to_string(),
             },
         ];
-        let partitions = plan_research_saturation_partitions(&requirements, &evidence, 5).unwrap();
-        assert_eq!(partitions.len(), 5);
-        let authority = partitions
+        let context = research_target_canonical_context(&decisions);
+        assert_eq!(context.len(), 1);
+        assert_eq!(context[0].target_requirement_id, "target-client");
+        assert_eq!(
+            context[0].authority_requirement_ids,
+            vec!["target-storage".to_string()]
+        );
+        assert_eq!(
+            context[0].rationale,
+            "The client target is constrained by the storage section."
+        );
+    }
+
+    #[test]
+    fn section_partitions_cover_every_target_exactly_once() {
+        let candidates = vec![
+            generic_research_target("target-a", "transport"),
+            generic_research_target("target-b", "transport"),
+            generic_research_target("target-c", "storage"),
+            generic_research_target("target-d", ""),
+        ];
+        let partitions = plan_research_closure_section_partitions(&candidates);
+        let covered = partitions
             .iter()
             .flat_map(|partition| {
                 partition
-                    .requirements
+                    .candidates
                     .iter()
-                    .map(|requirement| requirement.id.clone())
+                    .map(|candidate| candidate.requirement_id.clone())
             })
             .collect::<Vec<_>>();
-        assert_eq!(
-            authority,
-            requirements
-                .iter()
-                .map(|requirement| requirement.id.clone())
-                .collect::<Vec<_>>()
-        );
-        for partition in &partitions {
-            let requirement_ids = partition
-                .requirements
-                .iter()
-                .map(|requirement| requirement.id.as_str())
-                .collect::<HashSet<_>>();
-            let sections = partition
-                .requirements
-                .iter()
-                .map(|requirement| requirement.section.as_str())
-                .collect::<HashSet<_>>();
-            assert_eq!(
-                partition
-                    .section_context_requirements
-                    .iter()
-                    .map(|requirement| requirement.id.as_str())
-                    .collect::<Vec<_>>(),
-                requirements
-                    .iter()
-                    .filter(|requirement| sections.contains(requirement.section.as_str()))
-                    .map(|requirement| requirement.id.as_str())
-                    .collect::<Vec<_>>()
-            );
-            assert!(partition.evidence.iter().all(|record| record
-                .requirement_ids
-                .iter()
-                .any(|requirement_id| requirement_ids.contains(requirement_id.as_str()))));
-        }
+        let counts = covered.iter().fold(HashMap::new(), |mut counts, id| {
+            *counts.entry(id.as_str()).or_insert(0usize) += 1;
+            counts
+        });
+        assert_eq!(counts.len(), candidates.len());
+        assert!(counts.values().all(|count| *count == 1));
         assert_eq!(
             partitions
                 .iter()
-                .filter(|partition| partition
-                    .evidence
-                    .iter()
-                    .any(|record| record.id == "E-first"))
-                .count(),
-            1
-        );
-        assert_eq!(
-            partitions
-                .iter()
-                .filter(|partition| partition
-                    .evidence
-                    .iter()
-                    .any(|record| record.id == "E-cross"))
-                .count(),
-            2
-        );
-    }
-
-    #[test]
-    fn research_saturation_merge_restores_authority_order_and_namespaces_questions() {
-        let requirements = (0..6)
-            .map(|index| RequirementRecord {
-                id: format!("REQ-{index}"),
-                section: format!("section-{}", index / 3),
-                quote: format!("requirement {index}"),
-            })
-            .collect::<Vec<_>>();
-        let routes = ResearchSeedLookupRoutes {
-            attached_extensions: vec!["web-search".to_string()],
-            spec_document_urls: Vec::new(),
-            codebase_shell: false,
-        };
-        let partitions = plan_research_saturation_partitions(&requirements, &[], 2).unwrap();
-        let compiled = partitions
-            .iter()
-            .enumerate()
-            .map(|(index, partition)| {
-                let unresolved = partition.requirements[0].id.clone();
-                let mut coverage = partition
-                    .requirements
-                    .iter()
-                    .map(|requirement| ResearchCoverageAssessment {
-                        requirement_id: requirement.id.clone(),
-                        state: if requirement.id == unresolved {
-                            ResearchCoverageState::Unresolved
-                        } else {
-                            ResearchCoverageState::SpecSufficient
-                        },
-                        evidence_ids: Vec::new(),
-                        rationale: "Exact packet rationale.".to_string(),
-                    })
-                    .collect::<Vec<_>>();
-                coverage.reverse();
-                CompiledResearchSaturationPartition {
-                    partition_id: partition.partition_id.clone(),
-                    model: format!("node-{index}"),
-                    ledger_corrections: 0,
-                    ledger: ResearchSaturationDraft {
-                        status: ResearchSaturationStatus::Continue,
-                        coverage,
-                        next_questions: vec![ResearchQuestion {
-                            id: "same-local-id".to_string(),
-                            question: "Which exact current fact settles this requirement?"
-                                .to_string(),
-                            kind: "web".to_string(),
-                            requirement_ids: vec![unresolved],
-                            evidence_needed: "exact current authority".to_string(),
-                        }],
-                        summary: "One evidence slot remains.".to_string(),
-                    },
-                }
-            })
-            .collect::<Vec<_>>();
-        let merged = merge_research_saturation_partitions(
-            &partitions,
-            compiled,
-            &requirements,
-            &[],
-            &HashSet::new(),
-            &routes,
-        )
-        .unwrap();
-        assert_eq!(merged.status, ResearchSaturationStatus::Continue);
-        assert_eq!(
-            merged
-                .coverage
-                .iter()
-                .map(|assessment| assessment.requirement_id.as_str())
-                .collect::<Vec<_>>(),
-            requirements
-                .iter()
-                .map(|requirement| requirement.id.as_str())
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            merged
-                .next_questions
-                .iter()
-                .map(|question| question.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["saturation-1-same-local-id", "saturation-2-same-local-id"]
-        );
-    }
-
-    #[test]
-    fn research_saturation_blocked_packet_dominates_runnable_sibling() {
-        let requirements = vec![
-            RequirementRecord {
-                id: "REQ-blocked".to_string(),
-                section: "blocked".to_string(),
-                quote: "Needs unavailable evidence.".to_string(),
-            },
-            RequirementRecord {
-                id: "REQ-runnable".to_string(),
-                section: "runnable".to_string(),
-                quote: "Needs available evidence.".to_string(),
-            },
-        ];
-        let routes = ResearchSeedLookupRoutes {
-            attached_extensions: vec!["web-search".to_string()],
-            spec_document_urls: Vec::new(),
-            codebase_shell: false,
-        };
-        let partitions = plan_research_saturation_partitions(&requirements, &[], 2).unwrap();
-        let compiled = vec![
-            CompiledResearchSaturationPartition {
-                partition_id: partitions[0].partition_id.clone(),
-                model: "node-a".to_string(),
-                ledger_corrections: 0,
-                ledger: ResearchSaturationDraft {
-                    status: ResearchSaturationStatus::Blocked,
-                    coverage: vec![ResearchCoverageAssessment {
-                        requirement_id: "REQ-blocked".to_string(),
-                        state: ResearchCoverageState::Blocked,
-                        evidence_ids: Vec::new(),
-                        rationale: "No source route exists.".to_string(),
-                    }],
-                    next_questions: Vec::new(),
-                    summary: "Blocked.".to_string(),
-                },
-            },
-            CompiledResearchSaturationPartition {
-                partition_id: partitions[1].partition_id.clone(),
-                model: "node-b".to_string(),
-                ledger_corrections: 0,
-                ledger: ResearchSaturationDraft {
-                    status: ResearchSaturationStatus::Continue,
-                    coverage: vec![ResearchCoverageAssessment {
-                        requirement_id: "REQ-runnable".to_string(),
-                        state: ResearchCoverageState::Unresolved,
-                        evidence_ids: Vec::new(),
-                        rationale: "A current fact remains.".to_string(),
-                    }],
-                    next_questions: vec![ResearchQuestion {
-                        id: "lookup".to_string(),
-                        question: "What current fact settles the requirement?".to_string(),
-                        kind: "web".to_string(),
-                        requirement_ids: vec!["REQ-runnable".to_string()],
-                        evidence_needed: "current fact".to_string(),
-                    }],
-                    summary: "Runnable.".to_string(),
-                },
-            },
-        ];
-        let merged = merge_research_saturation_partitions(
-            &partitions,
-            compiled,
-            &requirements,
-            &[],
-            &HashSet::new(),
-            &routes,
-        )
-        .unwrap();
-        assert_eq!(merged.status, ResearchSaturationStatus::Blocked);
-        assert!(merged.next_questions.is_empty());
-    }
-
-    #[test]
-    fn research_seed_assigns_every_node_before_the_complete_merge_barrier() {
-        let requirements = (0..10)
-            .map(|index| RequirementRecord {
-                id: format!("REQ-{index}"),
-                section: format!("section-{}", index / 3),
-                quote: format!("requirement {index}"),
-            })
-            .collect::<Vec<_>>();
-        let models = [
-            "node-a".to_string(),
-            "node-b".to_string(),
-            "node-c".to_string(),
-        ];
-        let partitions = plan_research_seed_partitions(&requirements, 6).unwrap();
-        assert_eq!(partitions.len(), 6);
-        let assignments = partitions
-            .into_iter()
-            .enumerate()
-            .map(|(index, partition)| ResearchSeedAssignment {
-                partition_id: partition.partition_id,
-                model: models[index % models.len()].clone(),
-                requirements: partition.requirements,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            assignments
-                .iter()
-                .take(models.len())
-                .map(|assignment| assignment.model.as_str())
-                .collect::<Vec<_>>(),
-            vec!["node-a", "node-b", "node-c"]
-        );
-        assert!(assignments
-            .iter()
-            .all(|assignment| !assignment.requirements.is_empty()));
-        assert_eq!(
-            assignments
-                .iter()
-                .flat_map(|assignment| {
-                    assignment
-                        .requirements
+                .find(|partition| {
+                    partition
+                        .candidates
                         .iter()
-                        .map(|requirement| requirement.id.as_str())
+                        .any(|candidate| candidate.requirement_id == "target-a")
                 })
-                .collect::<HashSet<_>>(),
-            requirements
+                .unwrap()
+                .candidates
                 .iter()
-                .map(|requirement| requirement.id.as_str())
-                .collect::<HashSet<_>>()
+                .map(|candidate| candidate.requirement_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["target-a", "target-b"]
         );
-        let source_positions = requirements
-            .iter()
-            .enumerate()
-            .map(|(index, requirement)| (requirement.id.as_str(), index))
-            .collect::<HashMap<_, _>>();
-        assert!(assignments.iter().all(|assignment| {
-            assignment.requirements.windows(2).all(|pair| {
-                source_positions[pair[0].id.as_str()] < source_positions[pair[1].id.as_str()]
-            })
-        }));
-
-        let routes = ResearchSeedLookupRoutes {
-            attached_extensions: Vec::new(),
-            spec_document_urls: Vec::new(),
-            codebase_shell: true,
-        };
-        let ledgers = assignments
-            .iter()
-            .map(|assignment| {
-                let raw = serde_json::json!({
-                    "partition_id": assignment.partition_id,
-                    "complete": true,
-                    "assessments": assignment.requirements.iter().map(|requirement| serde_json::json!({
-                        "requirement_id": requirement.id,
-                        "state": "needs-evidence",
-                        "rationale": "The exact authored clause leaves one external fact unresolved.",
-                        "observations": format!("Exact clause: {}", requirement.quote),
-                        "question_id": format!("q-{}", requirement.id),
-                        "question": format!("What exact implementation fact settles {}?", requirement.id),
-                        "kind": "codebase",
-                        "evidence_needed": format!("Exact implementation fact for {}", requirement.id)
-                    })).collect::<Vec<_>>()
-                })
-                .to_string();
-                compile_research_seed_ledger(&raw, assignment, &routes).unwrap()
-            })
-            .collect::<Vec<_>>();
-        assert!(merge_research_seed_ledgers(&assignments, ledgers[..2].to_vec()).is_err());
-        let merged = merge_research_seed_ledgers(&assignments, ledgers).unwrap();
-        assert_eq!(merged.questions.len(), requirements.len());
-        assert_eq!(merged.findings.len(), requirements.len());
-        assert!(merged
-            .questions
-            .iter()
-            .all(|question| question.requirement_ids.len() == 1));
-        assert!(merged
-            .findings
-            .iter()
-            .all(|finding| finding.requirement_ids.len() == 1 && !finding.grounded));
-        assert!(merged.blocked_requirement_ids.is_empty());
     }
 
     #[test]
-    fn research_seed_compiler_rejects_unrunnable_evidence_routes() {
-        let assignment = ResearchSeedAssignment {
-            partition_id: "seed-1".to_string(),
-            model: "node-a".to_string(),
-            requirements: vec![RequirementRecord {
-                id: "REQ-api".to_string(),
-                section: "API".to_string(),
-                quote: "Use the current vendor endpoint.".to_string(),
-            }],
-        };
-        let unavailable = ResearchSeedLookupRoutes {
-            attached_extensions: Vec::new(),
-            spec_document_urls: Vec::new(),
-            codebase_shell: false,
-        };
-        let needs_web = serde_json::json!({
-            "partition_id": "seed-1",
-            "complete": true,
-            "assessments": [{
-                "requirement_id": "REQ-api",
-                "state": "needs-evidence",
-                "rationale": "The endpoint is external and versioned.",
-                "observations": "The authored requirement does not name the endpoint.",
-                "question_id": "vendor-endpoint",
-                "question": "What is the current vendor endpoint?",
-                "kind": "web",
-                "evidence_needed": "The vendor's current endpoint from an authoritative source."
-            }]
-        })
-        .to_string();
-        let error = compile_research_seed_ledger(&needs_web, &assignment, &unavailable)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("without a runnable downstream route"),
-            "{error}"
-        );
-
-        let blocked = serde_json::json!({
-            "partition_id": "seed-1",
-            "complete": true,
-            "assessments": [{
-                "requirement_id": "REQ-api",
-                "state": "blocked",
-                "rationale": "The endpoint is external and versioned.",
-                "observations": "No external lookup route is configured.",
-                "question_id": "",
-                "question": "",
-                "kind": "none",
-                "evidence_needed": "An authoritative vendor endpoint source is unavailable."
-            }]
-        })
-        .to_string();
-        assert!(compile_research_seed_ledger(&blocked, &assignment, &unavailable).is_ok());
+    fn reversed_order_same_vocabulary_mints_distinct_semantic_gap_ids() {
+        let first = generic_research_gap("Does alpha precede beta?", "Alpha before beta ordering.");
+        let (first_id, first_materialized) =
+            materialize_research_authority_gap("target-order", &first, &HashMap::new(), 0);
+        let registry = HashMap::from([(
+            first_id.clone(),
+            ResearchGapRegistryEntry {
+                gap: first_materialized,
+                requirement_ids: vec!["target-order".to_string()],
+            },
+        )]);
+        let second =
+            generic_research_gap("Does beta precede alpha?", "Beta before alpha ordering.");
+        let (second_id, _) =
+            materialize_research_authority_gap("target-order", &second, &registry, 0);
+        assert_ne!(first_id, second_id);
     }
 
     #[test]
-    fn research_lookup_routes_match_actual_extension_capabilities() {
-        let context7_only = ResearchSeedLookupRoutes {
-            attached_extensions: vec!["context7".to_string()],
-            spec_document_urls: Vec::new(),
-            codebase_shell: false,
+    fn source_quotes_require_exact_bytes_locator_and_assigned_extension() {
+        let document_url = "https://docs.example.test/reference";
+        let source_id = format!("document:{document_url}");
+        let question = ResearchQuestion {
+            id: "question-reference".to_string(),
+            semantic_gap_id: "gap-reference".to_string(),
+            question: "Which response field is required?".to_string(),
+            kind: "web".to_string(),
+            requirement_ids: vec!["target-reference".to_string()],
+            evidence_needed: "The exact required response field.".to_string(),
+            applicable_source_ids: vec![source_id.clone()],
         };
-        assert!(context7_only.supports("library_docs"));
-        assert!(!context7_only.supports("web"));
-
-        let web_search = ResearchSeedLookupRoutes {
-            attached_extensions: vec!["web-search".to_string()],
-            spec_document_urls: Vec::new(),
-            codebase_shell: false,
+        let receipt = ResearchSourceReceipt {
+            source_id: source_id.clone(),
+            tool_name: "engine__document-prefetch".to_string(),
+            resolved_locator: document_url.to_string(),
+            request_text: serde_json::json!({"requested_url": document_url}).to_string(),
+            result_text: "The response must include field alpha_id.".to_string(),
         };
-        assert!(web_search.supports("library_docs"));
-        assert!(web_search.supports("web"));
-
-        let named_document = ResearchSeedLookupRoutes {
-            attached_extensions: vec!["context7".to_string()],
-            spec_document_urls: vec!["https://vendor.example/reference".to_string()],
-            codebase_shell: false,
-        };
-        assert!(named_document.supports("web"));
-        let web_prompt = research_evidence_route_prompt("web", &named_document);
-        assert!(web_prompt.contains("https://vendor.example/reference"));
-        assert!(!web_prompt.contains("Context7"));
-        let library_prompt = research_evidence_route_prompt("library_docs", &named_document);
-        assert!(library_prompt.contains("Context7"));
-        assert!(library_prompt.contains("https://vendor.example/reference"));
-    }
-
-    #[test]
-    fn research_seed_progress_history_rejects_wording_churn_and_a_b_c_a_recurrence() {
-        let assignment = ResearchSeedAssignment {
-            partition_id: "seed-1".to_string(),
-            model: "node-a".to_string(),
-            requirements: vec![RequirementRecord {
-                id: "REQ-api".to_string(),
-                section: "API".to_string(),
-                quote: "Use the current vendor endpoint.".to_string(),
-            }],
-        };
-        let routes = ResearchSeedLookupRoutes {
-            attached_extensions: Vec::new(),
-            spec_document_urls: Vec::new(),
-            codebase_shell: false,
-        };
-        let invalid = |rationale: &str| {
+        let packet = |quote_source: &str, locator: &str| {
             serde_json::json!({
-                "partition_id": "seed-1",
+                "question_id": question.id,
                 "complete": true,
-                "assessments": [{
-                    "requirement_id": "REQ-api",
-                    "state": "needs-evidence",
-                    "rationale": rationale,
-                    "observations": format!("{rationale} but still no route."),
-                    "question_id": "vendor-endpoint",
-                    "question": "What is the current vendor endpoint?",
-                    "kind": "web",
-                    "evidence_needed": "The vendor's current endpoint."
+                "disposition": "found",
+                "findings": "The required response field is established by the assigned source.",
+                "source_quotes": [{
+                    "source_id": quote_source,
+                    "locator": locator,
+                    "quote": "must include field alpha_id"
                 }]
             })
             .to_string()
         };
-        let first =
-            research_seed_progress_fingerprint(&invalid("First wording"), &assignment, &routes);
-        let same_structure = research_seed_progress_fingerprint(
-            &invalid("Completely different prose"),
-            &assignment,
-            &routes,
-        );
-        assert_eq!(first, same_structure);
-        assert_eq!(first.route_infeasible_assessments, 1);
-
-        let mut history = ResearchSeedProgressHistory::for_assignment(&assignment);
-        assert!(history.admit(first.clone()));
-        assert!(!history.admit(same_structure));
-        let mut second = first.clone();
-        second.complete = false;
-        let mut third = first.clone();
-        third.partition_matches = false;
-        let mut recurrence = ResearchSeedProgressHistory::for_assignment(&assignment);
-        assert!(recurrence.admit(first.clone()));
-        assert!(recurrence.admit(second));
-        assert!(recurrence.admit(third));
-        assert!(
-            !recurrence.admit(first),
-            "retaining every finite canonical state must reject A→B→C→A even for one requirement"
-        );
-        assert_eq!(recurrence.fingerprints.len(), 3);
-    }
-
-    #[test]
-    fn research_seed_packets_preserve_authority_and_balance_estimated_output_cost() {
-        let requirements = (0..197)
-            .map(|index| RequirementRecord {
-                id: format!("REQ-{index}"),
-                section: format!("section-{}", index / 20),
-                quote: format!("requirement {index}"),
-            })
-            .collect::<Vec<_>>();
-        let partitions = plan_research_seed_partitions(&requirements, 9).unwrap();
-        assert_eq!(partitions.len(), 9);
-        let assigned_ids = partitions
-            .iter()
-            .flat_map(|partition| {
-                partition
-                    .requirements
-                    .iter()
-                    .map(|requirement| requirement.id.as_str())
-            })
-            .collect::<HashSet<_>>();
-        assert_eq!(assigned_ids.len(), requirements.len());
-        assert_eq!(
-            assigned_ids,
-            requirements
-                .iter()
-                .map(|requirement| requirement.id.as_str())
-                .collect::<HashSet<_>>()
-        );
-        let source_positions = requirements
-            .iter()
-            .enumerate()
-            .map(|(index, requirement)| (requirement.id.as_str(), index))
-            .collect::<HashMap<_, _>>();
-        assert!(partitions.iter().all(|partition| {
-            partition.requirements.windows(2).all(|pair| {
-                source_positions[pair[0].id.as_str()] < source_positions[pair[1].id.as_str()]
-            })
-        }));
-        let costs = partitions
-            .iter()
-            .map(|partition| {
-                partition
-                    .requirements
-                    .iter()
-                    .map(research_seed_unit_cost)
-                    .sum::<usize>()
-            })
-            .collect::<Vec<_>>();
-        assert!(costs.iter().all(|cost| *cost > 0));
-        assert!(costs.iter().max().unwrap() < &(costs.iter().sum::<usize>() / 3));
-    }
-
-    #[test]
-    fn research_seed_final_splits_balance_long_and_short_assessment_rows_by_cost() {
-        let mut requirements = vec![RequirementRecord {
-            id: "REQ-anchor".to_string(),
-            section: "anchor".to_string(),
-            quote: "a".repeat(10_000),
-        }];
-        requirements.push(RequirementRecord {
-            id: "REQ-mixed-long".to_string(),
-            section: "mixed".to_string(),
-            quote: "l".repeat(1_000),
-        });
-        requirements.extend((0..7).map(|index| RequirementRecord {
-            id: format!("REQ-mixed-short-{index}"),
-            section: "mixed".to_string(),
-            quote: "x".to_string(),
-        }));
-
-        let partitions = plan_research_seed_partitions(&requirements, 4).unwrap();
-        assert_eq!(partitions.len(), 4);
-        let mut splittable_section_costs = partitions
-            .iter()
-            .filter(|partition| partition.requirements[0].section == "mixed")
-            .map(research_seed_partition_cost)
-            .collect::<Vec<_>>();
-        assert_eq!(splittable_section_costs.len(), 3);
-        splittable_section_costs.sort_unstable();
-        assert!(
-            splittable_section_costs[2]
-                <= splittable_section_costs[0].saturating_mul(4),
-            "cost-nearest final splits must not recreate count-midpoint skew: {splittable_section_costs:?}"
-        );
-        assert!(partitions
-            .iter()
-            .all(|partition| !partition.requirements.is_empty()));
-    }
-
-    #[test]
-    fn research_saturation_requires_real_grounding_and_rejects_repeated_semantic_slots() {
-        let routes = ResearchSeedLookupRoutes {
-            attached_extensions: vec!["web-search".to_string()],
-            spec_document_urls: Vec::new(),
-            codebase_shell: false,
-        };
-        let requirements = vec![RequirementRecord {
-            id: "REQ-api".to_string(),
-            section: "task".to_string(),
-            quote: "Use the vendor API".to_string(),
-        }];
-        let evidence = vec![ResearchEvidenceRecord {
-            id: "RESEARCH-docs".to_string(),
-            question: "What is the endpoint?".to_string(),
-            requirement_ids: vec!["REQ-api".to_string()],
-            evidence_needed: "exact endpoint".to_string(),
-            findings: "Model recall only".to_string(),
-            grounded: false,
-            lookups: Vec::new(),
-        }];
-        let false_grounding = serde_json::json!({
-            "status": "saturated",
-            "coverage": [{
-                "requirement_id": "REQ-api",
-                "state": "grounded",
-                "evidence_ids": ["RESEARCH-docs"],
-                "rationale": "The endpoint was found."
-            }],
-            "next_questions": [],
-            "summary": "Complete."
-        })
-        .to_string();
-        assert!(compile_research_saturation(
-            &false_grounding,
-            &requirements,
-            &evidence,
-            &HashSet::new(),
-            &routes,
+        let compiled = compile_research_evidence_worker(
+            &packet(&source_id, document_url),
+            &question,
+            &[receipt.clone()],
+            Path::new("."),
         )
-        .is_err());
-        let wrong_requirement_evidence = vec![ResearchEvidenceRecord {
-            id: "RESEARCH-docs".to_string(),
-            question: "What is the endpoint?".to_string(),
-            requirement_ids: vec!["REQ-other".to_string()],
-            evidence_needed: "exact endpoint".to_string(),
-            findings: "Fetched from the vendor docs".to_string(),
-            grounded: true,
-            lookups: vec!["web-search".to_string()],
-        }];
-        assert!(compile_research_saturation(
-            &false_grounding,
-            &requirements,
-            &wrong_requirement_evidence,
-            &HashSet::new(),
-            &routes,
-        )
-        .is_err());
+        .unwrap();
+        assert_eq!(compiled.verified_quotes.len(), 1);
+        assert!(
+            compile_research_evidence_worker(
+                &packet(&source_id, "https://other.example.test/reference"),
+                &question,
+                &[receipt],
+                Path::new("."),
+            )
+            .is_err(),
+            "authentic bytes from the wrong URL are not assigned-source proof"
+        );
 
-        let previous = ResearchQuestion {
-            id: "endpoint-1".to_string(),
-            question: "Which endpoint must be called?".to_string(),
+        let extension_question = ResearchQuestion {
+            id: "question-library".to_string(),
+            semantic_gap_id: "gap-library".to_string(),
+            question: "Which library symbol is current?".to_string(),
             kind: "library_docs".to_string(),
-            requirement_ids: vec!["REQ-api".to_string()],
-            evidence_needed: "exact current vendor endpoint and method".to_string(),
+            requirement_ids: vec!["target-library".to_string()],
+            evidence_needed: "The current library symbol.".to_string(),
+            applicable_source_ids: vec!["extension:context7".to_string()],
         };
-        let seen = [research_question_slot(&previous)]
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let repeated = serde_json::json!({
-            "status": "continue",
-            "coverage": [{
-                "requirement_id": "REQ-api",
-                "state": "unresolved",
-                "evidence_ids": [],
-                "rationale": "The endpoint is still unknown."
-            }],
-            "next_questions": [{
-                "id": "endpoint-rephrased",
-                "question": "What method and route do the current vendor docs specify?",
-                "kind": "library_docs",
-                "requirement_ids": ["REQ-api"],
-                "evidence_needed": "vendor method, current endpoint, and exact endpoint"
-            }],
-            "summary": "The same evidence is still missing."
+        let context7_receipt = ResearchSourceReceipt {
+            source_id: "extension:context7".to_string(),
+            tool_name: "context7__query-docs".to_string(),
+            resolved_locator: "library-alpha".to_string(),
+            request_text: "library-alpha current symbol".to_string(),
+            result_text: "library-alpha exports alpha_symbol".to_string(),
+        };
+        let cross_extension = serde_json::json!({
+            "question_id": extension_question.id,
+            "complete": true,
+            "disposition": "found",
+            "findings": "A symbol was returned, but the quote names the wrong source.",
+            "source_quotes": [{
+                "source_id": "extension:web-search",
+                "locator": "library-alpha",
+                "quote": "exports alpha_symbol"
+            }]
         })
         .to_string();
         assert!(
-            compile_research_saturation(&repeated, &requirements, &[], &seen, &routes).is_err()
+            compile_research_evidence_worker(
+                &cross_extension,
+                &extension_question,
+                &[context7_receipt],
+                Path::new("."),
+            )
+            .is_err(),
+            "a quote from another extension cannot satisfy the assigned source"
         );
-    }
-
-    #[test]
-    fn research_saturation_correction_history_rejects_a_b_c_a_recurrence() {
-        let requirements = vec![RequirementRecord {
-            id: "REQ-api".to_string(),
-            section: "API".to_string(),
-            quote: "Use the current endpoint.".to_string(),
-        }];
-        let routes = ResearchSeedLookupRoutes {
-            attached_extensions: vec!["web-search".to_string()],
-            spec_document_urls: Vec::new(),
-            codebase_shell: false,
-        };
-        let invalid = |status: &str, summary: &str| {
-            serde_json::json!({
-                "status": status,
-                "coverage": [{
-                    "requirement_id": "REQ-api",
-                    "state": "unresolved",
-                    "evidence_ids": [],
-                    "rationale": "The endpoint is unresolved."
-                }],
-                "next_questions": [],
-                "summary": summary
-            })
-            .to_string()
-        };
-        let a = research_saturation_progress_fingerprint(
-            &invalid("saturated", "First wording."),
-            &requirements,
-            &[],
-            &HashSet::new(),
-            &routes,
-        );
-        let same_structure = research_saturation_progress_fingerprint(
-            &invalid("saturated", "Completely different wording."),
-            &requirements,
-            &[],
-            &HashSet::new(),
-            &routes,
-        );
-        assert_eq!(a, same_structure);
-        let b = research_saturation_progress_fingerprint(
-            &invalid("continue", "Still invalid."),
-            &requirements,
-            &[],
-            &HashSet::new(),
-            &routes,
-        );
-        let c = research_saturation_progress_fingerprint(
-            &invalid("blocked", "Also invalid."),
-            &requirements,
-            &[],
-            &HashSet::new(),
-            &routes,
-        );
-        let mut history = ResearchSaturationProgressHistory::default();
-        assert!(history.admit(a.clone()));
-        assert!(history.admit(b));
-        assert!(history.admit(c));
-        assert!(!history.admit(a));
     }
 
     #[test]
@@ -7797,157 +7709,6 @@ mod tests {
             classify_research_attempt(&[mk("developer__shell", false, Some(true))]),
             ResearchAttempt::CalledEmpty
         );
-        // The field is populated on the struct — read it so the P1 substrate is exercised end to end.
-        let f = ResearchFinding {
-            question: "q".into(),
-            kind: "web".into(),
-            requirement_ids: Vec::new(),
-            evidence_needed: "fact".into(),
-            findings: "f".into(),
-            grounded: false,
-            lookups: Vec::new(),
-            attempt: classify_research_attempt(&[mk("developer__shell", false, Some(true))]),
-        };
-        assert_eq!(f.attempt, ResearchAttempt::CalledEmpty);
-    }
-
-    #[test]
-    fn typed_research_evidence_requires_exact_assignment_and_successful_source_provenance() {
-        let question = ResearchQuestion {
-            id: "vendor-endpoint".to_string(),
-            question: "Which endpoint is current?".to_string(),
-            kind: "web".to_string(),
-            requirement_ids: vec!["REQ-api".to_string()],
-            evidence_needed: "The current endpoint from the named vendor document.".to_string(),
-        };
-        let unavailable = serde_json::json!({
-            "question_id": "vendor-endpoint",
-            "complete": true,
-            "disposition": "unavailable",
-            "findings": "The consulted document does not define this endpoint.",
-            "source_provenance": ["https://vendor.example/reference"]
-        })
-        .to_string();
-        assert!(compile_research_evidence_worker(&unavailable, &question, &[]).is_err());
-        let compiled = compile_research_evidence_worker(
-            &unavailable,
-            &question,
-            &["developer__shell".to_string()],
-        )
-        .unwrap();
-        assert_eq!(
-            compiled.disposition,
-            ResearchEvidenceDisposition::Unavailable
-        );
-        assert!(!compiled.disposition.fact_grounded());
-        assert!(compiled.findings.contains("Disposition: unavailable"));
-        assert!(compiled
-            .findings
-            .contains("https://vendor.example/reference"));
-
-        let wrong_assignment = unavailable.replace("vendor-endpoint", "different-question");
-        assert!(compile_research_evidence_worker(
-            &wrong_assignment,
-            &question,
-            &["developer__shell".to_string()],
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn research_evidence_slot_commit_is_atomic_after_typed_batch_success() {
-        let question = ResearchQuestion {
-            id: "vendor-endpoint".to_string(),
-            question: "Which endpoint is current?".to_string(),
-            kind: "web".to_string(),
-            requirement_ids: vec!["REQ-api".to_string()],
-            evidence_needed: "The current vendor endpoint.".to_string(),
-        };
-        let slot = research_question_slot(&question);
-        let mut seen = HashSet::new();
-        let failed_batch: Result<Vec<ResearchFinding>> = Err(anyhow!("provider transport failed"));
-        assert!(commit_research_queue_batch(&mut seen, vec![slot.clone()], failed_batch).is_err());
-        assert!(seen.is_empty(), "a failed packet must remain eligible");
-
-        let finding = ResearchFinding {
-            question: question.question,
-            kind: question.kind,
-            requirement_ids: question.requirement_ids,
-            evidence_needed: question.evidence_needed,
-            findings: "Disposition: found\nThe endpoint is /v2/items.".to_string(),
-            grounded: true,
-            lookups: vec!["web-search__search".to_string()],
-            attempt: ResearchAttempt::Grounded,
-        };
-        let committed =
-            commit_research_queue_batch(&mut seen, vec![slot.clone()], Ok(vec![finding])).unwrap();
-        assert_eq!(committed.len(), 1);
-        assert_eq!(seen, HashSet::from([slot]));
-
-        let unavailable_slot = "web|REQ-api|missing vendor endpoint".to_string();
-        let unavailable = ResearchFinding {
-            question: "Does the vendor reference define the endpoint?".to_string(),
-            kind: "web".to_string(),
-            requirement_ids: vec!["REQ-api".to_string()],
-            evidence_needed: "The missing vendor endpoint.".to_string(),
-            findings: "Disposition: unavailable\nThe consulted reference omits it.".to_string(),
-            grounded: false,
-            lookups: vec!["developer__shell".to_string()],
-            attempt: ResearchAttempt::Grounded,
-        };
-        let mut unavailable_seen = HashSet::new();
-        assert!(commit_research_queue_batch(
-            &mut unavailable_seen,
-            vec![unavailable_slot.clone()],
-            Ok(vec![unavailable]),
-        )
-        .is_ok());
-        assert_eq!(unavailable_seen, HashSet::from([unavailable_slot]));
-    }
-
-    #[test]
-    fn research_saturation_rejects_proven_unavailable_as_fact_grounded() {
-        let requirements = vec![RequirementRecord {
-            id: "REQ-api".to_string(),
-            section: "API".to_string(),
-            quote: "Use the vendor endpoint.".to_string(),
-        }];
-        let evidence = vec![ResearchEvidenceRecord {
-            id: "RESEARCH-unavailable".to_string(),
-            question: "Does the vendor reference define the endpoint?".to_string(),
-            requirement_ids: vec!["REQ-api".to_string()],
-            evidence_needed: "The vendor endpoint.".to_string(),
-            findings: "Disposition: unavailable\nThe consulted reference omits it.".to_string(),
-            grounded: false,
-            lookups: vec!["developer__shell".to_string()],
-        }];
-        let false_grounding = serde_json::json!({
-            "status": "saturated",
-            "coverage": [{
-                "requirement_id": "REQ-api",
-                "state": "grounded",
-                "evidence_ids": ["RESEARCH-unavailable"],
-                "rationale": "The source was consulted."
-            }],
-            "next_questions": [],
-            "summary": "Complete."
-        })
-        .to_string();
-        let routes = ResearchSeedLookupRoutes {
-            attached_extensions: Vec::new(),
-            spec_document_urls: vec!["https://vendor.example/reference".to_string()],
-            codebase_shell: false,
-        };
-        let error = compile_research_saturation(
-            &false_grounding,
-            &requirements,
-            &evidence,
-            &HashSet::new(),
-            &routes,
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("called ungrounded"), "{error}");
     }
 
     // ---- PROVEN-CRASH DEMOTE ----------------------------------------------------------------
