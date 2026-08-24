@@ -5526,6 +5526,195 @@ mod tests {
         );
     }
 
+    struct BuildDispatchProbe {
+        starts: std::sync::atomic::AtomicUsize,
+        descriptions: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl TaskDispatcher for BuildDispatchProbe {
+        async fn run(&self, request: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            self.starts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.descriptions.lock().unwrap().push(request.description);
+            Ok(format!("built:{}", request.task_id).into())
+        }
+    }
+
+    #[tokio::test]
+    async fn degraded_research_merges_into_one_specific_plan_and_reaches_build_dispatch() {
+        const ACCEPTED: &str = "REQ-runtime-interface";
+        const DEGRADED: &str = "REQ-library-authority";
+        let accepted = ResearchClosureAssessment {
+            requirement_id: ACCEPTED.to_string(),
+            complete: true,
+            authority_requirement_ids: vec![ACCEPTED.to_string()],
+            evidence_ids: Vec::new(),
+            gaps: Vec::new(),
+            rationale: "The authored runtime interface is exact and complete.".to_string(),
+        };
+        let partial_gap = ResearchAuthorityGap {
+            prior_semantic_gap_id: String::new(),
+            question: "Which exact symbol is exposed by /v3/docs?".to_string(),
+            kind: "library_docs".to_string(),
+            evidence_needed: "The exact /v3/docs API symbol and signature.".to_string(),
+            applicable_source_ids: vec!["document:http://127.0.0.1:18970/v3/docs".to_string()],
+            attempted_source_ids: Vec::new(),
+            exhausted_source_ids: Vec::new(),
+            unavailable: false,
+        };
+        let degradation = ResearchAuthorityDegradation {
+            requirement_id: DEGRADED.to_string(),
+            partition_id: "target-section-runtime-degraded-e2e".to_string(),
+            reason: "distinct-host jury authority exhausted after one valid partial ledger"
+                .to_string(),
+            partial_assessments: vec![ResearchClosureAssessment {
+                requirement_id: DEGRADED.to_string(),
+                complete: false,
+                authority_requirement_ids: Vec::new(),
+                evidence_ids: Vec::new(),
+                gaps: vec![partial_gap],
+                rationale: "The assigned /v3/docs source still needs a verified symbol."
+                    .to_string(),
+            }],
+            physical_host_ids: vec!["runtime-host-a".to_string()],
+            authority_input_digests: vec!["runtime-authority-digest".to_string()],
+        };
+        let research_outcome = ResearchTargetReconciliationOutcome {
+            decisions: vec![accepted.clone()],
+            degradations: vec![degradation.clone()],
+        };
+        let mut ledger =
+            generic_saturation_ledger(&[ACCEPTED, DEGRADED], ResearchCoverageState::Unresolved);
+        apply_research_reconciliation_outcome(
+            &mut ledger,
+            &research_outcome,
+            &mut HashMap::new(),
+            &mut HashMap::new(),
+            &[],
+        )
+        .expect("typed degraded authority must be a valid research handoff");
+        assert_eq!(ledger.status, ResearchSaturationStatus::Blocked);
+        assert!(ledger.next_questions.is_empty());
+        let mut canonical_context = research_target_canonical_context(&[accepted]);
+        canonical_context.extend(degraded_research_target_canonical_context(&[degradation]));
+        let research_handoff = serde_json::to_string_pretty(&canonical_context).unwrap();
+        assert!(research_handoff.contains("/v3/docs"));
+        assert!(research_handoff.contains("\"authority_status\": \"degraded\""));
+
+        let plan = serde_json::json!({
+            "subtasks": [
+                {
+                    "id": "runtime-core",
+                    "description": "Implement the exact authored runtime interface and isolate /v3/docs symbol uncertainty behind a validated adapter",
+                    "difficulty": "medium",
+                    "model": "qwen-runtime",
+                    "depends_on": [],
+                    "files": ["src/runtime_core.py"]
+                },
+                {
+                    "id": "integrate-verify",
+                    "description": "Build and run the advertised runtime interface, then verify the /v3/docs adapter fails cleanly when the unresolved symbol is unavailable",
+                    "difficulty": "hard",
+                    "model": "qwen-runtime",
+                    "depends_on": ["runtime-core"],
+                    "files": []
+                }
+            ]
+        });
+        let decision = serde_json::json!({
+            "selected_candidate": 0,
+            "task_coverage": [
+                {
+                    "task_id": "runtime-core",
+                    "owns_requirement_ids": [ACCEPTED, DEGRADED],
+                    "applies_requirement_ids": [],
+                    "verifies_requirement_ids": [],
+                    "evidence_ids": []
+                },
+                {
+                    "task_id": "integrate-verify",
+                    "owns_requirement_ids": [],
+                    "applies_requirement_ids": [],
+                    "verifies_requirement_ids": [ACCEPTED, DEGRADED],
+                    "evidence_ids": []
+                }
+            ],
+            "material_conflicts": [],
+            "canonical_plan": plan
+        });
+        let requirements = vec![
+            RequirementRecord {
+                id: ACCEPTED.to_string(),
+                section: "runtime".to_string(),
+                quote: "Preserve the exact authored runtime interface.".to_string(),
+            },
+            RequirementRecord {
+                id: DEGRADED.to_string(),
+                section: "library".to_string(),
+                quote: "Use the assigned /v3/docs authority without inventing symbols.".to_string(),
+            },
+        ];
+        let candidate = decision["canonical_plan"].to_string();
+        let planning_calls = std::sync::atomic::AtomicUsize::new(0);
+        let mut compiled = None;
+        for _ in 0..planning_pod_full_plan_drafts(32, 3) {
+            planning_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            compiled = Some(
+                compile_canonical_plan_adjudication(
+                    &decision.to_string(),
+                    &requirements,
+                    &[],
+                    std::slice::from_ref(&candidate),
+                    &["qwen-runtime".to_string()],
+                )
+                .expect("the one shared plan must preserve every accepted and degraded target"),
+            );
+        }
+        assert_eq!(planning_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let compiled = compiled.expect("one shared planning authority ran");
+        let specs = goose_swarm::specs_from_plan_json(&compiled.plan_json).unwrap();
+        assert!(specs.iter().all(|spec| spec.description.len() > 40));
+        assert!(specs
+            .iter()
+            .any(|spec| spec.description.contains("/v3/docs")));
+        let dag = Dag::from_specs(specs).unwrap();
+        let dispatcher = Arc::new(BuildDispatchProbe {
+            starts: std::sync::atomic::AtomicUsize::new(0),
+            descriptions: Mutex::new(Vec::new()),
+        });
+        let scheduler = Scheduler::new(
+            vec![DeviceCfg {
+                id: "runtime-build-node".to_string(),
+                model_id: "qwen-runtime".to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            }],
+            1,
+        );
+        let report = scheduler
+            .run(
+                dag,
+                dispatcher.clone() as Arc<dyn TaskDispatcher>,
+                format!("Build from this exact merged research handoff:\n{research_handoff}"),
+            )
+            .await
+            .expect("the merged plan reached build execution");
+        assert_eq!(
+            dispatcher.starts.load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+        assert_eq!(report.done.len(), 2);
+        assert!(dispatcher
+            .descriptions
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|description| description.contains("exact authored runtime interface")));
+    }
+
     #[test]
     fn planning_pod_audit_compiler_binds_role_and_every_reference() {
         let requirements = ["REQ-a".to_string()].into_iter().collect::<HashSet<_>>();
@@ -5793,9 +5982,10 @@ mod tests {
             partition_id: "target-partition".to_string(),
             candidates: vec![candidate],
         };
+        let complete = assessment.complete;
         let raw = serde_json::to_string(&ResearchClosureLedgerDraft {
             partition_id: partition.partition_id.clone(),
-            complete: true,
+            complete,
             assessments: vec![assessment],
         })?;
         compile_research_closure_partition(
@@ -6112,7 +6302,7 @@ mod tests {
     }
 
     #[test]
-    fn planning_handoff_keeps_only_final_jury_accepted_found_evidence() {
+    fn planning_handoff_keeps_accepted_and_degraded_partial_found_evidence() {
         let finding = |semantic_gap_id: &str, findings: &str| ResearchFinding {
             question: "Which alpha field is current?".to_string(),
             semantic_gap_id: semantic_gap_id.to_string(),
@@ -6145,6 +6335,10 @@ mod tests {
         let findings = vec![
             finding("gap-stale", "The stale provisional claim says alpha_old."),
             finding("gap-accepted", "The verified source says alpha_current."),
+            finding(
+                "gap-degraded-partial",
+                "The verified partial source fixes the alpha wire type but not its lifecycle.",
+            ),
         ];
         let evidence = research_evidence_inventory(&findings);
         let decisions = vec![ResearchClosureAssessment {
@@ -6155,13 +6349,35 @@ mod tests {
             gaps: Vec::new(),
             rationale: "Only the current source quote entails the final target.".to_string(),
         }];
-        let planning = accepted_planning_research_findings(findings, evidence, &decisions).unwrap();
-        assert_eq!(planning.len(), 1);
+        let degradations = vec![ResearchAuthorityDegradation {
+            requirement_id: "target-alpha-degraded".to_string(),
+            partition_id: "target-section-alpha-degraded".to_string(),
+            reason: "the second independent juror exhausted its physical hosts".to_string(),
+            partial_assessments: vec![ResearchClosureAssessment {
+                requirement_id: "target-alpha-degraded".to_string(),
+                complete: false,
+                authority_requirement_ids: Vec::new(),
+                evidence_ids: vec![evidence[2].id.clone()],
+                gaps: vec![generic_research_gap(
+                    "Which alpha lifecycle is authoritative?",
+                    "The exact lifecycle and terminal state.",
+                )],
+                rationale: "The wire type is proven while lifecycle authority is incomplete."
+                    .to_string(),
+            }],
+            physical_host_ids: vec!["host-alpha".to_string()],
+            authority_input_digests: vec!["alpha-authority-digest".to_string()],
+        }];
+        let planning =
+            accepted_planning_research_findings(findings, evidence, &decisions, &degradations)
+                .unwrap();
+        assert_eq!(planning.len(), 2);
         assert_eq!(planning[0].semantic_gap_id, "gap-accepted");
         assert_eq!(
             planning[0].findings,
             "The verified source says alpha_current."
         );
+        assert_eq!(planning[1].semantic_gap_id, "gap-degraded-partial");
     }
 
     #[test]
@@ -6443,6 +6659,86 @@ mod tests {
     }
 
     #[test]
+    fn typed_unavailable_source_closure_reaches_degraded_planning_handoff() {
+        const REQUIREMENT: &str = "target-unavailable-library-authority";
+        const GAP_ID: &str = "gap-unavailable-library-authority";
+        let source = generic_web_authority_source();
+        let source_id = source.id.clone();
+        let mut prior_gap = generic_research_gap(
+            "Which exact library operation is exposed?",
+            "The exact currently exposed library operation and signature.",
+        );
+        prior_gap.prior_semantic_gap_id = GAP_ID.to_string();
+        prior_gap.attempted_source_ids = vec![source_id.clone()];
+        prior_gap.exhausted_source_ids = vec![source_id.clone()];
+        let mut candidate = generic_research_target(REQUIREMENT, "library");
+        candidate.prior_gaps = vec![prior_gap.clone()];
+        let unavailable_gap = ResearchAuthorityGap {
+            prior_semantic_gap_id: GAP_ID.to_string(),
+            question: String::new(),
+            kind: prior_gap.kind.clone(),
+            evidence_needed: prior_gap.evidence_needed.clone(),
+            applicable_source_ids: Vec::new(),
+            attempted_source_ids: vec![source_id.clone()],
+            exhausted_source_ids: vec![source_id],
+            unavailable: true,
+        };
+        let compiled = compile_generic_target_decision(
+            candidate,
+            &[generic_research_requirement(REQUIREMENT, "library")],
+            &[source],
+            ResearchClosureAssessment {
+                requirement_id: REQUIREMENT.to_string(),
+                complete: false,
+                authority_requirement_ids: Vec::new(),
+                evidence_ids: Vec::new(),
+                gaps: vec![unavailable_gap.clone()],
+                rationale: "Every assigned authority route is independently exhausted.".to_string(),
+            },
+        )
+        .expect("a two-host-proven Unavailable source is a valid typed target closure");
+        let mut ledger =
+            generic_saturation_ledger(&[REQUIREMENT], ResearchCoverageState::Unresolved);
+        let mut registry = HashMap::from([(
+            GAP_ID.to_string(),
+            ResearchGapRegistryEntry {
+                gap: prior_gap,
+                requirement_ids: vec![REQUIREMENT.to_string()],
+            },
+        )]);
+        let mut history = HashMap::from([(
+            REQUIREMENT.to_string(),
+            ResearchTargetHistory {
+                accepted_gap_ids: vec![GAP_ID.to_string()],
+                observed_found_evidence_ids: Vec::new(),
+            },
+        )]);
+        let outcome = ResearchTargetReconciliationOutcome {
+            decisions: compiled.assessments,
+            degradations: Vec::new(),
+        };
+        apply_research_reconciliation_outcome(
+            &mut ledger,
+            &outcome,
+            &mut registry,
+            &mut history,
+            &[],
+        )
+        .expect("typed Unavailable closure must not abort global research");
+        assert_eq!(ledger.status, ResearchSaturationStatus::Blocked);
+        assert!(ledger.next_questions.is_empty());
+        let context = research_target_canonical_context(&outcome.decisions);
+        assert_eq!(context.len(), 1);
+        assert_eq!(context[0].authority_status, "accepted-incomplete");
+        assert_eq!(context[0].material_gaps.len(), 1);
+        assert!(context[0].material_gaps[0].unavailable);
+        assert_eq!(
+            context[0].material_gaps[0].prior_semantic_gap_id,
+            unavailable_gap.prior_semantic_gap_id
+        );
+    }
+
+    #[test]
     fn canonical_context_omits_self_only_edges_and_preserves_cross_target_edges() {
         let decisions = vec![
             ResearchClosureAssessment {
@@ -6569,6 +6865,11 @@ mod tests {
         assert_eq!(ledger.status, ResearchSaturationStatus::Continue);
         assert_eq!(ledger.next_questions.len(), 1);
         assert_eq!(ledger.next_questions[0].requirement_ids, vec![GAP_ID]);
+        assert_eq!(
+            research_followup_requirement_ids(&ledger.next_questions),
+            HashSet::from([GAP_ID.to_string()]),
+            "the already complete sibling must not be re-juried after gap evidence returns"
+        );
         assert_eq!(
             ledger.next_questions[0].applicable_source_ids,
             vec![document_source_id]
@@ -6767,6 +7068,72 @@ mod tests {
             .is_err(),
             "a quote from another extension cannot satisfy the assigned source"
         );
+    }
+
+    #[tokio::test]
+    async fn bound_document_gap_prefetches_the_exact_assigned_source() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let document_url = format!("http://{address}/v3/docs");
+        let source_id = format!("document:{document_url}");
+        let body = "The v3 webhook registration symbol is register_webhook_v3(callback_url).";
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0u8; 4096];
+            let read = socket.read(&mut request).await.unwrap();
+            let request = String::from_utf8_lossy(&request[..read]).to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+            request
+        });
+        let question = ResearchQuestion {
+            id: "question-v3-webhook-registration".to_string(),
+            semantic_gap_id: "gap-v3-webhook-registration".to_string(),
+            question: "Which exact v3 webhook registration symbol is exposed?".to_string(),
+            kind: "library_docs".to_string(),
+            requirement_ids: vec!["REQ-v3-webhook-registration".to_string()],
+            evidence_needed: "The exact v3 symbol and callback signature.".to_string(),
+            applicable_source_ids: vec![source_id.clone()],
+        };
+        let receipts = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            prefetch_assigned_engine_sources(&question, Path::new(".")),
+        )
+        .await
+        .expect("the assigned document fetch did not return")
+        .expect("the engine-owned assigned document fetch failed");
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].source_id, source_id);
+        assert_eq!(receipts[0].tool_name, "engine__document-prefetch");
+        assert_eq!(receipts[0].resolved_locator, document_url);
+        assert_eq!(receipts[0].result_text, body);
+        let request = server.await.unwrap();
+        assert!(request.starts_with("GET /v3/docs HTTP/1.1\r\n"));
+        let compiled = compile_research_evidence_worker(
+            &serde_json::json!({
+                "question_id": question.id,
+                "complete": true,
+                "disposition": "found",
+                "findings": "The assigned v3 document supplies the exact webhook symbol.",
+                "source_quotes": [{
+                    "source_id": source_id,
+                    "locator": document_url,
+                    "quote": "register_webhook_v3(callback_url)"
+                }]
+            })
+            .to_string(),
+            &question,
+            &receipts,
+            Path::new("."),
+        )
+        .expect("the fetched exact quote must compile as Found authority evidence");
+        assert_eq!(compiled.verified_quotes.len(), 1);
     }
 
     #[test]
@@ -17287,7 +17654,10 @@ struct ResearchCanonicalSpecContext {
     candidate_id: String,
     target_requirement_id: String,
     claimed_gap: String,
+    authority_status: String,
     authority_requirement_ids: Vec<String>,
+    material_gaps: Vec<ResearchAuthorityGap>,
+    partial_assessments: Vec<ResearchClosureAssessment>,
     rationale: String,
 }
 
@@ -17359,11 +17729,81 @@ struct CompiledResearchClosurePartition {
 
 struct ResearchTargetPartitionResolution {
     decisions: Vec<ResearchClosureAssessment>,
+    degradations: Vec<ResearchAuthorityDegradation>,
     decision_sources: HashMap<String, ResearchAuthorityDecisionSources>,
     ledger_corrections: u64,
     jury_disagreements: usize,
     citations_verified: usize,
     citations_rejected: usize,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct ResearchAuthorityDegradation {
+    requirement_id: String,
+    partition_id: String,
+    reason: String,
+    partial_assessments: Vec<ResearchClosureAssessment>,
+    physical_host_ids: Vec<String>,
+    authority_input_digests: Vec<String>,
+}
+
+struct ResearchTargetReconciliationOutcome {
+    decisions: Vec<ResearchClosureAssessment>,
+    degradations: Vec<ResearchAuthorityDegradation>,
+}
+
+enum ResearchJuryHandoff {
+    Pair {
+        index: usize,
+        first: CompiledResearchClosurePartition,
+        second: CompiledResearchClosurePartition,
+    },
+    Degraded {
+        index: usize,
+        partial_ledgers: Vec<CompiledResearchClosurePartition>,
+        reason: String,
+    },
+}
+
+#[derive(Debug)]
+struct ResearchAuthorityExhaustion {
+    scope: String,
+    failed_physical_hosts: Vec<String>,
+}
+
+impl std::fmt::Display for ResearchAuthorityExhaustion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "research authority `{}` exhausted every eligible distinct physical host",
+            self.scope
+        )?;
+        if !self.failed_physical_hosts.is_empty() {
+            write!(formatter, ": {}", self.failed_physical_hosts.join(", "))?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ResearchAuthorityExhaustion {}
+
+fn research_authority_exhaustion(
+    scope: impl Into<String>,
+    failed_physical_hosts: impl IntoIterator<Item = String>,
+) -> anyhow::Error {
+    let mut failed_physical_hosts = failed_physical_hosts.into_iter().collect::<Vec<_>>();
+    failed_physical_hosts.sort();
+    failed_physical_hosts.dedup();
+    anyhow::Error::new(ResearchAuthorityExhaustion {
+        scope: scope.into(),
+        failed_physical_hosts,
+    })
+}
+
+fn is_research_authority_exhaustion(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.is::<ResearchAuthorityExhaustion>())
 }
 
 #[derive(Clone)]
@@ -17633,7 +18073,7 @@ where
     ObserveFailure: FnMut(&ResearchPhysicalLane, usize, &anyhow::Error, &[String]),
 {
     let mut failed_tokens = Vec::<String>::new();
-    let mut failure_history = Vec::new();
+    let mut failed_physical_hosts = Vec::<String>::new();
     loop {
         if admission_stop.is_cancelled() {
             return Ok(None);
@@ -17644,11 +18084,10 @@ where
             .cloned()
             .collect::<Vec<_>>();
         if remaining_tokens.is_empty() {
-            admission_stop.cancel();
-            bail!(
-                "research host failover `{label}` exhausted every eligible physical host: {}",
-                failure_history.join(" | ")
-            );
+            return Err(research_authority_exhaustion(
+                label.clone(),
+                failed_physical_hosts.clone(),
+            ));
         }
         let lease = match acquire_research_host_until_cancelled(
             scheduler,
@@ -17678,7 +18117,7 @@ where
             Ok(output) => return Ok(Some(output)),
             Err(error) => {
                 failed_tokens.push(lane.token.clone());
-                failure_history.push(format!("{}: {error}", lane.physical_host_id));
+                failed_physical_hosts.push(lane.physical_host_id.clone());
                 observe_failure(&lane, attempt, &error, &failed_tokens);
             }
         }
@@ -18790,15 +19229,120 @@ fn research_target_canonical_context(
                 .collect::<Vec<_>>();
             nontrivial_authority_ids.sort();
             nontrivial_authority_ids.dedup();
-            (!nontrivial_authority_ids.is_empty()).then(|| ResearchCanonicalSpecContext {
-                candidate_id: stable_inventory_id("target-authority", &decision.requirement_id, 0),
-                target_requirement_id: decision.requirement_id.clone(),
-                claimed_gap: "cross-requirement canonical authority".to_string(),
-                authority_requirement_ids: nontrivial_authority_ids,
-                rationale: decision.rationale.clone(),
+            (!nontrivial_authority_ids.is_empty() || !decision.complete).then(|| {
+                ResearchCanonicalSpecContext {
+                    candidate_id: stable_inventory_id(
+                        "target-authority",
+                        &decision.requirement_id,
+                        0,
+                    ),
+                    target_requirement_id: decision.requirement_id.clone(),
+                    claimed_gap: if decision.complete {
+                        "cross-requirement canonical authority".to_string()
+                    } else {
+                        "accepted typed material research gap".to_string()
+                    },
+                    authority_status: if decision.complete {
+                        "accepted".to_string()
+                    } else {
+                        "accepted-incomplete".to_string()
+                    },
+                    authority_requirement_ids: nontrivial_authority_ids,
+                    material_gaps: decision.gaps.clone(),
+                    partial_assessments: Vec::new(),
+                    rationale: decision.rationale.clone(),
+                }
             })
         })
         .collect()
+}
+
+fn degraded_research_target_canonical_context(
+    degradations: &[ResearchAuthorityDegradation],
+) -> Vec<ResearchCanonicalSpecContext> {
+    degradations
+        .iter()
+        .map(|degradation| {
+            let mut authority_requirement_ids = degradation
+                .partial_assessments
+                .iter()
+                .flat_map(|assessment| assessment.authority_requirement_ids.iter().cloned())
+                .collect::<Vec<_>>();
+            authority_requirement_ids.sort();
+            authority_requirement_ids.dedup();
+            let mut material_gaps = degradation
+                .partial_assessments
+                .iter()
+                .flat_map(|assessment| assessment.gaps.iter().cloned())
+                .collect::<Vec<_>>();
+            material_gaps.sort_by_key(research_authority_gap_signature);
+            material_gaps.dedup_by(|left, right| {
+                research_authority_gap_signature(left) == research_authority_gap_signature(right)
+            });
+            ResearchCanonicalSpecContext {
+                candidate_id: stable_inventory_id(
+                    "target-authority-degraded",
+                    &degradation.requirement_id,
+                    0,
+                ),
+                target_requirement_id: degradation.requirement_id.clone(),
+                claimed_gap: "distinct-host authority quorum unavailable".to_string(),
+                authority_status: "degraded".to_string(),
+                authority_requirement_ids,
+                material_gaps,
+                partial_assessments: degradation.partial_assessments.clone(),
+                rationale: degradation.reason.clone(),
+            }
+        })
+        .collect()
+}
+
+fn degraded_research_target_partition_resolution(
+    partition: &ResearchClosurePartition,
+    partial_ledgers: Vec<CompiledResearchClosurePartition>,
+    reason: String,
+) -> ResearchTargetPartitionResolution {
+    let mut physical_host_ids = partial_ledgers
+        .iter()
+        .map(|ledger| ledger.physical_host_id.clone())
+        .collect::<Vec<_>>();
+    physical_host_ids.sort();
+    physical_host_ids.dedup();
+    let mut authority_input_digests = partial_ledgers
+        .iter()
+        .map(|ledger| ledger.authority_input_digest.clone())
+        .collect::<Vec<_>>();
+    authority_input_digests.sort();
+    authority_input_digests.dedup();
+    let degradations = partition
+        .candidates
+        .iter()
+        .map(|candidate| ResearchAuthorityDegradation {
+            requirement_id: candidate.requirement_id.clone(),
+            partition_id: partition.partition_id.clone(),
+            reason: reason.clone(),
+            partial_assessments: partial_ledgers
+                .iter()
+                .flat_map(|ledger| ledger.assessments.iter())
+                .filter(|assessment| assessment.requirement_id == candidate.requirement_id)
+                .cloned()
+                .collect(),
+            physical_host_ids: physical_host_ids.clone(),
+            authority_input_digests: authority_input_digests.clone(),
+        })
+        .collect();
+    ResearchTargetPartitionResolution {
+        decisions: Vec::new(),
+        degradations,
+        decision_sources: HashMap::new(),
+        ledger_corrections: partial_ledgers
+            .iter()
+            .map(|ledger| ledger.ledger_corrections)
+            .sum(),
+        jury_disagreements: 0,
+        citations_verified: 0,
+        citations_rejected: 0,
+    }
 }
 
 fn apply_research_saturation_target_decisions(
@@ -18996,6 +19540,118 @@ fn apply_research_saturation_target_decisions(
     Ok(canonical)
 }
 
+fn apply_research_reconciliation_outcome(
+    ledger: &mut ResearchSaturationDraft,
+    outcome: &ResearchTargetReconciliationOutcome,
+    registry: &mut HashMap<String, ResearchGapRegistryEntry>,
+    history: &mut HashMap<String, ResearchTargetHistory>,
+    evidence: &[ResearchEvidenceRecord],
+) -> Result<()> {
+    let expected = ledger
+        .coverage
+        .iter()
+        .map(|assessment| assessment.requirement_id.as_str())
+        .collect::<HashSet<_>>();
+    let resolved = outcome
+        .decisions
+        .iter()
+        .map(|decision| decision.requirement_id.as_str())
+        .collect::<HashSet<_>>();
+    let degraded = outcome
+        .degradations
+        .iter()
+        .map(|degradation| degradation.requirement_id.as_str())
+        .collect::<HashSet<_>>();
+    if resolved.len() != outcome.decisions.len()
+        || degraded.len() != outcome.degradations.len()
+        || !resolved.is_disjoint(&degraded)
+        || resolved.union(&degraded).copied().collect::<HashSet<_>>() != expected
+    {
+        bail!("research reconciliation did not form one resolved-or-degraded exact target cover");
+    }
+
+    let mut resolved_ledger = ResearchSaturationDraft {
+        status: ResearchSaturationStatus::Continue,
+        coverage: ledger
+            .coverage
+            .iter()
+            .filter(|assessment| resolved.contains(assessment.requirement_id.as_str()))
+            .cloned()
+            .collect(),
+        next_questions: Vec::new(),
+        summary: String::new(),
+    };
+    if !outcome.decisions.is_empty() {
+        apply_research_saturation_target_decisions(
+            &mut resolved_ledger,
+            &outcome.decisions,
+            registry,
+            history,
+            evidence,
+        )?;
+    }
+    let resolved_rows = resolved_ledger
+        .coverage
+        .into_iter()
+        .map(|assessment| (assessment.requirement_id.clone(), assessment))
+        .collect::<HashMap<_, _>>();
+    let degradation_by_requirement = outcome
+        .degradations
+        .iter()
+        .map(|degradation| (degradation.requirement_id.as_str(), degradation))
+        .collect::<HashMap<_, _>>();
+    for assessment in &mut ledger.coverage {
+        if let Some(resolved) = resolved_rows.get(&assessment.requirement_id) {
+            *assessment = resolved.clone();
+            continue;
+        }
+        let degradation = degradation_by_requirement[assessment.requirement_id.as_str()];
+        assessment.state = ResearchCoverageState::Blocked;
+        assessment.evidence_ids = degradation
+            .partial_assessments
+            .iter()
+            .flat_map(|partial| partial.evidence_ids.iter().cloned())
+            .collect();
+        assessment.evidence_ids.sort();
+        assessment.evidence_ids.dedup();
+        assessment.rationale = format!(
+            "Typed degraded authority closure for partition `{}`: {}",
+            degradation.partition_id, degradation.reason
+        );
+        history
+            .entry(assessment.requirement_id.clone())
+            .or_default();
+    }
+    ledger.next_questions = resolved_ledger.next_questions;
+    ledger.status = if !ledger.next_questions.is_empty() {
+        ResearchSaturationStatus::Continue
+    } else if ledger.coverage.iter().any(|assessment| {
+        matches!(
+            assessment.state,
+            ResearchCoverageState::Unresolved | ResearchCoverageState::Blocked
+        )
+    }) {
+        ResearchSaturationStatus::Blocked
+    } else {
+        ResearchSaturationStatus::Saturated
+    };
+    ledger.summary = format!(
+        "Whole-target authority accepted {} target(s), retained {} material gap(s), and preserved {} typed degraded target closure(s).",
+        outcome
+            .decisions
+            .iter()
+            .filter(|decision| decision.complete)
+            .count(),
+        outcome
+            .decisions
+            .iter()
+            .map(|decision| decision.gaps.len())
+            .sum::<usize>(),
+        outcome.degradations.len(),
+    );
+    Ok(())
+}
+
 fn research_question_slot(question: &ResearchQuestion) -> String {
     let mut sources = question.applicable_source_ids.clone();
     sources.sort();
@@ -19023,6 +19679,13 @@ fn research_question_slot(question: &ResearchQuestion) -> String {
             question.question, question.evidence_needed
         ))
     )
+}
+
+fn research_followup_requirement_ids(questions: &[ResearchQuestion]) -> HashSet<String> {
+    questions
+        .iter()
+        .flat_map(|question| question.requirement_ids.iter().cloned())
+        .collect()
 }
 
 fn research_question_authored_cost(question: &ResearchQuestion) -> usize {
@@ -19166,6 +19829,7 @@ fn accepted_planning_research_findings(
     findings: Vec<ResearchFinding>,
     evidence: Vec<ResearchEvidenceRecord>,
     decisions: &[ResearchClosureAssessment],
+    degradations: &[ResearchAuthorityDegradation],
 ) -> Result<Vec<ResearchFinding>> {
     if findings.len() != evidence.len() {
         bail!(
@@ -19177,6 +19841,12 @@ fn accepted_planning_research_findings(
     let accepted_evidence_ids = decisions
         .iter()
         .flat_map(|decision| decision.evidence_ids.iter().map(String::as_str))
+        .chain(degradations.iter().flat_map(|degradation| {
+            degradation
+                .partial_assessments
+                .iter()
+                .flat_map(|assessment| assessment.evidence_ids.iter().map(String::as_str))
+        }))
         .collect::<HashSet<_>>();
     Ok(findings
         .into_iter()
@@ -25152,11 +25822,10 @@ impl GooseAgentDispatcher {
                 .map(|lane| lane.token.clone())
                 .collect::<Vec<_>>();
             if eligible_tokens.is_empty() {
-                admission_stop.cancel();
-                bail!(
-                    "target authority partition `{}` exhausted eligible physical hosts for {pass}",
-                    partition.partition_id
-                );
+                return Err(research_authority_exhaustion(
+                    format!("{}:{pass}", partition.partition_id),
+                    failed_hosts.iter().cloned(),
+                ));
             }
             let lease = match acquire_research_host_until_cancelled(
                 &runtime.host_scheduler,
@@ -25235,12 +25904,17 @@ impl GooseAgentDispatcher {
                     .collect::<Vec<_>>()
             };
             if eligible_hosts.is_empty() {
-                admission_stop.cancel();
-                bail!(
-                    "target authority partition `{}` exhausted distinct physical hosts for {}",
-                    partition.partition_id,
-                    jury_stage.as_str()
-                );
+                let failed_hosts = partition_host_state
+                    .lock()
+                    .await
+                    .failed_hosts
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                return Err(research_authority_exhaustion(
+                    format!("{}:{}", partition.partition_id, jury_stage.as_str()),
+                    failed_hosts,
+                ));
             }
             let lease = match acquire_research_host_until_cancelled(
                 &runtime.host_scheduler,
@@ -25405,12 +26079,29 @@ impl GooseAgentDispatcher {
         let (first, second) = match (first, second) {
             (Ok(Some(first)), Ok(Some(second))) => (first, second),
             (Ok(None), Ok(None)) | (Ok(None), Ok(Some(_))) | (Ok(Some(_)), Ok(None)) => {
-                return Ok(None)
+                return Ok(None);
             }
-            (Err(first), Err(second)) => bail!(
-                "target authority pair failed after draining both admitted jurors: first={first}; second={second}"
-            ),
+            (Err(first), Err(second)) => {
+                if is_research_authority_exhaustion(&first) {
+                    return Err(first.context(format!(
+                        "target authority pair drained both jurors; sibling failure: {second}"
+                    )));
+                }
+                if is_research_authority_exhaustion(&second) {
+                    return Err(second.context(format!(
+                        "target authority pair drained both jurors; sibling failure: {first}"
+                    )));
+                }
+                bail!(
+                    "target authority pair failed after draining both admitted jurors: first={first}; second={second}"
+                )
+            }
             (Err(error), Ok(_)) | (Ok(_), Err(error)) => {
+                if is_research_authority_exhaustion(&error) {
+                    return Err(error.context(
+                        "target authority pair exhausted after its admitted sibling drained",
+                    ));
+                }
                 bail!("target authority pair failed after draining both admitted jurors: {error}")
             }
         };
@@ -25737,6 +26428,7 @@ impl GooseAgentDispatcher {
         if admission_stop.is_cancelled() {
             return Ok(None);
         }
+        let degraded_partition = partition.clone();
         let result = self
             .resolve_research_target_partition_from_pair_inner(
                 runtime,
@@ -25745,10 +26437,29 @@ impl GooseAgentDispatcher {
                 admission_stop,
             )
             .await;
-        if result.is_err() {
-            admission_stop.cancel();
+        match result {
+            Err(error) if is_research_authority_exhaustion(&error) => {
+                self.events.write_value(serde_json::json!({
+                    "event": "research_target_partition_degraded",
+                    "stage": runtime.stage,
+                    "cycle": runtime.cycle,
+                    "partition_id": degraded_partition.partition_id,
+                    "requirement_ids": degraded_partition.candidates.iter().map(|candidate| candidate.requirement_id.as_str()).collect::<Vec<_>>(),
+                    "reason": error.to_string(),
+                    "continuation": "preserve-typed-partial-authority-and-continue-global-research",
+                }));
+                Ok(Some(degraded_research_target_partition_resolution(
+                    &degraded_partition,
+                    Vec::new(),
+                    error.to_string(),
+                )))
+            }
+            Err(error) => {
+                admission_stop.cancel();
+                Err(error)
+            }
+            ok => ok,
         }
-        result
     }
 
     async fn resolve_research_target_partition_from_pair_inner(
@@ -26045,6 +26756,7 @@ impl GooseAgentDispatcher {
             .collect::<Result<Vec<_>>>()?;
         Ok(Some(ResearchTargetPartitionResolution {
             decisions,
+            degradations: Vec::new(),
             decision_sources: accepted_sources,
             ledger_corrections,
             jury_disagreements,
@@ -26061,7 +26773,7 @@ impl GooseAgentDispatcher {
         requirements: Vec<RequirementRecord>,
         worker_models: Vec<String>,
         lookup_routes: ResearchSeedLookupRoutes,
-    ) -> Result<Vec<ResearchClosureAssessment>> {
+    ) -> Result<ResearchTargetReconciliationOutcome> {
         if candidates.is_empty() {
             bail!("whole-target authority reconciliation received no canonical targets");
         }
@@ -26139,16 +26851,16 @@ impl GooseAgentDispatcher {
             .iter()
             .map(|partition| partition.partition_id.clone())
             .collect::<Vec<_>>();
-        let (pair_sender, mut pair_receiver) = tokio::sync::mpsc::unbounded_channel::<(
-            usize,
-            CompiledResearchClosurePartition,
-            CompiledResearchClosurePartition,
-        )>();
+        let (pair_sender, mut pair_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<ResearchJuryHandoff>();
         let retired_events = self.events.clone();
         let retired_stage = stage.clone();
         let pair_events = self.events.clone();
         let pair_stage = stage.clone();
         let pair_labels = partition_labels.clone();
+        let degraded_pair_labels = partition_labels.clone();
+        let resolved_pair_sender = pair_sender.clone();
+        let degraded_pair_sender = pair_sender;
         let pair_fan_stop = jury_admission_stop.clone();
         let pair_fan = drain_research_jury_orchestration(
             jury_calls,
@@ -26177,19 +26889,58 @@ impl GooseAgentDispatcher {
                     "jury_2_physical_host_id": second.physical_host_id,
                     "downstream_enqueued_before_next_dispatch_tick": true,
                 }));
-                pair_sender
-                    .send((index, first, second))
+                resolved_pair_sender
+                    .send(ResearchJuryHandoff::Pair {
+                        index,
+                        first,
+                        second,
+                    })
                     .map_err(|_| anyhow!("target jury downstream receiver closed"))
+            },
+            {
+                let pair_labels = degraded_pair_labels;
+                let pair_events = self.events.clone();
+                let pair_stage = stage.clone();
+                move |index, partial_ledgers, reason| {
+                    let partition_id = pair_labels.get(index).ok_or_else(|| {
+                        anyhow!("target jury degraded unknown partition ordinal {index}")
+                    })?;
+                    pair_events.write_value(serde_json::json!({
+                        "event": "research_target_partition_degraded",
+                        "stage": pair_stage,
+                        "cycle": cycle,
+                        "partition_id": partition_id,
+                        "partial_physical_host_ids": partial_ledgers.iter().map(|ledger| ledger.physical_host_id.as_str()).collect::<Vec<_>>(),
+                        "reason": reason,
+                        "continuation": "preserve-typed-partial-authority-and-continue-global-research",
+                    }));
+                    degraded_pair_sender
+                        .send(ResearchJuryHandoff::Degraded {
+                            index,
+                            partial_ledgers,
+                            reason,
+                        })
+                        .map_err(|_| anyhow!("target jury degraded downstream receiver closed"))
+                }
             },
         );
         tokio::pin!(pair_fan);
         let mut pair_fan_open = true;
         let mut pair_channel_open = true;
-        let mut resolutions = futures::stream::FuturesUnordered::new();
+        let mut resolutions = futures::stream::FuturesUnordered::<
+            std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<Option<ResearchTargetPartitionResolution>>,
+                        > + Send,
+                >,
+            >,
+        >::new();
         let mut lifecycle_failures = Vec::new();
         let mut terminal_failure = false;
 
         let mut by_requirement = HashMap::new();
+        let mut degraded_by_requirement = HashMap::new();
         let mut decision_sources = HashMap::new();
         let mut corrections = 0u64;
         let mut disagreements = 0usize;
@@ -26207,7 +26958,40 @@ impl GooseAgentDispatcher {
                             disagreements = disagreements.saturating_add(resolution.jury_disagreements);
                             citations_verified = citations_verified.saturating_add(resolution.citations_verified);
                             citations_rejected = citations_rejected.saturating_add(resolution.citations_rejected);
+                            for degradation in resolution.degradations {
+                                if by_requirement.contains_key(&degradation.requirement_id) {
+                                    terminal_failure = true;
+                                    jury_admission_stop.cancel();
+                                    lifecycle_failures.push(format!(
+                                        "target section pipeline both resolved and degraded canonical target `{}`",
+                                        degradation.requirement_id
+                                    ));
+                                    continue;
+                                }
+                                match degraded_by_requirement.entry(degradation.requirement_id.clone()) {
+                                    std::collections::hash_map::Entry::Occupied(_) => {
+                                        terminal_failure = true;
+                                        jury_admission_stop.cancel();
+                                        lifecycle_failures.push(format!(
+                                            "target section pipelines repeated degraded canonical target `{}`",
+                                            degradation.requirement_id
+                                        ));
+                                    }
+                                    std::collections::hash_map::Entry::Vacant(entry) => {
+                                        entry.insert(degradation);
+                                    }
+                                }
+                            }
                             for decision in resolution.decisions {
+                                if degraded_by_requirement.contains_key(&decision.requirement_id) {
+                                    terminal_failure = true;
+                                    jury_admission_stop.cancel();
+                                    lifecycle_failures.push(format!(
+                                        "target section pipeline both degraded and resolved canonical target `{}`",
+                                        decision.requirement_id
+                                    ));
+                                    continue;
+                                }
                                 match by_requirement.entry(decision.requirement_id.clone()) {
                                     std::collections::hash_map::Entry::Occupied(_) => {
                                         terminal_failure = true;
@@ -26248,14 +27032,24 @@ impl GooseAgentDispatcher {
                         }
                     }
                 }
-                pair = pair_receiver.recv(), if pair_channel_open => {
-                    let Some((index, first, second)) = pair else {
+                handoff = pair_receiver.recv(), if pair_channel_open => {
+                    let Some(handoff) = handoff else {
                         pair_channel_open = false;
                         continue;
                     };
                     if terminal_failure || jury_admission_stop.is_cancelled() {
                         continue;
                     }
+                    let (index, pair, degraded) = match handoff {
+                        ResearchJuryHandoff::Pair { index, first, second } => {
+                            (index, Some((first, second)), None)
+                        }
+                        ResearchJuryHandoff::Degraded {
+                            index,
+                            partial_ledgers,
+                            reason,
+                        } => (index, None, Some((partial_ledgers, reason))),
+                    };
                     let Some(partition) = partitions.get(index).cloned() else {
                         terminal_failure = true;
                         jury_admission_stop.cancel();
@@ -26264,10 +27058,21 @@ impl GooseAgentDispatcher {
                         ));
                         continue;
                     };
+                    if let Some((partial_ledgers, reason)) = degraded {
+                        resolutions.push(Box::pin(async move {
+                            Ok(Some(degraded_research_target_partition_resolution(
+                                &partition,
+                                partial_ledgers,
+                                reason,
+                            )))
+                        }));
+                        continue;
+                    }
+                    let (first, second) = pair.expect("a non-degraded jury handoff has a pair");
                     let dispatcher = self.clone();
                     let resolution_runtime = runtime.clone();
                     let resolution_stop = jury_admission_stop.clone();
-                    resolutions.push(async move {
+                    resolutions.push(Box::pin(async move {
                         dispatcher
                             .resolve_research_target_partition_from_pair(
                                 &resolution_runtime,
@@ -26276,7 +27081,7 @@ impl GooseAgentDispatcher {
                                 &resolution_stop,
                             )
                             .await
-                    });
+                    }));
                 }
                 result = &mut pair_fan, if pair_fan_open => {
                     if let Err(error) = result {
@@ -26295,27 +27100,35 @@ impl GooseAgentDispatcher {
             );
         }
 
-        let decisions = candidates
-            .iter()
-            .map(|candidate| {
-                by_requirement
-                    .remove(&candidate.requirement_id)
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "target authority omitted final `{}`",
-                            candidate.requirement_id
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        if !by_requirement.is_empty() || decision_sources.len() != decisions.len() {
+        let mut decisions = Vec::new();
+        let mut degradations = Vec::new();
+        for candidate in &candidates {
+            if let Some(decision) = by_requirement.remove(&candidate.requirement_id) {
+                decisions.push(decision);
+            } else if let Some(degradation) =
+                degraded_by_requirement.remove(&candidate.requirement_id)
+            {
+                degradations.push(degradation);
+            } else {
+                bail!(
+                    "target authority omitted final or degraded `{}`",
+                    candidate.requirement_id
+                );
+            }
+        }
+        if !by_requirement.is_empty()
+            || !degraded_by_requirement.is_empty()
+            || decision_sources.len() != decisions.len()
+        {
             bail!("target section pipelines did not form an exact canonical-target cover");
         }
         self.events.write_value(serde_json::json!({
             "event": "research_target_authority_completed",
             "stage": stage,
             "cycle": cycle,
-            "targets": decisions.len(),
+            "targets": decisions.len().saturating_add(degradations.len()),
+            "accepted_targets": decisions.len(),
+            "degraded_targets": degradations.len(),
             "complete_targets": decisions.iter().filter(|decision| decision.complete).count(),
             "material_gaps": decisions.iter().map(|decision| decision.gaps.len()).sum::<usize>(),
             "jury_disagreements": disagreements,
@@ -26326,7 +27139,10 @@ impl GooseAgentDispatcher {
             "decisions": decisions,
             "completion_basis": "every-target-two-distinct-host-reviews-pipelined-by-authored-section-disagreements-third-host-selected-and-proofs-verified-away-from-authors",
         }));
-        Ok(decisions)
+        Ok(ResearchTargetReconciliationOutcome {
+            decisions,
+            degradations,
+        })
     }
     async fn research_to_saturation(
         self: &Arc<Self>,
@@ -26369,11 +27185,19 @@ impl GooseAgentDispatcher {
         let mut gap_registry = HashMap::new();
         let mut target_history = HashMap::new();
         let mut canonical_spec_context = HashMap::<String, ResearchCanonicalSpecContext>::new();
+        let mut accepted_decisions = HashMap::<String, ResearchClosureAssessment>::new();
+        let mut degraded_closures = HashMap::<String, ResearchAuthorityDegradation>::new();
+        let mut retained_coverage = HashMap::<String, ResearchCoverageAssessment>::new();
+        let mut active_requirement_ids = requirements
+            .iter()
+            .map(|requirement| requirement.id.clone())
+            .collect::<HashSet<_>>();
         let mut cycle = 0u64;
         loop {
             let evidence = research_evidence_inventory(&findings);
             let coverage = requirements
                 .iter()
+                .filter(|requirement| active_requirement_ids.contains(&requirement.id))
                 .map(|requirement| {
                     let mut evidence_ids = evidence
                         .iter()
@@ -26388,15 +27212,18 @@ impl GooseAgentDispatcher {
                         .collect::<Vec<_>>();
                     evidence_ids.sort();
                     evidence_ids.dedup();
+                    let prior = retained_coverage.get(&requirement.id);
                     ResearchCoverageAssessment {
                         requirement_id: requirement.id.clone(),
                         state: if evidence_ids.is_empty() {
-                            ResearchCoverageState::Unresolved
+                            prior
+                                .map(|assessment| assessment.state)
+                                .unwrap_or(ResearchCoverageState::Unresolved)
                         } else {
                             ResearchCoverageState::Grounded
                         },
                         evidence_ids,
-                        rationale: if cycle == 0 {
+                        rationale: if cycle == 0 && prior.is_none() {
                             "Direct whole-target authority audit; no provisional verdict is trusted."
                                 .to_string()
                         } else {
@@ -26425,7 +27252,7 @@ impl GooseAgentDispatcher {
             } else {
                 format!("target-evidence-{cycle}")
             };
-            let decisions = self
+            let outcome = self
                 .run_research_target_reconciliation(
                     stage,
                     Some(cycle),
@@ -26436,28 +27263,54 @@ impl GooseAgentDispatcher {
                 )
                 .await?;
 
-            for decision in &decisions {
+            for decision in &outcome.decisions {
                 canonical_spec_context.remove(&stable_inventory_id(
                     "target-authority",
                     &decision.requirement_id,
                     0,
                 ));
+                canonical_spec_context.remove(&stable_inventory_id(
+                    "target-authority-degraded",
+                    &decision.requirement_id,
+                    0,
+                ));
+                degraded_closures.remove(&decision.requirement_id);
+                accepted_decisions.insert(decision.requirement_id.clone(), decision.clone());
             }
-            for context in research_target_canonical_context(&decisions) {
+            for degradation in &outcome.degradations {
+                canonical_spec_context.remove(&stable_inventory_id(
+                    "target-authority",
+                    &degradation.requirement_id,
+                    0,
+                ));
+                canonical_spec_context.remove(&stable_inventory_id(
+                    "target-authority-degraded",
+                    &degradation.requirement_id,
+                    0,
+                ));
+                accepted_decisions.remove(&degradation.requirement_id);
+                degraded_closures.insert(degradation.requirement_id.clone(), degradation.clone());
+            }
+            for context in research_target_canonical_context(&outcome.decisions) {
                 canonical_spec_context.insert(context.candidate_id.clone(), context);
             }
-            apply_research_saturation_target_decisions(
+            for context in degraded_research_target_canonical_context(&outcome.degradations) {
+                canonical_spec_context.insert(context.candidate_id.clone(), context);
+            }
+            apply_research_reconciliation_outcome(
                 &mut ledger,
-                &decisions,
+                &outcome,
                 &mut gap_registry,
                 &mut target_history,
                 &evidence,
             )?;
+            for assessment in &ledger.coverage {
+                retained_coverage.insert(assessment.requirement_id.clone(), assessment.clone());
+            }
 
             let state_count = |state| {
-                ledger
-                    .coverage
-                    .iter()
+                retained_coverage
+                    .values()
                     .filter(|assessment| assessment.state == state)
                     .count()
             };
@@ -26465,7 +27318,8 @@ impl GooseAgentDispatcher {
                 "event": "research_target_cycle_checked",
                 "cycle": cycle,
                 "status": ledger.status.as_str(),
-                "coverage_total": ledger.coverage.len(),
+                "coverage_total": retained_coverage.len(),
+                "active_targets": ledger.coverage.len(),
                 "grounded": state_count(ResearchCoverageState::Grounded),
                 "spec_sufficient": state_count(ResearchCoverageState::SpecSufficient),
                 "unresolved": state_count(ResearchCoverageState::Unresolved),
@@ -26476,30 +27330,58 @@ impl GooseAgentDispatcher {
             }));
 
             match ledger.status {
-                ResearchSaturationStatus::Saturated => {
+                ResearchSaturationStatus::Saturated | ResearchSaturationStatus::Blocked => {
                     let mut canonical_spec_context =
                         canonical_spec_context.into_values().collect::<Vec<_>>();
                     canonical_spec_context
                         .sort_by(|left, right| left.candidate_id.cmp(&right.candidate_id));
+                    let ordered_degradations = requirements
+                        .iter()
+                        .filter_map(|requirement| degraded_closures.get(&requirement.id).cloned())
+                        .collect::<Vec<_>>();
+                    let ordered_decisions = requirements
+                        .iter()
+                        .filter_map(|requirement| accepted_decisions.get(&requirement.id).cloned())
+                        .collect::<Vec<_>>();
+                    let has_incomplete_authority =
+                        ordered_decisions.iter().any(|decision| !decision.complete);
                     self.events.write_value(serde_json::json!({
                         "event": "research_canonical_spec_context_frozen",
                         "entries": canonical_spec_context,
-                        "authority": "typed-complete-canonical-ledger-jury",
+                        "authority": if degraded_closures.is_empty() && !has_incomplete_authority {
+                            "typed-complete-canonical-ledger-jury"
+                        } else {
+                            "typed-resolved-plus-incomplete-or-degraded-canonical-ledger"
+                        },
+                        "degraded_targets": degraded_closures.len(),
                         "externally_grounded": false,
                     }));
-                    let findings =
-                        accepted_planning_research_findings(findings, evidence, &decisions)?;
+                    if !degraded_closures.is_empty()
+                        || ledger.status == ResearchSaturationStatus::Blocked
+                    {
+                        self.events.write_value(serde_json::json!({
+                            "event": "research_pod_degraded_completed",
+                            "cycle": cycle,
+                            "degraded_targets": &ordered_degradations,
+                            "accepted_targets": accepted_decisions.len(),
+                            "continuation": "one-shared-specific-planning-pod",
+                        }));
+                    }
+                    let findings = accepted_planning_research_findings(
+                        findings,
+                        evidence,
+                        &ordered_decisions,
+                        &ordered_degradations,
+                    )?;
                     return Ok(ResearchSaturationOutcome {
                         findings,
                         canonical_spec_context,
                     });
                 }
-                ResearchSaturationStatus::Blocked => {
-                    bail!("semantic research blocked: {}", ledger.summary)
-                }
                 ResearchSaturationStatus::Continue => {}
             }
 
+            active_requirement_ids = research_followup_requirement_ids(&ledger.next_questions);
             let dispatched_slots = ledger
                 .next_questions
                 .iter()
@@ -35192,6 +36074,7 @@ mod fan_order_tests {
                     Ok(())
                 }
             },
+            |_, _, _| Ok(()),
         ));
         started
             .clone()
@@ -35321,6 +36204,7 @@ mod fan_order_tests {
                     .send((index, first, second))
                     .map_err(|_| anyhow!("pair receiver closed"))
             },
+            |_, _, _| Ok(()),
         ));
 
         let mut initial = Vec::new();
@@ -35608,6 +36492,7 @@ mod fan_order_tests {
                             Ok(())
                         }
                     },
+                    |_, _, _| Ok(()),
                 ));
                 started
                     .clone()
@@ -36253,18 +37138,27 @@ where
     Fut: std::future::Future<Output = Result<R>>,
 {
     let mut results = Vec::new();
-    let mut failures = Vec::new();
+    let mut failures = Vec::<anyhow::Error>::new();
     while let Some(result) = calls.next().await {
         match result {
             Ok(result) => results.push(result),
-            Err(error) => failures.push(error.to_string()),
+            Err(error) => failures.push(error),
         }
     }
     if !failures.is_empty() {
-        bail!(
-            "{label} failed after draining every admitted request: {}",
-            failures.join(" | ")
-        );
+        let mut failures = failures.into_iter();
+        let first = failures
+            .next()
+            .expect("a non-empty admitted fan failure list has a first error");
+        let remaining = failures.map(|error| error.to_string()).collect::<Vec<_>>();
+        let suffix = if remaining.is_empty() {
+            String::new()
+        } else {
+            format!("; sibling failures: {}", remaining.join(" | "))
+        };
+        return Err(first.context(format!(
+            "{label} failed after draining every admitted request{suffix}"
+        )));
     }
     Ok(results)
 }
@@ -37103,12 +37997,13 @@ fn research_jury_unit_specs(partitions: &[ResearchClosurePartition]) -> Vec<Rese
     specs
 }
 
-async fn drain_research_jury_orchestration<Fut, ObserveRetired, ObservePair>(
+async fn drain_research_jury_orchestration<Fut, ObserveRetired, ObservePair, ObserveDegraded>(
     mut jury_calls: futures::stream::FuturesUnordered<Fut>,
     partition_labels: Vec<String>,
     admission_stop: tokio_util::sync::CancellationToken,
     mut observe_retired: ObserveRetired,
     mut observe_pair: ObservePair,
+    mut observe_degraded: ObserveDegraded,
 ) -> Result<()>
 where
     Fut: std::future::Future<
@@ -37124,6 +38019,7 @@ where
         CompiledResearchClosurePartition,
         CompiledResearchClosurePartition,
     ) -> Result<()>,
+    ObserveDegraded: FnMut(usize, Vec<CompiledResearchClosurePartition>, String) -> Result<()>,
 {
     let partition_count = partition_labels.len();
     let expected_units = partition_count.saturating_mul(2);
@@ -37131,30 +38027,14 @@ where
         Option<CompiledResearchClosurePartition>,
         Option<CompiledResearchClosurePartition>,
     )>>();
+    let mut settled_by_partition = vec![0usize; partition_count];
+    let mut recoverable_failures = vec![Vec::<String>::new(); partition_count];
     let mut settled_units = 0usize;
-    let mut pairs_formed = 0usize;
+    let mut partitions_handed_off = 0usize;
     let mut terminal_failures = Vec::new();
 
     while let Some((index, jury_stage, result)) = jury_calls.next().await {
         settled_units = settled_units.saturating_add(1);
-        let compiled = match result {
-            Ok(Some(compiled)) => compiled,
-            Ok(None) => {
-                observe_retired(index, jury_stage);
-                continue;
-            }
-            Err(error) => {
-                admission_stop.cancel();
-                terminal_failures.push(format!(
-                    "target jury partition ordinal {index} {} failed after admitted work drained: {error}",
-                    jury_stage.as_str()
-                ));
-                continue;
-            }
-        };
-        if admission_stop.is_cancelled() {
-            continue;
-        }
         let Some(pair) = completed_units.get_mut(index) else {
             admission_stop.cancel();
             terminal_failures.push(format!(
@@ -37162,27 +38042,65 @@ where
             ));
             continue;
         };
-        let slot = match jury_stage {
-            PairedRetryingFanStage::First => &mut pair.0,
-            PairedRetryingFanStage::Second => &mut pair.1,
-        };
-        if slot.replace(compiled).is_some() {
-            admission_stop.cancel();
-            terminal_failures.push(format!(
-                "target jury completed partition ordinal {index} {} more than once",
-                jury_stage.as_str()
-            ));
+        settled_by_partition[index] = settled_by_partition[index].saturating_add(1);
+        match result {
+            Ok(Some(compiled)) => {
+                let slot = match jury_stage {
+                    PairedRetryingFanStage::First => &mut pair.0,
+                    PairedRetryingFanStage::Second => &mut pair.1,
+                };
+                if slot.replace(compiled).is_some() {
+                    admission_stop.cancel();
+                    terminal_failures.push(format!(
+                        "target jury completed partition ordinal {index} {} more than once",
+                        jury_stage.as_str()
+                    ));
+                }
+            }
+            Ok(None) => {
+                observe_retired(index, jury_stage);
+            }
+            Err(error) if is_research_authority_exhaustion(&error) => {
+                recoverable_failures[index].push(error.to_string());
+            }
+            Err(error) => {
+                admission_stop.cancel();
+                terminal_failures.push(format!(
+                    "target jury partition ordinal {index} {} failed after admitted work drained: {error}",
+                    jury_stage.as_str()
+                ));
+            }
+        }
+        if admission_stop.is_cancelled() || settled_by_partition[index] < 2 {
             continue;
         }
-        if pair.0.is_none() || pair.1.is_none() {
-            continue;
-        }
-        let first = pair.0.take().expect("a formed target pair has jury-1");
-        let second = pair.1.take().expect("a formed target pair has jury-2");
         let partition_label = partition_labels
             .get(index)
             .map(String::as_str)
             .unwrap_or("unknown");
+        if !recoverable_failures[index].is_empty() {
+            let partial_ledgers = pair.0.take().into_iter().chain(pair.1.take()).collect();
+            let reason = recoverable_failures[index].join(" | ");
+            if let Err(error) = observe_degraded(index, partial_ledgers, reason) {
+                admission_stop.cancel();
+                terminal_failures.push(format!(
+                    "target authority partition `{partition_label}` could not hand its degraded closure downstream: {error}"
+                ));
+                continue;
+            }
+            partitions_handed_off = partitions_handed_off.saturating_add(1);
+            tokio::task::yield_now().await;
+            continue;
+        }
+        if pair.0.is_none() || pair.1.is_none() {
+            admission_stop.cancel();
+            terminal_failures.push(format!(
+                "target authority partition `{partition_label}` retired without a terminal failure or typed degraded closure"
+            ));
+            continue;
+        }
+        let first = pair.0.take().expect("a formed target pair has jury-1");
+        let second = pair.1.take().expect("a formed target pair has jury-2");
         if first.physical_host_id == second.physical_host_id {
             admission_stop.cancel();
             terminal_failures.push(format!(
@@ -37205,7 +38123,7 @@ where
             ));
             continue;
         }
-        pairs_formed = pairs_formed.saturating_add(1);
+        partitions_handed_off = partitions_handed_off.saturating_add(1);
         tokio::task::yield_now().await;
     }
 
@@ -37218,9 +38136,9 @@ where
         terminal_failures
             .push("target jury admission stopped by a downstream terminal failure".to_string());
     }
-    if pairs_formed != partition_count && terminal_failures.is_empty() {
+    if partitions_handed_off != partition_count && terminal_failures.is_empty() {
         terminal_failures.push(format!(
-            "target jury formed {pairs_formed} pairs for {partition_count} partitions"
+            "target jury handed off {partitions_handed_off} resolved or degraded closures for {partition_count} partitions"
         ));
     }
     if !terminal_failures.is_empty() {
@@ -51536,7 +52454,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let canonical_spec_context =
             serde_json::to_string_pretty(&research_outcome.canonical_spec_context)?;
         research_findings = format!(
-            "{finding_briefs}\n\n## Typed canonical spec authority context\nThis ledger was reconciled against the complete frozen specification by independent physical-node juries. It is canonical authored context, not external research evidence. Preserve each target-to-authority relationship in the shared plan and task specifications.\n{canonical_spec_context}"
+            "{finding_briefs}\n\n## Typed canonical spec authority context\nEntries marked accepted were reconciled against the complete frozen specification by independent physical-node juries. Entries marked degraded or accepted-incomplete preserve typed partial authority plus the exact unresolved or Unavailable gaps; they are not permission to invent the missing fact. Preserve every target and status in the one shared plan, bind known authority exactly, and give each unresolved gap a concrete isolation, validation, or fail-closed acceptance task.\n{canonical_spec_context}"
         );
         // COUNT RESEARCH, NOT LENSES. `findings.len()` is the LENS count — it is 3 whether all three looked
         // things up, all three timed out at the budget wall, or all three answered from the model's own head.
@@ -56879,6 +57797,81 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
+    async fn production_partition_host_exhaustion_returns_typed_degraded_partial_authority() {
+        const REQUIREMENT: &str = "REQ-runtime-degraded-partition";
+        const MODEL_A: &str = "runtime-degraded-model-a";
+        const MODEL_B: &str = "runtime-degraded-model-b";
+        const MODEL_C: &str = "runtime-degraded-model-c";
+        const HOST_A: &str = "runtime-degraded-host-a";
+        const HOST_B: &str = "runtime-degraded-host-b";
+        const HOST_C: &str = "runtime-degraded-host-c";
+        let partition_id =
+            plan_research_closure_section_partitions(&[correction_runtime_candidate(REQUIREMENT)])
+                [0]
+            .partition_id
+            .clone();
+        let mut scripts = HashMap::new();
+        scripts.insert(
+            MODEL_A.to_string(),
+            vec![valid_jury_runtime_output(&partition_id, REQUIREMENT)],
+        );
+        scripts.insert(
+            MODEL_B.to_string(),
+            invalid_jury_runtime_outputs(&partition_id, REQUIREMENT),
+        );
+        scripts.insert(
+            MODEL_C.to_string(),
+            invalid_jury_runtime_outputs(&partition_id, REQUIREMENT),
+        );
+        let harness = research_correction_runtime_harness(
+            &[
+                ("degraded-lane-a", MODEL_A, HOST_A),
+                ("degraded-lane-b", MODEL_B, HOST_B),
+                ("degraded-lane-c", MODEL_C, HOST_C),
+            ],
+            scripts,
+        )
+        .await;
+        let outcome = harness
+            .dispatcher
+            .run_research_target_reconciliation(
+                "runtime-degraded-stage".to_string(),
+                Some(0),
+                vec![correction_runtime_candidate(REQUIREMENT)],
+                vec![correction_runtime_requirement(REQUIREMENT)],
+                vec![
+                    MODEL_A.to_string(),
+                    MODEL_B.to_string(),
+                    MODEL_C.to_string(),
+                ],
+                ResearchSeedLookupRoutes {
+                    attached_extensions: Vec::new(),
+                    spec_document_urls: Vec::new(),
+                    codebase_shell: false,
+                },
+            )
+            .await
+            .expect("one exhausted partition must not abort global research");
+        assert!(outcome.decisions.is_empty());
+        assert_eq!(outcome.degradations.len(), 1);
+        let degradation = &outcome.degradations[0];
+        assert_eq!(degradation.requirement_id, REQUIREMENT);
+        assert_eq!(degradation.partition_id, partition_id);
+        assert_eq!(degradation.physical_host_ids, vec![HOST_A]);
+        assert_eq!(degradation.partial_assessments.len(), 1);
+        assert!(degradation.partial_assessments[0].complete);
+        assert_eq!(harness.provider.call_count(MODEL_A), 1);
+        assert_eq!(harness.provider.call_count(MODEL_B), 2);
+        assert_eq!(harness.provider.call_count(MODEL_C), 2);
+        assert!(harness.sink.has("research_target_partition_degraded"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("typed degraded partition lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
     async fn production_terminal_stop_retires_a_queued_adjudication_before_provider_admission() {
         const PARTITION: &str = "target-section-runtime-terminal-adjudication";
         const REQUIREMENT: &str = "REQ-runtime-terminal-adjudication";
@@ -57018,18 +58011,13 @@ mod pre_scheduler_semantic_runtime_tests {
         const HOST_A: &str = "runtime-terminal-citation-host-a";
         const HOST_B: &str = "runtime-terminal-citation-host-b";
         const HOST_C: &str = "runtime-terminal-citation-host-c";
-        let mut scripts = HashMap::new();
-        scripts.insert(
-            MODEL_C.to_string(),
-            invalid_citation_runtime_outputs(REQUIREMENT),
-        );
         let mut harness = research_correction_runtime_harness(
             &[
                 ("terminal-citation-lane-a", MODEL_A, HOST_A),
                 ("terminal-citation-lane-b", MODEL_B, HOST_B),
                 ("terminal-citation-lane-c", MODEL_C, HOST_C),
             ],
-            scripts,
+            HashMap::new(),
         )
         .await;
         Arc::get_mut(&mut harness.runtime).unwrap().requirements =
@@ -57136,37 +58124,228 @@ mod pre_scheduler_semantic_runtime_tests {
         })
         .await
         .expect("citation and re-jury work did not share the production scheduler");
+        admission_stop.cancel();
         drop(held_c);
-        tokio::time::timeout(Duration::from_secs(5), admission_stop.cancelled())
-            .await
-            .expect("citation host exhaustion did not close shared admission");
-        assert_eq!(harness.provider.call_count(MODEL_A), 0);
-        assert_eq!(harness.provider.call_count(MODEL_B), 0);
-        assert_eq!(harness.provider.call_count(MODEL_C), 2);
         drop(held_a);
         drop(held_b);
+        assert_eq!(harness.provider.call_count(MODEL_A), 0);
+        assert_eq!(harness.provider.call_count(MODEL_B), 0);
+        assert_eq!(harness.provider.call_count(MODEL_C), 0);
         let citation_result = tokio::time::timeout(Duration::from_secs(5), citation)
             .await
             .expect("terminal citation group did not drain")
-            .unwrap();
-        let citation_error = match citation_result {
-            Ok(_) => panic!("terminal citation exhaustion unexpectedly succeeded"),
-            Err(error) => error.to_string(),
-        };
-        assert!(citation_error.contains("exhausted every eligible physical host"));
+            .unwrap()
+            .expect("external terminal retirement must not manufacture a citation error");
+        assert!(citation_result.is_none());
         let pair_result = tokio::time::timeout(Duration::from_secs(5), pair)
             .await
             .expect("queued production re-jury did not retire")
             .unwrap()
             .expect("shared cancellation must retire, not fail, queued re-jury work");
         assert!(pair_result.is_none());
-        assert!(harness
+        assert!(!harness
             .sink
             .has("research_target_citation_correction_repeat_detected"));
         assert!(!harness.sink.has("research_target_jury_packet_started"));
+        assert!(!harness.sink.has("broker_provider_request_permitted"));
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
             .expect("terminal citation/re-jury lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_v15_terminal_sequence_retires_22_and_permits_zero_post_terminal_calls() {
+        const MODEL_A: &str = "runtime-v15-terminal-model-a";
+        const MODEL_B: &str = "runtime-v15-terminal-model-b";
+        const MODEL_C: &str = "runtime-v15-terminal-model-c";
+        let harness = research_correction_runtime_harness(
+            &[
+                (
+                    "v15-terminal-lane-a",
+                    MODEL_A,
+                    "runtime-v15-terminal-host-a",
+                ),
+                (
+                    "v15-terminal-lane-b",
+                    MODEL_B,
+                    "runtime-v15-terminal-host-b",
+                ),
+                (
+                    "v15-terminal-lane-c",
+                    MODEL_C,
+                    "runtime-v15-terminal-host-c",
+                ),
+            ],
+            HashMap::new(),
+        )
+        .await;
+        let scheduler = &harness.runtime.host_scheduler;
+        let held_a = scheduler
+            .acquire(
+                vec!["v15-terminal-lane-a".to_string()],
+                1,
+                0,
+                "hold-v15-terminal-a".to_string(),
+            )
+            .await
+            .unwrap();
+        let held_b = scheduler
+            .acquire(
+                vec!["v15-terminal-lane-b".to_string()],
+                1,
+                0,
+                "hold-v15-terminal-b".to_string(),
+            )
+            .await
+            .unwrap();
+        let held_c = scheduler
+            .acquire(
+                vec!["v15-terminal-lane-c".to_string()],
+                1,
+                0,
+                "hold-v15-terminal-c".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let admission_stop = tokio_util::sync::CancellationToken::new();
+        let queued_partition_count = 11usize;
+        let queued_calls = futures::stream::FuturesUnordered::new();
+        for index in 0..queued_partition_count {
+            let partition = ResearchClosurePartition {
+                partition_id: format!("target-section-v15-terminal-queued-{index}"),
+                candidates: vec![correction_runtime_candidate(&format!(
+                    "REQ-v15-terminal-queued-{index}"
+                ))],
+            };
+            let partition_host_state = Arc::new(tokio::sync::Mutex::new(
+                ResearchPartitionHostState::default(),
+            ));
+            for jury_stage in [
+                PairedRetryingFanStage::First,
+                PairedRetryingFanStage::Second,
+            ] {
+                let dispatcher = harness.dispatcher.clone();
+                let runtime = harness.runtime.clone();
+                let admission_stop = admission_stop.clone();
+                let partition = partition.clone();
+                let partition_host_state = partition_host_state.clone();
+                queued_calls.push(async move {
+                    let result = dispatcher
+                        .run_research_closure_partition_pair_unit(
+                            runtime.as_ref(),
+                            jury_stage,
+                            partition,
+                            partition_host_state,
+                            &admission_stop,
+                        )
+                        .await;
+                    (index, jury_stage, result)
+                });
+            }
+        }
+        let queued_retired = Arc::new(AtomicU64::new(0));
+        let queued_run = tokio::spawn(drain_research_jury_orchestration(
+            queued_calls,
+            (0..queued_partition_count)
+                .map(|index| format!("target-section-v15-terminal-queued-{index}"))
+                .collect(),
+            admission_stop.clone(),
+            {
+                let queued_retired = queued_retired.clone();
+                move |_, _| {
+                    queued_retired.fetch_add(1, AtomicOrdering::SeqCst);
+                }
+            },
+            |_, _, _| Ok(()),
+            |_, _, _| Ok(()),
+        ));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while scheduler.inner.state.lock().unwrap().pending.len() != 22 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the exact 22 v15-shaped jury units did not queue before terminal closure");
+        admission_stop.cancel();
+        drop(held_a);
+        drop(held_b);
+        drop(held_c);
+        let queued_error = tokio::time::timeout(Duration::from_secs(5), queued_run)
+            .await
+            .expect("the 22 queued v15-shaped units did not retire")
+            .unwrap()
+            .unwrap_err()
+            .to_string();
+        assert!(queued_error.contains("downstream terminal failure"));
+        assert_eq!(queued_retired.load(AtomicOrdering::SeqCst), 22);
+
+        let post_terminal_partition_count = 3usize;
+        let post_terminal_calls = futures::stream::FuturesUnordered::new();
+        for index in 0..post_terminal_partition_count {
+            let partition = ResearchClosurePartition {
+                partition_id: format!("target-section-v15-post-terminal-{index}"),
+                candidates: vec![correction_runtime_candidate(&format!(
+                    "REQ-v15-post-terminal-{index}"
+                ))],
+            };
+            let partition_host_state = Arc::new(tokio::sync::Mutex::new(
+                ResearchPartitionHostState::default(),
+            ));
+            for jury_stage in [
+                PairedRetryingFanStage::First,
+                PairedRetryingFanStage::Second,
+            ] {
+                let dispatcher = harness.dispatcher.clone();
+                let runtime = harness.runtime.clone();
+                let admission_stop = admission_stop.clone();
+                let partition = partition.clone();
+                let partition_host_state = partition_host_state.clone();
+                post_terminal_calls.push(async move {
+                    let result = dispatcher
+                        .run_research_closure_partition_pair_unit(
+                            runtime.as_ref(),
+                            jury_stage,
+                            partition,
+                            partition_host_state,
+                            &admission_stop,
+                        )
+                        .await;
+                    (index, jury_stage, result)
+                });
+            }
+        }
+        let post_terminal_retired = Arc::new(AtomicU64::new(0));
+        let post_terminal_error = drain_research_jury_orchestration(
+            post_terminal_calls,
+            (0..post_terminal_partition_count)
+                .map(|index| format!("target-section-v15-post-terminal-{index}"))
+                .collect(),
+            admission_stop,
+            {
+                let post_terminal_retired = post_terminal_retired.clone();
+                move |_, _| {
+                    post_terminal_retired.fetch_add(1, AtomicOrdering::SeqCst);
+                }
+            },
+            |_, _, _| Ok(()),
+            |_, _, _| Ok(()),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(post_terminal_error.contains("downstream terminal failure"));
+        assert_eq!(post_terminal_retired.load(AtomicOrdering::SeqCst), 6);
+        assert_eq!(harness.provider.call_count(MODEL_A), 0);
+        assert_eq!(harness.provider.call_count(MODEL_B), 0);
+        assert_eq!(harness.provider.call_count(MODEL_C), 0);
+        assert!(!harness.sink.has("research_target_jury_packet_started"));
+        assert!(!harness.sink.has("broker_provider_request_permitted"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("v15-shaped terminal lifecycle did not drain")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
