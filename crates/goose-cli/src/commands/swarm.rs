@@ -3603,6 +3603,15 @@ const OMNI_JUDGE_MIN_CHARS: usize = 2_000;
 /// Cap the looks per call so a very long healthy call cannot spend unbounded judge time.
 const OMNI_JUDGE_MAX_LOOKS: u32 = 6;
 
+// The durable monitor uses this same measured full-stream signal. Unlike a time or token ceiling,
+// it only becomes actionable after distant reasoning has measurably recurred, the repeated share
+// reaches the captured incident boundary, and a second growing sample corroborates it while typed
+// output remains completely absent. An independently admitted semantic judge still has priority;
+// this is the retryable-source fallback when every other physical host is occupied.
+const PRE_SCHEDULER_RECURRENCE_FAILOVER_MIN_SHARE: f64 = 0.30;
+const PRE_SCHEDULER_RECURRENCE_FAILOVER_MIN_REPEATED_WINDOWS: u64 = 1_024;
+const PRE_SCHEDULER_RECURRENCE_FAILOVER_CONFIRMATIONS: u8 = 2;
+
 /// The tail's 48-char shingle set (16-char stride), for RECURRENCE comparison across judge looks.
 /// An exact tail hash cannot see the most classic loop: a repeating sentence SHIFTS through the
 /// fixed-size tail window, so every look hashes differently and the two-consecutive-LOOPING streak
@@ -11185,6 +11194,60 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             earlier_reasoning: "a distant matching reasoning sample".to_string(),
         };
         assert!(recurrence_warrants_semantic_review(&measured_recurrence));
+    }
+
+    #[test]
+    fn corroborated_no_output_recurrence_retires_only_the_same_provider_request() {
+        let request = ProviderRequestKey {
+            ordinal: 0,
+            provider_request_id: "incident-shaped-request".to_string(),
+        };
+        let first = ReasoningRecurrenceSnapshot {
+            window_chars: 48,
+            observed_windows: 31_000,
+            repeated_windows: 9_500,
+            repeat_share: 9_500.0 / 31_000.0,
+            earlier_reasoning: "the earlier reasoning revisits the same unresolved choice"
+                .to_string(),
+        };
+        let second = ReasoningRecurrenceSnapshot {
+            window_chars: 48,
+            observed_windows: 31_359,
+            repeated_windows: 9_852,
+            repeat_share: 9_852.0 / 31_359.0,
+            earlier_reasoning: first.earlier_reasoning.clone(),
+        };
+        let mut gate = PreSchedulerRecurrenceFailoverGate::default();
+        assert!(!gate.observe(
+            Some(&request),
+            &first,
+            ProviderStreamProgressSnapshot::default(),
+        ));
+        assert!(gate.observe(
+            Some(&request),
+            &second,
+            ProviderStreamProgressSnapshot::default(),
+        ));
+
+        let next_request = ProviderRequestKey {
+            ordinal: 1,
+            provider_request_id: "distinct-retry-request".to_string(),
+        };
+        assert!(!gate.observe(
+            Some(&next_request),
+            &second,
+            ProviderStreamProgressSnapshot::default(),
+        ));
+        assert!(!gate.observe(
+            Some(&next_request),
+            &second,
+            ProviderStreamProgressSnapshot {
+                structured_output_chunks: 1,
+                structured_output_bytes: 377,
+                ..ProviderStreamProgressSnapshot::default()
+            },
+        ));
+        assert_eq!(gate.confirmations(), 0);
     }
 
     #[test]
@@ -24348,6 +24411,7 @@ impl GooseAgentDispatcher {
         let mut observed_structured_output_active = false;
         let mut last_provider_progress_event_at: Option<tokio::time::Instant> = None;
         let mut pre_scheduler_review: Option<PreSchedulerRecurrenceReview> = None;
+        let mut pre_scheduler_recurrence_failover = PreSchedulerRecurrenceFailoverGate::default();
         let mut next_pre_scheduler_review_check = tokio::time::Instant::now();
         let handle_pre_scheduler_wake =
             |wake: PreSchedulerRecurrenceWake,
@@ -24678,7 +24742,7 @@ impl GooseAgentDispatcher {
                                     .try_spawn_recurrence_review(
                                         &source,
                                         evidence_request,
-                                        recurrence,
+                                        recurrence.clone(),
                                         recurrence_recent_reasoning.clone(),
                                         provider_stream_progress.clone(),
                                     )
@@ -24686,8 +24750,37 @@ impl GooseAgentDispatcher {
                                 {
                                     Ok(Some(review)) => pre_scheduler_review = Some(review),
                                     Ok(None) => {
-                                        // This cadence only rechecks idle-route availability. It never ends,
-                                        // truncates, or advances the source call and leaves no broker work queued.
+                                        let progress = provider_stream_progress.snapshot();
+                                        if pre_scheduler_recurrence_failover_eligible(&source)
+                                            && pre_scheduler_recurrence_failover.observe(
+                                                recurrence_provider_request.as_ref(),
+                                                &recurrence,
+                                                progress,
+                                            )
+                                        {
+                                            self.events.write_value(serde_json::json!({
+                                                "event": "pre_scheduler_recurrent_source_retired",
+                                                "task_id": activity_key,
+                                                "source_admission_id": source.lifecycle.admission().admission_id,
+                                                "physical_host_id": source.lifecycle.admission().physical_host_id,
+                                                "provider_request": recurrence_provider_request,
+                                                "observed_windows": recurrence.observed_windows,
+                                                "repeated_windows": recurrence.repeated_windows,
+                                                "repeat_share": recurrence.repeat_share,
+                                                "confirmations": pre_scheduler_recurrence_failover.confirmations(),
+                                                "structured_output_chunks": progress.structured_output_chunks,
+                                                "structured_output_bytes": progress.structured_output_bytes,
+                                                "structured_output_active": progress.structured_output_active,
+                                                "continuation": "retire-active-source-and-retry-on-distinct-eligible-host",
+                                                "payload_logged": false,
+                                            }));
+                                            return Err(anyhow!(
+                                                "pre-scheduler research source retired after corroborated full-stream recurrence without structured output: {} repeated of {} windows ({:.4})",
+                                                recurrence.repeated_windows,
+                                                recurrence.observed_windows,
+                                                recurrence.repeat_share,
+                                            ));
+                                        }
                                         next_pre_scheduler_review_check =
                                             tokio::time::Instant::now()
                                                 + std::time::Duration::from_secs(1);
@@ -38943,6 +39036,58 @@ fn recurrence_warrants_semantic_review(snapshot: &ReasoningRecurrenceSnapshot) -
     snapshot.observed_windows > 0
         && snapshot.repeated_windows > 0
         && !snapshot.earlier_reasoning.trim().is_empty()
+}
+
+#[derive(Default)]
+struct PreSchedulerRecurrenceFailoverGate {
+    provider_request: Option<ProviderRequestKey>,
+    previous_repeated_windows: u64,
+    confirmations: u8,
+}
+
+impl PreSchedulerRecurrenceFailoverGate {
+    fn observe(
+        &mut self,
+        provider_request: Option<&ProviderRequestKey>,
+        recurrence: &ReasoningRecurrenceSnapshot,
+        progress: ProviderStreamProgressSnapshot,
+    ) -> bool {
+        let provider_request = provider_request.cloned();
+        if provider_request != self.provider_request {
+            self.provider_request = provider_request;
+            self.previous_repeated_windows = 0;
+            self.confirmations = 0;
+        }
+        if self.provider_request.is_none()
+            || progress.structured_output_chunks > 0
+            || progress.structured_output_bytes > 0
+            || progress.structured_output_active
+        {
+            self.previous_repeated_windows = recurrence.repeated_windows;
+            self.confirmations = 0;
+            return false;
+        }
+        let repeated_windows_grew = recurrence.repeated_windows > self.previous_repeated_windows;
+        self.previous_repeated_windows = recurrence.repeated_windows;
+        let qualifies = recurrence_warrants_semantic_review(recurrence)
+            && recurrence.repeat_share >= PRE_SCHEDULER_RECURRENCE_FAILOVER_MIN_SHARE
+            && recurrence.repeated_windows
+                >= PRE_SCHEDULER_RECURRENCE_FAILOVER_MIN_REPEATED_WINDOWS;
+        if qualifies && repeated_windows_grew {
+            self.confirmations = self.confirmations.saturating_add(1);
+        } else if !qualifies {
+            self.confirmations = 0;
+        }
+        self.confirmations >= PRE_SCHEDULER_RECURRENCE_FAILOVER_CONFIRMATIONS
+    }
+
+    fn confirmations(&self) -> u8 {
+        self.confirmations
+    }
+}
+
+fn pre_scheduler_recurrence_failover_eligible(source: &PreSchedulerSourceContext) -> bool {
+    source.label.starts_with("research-target-")
 }
 
 fn bind_recurrence_to_provider_request(
@@ -57037,6 +57182,7 @@ mod pre_scheduler_semantic_runtime_tests {
     struct ResearchCorrectionRuntimeProvider {
         scripts: Mutex<HashMap<String, VecDeque<serde_json::Value>>>,
         calls: Mutex<Vec<String>>,
+        recurrent_models: Mutex<HashSet<String>>,
         blocked_models: Mutex<HashSet<String>>,
         blocked_call_started: Notify,
         blocked_call_release: tokio::sync::Semaphore,
@@ -57052,6 +57198,7 @@ mod pre_scheduler_semantic_runtime_tests {
                         .collect(),
                 ),
                 calls: Mutex::new(Vec::new()),
+                recurrent_models: Mutex::new(HashSet::new()),
                 blocked_models: Mutex::new(HashSet::new()),
                 blocked_call_started: Notify::new(),
                 blocked_call_release: tokio::sync::Semaphore::new(0),
@@ -57069,6 +57216,13 @@ mod pre_scheduler_semantic_runtime_tests {
 
         fn block_next_call(&self, model: &str) {
             self.blocked_models
+                .lock()
+                .unwrap()
+                .insert(model.to_string());
+        }
+
+        fn recur_next_call(&self, model: &str) {
+            self.recurrent_models
                 .lock()
                 .unwrap()
                 .insert(model.to_string());
@@ -57094,6 +57248,26 @@ mod pre_scheduler_semantic_runtime_tests {
             SingleAttemptStream::finished(Box::pin(stream::once(async move {
                 Ok((Some(message), Some(usage)))
             })))
+        }
+
+        fn recurrent_then_pending(model: &str) -> SingleAttemptStream {
+            let first = Message::assistant().with_thinking(
+                "the same unresolved authority analysis repeats without new evidence ".repeat(500),
+                format!("{model}-recurrent-first"),
+            );
+            let second = Message::assistant().with_thinking(
+                "the same unresolved authority analysis repeats without new evidence ".repeat(80),
+                format!("{model}-recurrent-second"),
+            );
+            SingleAttemptStream::new(
+                Box::pin(async_stream::stream! {
+                    yield Ok((Some(first), None));
+                    tokio::time::sleep(Duration::from_millis(1_200)).await;
+                    yield Ok((Some(second), None));
+                    std::future::pending::<()>().await;
+                }),
+                SingleAttemptTerminalProof::default(),
+            )
         }
     }
 
@@ -57144,6 +57318,9 @@ mod pre_scheduler_semantic_runtime_tests {
         ) -> Result<SingleAttemptStream, ProviderError> {
             let model = model_config.model_name.clone();
             self.calls.lock().unwrap().push(model.clone());
+            if self.recurrent_models.lock().unwrap().remove(&model) {
+                return Ok(Self::recurrent_then_pending(&model));
+            }
             let should_block = self.blocked_models.lock().unwrap().remove(&model);
             if should_block {
                 self.blocked_call_started.notify_one();
@@ -57400,6 +57577,14 @@ mod pre_scheduler_semantic_runtime_tests {
         lanes: &[(&str, &str, &str)],
         scripts: HashMap<String, Vec<serde_json::Value>>,
     ) -> ResearchCorrectionRuntimeHarness {
+        research_correction_runtime_harness_with_timeout(lanes, scripts, 1).await
+    }
+
+    async fn research_correction_runtime_harness_with_timeout(
+        lanes: &[(&str, &str, &str)],
+        scripts: HashMap<String, Vec<serde_json::Value>>,
+        planner_timeout_secs: u64,
+    ) -> ResearchCorrectionRuntimeHarness {
         let working_dir = tempfile::tempdir().unwrap();
         let sink = Arc::new(RuntimeRecordingSink::default());
         let provider = Arc::new(ResearchCorrectionRuntimeProvider::new(scripts));
@@ -57413,7 +57598,7 @@ mod pre_scheduler_semantic_runtime_tests {
             HashMap::new(),
             planner_model.to_string(),
             1,
-            1,
+            planner_timeout_secs,
             false,
             SamplingParams::default(),
             false,
@@ -57566,6 +57751,158 @@ mod pre_scheduler_semantic_runtime_tests {
                 "rationale": "The canonical requirement entails the decision."
             }]
         })
+    }
+
+    #[tokio::test]
+    async fn production_recurrent_jury_retires_drains_and_fails_over_to_distinct_host() {
+        const PARTITION: &str = "target-section-runtime-recurrence-incident";
+        const REQUIREMENT: &str = "REQ-runtime-recurrence-incident";
+        const MODEL_A: &str = "runtime-recurrence-model-a";
+        const MODEL_B: &str = "runtime-recurrence-model-b";
+        const MODEL_C: &str = "runtime-recurrence-model-c";
+        const HOST_A: &str = "runtime-recurrence-host-a";
+        const HOST_B: &str = "runtime-recurrence-host-b";
+        const HOST_C: &str = "runtime-recurrence-host-c";
+        const TOKEN_A: &str = "recurrence-lane-a";
+        const TOKEN_B: &str = "recurrence-lane-b";
+        const TOKEN_C: &str = "recurrence-lane-c";
+
+        let mut scripts = HashMap::new();
+        scripts.insert(
+            MODEL_B.to_string(),
+            vec![valid_jury_runtime_output(PARTITION, REQUIREMENT)],
+        );
+        let mut harness = research_correction_runtime_harness_with_timeout(
+            &[
+                (TOKEN_A, MODEL_A, HOST_A),
+                (TOKEN_B, MODEL_B, HOST_B),
+                (TOKEN_C, MODEL_C, HOST_C),
+            ],
+            scripts,
+            4,
+        )
+        .await;
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements =
+            Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        harness.provider.recur_next_call(MODEL_A);
+
+        let scheduler_hold_b = harness
+            .runtime
+            .host_scheduler
+            .acquire(
+                vec![TOKEN_B.to_string()],
+                1,
+                0,
+                "hold-recurrence-b".to_string(),
+            )
+            .await
+            .unwrap();
+        let scheduler_hold_c = harness
+            .runtime
+            .host_scheduler
+            .acquire(
+                vec![TOKEN_C.to_string()],
+                1,
+                0,
+                "hold-recurrence-c".to_string(),
+            )
+            .await
+            .unwrap();
+        let physical_hold_b = admit_direct(
+            &harness.control,
+            "hold-recurrence-physical-b",
+            &format!("device-{TOKEN_B}"),
+        )
+        .await
+        .unwrap();
+        let physical_hold_c = admit_direct(
+            &harness.control,
+            "hold-recurrence-physical-c",
+            &format!("device-{TOKEN_C}"),
+        )
+        .await
+        .unwrap();
+
+        let run = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            let runtime = harness.runtime.clone();
+            async move {
+                dispatcher
+                    .run_research_closure_partition_pair_unit(
+                        runtime.as_ref(),
+                        PairedRetryingFanStage::First,
+                        ResearchClosurePartition {
+                            partition_id: PARTITION.to_string(),
+                            candidates: vec![correction_runtime_candidate(REQUIREMENT)],
+                        },
+                        Arc::new(tokio::sync::Mutex::new(
+                            ResearchPartitionHostState::default(),
+                        )),
+                        &tokio_util::sync::CancellationToken::new(),
+                    )
+                    .await
+            }
+        });
+
+        let retirement = harness
+            .sink
+            .wait_for("pre_scheduler_recurrent_source_retired")
+            .await;
+        assert_eq!(retirement["physical_host_id"], HOST_A);
+        assert_eq!(retirement["structured_output_chunks"], 0);
+        assert_eq!(retirement["structured_output_bytes"], 0);
+        assert!(retirement["repeat_share"].as_f64().unwrap() >= 0.30);
+        let rescheduled = harness
+            .sink
+            .wait_for("research_target_semantic_unit_rescheduled")
+            .await;
+        assert_eq!(rescheduled["failed_physical_host_id"], HOST_A);
+
+        drop(scheduler_hold_b);
+        physical_hold_b
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        let compiled = tokio::time::timeout(Duration::from_secs(8), run)
+            .await
+            .expect("recurrent jury did not fail over")
+            .unwrap()
+            .expect("recurrent jury retry failed")
+            .expect("recurrent jury retry was externally retired");
+        assert_eq!(compiled.physical_host_id, HOST_B);
+
+        drop(scheduler_hold_c);
+        physical_hold_c
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        assert_eq!(harness.provider.call_count(MODEL_A), 1);
+        assert_eq!(harness.provider.call_count(MODEL_B), 1);
+        assert_eq!(harness.provider.call_count(MODEL_C), 0);
+        let events = harness.sink.values();
+        let starts = events
+            .iter()
+            .filter(|event| event["event"] == "research_target_jury_packet_started")
+            .collect::<Vec<_>>();
+        assert_eq!(starts.len(), 2);
+        assert_eq!(
+            starts
+                .iter()
+                .map(|event| event["authority_input_digest"].as_str().unwrap())
+                .collect::<HashSet<_>>()
+                .len(),
+            1,
+        );
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["model_id"] == MODEL_A
+                && event["receipt"]["kind"] == "cancelled"
+        }));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("recurrence failover lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
     #[tokio::test]
