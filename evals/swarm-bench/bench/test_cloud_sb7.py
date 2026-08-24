@@ -8,6 +8,7 @@ import os
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1266,6 +1267,51 @@ class CloudSb7HarnessTest(unittest.TestCase):
         score_listeners.write_text(json.dumps({"fixture": True}))
         raw_tree = root / "entrants" / entrant_id / "tree"
         raw_tree.mkdir(parents=True)
+        lifecycle = (
+            root
+            / "entrants"
+            / entrant_id
+            / "attempts"
+            / "attempt-1"
+            / "provider-lifecycle.jsonl"
+        )
+        lifecycle.parent.mkdir(parents=True)
+        lifecycle_events = self.provider_lifecycle_events(
+            row,
+            [
+                "queued",
+                "admitted",
+                "first_item",
+                "usage_reported",
+                "provider_terminal",
+            ],
+            request_id="fixture-score-telemetry-request",
+        )
+        for index, event in enumerate(lifecycle_events):
+            event["timestamp"] = f"2026-08-24T00:00:0{index}+00:00"
+        lifecycle.write_text(
+            "".join(json.dumps(event) + "\n" for event in lifecycle_events)
+        )
+        budget_ledger = root / "budget-ledger.json"
+        cloud_sb7.atomic_json(
+            budget_ledger,
+            {
+                "schema_version": 1,
+                "outstanding": {},
+                "settled": [
+                    {
+                        "request_id": "fixture-score-telemetry-request",
+                        "provider": row["provider"],
+                        "model": row["model"],
+                        "reported_model": row["model"],
+                        "input_tokens": 2,
+                        "output_tokens": 3,
+                        "total_tokens": 5,
+                    }
+                ],
+                "spent_upper_bound": 0,
+            },
+        )
         (root / "publish").mkdir()
         cloud_sb7.atomic_json(
             cloud_sb7.state_file(root, entrant_id),
@@ -1284,6 +1330,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "elapsed_seconds": 123.4,
                 "vendor_port": 9999,
                 "tree": str(raw_tree),
+                "provider_lifecycle": str(lifecycle),
                 "raw_tree_sha256": cloud_sb7.hash_tree(raw_tree),
                 "score_attempt_root": str(score_dir),
                 "score_listener_snapshot": str(score_listeners),
@@ -1340,6 +1387,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "instrument_set_sha256": "instrument",
             "entrant_manifest": str(entrant_manifest),
             "entrant_manifest_sha256": cloud_sb7.sha256_file(entrant_manifest),
+            "budget_ledger": str(budget_ledger),
             "secret_file": str(secret_file),
             "instrument_root": str(instrument),
             "scorer_runtime": scorer_runtime,
@@ -9362,6 +9410,203 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
             self.assertFalse((clone / ".swarm/telemetry.jsonl").exists())
             self.assertFalse((clone / ".DS_Store").exists())
+
+    def test_session_token_snapshot_reads_uncheckpointed_wal_without_source_mutation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            database = root / "profile/data/sessions/sessions.db"
+            database.parent.mkdir(parents=True)
+            working_root = root / "tree"
+            connection = sqlite3.connect(database)
+            try:
+                self.assertEqual(
+                    connection.execute("PRAGMA journal_mode=WAL").fetchone(),
+                    ("wal",),
+                )
+                connection.execute("PRAGMA wal_autocheckpoint=0")
+                connection.execute(
+                    "CREATE TABLE sessions (working_dir TEXT NOT NULL, "
+                    "accumulated_input_tokens INTEGER, "
+                    "accumulated_output_tokens INTEGER)"
+                )
+                connection.commit()
+                connection.executemany(
+                    "INSERT INTO sessions VALUES (?, ?, ?)",
+                    [
+                        (str(working_root), 11, 3),
+                        (str(working_root / "delegate"), 7, 5),
+                        (str(root / "other"), 100, 100),
+                    ],
+                )
+                connection.commit()
+                self.assertTrue(Path(f"{database}-wal").is_file())
+                self.assertTrue(Path(f"{database}-shm").is_file())
+                source_before = cloud_sb7.sqlite_wal_bundle_identity(database)
+
+                totals = cloud_sb7.session_token_totals_without_source_mutation(
+                    database, working_root
+                )
+
+                self.assertEqual(
+                    source_before, cloud_sb7.sqlite_wal_bundle_identity(database)
+                )
+                self.assertEqual(totals["sessions"], 2)
+                self.assertEqual(totals["prompt_tokens"], 18)
+                self.assertEqual(totals["completion_tokens"], 8)
+                self.assertTrue(totals["source_unchanged_after_copy"])
+                self.assertTrue(totals["source_unchanged_after_query"])
+            finally:
+                connection.close()
+
+    def test_score_telemetry_is_rebuilt_from_lifecycle_and_settled_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            lifecycle = self.make_full_attempt_fixture(root, entrant_id, 1)
+            events = self.provider_lifecycle_events(
+                row,
+                [
+                    "queued",
+                    "admitted",
+                    "first_item",
+                    "usage_reported",
+                    "provider_terminal",
+                ],
+            )
+            timestamps = [
+                "2026-08-24T00:00:00+00:00",
+                "2026-08-24T00:00:01+00:00",
+                "2026-08-24T00:00:02+00:00",
+                "2026-08-24T00:00:03+00:00",
+                "2026-08-24T00:00:03.500000+00:00",
+            ]
+            for event, timestamp in zip(events, timestamps, strict=True):
+                event["timestamp"] = timestamp
+            lifecycle.write_text("".join(json.dumps(event) + "\n" for event in events))
+            tree = root / "entrants" / entrant_id / "tree"
+            raw_telemetry = tree / ".swarm/telemetry.jsonl"
+            raw_telemetry.parent.mkdir()
+            raw_telemetry.write_text("")
+            request_id = str(events[0]["request_id"])
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            cloud_sb7.atomic_json(
+                Path(str(campaign["budget_ledger"])),
+                {
+                    "schema_version": 1,
+                    "outstanding": {},
+                    "settled": [
+                        {
+                            "request_id": request_id,
+                            "provider": row["provider"],
+                            "model": row["model"],
+                            "reported_model": row["model"],
+                            "input_tokens": 2,
+                            "output_tokens": 3,
+                            "total_tokens": 5,
+                        }
+                    ],
+                    "spent_upper_bound": 0,
+                },
+            )
+            state = cloud_sb7.read_state(root, entrant_id)
+            score_tree = cloud_sb7.clone_for_score(root, entrant_id, 1)
+
+            receipt = cloud_sb7.prepare_score_telemetry_evidence(
+                root, entrant_id, campaign, state, score_tree
+            )
+
+            rebuilt = score_tree / ".swarm/telemetry.jsonl"
+            row_payload = json.loads(rebuilt.read_text())
+            self.assertEqual(receipt["summary"]["calls"], 1)
+            self.assertEqual(receipt["summary"]["prompt_tokens"], 2)
+            self.assertEqual(receipt["summary"]["completion_tokens"], 3)
+            self.assertEqual(row_payload["ttft_ms"], 1000)
+            self.assertEqual(row_payload["total_ms"], 2500)
+            self.assertEqual(row_payload["request_id"], request_id)
+            self.assertEqual(receipt["raw_engine_telemetry"]["bytes"], 0)
+            self.assertEqual(raw_telemetry.read_bytes(), b"")
+            sealed = cloud_sb7.score_telemetry_evidence_seal(
+                score_tree.parent,
+                {
+                    "telemetry": {
+                        "calls": 1,
+                        "prompt_tokens": 2,
+                        "completion_tokens": 3,
+                    }
+                },
+            )
+            self.assertEqual(sealed["telemetry_sha256"], receipt["telemetry_sha256"])
+            rebuilt.write_text(rebuilt.read_text() + "{}\n")
+            with self.assertRaisesRegex(
+                SystemExit, "score telemetry payload differs from its receipt"
+            ):
+                cloud_sb7.score_telemetry_evidence_seal(
+                    score_tree.parent,
+                    {
+                        "telemetry": {
+                            "calls": 1,
+                            "prompt_tokens": 2,
+                            "completion_tokens": 3,
+                        }
+                    },
+                )
+
+    def test_score_telemetry_refuses_lifecycle_ledger_token_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            lifecycle = self.make_full_attempt_fixture(root, entrant_id, 1)
+            events = self.provider_lifecycle_events(
+                row,
+                [
+                    "queued",
+                    "admitted",
+                    "first_item",
+                    "usage_reported",
+                    "provider_terminal",
+                ],
+            )
+            for index, event in enumerate(events):
+                event["timestamp"] = f"2026-08-24T00:00:0{index}+00:00"
+            lifecycle.write_text(
+                "".join(json.dumps(event) + "\n" for event in events)
+            )
+            tree = root / "entrants" / entrant_id / "tree"
+            (tree / ".swarm").mkdir()
+            (tree / ".swarm/telemetry.jsonl").write_text("")
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            cloud_sb7.atomic_json(
+                Path(str(campaign["budget_ledger"])),
+                {
+                    "schema_version": 1,
+                    "outstanding": {},
+                    "settled": [
+                        {
+                            "request_id": events[0]["request_id"],
+                            "provider": row["provider"],
+                            "model": row["model"],
+                            "reported_model": row["model"],
+                            "input_tokens": 999,
+                            "output_tokens": 3,
+                            "total_tokens": 1002,
+                        }
+                    ],
+                    "spent_upper_bound": 0,
+                },
+            )
+            with self.assertRaisesRegex(
+                SystemExit, "terminal lifecycle and budget settlement differ"
+            ):
+                cloud_sb7.lifecycle_telemetry_evidence(
+                    root,
+                    entrant_id,
+                    campaign,
+                    cloud_sb7.read_state(root, entrant_id),
+                )
 
     def test_owned_process_group_is_terminated(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
