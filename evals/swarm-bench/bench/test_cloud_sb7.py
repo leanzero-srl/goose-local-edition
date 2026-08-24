@@ -4738,6 +4738,25 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 or "",
             )
 
+    def test_post_smoke_runtime_successor_rejects_dangling_legacy_link_without_head(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            legacy_root = root / cloud_sb7.POST_SMOKE_RUNTIME_SUCCESSOR_PATH
+            legacy_root.symlink_to(root / "missing-successor")
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+
+            self.assertIn(
+                "pending application",
+                cloud_sb7.post_smoke_runtime_successor_failure(
+                    root, campaign, lineage
+                )
+                or "",
+            )
+
     def test_post_smoke_runtime_successor_rejects_pending_child_fork(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))

@@ -18802,7 +18802,8 @@ def post_smoke_runtime_successor_failure(
     pointer = campaign.get("post_smoke_runtime_successor")
     lineage_pointer = lineage.get("post_smoke_runtime_successor")
     if pointer is None and lineage_pointer is None:
-        if (root / POST_SMOKE_RUNTIME_SUCCESSOR_PATH).exists():
+        legacy_root = root / POST_SMOKE_RUNTIME_SUCCESSOR_PATH
+        if legacy_root.exists() or legacy_root.is_symlink():
             return "post-smoke runtime successor is pending application"
         if (root / POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH).exists() or (
             root / POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH
