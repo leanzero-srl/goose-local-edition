@@ -9413,6 +9413,17 @@ class CloudSb7HarnessTest(unittest.TestCase):
             ],
         )
         cloud_sb7.validate_rosters([row], roster)
+        self.assertEqual(
+            cloud_sb7.selected_roster_evidence([row], roster),
+            {
+                "meta": {
+                    "muse-spark-1.2": {
+                        "roster": roster_metadata,
+                        "catalog": muse_metadata,
+                    }
+                }
+            },
+        )
 
         for field, value in (
             ("tool_call", False),
@@ -9512,7 +9523,8 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     },
                 ],
             }
-            for index, payload in enumerate((first, second)):
+            # RequestLog rotates newest to index 0 and prior requests upward.
+            for index, payload in ((1, first), (0, second)):
                 (logs / f"llm_request.{index}.jsonl").write_text(
                     json.dumps({"input": payload, "model_config": {}}) + "\n"
                 )
