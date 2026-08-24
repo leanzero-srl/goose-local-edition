@@ -99,6 +99,7 @@ pub enum ProviderEngine {
 pub enum OpenAiRequestProfile {
     #[default]
     Standard,
+    AlibabaQwen,
     DeepseekV4,
     MetaMuse,
     ZaiGlm,
@@ -463,6 +464,29 @@ mod tests {
         assert_eq!(meta.models[0].name, "muse-spark-1.2");
         assert_eq!(meta.models[0].context_limit, 1_007_997);
         assert!(meta.models[0].reasoning);
+
+        let alibaba =
+            deserialize_provider_config(include_str!("declarative/definitions/alibaba.json"))
+                .unwrap();
+        assert_eq!(alibaba.name, "alibaba");
+        assert_eq!(alibaba.engine, ProviderEngine::OpenAI);
+        assert_eq!(alibaba.base_url, "${DASHSCOPE_BASE_URL}");
+        assert_eq!(
+            alibaba.env_vars.as_ref().unwrap()[0].default.as_deref(),
+            Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+        );
+        assert_eq!(
+            alibaba.openai_request_profile,
+            OpenAiRequestProfile::AlibabaQwen
+        );
+        assert!(alibaba.preserves_thinking);
+        let qwen = alibaba
+            .models
+            .iter()
+            .find(|model| model.name == "qwen3.8-max")
+            .unwrap();
+        assert_eq!(qwen.context_limit, 1_000_000);
+        assert!(qwen.reasoning);
     }
 
     fn placeholder_var_names(template: &str) -> Vec<String> {

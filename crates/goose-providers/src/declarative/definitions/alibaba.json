@@ -2,12 +2,26 @@
   "name": "alibaba",
   "engine": "openai",
   "display_name": "Alibaba (Qwen)",
-  "description": "Alibaba Qwen models via DashScope's OpenAI-compatible API.",
+  "description": "Alibaba Qwen models via DashScope's OpenAI-compatible API. Set DASHSCOPE_BASE_URL to select the endpoint for your account or Token Plan.",
   "api_key_env": "DASHSCOPE_API_KEY",
-  "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+  "base_url": "${DASHSCOPE_BASE_URL}",
+  "env_vars": [
+    {
+      "name": "DASHSCOPE_BASE_URL",
+      "required": false,
+      "secret": false,
+      "default": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "description": "DashScope OpenAI-compatible base URL. Token Plan credentials require their dedicated Token Plan endpoint."
+    }
+  ],
   "catalog_provider_id": "alibaba",
   "dynamic_models": true,
   "models": [
+    {
+      "name": "qwen3.8-max",
+      "context_limit": 1000000,
+      "reasoning": true
+    },
     {
       "name": "qwen3.7-max",
       "context_limit": 262144
@@ -50,6 +64,7 @@
     }
   ],
   "preserves_thinking": true,
+  "openai_request_profile": "alibaba_qwen",
   "supports_streaming": true,
   "model_doc_link": "https://www.alibabacloud.com/help/en/model-studio/models",
   "setup_steps": [
