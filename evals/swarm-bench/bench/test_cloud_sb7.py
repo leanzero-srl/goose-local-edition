@@ -3455,6 +3455,73 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 second_request,
             }))
             self.assertIsNone(cloud_sb7.lineage_failure(root))
+
+            tree = Path(str(continued["tree"]))
+            baseline = cloud_sb7.sha256_tree_exact(tree)
+            cloud_sb7.update_campaign(
+                root,
+                smoke_raw_tree_sha256_before={entrant_id: baseline},
+                smoke_raw_tree_sha256_after={entrant_id: baseline},
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            telemetry = tree / cloud_sb7.SWARM_TELEMETRY_RELATIVE_PATH
+            telemetry.parent.mkdir(parents=True)
+            telemetry.write_text('{"usage":true,"completion_tokens":211}\n')
+            self.assertEqual(
+                cloud_sb7.transport_continuation_pristine_tree_sha256(
+                    root, campaign, entrant_id, continued
+                ),
+                baseline,
+            )
+            application_file = tree / "application.txt"
+            application_file.write_text("must remain a hard failure\n")
+            self.assertNotEqual(
+                cloud_sb7.transport_continuation_pristine_tree_sha256(
+                    root, campaign, entrant_id, continued
+                ),
+                baseline,
+            )
+
+            message = f"raw benchmark tree changed before build: {entrant_id}"
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="PRE_ADMISSION_FAILURE",
+                failure=f"pre-admission qualification gate failed: {message}",
+                pre_admission_gate_failure={
+                    "schema_version": cloud_sb7.CAMPAIGN_SCHEMA,
+                    "kind": "pre_admission_qualification_gate_failure",
+                    "campaign_id": campaign["campaign_id"],
+                    "entrant": entrant_id,
+                    "error_type": "SystemExit",
+                    "message": message,
+                    "supervisor_pid": os.getpid(),
+                    "supervisor_identity": cloud_sb7.process_identity(os.getpid()),
+                    "recorded_at": cloud_sb7.utc_now(),
+                },
+            )
+            with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
+                with self.assertRaisesRegex(
+                    SystemExit,
+                    "tree contains changes beyond sealed telemetry",
+                ):
+                    cloud_sb7.continue_transport_unknown_successor(
+                        root, entrant_id
+                    )
+                application_file.unlink()
+                cloud_sb7.continue_transport_unknown_successor(root, entrant_id)
+            recovered = cloud_sb7.read_state(root, entrant_id)
+            self.assertEqual(recovered["status"], "PLANNED")
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            recovery = recovered["transport_continuation_pre_admission_recovery"]
+            self.assertEqual(
+                recovery["kind"],
+                "sealed_transport_continuation_telemetry_gate_recovery",
+            )
+            self.assertEqual(recovery["pristine_tree_sha256"], baseline)
+            self.assertEqual(
+                recovery["telemetry_sha256"], cloud_sb7.sha256_file(telemetry)
+            )
             cloud_sb7.continue_transport_unknown_successor(root, entrant_id)
             self.assertEqual(ledger_path.read_bytes(), ledger_before)
             cloud_sb7.update_campaign(root, status="INITIALIZED", failure=None)
