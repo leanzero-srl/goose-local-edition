@@ -1,0 +1,26 @@
+{
+  "capture_provenance": {
+    "source_activity_sha256": "51592a4d10713024e17117b9f82b201df290a9e55a16c27dd2a51af384544f09",
+    "projected_trace_sha256": "cbeb177a592368caa434c70a7c2cf134f99c6dfb66e7e63a456934b1a66310f6"
+  },
+  "model": "workhorse-qwen/qwen3.8-27b",
+  "phase": "done",
+  "tool_calls": 2,
+  "malformed": 0,
+  "calls": [
+    {
+      "name": "recipe__final_output",
+      "summary": "{\"partition_id\":\"seed-4\",\"complete\":true,\"assessments\":[{\"requirement_id\":\"REQ-fc8a9e55fda9339a\",\"state\":\"spec-sufficient\",\"rationale\":\"The requirement fully specifies the authentication contract: th…",
+      "ok": false,
+      "result": "",
+      "is_mcp": false
+    },
+    {
+      "name": "recipe__final_output",
+      "summary": "{\"assessments\":[{\"evidence_needed\":\"\",\"kind\":\"none\",\"observations\":\"Roles: maker, checker, admin. Admin is read-only (reads drafts and events, writes nothing). Missing or unknown token → 401 / \\\"unau…",
+      "ok": true,
+      "result": "Final output successfully collected.",
+      "is_mcp": false
+    }
+  ]
+}
