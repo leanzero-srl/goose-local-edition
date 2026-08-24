@@ -2208,9 +2208,14 @@ def authenticated_rosters(
             raise SystemExit(
                 "Alibaba qwen3.8-max entrants require the exact Token Plan endpoint"
             )
+        token_plan_secret = secret_values["DASHSCOPE_API_KEY"]
+        if not token_plan_secret.startswith("sk-sp-"):
+            raise SystemExit(
+                "Alibaba Token Plan credential identity is invalid"
+            )
         alibaba = fetch_json(
             f"{token_plan_endpoint}/models",
-            {"Authorization": f"Bearer {secret_values['DASHSCOPE_API_KEY']}"},
+            {"Authorization": f"Bearer {token_plan_secret}"},
         )
     zai_rows = {
         str(row.get("id", "")): dict(row)
@@ -7194,6 +7199,47 @@ def budget_model_profile(
     ):
         return None
     return profile
+
+
+def budget_guard_semantics(profile: Mapping[str, Any]) -> Dict[str, Any]:
+    billing = profile.get("billing")
+    pricing = profile.get("pricing")
+    shadow_guard = (
+        isinstance(billing, dict)
+        and billing.get("budget_guard_is_actual_charge") is False
+    )
+    return {
+        "operator_label": (
+            "PAYG-equivalent shadow guard" if shadow_guard else "benchmark budget"
+        ),
+        "billing": dict(billing) if isinstance(billing, dict) else None,
+        "pricing_purpose": (
+            pricing.get("purpose") if isinstance(pricing, dict) else None
+        ),
+    }
+
+
+def budget_guard_report(config: Mapping[str, Any]) -> Dict[str, Any]:
+    models = config.get("models")
+    if not isinstance(models, dict):
+        raise SystemExit("frozen budget config has no model profiles")
+    return {
+        "ledger_currency": config.get("currency"),
+        "models": {
+            str(key): budget_guard_semantics(profile)
+            for key, profile in sorted(models.items())
+            if isinstance(profile, dict)
+        },
+    }
+
+
+def has_payg_equivalent_shadow_guard(report: Mapping[str, Any]) -> bool:
+    models = report.get("models")
+    return isinstance(models, dict) and any(
+        isinstance(value, dict)
+        and value.get("operator_label") == "PAYG-equivalent shadow guard"
+        for value in models.values()
+    )
 
 
 def budget_price(
@@ -13868,7 +13914,7 @@ def qwen_chat_smoke_contract(
         )
 
     unsupported = {
-        "max_completion_tokens",
+        "max_tokens",
         "reasoning_effort",
         "temperature",
         "top_p",
@@ -13887,10 +13933,12 @@ def qwen_chat_smoke_contract(
             request_errors.append("stream")
         if payload.get("stream_options") != {"include_usage": True}:
             request_errors.append("stream_options")
-        if payload.get("max_tokens") != int(row["max_output_tokens"]):
-            request_errors.append("max_tokens")
+        if payload.get("max_completion_tokens") != int(row["max_output_tokens"]):
+            request_errors.append("max_completion_tokens")
         if payload.get("enable_thinking") is not True:
             request_errors.append("enable_thinking")
+        if payload.get("preserve_thinking") is not True:
+            request_errors.append("preserve_thinking")
         if not isinstance(messages, list) or len(messages) < 2:
             request_errors.append("messages")
         elif (
@@ -19385,6 +19433,7 @@ def provider_reserve_evidence(
         "provider": provider,
         "model": model,
         "budget_config_sha256": campaign["budget_config_sha256"],
+        "budget_guard": budget_guard_semantics(profile),
         "reserve_usd": reserve,
         "provider_cap": provider_cap,
         "provider_spent_upper_bound": provider_spent,
@@ -19424,8 +19473,14 @@ def smoke_attempt_proves_local_budget_exhaustion(
                 notification = True
     except (OSError, json.JSONDecodeError):
         return False
+    reserve_label = budget_guard_semantics(row)["operator_label"]
+    reserve_prefix = (
+        reserve_label
+        if reserve_label == "PAYG-equivalent shadow guard"
+        else "benchmark"
+    )
     expected = (
-        f"benchmark reserve ${reserve:.6f} for {row['provider']}/{row['model']} "
+        f"{reserve_prefix} reserve ${reserve:.6f} for {row['provider']}/{row['model']} "
         "does not fit remaining campaign/provider envelope"
     )
     internal_logs = attempt_root / "profile/state/logs/cli"
@@ -30218,8 +30273,21 @@ def print_status(root: Path) -> None:
     budget_path = campaign.get("budget_ledger")
     if budget_path and Path(str(budget_path)).is_file():
         budget = load_json(Path(str(budget_path)))
+        config_path = Path(str(campaign.get("budget_config", "")))
+        if (
+            config_path.is_symlink()
+            or not config_path.is_file()
+            or sha256_file(config_path) != campaign.get("budget_config_sha256")
+        ):
+            raise SystemExit("frozen budget config changed before status")
+        guard_report = budget_guard_report(load_json(config_path))
+        budget_label = (
+            "PAYG-equivalent shadow guard"
+            if has_payg_equivalent_shadow_guard(guard_report)
+            else "budget"
+        )
         print(
-            f"budget=${float(budget.get('spent_upper_bound', 0)):.4f}/"
+            f"{budget_label}=${float(budget.get('spent_upper_bound', 0)):.4f}/"
             f"${float(budget.get('total_cap', 0)):.2f} "
             f"outstanding={len(budget.get('outstanding', {}))}"
         )
@@ -30268,6 +30336,17 @@ def results(root: Path) -> Dict[str, Any]:
     budget = None
     if campaign.get("budget_ledger") and Path(str(campaign["budget_ledger"])).is_file():
         budget = load_json(Path(str(campaign["budget_ledger"])))
+        config_path = Path(str(campaign.get("budget_config", "")))
+        if (
+            config_path.is_symlink()
+            or not config_path.is_file()
+            or sha256_file(config_path) != campaign.get("budget_config_sha256")
+        ):
+            raise SystemExit("frozen budget config changed before results")
+        budget = {
+            **budget,
+            "guard_semantics": budget_guard_report(load_json(config_path)),
+        }
     return {
         "campaign": campaign["campaign_id"],
         "status": campaign["status"],

@@ -34,6 +34,13 @@ struct ModelBudget {
     context_limit: usize,
     max_output_tokens: i32,
     pricing: Pricing,
+    #[serde(default)]
+    billing: Option<BillingSemantics>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct BillingSemantics {
+    budget_guard_is_actual_charge: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -425,9 +432,18 @@ fn reserve_from_paths(
         if ledger.spent_upper_bound + outstanding_total + reserved_usd > config.total_cap
             || provider_spent + provider_outstanding + reserved_usd > provider_cap
         {
+            let reserve_label = if model
+                .billing
+                .as_ref()
+                .is_some_and(|billing| !billing.budget_guard_is_actual_charge)
+            {
+                "PAYG-equivalent shadow guard"
+            } else {
+                "benchmark"
+            };
             return Err(ProviderError::CreditsExhausted {
                 details: format!(
-                    "benchmark reserve ${reserved_usd:.6} for {key} does not fit remaining campaign/provider envelope"
+                    "{reserve_label} reserve ${reserved_usd:.6} for {key} does not fit remaining campaign/provider envelope"
                 ),
                 top_up_url: None,
             });
@@ -828,6 +844,29 @@ mod tests {
             .err()
             .expect("reserve must fail");
         assert!(matches!(error, ProviderError::CreditsExhausted { .. }));
+    }
+
+    #[test]
+    fn shadow_guard_reservation_error_cannot_be_read_as_actual_spend() {
+        let root = tempfile::tempdir().unwrap();
+        let (config, _sha, ledger, model) = fixture(root.path(), 0.1);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+        value["models"]["test/model"]["billing"] = serde_json::json!({
+            "budget_guard_is_actual_charge": false
+        });
+        let raw = serde_json::to_vec_pretty(&value).unwrap();
+        fs::write(&config, &raw).unwrap();
+        let error = reserve_from_paths(&config, &sha256_hex(&raw), &ledger, "test", &model)
+            .err()
+            .expect("shadow guard reserve must fail");
+        match error {
+            ProviderError::CreditsExhausted { details, .. } => {
+                assert!(details.contains("PAYG-equivalent shadow guard reserve $"));
+                assert!(!details.starts_with("benchmark reserve $"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 
     #[test]

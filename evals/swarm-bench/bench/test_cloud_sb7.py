@@ -7657,6 +7657,13 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
         )
         self.assertEqual(row["base_url_env"], "DASHSCOPE_BASE_URL")
+        self.assertEqual(
+            row["secret_keychain"],
+            {
+                "service": "goose-benchmark-qwen-api",
+                "account": "goose-sb7-qwen38-max",
+            },
+        )
         self.assertEqual(row["context_limit"], 1_000_000)
         self.assertEqual(row["max_output_tokens"], 131_072)
         self.assertEqual(row["billing"]["actual_charge_unit"], "Credits")
@@ -9793,11 +9800,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
             return_value={"object": "list", "data": [metadata]},
         ) as fetch:
             roster = cloud_sb7.authenticated_rosters(
-                {"DASHSCOPE_API_KEY": "fixture-secret"}, [row]
+                {"DASHSCOPE_API_KEY": "sk-sp-fixture-secret"}, [row]
             )
         fetch.assert_called_once_with(
             "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/models",
-            {"Authorization": "Bearer fixture-secret"},
+            {"Authorization": "Bearer sk-sp-fixture-secret"},
         )
         cloud_sb7.validate_rosters([row], roster)
         self.assertEqual(
@@ -9812,13 +9819,115 @@ class CloudSb7HarnessTest(unittest.TestCase):
         with mock.patch.object(cloud_sb7, "fetch_json") as blocked:
             with self.assertRaisesRegex(SystemExit, "exact Token Plan endpoint"):
                 cloud_sb7.authenticated_rosters(
-                    {"DASHSCOPE_API_KEY": "fixture-secret"}, [wrong_endpoint]
+                    {"DASHSCOPE_API_KEY": "sk-sp-fixture-secret"}, [wrong_endpoint]
+                )
+        blocked.assert_not_called()
+
+        with mock.patch.object(cloud_sb7, "fetch_json") as blocked:
+            with self.assertRaisesRegex(
+                SystemExit, "Token Plan credential identity"
+            ):
+                cloud_sb7.authenticated_rosters(
+                    {"DASHSCOPE_API_KEY": "sk-fixture-payg-secret"}, [row]
                 )
         blocked.assert_not_called()
 
         roster["evidence"]["alibaba"]["qwen3.8-max"]["id"] = "qwen3.8-max-alias"
         with self.assertRaisesRegex(SystemExit, "exact qwen3.8-max"):
             cloud_sb7.validate_rosters([row], roster)
+
+    def test_qwen_budget_surfaces_cannot_present_shadow_guard_as_actual_spend(
+        self,
+    ) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-qwen38-max-entrant.json"
+            )
+        )[0]
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            config_path = root / "budget-config.json"
+            ledger_path = root / "budget-ledger.json"
+            config = {
+                "schema_version": 1,
+                "currency": "USD",
+                "total_cap": 100.0,
+                "provider_caps": {"alibaba": 100.0},
+                "models": {
+                    "alibaba/qwen3.8-max": {
+                        "provider": row["provider"],
+                        "model": row["model"],
+                        "accepted_reported_models": row[
+                            "accepted_reported_models"
+                        ],
+                        "context_limit": row["context_limit"],
+                        "max_output_tokens": row["max_output_tokens"],
+                        "pricing": row["pricing"],
+                        "billing": row["billing"],
+                    }
+                },
+            }
+            ledger = {
+                "schema_version": 1,
+                "currency": "USD",
+                "total_cap": 100.0,
+                "provider_caps": {"alibaba": 100.0},
+                "spent_upper_bound": 0.0,
+                "provider_spent_upper_bound": {"alibaba": 0.0},
+                "outstanding": {},
+                "settled": [],
+                "updated_at": "fixture",
+            }
+            cloud_sb7.atomic_json(config_path, config)
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            campaign = {
+                "campaign_id": "qwen-shadow-surface-fixture",
+                "status": "INITIALIZED",
+                "smoke_status": "PLANNED",
+                "binary_sha256": "b" * 64,
+                "instrument_set_sha256": "i" * 64,
+                "budget_config": str(config_path),
+                "budget_config_sha256": cloud_sb7.sha256_file(config_path),
+                "budget_ledger": str(ledger_path),
+            }
+            cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
+            cloud_sb7.atomic_json(root / "manager.json", {"status": "IDLE"})
+            state = {
+                "entrant": row["id"],
+                "provider": row["provider"],
+                "model": row["model"],
+                "status": "PLANNED",
+                "fixture_seed": 7,
+                "vendor_port": row["vendor_port"],
+            }
+
+            reserve = cloud_sb7.provider_reserve_evidence(campaign, row)
+            self.assertEqual(
+                reserve["budget_guard"]["operator_label"],
+                "PAYG-equivalent shadow guard",
+            )
+            self.assertEqual(
+                reserve["budget_guard"]["billing"], row["billing"]
+            )
+
+            with mock.patch.object(cloud_sb7, "status_rows", return_value=[state]):
+                rendered = cloud_sb7.results(root)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    cloud_sb7.print_status(root)
+
+            model_guard = rendered["budget"]["guard_semantics"]["models"][
+                "alibaba/qwen3.8-max"
+            ]
+            self.assertEqual(
+                model_guard["operator_label"],
+                "PAYG-equivalent shadow guard",
+            )
+            self.assertIs(
+                model_guard["billing"]["budget_guard_is_actual_charge"], False
+            )
+            self.assertIn("PAYG-equivalent shadow guard=$", output.getvalue())
+            self.assertNotIn("\nbudget=$", output.getvalue())
 
     def test_meta_smoke_contract_proves_exact_encrypted_reasoning_tool_replay(
         self,
@@ -10195,8 +10304,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "model": "qwen3.8-max",
                 "stream": True,
                 "stream_options": {"include_usage": True},
-                "max_tokens": 131_072,
+                "max_completion_tokens": 131_072,
                 "enable_thinking": True,
+                "preserve_thinking": True,
                 "tools": [
                     {
                         "type": "function",
@@ -10353,8 +10463,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "model": "qwen3.8-max",
             "stream": True,
             "stream_options": {"include_usage": True},
-            "max_tokens": 131_072,
+            "max_completion_tokens": 131_072,
             "enable_thinking": True,
+            "preserve_thinking": True,
             "tools": [{"type": "function", "function": {"name": "shell"}}],
         }
         source_response = {
@@ -10418,6 +10529,23 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
         cases = {
             "unrelated_prior": (base_first, unrelated_replay, usage),
+            "missing_preserve": (
+                {key: value for key, value in base_first.items() if key != "preserve_thinking"},
+                unrelated_replay,
+                usage,
+            ),
+            "legacy_max_tokens": (
+                {
+                    **{
+                        key: value
+                        for key, value in base_first.items()
+                        if key != "max_completion_tokens"
+                    },
+                    "max_tokens": 131_072,
+                },
+                unrelated_replay,
+                usage,
+            ),
             "sampling": (
                 {**base_first, "temperature": 0.7},
                 unrelated_replay,
@@ -10462,6 +10590,17 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     self.assertFalse(contract["sampling_omitted"])
                     self.assertTrue(
                         any("unsupported:temperature" in error for error in contract["errors"])
+                    )
+                if name == "missing_preserve":
+                    self.assertTrue(
+                        any("preserve_thinking" in error for error in contract["errors"])
+                    )
+                if name == "legacy_max_tokens":
+                    self.assertTrue(
+                        any("max_completion_tokens" in error for error in contract["errors"])
+                    )
+                    self.assertTrue(
+                        any("unsupported:max_tokens" in error for error in contract["errors"])
                     )
                 if name == "wrong_model_usage":
                     self.assertTrue(
