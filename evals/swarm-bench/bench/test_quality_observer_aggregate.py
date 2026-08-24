@@ -182,6 +182,14 @@ class MorningAggregateTests(unittest.TestCase):
         ]
         value["open_hosts"] = ["WorksMacStudio.lan"]
         value["open_request_keys"] = [row["provider_request_key"]]
+        value["tool_and_compiler_integrity"] = {
+            "activity_files": 2,
+            "done_missing_final_output": 0,
+            "done_duplicate_final_output": 0,
+            "errors": 0,
+            "malformed": 0,
+        }
+        value["lifecycle"]["terminal"] = 1
         value["recent_terminal_acceptances"] = [
             {
                 "terminal_seq": 11,
@@ -211,6 +219,11 @@ class MorningAggregateTests(unittest.TestCase):
         self.assertEqual(result["terminal_acceptances"]["accepted"], 1)
         self.assertEqual(
             result["terminal_acceptances"]["final_output_cardinality_violations"], 0
+        )
+        self.assertTrue(
+            result["terminal_acceptances"]["latest_complete_integrity"][
+                "all_terminals_accepted"
+            ]
         )
         self.assertEqual(
             result["corrections"]["outcome_counts"],
