@@ -792,6 +792,28 @@ def spend_policy(
         )
         if input_rate < 0 or output_rate < 0:
             raise SystemExit(f"pricing rates must be non-negative: {row['id']}")
+        billing = row.get("billing")
+        if provider == "alibaba" and row.get("model") == "qwen3.8-max":
+            expected_billing = {
+                "mode": "token_plan_credits",
+                "actual_charge_unit": "Credits",
+                "actual_charge_observable_via_inference_api": False,
+                "budget_guard_unit": "USD",
+                "budget_guard_basis": "singapore_payg_list_price_equivalent",
+                "budget_guard_is_actual_charge": False,
+            }
+            if billing != expected_billing:
+                raise SystemExit(
+                    "qwen3.8-max Token Plan billing must distinguish Credits from "
+                    "the conservative PAYG-equivalent transport guard"
+                )
+            if pricing.get("purpose") != (
+                "conservative_shadow_budget_guard_not_actual_token_plan_charge"
+            ):
+                raise SystemExit(
+                    "qwen3.8-max pricing must be explicitly marked as a shadow "
+                    "budget guard, not an actual Token Plan charge"
+                )
         reported_models = row["accepted_reported_models"]
         if (
             not isinstance(reported_models, list)
@@ -2133,6 +2155,7 @@ def authenticated_rosters(
     moonshot: Dict[str, Any] = {"data": []}
     meta: Dict[str, Any] = {"data": []}
     meta_catalog: Dict[str, Any] = {"data": []}
+    alibaba: Dict[str, Any] = {"data": []}
     if "zai_api" in providers:
         zai_endpoints = {
             str(row["endpoint_family"]).rstrip("/")
@@ -2171,6 +2194,24 @@ def authenticated_rosters(
         headers = {"Authorization": f"Bearer {secret_values['META_API_KEY']}"}
         meta = fetch_json("https://api.meta.ai/v1/models", headers)
         meta_catalog = fetch_json("https://api.meta.ai/muse-code/models", headers)
+    if "alibaba" in providers:
+        alibaba_endpoints = {
+            str(row["endpoint_family"]).rstrip("/")
+            for row in rows
+            if row["provider"] == "alibaba"
+        }
+        token_plan_endpoint = (
+            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/"
+            "compatible-mode/v1"
+        )
+        if alibaba_endpoints != {token_plan_endpoint}:
+            raise SystemExit(
+                "Alibaba qwen3.8-max entrants require the exact Token Plan endpoint"
+            )
+        alibaba = fetch_json(
+            f"{token_plan_endpoint}/models",
+            {"Authorization": f"Bearer {secret_values['DASHSCOPE_API_KEY']}"},
+        )
     zai_rows = {
         str(row.get("id", "")): dict(row)
         for row in zai.get("data", [])
@@ -2201,12 +2242,18 @@ def authenticated_rosters(
         for row in meta_catalog.get("data", [])
         if isinstance(row, dict) and row.get("id")
     }
+    alibaba_rows = {
+        str(row.get("id", "")): dict(row)
+        for row in alibaba.get("data", [])
+        if isinstance(row, dict) and row.get("id")
+    }
     reported_models: Dict[str, Dict[str, list[str]]] = {
         "zai_api": {model: [model] for model in zai_rows},
         "google": {},
         "custom_deepseek": {model: [model] for model in deepseek_rows},
         "moonshot": {model: [model] for model in moonshot_rows},
         "meta": {model: [model] for model in meta_rows},
+        "alibaba": {model: [model] for model in alibaba_rows},
     }
     for model, metadata in google_rows.items():
         aliases = {model}
@@ -2221,6 +2268,7 @@ def authenticated_rosters(
             "custom_deepseek": set(deepseek_rows),
             "moonshot": set(moonshot_rows),
             "meta": set(meta_rows),
+            "alibaba": set(alibaba_rows),
         },
         "accepted_reported_models": reported_models,
         "evidence": {
@@ -2229,6 +2277,7 @@ def authenticated_rosters(
             "custom_deepseek": deepseek_rows,
             "moonshot": moonshot_rows,
             "meta": {"roster": meta_rows, "catalog": meta_catalog_rows},
+            "alibaba": alibaba_rows,
         },
     }
 
@@ -2409,6 +2458,30 @@ def validate_rosters(
                 raise SystemExit(
                     f"authenticated Meta catalog does not prove the required "
                     f"reasoning/tool/sampling/limit/pricing contract for {model}"
+                )
+        if provider == "alibaba":
+            provider_evidence = evidence.get(provider)
+            metadata = (
+                provider_evidence.get(model)
+                if isinstance(provider_evidence, dict)
+                else None
+            )
+            if (
+                model != "qwen3.8-max"
+                or not isinstance(metadata, dict)
+                or metadata.get("id") != model
+                or row.get("endpoint_family")
+                != (
+                    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/"
+                    "compatible-mode/v1"
+                )
+                or int(row["context_limit"]) != 1_000_000
+                or int(row["max_output_tokens"]) != 131_072
+                or str(row["thinking_effort"]) != "max"
+            ):
+                raise SystemExit(
+                    "authenticated Alibaba roster and frozen manifest do not prove "
+                    f"the exact qwen3.8-max Token Plan identity: {model}"
                 )
 
 
@@ -2674,6 +2747,7 @@ def init_campaign(
                 "context_limit": row["context_limit"],
                 "max_output_tokens": row["max_output_tokens"],
                 "pricing": row["pricing"],
+                **({"billing": row["billing"]} if "billing" in row else {}),
             }
             for row in rows
         },
@@ -13716,6 +13790,330 @@ def meta_responses_smoke_contract(
     }
 
 
+def qwen_chat_smoke_contract(
+    profile: Path,
+    row: Mapping[str, Any],
+    terminal_usage: Mapping[str, Any],
+) -> Dict[str, Any]:
+    errors: list[str] = []
+    logs_root = profile / "state/logs"
+    indexed: list[tuple[int, Path]] = []
+    if logs_root.is_symlink() or not logs_root.is_dir():
+        errors.append("Qwen request-log directory is missing or linked")
+    else:
+        for path in logs_root.iterdir():
+            match = re.fullmatch(r"llm_request[.]([0-9]+)[.]jsonl", path.name)
+            if match is None:
+                continue
+            if path.is_symlink() or not path.is_file():
+                errors.append(f"Qwen request log is not regular: {path.name}")
+                continue
+            indexed.append((int(match.group(1)), path))
+    indexed.sort()
+    if [index for index, _ in indexed] != list(range(len(indexed))):
+        errors.append("Qwen request-log indexes are not contiguous from zero")
+    if len(indexed) < 2:
+        errors.append("Qwen smoke did not record a multi-turn tool replay")
+
+    request_records: list[Dict[str, Any]] = []
+    file_hashes: Dict[str, str] = {}
+    for _, path in reversed(indexed):
+        file_hashes[path.name] = sha256_file(path)
+        try:
+            lines = path.read_text().splitlines()
+            first_line = lines[0]
+            record = json.loads(first_line, object_pairs_hook=unique_json_object)
+            payload = record.get("input") if isinstance(record, dict) else None
+        except (IndexError, OSError, ValueError, json.JSONDecodeError) as error:
+            errors.append(
+                f"Qwen request log cannot be decoded: {path.name}: "
+                f"{type(error).__name__}"
+            )
+            continue
+        if not isinstance(payload, dict):
+            errors.append(f"Qwen request log has no request payload: {path.name}")
+            continue
+        response_messages: list[Dict[str, Any]] = []
+        for line_number, line in enumerate(lines[1:], start=2):
+            try:
+                response_record = json.loads(
+                    line, object_pairs_hook=unique_json_object
+                )
+            except (ValueError, json.JSONDecodeError):
+                errors.append(
+                    f"Qwen request log response cannot be decoded: "
+                    f"{path.name}:{line_number}"
+                )
+                continue
+            if not isinstance(response_record, dict):
+                errors.append(
+                    f"Qwen request log response is not an object: "
+                    f"{path.name}:{line_number}"
+                )
+                continue
+            data = response_record.get("data")
+            if data is not None and not isinstance(data, dict):
+                errors.append(
+                    f"Qwen request log response data is malformed: "
+                    f"{path.name}:{line_number}"
+                )
+            elif isinstance(data, dict):
+                response_messages.append(data)
+        request_records.append(
+            {
+                "name": path.name,
+                "payload": payload,
+                "responses": response_messages,
+            }
+        )
+
+    unsupported = {
+        "max_completion_tokens",
+        "reasoning_effort",
+        "temperature",
+        "top_p",
+        "presence_penalty",
+        "frequency_penalty",
+        "seed",
+    }
+    payloads = [record["payload"] for record in request_records]
+    for index, payload in enumerate(payloads):
+        messages = payload.get("messages")
+        tools = payload.get("tools")
+        request_errors: list[str] = []
+        if payload.get("model") != row.get("model"):
+            request_errors.append("model")
+        if payload.get("stream") is not True:
+            request_errors.append("stream")
+        if payload.get("stream_options") != {"include_usage": True}:
+            request_errors.append("stream_options")
+        if payload.get("max_tokens") != int(row["max_output_tokens"]):
+            request_errors.append("max_tokens")
+        if payload.get("enable_thinking") is not True:
+            request_errors.append("enable_thinking")
+        if not isinstance(messages, list) or len(messages) < 2:
+            request_errors.append("messages")
+        elif (
+            messages[0].get("role") != "system"
+            or not isinstance(messages[0].get("content"), str)
+            or not messages[0]["content"]
+            or not any(
+                isinstance(message, dict) and message.get("role") == "user"
+                for message in messages[1:]
+            )
+        ):
+            request_errors.append("system/user")
+        if not isinstance(tools, list) or not tools:
+            request_errors.append("tools")
+        present_unsupported = sorted(unsupported & payload.keys())
+        if present_unsupported:
+            request_errors.append("unsupported:" + ",".join(present_unsupported))
+        if request_errors:
+            errors.append(
+                f"Qwen request {index} violates Chat contract: "
+                + ", ".join(request_errors)
+            )
+
+    usage_rows: list[Dict[str, Any]] = []
+    if not isinstance(terminal_usage, dict) or not terminal_usage:
+        errors.append("Qwen smoke has no provider-terminal usage evidence")
+    else:
+        for request_id, usage in sorted(terminal_usage.items()):
+            usage_error = lifecycle_usage_failure(usage)
+            if usage_error:
+                errors.append(f"Qwen terminal usage {request_id}: {usage_error}")
+                continue
+            if usage["reported_model"] not in row["accepted_reported_models"]:
+                errors.append(
+                    f"Qwen terminal usage {request_id} has an unexpected model identity"
+                )
+                continue
+            if usage["input_tokens"] <= 0 or usage["output_tokens"] <= 0:
+                errors.append(
+                    f"Qwen terminal usage {request_id} has no positive token usage"
+                )
+                continue
+            usage_rows.append(
+                {
+                    "request_id_sha256": sha256_bytes(str(request_id).encode()),
+                    "reported_model": usage["reported_model"],
+                    "input_tokens": usage["input_tokens"],
+                    "output_tokens": usage["output_tokens"],
+                    "total_tokens": usage["total_tokens"],
+                }
+            )
+
+    def source_turn(record: Mapping[str, Any]) -> Dict[str, Any] | None:
+        responses = record.get("responses")
+        if not isinstance(responses, list):
+            return None
+        reasoning_parts: list[str] = []
+        text_parts: list[str] = []
+        tool_requests: list[Dict[str, Any]] = []
+        response_ids: set[str] = set()
+        for message in responses:
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                continue
+            response_id = message.get("id")
+            if isinstance(response_id, str) and response_id:
+                response_ids.add(response_id)
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "thinking":
+                    thinking = item.get("thinking")
+                    if isinstance(thinking, str):
+                        reasoning_parts.append(thinking)
+                    else:
+                        errors.append("Qwen source response has malformed reasoning")
+                elif item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        text_parts.append(text)
+                    else:
+                        errors.append("Qwen source response has malformed text")
+                elif item.get("type") == "toolRequest":
+                    tool_call = item.get("toolCall")
+                    value = (
+                        tool_call.get("value")
+                        if isinstance(tool_call, dict)
+                        and tool_call.get("status") == "success"
+                        else None
+                    )
+                    call_id = item.get("id")
+                    name = value.get("name") if isinstance(value, dict) else None
+                    arguments = (
+                        value.get("arguments") if isinstance(value, dict) else None
+                    )
+                    if (
+                        not isinstance(call_id, str)
+                        or not call_id
+                        or not isinstance(name, str)
+                        or not name
+                        or not isinstance(arguments, dict)
+                    ):
+                        errors.append("Qwen source response tool request is malformed")
+                    else:
+                        tool_requests.append(
+                            {"id": call_id, "name": name, "arguments": arguments}
+                        )
+        if not reasoning_parts and not tool_requests:
+            return None
+        if len(response_ids) != 1:
+            errors.append("Qwen source response identity changed within one request")
+            return None
+        if not reasoning_parts:
+            errors.append("Qwen source response has no reasoning before its tool call")
+            return None
+        if len(tool_requests) != 1:
+            errors.append("Qwen source response must have exactly one smoke tool call")
+            return None
+        return {
+            "reasoning": "".join(reasoning_parts),
+            "text": "".join(text_parts),
+            "tool": tool_requests[0],
+            "response_id": next(iter(response_ids)),
+        }
+
+    replay: Dict[str, Any] | None = None
+    for source_index, (source_record, replay_record) in enumerate(
+        zip(request_records, request_records[1:])
+    ):
+        source = source_turn(source_record)
+        if source is None:
+            continue
+        messages = replay_record["payload"].get("messages")
+        if not isinstance(messages, list):
+            errors.append("Qwen replay request messages are malformed")
+            continue
+        matching_assistants: list[tuple[int, Dict[str, Any]]] = []
+        for message_index, message in enumerate(messages):
+            if (
+                not isinstance(message, dict)
+                or message.get("role") != "assistant"
+                or message.get("reasoning_content") != source["reasoning"]
+            ):
+                continue
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list) or len(tool_calls) != 1:
+                continue
+            tool_call = tool_calls[0]
+            function = (
+                tool_call.get("function") if isinstance(tool_call, dict) else None
+            )
+            try:
+                arguments = json.loads(
+                    function.get("arguments", ""),
+                    object_pairs_hook=unique_json_object,
+                )
+            except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if (
+                tool_call.get("id") == source["tool"]["id"]
+                and isinstance(function, dict)
+                and function.get("name") == source["tool"]["name"]
+                and arguments == source["tool"]["arguments"]
+                and (message.get("content") or "") == source["text"]
+            ):
+                matching_assistants.append((message_index, message))
+        if len(matching_assistants) != 1:
+            errors.append(
+                "Qwen replay does not contain the exact immediate prior "
+                "reasoning/tool assistant turn once"
+            )
+            continue
+        assistant_index, _ = matching_assistants[0]
+        if assistant_index + 1 >= len(messages):
+            errors.append("Qwen replay has no tool output after the assistant turn")
+            continue
+        tool_output = messages[assistant_index + 1]
+        if (
+            not isinstance(tool_output, dict)
+            or tool_output.get("role") != "tool"
+            or tool_output.get("tool_call_id") != source["tool"]["id"]
+            or not isinstance(tool_output.get("content"), str)
+            or not tool_output["content"]
+        ):
+            errors.append("Qwen replay tool output identity/order is invalid")
+            continue
+        replay = {
+            "source_request_index": source_index,
+            "replay_request_index": source_index + 1,
+            "source_request_log_sha256": file_hashes[source_record["name"]],
+            "replay_request_log_sha256": file_hashes[replay_record["name"]],
+            "response_id_sha256": sha256_bytes(source["response_id"].encode()),
+            "reasoning_sha256": sha256_bytes(source["reasoning"].encode()),
+            "assistant_text_sha256": sha256_bytes(source["text"].encode()),
+            "call_id_sha256": sha256_bytes(source["tool"]["id"].encode()),
+            "tool_name_sha256": sha256_bytes(source["tool"]["name"].encode()),
+            "arguments_sha256": canonical_json_sha256(
+                source["tool"]["arguments"]
+            ),
+            "tool_output_sha256": sha256_bytes(tool_output["content"].encode()),
+            "order": ["reasoning_content", "assistant_tool_call", "tool_output"],
+        }
+        break
+    if replay is None:
+        errors.append(
+            "Qwen smoke has no ordered immediate reasoning/tool/output replay"
+        )
+
+    return {
+        "required": True,
+        "valid": not errors,
+        "errors": errors,
+        "request_count": len(payloads),
+        "request_log_sha256": file_hashes,
+        "tool_replay": replay,
+        "terminal_usage": usage_rows,
+        "sampling_omitted": bool(payloads)
+        and not any(unsupported & payload.keys() for payload in payloads),
+    }
+
+
 def smoke_attempt_evidence(
     root: Path,
     entrant_id: str,
@@ -13832,6 +14230,15 @@ def smoke_attempt_evidence(
     }
     if row["provider"] == "meta":
         provider_contract = meta_responses_smoke_contract(paths["profile"], row)
+        if not provider_contract["valid"]:
+            reasons.extend(
+                f"provider contract: {error}"
+                for error in provider_contract["errors"]
+            )
+    elif row["provider"] == "alibaba":
+        provider_contract = qwen_chat_smoke_contract(
+            paths["profile"], row, lifecycle.get("terminal_usage", {})
+        )
         if not provider_contract["valid"]:
             reasons.extend(
                 f"provider contract: {error}"
@@ -14305,6 +14712,12 @@ def smoke_proof_mismatch(
     if row["provider"] == "meta":
         expected_provider_contract = meta_responses_smoke_contract(
             Path(str(state.get("profile", ""))), row
+        )
+    elif row["provider"] == "alibaba":
+        expected_provider_contract = qwen_chat_smoke_contract(
+            Path(str(state.get("profile", ""))),
+            row,
+            lifecycle.get("terminal_usage", {}),
         )
     if (
         expected_provider_contract.get("valid") is not True

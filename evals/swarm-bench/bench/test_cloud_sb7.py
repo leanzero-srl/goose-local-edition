@@ -7642,6 +7642,73 @@ class CloudSb7HarnessTest(unittest.TestCase):
         for forbidden in (*hostile, "MOONSHOT_BASE_URL", "ZAI_API_BASE_URL"):
             self.assertNotIn(forbidden, env)
 
+    def test_qwen_token_plan_manifest_and_child_environment_are_exactly_isolated(
+        self,
+    ) -> None:
+        manifest = cloud_sb7.load_json(
+            cloud_sb7.HERE / "cloud-sb7-qwen38-max-entrant.json"
+        )
+        row = cloud_sb7.entrants(manifest)[0]
+        policy = cloud_sb7.spend_policy(manifest, [row])
+        self.assertEqual(row["provider"], "alibaba")
+        self.assertEqual(row["model"], "qwen3.8-max")
+        self.assertEqual(
+            row["endpoint_family"],
+            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        )
+        self.assertEqual(row["base_url_env"], "DASHSCOPE_BASE_URL")
+        self.assertEqual(row["context_limit"], 1_000_000)
+        self.assertEqual(row["max_output_tokens"], 131_072)
+        self.assertEqual(row["billing"]["actual_charge_unit"], "Credits")
+        self.assertIs(row["billing"]["budget_guard_is_actual_charge"], False)
+        self.assertEqual(policy["currency"], "USD")
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            profile = root / "profile"
+            tree = root / "tree"
+            profile.mkdir()
+            tree.mkdir()
+            state = {
+                "profile": str(profile),
+                "tree": str(tree),
+                "campaign_root": str(root),
+                "provider_lifecycle": str(root / "provider-lifecycle.jsonl"),
+                "budget_config_sha256": "fixture-budget-config",
+                "sandbox_denied_local_ports": [],
+            }
+            hostile = {
+                "MOONSHOT_API_KEY": "unrelated-moonshot",
+                "META_API_KEY": "unrelated-meta",
+                "ZHIPU_API_KEY": "unrelated-zai",
+                "GOOGLE_API_KEY": "unrelated-google",
+                "DEEPSEEK_API_KEY": "unrelated-deepseek",
+                "LMSTUDIO_API_KEY": "unrelated-local",
+                "GOOSE_TEMPERATURE": "0.7",
+                "GOOSE_SWARM_TOP_P": "0.8",
+            }
+            with mock.patch.dict(os.environ, hostile, clear=True):
+                env = cloud_sb7.child_env(row, state, "in-memory-dashscope")
+
+        self.assertEqual(env["GOOSE_PROVIDER"], "alibaba")
+        self.assertEqual(env["GOOSE_MODEL"], "qwen3.8-max")
+        self.assertEqual(env["GOOSE_FAST_MODEL"], "qwen3.8-max")
+        self.assertEqual(
+            env["DASHSCOPE_BASE_URL"],
+            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        )
+        self.assertEqual(env["GOOSE_THINKING_EFFORT"], "max")
+        self.assertEqual(env["GOOSE_CONTEXT_LIMIT"], "1000000")
+        self.assertEqual(env["GOOSE_MAX_TOKENS"], "131072")
+        self.assertEqual(env["DASHSCOPE_API_KEY"], "in-memory-dashscope")
+        for forbidden in (*hostile, "MOONSHOT_BASE_URL", "META_API_BASE_URL"):
+            self.assertNotIn(forbidden, env)
+
+        changed = json.loads(json.dumps(manifest))
+        changed["entrants"][0]["billing"]["budget_guard_is_actual_charge"] = True
+        with self.assertRaisesRegex(SystemExit, "distinguish Credits"):
+            cloud_sb7.spend_policy(changed, cloud_sb7.entrants(changed))
+
     def test_smoke_environment_uses_shared_budget_and_isolated_paths(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw).resolve()
@@ -9708,6 +9775,51 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 )
         fetch.assert_not_called()
 
+    def test_qwen_roster_binds_exact_token_plan_endpoint_and_model(self) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-qwen38-max-entrant.json"
+            )
+        )[0]
+        metadata = {
+            "id": "qwen3.8-max",
+            "object": "model",
+            "created": 0,
+            "owned_by": "qwen",
+        }
+        with mock.patch.object(
+            cloud_sb7,
+            "fetch_json",
+            return_value={"object": "list", "data": [metadata]},
+        ) as fetch:
+            roster = cloud_sb7.authenticated_rosters(
+                {"DASHSCOPE_API_KEY": "fixture-secret"}, [row]
+            )
+        fetch.assert_called_once_with(
+            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/models",
+            {"Authorization": "Bearer fixture-secret"},
+        )
+        cloud_sb7.validate_rosters([row], roster)
+        self.assertEqual(
+            cloud_sb7.selected_roster_evidence([row], roster),
+            {"alibaba": {"qwen3.8-max": metadata}},
+        )
+
+        wrong_endpoint = dict(row)
+        wrong_endpoint["endpoint_family"] = (
+            "https://coding-intl.dashscope.aliyuncs.com/v1"
+        )
+        with mock.patch.object(cloud_sb7, "fetch_json") as blocked:
+            with self.assertRaisesRegex(SystemExit, "exact Token Plan endpoint"):
+                cloud_sb7.authenticated_rosters(
+                    {"DASHSCOPE_API_KEY": "fixture-secret"}, [wrong_endpoint]
+                )
+        blocked.assert_not_called()
+
+        roster["evidence"]["alibaba"]["qwen3.8-max"]["id"] = "qwen3.8-max-alias"
+        with self.assertRaisesRegex(SystemExit, "exact qwen3.8-max"):
+            cloud_sb7.validate_rosters([row], roster)
+
     def test_meta_smoke_contract_proves_exact_encrypted_reasoning_tool_replay(
         self,
     ) -> None:
@@ -10065,6 +10177,295 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     self.assertIn(
                         "Meta replay assistant message precedes its reasoning",
                         contract["errors"],
+                    )
+
+    def test_qwen_smoke_contract_proves_exact_reasoning_tool_replay_and_usage(
+        self,
+    ) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-qwen38-max-entrant.json"
+            )
+        )[0]
+        with tempfile.TemporaryDirectory() as raw:
+            profile = Path(raw) / "profile"
+            logs = profile / "state/logs"
+            logs.mkdir(parents=True)
+            common = {
+                "model": "qwen3.8-max",
+                "stream": True,
+                "stream_options": {"include_usage": True},
+                "max_tokens": 131_072,
+                "enable_thinking": True,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "shell",
+                            "description": "Run a command",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            }
+            source_reasoning = "Inspect the isolated workspace exactly."
+            source_text = "I will inspect it."
+            source_call = {
+                "id": "call-qwen-fixture",
+                "name": "shell",
+                "arguments": {"command": "pwd"},
+            }
+            first = {
+                **common,
+                "messages": [
+                    {"role": "system", "content": "Use one shell call."},
+                    {"role": "user", "content": "Run pwd."},
+                ],
+            }
+            second = {
+                **common,
+                "messages": [
+                    {"role": "system", "content": "Use one shell call."},
+                    {"role": "user", "content": "Run pwd."},
+                    {
+                        "role": "assistant",
+                        "content": source_text,
+                        "reasoning_content": source_reasoning,
+                        "tool_calls": [
+                            {
+                                "id": source_call["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": source_call["name"],
+                                    "arguments": json.dumps(
+                                        source_call["arguments"], separators=(",", ":")
+                                    ),
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": source_call["id"],
+                        "content": "/workspace",
+                    },
+                    {"role": "user", "content": "Return the marker."},
+                ],
+            }
+            source_responses = [
+                {
+                    "data": {
+                        "id": "response-qwen-fixture",
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "Inspect the "}
+                        ],
+                    }
+                },
+                {
+                    "data": {
+                        "id": "response-qwen-fixture",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "thinking",
+                                "thinking": "isolated workspace exactly.",
+                            },
+                            {"type": "text", "text": source_text},
+                        ],
+                    }
+                },
+                {
+                    "data": {
+                        "id": "response-qwen-fixture",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "toolRequest",
+                                "id": source_call["id"],
+                                "toolCall": {
+                                    "status": "success",
+                                    "value": {
+                                        "name": source_call["name"],
+                                        "arguments": source_call["arguments"],
+                                    },
+                                },
+                            }
+                        ],
+                    },
+                    "usage": {"inputTokens": 20, "outputTokens": 8},
+                },
+            ]
+            (logs / "llm_request.1.jsonl").write_text(
+                "\n".join(
+                    [json.dumps({"input": first, "model_config": {}})]
+                    + [json.dumps(value) for value in source_responses]
+                )
+                + "\n"
+            )
+            (logs / "llm_request.0.jsonl").write_text(
+                json.dumps({"input": second, "model_config": {}}) + "\n"
+            )
+            usage = {
+                "request-a": {
+                    "reported_model": "qwen3.8-max",
+                    "input_tokens": 20,
+                    "output_tokens": 8,
+                    "total_tokens": 28,
+                },
+                "request-b": {
+                    "reported_model": "qwen3.8-max",
+                    "input_tokens": 35,
+                    "output_tokens": 4,
+                    "total_tokens": 39,
+                },
+            }
+
+            contract = cloud_sb7.qwen_chat_smoke_contract(profile, row, usage)
+
+            self.assertTrue(contract["valid"], contract["errors"])
+            self.assertEqual(contract["request_count"], 2)
+            self.assertTrue(contract["sampling_omitted"])
+            self.assertEqual(len(contract["terminal_usage"]), 2)
+            self.assertEqual(
+                contract["tool_replay"]["order"],
+                ["reasoning_content", "assistant_tool_call", "tool_output"],
+            )
+            serialized = json.dumps(contract, sort_keys=True)
+            for sensitive in (
+                source_reasoning,
+                source_text,
+                source_call["id"],
+                "response-qwen-fixture",
+                "/workspace",
+            ):
+                self.assertNotIn(sensitive, serialized)
+
+    def test_qwen_smoke_contract_rejects_sampling_usage_and_nonimmediate_replay(
+        self,
+    ) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-qwen38-max-entrant.json"
+            )
+        )[0]
+        common = {
+            "model": "qwen3.8-max",
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "max_tokens": 131_072,
+            "enable_thinking": True,
+            "tools": [{"type": "function", "function": {"name": "shell"}}],
+        }
+        source_response = {
+            "data": {
+                "id": "response-current",
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "current reasoning"},
+                    {
+                        "type": "toolRequest",
+                        "id": "call-current",
+                        "toolCall": {
+                            "status": "success",
+                            "value": {
+                                "name": "shell",
+                                "arguments": {"command": "pwd"},
+                            },
+                        },
+                    },
+                ],
+            }
+        }
+        base_first = {
+            **common,
+            "messages": [
+                {"role": "system", "content": "Use shell."},
+                {"role": "user", "content": "Run pwd."},
+            ],
+        }
+        unrelated_replay = {
+            **common,
+            "messages": [
+                {"role": "system", "content": "Use shell."},
+                {"role": "user", "content": "Run pwd."},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "unrelated old reasoning",
+                    "tool_calls": [
+                        {
+                            "id": "call-old",
+                            "type": "function",
+                            "function": {
+                                "name": "shell",
+                                "arguments": '{"command":"pwd"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call-old", "content": "ok"},
+            ],
+        }
+        usage = {
+            "request-a": {
+                "reported_model": "qwen3.8-max",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+            }
+        }
+
+        cases = {
+            "unrelated_prior": (base_first, unrelated_replay, usage),
+            "sampling": (
+                {**base_first, "temperature": 0.7},
+                unrelated_replay,
+                usage,
+            ),
+            "wrong_model_usage": (
+                base_first,
+                unrelated_replay,
+                {
+                    "request-a": {
+                        **usage["request-a"],
+                        "reported_model": "qwen3.8-max-alias",
+                    }
+                },
+            ),
+        }
+        for name, (first, second, terminal_usage) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as raw:
+                profile = Path(raw) / "profile"
+                logs = profile / "state/logs"
+                logs.mkdir(parents=True)
+                (logs / "llm_request.1.jsonl").write_text(
+                    json.dumps({"input": first, "model_config": {}})
+                    + "\n"
+                    + json.dumps(source_response)
+                    + "\n"
+                )
+                (logs / "llm_request.0.jsonl").write_text(
+                    json.dumps({"input": second, "model_config": {}}) + "\n"
+                )
+
+                contract = cloud_sb7.qwen_chat_smoke_contract(
+                    profile, row, terminal_usage
+                )
+
+                self.assertFalse(contract["valid"])
+                self.assertIsNone(contract["tool_replay"])
+                self.assertTrue(
+                    any("exact immediate prior" in error for error in contract["errors"])
+                )
+                if name == "sampling":
+                    self.assertFalse(contract["sampling_omitted"])
+                    self.assertTrue(
+                        any("unsupported:temperature" in error for error in contract["errors"])
+                    )
+                if name == "wrong_model_usage":
+                    self.assertTrue(
+                        any("unexpected model identity" in error for error in contract["errors"])
                     )
 
     def test_keychain_provider_secret_is_memory_only_and_unambiguous(self) -> None:
