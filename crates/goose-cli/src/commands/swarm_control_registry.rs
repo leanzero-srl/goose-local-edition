@@ -106,7 +106,7 @@ const fn environment_only(
 /// This is intentionally exhaustive rather than a UI/campaign allowlist. A field that exists but is
 /// absent here is configuration the engine cannot account for, so the coverage test fails the build.
 pub(crate) const CONFIG_CONTROLS: &[ConfigControlSpec] = &[
-    // Retain enabled (30).
+    // Retain enabled (27).
     config("stream_decode_retry", ControlDisposition::RetainEnabled),
     config("planner_also_works", ControlDisposition::RetainEnabled),
     config("sink_lean_prefill", ControlDisposition::RetainEnabled),
@@ -114,7 +114,7 @@ pub(crate) const CONFIG_CONTROLS: &[ConfigControlSpec] = &[
     config("spec_sized_plan", ControlDisposition::RetainEnabled),
     config("delegated_decisions_ok", ControlDisposition::RetainEnabled),
     config("clarify_spec_bound", ControlDisposition::RetainEnabled),
-    config("spec_wins", ControlDisposition::RetainEnabled),
+    config("spec_wins", ControlDisposition::RemoveMerge),
     config("clarity_fail_closed", ControlDisposition::RetainEnabled),
     config("spec_contract", ControlDisposition::RetainEnabled),
     config("retarget_stall_guard", ControlDisposition::RetainEnabled),
@@ -123,9 +123,9 @@ pub(crate) const CONFIG_CONTROLS: &[ConfigControlSpec] = &[
     config("smoke", ControlDisposition::RetainEnabled),
     config("verify_commands", ControlDisposition::RetainEnabled),
     config("fan_e2e", ControlDisposition::RetainEnabled),
-    config("no_tools_means_ask", ControlDisposition::RetainEnabled),
+    config("no_tools_means_ask", ControlDisposition::RemoveMerge),
     config("author_pitfalls", ControlDisposition::RetainEnabled),
-    config("grounded_research_only", ControlDisposition::RetainEnabled),
+    config("grounded_research_only", ControlDisposition::RemoveMerge),
     config("ts_smoke_tests", ControlDisposition::RetainEnabled),
     config(
         "failed_tasks_block_green",
@@ -149,7 +149,7 @@ pub(crate) const CONFIG_CONTROLS: &[ConfigControlSpec] = &[
     config("ask_away", ControlDisposition::RetainDisabled),
     config("write_first", ControlDisposition::RetainDisabled),
     config("think_off_test_authors", ControlDisposition::RetainDisabled),
-    // Modify before another causal arm (32).
+    // Modify before another causal arm (31).
     config("max_attempts", ControlDisposition::Modify),
     config("max_research_questions", ControlDisposition::Modify),
     config("dynamic_replan", ControlDisposition::Modify),
@@ -175,14 +175,14 @@ pub(crate) const CONFIG_CONTROLS: &[ConfigControlSpec] = &[
     config("persona", ControlDisposition::Modify),
     config("relax_contracted_deps", ControlDisposition::Modify),
     config("split_fat", ControlDisposition::Modify),
-    config("doc_fetch", ControlDisposition::Modify),
+    config("doc_fetch", ControlDisposition::RemoveMerge),
     config("fan_verify", ControlDisposition::Modify),
     config("parallel_tests", ControlDisposition::Modify),
     config("repeat_break", ControlDisposition::Modify),
     config("straggler_stop", ControlDisposition::Modify),
     config("backbone_skip_confident", ControlDisposition::Modify),
     config("degrade_on_stall", ControlDisposition::Modify),
-    // Remove or merge (12).
+    // Remove or merge (16).
     config("sink_review", ControlDisposition::RemoveMerge),
     config("detail_memo", ControlDisposition::RemoveMerge),
     config("spiral_break_chars", ControlDisposition::RemoveMerge),
@@ -238,7 +238,7 @@ pub(crate) const CONFIG_CONTROLS: &[ConfigControlSpec] = &[
 /// Controls that genuinely have no `SwarmConfig` field. Their disposition remains explicit, but they are
 /// never smuggled into a config-field allowlist. The exact reader-set test prevents stale names living here.
 pub(crate) const ENVIRONMENT_ONLY_CONTROLS: &[EnvironmentOnlyControlSpec] = &[
-    // Retain enabled (14).
+    // Retain enabled (13).
     environment_only(
         "boundary_probe",
         "GOOSE_SWARM_BOUNDARY_PROBE",
@@ -291,11 +291,6 @@ pub(crate) const ENVIRONMENT_ONLY_CONTROLS: &[EnvironmentOnlyControlSpec] = &[
         ControlDisposition::RetainEnabled,
     ),
     environment_only(
-        "scout_doc_urls",
-        "GOOSE_SWARM_SCOUT_DOC_URLS",
-        ControlDisposition::RetainEnabled,
-    ),
-    environment_only(
         "skeleton_first",
         "GOOSE_SWARM_SKELETON_FIRST",
         ControlDisposition::RetainEnabled,
@@ -305,12 +300,7 @@ pub(crate) const ENVIRONMENT_ONLY_CONTROLS: &[EnvironmentOnlyControlSpec] = &[
         "GOOSE_SWARM_SPLIT_INHERIT_SPEC",
         ControlDisposition::RetainEnabled,
     ),
-    // Retain disabled pending evidence (4).
-    environment_only(
-        "doc_examples",
-        "GOOSE_SWARM_DOC_EXAMPLES",
-        ControlDisposition::RetainDisabled,
-    ),
+    // Retain disabled pending evidence (3).
     environment_only(
         "physical_broker",
         "GOOSE_SWARM_PHYSICAL_BROKER",
@@ -586,8 +576,6 @@ pub(crate) const SWARM_ENV_READERS: &[&str] = &[
     "GOOSE_SWARM_DEP_SIGNATURES",
     "GOOSE_SWARM_DETAIL_MEMO",
     "GOOSE_SWARM_DIVERSE_PLAN",
-    "GOOSE_SWARM_DOC_EXAMPLES",
-    "GOOSE_SWARM_DOC_FETCH",
     "GOOSE_SWARM_DOC_PREFETCH",
     "GOOSE_SWARM_DOM_ID_SCAN",
     "GOOSE_SWARM_DONE_GATE",
@@ -602,7 +590,6 @@ pub(crate) const SWARM_ENV_READERS: &[&str] = &[
     "GOOSE_SWARM_FIX_SCHED",
     "GOOSE_SWARM_FORCE_WRITE",
     "GOOSE_SWARM_GOALS",
-    "GOOSE_SWARM_GROUNDED_RESEARCH_ONLY",
     "GOOSE_SWARM_INCREMENTAL_REPLAN",
     "GOOSE_SWARM_INHERIT_HINTS",
     "GOOSE_SWARM_JUDGE",
@@ -611,7 +598,6 @@ pub(crate) const SWARM_ENV_READERS: &[&str] = &[
     "GOOSE_SWARM_MAX_NODES",
     "GOOSE_SWARM_MIN_P",
     "GOOSE_SWARM_NAME_TIMEOUT_SECS",
-    "GOOSE_SWARM_NO_TOOLS_MEANS_ASK",
     "GOOSE_SWARM_OCCUPANCY",
     "GOOSE_SWARM_OMNI_JUDGE",
     "GOOSE_SWARM_OVERVIEW",
@@ -646,7 +632,6 @@ pub(crate) const SWARM_ENV_READERS: &[&str] = &[
     "GOOSE_SWARM_SALVAGE_REQUIRE_CRITICAL",
     "GOOSE_SWARM_SALVAGE_SPIN",
     "GOOSE_SWARM_SCOPED_CONTRACTS",
-    "GOOSE_SWARM_SCOUT_DOC_URLS",
     "GOOSE_SWARM_SHIP_BEST",
     "GOOSE_SWARM_SINK_CAP_REF_BYTES",
     "GOOSE_SWARM_SINK_CAP_SECS",
@@ -661,7 +646,6 @@ pub(crate) const SWARM_ENV_READERS: &[&str] = &[
     "GOOSE_SWARM_SPEC_CONTRACT",
     "GOOSE_SWARM_SPEC_REPAIR",
     "GOOSE_SWARM_SPEC_SIZED_PLAN",
-    "GOOSE_SWARM_SPEC_WINS",
     "GOOSE_SWARM_SPIRAL_BREAK_CHARS",
     "GOOSE_SWARM_SPIRAL_THINKING_CHARS",
     "GOOSE_SWARM_SPLIT",
@@ -1067,10 +1051,10 @@ mod tests {
                 .filter(|spec| spec.disposition == wanted)
                 .count()
         };
-        assert_eq!(count(ControlDisposition::RetainEnabled), 30);
+        assert_eq!(count(ControlDisposition::RetainEnabled), 27);
         assert_eq!(count(ControlDisposition::RetainDisabled), 8);
-        assert_eq!(count(ControlDisposition::Modify), 32);
-        assert_eq!(count(ControlDisposition::RemoveMerge), 12);
+        assert_eq!(count(ControlDisposition::Modify), 31);
+        assert_eq!(count(ControlDisposition::RemoveMerge), 16);
         assert_eq!(count(ControlDisposition::RuntimeProfile), 34);
 
         let env_count = |wanted| {
@@ -1079,8 +1063,8 @@ mod tests {
                 .filter(|spec| spec.disposition == wanted)
                 .count()
         };
-        assert_eq!(env_count(ControlDisposition::RetainEnabled), 14);
-        assert_eq!(env_count(ControlDisposition::RetainDisabled), 4);
+        assert_eq!(env_count(ControlDisposition::RetainEnabled), 13);
+        assert_eq!(env_count(ControlDisposition::RetainDisabled), 3);
         assert_eq!(env_count(ControlDisposition::Modify), 9);
         assert_eq!(env_count(ControlDisposition::RemoveMerge), 8);
         assert_eq!(env_count(ControlDisposition::RuntimeProfile), 15);
