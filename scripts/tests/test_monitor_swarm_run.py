@@ -11,6 +11,9 @@ import unittest
 
 
 SCRIPT = pathlib.Path(__file__).parents[1] / "monitor_swarm_run.py"
+RESPONSE_ONLY_RETRY_FIXTURE = (
+    pathlib.Path(__file__).parent / "fixtures/response_only_schema_retry.json"
+)
 SPEC = importlib.util.spec_from_file_location("monitor_swarm_run", SCRIPT)
 MONITOR = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -131,6 +134,73 @@ class RecurrenceGateTests(unittest.TestCase):
         self.assertFalse(decision.incident)
 
 
+class ResponseOnlyEventGateTests(unittest.TestCase):
+    def record(self, tool_calls):
+        value = {
+            "event": "research_pod_role_completed",
+            "role": "seed-requirement-evidence-mapper",
+            "partition_id": "seed-4",
+            "model": "workhorse-qwen/qwen3.8-27b",
+            "tool_calls": tool_calls,
+            "seq": 168,
+        }
+        raw = json.dumps(value).encode()
+        return MONITOR.EventRecord(value, 10, 10 + len(raw), "abc")
+
+    def observe(self, activity):
+        with tempfile.TemporaryDirectory() as temporary:
+            activity_dir = pathlib.Path(temporary) / ".swarm" / "activity"
+            activity_dir.mkdir(parents=True)
+            path = activity_dir / "research-pod-seed-4:pre-scheduler:11.json"
+            MONITOR.atomic_write(path, json.dumps(activity).encode())
+            return MONITOR.ResponseOnlyEventGate(activity_dir).observe(
+                self.record(activity["tool_calls"])
+            )
+
+    def captured_retry(self):
+        return json.loads(RESPONSE_ONLY_RETRY_FIXTURE.read_text(encoding="utf-8"))
+
+    def test_schema_rejected_attempt_before_one_success_is_accepted(self):
+        activity = self.captured_retry()
+        self.assertEqual(
+            activity["capture_provenance"]["source_activity_sha256"],
+            "51592a4d10713024e17117b9f82b201df290a9e55a16c27dd2a51af384544f09",
+        )
+        self.assertEqual([call["ok"] for call in activity["calls"]], [False, True])
+        self.assertIsNone(self.observe(activity))
+
+    def test_two_successful_final_outputs_are_rejected(self):
+        activity = self.captured_retry()
+        successful = activity["calls"][1]
+        activity["calls"] = [successful, dict(successful)]
+        activity["tool_calls"] = 2
+        incident = self.observe(activity)
+        self.assertIn("exactly one successful final_output", incident["reason"])
+
+    def test_forbidden_tool_type_is_rejected(self):
+        activity = self.captured_retry()
+        activity["calls"] = [
+            activity["calls"][1],
+            {"name": "developer__shell", "ok": True, "is_mcp": False},
+        ]
+        activity["tool_calls"] = 2
+        incident = self.observe(activity)
+        self.assertIn("forbidden tool types", incident["reason"])
+
+    def test_zero_successful_final_outputs_are_rejected(self):
+        activity = self.captured_retry()
+        activity["calls"] = [activity["calls"][0]]
+        activity["tool_calls"] = 1
+        incident = self.observe(activity)
+        self.assertIn("exactly one successful final_output", incident["reason"])
+
+    def test_rejected_attempt_after_success_is_rejected(self):
+        activity = self.captured_retry()
+        activity["calls"].reverse()
+        incident = self.observe(activity)
+        self.assertIn("continued after", incident["reason"])
+
+
 class EventGateTests(unittest.TestCase):
     def record(self, value):
         raw = json.dumps(value).encode()
@@ -239,19 +309,6 @@ class EventGateTests(unittest.TestCase):
             )
         )
         self.assertIn("distinct roster device", incident["reason"])
-
-    def test_seed_without_one_final_output_is_rejected(self):
-        gate = MONITOR.EventGate(3, True)
-        incident = gate.observe(
-            self.record(
-                {
-                    "event": "research_pod_role_completed",
-                    "role": "seed-requirement-evidence-mapper",
-                    "tool_calls": 0,
-                }
-            )
-        )
-        self.assertIn("exactly one final_output", incident["reason"])
 
     def test_research_cannot_precede_physical_snapshot(self):
         gate = MONITOR.EventGate(3, True)

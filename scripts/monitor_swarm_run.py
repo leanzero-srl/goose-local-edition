@@ -25,6 +25,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 F924_MEASURED_REPEAT_SHARE = 0.4033
 DEFAULT_RECURRENCE_SHARE = 0.30
 DEFAULT_REPEATED_WINDOWS = 1024
+FINAL_OUTPUT_TOOL = "recipe__final_output"
 
 
 def utc_now() -> str:
@@ -414,6 +415,151 @@ class JsonlCursor:
         return records, None
 
 
+def response_only_call_contract(
+    activity: Dict[str, Any], expected_tool_calls: int
+) -> Optional[Dict[str, Any]]:
+    calls = activity.get("calls")
+    if not isinstance(calls, list):
+        return {
+            "reason": "ResponseOnly activity has no auditable call ledger",
+            "evidence": {"expected_tool_calls": expected_tool_calls},
+        }
+
+    successful_final_output = []
+    rejected_final_output = []
+    incomplete_final_output = []
+    forbidden = []
+    for index, call in enumerate(calls):
+        if not isinstance(call, dict):
+            forbidden.append({"index": index, "name": None, "ok": None})
+            continue
+        entry = {
+            "index": index,
+            "name": call.get("name"),
+            "ok": call.get("ok"),
+        }
+        if call.get("name") != FINAL_OUTPUT_TOOL:
+            forbidden.append(entry)
+        elif call.get("ok") is True:
+            successful_final_output.append(entry)
+        elif call.get("ok") is False:
+            rejected_final_output.append(entry)
+        else:
+            incomplete_final_output.append(entry)
+
+    reported_tool_calls = int(activity.get("tool_calls", 0) or 0)
+    evidence = {
+        "expected_tool_calls": expected_tool_calls,
+        "reported_tool_calls": reported_tool_calls,
+        "audited_calls": len(calls),
+        "successful_final_output_calls": successful_final_output,
+        "rejected_final_output_calls": rejected_final_output,
+        "incomplete_final_output_calls": incomplete_final_output,
+        "forbidden_tool_calls": forbidden,
+    }
+    if reported_tool_calls != expected_tool_calls or len(calls) != expected_tool_calls:
+        return {
+            "reason": "ResponseOnly activity call ledger is incomplete",
+            "evidence": evidence,
+        }
+    if forbidden:
+        return {
+            "reason": "ResponseOnly activity contains forbidden tool types",
+            "evidence": evidence,
+        }
+    if incomplete_final_output:
+        return {
+            "reason": "ResponseOnly activity contains non-terminal final_output calls",
+            "evidence": evidence,
+        }
+    if len(successful_final_output) != 1:
+        return {
+            "reason": "ResponseOnly activity did not complete with exactly one successful final_output",
+            "evidence": evidence,
+        }
+    success_index = successful_final_output[0]["index"]
+    if any(call["index"] > success_index for call in rejected_final_output):
+        return {
+            "reason": "ResponseOnly activity continued after its successful final_output",
+            "evidence": evidence,
+        }
+    return None
+
+
+class ResponseOnlyEventGate:
+    def __init__(self, activity_dir: pathlib.Path) -> None:
+        self.activity_dir = activity_dir
+
+    def observe(self, record: EventRecord) -> Optional[Dict[str, Any]]:
+        value = record.value
+        if value.get("event") != "research_pod_role_completed" or value.get(
+            "role"
+        ) != "seed-requirement-evidence-mapper":
+            return None
+
+        partition_id = str(value.get("partition_id", ""))
+        model = str(value.get("model", ""))
+        expected_tool_calls = int(value.get("tool_calls", 0) or 0)
+        event_evidence = {
+            "event": value.get("event"),
+            "seq": value.get("seq"),
+            "event_log_start_offset": record.start_offset,
+            "event_log_end_offset": record.end_offset,
+            "event_line_sha256": record.raw_sha256,
+            "partition_id": partition_id,
+            "model": model,
+        }
+        if not partition_id or not model:
+            return {
+                "reason": "ResponseOnly research seed completion lacks activity identity",
+                "evidence": event_evidence,
+            }
+
+        prefix = "research-pod-{}".format(partition_id)
+        matches: List[Tuple[pathlib.Path, bytes, Dict[str, Any]]] = []
+        unreadable = []
+        for path in sorted(self.activity_dir.glob(prefix + "*.json")):
+            suffix = path.name[len(prefix) : -len(".json")]
+            if suffix and not suffix.startswith(":"):
+                continue
+            try:
+                raw = path.read_bytes()
+                activity = json.loads(raw)
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                unreadable.append({"path": str(path), "error": repr(error)})
+                continue
+            if (
+                activity.get("phase") == "done"
+                and str(activity.get("model", "")) == model
+                and int(activity.get("tool_calls", 0) or 0) == expected_tool_calls
+            ):
+                matches.append((path, raw, activity))
+
+        event_evidence["matching_activity_files"] = [
+            str(path) for path, _, _ in matches
+        ]
+        event_evidence["unreadable_activity_files"] = unreadable
+        if len(matches) != 1:
+            return {
+                "reason": "ResponseOnly research seed completion has no unique terminal activity audit",
+                "evidence": event_evidence,
+            }
+
+        path, raw, activity = matches[0]
+        incident = response_only_call_contract(activity, expected_tool_calls)
+        if incident is None:
+            return None
+        incident_evidence = dict(event_evidence)
+        incident_evidence.update(incident["evidence"])
+        incident_evidence.update(
+            {
+                "activity_path": str(path),
+                "activity_sha256": hashlib.sha256(raw).hexdigest(),
+            }
+        )
+        return {"reason": incident["reason"], "evidence": incident_evidence}
+
+
 class EventGate:
     def __init__(
         self, expected_nodes: int, require_physical: bool, require_judge: bool = False
@@ -594,15 +740,6 @@ class EventGate:
             if role == "evidence-saturation-coordinator" and not self.seed_merged:
                 return {
                     "reason": "research coordinator started before every seed packet compiled and merged",
-                    "evidence": evidence,
-                }
-
-        if event == "research_pod_role_completed" and value.get("role") == (
-            "seed-requirement-evidence-mapper"
-        ):
-            if int(value.get("tool_calls", 0) or 0) != 1:
-                return {
-                    "reason": "ResponseOnly research seed did not complete with exactly one final_output call",
                     "evidence": evidence,
                 }
 
@@ -904,10 +1041,12 @@ def watch(args: argparse.Namespace) -> int:
     engine_console = pathlib.Path(
         args.engine_console or (run_dir / "engine-console.log")
     )
+    activity_dir = run_dir / ".swarm" / "activity"
     cursor = JsonlCursor(event_log)
     event_gate = EventGate(
         args.expected_nodes, args.require_physical, args.require_judge
     )
+    response_only_gate = ResponseOnlyEventGate(activity_dir)
     recurrence_gate = RecurrenceGate(
         args.recurrence_share, args.repeated_windows, args.confirmations
     )
@@ -957,12 +1096,13 @@ def watch(args: argparse.Namespace) -> int:
                         start_offset=record.start_offset,
                         end_offset=record.end_offset,
                     )
-                gate_incident = event_gate.observe(record)
+                gate_incident = response_only_gate.observe(record)
+                if gate_incident is None:
+                    gate_incident = event_gate.observe(record)
                 if gate_incident is not None:
                     incident = gate_incident
                     break
 
-            activity_dir = run_dir / ".swarm" / "activity"
             if incident is None and activity_dir.is_dir():
                 for activity in sorted(activity_dir.glob("*.json")):
                     try:
