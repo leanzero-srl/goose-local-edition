@@ -123,6 +123,10 @@ POST_SMOKE_RUNTIME_SUCCESSOR_PATH = "lineage/post-smoke-runtime-successor"
 POST_SMOKE_RUNTIME_SUCCESSOR_INSTRUMENT_PATH = (
     f"{POST_SMOKE_RUNTIME_SUCCESSOR_PATH}/runtime-instrument/source"
 )
+POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_SCHEMA = 2
+POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH = (
+    "lineage/post-smoke-runtime-successors"
+)
 ORCHESTRATOR_MONITOR_FAILURE = (
     "cloud campaign lineage refused execution: unstarted entrant acquired or "
     "reset attempts: deepseek-v4-flash\n"
@@ -1305,8 +1309,13 @@ def publisher_mismatch(campaign: Mapping[str, Any]) -> str | None:
     if not isinstance(expected, dict):
         return "campaign has no pinned publisher"
     try:
-        repo = Path(str(expected["repo"])).resolve()
-        if not repo.is_dir():
+        repo = Path(str(expected["repo"]))
+        if (
+            not repo.is_absolute()
+            or repo.is_symlink()
+            or not repo.is_dir()
+            or repo.resolve() != repo
+        ):
             raise SystemExit(f"publisher repo is missing: {repo}")
         top = Path(git_value_at(repo, "rev-parse", "--show-toplevel")).resolve()
         if top != repo:
@@ -1384,6 +1393,7 @@ def freeze_publisher_runtime(
     destination: Path, publisher: Mapping[str, Any]
 ) -> Dict[str, Any]:
     repo = Path(str(publisher["repo"]))
+    destination = destination.resolve()
     destination.mkdir(parents=True, exist_ok=False)
     tracked = publisher.get("tracked_hashes")
     runtime = publisher.get("runtime_hashes")
@@ -1426,19 +1436,148 @@ def frozen_publisher_mismatch(campaign: Mapping[str, Any]) -> str | None:
     root = Path(str(frozen.get("root", "")))
     tracked = frozen.get("tracked_hashes")
     runtime = frozen.get("runtime_hashes")
-    if not isinstance(tracked, dict) or not isinstance(runtime, dict):
+    if (
+        not isinstance(publisher, dict)
+        or not isinstance(tracked, dict)
+        or not isinstance(runtime, dict)
+        or tracked != publisher.get("tracked_hashes")
+        or runtime != publisher.get("runtime_hashes")
+    ):
         return "campaign frozen publisher hashes are malformed"
     try:
-        current_tracked = {
-            str(relative): sha256_file(root / str(relative)) for relative in tracked
+        if (
+            not root.is_absolute()
+            or root.is_symlink()
+            or not root.is_dir()
+            or root.resolve() != root
+        ):
+            raise SystemExit(
+                "frozen publisher root is missing, linked, or non-canonical"
+            )
+        instrument_root_value = campaign.get("instrument_root")
+        if not isinstance(instrument_root_value, str) or not instrument_root_value:
+            raise SystemExit("campaign instrument root is missing")
+        instrument_root = Path(instrument_root_value)
+        if (
+            not instrument_root.is_absolute()
+            or instrument_root.is_symlink()
+            or not instrument_root.is_dir()
+            or instrument_root.resolve() != instrument_root
+        ):
+            raise SystemExit("campaign instrument root is linked or non-canonical")
+        expected_root = instrument_root.parent / "publisher"
+        if root != expected_root:
+            raise SystemExit(
+                "frozen publisher root is outside the campaign instrument"
+            )
+
+        def contained(relative: Any, *, directory: bool) -> Path:
+            raw = str(relative)
+            path = Path(raw)
+            if (
+                not raw
+                or "\\" in raw
+                or path.is_absolute()
+                or path.as_posix() != raw
+                or any(part in {"", ".", ".."} for part in path.parts)
+            ):
+                raise SystemExit(
+                    f"frozen publisher path is not canonical relative: {raw}"
+                )
+            target = root / path
+            try:
+                target.resolve().relative_to(root)
+            except ValueError:
+                raise SystemExit(
+                    f"frozen publisher path escapes its root: {raw}"
+                ) from None
+            if target.is_symlink() or target.resolve() != target:
+                raise SystemExit(f"frozen publisher path is linked: {raw}")
+            if directory:
+                if not target.is_dir():
+                    raise SystemExit(
+                        f"frozen publisher runtime package is missing: {raw}"
+                    )
+            elif not target.is_file() or not stat_module.S_ISREG(
+                target.lstat().st_mode
+            ):
+                raise SystemExit(
+                    f"frozen publisher tracked input is not regular: {raw}"
+                )
+            return target
+
+        tracked_paths = {
+            str(relative): contained(relative, directory=False)
+            for relative in tracked
         }
-        current_runtime = {
-            str(relative): sha256_tree_exact(root / str(relative))
+        runtime_paths = {
+            str(relative): contained(relative, directory=True)
             for relative in runtime
         }
+        current_tracked = {
+            relative: sha256_file(path)
+            for relative, path in tracked_paths.items()
+        }
+        current_runtime = {
+            relative: sha256_tree_exact(path)
+            for relative, path in runtime_paths.items()
+        }
+        allowed_files = set(tracked_paths.values())
+        for runtime_path in runtime_paths.values():
+            allowed_files.update(
+                path for path in runtime_path.rglob("*") if path.is_file()
+            )
+        allowed_directories = {root}
+        for path in allowed_files:
+            parent = path.parent
+            while parent != root:
+                allowed_directories.add(parent)
+                parent = parent.parent
+        for path in root.rglob("*"):
+            if path.is_symlink():
+                raise SystemExit(
+                    f"frozen publisher closure contains a link: {path}"
+                )
+            if path.is_file():
+                if path not in allowed_files:
+                    raise SystemExit(
+                        f"frozen publisher closure contains an extra file: {path}"
+                    )
+            elif path.is_dir():
+                if path not in allowed_directories:
+                    raise SystemExit(
+                        "frozen publisher closure contains an unexpected "
+                        f"directory: {path}"
+                    )
+            else:
+                raise SystemExit(
+                    f"frozen publisher closure contains a non-regular entry: {path}"
+                )
+        frozen_digest = sha256_bytes(
+            json.dumps(
+                {**current_tracked, **current_runtime}, sort_keys=True
+            ).encode()
+        )
+        source_digest = sha256_bytes(
+            json.dumps(
+                {
+                    **dict(tracked),
+                    **dict(runtime),
+                    ".env.local": str(publisher.get("env_file_sha256", "")),
+                },
+                sort_keys=True,
+            ).encode()
+        )
     except (OSError, SystemExit) as error:
         return f"frozen publisher runtime cannot be verified: {error}"
-    if current_tracked != tracked or current_runtime != runtime:
+    if (
+        current_tracked != tracked
+        or current_runtime != runtime
+        or frozen_digest != frozen.get("instrument_set_sha256")
+        or source_digest != publisher.get("instrument_set_sha256")
+        or str(publisher.get("script", "")) not in tracked
+        or str(publisher.get("manifest", "")) not in tracked
+    ):
         return "frozen publisher runtime changed after freeze"
     return None
 
@@ -18584,27 +18723,113 @@ def post_smoke_runtime_tree_failure(
     return None
 
 
+def post_smoke_runtime_successor_target(
+    root: Path, bundle: Path
+) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, str]]:
+    try:
+        relative_bundle = str(bundle.relative_to(root))
+    except ValueError:
+        raise SystemExit(
+            "post-smoke runtime successor bundle is outside its campaign"
+        ) from None
+    legacy_bundle = relative_bundle == POST_SMOKE_RUNTIME_SUCCESSOR_PATH
+    chained = re.fullmatch(
+        re.escape(POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH)
+        + r"/([0-9a-f]{64})",
+        relative_bundle,
+    )
+    receipt_path = bundle / "receipt.json"
+    if (
+        (not legacy_bundle and chained is None)
+        or bundle.is_symlink()
+        or not bundle.is_dir()
+        or bundle.resolve() != bundle
+        or receipt_path.is_symlink()
+        or not receipt_path.is_file()
+    ):
+        raise SystemExit("post-smoke runtime successor bundle is outside its campaign")
+    receipt = load_json(receipt_path)
+    source_campaign = load_json(bundle / "source-campaign.json")
+    source_lineage = load_json(bundle / "source-lineage.json")
+    pointer = {
+        "path": f"{relative_bundle}/receipt.json",
+        "sha256": sha256_file(receipt_path),
+    }
+    target_lineage = dict(source_lineage)
+    target_lineage["post_smoke_runtime_successor"] = pointer
+    target_root = bundle / "runtime-instrument/source"
+    if receipt.get("target_runtime_instrument_root") != str(target_root):
+        raise SystemExit(
+            "post-smoke runtime successor target runtime is outside its bundle"
+        )
+    target_campaign = dict(source_campaign)
+    target_campaign.update(
+        {
+            "coordinator": str(target_root / COORDINATOR_INSTRUMENT_PATH),
+            "runtime_instrument_root": str(target_root),
+            "runtime_instrument_hashes": receipt[
+                "target_runtime_instrument_hashes"
+            ],
+            "runtime_instrument_set_sha256": receipt[
+                "target_runtime_instrument_set_sha256"
+            ],
+            "runtime_coordinator_sha256": receipt[
+                "target_runtime_coordinator_sha256"
+            ],
+            "runtime_source_commit": receipt["runtime_source_commit"],
+            "runtime_source_branch": receipt["runtime_source_branch"],
+            "post_smoke_runtime_successor_transition_id": receipt[
+                "transition_id"
+            ],
+            "post_smoke_runtime_successor": pointer,
+            "lineage": {
+                **dict(source_campaign["lineage"]),
+                "sha256": json_payload_sha256(target_lineage),
+            },
+            "updated_at": receipt["upgraded_at"],
+        }
+    )
+    return target_campaign, target_lineage, pointer
+
+
 def post_smoke_runtime_successor_failure(
     root: Path,
     campaign: Mapping[str, Any],
     lineage: Mapping[str, Any],
+    _seen: set[str] | None = None,
 ) -> str | None:
+    top_level = _seen is None
     pointer = campaign.get("post_smoke_runtime_successor")
     lineage_pointer = lineage.get("post_smoke_runtime_successor")
     if pointer is None and lineage_pointer is None:
         if (root / POST_SMOKE_RUNTIME_SUCCESSOR_PATH).exists():
             return "post-smoke runtime successor is pending application"
+        if (root / POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH).exists() or (
+            root / POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH
+        ).is_symlink():
+            return "post-smoke runtime successor chain exists without a head"
         return None
     try:
-        relative_receipt = f"{POST_SMOKE_RUNTIME_SUCCESSOR_PATH}/receipt.json"
         if (
             not isinstance(pointer, dict)
             or set(pointer) != {"path", "sha256"}
             or pointer != lineage_pointer
-            or pointer.get("path") != relative_receipt
         ):
             return "post-smoke runtime successor pointer is malformed"
-        bundle = root / POST_SMOKE_RUNTIME_SUCCESSOR_PATH
+        relative_receipt = str(pointer.get("path", ""))
+        legacy_receipt = f"{POST_SMOKE_RUNTIME_SUCCESSOR_PATH}/receipt.json"
+        chained = re.fullmatch(
+            re.escape(POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH)
+            + r"/([0-9a-f]{64})/receipt[.]json",
+            relative_receipt,
+        )
+        if relative_receipt != legacy_receipt and chained is None:
+            return "post-smoke runtime successor pointer is malformed"
+        seen = set() if _seen is None else _seen
+        if relative_receipt in seen:
+            return "post-smoke runtime successor chain contains a cycle"
+        seen.add(relative_receipt)
+        bundle = (root / relative_receipt).parent
         receipt_path = bundle / "receipt.json"
         expected_entries = {
             "build-states",
@@ -18630,6 +18855,11 @@ def post_smoke_runtime_successor_failure(
         ):
             return "post-smoke runtime successor bundle is missing or changed"
         receipt = load_json(receipt_path)
+        expected_schema = (
+            POST_SMOKE_RUNTIME_SUCCESSOR_SCHEMA
+            if chained is None
+            else POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_SCHEMA
+        )
         expected_fields = {
             "schema_version",
             "kind",
@@ -18662,15 +18892,29 @@ def post_smoke_runtime_successor_failure(
             "only_coordinator_changed",
             "no_paid_artifact_mutation",
         }
+        if chained is not None:
+            expected_fields.update({"generation", "parent"})
         if (
             set(receipt) != expected_fields
-            or receipt.get("schema_version")
-            != POST_SMOKE_RUNTIME_SUCCESSOR_SCHEMA
+            or receipt.get("schema_version") != expected_schema
             or receipt.get("kind") != "post_smoke_runtime_successor"
+            or (
+                chained is not None
+                and receipt.get("transition_id") != chained.group(1)
+            )
             or receipt.get("root") != str(root.resolve())
             or receipt.get("campaign_id") != campaign.get("campaign_id")
             or receipt.get("only_coordinator_changed") is not True
             or receipt.get("no_paid_artifact_mutation") is not True
+            or (
+                chained is not None
+                and (
+                    not isinstance(receipt.get("generation"), int)
+                    or isinstance(receipt.get("generation"), bool)
+                    or int(receipt["generation"]) < 2
+                    or not isinstance(receipt.get("parent"), dict)
+                )
+            )
             or not isinstance(receipt.get("upgraded_at"), str)
             or not receipt.get("upgraded_at")
             or re.fullmatch(
@@ -18749,20 +18993,45 @@ def post_smoke_runtime_successor_failure(
         source_campaign = load_json(bundle / "source-campaign.json")
         source_lineage = load_json(bundle / "source-lineage.json")
         source_pointer = source_campaign.get("post_smoke_coordinator_repair")
-        source_runtime_root = root / POST_SMOKE_RUNTIME_INSTRUMENT_PATH
+        prior_successor = source_campaign.get("post_smoke_runtime_successor")
+        source_runtime_root = Path(
+            str(receipt.get("source_runtime_instrument_root", ""))
+        )
+        expected_source_runtime_root = (
+            root / POST_SMOKE_RUNTIME_INSTRUMENT_PATH
+            if chained is None
+            else Path(str(source_campaign.get("runtime_instrument_root", "")))
+        )
         source_hashes = receipt.get("source_runtime_instrument_hashes")
-        target_runtime_root = root / POST_SMOKE_RUNTIME_SUCCESSOR_INSTRUMENT_PATH
+        target_runtime_root = bundle / "runtime-instrument/source"
         target_hashes = receipt.get("target_runtime_instrument_hashes")
         if (
             source_campaign.get("campaign_id") != receipt.get("campaign_id")
             or source_campaign.get("status") != "ATTENTION"
-            or source_campaign.get("post_smoke_runtime_successor") is not None
+            or (
+                chained is None
+                and prior_successor is not None
+            )
+            or (
+                chained is not None
+                and (
+                    not isinstance(prior_successor, dict)
+                    or prior_successor
+                    != source_lineage.get("post_smoke_runtime_successor")
+                    or prior_successor == pointer
+                )
+            )
             or not isinstance(source_pointer, dict)
             or source_pointer != campaign.get("post_smoke_coordinator_repair")
             or sha256_file(
                 root / str(source_pointer.get("path", ""))
             )
             != receipt.get("source_post_smoke_repair_receipt_sha256")
+            or not source_runtime_root.is_absolute()
+            or source_runtime_root != expected_source_runtime_root
+            or source_runtime_root.resolve() != source_runtime_root
+            or not target_runtime_root.is_absolute()
+            or target_runtime_root.resolve() != target_runtime_root
             or source_campaign.get("runtime_instrument_root")
             != str(source_runtime_root)
             or receipt.get("source_runtime_instrument_root")
@@ -18792,6 +19061,42 @@ def post_smoke_runtime_successor_failure(
             != str(target_runtime_root)
         ):
             return "post-smoke runtime successor did not change exactly the coordinator"
+        if receipt.get("transition_id") != post_smoke_runtime_successor_transition_id(
+            root,
+            str(receipt["campaign_id"]),
+            str(receipt["source_campaign_sha256"]),
+            str(receipt["source_runtime_coordinator_sha256"]),
+            str(receipt["target_runtime_coordinator_sha256"]),
+            str(receipt["runtime_source_commit"]),
+        ):
+            return "post-smoke runtime successor transition identity changed"
+        if chained is not None:
+            try:
+                source_runtime_root.relative_to(root)
+                target_runtime_root.relative_to(root)
+            except ValueError:
+                return "post-smoke runtime successor instrument escaped its campaign"
+            if receipt.get("parent") != prior_successor:
+                return "post-smoke runtime successor parent pointer changed"
+            ancestor_problem = post_smoke_runtime_successor_failure(
+                root, source_campaign, source_lineage, seen
+            )
+            if ancestor_problem:
+                return "post-smoke runtime successor ancestor is invalid: " + ancestor_problem
+            parent_receipt_path = root / str(prior_successor["path"])
+            parent_receipt = load_json(parent_receipt_path)
+            parent_generation = (
+                1
+                if parent_receipt.get("schema_version")
+                == POST_SMOKE_RUNTIME_SUCCESSOR_SCHEMA
+                else parent_receipt.get("generation")
+            )
+            if (
+                not isinstance(parent_generation, int)
+                or isinstance(parent_generation, bool)
+                or receipt.get("generation") != parent_generation + 1
+            ):
+                return "post-smoke runtime successor generation is not append-only"
         source_tree_problem = post_smoke_runtime_tree_failure(
             source_runtime_root,
             source_hashes,
@@ -18849,7 +19154,9 @@ def post_smoke_runtime_successor_failure(
         }
         if any(
             campaign.get(field) != source_campaign.get(field)
-            for field in set(source_campaign) - mutable_campaign_fields
+            for field in (
+                set(source_campaign) | set(campaign)
+            ) - mutable_campaign_fields
         ):
             return "post-smoke runtime successor changed campaign identity"
         expected_lineage = dict(source_lineage)
@@ -18875,6 +19182,100 @@ def post_smoke_runtime_successor_failure(
             != json_payload_sha256(lineage)
         ):
             return "post-smoke runtime successor campaign lineage pointer changed"
+        if top_level:
+            chain_root = root / POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH
+            referenced_children = {
+                (root / relative).parent
+                for relative in seen
+                if relative.startswith(
+                    f"{POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH}/"
+                )
+            }
+            if chain_root.exists() or chain_root.is_symlink():
+                if (
+                    chain_root.is_symlink()
+                    or not chain_root.is_dir()
+                    or chain_root.resolve() != chain_root
+                ):
+                    return "post-smoke runtime successor chain root is invalid"
+                unreferenced: list[Path] = []
+                observed: set[Path] = set()
+                for child in sorted(chain_root.iterdir()):
+                    if (
+                        child.is_symlink()
+                        or not child.is_dir()
+                        or child.resolve() != child
+                        or re.fullmatch(r"[0-9a-f]{64}", child.name) is None
+                    ):
+                        return (
+                            "post-smoke runtime successor chain contains an "
+                            "unexpected entry"
+                        )
+                    observed.add(child)
+                    if child not in referenced_children:
+                        unreferenced.append(child)
+                if not referenced_children.issubset(observed):
+                    return "post-smoke runtime successor chain lost an ancestor"
+                if len(unreferenced) > 1:
+                    return "post-smoke runtime successor chain contains a fork"
+                if unreferenced:
+                    pending_bundle = unreferenced[0]
+                    try:
+                        pending_receipt = load_json(
+                            pending_bundle / "receipt.json"
+                        )
+                        pending_source_campaign = load_json(
+                            pending_bundle / "source-campaign.json"
+                        )
+                        pending_source_lineage = load_json(
+                            pending_bundle / "source-lineage.json"
+                        )
+                        (
+                            pending_campaign,
+                            pending_lineage,
+                            _,
+                        ) = post_smoke_runtime_successor_target(
+                            root, pending_bundle
+                        )
+                    except (
+                        OSError,
+                        KeyError,
+                        TypeError,
+                        ValueError,
+                        json.JSONDecodeError,
+                        SystemExit,
+                    ) as error:
+                        return (
+                            "post-smoke runtime successor chain contains an "
+                            f"invalid unreferenced generation: {error}"
+                        )
+                    if (
+                        pending_source_campaign != campaign
+                        or pending_source_lineage != lineage
+                        or not post_smoke_runtime_successor_source_matches_bundle(
+                            root,
+                            campaign,
+                            pending_bundle,
+                            pending_receipt,
+                        )
+                    ):
+                        return (
+                            "post-smoke runtime successor chain contains an "
+                            "unbound generation"
+                        )
+                    pending_problem = post_smoke_runtime_successor_failure(
+                        root,
+                        pending_campaign,
+                        pending_lineage,
+                        set(),
+                    )
+                    if pending_problem:
+                        return (
+                            "post-smoke runtime successor chain contains an "
+                            "invalid pending generation: "
+                            + pending_problem
+                        )
+                    return "post-smoke runtime successor child is pending application"
         campaign_runtime_coordinator(campaign)
     except (
         OSError,
@@ -19172,8 +19573,21 @@ def post_smoke_coordinator_repair_failure(
             "stopped_at",
             "coordinator",
             "lineage",
+            "post_smoke_coordinator_repair",
+            "post_smoke_coordinator_repair_transition_id",
+            "post_smoke_runtime_successor",
+            "post_smoke_runtime_successor_transition_id",
+            "runtime_coordinator_sha256",
+            "runtime_instrument_hashes",
+            "runtime_instrument_root",
+            "runtime_instrument_set_sha256",
+            "runtime_source_branch",
+            "runtime_source_commit",
+            "transport_unknown",
         }
-        immutable_campaign_fields = set(source_campaign) - source_mutable_campaign_fields
+        immutable_campaign_fields = (
+            set(source_campaign) | set(campaign)
+        ) - source_mutable_campaign_fields
         if any(
             campaign.get(field) != source_campaign.get(field)
             for field in immutable_campaign_fields
@@ -19541,54 +19955,13 @@ def post_smoke_runtime_successor_source_matches_bundle(
 def apply_post_smoke_runtime_successor(
     root: Path, bundle: Path
 ) -> Dict[str, Any]:
-    expected_bundle = root / POST_SMOKE_RUNTIME_SUCCESSOR_PATH
+    target_campaign, target_lineage, pointer = (
+        post_smoke_runtime_successor_target(root, bundle)
+    )
     receipt_path = bundle / "receipt.json"
-    if (
-        bundle != expected_bundle
-        or bundle.is_symlink()
-        or not bundle.is_dir()
-        or bundle.resolve() != bundle
-        or receipt_path.is_symlink()
-        or not receipt_path.is_file()
-    ):
-        raise SystemExit("post-smoke runtime successor bundle is outside its campaign")
     receipt = load_json(receipt_path)
     source_campaign = load_json(bundle / "source-campaign.json")
     source_lineage = load_json(bundle / "source-lineage.json")
-    pointer = {
-        "path": f"{POST_SMOKE_RUNTIME_SUCCESSOR_PATH}/receipt.json",
-        "sha256": sha256_file(receipt_path),
-    }
-    target_lineage = dict(source_lineage)
-    target_lineage["post_smoke_runtime_successor"] = pointer
-    target_root = root / POST_SMOKE_RUNTIME_SUCCESSOR_INSTRUMENT_PATH
-    target_campaign = dict(source_campaign)
-    target_campaign.update(
-        {
-            "coordinator": str(target_root / COORDINATOR_INSTRUMENT_PATH),
-            "runtime_instrument_root": str(target_root),
-            "runtime_instrument_hashes": receipt[
-                "target_runtime_instrument_hashes"
-            ],
-            "runtime_instrument_set_sha256": receipt[
-                "target_runtime_instrument_set_sha256"
-            ],
-            "runtime_coordinator_sha256": receipt[
-                "target_runtime_coordinator_sha256"
-            ],
-            "runtime_source_commit": receipt["runtime_source_commit"],
-            "runtime_source_branch": receipt["runtime_source_branch"],
-            "post_smoke_runtime_successor_transition_id": receipt[
-                "transition_id"
-            ],
-            "post_smoke_runtime_successor": pointer,
-            "lineage": {
-                **dict(source_campaign["lineage"]),
-                "sha256": json_payload_sha256(target_lineage),
-            },
-            "updated_at": receipt["upgraded_at"],
-        }
-    )
     bundle_problem = post_smoke_coordinator_repair_failure(
         root, target_campaign, target_lineage
     )
@@ -19664,7 +20037,7 @@ def repair_post_smoke_runtime_successor(
         )
     runtime_source_commit = observed_commit
     runtime_source_branch = observed_branch
-    bundle = root / POST_SMOKE_RUNTIME_SUCCESSOR_PATH
+    legacy_bundle = root / POST_SMOKE_RUNTIME_SUCCESSOR_PATH
     with contextlib.ExitStack() as locks:
         for relative in (
             "locks/manager-launch.claim",
@@ -19701,10 +20074,127 @@ def repair_post_smoke_runtime_successor(
             raise SystemExit(
                 "cannot claim post-smoke runtime successor budget boundary"
             )
-        if bundle.is_symlink():
+
+        def require_replay_quiescence() -> None:
+            problem = post_smoke_runtime_quiescence_failure(root, campaign)
+            if problem:
+                raise SystemExit(
+                    problem.replace(
+                        "post-smoke coordinator repair",
+                        "post-smoke runtime successor replay",
+                    )
+                )
+
+        current_lineage = load_json(root / "lineage/lineage.json")
+        campaign_pointer = campaign.get("post_smoke_runtime_successor")
+        lineage_pointer = current_lineage.get("post_smoke_runtime_successor")
+        if lineage_pointer != campaign_pointer:
+            if not isinstance(lineage_pointer, dict):
+                raise SystemExit(
+                    "pending post-smoke runtime successor lineage pointer is malformed"
+                )
+            pending_relative = str(lineage_pointer.get("path", ""))
+            pending_legacy = (
+                pending_relative
+                == f"{POST_SMOKE_RUNTIME_SUCCESSOR_PATH}/receipt.json"
+            )
+            pending_chained = re.fullmatch(
+                re.escape(POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH)
+                + r"/[0-9a-f]{64}/receipt[.]json",
+                pending_relative,
+            )
+            if not pending_legacy and pending_chained is None:
+                raise SystemExit(
+                    "pending post-smoke runtime successor lineage pointer is malformed"
+                )
+            pending_bundle = (root / pending_relative).parent
+            if (
+                pending_bundle.is_symlink()
+                or not pending_bundle.is_dir()
+                or pending_bundle.resolve() != pending_bundle
+            ):
+                raise SystemExit(
+                    "pending post-smoke runtime successor bundle is invalid"
+                )
+            pending_receipt = load_json(pending_bundle / "receipt.json")
+            pending_source_lineage = load_json(
+                pending_bundle / "source-lineage.json"
+            )
+            expected_pending_lineage = dict(pending_source_lineage)
+            expected_pending_lineage["post_smoke_runtime_successor"] = dict(
+                lineage_pointer
+            )
+            if (
+                sha256_file(campaign_file(root))
+                != pending_receipt.get("source_campaign_sha256")
+                or pending_receipt.get("target_runtime_coordinator_sha256")
+                != sha256_file(coordinator_source)
+                or pending_source_lineage.get("post_smoke_runtime_successor")
+                != campaign_pointer
+                or current_lineage != expected_pending_lineage
+                or (
+                    campaign_pointer is not None
+                    and pending_receipt.get("parent") != campaign_pointer
+                )
+            ):
+                raise SystemExit(
+                    "pending post-smoke runtime successor is not the requested "
+                    "one-step child"
+                )
+            require_replay_quiescence()
+            return apply_post_smoke_runtime_successor(root, pending_bundle)
+        if legacy_bundle.is_symlink():
             raise SystemExit("post-smoke runtime successor bundle is linked")
-        if bundle.exists():
-            return apply_post_smoke_runtime_successor(root, bundle)
+        if legacy_bundle.exists():
+            if campaign.get("post_smoke_runtime_successor") is None:
+                legacy_receipt = load_json(legacy_bundle / "receipt.json")
+                if (
+                    legacy_receipt.get("target_runtime_coordinator_sha256")
+                    != sha256_file(coordinator_source)
+                ):
+                    raise SystemExit(
+                        "post-smoke runtime successor target bundle collides with "
+                        "different transition evidence"
+                    )
+                require_replay_quiescence()
+                return apply_post_smoke_runtime_successor(root, legacy_bundle)
+        head_problem = post_smoke_runtime_successor_failure(
+            root, campaign, current_lineage
+        )
+        if head_problem == (
+            "post-smoke runtime successor child is pending application"
+        ):
+            chain_root = root / POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH
+            pending_children: list[Path] = []
+            for child in sorted(chain_root.iterdir()):
+                try:
+                    child_source_campaign = load_json(
+                        child / "source-campaign.json"
+                    )
+                    child_receipt = load_json(child / "receipt.json")
+                except (OSError, json.JSONDecodeError, SystemExit):
+                    continue
+                if (
+                    child_source_campaign == campaign
+                    and child_receipt.get("parent") == campaign_pointer
+                ):
+                    pending_children.append(child)
+            if len(pending_children) != 1:
+                raise SystemExit(
+                    "post-smoke runtime successor pending child is ambiguous"
+                )
+            pending_child = pending_children[0]
+            pending_receipt = load_json(pending_child / "receipt.json")
+            if (
+                pending_receipt.get("target_runtime_coordinator_sha256")
+                != sha256_file(coordinator_source)
+            ):
+                raise SystemExit(
+                    "post-smoke runtime successor source already has a "
+                    "different uncommitted child"
+                )
+            require_replay_quiescence()
+            return apply_post_smoke_runtime_successor(root, pending_child)
         require_lineage(root)
         require_smoke_proofs(root)
         campaign = load_json(campaign_file(root))
@@ -19713,10 +20203,9 @@ def repair_post_smoke_runtime_successor(
             or campaign.get("smoke_status")
             not in {"PASS", BUDGET_BLOCKED_CARRIED_SMOKE_STATUS}
             or not isinstance(campaign.get("post_smoke_coordinator_repair"), dict)
-            or campaign.get("post_smoke_runtime_successor") is not None
         ):
             raise SystemExit(
-                "post-smoke runtime successor requires one repaired ATTENTION runtime"
+                "post-smoke runtime successor requires a repaired ATTENTION runtime"
             )
         quiescence_problem = post_smoke_runtime_quiescence_failure(root, campaign)
         if quiescence_problem:
@@ -19727,23 +20216,116 @@ def repair_post_smoke_runtime_successor(
                 )
             )
         source_runtime_root = Path(str(campaign["runtime_instrument_root"]))
-        expected_source_root = root / POST_SMOKE_RUNTIME_INSTRUMENT_PATH
+        prior_pointer = campaign.get("post_smoke_runtime_successor")
+        if prior_pointer is None:
+            expected_source_root = root / POST_SMOKE_RUNTIME_INSTRUMENT_PATH
+        else:
+            lineage = load_json(root / "lineage/lineage.json")
+            prior_problem = post_smoke_runtime_successor_failure(
+                root, campaign, lineage
+            )
+            if prior_problem:
+                raise SystemExit(
+                    "post-smoke runtime successor source chain is invalid: "
+                    + prior_problem
+                )
+            expected_source_root = Path(str(campaign["runtime_instrument_root"]))
         source_hashes = campaign.get("runtime_instrument_hashes")
         if (
             source_runtime_root != expected_source_root
+            or not source_runtime_root.is_absolute()
+            or source_runtime_root.resolve() != source_runtime_root
             or not isinstance(source_hashes, dict)
         ):
             raise SystemExit(
-                "post-smoke runtime successor source runtime is not the first repair"
+                "post-smoke runtime successor source runtime is not frozen"
             )
         source_coordinator, source_coordinator_sha = campaign_runtime_coordinator(
             campaign
         )
         target_coordinator_sha = sha256_file(coordinator_source)
         if target_coordinator_sha == source_coordinator_sha:
+            lineage = load_json(root / "lineage/lineage.json")
+            problem = post_smoke_coordinator_repair_failure(
+                root, campaign, lineage
+            )
+            if problem:
+                raise SystemExit(
+                    "post-smoke runtime successor no-op source is invalid: "
+                    + problem
+                )
+            if prior_pointer is not None:
+                return campaign
             raise SystemExit(
                 "post-smoke runtime successor changes no coordinator bytes"
             )
+        source_campaign_sha256 = sha256_file(campaign_file(root))
+        if prior_pointer is not None:
+            parent_receipt = load_json(root / str(prior_pointer["path"]))
+            parent_generation = (
+                1
+                if parent_receipt.get("schema_version")
+                == POST_SMOKE_RUNTIME_SUCCESSOR_SCHEMA
+                else parent_receipt.get("generation")
+            )
+            if (
+                not isinstance(parent_generation, int)
+                or isinstance(parent_generation, bool)
+                or parent_generation < 1
+            ):
+                raise SystemExit(
+                    "post-smoke runtime successor parent generation is malformed"
+                )
+            generation = parent_generation + 1
+            chain_root = root / POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH
+            if chain_root.exists():
+                if (
+                    chain_root.is_symlink()
+                    or not chain_root.is_dir()
+                    or chain_root.resolve() != chain_root
+                ):
+                    raise SystemExit(
+                        "post-smoke runtime successor chain root is invalid"
+                    )
+                matching_children: list[Path] = []
+                for child in sorted(chain_root.iterdir()):
+                    if (
+                        child.is_symlink()
+                        or not child.is_dir()
+                        or re.fullmatch(r"[0-9a-f]{64}", child.name) is None
+                    ):
+                        raise SystemExit(
+                            "post-smoke runtime successor chain contains an "
+                            "unexpected entry"
+                        )
+                    child_receipt = load_json(child / "receipt.json")
+                    if (
+                        child_receipt.get("source_campaign_sha256")
+                        != source_campaign_sha256
+                        or child_receipt.get("parent") != prior_pointer
+                    ):
+                        continue
+                    if (
+                        child_receipt.get("source_runtime_coordinator_sha256")
+                        != source_coordinator_sha
+                        or child_receipt.get("target_runtime_coordinator_sha256")
+                        != target_coordinator_sha
+                        or child_receipt.get("generation") != generation
+                    ):
+                        raise SystemExit(
+                            "post-smoke runtime successor source already has a "
+                            "different uncommitted child"
+                        )
+                    matching_children.append(child)
+                if len(matching_children) > 1:
+                    raise SystemExit(
+                        "post-smoke runtime successor source has ambiguous "
+                        "uncommitted children"
+                    )
+                if matching_children:
+                    return apply_post_smoke_runtime_successor(
+                        root, matching_children[0]
+                    )
         target_hashes = {
             **dict(source_hashes),
             COORDINATOR_INSTRUMENT_PATH: target_coordinator_sha,
@@ -19757,7 +20339,6 @@ def repair_post_smoke_runtime_successor(
                 "post-smoke runtime successor must change exactly the coordinator"
             )
         source_evidence = post_smoke_source_evidence(root, campaign)
-        source_campaign_sha256 = sha256_file(campaign_file(root))
         transition_id = post_smoke_runtime_successor_transition_id(
             root,
             str(campaign["campaign_id"]),
@@ -19766,6 +20347,49 @@ def repair_post_smoke_runtime_successor(
             target_coordinator_sha,
             runtime_source_commit,
         )
+        if prior_pointer is None:
+            schema_version = POST_SMOKE_RUNTIME_SUCCESSOR_SCHEMA
+            generation = 1
+            bundle = legacy_bundle
+        else:
+            schema_version = POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_SCHEMA
+            chain_root = root / POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH
+            if chain_root.is_symlink():
+                raise SystemExit(
+                    "post-smoke runtime successor chain root is linked"
+                )
+            chain_root.mkdir(mode=0o700, exist_ok=True)
+            if chain_root.resolve() != chain_root:
+                raise SystemExit(
+                    "post-smoke runtime successor chain root is outside its campaign"
+                )
+            bundle = chain_root / transition_id
+        if bundle.is_symlink():
+            raise SystemExit("post-smoke runtime successor target bundle is linked")
+        if bundle.exists():
+            existing_receipt = load_json(bundle / "receipt.json")
+            expected_existing = {
+                "schema_version": schema_version,
+                "transition_id": transition_id,
+                "source_campaign_sha256": source_campaign_sha256,
+                "source_runtime_coordinator_sha256": source_coordinator_sha,
+                "target_runtime_coordinator_sha256": target_coordinator_sha,
+            }
+            if any(
+                existing_receipt.get(field) != value
+                for field, value in expected_existing.items()
+            ) or (
+                prior_pointer is not None
+                and (
+                    existing_receipt.get("generation") != generation
+                    or existing_receipt.get("parent") != prior_pointer
+                )
+            ):
+                raise SystemExit(
+                    "post-smoke runtime successor target bundle collides with "
+                    "different transition evidence"
+                )
+            return apply_post_smoke_runtime_successor(root, bundle)
         discard_uncommitted_runtime_successor_staging(
             root / "lineage", bundle, transition_id
         )
@@ -19821,13 +20445,11 @@ def repair_post_smoke_runtime_successor(
                 runtime_staging / COORDINATOR_INSTRUMENT_PATH,
                 0o600,
             )
-            target_runtime_root = (
-                root / POST_SMOKE_RUNTIME_SUCCESSOR_INSTRUMENT_PATH
-            )
+            target_runtime_root = bundle / "runtime-instrument/source"
             source_repair_pointer = campaign["post_smoke_coordinator_repair"]
             upgraded_at = utc_now()
             receipt = {
-                "schema_version": POST_SMOKE_RUNTIME_SUCCESSOR_SCHEMA,
+                "schema_version": schema_version,
                 "kind": "post_smoke_runtime_successor",
                 "transition_id": transition_id,
                 "upgraded_at": upgraded_at,
@@ -19892,6 +20514,13 @@ def repair_post_smoke_runtime_successor(
                 "only_coordinator_changed": True,
                 "no_paid_artifact_mutation": True,
             }
+            if prior_pointer is not None:
+                receipt.update(
+                    {
+                        "generation": generation,
+                        "parent": dict(prior_pointer),
+                    }
+                )
             if receipt["source_campaign_sha256"] != source_campaign_sha256:
                 raise SystemExit(
                     "post-smoke runtime successor source campaign changed while staging"
@@ -23026,7 +23655,6 @@ def run_publisher(
     if mismatch:
         raise PublicationError(mismatch)
     publisher = campaign["publisher"]
-    repo = Path(str(publisher["repo"]))
     frozen_repo = Path(str(publisher["frozen"]["root"]))
     state = read_state(root, entrant_id)
     if live:

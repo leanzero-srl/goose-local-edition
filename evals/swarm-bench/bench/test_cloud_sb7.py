@@ -4422,6 +4422,485 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 )
             )
 
+    def test_post_smoke_runtime_successor_appends_a_sealed_second_hop(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            source_campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            source_budget = Path(str(source_campaign["budget_ledger"])).read_bytes()
+            source_artifacts = cloud_sb7.post_smoke_artifact_seals(
+                root, source_campaign
+            )
+
+            with self.post_smoke_runtime_successor_patches(source_root):
+                first = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+            first_pointer = dict(first["post_smoke_runtime_successor"])
+            first_receipt = root / str(first_pointer["path"])
+            first_receipt_bytes = first_receipt.read_bytes()
+            coordinator.write_bytes(
+                coordinator.read_bytes()
+                + b"\n# second post-smoke runtime successor fixture\n"
+            )
+
+            with self.post_smoke_runtime_successor_patches(source_root):
+                second = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+                repeated = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+
+            second_pointer = second["post_smoke_runtime_successor"]
+            self.assertNotEqual(second_pointer, first_pointer)
+            self.assertRegex(
+                str(second_pointer["path"]),
+                rf"^{cloud_sb7.POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH}/"
+                r"[0-9a-f]{64}/receipt[.]json$",
+            )
+            second_receipt = cloud_sb7.load_json(root / str(second_pointer["path"]))
+            self.assertEqual(second_receipt["schema_version"], 2)
+            self.assertEqual(second_receipt["generation"], 2)
+            self.assertEqual(second_receipt["parent"], first_pointer)
+            self.assertEqual(
+                repeated["post_smoke_runtime_successor_transition_id"],
+                second["post_smoke_runtime_successor_transition_id"],
+            )
+            self.assertEqual(first_receipt.read_bytes(), first_receipt_bytes)
+            self.assertEqual(
+                Path(str(second["budget_ledger"])).read_bytes(), source_budget
+            )
+            self.assertEqual(
+                cloud_sb7.post_smoke_artifact_seals(root, second),
+                source_artifacts,
+            )
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+            self.assertIsNone(
+                cloud_sb7.post_smoke_runtime_successor_failure(
+                    root, second, lineage
+                )
+            )
+
+    def test_post_smoke_runtime_successor_second_hop_replays_each_boundary(
+        self,
+    ) -> None:
+        for stage in (
+            "staging_created",
+            "runtime_staged",
+            "receipt_committed",
+            "lineage_committed",
+            "campaign_committed",
+        ):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_post_smoke_runtime_successor_fixture(
+                    Path(raw)
+                )
+                root = Path(str(fixture["root"]))
+                source_root = Path(str(fixture["source_root"]))
+                coordinator = Path(str(fixture["coordinator"]))
+                with self.post_smoke_runtime_successor_patches(source_root):
+                    cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+                coordinator.write_bytes(
+                    coordinator.read_bytes()
+                    + f"\n# second-hop crash fixture {stage}\n".encode()
+                )
+
+                def crash(observed: str) -> None:
+                    if observed == stage:
+                        raise RuntimeError(f"second-hop crash at {stage}")
+
+                with (
+                    self.post_smoke_runtime_successor_patches(source_root),
+                    mock.patch.object(
+                        cloud_sb7,
+                        "post_smoke_runtime_successor_fault",
+                        side_effect=crash,
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, stage):
+                        cloud_sb7.repair_post_smoke_runtime_successor(
+                            root, coordinator
+                        )
+                with self.post_smoke_runtime_successor_patches(source_root):
+                    recovered = cloud_sb7.repair_post_smoke_runtime_successor(
+                        root, coordinator
+                    )
+                lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+                self.assertIsNone(
+                    cloud_sb7.post_smoke_runtime_successor_failure(
+                        root, recovered, lineage
+                    )
+                )
+
+    def test_post_smoke_runtime_successor_rejects_tampered_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            with self.post_smoke_runtime_successor_patches(source_root):
+                first = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+            first_receipt = root / str(
+                first["post_smoke_runtime_successor"]["path"]
+            )
+            coordinator.write_bytes(
+                coordinator.read_bytes() + b"\n# second hop for ancestor tamper\n"
+            )
+            with self.post_smoke_runtime_successor_patches(source_root):
+                second = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+
+            first_receipt.write_bytes(first_receipt.read_bytes() + b"\n")
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+            self.assertIn(
+                "ancestor is invalid",
+                cloud_sb7.post_smoke_runtime_successor_failure(
+                    root, second, lineage
+                )
+                or "",
+            )
+
+    def test_post_smoke_runtime_successor_third_hop_replays_split_commit(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            with self.post_smoke_runtime_successor_patches(source_root):
+                first = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+            coordinator.write_bytes(coordinator.read_bytes() + b"\n# hop two\n")
+            with self.post_smoke_runtime_successor_patches(source_root):
+                second = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+            ancestor_bytes = {
+                str(pointer["path"]): (root / str(pointer["path"])).read_bytes()
+                for pointer in (
+                    first["post_smoke_runtime_successor"],
+                    second["post_smoke_runtime_successor"],
+                )
+            }
+            budget_before = Path(str(second["budget_ledger"])).read_bytes()
+            artifacts_before = cloud_sb7.post_smoke_artifact_seals(root, second)
+            coordinator.write_bytes(coordinator.read_bytes() + b"\n# hop three\n")
+
+            def crash(stage: str) -> None:
+                if stage == "lineage_committed":
+                    raise RuntimeError("third-hop split commit")
+
+            with (
+                self.post_smoke_runtime_successor_patches(source_root),
+                mock.patch.object(
+                    cloud_sb7,
+                    "post_smoke_runtime_successor_fault",
+                    side_effect=crash,
+                ),
+                self.assertRaisesRegex(RuntimeError, "third-hop split commit"),
+            ):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            with self.post_smoke_runtime_successor_patches(source_root):
+                third = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+
+            receipt = cloud_sb7.load_json(
+                root / str(third["post_smoke_runtime_successor"]["path"])
+            )
+            self.assertEqual(receipt["generation"], 3)
+            self.assertEqual(
+                receipt["parent"], second["post_smoke_runtime_successor"]
+            )
+            for relative, expected in ancestor_bytes.items():
+                self.assertEqual((root / relative).read_bytes(), expected)
+            self.assertEqual(Path(str(third["budget_ledger"])).read_bytes(), budget_before)
+            self.assertEqual(
+                cloud_sb7.post_smoke_artifact_seals(root, third), artifacts_before
+            )
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+            self.assertIsNone(
+                cloud_sb7.post_smoke_runtime_successor_failure(
+                    root, third, lineage
+                )
+            )
+
+    def test_post_smoke_runtime_successor_refuses_existing_bundle_collision(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            with self.post_smoke_runtime_successor_patches(source_root):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            coordinator.write_bytes(
+                coordinator.read_bytes() + b"\n# collision target\n"
+            )
+
+            def crash(stage: str) -> None:
+                if stage == "receipt_committed":
+                    raise RuntimeError("leave committed child bundle")
+
+            with (
+                self.post_smoke_runtime_successor_patches(source_root),
+                mock.patch.object(
+                    cloud_sb7,
+                    "post_smoke_runtime_successor_fault",
+                    side_effect=crash,
+                ),
+                self.assertRaisesRegex(RuntimeError, "committed child bundle"),
+            ):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+            self.assertIn(
+                "pending application",
+                cloud_sb7.post_smoke_coordinator_repair_failure(
+                    root, campaign, lineage
+                )
+                or "",
+            )
+            self.assertIsNotNone(cloud_sb7.lineage_failure(root))
+            chain_root = root / cloud_sb7.POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH
+            child = next(path for path in chain_root.iterdir() if path.is_dir())
+            receipt_path = child / "receipt.json"
+            receipt = cloud_sb7.load_json(receipt_path)
+            receipt["target_runtime_coordinator_sha256"] = "f" * 64
+            cloud_sb7.atomic_json(receipt_path, receipt)
+
+            with (
+                self.post_smoke_runtime_successor_patches(source_root),
+                self.assertRaisesRegex(
+                    SystemExit,
+                    "invalid pending generation|different uncommitted child",
+                ),
+            ):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+
+    def test_post_smoke_runtime_successor_rejects_unreferenced_generation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            with self.post_smoke_runtime_successor_patches(source_root):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            coordinator.write_bytes(coordinator.read_bytes() + b"\n# hop two\n")
+            with self.post_smoke_runtime_successor_patches(source_root):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            garbage = (
+                root
+                / cloud_sb7.POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH
+                / ("f" * 64)
+            )
+            garbage.mkdir()
+            (garbage / "garbage").write_text("not a receipt\n")
+
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+            self.assertIn(
+                "invalid unreferenced generation",
+                cloud_sb7.post_smoke_runtime_successor_failure(
+                    root, campaign, lineage
+                )
+                or "",
+            )
+            self.assertIsNotNone(cloud_sb7.lineage_failure(root))
+
+    def test_post_smoke_runtime_successor_rejects_chain_without_head(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            chain_root = root / cloud_sb7.POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH
+            (chain_root / ("d" * 64)).mkdir(parents=True)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+
+            self.assertIn(
+                "chain exists without a head",
+                cloud_sb7.post_smoke_runtime_successor_failure(
+                    root, campaign, lineage
+                )
+                or "",
+            )
+
+    def test_post_smoke_runtime_successor_rejects_pending_child_fork(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            with self.post_smoke_runtime_successor_patches(source_root):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            coordinator.write_bytes(coordinator.read_bytes() + b"\n# fork target\n")
+
+            def crash(stage: str) -> None:
+                if stage == "receipt_committed":
+                    raise RuntimeError("leave pending child")
+
+            with (
+                self.post_smoke_runtime_successor_patches(source_root),
+                mock.patch.object(
+                    cloud_sb7,
+                    "post_smoke_runtime_successor_fault",
+                    side_effect=crash,
+                ),
+                self.assertRaisesRegex(RuntimeError, "pending child"),
+            ):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            chain_root = root / cloud_sb7.POST_SMOKE_RUNTIME_SUCCESSOR_CHAIN_PATH
+            child = next(path for path in chain_root.iterdir() if path.is_dir())
+            shutil.copytree(child, chain_root / ("e" * 64))
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+
+            self.assertIn(
+                "contains a fork",
+                cloud_sb7.post_smoke_runtime_successor_failure(
+                    root, campaign, lineage
+                )
+                or "",
+            )
+
+    def test_post_smoke_runtime_successor_rejects_unexpected_campaign_key(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            with self.post_smoke_runtime_successor_patches(source_root):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            coordinator.write_bytes(coordinator.read_bytes() + b"\n# hop two\n")
+            with self.post_smoke_runtime_successor_patches(source_root):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            campaign["unsealed_runtime_authority"] = True
+            cloud_sb7.atomic_json(cloud_sb7.campaign_file(root), campaign)
+            lineage = cloud_sb7.load_json(root / "lineage/lineage.json")
+
+            self.assertIn(
+                "changed campaign identity",
+                cloud_sb7.post_smoke_runtime_successor_failure(
+                    root, campaign, lineage
+                )
+                or "",
+            )
+            self.assertIn(
+                "changed qualified campaign identity",
+                cloud_sb7.post_smoke_coordinator_repair_failure(
+                    root, campaign, lineage
+                )
+                or "",
+            )
+            self.assertIsNotNone(cloud_sb7.lineage_failure(root))
+
+    def test_post_smoke_runtime_successor_split_replay_allows_moved_checkout(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            with self.post_smoke_runtime_successor_patches(source_root):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            coordinator.write_bytes(
+                coordinator.read_bytes() + b"\n# moved-checkout target\n"
+            )
+
+            def crash(stage: str) -> None:
+                if stage == "lineage_committed":
+                    raise RuntimeError("moved-checkout split")
+
+            with (
+                self.post_smoke_runtime_successor_patches(source_root),
+                mock.patch.object(
+                    cloud_sb7,
+                    "post_smoke_runtime_successor_fault",
+                    side_effect=crash,
+                ),
+                self.assertRaisesRegex(RuntimeError, "moved-checkout split"),
+            ):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+
+            def moved_git(*args: str) -> str:
+                if args == ("rev-parse", "HEAD"):
+                    return "b" * 40
+                if args == ("branch", "--show-current"):
+                    return "codex/moved-checkout"
+                raise AssertionError(args)
+
+            with (
+                self.post_smoke_runtime_successor_patches(source_root),
+                mock.patch.object(
+                    cloud_sb7, "git_value", side_effect=moved_git
+                ),
+            ):
+                recovered = cloud_sb7.repair_post_smoke_runtime_successor(
+                    root, coordinator
+                )
+            receipt = cloud_sb7.load_json(
+                root / str(recovered["post_smoke_runtime_successor"]["path"])
+            )
+            self.assertEqual(receipt["runtime_source_commit"], "a" * 40)
+            self.assertEqual(
+                recovered["runtime_coordinator_sha256"],
+                cloud_sb7.sha256_file(coordinator),
+            )
+
+    def test_post_smoke_runtime_successor_split_replay_requires_quiescence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_post_smoke_runtime_successor_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            source_root = Path(str(fixture["source_root"]))
+            coordinator = Path(str(fixture["coordinator"]))
+            with self.post_smoke_runtime_successor_patches(source_root):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            coordinator.write_bytes(
+                coordinator.read_bytes() + b"\n# non-quiescent target\n"
+            )
+
+            def crash(stage: str) -> None:
+                if stage == "lineage_committed":
+                    raise RuntimeError("non-quiescent split")
+
+            with (
+                self.post_smoke_runtime_successor_patches(source_root),
+                mock.patch.object(
+                    cloud_sb7,
+                    "post_smoke_runtime_successor_fault",
+                    side_effect=crash,
+                ),
+                self.assertRaisesRegex(RuntimeError, "non-quiescent split"),
+            ):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+            with (
+                self.post_smoke_runtime_successor_patches(source_root),
+                mock.patch.object(
+                    cloud_sb7, "port_is_free", return_value=False
+                ),
+                self.assertRaisesRegex(SystemExit, "vendor ports are occupied"),
+            ):
+                cloud_sb7.repair_post_smoke_runtime_successor(root, coordinator)
+
     def test_detached_children_report_repaired_coordinator_path_and_digest(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_post_smoke_coordinator_repair_fixture(Path(raw))
@@ -9840,9 +10319,14 @@ class CloudSb7HarnessTest(unittest.TestCase):
             root = Path(raw)
             repo, row = self.make_publisher_repo(root)
             snapshot = cloud_sb7.publisher_snapshot(repo, [row])
-            frozen = cloud_sb7.freeze_publisher_runtime(root / "frozen", snapshot)
+            instrument_root = (root / "instrument/source").resolve()
+            instrument_root.mkdir(parents=True)
+            frozen = cloud_sb7.freeze_publisher_runtime(
+                instrument_root.parent / "publisher", snapshot
+            )
             campaign = self.publisher_campaign(root, row, snapshot)
             campaign["publisher"] = {**snapshot, "frozen": frozen}
+            campaign["instrument_root"] = str(instrument_root)
             runtime = repo / "node_modules/@sanity/client/index.js"
             runtime.write_text("export const client = 'mutated';\n")
 
@@ -9873,6 +10357,21 @@ class CloudSb7HarnessTest(unittest.TestCase):
 
             self.assertIn(
                 "tracked worktree changed",
+                cloud_sb7.publisher_mismatch(campaign) or "",
+            )
+
+    def test_runtime_publisher_rejects_symlinked_source_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            campaign = self.publisher_campaign(root, row, snapshot)
+            relocated = root / "relocated-site"
+            repo.rename(relocated)
+            repo.symlink_to(relocated, target_is_directory=True)
+
+            self.assertIn(
+                "publisher repo is missing",
                 cloud_sb7.publisher_mismatch(campaign) or "",
             )
 
@@ -9926,8 +10425,15 @@ class CloudSb7HarnessTest(unittest.TestCase):
             root = Path(raw)
             repo, row = self.make_publisher_repo(root)
             snapshot = cloud_sb7.publisher_snapshot(repo, [row])
-            frozen = cloud_sb7.freeze_publisher_runtime(root / "frozen", snapshot)
-            campaign = {"publisher": {**snapshot, "frozen": frozen}}
+            instrument_root = (root / "instrument/source").resolve()
+            instrument_root.mkdir(parents=True)
+            frozen = cloud_sb7.freeze_publisher_runtime(
+                instrument_root.parent / "publisher", snapshot
+            )
+            campaign = {
+                "instrument_root": str(instrument_root),
+                "publisher": {**snapshot, "frozen": frozen},
+            }
 
             (repo / "node_modules/@sanity/client/index.js").write_text(
                 "export const client = 'mutated live source';\n"
@@ -9936,6 +10442,124 @@ class CloudSb7HarnessTest(unittest.TestCase):
             (Path(frozen["root"]) / "node_modules/@sanity/client/index.js").unlink()
             self.assertIn(
                 "changed after freeze",
+                cloud_sb7.frozen_publisher_mismatch(campaign) or "",
+            )
+
+    def test_frozen_publisher_runtime_rejects_symlinked_root(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            instrument_root = (root / "instrument/source").resolve()
+            instrument_root.mkdir(parents=True)
+            frozen_root = instrument_root.parent / "publisher"
+            frozen = cloud_sb7.freeze_publisher_runtime(frozen_root, snapshot)
+            campaign = {
+                "instrument_root": str(instrument_root),
+                "publisher": {**snapshot, "frozen": frozen},
+            }
+            relocated = root.resolve() / "byte-identical-live-tree"
+            frozen_root.rename(relocated)
+            frozen_root.symlink_to(relocated, target_is_directory=True)
+
+            self.assertIn(
+                "root is missing, linked, or non-canonical",
+                cloud_sb7.frozen_publisher_mismatch(campaign) or "",
+            )
+
+    def test_frozen_publisher_runtime_rejects_relative_path_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            instrument_root = (root / "instrument/source").resolve()
+            instrument_root.mkdir(parents=True)
+            frozen = cloud_sb7.freeze_publisher_runtime(
+                instrument_root.parent / "publisher", snapshot
+            )
+            outside = root / "outside.js"
+            outside.write_text("outside frozen closure\n")
+            escaped_sha = cloud_sb7.sha256_file(outside)
+            frozen["tracked_hashes"] = {
+                **frozen["tracked_hashes"],
+                "../outside.js": escaped_sha,
+            }
+            frozen["instrument_set_sha256"] = cloud_sb7.sha256_bytes(
+                json.dumps(
+                    {
+                        **frozen["tracked_hashes"],
+                        **frozen["runtime_hashes"],
+                    },
+                    sort_keys=True,
+                ).encode()
+            )
+            publisher = {**snapshot, "frozen": frozen}
+            publisher["tracked_hashes"] = dict(frozen["tracked_hashes"])
+            publisher["instrument_set_sha256"] = cloud_sb7.sha256_bytes(
+                json.dumps(
+                    {
+                        **publisher["tracked_hashes"],
+                        **publisher["runtime_hashes"],
+                        ".env.local": publisher["env_file_sha256"],
+                    },
+                    sort_keys=True,
+                ).encode()
+            )
+            campaign = {
+                "instrument_root": str(instrument_root),
+                "publisher": publisher,
+            }
+
+            self.assertIn(
+                "not canonical relative",
+                cloud_sb7.frozen_publisher_mismatch(campaign) or "",
+            )
+
+    def test_frozen_publisher_runtime_rejects_extra_environment_file(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            instrument_root = (root / "instrument/source").resolve()
+            instrument_root.mkdir(parents=True)
+            frozen = cloud_sb7.freeze_publisher_runtime(
+                instrument_root.parent / "publisher", snapshot
+            )
+            campaign = {
+                "instrument_root": str(instrument_root),
+                "publisher": {**snapshot, "frozen": frozen},
+            }
+            (Path(str(frozen["root"])) / ".env.local").write_text(
+                "SANITY_WRITE_TOKEN=unsealed\n"
+            )
+
+            self.assertIn(
+                "extra file",
+                cloud_sb7.frozen_publisher_mismatch(campaign) or "",
+            )
+
+    def test_frozen_publisher_runtime_rejects_extra_node_package(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            instrument_root = (root / "instrument/source").resolve()
+            instrument_root.mkdir(parents=True)
+            frozen = cloud_sb7.freeze_publisher_runtime(
+                instrument_root.parent / "publisher", snapshot
+            )
+            campaign = {
+                "instrument_root": str(instrument_root),
+                "publisher": {**snapshot, "frozen": frozen},
+            }
+            extra = Path(str(frozen["root"])) / "node_modules/unsealed"
+            extra.mkdir()
+            (extra / "package.json").write_text(
+                '{"name":"unsealed","version":"1"}\n'
+            )
+
+            self.assertIn(
+                "unexpected directory",
                 cloud_sb7.frozen_publisher_mismatch(campaign) or "",
             )
 
