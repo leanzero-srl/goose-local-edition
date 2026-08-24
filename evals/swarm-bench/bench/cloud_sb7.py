@@ -4813,6 +4813,7 @@ def sealed_unstarted_transport_continuation(
     lifecycle: Mapping[str, Any],
     *,
     allowed_statuses: Iterable[str] = ("PLANNED",),
+    allow_current_supervisor: bool = False,
 ) -> bool:
     try:
         accepted_statuses = set(allowed_statuses)
@@ -4824,6 +4825,22 @@ def sealed_unstarted_transport_continuation(
         latest = chain[-1]
         receipt = latest["receipt"]
         lifecycle_path = Path(str(state.get("provider_lifecycle", "")))
+        runtime_ownership = build_runtime_ownership(state)
+        supervisor_ownership_is_exact = bool(
+            allow_current_supervisor
+            and not any(runtime_ownership[3:])
+            and launched_child_ownership_failure(
+                state,
+                expected_statuses=RETRYABLE_BUILD_STATES,
+                pid_key="supervisor_pid",
+                pgid_key="supervisor_pgid",
+                sid_key="supervisor_sid",
+                identity_key="supervisor_identity",
+                launched_key="launched_at",
+                role=f"build supervisor {entrant_id}",
+            )
+            is None
+        )
         return bool(
             accepted_statuses
             and state.get("status") in accepted_statuses
@@ -4843,7 +4860,7 @@ def sealed_unstarted_transport_continuation(
             and not lifecycle_path.is_symlink()
             and sha256_file(lifecycle_path)
             == receipt.get("source_lifecycle_sha256")
-            and not any(build_runtime_ownership(state))
+            and (not any(runtime_ownership) or supervisor_ownership_is_exact)
             and all(
                 state.get(field) is None or state.get(field) == ""
                 for field in (
@@ -4873,6 +4890,7 @@ def transport_continuation_pristine_tree_sha256(
     state: Mapping[str, Any],
     *,
     allowed_statuses: Iterable[str] = ("PLANNED",),
+    allow_current_supervisor: bool = False,
 ) -> str | None:
     try:
         row = manifest_row(root, entrant_id)
@@ -4888,6 +4906,7 @@ def transport_continuation_pristine_tree_sha256(
             state,
             lifecycle,
             allowed_statuses=allowed_statuses,
+            allow_current_supervisor=allow_current_supervisor,
         ):
             return None
         tree = Path(str(state["tree"]))
@@ -13628,7 +13647,11 @@ def require_smoke_proofs(
             else root / "entrants" / entrant_id / "tree"
         )
         continuation_hash = transport_continuation_pristine_tree_sha256(
-            root, campaign, entrant_id, entrant_state
+            root,
+            campaign,
+            entrant_id,
+            entrant_state,
+            allow_current_supervisor=True,
         )
         current_hash = (
             continuation_hash
