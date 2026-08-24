@@ -173,7 +173,7 @@ class MorningAggregateTests(unittest.TestCase):
                 "physical_host_id": "WorksMacStudio.lan",
                 "correction": 1,
                 "compiler_error_sha256": "a" * 64,
-                "outcome": "accepted",
+                "outcome": "distinct_error_recorrected",
                 "correction_duration_secs": 12.5,
                 "total_packet_duration_secs": 32.5,
                 "material_gaps": 0,
@@ -212,7 +212,10 @@ class MorningAggregateTests(unittest.TestCase):
         self.assertEqual(
             result["terminal_acceptances"]["final_output_cardinality_violations"], 0
         )
-        self.assertEqual(result["corrections"]["outcome_counts"], {"accepted": 1})
+        self.assertEqual(
+            result["corrections"]["outcome_counts"],
+            {"distinct_error_recorrected": 1},
+        )
         self.assertEqual(
             result["corrections"]["correction_duration_secs_total"], 12.5
         )
