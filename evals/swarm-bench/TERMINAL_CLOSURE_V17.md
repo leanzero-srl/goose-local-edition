@@ -30,9 +30,16 @@ python3 evals/swarm-bench/terminal_closure.py watch \
 ```
 
 `resume` adopts a still-running detached scorer or publisher from its PID/start-time/process-name
-hash receipt, while the runtime binaries have separate frozen file hashes. It retries only abandoned disposable attempts. `stop` writes a closure-owned stop
-marker; it never signals the live v17 harness, Goose, or monitor. `results` prints only the final
-non-secret receipt.
+hash receipt, while the runtime binaries have separate frozen file hashes. Every scorer subprocess
+PID, process-name hash, and kernel birth-time hash are captured once after `Popen` and fsynced to a
+private journal without argv. The birth identity remains stable across executable-name transitions
+and cannot authorize a reused PID. The worker continuously seals the authenticated full descendant
+tree, including children that create new sessions. Capture or journal failures synchronously reap
+the just-created process and its separate process group before the scorer can fail. If a positively
+live descendant's birth identity cannot be queried, cleanup is unproven and the attempt fails. A retry is
+forbidden until every authenticated descendant is gone and port `18970` is provably free. It
+retries only abandoned disposable attempts. `stop` writes a closure-owned stop marker; it never
+signals the live v17 harness, Goose, or monitor. `results` prints only the final non-secret receipt.
 
 At terminal, the controller requires one authenticated natural Goose exit, the monitor's durable
 `run_finished` completion, identical harness auto-verdict/aggregate artifacts, and their exact
@@ -44,10 +51,20 @@ harness artifacts.
 Before authoritative scoring, the controller proves the live processes are gone, uses `lsof` as
 a closed-tree positive control, hashes the entire raw run twice, and never writes it again. It
 scores a private disposable clone on serially locked port `18970`, with the exact seed and frozen
-SB7 hashes. Publication uses the dedicated create-only website publisher. That publisher can only
+SB7 hashes. Both the raw auto-verdict and authoritative result must carry empty
+`probe_unavailable` and `harness_missing` registries; missing registries, check-level unavailable
+flags, or equivalent product-probe failure evidence reject the chain even when the frozen scorer
+exits zero. `sched_unreached` remains valid scored app evidence. Publication uses the dedicated
+create-only website publisher. That publisher can only
 create/adopt the exact new ID `brun-fleet-qwen38-brainwaves-sb70`; it positively reads and hashes
-both protected IDs before and after, and has no replace path. Completion requires fresh no-cache
-board/run fetches, exact Sanity payload and telemetry, ItemList/Dataset JSON-LD, direct PNG checks,
+both protected IDs before and after, and has no replace path. Persisted screenshot state is bound
+to the current sealed file and decoded-pixel SHA-256 before an uploaded asset may be reused.
+Completion requires HTTP-2xx HTML board/run responses with positive cache-bypass proof (`Age: 0`
+plus an explicit miss/bypass, or response `no-store`) and rejects cache-serving status at any
+observed layer, including an exact inner Next.js `HIT`/`STALE` behind an outer CDN `MISS`; malformed
+or compound inner cache statuses are rejected. It also requires exact Sanity payload and telemetry,
+ItemList/Dataset JSON-LD, fully decoded PNG dimensions and pixel buffers (including legitimate
+uniform impaired-output evidence),
 rendered screenshot references, and no `-rc` label on either public surface.
 
 The score worker keeps its private empty `HOME` and `TMPDIR`; it does not inherit the operator's
@@ -55,7 +72,9 @@ home or Playwright cache. Instead it creates a private `PLAYWRIGHT_BROWSERS_PATH
 single symlink to the pinned headless-shell revision. A private hashed Node wrapper injects that
 view and a `NODE_PATH` containing only the pinned Playwright module root into browser probes, without
 leaking either variable into the entrant processes. The smoke launch resolves Playwright from the
-frozen product probe's own location before invoking the scorer, then the worker re-hashes the
+frozen product probe's own location and requires its real `playwright/package.json` to equal the
+configured module root before invoking the scorer. It repeats that exact resolution check after
+scoring, then re-hashes the
 module/browser/executable and wrapper after scoring and rejects the attempt if the runtime is
 absent, resolves elsewhere, or changes. Those hashes are carried into the worker, provenance, and
 final receipts.

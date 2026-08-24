@@ -5,6 +5,8 @@ import json
 import os
 import pathlib
 import shutil
+import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -78,6 +80,9 @@ def fixture_score(seed: str = "0123456789abcdef") -> dict:
             "rows": [],
         },
         "solid": True,
+        "probe_unavailable": [],
+        "harness_missing": [],
+        "sched_unreached": [],
         "telemetry": {
             "calls": 9,
             "prompt_tokens": 3603,
@@ -343,6 +348,146 @@ class TerminalClosureTests(unittest.TestCase):
             process.terminate()
             process.wait(timeout=5)
 
+    def test_scorer_spawn_tracking_does_not_add_an_observation_window(self) -> None:
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        fake_ps = fake_bin / "ps"
+        fake_ps.write_text("#!/bin/sh\nprintf 'fixture-process-identity\\n'\n", encoding="utf-8")
+        fake_ps.chmod(0o500)
+        subprocess.run([fake_ps], check=True, stdout=subprocess.DEVNULL)
+        elapsed_path = self.root / "spawn-elapsed"
+        scorer = self.root / "timed-scorer.py"
+        scorer.write_text(
+            "import subprocess,sys,time\n"
+            "started=time.monotonic()\n"
+            "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(5)'])\n"
+            f"open({str(elapsed_path)!r},'w').write(str(time.monotonic()-started))\n"
+            "child.terminate()\n"
+            "child.wait()\n",
+            encoding="utf-8",
+        )
+        journal = self.root / "spawn-journal.txt"
+        journal.touch(mode=0o600)
+        gate_source = closure.SCORER_GATE_SOURCE.replace("os.fsync(output)", "None")
+        self.assertNotEqual(gate_source, closure.SCORER_GATE_SOURCE)
+        read_gate, write_gate = os.pipe()
+        try:
+            gate = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    gate_source,
+                    str(read_gate),
+                    str(journal),
+                    str(scorer),
+                ],
+                pass_fds=(read_gate,),
+                env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        finally:
+            os.close(read_gate)
+        try:
+            os.write(write_gate, b"1")
+        finally:
+            os.close(write_gate)
+        stdout, stderr = gate.communicate(timeout=10)
+        self.assertEqual(gate.returncode, 0, f"stdout={stdout!r} stderr={stderr!r}")
+        self.assertLess(
+            float(elapsed_path.read_text(encoding="utf-8")),
+            0.15,
+            "spawn tracking delayed the scorer after Popen returned",
+        )
+        receipts = closure.read_spawn_journal_receipts(journal)
+        self.assertEqual(len(receipts), 1)
+
+    def test_spawn_tracking_failure_reaps_a_detached_child(self) -> None:
+        fake_bin = self.root / "failing-ps-bin"
+        fake_bin.mkdir()
+        fake_ps = fake_bin / "ps"
+        fake_ps.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        fake_ps.chmod(0o500)
+        subprocess.run([fake_ps], check=False, stdout=subprocess.DEVNULL)
+        for failure in ("ps", "journal"):
+            with self.subTest(failure=failure):
+                with socket.socket(socket.AF_INET6) as reservation:
+                    reservation.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                    reservation.bind(("::1", 0))
+                    port = int(reservation.getsockname()[1])
+                child_pid_path = self.root / f"{failure}-child.pid"
+                child_source = (
+                    "import os,socket,time\n"
+                    "listener=socket.socket(socket.AF_INET6); "
+                    "listener.setsockopt(socket.IPPROTO_IPV6,socket.IPV6_V6ONLY,1); "
+                    f"listener.bind(('::1',{port})); listener.listen(1)\n"
+                    f"open({str(child_pid_path)!r},'w').write(str(os.getpid()))\n"
+                    "time.sleep(30)\n"
+                )
+                scorer = self.root / f"{failure}-tracking-scorer.py"
+                scorer.write_text(
+                    "import os,subprocess,sys\n"
+                    f"pid_path={str(child_pid_path)!r}\n"
+                    "def record_pid():\n"
+                    "    descriptor=os.open(pid_path,os.O_CREAT|os.O_WRONLY,0o600)\n"
+                    "    os.write(descriptor,str(os.getpid()).encode())\n"
+                    "    os.close(descriptor)\n"
+                    f"subprocess.Popen([sys.executable,'-c',{child_source!r}], "
+                    "start_new_session=True,preexec_fn=record_pid)\n",
+                    encoding="utf-8",
+                )
+                journal = self.root / f"{failure}-spawn-journal.txt"
+                if failure == "ps":
+                    journal.touch(mode=0o600)
+                else:
+                    journal = self.root / "missing-journal-parent" / "journal.txt"
+                read_gate, write_gate = os.pipe()
+                environment = dict(os.environ)
+                if failure == "ps":
+                    environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+                try:
+                    gate = subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-c",
+                            closure.SCORER_GATE_SOURCE,
+                            str(read_gate),
+                            str(journal),
+                            str(scorer),
+                        ],
+                        pass_fds=(read_gate,),
+                        env=environment,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                finally:
+                    os.close(read_gate)
+                try:
+                    os.write(write_gate, b"1")
+                finally:
+                    os.close(write_gate)
+                stdout, stderr = gate.communicate(timeout=10)
+                self.assertNotEqual(
+                    gate.returncode, 0, f"stdout={stdout!r} stderr={stderr!r}"
+                )
+                self.assertTrue(child_pid_path.is_file())
+                child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+
+                def cleanup_child() -> None:
+                    try:
+                        os.killpg(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+                self.addCleanup(cleanup_child)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child_pid, 0)
+                with socket.socket(socket.AF_INET6) as listener:
+                    listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                    listener.bind(("::1", port))
+
     def test_authenticated_identity_allows_only_the_proven_reparenting_transition(self) -> None:
         original = (
             b"55194 55192 55194 Mon Aug 24 23:43:52 2026     "
@@ -410,6 +555,35 @@ class TerminalClosureTests(unittest.TestCase):
             (pinned_view / runtime["browser_directory"]).is_symlink(),
             "the worker must expose only the pinned browser revision",
         )
+        shadow_root = self.root / "shadow-probe"
+        shadow_probe = shadow_root / "product_probe_v3.mjs"
+        shadow_package = shadow_root / "node_modules" / "playwright"
+        shadow_package.mkdir(parents=True)
+        shadow_probe.write_text("export {};\n", encoding="utf-8")
+        (shadow_package / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "playwright",
+                    "version": runtime["version"],
+                    "main": "index.js",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (shadow_package / "index.js").write_text(
+            "module.exports = { chromium: { launch: async () => ({}) } };\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(closure.ClosureError, "unpinned Playwright package"):
+            closure.smoke_playwright_runtime(
+                runtime_info,
+                node,
+                runtime_home,
+                runtime_tmp,
+                pinned_view,
+                shadow_probe,
+                timeout_seconds=10,
+            )
 
     def test_config_refuses_state_or_lock_inside_live_tree(self) -> None:
         live = self.root / "live"
@@ -421,7 +595,9 @@ class TerminalClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(closure.ClosureError, "scorer lock"):
             closure.validate_config(config)
 
-    def test_fake_score_worker_records_seed_port_seals_clone_and_redacts_log(self) -> None:
+    def score_worker_fixture(
+        self, scorer_extra_source: str = ""
+    ) -> tuple[dict, pathlib.Path]:
         instrument = self.root / "instrument"
         instrument.mkdir()
         template = self.root / "score-template.json"
@@ -439,6 +615,7 @@ class TerminalClosureTests(unittest.TestCase):
             "'chromium_headless_shell-1200','fixture-platform','chrome-headless-shell')))"
             "process.exit(3)\"], check=True)\n"
             "print('api key sk_fixture_vendor_secret')\n"
+            f"{scorer_extra_source}"
             f"d=json.load(open({str(template)!r})); d['fixture_seed']=a.seed; "
             "json.dump(d,open(a.json_out,'w'))\n",
             encoding="utf-8",
@@ -491,6 +668,10 @@ class TerminalClosureTests(unittest.TestCase):
             },
             "vendor_source": str(vendor),
         }
+        return job, result
+
+    def test_fake_score_worker_records_seed_port_seals_clone_and_redacts_log(self) -> None:
+        job, result = self.score_worker_fixture()
         previous_umask = os.umask(0o077)
         try:
             with mock.patch.object(closure, "port_is_available", return_value=True):
@@ -516,11 +697,145 @@ class TerminalClosureTests(unittest.TestCase):
             "sk_fixture_vendor_secret",
             (self.root / "attempt" / "score.log").read_text(encoding="utf-8"),
         )
-        for name in ("worker-result.json", "score.log", "score-tree-seal.json", "scorer-state.json"):
+        for name in (
+            "worker-result.json",
+            "score.log",
+            "score-tree-seal.json",
+            "scorer-state.json",
+            "descendants.json",
+            "spawn-journal.txt",
+        ):
             self.assertEqual(stat.S_IMODE((self.root / "attempt" / name).stat().st_mode), 0o600)
         scorer_state = (self.root / "attempt" / "scorer-state.json").read_text(encoding="utf-8")
         self.assertNotIn("--seed", scorer_state)
         self.assertNotIn("fedcba9876543210", scorer_state)
+
+    def test_score_worker_terminates_detached_session_descendant_on_port_18970(
+        self,
+    ) -> None:
+        ready = self.root / "detached-ready"
+        child_source = (
+            "import socket,time\n"
+            "listener=socket.socket(socket.AF_INET6); "
+            "listener.setsockopt(socket.IPPROTO_IPV6,socket.IPV6_V6ONLY,1); "
+            "listener.bind(('::1',18970)); listener.listen(1)\n"
+            f"open({str(ready)!r},'w').write('ready')\n"
+            "time.sleep(120)\n"
+        )
+        scorer_extra = (
+            f"child=subprocess.Popen([{sys.executable!r},'-c',{child_source!r}], "
+            "start_new_session=True)\n"
+            "import time\n"
+            f"deadline=time.time()+5\nwhile not os.path.exists({str(ready)!r}):\n"
+            "    assert time.time() < deadline\n    time.sleep(0.01)\n"
+        )
+        job, result = self.score_worker_fixture(scorer_extra)
+        with mock.patch.object(closure, "port_is_available", return_value=True):
+            exit_code = closure.score_worker_impl(job)
+        self.assertEqual(exit_code, 70)
+        worker_result = json.loads(result.read_text(encoding="utf-8"))
+        self.assertFalse(worker_result["descendants_clean"])
+        self.assertTrue(worker_result["descendant_cleanup_proven"])
+        self.assertGreaterEqual(worker_result["descendants_observed"], 2)
+        self.assertGreaterEqual(worker_result["descendants_survived_scorer"], 1)
+        self.assertEqual(worker_result["descendants_live_after_cleanup"], 0)
+        inventory_text = (self.root / "attempt" / "descendants.json").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("--port", inventory_text)
+        self.assertNotIn("fedcba9876543210", inventory_text)
+        with socket.socket(socket.AF_INET6) as listener:
+            listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            listener.bind(("::1", 18970))
+
+    def test_stale_spawn_journal_pid_never_authorizes_an_unrelated_process(
+        self,
+    ) -> None:
+        unrelated = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        self.addCleanup(
+            lambda: unrelated.poll() is None
+            and (unrelated.terminate(), unrelated.wait(timeout=5))
+        )
+        journal = self.root / "spawn-journal.txt"
+        closure.atomic_write(
+            journal,
+            (
+                json.dumps(
+                    {
+                        "pid": unrelated.pid,
+                        "identity_sha256s": ["0" * 64],
+                        "birth_sha256s": ["0" * 64],
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode(),
+        )
+        with mock.patch.object(closure, "port_is_available", return_value=True):
+            cleanup = closure.cleanup_persisted_attempt_processes(
+                self.root / "missing-inventory.json", journal, 18970
+            )
+        self.assertTrue(cleanup["cleanup_proven"])
+        self.assertEqual(cleanup["signals_sent"], 0)
+        self.assertIsNone(unrelated.poll(), "stale PID authority signalled an unrelated process")
+        bare_pid_journal = self.root / "bare-pid-journal.txt"
+        closure.atomic_write(bare_pid_journal, f"{unrelated.pid}\n".encode())
+        with self.assertRaisesRegex(closure.ClosureError, "malformed"):
+            closure.read_spawn_journal_receipts(bare_pid_journal)
+
+    def test_live_descendant_birth_probe_failure_makes_cleanup_unproven(self) -> None:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        def cleanup_process() -> None:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+
+        self.addCleanup(cleanup_process)
+        identity = closure.safe_process_receipt(process.pid)
+        birth = closure.process_birth_sha256(process.pid)
+        self.assertIsNotNone(identity)
+        self.assertIsNotNone(birth)
+        inventory = self.root / "descendants.json"
+        closure.atomic_json(
+            inventory,
+            {
+                "schema_version": 1,
+                "root_pid": process.pid,
+                "processes": [
+                    {
+                        "pid": process.pid,
+                        "identity_sha256s": [identity["identity_sha256"]],
+                        "birth_sha256s": [birth],
+                    }
+                ],
+            },
+        )
+        journal = self.root / "spawn-journal.txt"
+        journal.touch(mode=0o600)
+        with (
+            mock.patch.object(closure, "process_birth_sha256", return_value=None),
+            mock.patch.object(closure, "port_is_available", return_value=True),
+        ):
+            cleanup = closure.cleanup_persisted_attempt_processes(
+                inventory, journal, 18970, grace_seconds=0.01
+            )
+        self.assertTrue(cleanup["identity_probe_unavailable"])
+        self.assertFalse(cleanup["cleanup_proven"])
+        self.assertEqual(cleanup["signals_sent"], 0)
+        self.assertIsNone(process.poll())
 
     def test_resume_rejects_abandoned_worker_and_stops_only_authenticated_scorer(self) -> None:
         live = self.root / "live"
@@ -560,6 +875,37 @@ class TerminalClosureTests(unittest.TestCase):
         self.assertEqual(result["exit_code"], 125)
         self.assertEqual(stat.S_IMODE((attempt / "worker-result.json").stat().st_mode), 0o600)
 
+    def test_retry_refuses_any_unproven_descendant_cleanup(self) -> None:
+        live = self.root / "live"
+        run_dir = live / "swarm-3node-qwen38-brainwaves-r0"
+        run_dir.mkdir(parents=True)
+        state = self.root / "state"
+        config_path = self.root / "retry-config.json"
+        config_path.write_text(
+            json.dumps(self.config(live, state)), encoding="utf-8"
+        )
+        supervisor = closure.TerminalClosure(config_path)
+        self.addCleanup(supervisor.events.handle.close)
+        attempt = state / "scoring" / "attempt-1"
+        attempt.mkdir(parents=True)
+        with self.assertRaisesRegex(closure.ClosureError, "refusing retry"):
+            supervisor.prove_attempt_cleanup_before_retry(
+                attempt,
+                {"exit_code": 70, "descendant_cleanup_proven": False},
+            )
+        with (
+            mock.patch.object(
+                closure,
+                "cleanup_persisted_attempt_processes",
+                return_value={"cleanup_proven": False},
+            ),
+            self.assertRaisesRegex(closure.ClosureError, "contaminated port"),
+        ):
+            supervisor.prove_attempt_cleanup_before_retry(
+                attempt,
+                {"exit_code": 70, "descendant_cleanup_proven": True},
+            )
+
     def test_authoritative_registry_must_match_raw_auto_verdict(self) -> None:
         _live, _state, fixture = self.write_terminal_fixture()
         config_path = self.root / "registry-config.json"
@@ -571,6 +917,57 @@ class TerminalClosureTests(unittest.TestCase):
         score["checks"][0]["check"] = "foreign_check"
         with self.assertRaisesRegex(closure.ClosureError, "check registry"):
             supervisor.validate_score(score, {"fixture_seed": "0123456789abcdef"})
+
+    def test_score_payload_rejects_all_product_probe_degradation_forms(self) -> None:
+        expected = {
+            "raw_scorer_version": "sb-7.0-rc",
+            "check_count": 91,
+            "telemetry_nodes": ["gabee", "mihai", "workhorse"],
+        }
+        for field, value in (
+            ("probe_unavailable", ["t_labels_culling"]),
+            ("harness_missing", ["fixtures_v3"]),
+        ):
+            score = fixture_score()
+            score[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                closure.ClosureError, "degraded product-probe"
+            ):
+                closure.validate_sb7_score_payload(
+                    score, expected, "0123456789abcdef"
+                )
+        missing = fixture_score()
+        missing.pop("probe_unavailable")
+        with self.assertRaisesRegex(closure.ClosureError, "missing or malformed"):
+            closure.validate_sb7_score_payload(
+                missing, expected, "0123456789abcdef"
+            )
+        valid_low_score = fixture_score()
+        valid_low_score["sched_unreached"] = [
+            {"sched-unreached": "partition_after_event"}
+        ]
+        valid_low_score["checks"][0]["detail"] = (
+            "sync2 produced too few list responses (sched-unreached, R1)"
+        )
+        closure.validate_sb7_score_payload(
+            valid_low_score, expected, "0123456789abcdef"
+        )
+        for mutation in (
+            {"unavailable": True},
+            {
+                "detail": "PROBE UNAVAILABLE: browser exited",
+                "consequence": "harness failure, not app evidence",
+            },
+            {"detail": "_probe_error product_probe_v3 failed"},
+        ):
+            score = fixture_score()
+            score["checks"][0].update(mutation)
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(
+                closure.ClosureError, "probe-unavailable|degraded product-probe"
+            ):
+                closure.validate_sb7_score_payload(
+                    score, expected, "0123456789abcdef"
+                )
 
     def test_snapshot_is_complete_private_and_hash_guarded(self) -> None:
         live = self.root / "live"

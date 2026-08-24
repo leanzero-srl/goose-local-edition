@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "controller_sha256": "3b89c8ad01613d4b0b0cc114778d978f48be24e09f22be95d1a5b789edfa71b0",
+  "controller_sha256": "ff5ff47302b6442ccfce9930a8f4ddbdf34ed2028ef837e8467e06b503ac4bb6",
   "live_root": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17",
   "run_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17/swarm-3node-qwen38-brainwaves-r0",
   "state_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17-terminal-closure",
@@ -52,7 +52,7 @@
   },
   "publisher": {
     "path": "/Users/mihaiperdum/Projects/LeanZero-website/scripts/seed-fleet-brainwaves-sb70.mjs",
-    "sha256": "ea04d936c22f6908da462f2ca31d6ec83fd74a99597a4631835975b2eae4d0d4",
+    "sha256": "d1aa8cdce2b01212ec880dcb1b96ebc42441498fff6a0082a64ae62b29b72d7d",
     "node": "/Users/mihaiperdum/.nvm/versions/node/v22.22.0/bin/node",
     "node_sha256": "913b144fdb40638b1acef7974ab3c33fbd527cc0974cb5da467ab1e6ac51b4d4",
     "site_root": "/Users/mihaiperdum/Projects/LeanZero-website",
