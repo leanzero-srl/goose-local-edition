@@ -108,6 +108,7 @@ ORCHESTRATOR_RECOVERY_PATH = "recovery/orchestrator-recovery.json"
 TRANSPORT_UNKNOWN_SCHEMA = 1
 TRANSPORT_UNKNOWN_PATH = "lineage/transport-unknown"
 TRANSPORT_CONTINUATION_SCHEMA = 1
+SWARM_TELEMETRY_RELATIVE_PATH = ".swarm/telemetry.jsonl"
 PRE_SMOKE_INSTRUMENT_REPAIR_SCHEMA = 1
 PRE_SMOKE_INSTRUMENT_REPAIR_PATH = "lineage/pre-smoke-instrument-repair"
 BUDGET_BLOCKED_CARRIED_SMOKE_SCHEMA = 1
@@ -4810,8 +4811,11 @@ def sealed_unstarted_transport_continuation(
     entrant_id: str,
     state: Mapping[str, Any],
     lifecycle: Mapping[str, Any],
+    *,
+    allowed_statuses: Iterable[str] = ("PLANNED",),
 ) -> bool:
     try:
+        accepted_statuses = set(allowed_statuses)
         chain, problem = transport_unknown_continuation_chain(
             root, campaign, entrant_id
         )
@@ -4821,12 +4825,17 @@ def sealed_unstarted_transport_continuation(
         receipt = latest["receipt"]
         lifecycle_path = Path(str(state.get("provider_lifecycle", "")))
         return bool(
-            state.get("status") == "PLANNED"
+            accepted_statuses
+            and state.get("status") in accepted_statuses
             and state.get("transport_unknown_continuation") == latest["pointer"]
             and state.get("transport_unknown_carried_request_ids")
             == receipt.get("carried_request_ids_after")
             and state.get("provider_episode_attempts")
             == receipt.get("provider_episode_attempts")
+            and state.get("tree") == receipt.get("tree")
+            and state.get("profile") == receipt.get("profile")
+            and state.get("build_log") == receipt.get("build_log")
+            and state.get("vendor_trace") == receipt.get("vendor_trace")
             and lifecycle.get("ambiguous_request_ids") == receipt.get("request_ids")
             and lifecycle.get("malformed_lines") == 0
             and not lifecycle.get("transition_errors")
@@ -4855,6 +4864,57 @@ def sealed_unstarted_transport_continuation(
         SystemExit,
     ):
         return False
+
+
+def transport_continuation_pristine_tree_sha256(
+    root: Path,
+    campaign: Mapping[str, Any],
+    entrant_id: str,
+    state: Mapping[str, Any],
+    *,
+    allowed_statuses: Iterable[str] = ("PLANNED",),
+) -> str | None:
+    try:
+        row = manifest_row(root, entrant_id)
+        lifecycle = lifecycle_summary(
+            Path(str(state.get("provider_lifecycle", ""))),
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        if not sealed_unstarted_transport_continuation(
+            root,
+            campaign,
+            entrant_id,
+            state,
+            lifecycle,
+            allowed_statuses=allowed_statuses,
+        ):
+            return None
+        tree = Path(str(state["tree"]))
+        telemetry = tree / SWARM_TELEMETRY_RELATIVE_PATH
+        if telemetry.exists() or telemetry.is_symlink():
+            swarm = telemetry.parent
+            if (
+                swarm.is_symlink()
+                or not swarm.is_dir()
+                or telemetry.is_symlink()
+                or not telemetry.is_file()
+                or {path.name for path in swarm.iterdir()} != {telemetry.name}
+            ):
+                return None
+            return sha256_tree_exact_without(
+                tree, {SWARM_TELEMETRY_RELATIVE_PATH}
+            )
+        return sha256_tree_exact(tree)
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ):
+        return None
 
 
 def transport_unknown_budget_descendant_failure(
@@ -13567,7 +13627,14 @@ def require_smoke_proofs(
             if successor_ids
             else root / "entrants" / entrant_id / "tree"
         )
-        current_hash = sha256_tree_exact(current_tree)
+        continuation_hash = transport_continuation_pristine_tree_sha256(
+            root, campaign, entrant_id, entrant_state
+        )
+        current_hash = (
+            continuation_hash
+            if continuation_hash is not None
+            else sha256_tree_exact(current_tree)
+        )
         if current_hash != raw_before[entrant_id]:
             raise SystemExit(f"raw benchmark tree changed before build: {entrant_id}")
     proof_hashes = campaign.get("smoke_proof_sha256")
@@ -22133,6 +22200,119 @@ def apply_transport_unknown_continuation(
     return load_json(campaign_file(root))
 
 
+def recover_transport_continuation_telemetry_gate_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    entrant_id: str,
+    state: Mapping[str, Any],
+) -> bool:
+    if state.get("status") != "PRE_ADMISSION_FAILURE":
+        return False
+    message = f"raw benchmark tree changed before build: {entrant_id}"
+    failure = f"pre-admission qualification gate failed: {message}"
+    gate = state.get("pre_admission_gate_failure")
+    expected_gate_fields = {
+        "schema_version",
+        "kind",
+        "campaign_id",
+        "entrant",
+        "error_type",
+        "message",
+        "supervisor_pid",
+        "supervisor_identity",
+        "recorded_at",
+    }
+    if (
+        campaign.get("status") != "ATTENTION"
+        or state.get("failure") != failure
+        or not isinstance(gate, dict)
+        or set(gate) != expected_gate_fields
+        or gate.get("schema_version") != CAMPAIGN_SCHEMA
+        or gate.get("kind") != "pre_admission_qualification_gate_failure"
+        or gate.get("campaign_id") != campaign.get("campaign_id")
+        or gate.get("entrant") != entrant_id
+        or gate.get("error_type") != "SystemExit"
+        or gate.get("message") != message
+        or isinstance(gate.get("supervisor_pid"), bool)
+        or not isinstance(gate.get("supervisor_pid"), int)
+        or int(gate["supervisor_pid"]) <= 1
+        or not isinstance(gate.get("supervisor_identity"), str)
+        or not gate.get("supervisor_identity")
+        or not isinstance(gate.get("recorded_at"), str)
+        or not gate.get("recorded_at")
+    ):
+        raise SystemExit(
+            "transport continuation pre-admission failure is not the exact "
+            "sealed telemetry gate defect"
+        )
+    require_lineage(root)
+    quiescence_problem = transport_unknown_quiescence_failure(root, campaign)
+    if quiescence_problem:
+        raise SystemExit(quiescence_problem)
+    require_smoke_proofs(root)
+    baseline = campaign.get("smoke_raw_tree_sha256_before")
+    if (
+        not isinstance(baseline, dict)
+        or baseline != campaign.get("smoke_raw_tree_sha256_after")
+        or not isinstance(baseline.get(entrant_id), str)
+    ):
+        raise SystemExit(
+            "transport continuation telemetry recovery has no exact smoke baseline"
+        )
+    tree = Path(str(state.get("tree", "")))
+    telemetry = tree / SWARM_TELEMETRY_RELATIVE_PATH
+    if (
+        tree.is_symlink()
+        or not tree.is_dir()
+        or telemetry.parent.is_symlink()
+        or not telemetry.parent.is_dir()
+        or telemetry.is_symlink()
+        or not telemetry.is_file()
+        or {path.name for path in telemetry.parent.iterdir()} != {telemetry.name}
+    ):
+        raise SystemExit(
+            "transport continuation pre-admission residue is not exact telemetry"
+        )
+    pristine_hash = transport_continuation_pristine_tree_sha256(
+        root,
+        campaign,
+        entrant_id,
+        state,
+        allowed_statuses=("PRE_ADMISSION_FAILURE",),
+    )
+    exact_hash = sha256_tree_exact(tree)
+    if pristine_hash != baseline[entrant_id] or exact_hash == pristine_hash:
+        raise SystemExit(
+            "transport continuation tree contains changes beyond sealed telemetry"
+        )
+    ledger_path = Path(str(campaign["budget_ledger"]))
+    ledger_before = ledger_path.read_bytes()
+    recovered_at = utc_now()
+    update_state(
+        root,
+        entrant_id,
+        status="PLANNED",
+        failure=None,
+        transport_continuation_pre_admission_recovery={
+            "kind": "sealed_transport_continuation_telemetry_gate_recovery",
+            "recovered_at": recovered_at,
+            "failure": dict(gate),
+            "tree_sha256_before": exact_hash,
+            "pristine_tree_sha256": pristine_hash,
+            "telemetry_path": SWARM_TELEMETRY_RELATIVE_PATH,
+            "telemetry_size": telemetry.stat().st_size,
+            "telemetry_sha256": sha256_file(telemetry),
+        },
+    )
+    if ledger_path.read_bytes() != ledger_before:
+        raise SystemExit(
+            "transport continuation telemetry recovery changed the budget ledger"
+        )
+    require_lineage(root)
+    require_smoke_proofs(root, pristine_entrant=entrant_id)
+    return True
+
+
 def continue_transport_unknown_successor(
     root: Path, entrant_id: str
 ) -> Dict[str, Any]:
@@ -22191,6 +22371,10 @@ def continue_transport_unknown_successor(
                     return apply_transport_unknown_continuation(root, entrant_id)
                 if state.get("status") == "PLANNED":
                     return campaign
+                if recover_transport_continuation_telemetry_gate_failure(
+                    root, campaign, entrant_id, state
+                ):
+                    return load_json(campaign_file(root))
 
         require_lineage(root)
         campaign = load_json(campaign_file(root))
