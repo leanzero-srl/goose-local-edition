@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "suite": "sb-7.0-rc",
+  "calibration": "uncalibrated",
+  "spec": "../spec-build-sb7.md",
+  "smoke_max_turns": 3,
+  "spend_policy": {
+    "currency": "USD",
+    "total_cap": 100.0,
+    "provider_caps": {
+      "meta": 100.0
+    },
+    "launch_all_entrants_concurrently": true,
+    "max_full_episodes_per_model": 2,
+    "terminal_safe_retry_limit": 0
+  },
+  "entrants": [
+    {
+      "id": "muse-spark-1.2",
+      "provider": "meta",
+      "model": "muse-spark-1.2",
+      "accepted_reported_models": [
+        "muse-spark-1.2"
+      ],
+      "secret_env": "META_API_KEY",
+      "secret_keychain": {
+        "service": "goose-benchmark-muse-api",
+        "account": "goose-sb7-muse-models"
+      },
+      "provider_lane": "meta-muse-spark-1.2",
+      "endpoint_family": "https://api.meta.ai/v1",
+      "base_url_env": "META_API_BASE_URL",
+      "thinking_effort": "high",
+      "context_limit": 1007997,
+      "max_output_tokens": 128000,
+      "vendor_port": 9131,
+      "pricing": {
+        "input_per_million": 1.25,
+        "cached_input_per_million": 0.15,
+        "output_per_million": 4.25,
+        "source": "https://api.meta.ai/muse-code/models",
+        "verified_at": "2026-08-24"
+      }
+    }
+  ]
+}
