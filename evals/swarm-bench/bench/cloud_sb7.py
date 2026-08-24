@@ -24621,11 +24621,26 @@ def rendered_publication_matches(
     board_parser = RenderedEvidenceParser()
     board_parser.feed(board_html)
     board_name = f"{entry['label']} — {score_text}"
+    board_json_ld = list(json_ld_objects(board_parser))
     board_item = any(
         item.get("@type") == "ListItem"
         and item.get("url") == run_url
         and item.get("name") == board_name
-        for item in json_ld_objects(board_parser)
+        for item in board_json_ld
+    )
+    board_truncation = next(
+        (
+            {
+                "declared": item["numberOfItems"],
+                "included": len(item["itemListElement"]),
+            }
+            for item in board_json_ld
+            if item.get("@type") == "ItemList"
+            and isinstance(item.get("numberOfItems"), int)
+            and isinstance(item.get("itemListElement"), list)
+            and item["numberOfItems"] > len(item["itemListElement"])
+        ),
+        None,
     )
 
     run_parser = RenderedEvidenceParser()
@@ -24668,7 +24683,17 @@ def rendered_publication_matches(
 
     reasons = []
     if not board_item:
-        reasons.append("board JSON-LD lacks the exact stable run URL, label and score")
+        if board_truncation is not None:
+            reasons.append(
+                "board JSON-LD itemListElement is truncated "
+                f"({board_truncation['included']} of "
+                f"{board_truncation['declared']}) and excludes the exact stable "
+                "run URL, label and score"
+            )
+        else:
+            reasons.append(
+                "board JSON-LD lacks the exact stable run URL, label and score"
+            )
     if missing_visible:
         reasons.append(
             f"run page lacks exact visible fields: {', '.join(missing_visible)}"
@@ -24686,6 +24711,7 @@ def rendered_publication_matches(
         )
     return not reasons, {
         "board_item_exact": board_item,
+        "board_item_list_truncated": board_truncation is not None,
         "run_visible_exact": not missing_visible and not forbidden_identity,
         "run_dataset_exact": dataset and dataset_identity,
         "run_public_identity_exact": (
@@ -24728,6 +24754,46 @@ def fetch_rendered_page(
     return status, raw.decode(content_type, errors="replace"), headers
 
 
+RENDERED_VERIFICATION_CACHE_PARAM = "sb7_verify"
+
+
+def rendered_verification_cache_token(
+    campaign: Mapping[str, Any],
+    entry: Mapping[str, str],
+    verdict: Mapping[str, Any],
+    attempt: int,
+) -> str:
+    return canonical_json_sha256(
+        {
+            "schema_version": 1,
+            "attempt": attempt,
+            "expected": rendered_publication_expected(campaign, entry, verdict),
+            "verdict_sha256": canonical_json_sha256(verdict),
+        }
+    )
+
+
+def rendered_verification_fetch_url(url: str, cache_token: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    query = [
+        (key, value)
+        for key, value in urllib.parse.parse_qsl(
+            parsed.query, keep_blank_values=True
+        )
+        if key != RENDERED_VERIFICATION_CACHE_PARAM
+    ]
+    query.append((RENDERED_VERIFICATION_CACHE_PARAM, cache_token))
+    return urllib.parse.urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urllib.parse.urlencode(query),
+            parsed.fragment,
+        )
+    )
+
+
 def verify_rendered_publication(
     campaign: Mapping[str, Any],
     entry: Mapping[str, str],
@@ -24750,17 +24816,26 @@ def verify_rendered_publication(
             publication_lease_checkpoint(
                 lease_probe, "rendered verification attempt preflight"
             )
+            cache_token = rendered_verification_cache_token(
+                campaign, entry, verdict, attempts
+            )
+            board_fetch_url = rendered_verification_fetch_url(
+                board_url, cache_token
+            )
+            run_fetch_url = rendered_verification_fetch_url(run_url, cache_token)
             if lease_probe is None:
                 board_status, board_html, board_headers = fetch_rendered_page(
-                    board_url
-                )
-                run_status, run_html, run_headers = fetch_rendered_page(run_url)
-            else:
-                board_status, board_html, board_headers = fetch_rendered_page(
-                    board_url, lease_probe=lease_probe
+                    board_fetch_url
                 )
                 run_status, run_html, run_headers = fetch_rendered_page(
-                    run_url, lease_probe=lease_probe
+                    run_fetch_url
+                )
+            else:
+                board_status, board_html, board_headers = fetch_rendered_page(
+                    board_fetch_url, lease_probe=lease_probe
+                )
+                run_status, run_html, run_headers = fetch_rendered_page(
+                    run_fetch_url, lease_probe=lease_probe
                 )
             matched, checks = rendered_publication_matches(
                 campaign, board_html, run_html, base_url, entry, verdict

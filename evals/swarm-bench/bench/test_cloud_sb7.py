@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from base64 import b64decode
 from pathlib import Path
 from unittest import mock
@@ -11020,6 +11021,137 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 lease_probe=lambda: next(lease_results),
             )
 
+    def test_rendered_verification_cache_busts_stale_base_and_each_retry(
+        self,
+    ) -> None:
+        verdict = self.fixture_verdict()
+        campaign = self.public_identity_campaign(verdict)
+        campaign["publisher"].update(
+            {
+                "website_base_url": "https://example.invalid",
+                "verify_timeout_seconds": 1,
+                "verify_interval_seconds": 0.01,
+            }
+        )
+        entry = {
+            "label": "Fixture Model",
+            "model": "fixture-model",
+            "doc_id": "brun-baseline-fixture-model-sb70",
+        }
+        board_url = "https://example.invalid/agentic-benchmarks"
+        run_url = f"{board_url}/run/{entry['doc_id']}"
+        stale_board = (
+            '<script type="application/ld+json">'
+            + json.dumps({"@type": "ItemList", "itemListElement": []})
+            + "</script>"
+        )
+        fresh_board = (
+            '<script type="application/ld+json">'
+            + json.dumps(
+                {
+                    "@type": "ItemList",
+                    "itemListElement": [
+                        {
+                            "@type": "ListItem",
+                            "name": "Fixture Model — 0.4200",
+                            "url": run_url,
+                        }
+                    ],
+                }
+            )
+            + "</script>"
+        )
+        run = (
+            '<script type="application/ld+json">'
+            + json.dumps(
+                {
+                    "@type": "Dataset",
+                    "name": "fixture-model on sb-7.0",
+                    "url": run_url,
+                    "variableMeasured": [{"value": 0.42}],
+                }
+            )
+            + "</script>"
+            + "<h1>Fixture Model — 0.4200 on sb-7.0</h1>"
+            + "<p>fixture-model · scorer sb-7.0</p>"
+        )
+        stale_match, stale_evidence = cloud_sb7.rendered_publication_matches(
+            campaign,
+            stale_board,
+            run,
+            "https://example.invalid",
+            entry,
+            verdict,
+        )
+        fresh_match, fresh_evidence = cloud_sb7.rendered_publication_matches(
+            campaign,
+            fresh_board,
+            run,
+            "https://example.invalid",
+            entry,
+            verdict,
+        )
+        self.assertFalse(stale_match)
+        self.assertFalse(stale_evidence["board_item_exact"])
+        self.assertTrue(fresh_match, fresh_evidence)
+
+        first_token = cloud_sb7.rendered_verification_cache_token(
+            campaign, entry, verdict, 1
+        )
+        second_token = cloud_sb7.rendered_verification_cache_token(
+            campaign, entry, verdict, 2
+        )
+        self.assertEqual(
+            first_token,
+            cloud_sb7.rendered_verification_cache_token(
+                campaign, entry, verdict, 1
+            ),
+        )
+        self.assertNotEqual(first_token, second_token)
+        fetched: list[str] = []
+
+        def fetch(url: str) -> tuple[int, str, dict[str, str]]:
+            fetched.append(url)
+            parsed = urllib.parse.urlsplit(url)
+            query = urllib.parse.parse_qs(parsed.query)
+            token = query.get(cloud_sb7.RENDERED_VERIFICATION_CACHE_PARAM)
+            self.assertIsNotNone(token)
+            self.assertEqual(len(token), 1)
+            if parsed.path == "/agentic-benchmarks":
+                body = stale_board if token[0] == first_token else fresh_board
+            elif parsed.path == f"/agentic-benchmarks/run/{entry['doc_id']}":
+                body = run
+            else:
+                self.fail(f"unexpected rendered verification URL: {url}")
+            return 200, body, {}
+
+        with (
+            mock.patch.object(
+                cloud_sb7, "fetch_rendered_page", side_effect=fetch
+            ),
+            mock.patch.object(cloud_sb7, "publication_lease_wait"),
+        ):
+            receipt = cloud_sb7.verify_rendered_publication(
+                campaign, entry, verdict
+            )
+
+        self.assertEqual(receipt["attempt"], 2)
+        self.assertEqual(receipt["board_url"], board_url)
+        self.assertEqual(receipt["run_url"], run_url)
+        self.assertEqual(len(fetched), 4)
+        self.assertNotIn(board_url, fetched)
+        self.assertNotIn(run_url, fetched)
+        fetched_tokens = [
+            urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)[
+                cloud_sb7.RENDERED_VERIFICATION_CACHE_PARAM
+            ][0]
+            for url in fetched
+        ]
+        self.assertEqual(
+            fetched_tokens,
+            [first_token, first_token, second_token, second_token],
+        )
+
     def test_rendered_verification_requires_exact_board_and_run_evidence(self) -> None:
         verdict = self.fixture_verdict()
         campaign = self.public_identity_campaign(verdict)
@@ -11104,6 +11236,84 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 )
                 self.assertFalse(matched)
                 self.assertFalse(evidence["run_public_identity_exact"])
+
+    def test_rendered_verification_diagnoses_structured_data_cap(self) -> None:
+        verdict = self.fixture_verdict()
+        campaign = self.public_identity_campaign(verdict)
+        entry = {
+            "label": "Fixture Model",
+            "model": "fixture-model",
+            "doc_id": "brun-baseline-fixture-model-sb70",
+        }
+        run_url = (
+            "https://example.invalid/agentic-benchmarks/run/"
+            "brun-baseline-fixture-model-sb70"
+        )
+        target = {
+            "@type": "ListItem",
+            "name": "Fixture Model — 0.4200",
+            "url": run_url,
+        }
+        leading = [
+            {
+                "@type": "ListItem",
+                "name": f"Earlier Model {index} — 0.9000",
+                "url": f"https://example.invalid/agentic-benchmarks/run/earlier-{index}",
+            }
+            for index in range(25)
+        ]
+
+        def board(items: list[dict[str, object]]) -> str:
+            return (
+                '<script type="application/ld+json">'
+                + json.dumps(
+                    {
+                        "@type": "ItemList",
+                        "numberOfItems": 26,
+                        "itemListElement": items,
+                    }
+                )
+                + "</script>"
+            )
+
+        run = (
+            '<script type="application/ld+json">'
+            + json.dumps(
+                {
+                    "@type": "Dataset",
+                    "name": "fixture-model on sb-7.0",
+                    "url": run_url,
+                    "variableMeasured": [{"value": 0.42}],
+                }
+            )
+            + "</script>"
+            + "<h1>Fixture Model — 0.4200 on sb-7.0</h1>"
+            + "<p>fixture-model · scorer sb-7.0</p>"
+        )
+        capped_match, capped_evidence = cloud_sb7.rendered_publication_matches(
+            campaign,
+            board(leading),
+            run,
+            "https://example.invalid",
+            entry,
+            verdict,
+        )
+        self.assertFalse(capped_match)
+        self.assertTrue(capped_evidence["board_item_list_truncated"])
+        self.assertIn("truncated (25 of 26)", capped_evidence["reasons"][0])
+
+        uncapped_match, uncapped_evidence = (
+            cloud_sb7.rendered_publication_matches(
+                campaign,
+                board(leading + [target]),
+                run,
+                "https://example.invalid",
+                entry,
+                verdict,
+            )
+        )
+        self.assertTrue(uncapped_match, uncapped_evidence)
+        self.assertFalse(uncapped_evidence["board_item_list_truncated"])
 
     def test_remote_receipt_compares_full_checks_and_screenshot_bytes(self) -> None:
         verdict = self.fixture_verdict()
