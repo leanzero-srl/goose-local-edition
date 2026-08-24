@@ -118,6 +118,7 @@ mod timeout_semantics_tests {
 
 pub type RequestBuilderDecorator =
     Arc<dyn Fn(reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> + Send + Sync>;
+pub type RequestHeadersDecorator = Arc<dyn Fn(&mut HeaderMap) -> Result<()> + Send + Sync>;
 
 pub struct ApiClient {
     client: Client,
@@ -128,6 +129,7 @@ pub struct ApiClient {
     timeout: Duration,
     tls_config: Option<TlsConfig>,
     request_builder: Option<RequestBuilderDecorator>,
+    request_headers: Option<RequestHeadersDecorator>,
 }
 
 pub enum AuthMethod {
@@ -368,6 +370,7 @@ impl ApiClient {
             timeout,
             tls_config,
             request_builder: None,
+            request_headers: None,
         })
     }
 
@@ -451,6 +454,13 @@ impl ApiClient {
 
     pub fn with_request_builder(mut self, request_builder: RequestBuilderDecorator) -> Self {
         self.request_builder = Some(request_builder);
+        self
+    }
+
+    /// Decorates request headers through a type boundary that cannot alter the method, URL, body,
+    /// or client. Unlike an opaque `RequestBuilderDecorator`, this preserves transport identity.
+    pub fn with_request_headers(mut self, request_headers: RequestHeadersDecorator) -> Self {
+        self.request_headers = Some(request_headers);
         self
     }
 
@@ -564,6 +574,13 @@ impl<'a> ApiRequestBuilder<'a> {
         let headers = self.headers.clone();
         let mut request = request_builder(url, &self.client.client);
         request = request.headers(headers);
+
+        if let Some(decorator) = &self.client.request_headers {
+            let (client, built_request) = request.build_split();
+            let mut built_request = built_request?;
+            decorator(built_request.headers_mut())?;
+            request = reqwest::RequestBuilder::from_parts(client, built_request);
+        }
 
         if let Some(decorator) = &self.client.request_builder {
             request = decorator(request)?;
@@ -825,14 +842,74 @@ mod tests {
             None,
         )
         .unwrap()
-        .with_request_builder(Arc::new(Ok));
+        .with_request_builder(Arc::new(|request| {
+            let (client, request) = request.build_split();
+            let mut request = request?;
+            *request.url_mut() = url::Url::parse("http://other-host.test/v1/chat/completions")?;
+            Ok(reqwest::RequestBuilder::from_parts(client, request))
+        }));
+        let header_decorated = ApiClient::new_with_tls(
+            "http://lm-link.local:1234/prefix".to_string(),
+            AuthMethod::NoAuth,
+            None,
+        )
+        .unwrap()
+        .with_request_headers(Arc::new(|headers| {
+            headers.insert("agent-session-id", HeaderValue::from_static("session-a"));
+            Ok(())
+        }));
 
         let plain_identity = plain.transport_identity("v1/chat/completions").unwrap();
         let queried_identity = queried.transport_identity("v1/chat/completions").unwrap();
+        let header_identity = header_decorated
+            .transport_identity("v1/chat/completions")
+            .unwrap();
         assert_ne!(plain_identity, queried_identity);
+        assert_eq!(plain_identity, header_identity);
         assert!(!queried_identity.contains("secret"));
         assert_eq!(queried_identity.len(), 71);
         assert_eq!(decorated.transport_identity("v1/chat/completions"), None);
+    }
+
+    #[tokio::test]
+    async fn transport_preserving_header_decorator_changes_headers_but_not_url() {
+        let client = ApiClient::new_with_tls(
+            "http://lm-link.local:1234".to_string(),
+            AuthMethod::NoAuth,
+            None,
+        )
+        .unwrap()
+        .with_request_headers(Arc::new(|headers| {
+            headers.insert("agent-session-id", HeaderValue::from_static("session-a"));
+            Ok(())
+        }));
+        let expected =
+            canonical_transport_identity("http://lm-link.local:1234", "v1/chat/completions")
+                .unwrap();
+
+        let request = client
+            .request("v1/chat/completions")
+            .send_request(|url, client| client.post(url))
+            .await
+            .unwrap()
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            client.transport_identity("v1/chat/completions"),
+            Some(expected)
+        );
+        assert_eq!(
+            request.url().as_str(),
+            "http://lm-link.local:1234/v1/chat/completions"
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("agent-session-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("session-a")
+        );
     }
 
     #[tokio::test]

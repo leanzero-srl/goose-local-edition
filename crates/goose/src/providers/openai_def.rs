@@ -115,7 +115,7 @@ pub async fn from_env(
         std::time::Duration::from_secs(timeout_secs),
         tls_config,
     )?
-    .with_request_builder(crate::session_context::session_id_request_builder());
+    .with_request_headers(crate::session_context::session_id_request_headers());
 
     if !parsed.query_params.is_empty() {
         api_client = api_client.with_query(parsed.query_params);
@@ -213,16 +213,13 @@ pub fn from_custom_config(
         builder
             .map_api_client(|api_client| {
                 api_client
-                    .with_request_builder(crate::session_context::session_id_request_builder())
+                    .with_request_headers(crate::session_context::session_id_request_headers())
             })
             .build()
     })
 }
 
-fn loopback_lmstudio_config(
-    endpoint: &str,
-    explicit_api_key: bool,
-) -> Result<Option<DeclarativeProviderConfig>> {
+fn loopback_lmstudio_chat_endpoint(endpoint: &str) -> Result<Option<url::Url>> {
     let mut url = url::Url::parse(endpoint)?;
     let loopback = match url.host() {
         Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
@@ -245,6 +242,29 @@ fn loopback_lmstudio_config(
         format!("{path}/v1/chat/completions")
     };
     url.set_path(&chat_path);
+    Ok(Some(url))
+}
+
+pub fn loopback_lmstudio_transport_identity(endpoint: &str) -> Result<Option<String>> {
+    let Some(chat_endpoint) = loopback_lmstudio_chat_endpoint(endpoint)? else {
+        return Ok(None);
+    };
+    let path = chat_endpoint.path().trim_start_matches('/').to_string();
+    let mut transport_base = chat_endpoint;
+    transport_base.set_path("");
+    Ok(goose_providers::api_client::canonical_transport_identity(
+        transport_base.as_str(),
+        &path,
+    ))
+}
+
+fn loopback_lmstudio_config(
+    endpoint: &str,
+    explicit_api_key: bool,
+) -> Result<Option<DeclarativeProviderConfig>> {
+    let Some(url) = loopback_lmstudio_chat_endpoint(endpoint)? else {
+        return Ok(None);
+    };
 
     let mut config = crate::config::declarative_providers::fixed_provider_configs()?
         .into_iter()

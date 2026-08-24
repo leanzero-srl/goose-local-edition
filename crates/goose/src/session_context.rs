@@ -20,18 +20,26 @@ pub fn current_session_id() -> Option<String> {
     SESSION_ID.try_with(|id| id.clone()).ok().flatten()
 }
 
-pub fn session_id_request_builder() -> goose_providers::api_client::RequestBuilderDecorator {
-    std::sync::Arc::new(|request| {
-        let (client, request) = request.build_split();
-        let mut request = request?;
+pub fn session_id_request_headers() -> goose_providers::api_client::RequestHeadersDecorator {
+    std::sync::Arc::new(|headers| {
         let session_header = HeaderName::from_static(SESSION_ID_HEADER);
-        request.headers_mut().remove(&session_header);
+        headers.remove(&session_header);
 
         if let Some(session_id) = current_session_id() {
             let value = HeaderValue::from_str(&session_id)?;
-            request.headers_mut().insert(session_header, value);
+            headers.insert(session_header, value);
         }
 
+        Ok(())
+    })
+}
+
+pub fn session_id_request_builder() -> goose_providers::api_client::RequestBuilderDecorator {
+    let decorate_headers = session_id_request_headers();
+    std::sync::Arc::new(move |request| {
+        let (client, request) = request.build_split();
+        let mut request = request?;
+        decorate_headers(request.headers_mut())?;
         Ok(reqwest::RequestBuilder::from_parts(client, request))
     })
 }

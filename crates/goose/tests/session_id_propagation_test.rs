@@ -2,7 +2,7 @@ use goose::conversation::message::Message;
 use goose::providers::api_client::{ApiClient, AuthMethod};
 use goose::providers::base::Provider;
 use goose::providers::openai::OpenAiProvider;
-use goose::session_context::{session_id_request_builder, SESSION_ID_HEADER};
+use goose::session_context::{session_id_request_headers, SESSION_ID_HEADER};
 use goose_providers::model::ModelConfig;
 use serde_json::json;
 use std::sync::Arc;
@@ -42,7 +42,7 @@ fn create_test_provider(mock_server_url: &str) -> Box<dyn Provider> {
         None,
     )
     .unwrap()
-    .with_request_builder(session_id_request_builder());
+    .with_request_headers(session_id_request_headers());
     Box::new(OpenAiProvider::new(api_client))
 }
 
@@ -201,6 +201,11 @@ async fn test_session_id_propagates_to_log_records() {
 #[tokio::test]
 async fn test_session_id_propagation_to_llm() {
     let (_, capture, provider) = setup_mock_server().await;
+
+    assert!(
+        provider.transport_identity("gpt-5-nano").is_some(),
+        "header-only session decoration must preserve the exact provider route identity"
+    );
 
     make_request(provider.as_ref(), "integration-test-session-123").await;
 

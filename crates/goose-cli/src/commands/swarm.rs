@@ -3109,6 +3109,29 @@ fn physical_fleet_snapshot(
     PhysicalFleetSnapshot::new(snapshot_id, lanes).map_err(anyhow::Error::from)
 }
 
+fn verify_provider_transport_snapshot(
+    provider: &dyn Provider,
+    snapshot: &PhysicalFleetSnapshot,
+) -> Result<()> {
+    for lane in &snapshot.lanes {
+        let actual = provider.transport_identity(&lane.model_id).ok_or_else(|| {
+            anyhow!(
+                "provider transport identity is unavailable for physical lane `{}` model `{}`",
+                lane.logical_device_id,
+                lane.model_id
+            )
+        })?;
+        if actual != lane.provider_transport_id {
+            anyhow::bail!(
+                "provider transport identity for physical lane `{}` model `{}` does not match the sealed fleet snapshot",
+                lane.logical_device_id,
+                lane.model_id
+            );
+        }
+    }
+    Ok(())
+}
+
 fn physical_snapshot_devices(
     execute_devices: &[DeviceCfg],
     supervision_devices: &[DeviceCfg],
@@ -3146,10 +3169,10 @@ fn physical_snapshot_devices(
 fn reconcile_pool_with_fleet(
     cfg: &SwarmConfig,
     served_model_ids: Option<&HashSet<String>>,
-) -> (Vec<SwarmDevice>, Option<String>) {
+) -> Result<(Vec<SwarmDevice>, Option<String>)> {
     let procs = match probe_lms_processes() {
         Ok(p) => p,
-        Err(_) => return (Vec::new(), None),
+        Err(_) => return Ok((Vec::new(), None)),
     };
     // LM Link routes by identifier alone. Keep legacy one-worker-per-identifier behavior, but never
     // certify a physical route when the same identifier appears on multiple hosts: "first host wins"
@@ -3171,10 +3194,14 @@ fn reconcile_pool_with_fleet(
         .into_iter()
         .filter_map(|(identifier, hosts)| (hosts.len() > 1).then_some(identifier))
         .collect();
-    let provider_transport_id = goose_providers::api_client::canonical_transport_identity(
-        &cfg.endpoint,
-        "v1/chat/completions",
-    );
+    let provider_transport_id =
+        match goose::providers::openai_def::loopback_lmstudio_transport_identity(&cfg.endpoint)? {
+            Some(identity) => Some(identity),
+            None => goose_providers::api_client::canonical_transport_identity(
+                &cfg.endpoint,
+                "v1/chat/completions",
+            ),
+        };
     // One worker per DISTINCT loaded identifier (LM Link routes by identifier).
     let mut seen = std::collections::HashSet::new();
     let mut resident: Vec<&LmsProcess> = Vec::new();
@@ -3184,7 +3211,7 @@ fn reconcile_pool_with_fleet(
         }
     }
     if resident.is_empty() {
-        return (Vec::new(), None);
+        return Ok((Vec::new(), None));
     }
     let pool: Vec<SwarmDevice> = resident
         .iter()
@@ -3269,7 +3296,7 @@ fn reconcile_pool_with_fleet(
             .or_else(|| resident.iter().max_by_key(|p| planner_rank(p)))
             .map(|p| p.identifier.clone())
     };
-    (pool, planner)
+    Ok((pool, planner))
 }
 
 fn gen_entry_id(cfg: &SwarmConfig, device: Option<&str>, identifier: &str) -> String {
@@ -16679,6 +16706,80 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert_eq!(identity.host_id, "WorksMacStudio.lan");
         assert_eq!(identity.advertised_instance_capacity, 4);
         assert_eq!(identity.capacity_evidence.max_concurrent(), 1);
+    }
+
+    #[test]
+    fn loopback_lmstudio_provider_matches_all_three_sealed_alias_routes() {
+        let endpoint = "http://localhost:1234";
+        let provider =
+            goose::providers::openai_def::from_loopback_lmstudio_endpoint(endpoint, None)
+                .unwrap()
+                .expect("loopback LM Studio endpoint must construct the local provider");
+        let transport =
+            goose::providers::openai_def::loopback_lmstudio_transport_identity(endpoint)
+                .unwrap()
+                .unwrap();
+        let aliases = [
+            ("mac-qwen3.8-27b", "gabee-qwen/qwen3.8-27b", "Mac.lan"),
+            ("local-qwen3.8-27b", "mihai-qwen/qwen3.8-27b", "Local"),
+            (
+                "worksmacstudio-qwen3.8-27b",
+                "workhorse-qwen/qwen3.8-27b",
+                "WorksMacStudio.lan",
+            ),
+        ];
+        let lanes = aliases
+            .iter()
+            .map(|(device, model, host)| {
+                assert_eq!(
+                    provider.transport_identity(model).as_deref(),
+                    Some(transport.as_str()),
+                    "actual LM Studio provider identity must match the sealed route for {model}"
+                );
+                VerifiedPhysicalIdentity {
+                    host_id: (*host).to_string(),
+                    model_instance_id: (*model).to_string(),
+                    provider_transport_id: transport.clone(),
+                    advertised_instance_capacity: 2,
+                    capacity_evidence: HostCapacityEvidence::ProbeSingleStream {
+                        probe_epoch: format!("test:{host}:{model}"),
+                    },
+                    route_evidence_id: format!("test:{host}:{model}:parallel=2"),
+                }
+                .into_lane((*device).to_string(), (*model).to_string(), 1)
+            })
+            .collect();
+        let snapshot = PhysicalFleetSnapshot::new("three-node-lmstudio", lanes).unwrap();
+
+        verify_provider_transport_snapshot(&provider, &snapshot).unwrap();
+    }
+
+    #[test]
+    fn loopback_lmstudio_transport_seal_matches_every_normalized_endpoint_shape() {
+        for endpoint in [
+            "http://localhost:1234/",
+            "http://localhost:1234/v1",
+            "http://localhost:1234/v1/chat/completions",
+            "http://localhost:1234/proxy/v1?tenant=operations",
+        ] {
+            let provider =
+                goose::providers::openai_def::from_loopback_lmstudio_endpoint(endpoint, None)
+                    .unwrap()
+                    .expect("valid loopback endpoint must construct the local provider");
+            let sealed =
+                goose::providers::openai_def::loopback_lmstudio_transport_identity(endpoint)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                provider.transport_identity("mihai-qwen/qwen3.8-27b"),
+                Some(sealed),
+                "sealed and actual provider routes diverged for {endpoint}"
+            );
+        }
+        assert!(
+            goose::providers::openai_def::loopback_lmstudio_transport_identity("://malformed")
+                .is_err()
+        );
     }
 
     #[test]
@@ -46254,7 +46355,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // legacy dispatch remains permissive on a failed probe, while physical identity is minted only for a
     // positively listed model. Intersect the logical pool before dispatch — see drop_unservable_devices.
     let served = endpoint_model_ids();
-    let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg, served.as_ref());
+    let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg, served.as_ref())?;
     // #128 no-start guard: if the endpoint proves it can serve models (non-empty /v1/models) but NONE of them
     // are our resident pool's — every alias withdrawn — refuse now instead of dispatching the whole run into
     // ~2s-per-attempt 400s and a dead run. `drop_unservable_devices` never empties the pool (it assumes a broken
@@ -46937,6 +47038,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         repeat_break: repeat_break_enabled(cfg.repeat_break),
     };
     let dispatcher = build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await?;
+    if broker_enforcement_requested {
+        let snapshot = physical_snapshot
+            .as_ref()
+            .expect("physical broker preflight rejected an unavailable snapshot");
+        verify_provider_transport_snapshot(dispatcher.provider.as_ref(), snapshot)?;
+        sink.write_value(serde_json::json!({
+            "event": "physical_provider_transport_verified",
+            "fleet_snapshot_id": snapshot.snapshot_id,
+            "verified_lane_count": snapshot.lanes.len(),
+            "transport_identity_source": "provider_request_boundary",
+        }));
+    }
     let pre_scheduler_control = if broker_enforcement_requested {
         dispatcher
             .activity_sink_health
