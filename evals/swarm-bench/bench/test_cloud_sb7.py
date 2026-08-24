@@ -6433,6 +6433,155 @@ class CloudSb7HarnessTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "no smoke or full activity"):
                 self.supersede_fixture(fixture)
 
+    def test_supersession_carries_sealed_smoke_transport_unknown_budget_baseline(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_supersession_fixture(Path(raw))
+            predecessor = Path(str(fixture["predecessor"]))
+            entrant_id = str(fixture["failed_id"])
+            row = cloud_sb7.manifest_row(predecessor, entrant_id)
+            full_state = cloud_sb7.read_state(predecessor, entrant_id)
+            Path(str(full_state["provider_lifecycle"])).write_text("")
+            failed_tree = Path(str(full_state["tree"]))
+            (failed_tree / "failed-raw.txt").unlink()
+            cloud_sb7.update_state(
+                predecessor,
+                entrant_id,
+                status="STOPPED",
+                provider_episode_attempts=0,
+                provider_launch_attempts=0,
+                admitted_requests=0,
+                provider_terminal_requests=0,
+                failure="smoke transport was not terminal",
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(predecessor))
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["settled"] = []
+            ledger["spent_upper_bound"] = 0.0
+            ledger["provider_spent_upper_bound"] = {"fixture": 0.0}
+            reserve = cloud_sb7.provider_reserve_evidence(
+                campaign, row, ledger_override=ledger
+            )["reserve_usd"]
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            cloud_sb7.update_smoke_state(
+                predecessor,
+                entrant_id,
+                status="PLANNED",
+                failure=None,
+            )
+            smoke = cloud_sb7.prepare_smoke_attempt(predecessor, entrant_id, row)
+            with mock.patch.object(
+                cloud_sb7, "snapshot_listening_tcp_ports", return_value=[43210]
+            ):
+                smoke = cloud_sb7.persist_listener_isolation(
+                    predecessor, row, smoke, smoke=True
+                )
+            Path(str(smoke["log"])).write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Network error: response stream could not be decoded",
+                                }
+                            ],
+                        },
+                    }
+                )
+                + "\n"
+                + json.dumps({"type": "complete", "total_tokens": 0})
+                + "\n"
+            )
+            request_id = "smoke-transport-unknown"
+            Path(str(smoke["provider_lifecycle"])).write_text(
+                "\n".join(
+                    map(
+                        json.dumps,
+                        self.provider_lifecycle_events(
+                            row,
+                            ["queued", "admitted", "stream_ambiguous"],
+                            request_id=request_id,
+                        ),
+                    )
+                )
+                + "\n"
+            )
+            ledger = cloud_sb7.load_json(ledger_path)
+            ledger["outstanding"][request_id] = {
+                "request_id": request_id,
+                "provider": row["provider"],
+                "model": row["model"],
+                "reserved_usd": reserve,
+                "input_reserve_tokens": row["context_limit"],
+                "output_reserve_tokens": row["max_output_tokens"],
+                "created_at_unix_ms": 2,
+            }
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            self.assertFalse(
+                cloud_sb7.finalize_smoke_attempt(
+                    predecessor,
+                    entrant_id,
+                    exit_code=0,
+                    descendants_clean=True,
+                )
+            )
+            cloud_sb7.update_smoke_state(
+                predecessor,
+                entrant_id,
+                supervisor_pid=None,
+                supervisor_pgid=None,
+                supervisor_sid=None,
+                supervisor_identity=None,
+            )
+
+            successor_campaign = self.supersede_fixture(fixture)
+            successor = Path(str(fixture["successor"]))
+            self.assertEqual(
+                successor_campaign["smoke_budget_outstanding_baselines"][entrant_id],
+                [request_id],
+            )
+            lineage = cloud_sb7.load_json(successor / "lineage/lineage.json")
+            self.assertEqual(
+                lineage["predecessor_terminal_outstanding"][entrant_id],
+                [request_id],
+            )
+            outstanding, error = (
+                cloud_sb7.current_full_episode_outstanding_reservations(
+                    successor,
+                    successor_campaign,
+                    cloud_sb7.manifest_row(successor, entrant_id),
+                )
+            )
+            self.assertIsNone(error)
+            self.assertEqual(outstanding, [])
+            successor_ledger = cloud_sb7.load_json(
+                Path(str(successor_campaign["budget_ledger"]))
+            )
+            self.assertIn(request_id, successor_ledger["outstanding"])
+            new_request_id = "successor-new-outstanding"
+            successor_ledger["outstanding"][new_request_id] = {
+                **successor_ledger["outstanding"][request_id],
+                "request_id": new_request_id,
+                "created_at_unix_ms": 3,
+            }
+            cloud_sb7.atomic_json(
+                Path(str(successor_campaign["budget_ledger"])), successor_ledger
+            )
+            outstanding, error = (
+                cloud_sb7.current_full_episode_outstanding_reservations(
+                    successor,
+                    successor_campaign,
+                    cloud_sb7.manifest_row(successor, entrant_id),
+                )
+            )
+            self.assertIsNone(error)
+            self.assertEqual(outstanding, [new_request_id])
+
     def test_supersession_rejects_uncorrelated_outstanding_reserve(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             fixture = self.make_supersession_fixture(Path(raw))

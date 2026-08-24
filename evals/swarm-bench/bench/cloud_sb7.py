@@ -4520,22 +4520,40 @@ def current_full_episode_outstanding_reservations(
     if error:
         return [], error
     try:
+        if smoke_contract_identity(campaign) != campaign.get("smoke_contract_sha256"):
+            return [], "campaign smoke contract hash is stale"
+    except SystemExit as contract_error:
+        return [], f"campaign smoke contract is invalid: {contract_error}"
+    baseline_by_entrant = campaign.get("smoke_budget_outstanding_baselines")
+    entrant_id = str(row.get("id", ""))
+    smoke_baseline = (
+        baseline_by_entrant.get(entrant_id)
+        if isinstance(baseline_by_entrant, dict)
+        else None
+    )
+    if (
+        not isinstance(smoke_baseline, list)
+        or any(not isinstance(value, str) or not value for value in smoke_baseline)
+        or smoke_baseline != sorted(set(smoke_baseline))
+    ):
+        return [], f"{entrant_id} smoke outstanding budget baseline is malformed"
+    try:
         generation = validated_campaign_lineage(campaign)["generation"]
     except SystemExit as lineage_error:
         return [], f"campaign lineage is invalid: {lineage_error}"
     carried_transport = transport_unknown_carried_request_ids(
-        root, campaign, str(row.get("id", ""))
+        root, campaign, entrant_id
     )
-    if carried_transport:
-        missing = sorted(carried_transport - set(outstanding))
-        if missing:
-            return [], (
-                f"{row.get('id')} transport-unknown reservations disappeared: "
-                + ", ".join(missing)
-            )
-        outstanding = sorted(set(outstanding) - carried_transport)
+    all_outstanding = set(outstanding)
+    carried = carried_transport | set(smoke_baseline)
+    missing = sorted(carried - all_outstanding)
+    if missing:
+        return [], (
+            f"{entrant_id} carried provider reservations disappeared: "
+            + ", ".join(missing)
+        )
     if generation != 2:
-        return outstanding, None
+        return sorted(all_outstanding - carried), None
 
     lineage_problem = orchestrator_recovery_lineage_failure(root, campaign)
     if lineage_problem:
@@ -4555,13 +4573,13 @@ def current_full_episode_outstanding_reservations(
         or baseline != sorted(set(baseline))
     ):
         return [], f"{entrant_id} carried full-episode reservation baseline is malformed"
-    missing = sorted(set(baseline) - set(outstanding))
+    missing = sorted(set(baseline) - all_outstanding)
     if missing:
         return [], (
             f"{entrant_id} carried full-episode reservations disappeared: "
             + ", ".join(missing)
         )
-    return sorted(set(outstanding) - set(baseline)), None
+    return sorted(all_outstanding - carried - set(baseline)), None
 
 
 def canonical_json_sha256(value: Any) -> str:
@@ -8564,73 +8582,97 @@ def supersession_fault(_stage: str) -> None:
 
 def predecessor_smoke_terminal_usage(
     root: Path, entrant_id: str, row: Mapping[str, Any]
-) -> tuple[Dict[str, Dict[str, Any]], bool, str | None]:
+) -> tuple[Dict[str, Dict[str, Any]], list[str], bool, str | None]:
     campaign = load_json(campaign_file(root))
     try:
         state = read_smoke_state(root, entrant_id)
     except (OSError, json.JSONDecodeError, SystemExit) as error:
-        return {}, False, f"smoke state cannot be read: {error}"
+        return {}, [], False, f"smoke state cannot be read: {error}"
     if (
         state.get("entrant") != entrant_id
         or state.get("provider") != row.get("provider")
         or state.get("model") != row.get("model")
         or state.get("status") not in SMOKE_TERMINAL_STATES
     ):
-        return {}, False, "smoke state identity or stopped status is invalid"
+        return {}, [], False, "smoke state identity or stopped status is invalid"
     launch_attempts = state.get("launch_attempts")
     if (
         isinstance(launch_attempts, bool)
         or not isinstance(launch_attempts, int)
         or launch_attempts < 0
     ):
-        return {}, False, "smoke launch count is malformed"
+        return {}, [], False, "smoke launch count is malformed"
     attempts_root = root / "smoke" / entrant_id / "attempts"
     if not attempts_root.is_dir() or attempts_root.is_symlink():
-        return {}, bool(launch_attempts), "smoke attempts root is missing or symbolic"
+        return {}, [], bool(launch_attempts), "smoke attempts root is missing or symbolic"
     expected_names = {f"attempt-{number}" for number in range(1, launch_attempts + 1)}
     actual_names = {path.name for path in attempts_root.iterdir()}
     if actual_names != expected_names:
-        return {}, bool(launch_attempts), "smoke attempt directories differ from launch count"
+        return (
+            {},
+            [],
+            bool(launch_attempts),
+            "smoke attempt directories differ from launch count",
+        )
     evidence_hashes = state.get("attempt_evidence_sha256")
     if not isinstance(evidence_hashes, dict):
-        return {}, bool(launch_attempts), "smoke evidence index is malformed"
+        return {}, [], bool(launch_attempts), "smoke evidence index is malformed"
 
     terminal_usage: Dict[str, Dict[str, Any]] = {}
+    transport_unknown: set[str] = set()
     for attempt in range(1, launch_attempts + 1):
         attempt_name = f"attempt-{attempt}"
         attempt_root = attempts_root / attempt_name
         if not attempt_root.is_dir() or attempt_root.is_symlink():
-            return {}, True, f"{attempt_name} is missing or symbolic"
+            return {}, [], True, f"{attempt_name} is missing or symbolic"
         lifecycle_path = attempt_root / "provider-lifecycle.jsonl"
         if lifecycle_path.is_symlink():
-            return {}, True, f"{attempt_name} lifecycle is symbolic"
+            return {}, [], True, f"{attempt_name} lifecycle is symbolic"
         lifecycle = lifecycle_summary(
             lifecycle_path,
             expected_provider=str(row["provider"]),
             expected_model=str(row["model"]),
         )
-        lifecycle_problem = lifecycle_failure(lifecycle)
-        if lifecycle_problem:
-            return {}, True, f"{attempt_name} lifecycle is ambiguous: {lifecycle_problem}"
-        if lifecycle["admitted"] != lifecycle["terminal"]:
-            return {}, True, f"{attempt_name} has unterminated provider admission"
+        if lifecycle["malformed_lines"] or lifecycle["transition_errors"]:
+            return {}, [], True, f"{attempt_name} lifecycle is malformed"
+        attempt_unknown = set(lifecycle["ambiguous_request_ids"])
+        request_states = lifecycle.get("request_states")
+        if not isinstance(request_states, dict) or any(
+            not isinstance(request_states.get(request_id), list)
+            or "admitted" not in request_states[request_id]
+            or request_states[request_id][-1] != "stream_ambiguous"
+            for request_id in attempt_unknown
+        ):
+            return (
+                {},
+                [],
+                True,
+                f"{attempt_name} has an unsealed ambiguous provider state",
+            )
+        if lifecycle["admitted"] != lifecycle["terminal"] + len(attempt_unknown):
+            return {}, [], True, f"{attempt_name} has unterminated provider admission"
 
         evidence_path = attempt_root / "attempt-evidence.json"
         indexed_hash = evidence_hashes.get(attempt_name)
         if evidence_path.exists():
             if evidence_path.is_symlink() or not evidence_path.is_file():
-                return {}, True, f"{attempt_name} evidence is not a regular file"
+                return {}, [], True, f"{attempt_name} evidence is not a regular file"
             if indexed_hash != sha256_file(evidence_path):
-                return {}, True, f"{attempt_name} evidence hash is not sealed"
+                return {}, [], True, f"{attempt_name} evidence hash is not sealed"
             try:
                 evidence = load_json(evidence_path)
             except (OSError, json.JSONDecodeError, SystemExit) as error:
-                return {}, True, f"{attempt_name} evidence cannot be read: {error}"
+                return {}, [], True, f"{attempt_name} evidence cannot be read: {error}"
             if evidence.get("lifecycle") != lifecycle:
-                return {}, True, f"{attempt_name} lifecycle differs from sealed evidence"
+                return (
+                    {},
+                    [],
+                    True,
+                    f"{attempt_name} lifecycle differs from sealed evidence",
+                )
             isolation = evidence.get("listener_isolation")
             if not isinstance(isolation, dict):
-                return {}, True, f"{attempt_name} has no listener isolation evidence"
+                return {}, [], True, f"{attempt_name} has no listener isolation evidence"
             isolation_state = {
                 **isolation,
                 "attempt_root": str(attempt_root),
@@ -8639,7 +8681,7 @@ def predecessor_smoke_terminal_usage(
                 campaign, row, isolation_state, smoke=True
             )
             if isolation_problem:
-                return {}, True, f"{attempt_name} {isolation_problem}"
+                return {}, [], True, f"{attempt_name} {isolation_problem}"
         elif not (
             attempt == launch_attempts
             and state.get("status") == "STOPPED"
@@ -8651,24 +8693,37 @@ def predecessor_smoke_terminal_usage(
             == lifecycle_path.resolve()
             and indexed_hash is None
         ):
-            return {}, True, f"{attempt_name} has no sealed or stopped crash evidence"
+            return (
+                {},
+                [],
+                True,
+                f"{attempt_name} has no sealed or stopped crash evidence",
+            )
         else:
             isolation_problem = listener_isolation_failure(
                 campaign, row, state, smoke=True
             )
             if isolation_problem:
-                return {}, True, f"{attempt_name} {isolation_problem}"
+                return {}, [], True, f"{attempt_name} {isolation_problem}"
 
         attempt_usage = lifecycle.get("terminal_usage")
         if not isinstance(attempt_usage, dict):
-            return {}, True, f"{attempt_name} terminal usage map is malformed"
-        duplicate = set(terminal_usage) & set(attempt_usage)
+            return {}, [], True, f"{attempt_name} terminal usage map is malformed"
+        duplicate = (set(terminal_usage) | transport_unknown) & (
+            set(attempt_usage) | attempt_unknown
+        )
         if duplicate:
-            return {}, True, "smoke request ID was reused across attempts"
+            return {}, [], True, "smoke request ID was reused across attempts"
         terminal_usage.update(attempt_usage)
+        transport_unknown.update(attempt_unknown)
     if set(evidence_hashes) - expected_names:
-        return {}, bool(launch_attempts), "smoke evidence index contains unknown attempts"
-    return terminal_usage, bool(launch_attempts), None
+        return (
+            {},
+            [],
+            bool(launch_attempts),
+            "smoke evidence index contains unknown attempts",
+        )
+    return terminal_usage, sorted(transport_unknown), bool(launch_attempts), None
 
 
 def full_entrant_was_never_started(
@@ -8779,12 +8834,20 @@ def validate_stopped_predecessor(
             expected_provider=str(row["provider"]),
             expected_model=str(row["model"]),
         )
-        smoke_usage, smoke_launched, smoke_problem = predecessor_smoke_terminal_usage(
-            root, entrant_id, row
-        )
+        (
+            smoke_usage,
+            smoke_transport_unknown,
+            smoke_launched,
+            smoke_problem,
+        ) = predecessor_smoke_terminal_usage(root, entrant_id, row)
         if smoke_problem:
             raise SystemExit(
                 f"predecessor smoke evidence is ambiguous for {entrant_id}: {smoke_problem}"
+            )
+        if smoke_transport_unknown and entrant_id not in affected_entrants:
+            raise SystemExit(
+                "smoke transport-unknown entrant was omitted from defect evidence: "
+                f"{entrant_id}"
             )
         if entrant_id not in affected_entrants:
             if full_entrant_was_never_started(state, lifecycle):
@@ -8837,7 +8900,9 @@ def validate_stopped_predecessor(
         full_terminal_usage = lifecycle.get("terminal_usage")
         if not isinstance(full_terminal_usage, dict):
             raise SystemExit(f"affected predecessor has no terminal usage map: {entrant_id}")
-        duplicate_request_ids = set(full_terminal_usage) & set(smoke_usage)
+        duplicate_request_ids = set(full_terminal_usage) & (
+            set(smoke_usage) | set(smoke_transport_unknown)
+        )
         if duplicate_request_ids:
             raise SystemExit(
                 f"affected predecessor reused request IDs across smoke and full work: {entrant_id}"
@@ -8870,9 +8935,22 @@ def validate_stopped_predecessor(
                     f"affected predecessor settlement differs from terminal usage: "
                     f"{entrant_id}/{request_id}"
                 )
+        missing_unknown = sorted(set(smoke_transport_unknown) - set(outstanding))
+        if missing_unknown:
+            raise SystemExit(
+                f"affected predecessor smoke reservations disappeared: {entrant_id}/"
+                + ", ".join(missing_unknown)
+            )
         for request_id in outstanding:
             usage = terminal_usage.get(request_id)
             if not isinstance(usage, dict):
+                if request_id in smoke_transport_unknown:
+                    if request_id in settlements:
+                        raise SystemExit(
+                            "smoke transport-unknown request was falsely settled: "
+                            f"{entrant_id}/{request_id}"
+                        )
+                    continue
                 raise SystemExit(
                     "affected predecessor has an uncorrelated outstanding reserve: "
                     f"{entrant_id}/{request_id}"
@@ -9484,13 +9562,18 @@ def validate_stopped_qualification_source(
             raise SystemExit(
                 f"qualification source {entrant_id} smoke process group is not clean"
             )
-        usage, _, smoke_problem = predecessor_smoke_terminal_usage(
+        usage, smoke_transport_unknown, _, smoke_problem = predecessor_smoke_terminal_usage(
             root, entrant_id, row
         )
         if smoke_problem:
             raise SystemExit(
                 f"qualification source smoke evidence is ambiguous for {entrant_id}: "
                 f"{smoke_problem}"
+            )
+        if smoke_transport_unknown:
+            raise SystemExit(
+                "qualification source has smoke transport-unknown requests: "
+                f"{entrant_id}"
             )
         for request_id, terminal in usage.items():
             if request_id in smoke_terminal_usage:
