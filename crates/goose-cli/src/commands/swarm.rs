@@ -18177,6 +18177,90 @@ fn research_target_correction_fingerprint(
     )
 }
 
+fn normalize_research_compiler_error(error: &str) -> String {
+    let normalized = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    let Some((before_column, column)) = normalized.rsplit_once(" column ") else {
+        return normalized;
+    };
+    if column.is_empty() || !column.chars().all(|value| value.is_ascii_digit()) {
+        return normalized;
+    }
+    let Some((message, line)) = before_column.rsplit_once(" at line ") else {
+        return normalized;
+    };
+    if line.is_empty() || !line.chars().all(|value| value.is_ascii_digit()) {
+        return normalized;
+    }
+    format!("{message} at line <serde-line> column <serde-column>")
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RepeatedResearchCorrection {
+    kind: &'static str,
+    first_correction: u64,
+    correction: u64,
+    state: String,
+}
+
+#[derive(Default)]
+struct ResearchCompilerCorrectionGuard {
+    invalid_states: HashMap<String, u64>,
+    compiler_errors: HashMap<String, u64>,
+    corrected_request_digests: HashMap<String, u64>,
+}
+
+impl ResearchCompilerCorrectionGuard {
+    fn observe_request(
+        &mut self,
+        correction: u64,
+        request_input_digest: &str,
+    ) -> Option<RepeatedResearchCorrection> {
+        if correction == 0 {
+            return None;
+        }
+        self.corrected_request_digests
+            .insert(request_input_digest.to_string(), correction)
+            .map(|first_correction| RepeatedResearchCorrection {
+                kind: "corrected-request-digest",
+                first_correction,
+                correction,
+                state: request_input_digest.to_string(),
+            })
+    }
+
+    fn observe_failure(
+        &mut self,
+        raw: &str,
+        target_ids: &[String],
+        rows_key: &str,
+        error: &str,
+        correction: u64,
+    ) -> Option<RepeatedResearchCorrection> {
+        let normalized_error = normalize_research_compiler_error(error);
+        if let Some(first_correction) = self
+            .compiler_errors
+            .insert(normalized_error.clone(), correction)
+        {
+            return Some(RepeatedResearchCorrection {
+                kind: "normalized-compiler-error",
+                first_correction,
+                correction,
+                state: normalized_error,
+            });
+        }
+        let invalid_state =
+            research_target_correction_fingerprint(raw, target_ids, rows_key, error);
+        self.invalid_states
+            .insert(invalid_state.clone(), correction)
+            .map(|first_correction| RepeatedResearchCorrection {
+                kind: "canonical-invalid-state",
+                first_correction,
+                correction,
+                state: invalid_state,
+            })
+    }
+}
+
 fn compile_research_closure_partition(
     raw: &str,
     partition: &ResearchClosurePartition,
@@ -24706,7 +24790,7 @@ impl GooseAgentDispatcher {
             .collect::<Vec<_>>();
         let system = "You are one host-bound member of a whole-target canonical authority jury. For every assigned canonical target, independently determine the COMPLETE zero/one/many set of material facts still missing after comparing its provisional row, the complete immutable requirement ledger across all sections, its engine registry of prior semantic gaps with attempted and exhausted sources, and its candidate-bound typed evidence. A complete row must cite exact canonical requirement ids and/or exact candidate-bound Found evidence ids whose engine-verified source quotes collectively settle it. An incomplete row must preserve every independent missing fact as one atomic gap; reuse a supplied prior_semantic_gap_id only for the same semantic fact, including a materially refined interrogative, otherwise leave it empty so the engine mints a new identity after two-cover consensus. Preserve engine-supplied attempted_source_ids and exhausted_source_ids exactly. A runnable gap must use kind library_docs, web, or codebase and a specific interrogative. For an unchanged interrogative select every unattempted, non-exhausted universal source plus only semantically relevant unattempted named documents. A materially refined interrogative may retry attempted, non-exhausted sources. The engine rejects exact query replay. unavailable means there is no remaining applicable route and every previously attempted admitted source is engine-proven exhausted; never infer it from a failed call or merely irrelevant Found evidence. Provisional output and model recollection are advisory, not authority. When exactly two prior_jury_assessments are supplied, you are the distinct-host adjudicator: select one entire prior whole-target assessment semantically verbatim and explain why; never synthesize a third target ledger. Return exactly one assessment for every assigned requirement_id. Do not inspect external sources, draft a plan, or create fill work. There is no gap, token, correction, or elapsed-time quota; finish the semantic target ledger, then call final_output.";
         let mut correction_feedback = String::new();
-        let mut correction_states = HashSet::new();
+        let mut correction_guard = ResearchCompilerCorrectionGuard::default();
         let mut correction = 0u64;
         loop {
             let variable_packet = serde_json::to_string_pretty(&serde_json::json!({
@@ -24723,6 +24807,30 @@ impl GooseAgentDispatcher {
                 format!("{immutable_prefix}\n\nVARIABLE WHOLE-TARGET PACKET:\n{variable_packet}");
             let authority_input_chars = user.chars().count();
             let request_input_digest = content_sha256(&user);
+            if let Some(repeat) =
+                correction_guard.observe_request(correction, &request_input_digest)
+            {
+                self.events.write_value(serde_json::json!({
+                    "event": "research_target_jury_correction_repeat_detected",
+                    "stage": stage,
+                    "cycle": cycle,
+                    "pass": pass,
+                    "partition_id": partition.partition_id,
+                    "model": lane.model_id,
+                    "physical_host_id": lane.physical_host_id,
+                    "repeat_kind": repeat.kind,
+                    "first_correction": repeat.first_correction,
+                    "correction": repeat.correction,
+                    "state": repeat.state,
+                    "provider_call_started": false,
+                    "retry_authority": "exclude-failed-physical-host-and-reschedule-distinct-host",
+                }));
+                bail!(
+                    "target authority packet `{}` repeated corrected request state on physical host `{}`",
+                    partition.partition_id,
+                    lane.physical_host_id
+                );
+            }
             let activity_key = format!(
                 "research-target-{}-{}-{}-{}",
                 stage, pass, partition.partition_id, correction
@@ -24800,16 +24908,32 @@ impl GooseAgentDispatcher {
                 }
                 Err(error) => {
                     let message = error.to_string();
-                    let state = research_target_correction_fingerprint(
+                    if let Some(repeat) = correction_guard.observe_failure(
                         &raw,
                         &target_ids,
                         "assessments",
                         &message,
-                    );
-                    if !correction_states.insert(state) {
+                        correction,
+                    ) {
+                        self.events.write_value(serde_json::json!({
+                            "event": "research_target_jury_correction_repeat_detected",
+                            "stage": stage,
+                            "cycle": cycle,
+                            "pass": pass,
+                            "partition_id": partition.partition_id,
+                            "model": lane.model_id,
+                            "physical_host_id": lane.physical_host_id,
+                            "repeat_kind": repeat.kind,
+                            "first_correction": repeat.first_correction,
+                            "correction": repeat.correction,
+                            "state": repeat.state,
+                            "provider_call_started": true,
+                            "retry_authority": "exclude-failed-physical-host-and-reschedule-distinct-host",
+                        }));
                         bail!(
-                            "target authority packet `{}` repeated a canonical invalid state after correction: {message}",
-                            partition.partition_id
+                            "target authority packet `{}` repeated compiler failure on physical host `{}` after correction: {message}",
+                            partition.partition_id,
+                            lane.physical_host_id
                         );
                     }
                     correction = correction.saturating_add(1);
@@ -25215,7 +25339,8 @@ impl GooseAgentDispatcher {
                         let stage = call_stage.clone();
                         async move {
                             let mut correction_feedback = String::new();
-                            let mut correction_states = HashSet::new();
+                            let mut correction_guard =
+                                ResearchCompilerCorrectionGuard::default();
                             let mut correction = 0u64;
                             loop {
                                 let user = format!(
@@ -25224,6 +25349,28 @@ impl GooseAgentDispatcher {
                                     packet_json,
                                     correction_feedback
                                 );
+                                let request_input_digest = content_sha256(&user);
+                                if let Some(repeat) = correction_guard
+                                    .observe_request(correction, &request_input_digest)
+                                {
+                                    me.events.write_value(serde_json::json!({
+                                        "event": "research_target_citation_correction_repeat_detected",
+                                        "stage": stage,
+                                        "requirement_ids": target_ids.as_ref(),
+                                        "model": lane.model_id,
+                                        "physical_host_id": lane.physical_host_id,
+                                        "repeat_kind": repeat.kind,
+                                        "first_correction": repeat.first_correction,
+                                        "correction": repeat.correction,
+                                        "state": repeat.state,
+                                        "provider_call_started": false,
+                                        "retry_authority": "exclude-failed-physical-host-and-reschedule-independent-verifier",
+                                    }));
+                                    bail!(
+                                        "target citation audit repeated corrected request state on physical host `{}`",
+                                        lane.physical_host_id
+                                    );
+                                }
                                 let activity_key = format!(
                                     "research-target-citation-{}-{}-{}",
                                     stage, lane.physical_host_id, correction
@@ -25267,14 +25414,30 @@ impl GooseAgentDispatcher {
                                     Ok(compiled) => return Ok(compiled),
                                     Err(error) => {
                                         let message = error.to_string();
-                                        let state = research_target_correction_fingerprint(
+                                        if let Some(repeat) = correction_guard.observe_failure(
                                             &raw,
                                             target_ids.as_ref(),
                                             "verdicts",
                                             &message,
-                                        );
-                                        if !correction_states.insert(state) {
-                                            return Err(error);
+                                            correction,
+                                        ) {
+                                            me.events.write_value(serde_json::json!({
+                                                "event": "research_target_citation_correction_repeat_detected",
+                                                "stage": stage,
+                                                "requirement_ids": target_ids.as_ref(),
+                                                "model": lane.model_id,
+                                                "physical_host_id": lane.physical_host_id,
+                                                "repeat_kind": repeat.kind,
+                                                "first_correction": repeat.first_correction,
+                                                "correction": repeat.correction,
+                                                "state": repeat.state,
+                                                "provider_call_started": true,
+                                                "retry_authority": "exclude-failed-physical-host-and-reschedule-independent-verifier",
+                                            }));
+                                            bail!(
+                                                "target citation audit repeated compiler failure on physical host `{}` after correction: {message}",
+                                                lane.physical_host_id
+                                            );
                                         }
                                         correction = correction.saturating_add(1);
                                         correction_feedback = message;
@@ -34089,6 +34252,298 @@ mod fan_order_tests {
             ledger_corrections: 0,
             assessments: Vec::new(),
         }
+    }
+
+    fn live_repeated_partition_error() -> &'static str {
+        "target authority ledger `target-section-runtime-alpha` did not complete partition `target-section-runtime-alpha`"
+    }
+
+    fn changed_invalid_target_ledgers() -> [&'static str; 2] {
+        [
+            r#"{"complete":false,"assessments":[]}"#,
+            r#"{"complete":false,"assessments":[{"requirement_id":"REQ-a","complete":false,"authority_requirement_ids":[],"evidence_ids":[],"gaps":[],"rationale":"changed raw shape"}]}"#,
+        ]
+    }
+
+    #[test]
+    fn compiler_correction_guard_rejects_live_error_after_changed_raw_output() {
+        let mut guard = ResearchCompilerCorrectionGuard::default();
+        let target_ids = vec!["REQ-a".to_string()];
+        let raw = changed_invalid_target_ledgers();
+        assert!(guard.observe_request(0, "initial-request").is_none());
+        assert!(guard
+            .observe_failure(
+                raw[0],
+                &target_ids,
+                "assessments",
+                live_repeated_partition_error(),
+                0,
+            )
+            .is_none());
+        assert!(guard
+            .observe_request(1, "corrected-request-runtime-alpha")
+            .is_none());
+        let repeat = guard
+            .observe_failure(
+                raw[1],
+                &target_ids,
+                "assessments",
+                live_repeated_partition_error(),
+                1,
+            )
+            .expect("the complete normalized compiler error repeated");
+        assert_eq!(repeat.kind, "normalized-compiler-error");
+        assert_eq!(repeat.first_correction, 0);
+        assert_eq!(repeat.correction, 1);
+        assert_eq!(repeat.state, live_repeated_partition_error());
+    }
+
+    #[test]
+    fn compiler_correction_guard_preserves_ids_and_rejects_request_cycles() {
+        let mut guard = ResearchCompilerCorrectionGuard::default();
+        let target_ids = vec!["REQ-a".to_string(), "REQ-b".to_string()];
+        assert!(guard
+            .observe_failure(
+                r#"{"complete":false,"assessments":[]}"#,
+                &target_ids,
+                "assessments",
+                "target authority ledger `partition-a` did not complete partition `partition-a`",
+                0,
+            )
+            .is_none());
+        assert!(guard
+            .observe_failure(
+                r#"{"complete":false,"assessments":[{"requirement_id":"REQ-b"}]}"#,
+                &target_ids,
+                "assessments",
+                "target authority ledger `partition-b` did not complete partition `partition-b`",
+                1,
+            )
+            .is_none());
+        assert!(guard.observe_request(1, "digest-a").is_none());
+        assert!(guard.observe_request(2, "digest-b").is_none());
+        let repeat = guard
+            .observe_request(3, "digest-a")
+            .expect("an exact corrected prompt cycle cannot reach a provider");
+        assert_eq!(repeat.kind, "corrected-request-digest");
+        assert_eq!(repeat.first_correction, 1);
+        assert_eq!(repeat.correction, 3);
+        assert_eq!(repeat.state, "digest-a");
+    }
+
+    #[test]
+    fn compiler_correction_guard_normalizes_only_serde_coordinates() {
+        let target_ids = vec!["REQ-runtime-alpha".to_string()];
+        let mut repeated = ResearchCompilerCorrectionGuard::default();
+        assert!(repeated
+            .observe_failure(
+                "{invalid-alpha",
+                &target_ids,
+                "assessments",
+                "target authority ledger was not valid typed JSON: expected value at line 4 column 8",
+                0,
+            )
+            .is_none());
+        let repeat = repeated
+            .observe_failure(
+                "[invalid-beta",
+                &target_ids,
+                "assessments",
+                "target authority ledger was not valid typed JSON: expected value at line 17 column 3",
+                1,
+            )
+            .expect("volatile serde coordinates must not hide the same compiler failure");
+        assert_eq!(repeat.kind, "normalized-compiler-error");
+        assert_eq!(
+            repeat.state,
+            "target authority ledger was not valid typed JSON: expected value at line <serde-line> column <serde-column>"
+        );
+
+        let mut distinct = ResearchCompilerCorrectionGuard::default();
+        assert!(distinct
+            .observe_failure(
+                "{invalid-alpha",
+                &target_ids,
+                "assessments",
+                "target authority ledger was not valid typed JSON: expected value at line 4 column 8",
+                0,
+            )
+            .is_none());
+        assert!(distinct
+            .observe_failure(
+                "[invalid-beta",
+                &target_ids,
+                "assessments",
+                "target authority ledger was not valid typed JSON: trailing characters at line 17 column 3",
+                1,
+            )
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn jury_compiler_repeat_excludes_failed_and_successful_sibling_hosts() {
+        let scheduler = ResearchHostScheduler::new(research_orchestration_test_lanes(&[
+            "successful-sibling-a",
+            "repeating-b",
+            "replacement-c",
+        ]));
+        let provider_calls = Arc::new(Mutex::new(Vec::new()));
+        let failures = Arc::new(Mutex::new(Vec::new()));
+        let selected = run_research_host_failover(
+            &scheduler,
+            vec!["lane-1".to_string(), "lane-2".to_string()],
+            1,
+            1,
+            "jury-2:target-section-runtime-alpha".to_string(),
+            {
+                let provider_calls = provider_calls.clone();
+                move |lane, _attempt| {
+                    let provider_calls = provider_calls.clone();
+                    async move {
+                        if lane.physical_host_id == "replacement-c" {
+                            provider_calls.lock().unwrap().push((
+                                lane.physical_host_id.clone(),
+                                0,
+                                "fresh".to_string(),
+                            ));
+                            return Ok(lane.physical_host_id);
+                        }
+                        let mut guard = ResearchCompilerCorrectionGuard::default();
+                        let target_ids = vec!["REQ-a".to_string()];
+                        for (correction, (digest, raw)) in [
+                            ("initial", changed_invalid_target_ledgers()[0]),
+                            (
+                                "corrected-runtime-alpha",
+                                changed_invalid_target_ledgers()[1],
+                            ),
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            if let Some(repeat) = guard.observe_request(correction as u64, digest) {
+                                bail!("unexpected request repeat: {}", repeat.state);
+                            }
+                            provider_calls.lock().unwrap().push((
+                                lane.physical_host_id.clone(),
+                                correction,
+                                digest.to_string(),
+                            ));
+                            if let Some(repeat) = guard.observe_failure(
+                                raw,
+                                &target_ids,
+                                "assessments",
+                                live_repeated_partition_error(),
+                                correction as u64,
+                            ) {
+                                bail!("{}", repeat.state);
+                            }
+                        }
+                        unreachable!("the repeated compiler error must fail the physical host")
+                    }
+                }
+            },
+            {
+                let failures = failures.clone();
+                move |lane, attempt, _, failed_tokens| {
+                    failures.lock().unwrap().push((
+                        lane.physical_host_id.clone(),
+                        attempt,
+                        failed_tokens.to_vec(),
+                    ));
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(selected, "replacement-c");
+        assert_eq!(
+            provider_calls.lock().unwrap().as_slice(),
+            &[
+                ("repeating-b".to_string(), 0, "initial".to_string()),
+                (
+                    "repeating-b".to_string(),
+                    1,
+                    "corrected-runtime-alpha".to_string(),
+                ),
+                ("replacement-c".to_string(), 0, "fresh".to_string()),
+            ]
+        );
+        assert!(provider_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(host, _, _)| host != "successful-sibling-a"));
+        assert_eq!(
+            failures.lock().unwrap().as_slice(),
+            &[("repeating-b".to_string(), 1, vec!["lane-1".to_string()])]
+        );
+    }
+
+    #[tokio::test]
+    async fn citation_compiler_repeat_fails_over_between_independent_verifiers() {
+        let scheduler = ResearchHostScheduler::new(research_orchestration_test_lanes(&[
+            "author-a",
+            "endorser-b",
+            "verifier-c",
+            "verifier-d",
+        ]));
+        let provider_calls = Arc::new(Mutex::new(Vec::new()));
+        let selected = run_research_host_failover(
+            &scheduler,
+            vec!["lane-2".to_string(), "lane-3".to_string()],
+            1,
+            3,
+            "citation-repeat".to_string(),
+            {
+                let provider_calls = provider_calls.clone();
+                move |lane, _attempt| {
+                    let provider_calls = provider_calls.clone();
+                    async move {
+                        provider_calls
+                            .lock()
+                            .unwrap()
+                            .push(lane.physical_host_id.clone());
+                        if lane.physical_host_id == "verifier-d" {
+                            return Ok(lane.physical_host_id);
+                        }
+                        let mut guard = ResearchCompilerCorrectionGuard::default();
+                        let target_ids = vec!["REQ-a".to_string()];
+                        assert!(guard
+                            .observe_failure(
+                                changed_invalid_target_ledgers()[0],
+                                &target_ids,
+                                "verdicts",
+                                "target citation audit omitted verdict `REQ-a`",
+                                0,
+                            )
+                            .is_none());
+                        let repeat = guard
+                            .observe_failure(
+                                changed_invalid_target_ledgers()[1],
+                                &target_ids,
+                                "verdicts",
+                                "target citation audit omitted verdict `REQ-a`",
+                                1,
+                            )
+                            .expect("citation compiler failure repeated on verifier-c");
+                        bail!("{}", repeat.state)
+                    }
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(selected, "verifier-d");
+        assert_eq!(
+            provider_calls.lock().unwrap().as_slice(),
+            &["verifier-c".to_string(), "verifier-d".to_string()]
+        );
+        assert!(provider_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|host| host != "author-a" && host != "endorser-b"));
     }
 
     #[tokio::test]
@@ -54680,6 +55135,7 @@ mod pre_scheduler_semantic_runtime_tests {
     use goose_swarm::VerifiedPhysicalLane;
     use rmcp::model::{CallToolRequestParams, Tool};
     use rmcp::object;
+    use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
     use std::time::Duration;
     use tempfile::TempDir;
@@ -54918,6 +55374,106 @@ mod pre_scheduler_semantic_runtime_tests {
         }
     }
 
+    struct ResearchCorrectionRuntimeProvider {
+        scripts: Mutex<HashMap<String, VecDeque<serde_json::Value>>>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl ResearchCorrectionRuntimeProvider {
+        fn new(scripts: HashMap<String, Vec<serde_json::Value>>) -> Self {
+            Self {
+                scripts: Mutex::new(
+                    scripts
+                        .into_iter()
+                        .map(|(model, outputs)| (model, outputs.into()))
+                        .collect(),
+                ),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn call_count(&self, model: &str) -> usize {
+            self.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|called| called.as_str() == model)
+                .count()
+        }
+
+        fn finished_final_output(model: &str, value: serde_json::Value) -> SingleAttemptStream {
+            let arguments = value
+                .as_object()
+                .cloned()
+                .expect("research runtime script must contain a JSON object");
+            let tool_call = CallToolRequestParams::new(FINAL_OUTPUT_TOOL).with_arguments(arguments);
+            let message = Message::assistant()
+                .with_tool_request(format!("research-correction-{model}"), Ok(tool_call));
+            let usage = ProviderUsage::new(model.to_string(), Usage::default());
+            SingleAttemptStream::finished(Box::pin(stream::once(async move {
+                Ok((Some(message), Some(usage)))
+            })))
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ResearchCorrectionRuntimeProvider {
+        fn get_name(&self) -> &str {
+            "research-correction-runtime-scripted"
+        }
+
+        fn transport_identity(&self, _model_name: &str) -> Option<String> {
+            Some(VERIFIED_TRANSPORT.to_string())
+        }
+
+        fn supports_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn single_attempt_failure_provenance(
+            &self,
+            _error: &ProviderError,
+        ) -> SingleAttemptFailureProvenance {
+            SingleAttemptFailureProvenance::Unresolved
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Err(ProviderError::ExecutionError(
+                "research correction harness must use terminal-proven single-attempt streaming"
+                    .to_string(),
+            ))
+        }
+
+        async fn stream_once_with_terminal_proof(
+            &self,
+            model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<SingleAttemptStream, ProviderError> {
+            let model = model_config.model_name.clone();
+            self.calls.lock().unwrap().push(model.clone());
+            let output = self
+                .scripts
+                .lock()
+                .unwrap()
+                .get_mut(&model)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or_else(|| panic!("unexpected additional provider call for `{model}`"));
+            Ok(Self::finished_final_output(&model, output))
+        }
+    }
+
     #[async_trait]
     impl Provider for RuntimeScriptedProvider {
         fn get_name(&self) -> &str {
@@ -55139,6 +55695,359 @@ mod pre_scheduler_semantic_runtime_tests {
             provider,
             journal_path,
         }
+    }
+
+    struct ResearchCorrectionRuntimeHarness {
+        _working_dir: TempDir,
+        dispatcher: Arc<GooseAgentDispatcher>,
+        control: PhysicalAdmissionControl,
+        sink: Arc<RuntimeRecordingSink>,
+        provider: Arc<ResearchCorrectionRuntimeProvider>,
+        runtime: Arc<ResearchAuthorityRuntime>,
+    }
+
+    async fn research_correction_runtime_harness(
+        lanes: &[(&str, &str, &str)],
+        scripts: HashMap<String, Vec<serde_json::Value>>,
+    ) -> ResearchCorrectionRuntimeHarness {
+        let working_dir = tempfile::tempdir().unwrap();
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let provider = Arc::new(ResearchCorrectionRuntimeProvider::new(scripts));
+        let planner_model = lanes.first().expect("research runtime needs a lane").1;
+        let mut dispatcher = GooseAgentDispatcher::new(
+            working_dir.path().to_path_buf(),
+            sink.clone(),
+            0,
+            4,
+            Vec::new(),
+            HashMap::new(),
+            planner_model.to_string(),
+            1,
+            1,
+            false,
+            SamplingParams::default(),
+            false,
+            false,
+            None,
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+        dispatcher.provider = provider.clone();
+        dispatcher.activity_sink_health.activate().unwrap();
+        let dispatcher = Arc::new(dispatcher);
+        let snapshot = PhysicalFleetSnapshot::new(
+            "research-correction-runtime-snapshot",
+            lanes
+                .iter()
+                .map(|(token, model, host)| lane(&format!("device-{token}"), model, host))
+                .collect(),
+        )
+        .unwrap();
+        let journal = Arc::new(
+            DurableProviderLifecycleJournal::open(
+                working_dir.path(),
+                "research-correction-runtime-run",
+                &snapshot.snapshot_id,
+            )
+            .unwrap(),
+        );
+        let control = PhysicalAdmissionControl::new_with_journal(
+            "research-correction-runtime-control",
+            snapshot.clone(),
+            sink.clone(),
+            journal,
+        )
+        .unwrap();
+        dispatcher.set_pre_scheduler_semantic(Some(Arc::new(PreSchedulerSemanticRuntime::new(
+            control.clone(),
+            snapshot,
+            "research-correction-runtime-run".to_string(),
+            Arc::downgrade(&dispatcher),
+        ))));
+        let research_lanes = lanes
+            .iter()
+            .map(|(token, model, host)| ResearchPhysicalLane {
+                token: (*token).to_string(),
+                model_id: (*model).to_string(),
+                physical_host_id: (*host).to_string(),
+            })
+            .collect::<Vec<_>>();
+        let runtime = Arc::new(ResearchAuthorityRuntime {
+            stage: "research-correction-runtime".to_string(),
+            cycle: Some(1),
+            requirements: Arc::new(Vec::new()),
+            sources: Arc::new(Vec::new()),
+            host_scheduler: ResearchHostScheduler::new(research_lanes.clone()),
+            lanes: Arc::new(research_lanes),
+        });
+        ResearchCorrectionRuntimeHarness {
+            _working_dir: working_dir,
+            dispatcher,
+            control,
+            sink,
+            provider,
+            runtime,
+        }
+    }
+
+    fn correction_runtime_candidate(requirement_id: &str) -> ResearchClosureCandidate {
+        ResearchClosureCandidate {
+            requirement_id: requirement_id.to_string(),
+            authored_section: "runtime-section".to_string(),
+            provisional_state: ResearchCoverageState::Unresolved,
+            provisional_rationale: "Runtime target needs an authority decision.".to_string(),
+            provisional_evidence_ids: Vec::new(),
+            prior_gaps: Vec::new(),
+            bound_evidence: Vec::new(),
+            prior_jury_assessments: Vec::new(),
+            prior_jury_physical_hosts: Vec::new(),
+            citation_rejection: String::new(),
+        }
+    }
+
+    fn correction_runtime_requirement(requirement_id: &str) -> RequirementRecord {
+        RequirementRecord {
+            id: requirement_id.to_string(),
+            section: "runtime-section".to_string(),
+            quote: "The runtime target must be satisfied.".to_string(),
+        }
+    }
+
+    fn correction_runtime_assessment(requirement_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "requirement_id": requirement_id,
+            "complete": true,
+            "authority_requirement_ids": [requirement_id],
+            "evidence_ids": [],
+            "gaps": [],
+            "rationale": "The exact canonical requirement settles this target."
+        })
+    }
+
+    fn invalid_jury_runtime_outputs(
+        partition_id: &str,
+        requirement_id: &str,
+    ) -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({
+                "partition_id": partition_id,
+                "complete": false,
+                "assessments": []
+            }),
+            serde_json::json!({
+                "partition_id": partition_id,
+                "complete": false,
+                "assessments": [correction_runtime_assessment(requirement_id)]
+            }),
+        ]
+    }
+
+    fn valid_jury_runtime_output(partition_id: &str, requirement_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "partition_id": partition_id,
+            "complete": true,
+            "assessments": [correction_runtime_assessment(requirement_id)]
+        })
+    }
+
+    fn invalid_citation_runtime_outputs(requirement_id: &str) -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({"complete": false, "verdicts": []}),
+            serde_json::json!({
+                "complete": false,
+                "verdicts": [{
+                    "requirement_id": requirement_id,
+                    "supported": false,
+                    "rationale": "The second raw output has a materially different shape."
+                }]
+            }),
+        ]
+    }
+
+    fn valid_citation_runtime_output(requirement_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "complete": true,
+            "verdicts": [{
+                "requirement_id": requirement_id,
+                "supported": true,
+                "rationale": "The canonical requirement entails the decision."
+            }]
+        })
+    }
+
+    #[tokio::test]
+    async fn production_jury_repeat_fails_over_without_third_identical_prompt() {
+        const PARTITION: &str = "target-section-runtime-alpha";
+        const REQUIREMENT: &str = "REQ-runtime-jury";
+        const MODEL_A: &str = "runtime-jury-model-a";
+        const MODEL_B: &str = "runtime-jury-model-b";
+        const MODEL_C: &str = "runtime-jury-model-c";
+        const HOST_A: &str = "runtime-jury-host-a";
+        const HOST_B: &str = "runtime-jury-host-b";
+        const HOST_C: &str = "runtime-jury-host-c";
+        let mut scripts = HashMap::new();
+        scripts.insert(
+            MODEL_B.to_string(),
+            invalid_jury_runtime_outputs(PARTITION, REQUIREMENT),
+        );
+        scripts.insert(
+            MODEL_C.to_string(),
+            vec![valid_jury_runtime_output(PARTITION, REQUIREMENT)],
+        );
+        let mut harness = research_correction_runtime_harness(
+            &[
+                ("jury-lane-a", MODEL_A, HOST_A),
+                ("jury-lane-b", MODEL_B, HOST_B),
+                ("jury-lane-c", MODEL_C, HOST_C),
+            ],
+            scripts,
+        )
+        .await;
+        let requirements = Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements = requirements;
+        let partition = ResearchClosurePartition {
+            partition_id: PARTITION.to_string(),
+            candidates: vec![correction_runtime_candidate(REQUIREMENT)],
+        };
+        let claimed_hosts = Arc::new(tokio::sync::Mutex::new(HashSet::from([HOST_A.to_string()])));
+        let result = harness
+            .dispatcher
+            .run_research_closure_partition_pair_unit(
+                harness.runtime.as_ref(),
+                PairedRetryingFanStage::Second,
+                partition,
+                claimed_hosts,
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .expect("jury failover returned a terminal error")
+            .expect("jury failover retired without a terminal sibling failure");
+        assert_eq!(result.physical_host_id, HOST_C);
+        assert_eq!(harness.provider.call_count(MODEL_A), 0);
+        assert_eq!(harness.provider.call_count(MODEL_B), 2);
+        assert_eq!(harness.provider.call_count(MODEL_C), 1);
+        let events = harness.sink.values();
+        let repeat = events
+            .iter()
+            .find(|event| event["event"] == "research_target_jury_correction_repeat_detected")
+            .expect("production jury did not detect the normalized compiler repeat");
+        assert_eq!(repeat["physical_host_id"], HOST_B);
+        assert_eq!(repeat["repeat_kind"], "normalized-compiler-error");
+        assert_eq!(repeat["provider_call_started"], true);
+        assert_eq!(repeat["first_correction"], 0);
+        assert_eq!(repeat["correction"], 1);
+        let started = events
+            .iter()
+            .filter(|event| {
+                event["event"] == "research_target_jury_packet_started"
+                    && event["physical_host_id"] == HOST_B
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(started.len(), 2, "host B must not receive a third prompt");
+        let reassigned = events
+            .iter()
+            .find(|event| {
+                event["event"] == "research_target_semantic_unit_rescheduled"
+                    && event["failed_physical_host_id"] == HOST_B
+            })
+            .expect("production jury did not exclude the repeated-error host");
+        assert!(reassigned["paired_claimed_hosts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|host| host == HOST_A));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("jury correction lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_citation_repeat_fails_over_and_drains_lifecycle() {
+        const REQUIREMENT: &str = "REQ-runtime-citation";
+        const MODEL_A: &str = "runtime-citation-model-a";
+        const MODEL_B: &str = "runtime-citation-model-b";
+        const MODEL_C: &str = "runtime-citation-model-c";
+        const MODEL_D: &str = "runtime-citation-model-d";
+        const HOST_A: &str = "runtime-citation-host-a";
+        const HOST_B: &str = "runtime-citation-host-b";
+        const HOST_C: &str = "runtime-citation-host-c";
+        const HOST_D: &str = "runtime-citation-host-d";
+        let mut scripts = HashMap::new();
+        scripts.insert(
+            MODEL_C.to_string(),
+            invalid_citation_runtime_outputs(REQUIREMENT),
+        );
+        scripts.insert(
+            MODEL_D.to_string(),
+            vec![valid_citation_runtime_output(REQUIREMENT)],
+        );
+        let mut harness = research_correction_runtime_harness(
+            &[
+                ("citation-lane-a", MODEL_A, HOST_A),
+                ("citation-lane-b", MODEL_B, HOST_B),
+                ("citation-lane-c", MODEL_C, HOST_C),
+                ("citation-lane-d", MODEL_D, HOST_D),
+            ],
+            scripts,
+        )
+        .await;
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements =
+            Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        let candidate = correction_runtime_candidate(REQUIREMENT);
+        let decision = ResearchClosureAssessment {
+            requirement_id: REQUIREMENT.to_string(),
+            complete: true,
+            authority_requirement_ids: vec![REQUIREMENT.to_string()],
+            evidence_ids: Vec::new(),
+            gaps: Vec::new(),
+            rationale: "The canonical requirement settles this target.".to_string(),
+        };
+        let decision_sources = HashMap::from([(
+            REQUIREMENT.to_string(),
+            ResearchAuthorityDecisionSources {
+                models: vec![MODEL_A.to_string(), MODEL_B.to_string()],
+                physical_host_ids: vec![HOST_A.to_string(), HOST_B.to_string()],
+            },
+        )]);
+        let compiled = harness
+            .dispatcher
+            .run_research_target_citation_audit(
+                harness.runtime.as_ref(),
+                &[candidate],
+                &[decision],
+                &decision_sources,
+            )
+            .await
+            .expect("citation verifier did not fail over after a repeated compiler error");
+        assert_eq!(compiled.len(), 1);
+        assert_eq!(compiled[0].physical_host_id, HOST_D);
+        assert!(compiled[0].supported);
+        assert_eq!(harness.provider.call_count(MODEL_A), 0);
+        assert_eq!(harness.provider.call_count(MODEL_B), 0);
+        assert_eq!(harness.provider.call_count(MODEL_C), 2);
+        assert_eq!(harness.provider.call_count(MODEL_D), 1);
+        let events = harness.sink.values();
+        let repeat = events
+            .iter()
+            .find(|event| event["event"] == "research_target_citation_correction_repeat_detected")
+            .expect("production citation path did not detect the normalized compiler repeat");
+        assert_eq!(repeat["physical_host_id"], HOST_C);
+        assert_eq!(repeat["repeat_kind"], "normalized-compiler-error");
+        assert_eq!(repeat["provider_call_started"], true);
+        assert!(events.iter().any(|event| {
+            event["event"] == "research_target_citation_reassigned"
+                && event["failed_physical_host_id"] == HOST_C
+        }));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("citation correction lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
     async fn run_source(
