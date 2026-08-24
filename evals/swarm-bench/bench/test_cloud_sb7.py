@@ -9523,10 +9523,16 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(receipt["summary"]["calls"], 1)
             self.assertEqual(receipt["summary"]["prompt_tokens"], 2)
             self.assertEqual(receipt["summary"]["completion_tokens"], 3)
-            self.assertEqual(row_payload["ttft_ms"], 1000)
-            self.assertEqual(row_payload["total_ms"], 2500)
+            self.assertIsNone(row_payload["ttft_ms"])
+            self.assertIsNone(row_payload["total_ms"])
             self.assertEqual(row_payload["request_id"], request_id)
             self.assertEqual(receipt["raw_engine_telemetry"]["bytes"], 0)
+            self.assertFalse(
+                receipt["raw_engine_telemetry"][
+                    "reconciles_lifecycle_and_ledger"
+                ]
+            )
+            self.assertIsNone(receipt["timing_source"])
             self.assertEqual(raw_telemetry.read_bytes(), b"")
             sealed = cloud_sb7.score_telemetry_evidence_seal(
                 score_tree.parent,
@@ -9539,6 +9545,35 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 },
             )
             self.assertEqual(sealed["telemetry_sha256"], receipt["telemetry_sha256"])
+            engine_payload = (
+                json.dumps(
+                    {
+                        "t": 1,
+                        "model": row["model"],
+                        "node": row["provider"],
+                        "usage": True,
+                        "prompt_tokens": 2,
+                        "completion_tokens": 3,
+                        "ttft_ms": 100,
+                        "total_ms": 300,
+                    }
+                )
+                + "\n"
+            )
+            raw_telemetry.write_text(engine_payload)
+            second_tree = cloud_sb7.clone_for_score(root, entrant_id, 2)
+            second_receipt = cloud_sb7.prepare_score_telemetry_evidence(
+                root, entrant_id, campaign, cloud_sb7.read_state(root, entrant_id), second_tree
+            )
+            self.assertEqual(
+                (second_tree / ".swarm/telemetry.jsonl").read_text(), engine_payload
+            )
+            self.assertEqual(second_receipt["timing_source"], "raw_engine_telemetry")
+            self.assertTrue(
+                second_receipt["raw_engine_telemetry"][
+                    "reconciles_lifecycle_and_ledger"
+                ]
+            )
             rebuilt.write_text(rebuilt.read_text() + "{}\n")
             with self.assertRaisesRegex(
                 SystemExit, "score telemetry payload differs from its receipt"
