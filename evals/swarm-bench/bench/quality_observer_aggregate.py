@@ -567,6 +567,43 @@ def latest_open_join(ticks: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def latest_terminal_integrity(ticks: list[dict[str, Any]]) -> dict[str, Any]:
+    latest = ticks[-1]
+    integrity = (
+        latest.get("tool_and_compiler_integrity")
+        if isinstance(latest.get("tool_and_compiler_integrity"), dict)
+        else {}
+    )
+    lifecycle = latest.get("lifecycle") if isinstance(latest.get("lifecycle"), dict) else {}
+    active = latest.get("active_calls") if isinstance(latest.get("active_calls"), list) else []
+    activity_files = integrity.get("activity_files")
+    terminal = lifecycle.get("terminal")
+    completed = (
+        activity_files - len(active) if isinstance(activity_files, int) else None
+    )
+    violations = {
+        key: integrity.get(key) if isinstance(integrity.get(key), int) else None
+        for key in (
+            "done_missing_final_output",
+            "done_duplicate_final_output",
+            "errors",
+            "malformed",
+        )
+    }
+    complete_proof = (
+        isinstance(completed, int)
+        and isinstance(terminal, int)
+        and completed == terminal
+        and all(value == 0 for value in violations.values())
+    )
+    return {
+        "terminal_count": terminal if isinstance(terminal, int) else None,
+        "completed_activity_count": completed,
+        **violations,
+        "all_terminals_accepted": complete_proof,
+    }
+
+
 def build_morning_aggregate(
     ticks: list[dict[str, Any]],
     source: dict[str, Any],
@@ -663,6 +700,7 @@ def build_morning_aggregate(
             "rejected": len(rejected_terminals),
             "unknown": len(unknown_terminals),
             "final_output_cardinality_violations": len(cardinality_violations),
+            "latest_complete_integrity": latest_terminal_integrity(morning_ticks),
             "recent_events": terminals[-20:],
         },
         "corrections": {
