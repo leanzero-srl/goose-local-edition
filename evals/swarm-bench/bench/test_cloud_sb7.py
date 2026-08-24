@@ -1848,6 +1848,91 @@ class CloudSb7HarnessTest(unittest.TestCase):
             "ledger_path": ledger_path,
         }
 
+    def promote_to_six_terminal_one_carried_fixture(
+        self, fixture: dict[str, object]
+    ) -> list[str]:
+        root = Path(str(fixture["root"]))
+        entrant_id = str(fixture["entrant_id"])
+        carried_id = str(fixture["request_id"])
+        row = fixture["row"]
+        assert isinstance(row, dict)
+        state = cloud_sb7.read_state(root, entrant_id)
+        lifecycle_path = Path(str(state["provider_lifecycle"]))
+        terminal_ids = [f"settled-before-carry-{index}" for index in range(6)]
+        events = []
+        for request_id in terminal_ids:
+            events.extend(
+                self.provider_lifecycle_events(
+                    row,
+                    [
+                        "queued",
+                        "admitted",
+                        "first_item",
+                        "usage_reported",
+                        "provider_terminal",
+                    ],
+                    request_id=request_id,
+                )
+            )
+        events.extend(
+            self.provider_lifecycle_events(
+                row,
+                ["queued", "admitted", "first_item"],
+                request_id=carried_id,
+            )
+        )
+        lifecycle_path.write_text("\n".join(map(json.dumps, events)) + "\n")
+        campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+        config = cloud_sb7.load_json(Path(str(campaign["budget_config"])))
+        profile = cloud_sb7.budget_model_profile(
+            config, str(row["provider"]), str(row["model"])
+        )
+        assert profile is not None
+        charged = cloud_sb7.budget_price(profile, 2, 3)
+        reserved = cloud_sb7.budget_price(
+            profile,
+            int(profile["context_limit"]),
+            int(profile["max_output_tokens"]),
+        )
+        assert charged is not None and reserved is not None
+        ledger_path = Path(str(fixture["ledger_path"]))
+        ledger = cloud_sb7.load_json(ledger_path)
+        settled_at = max(
+            [int(item["settled_at_unix_ms"]) for item in ledger["settled"]],
+            default=0,
+        )
+        for index, request_id in enumerate(terminal_ids, start=1):
+            ledger["settled"].append(
+                {
+                    "request_id": request_id,
+                    "provider": row["provider"],
+                    "model": row["model"],
+                    "reported_model": row["model"],
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                    "charged_upper_bound_usd": charged,
+                    "reserved_usd": reserved,
+                    "settled_at_unix_ms": settled_at + index,
+                }
+            )
+        ledger["spent_upper_bound"] += charged * len(terminal_ids)
+        ledger["provider_spent_upper_bound"][str(row["provider"])] += (
+            charged * len(terminal_ids)
+        )
+        cloud_sb7.atomic_json(ledger_path, ledger)
+        cloud_sb7.update_state(
+            root,
+            entrant_id,
+            admitted_requests=7,
+            provider_terminal_requests=6,
+            lifecycle_events=len(events),
+            lifecycle_malformed_lines=0,
+            lifecycle_transition_errors=[],
+            lifecycle_ambiguous_request_ids=[carried_id],
+        )
+        return terminal_ids
+
     def make_dead_empty_reconciliation_fixture(
         self, root: Path
     ) -> dict[str, object]:
@@ -3236,6 +3321,130 @@ class CloudSb7HarnessTest(unittest.TestCase):
             cloud_sb7.update_campaign(root, status="INITIALIZED", failure=None)
             with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
                 self.assertIsNone(cloud_sb7.manager_restart_mismatch(root))
+
+    def test_transport_successor_restart_ignores_only_its_sealed_carried_lifecycle(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            self.promote_to_six_terminal_one_carried_fixture(fixture)
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="admitted transport is unresolved"
+            )
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+            cloud_sb7.adjudicate_transport_unknown_successor(root, entrant_id)
+            cloud_sb7.update_campaign(root, status="INITIALIZED", failure=None)
+
+            with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
+                self.assertIsNone(cloud_sb7.manager_restart_mismatch(root))
+
+            state = cloud_sb7.read_state(root, entrant_id)
+            lifecycle_path = Path(str(state["provider_lifecycle"]))
+            extra_events = self.provider_lifecycle_events(
+                fixture["row"],
+                ["queued", "admitted", "first_item"],
+                request_id="not-sealed-by-the-successor",
+            )
+            with lifecycle_path.open("a") as handle:
+                for event in extra_events:
+                    handle.write(json.dumps(event) + "\n")
+            with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
+                mismatch = cloud_sb7.manager_restart_mismatch(root)
+            self.assertIn("not pre-admission restart-safe", mismatch or "")
+            self.assertIn("8 provider request(s) admitted", mismatch or "")
+
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            self.promote_to_six_terminal_one_carried_fixture(fixture)
+            cloud_sb7.update_campaign(root, status="INITIALIZED", failure=None)
+
+            with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
+                mismatch = cloud_sb7.manager_restart_mismatch(root)
+            self.assertIn("not pre-admission restart-safe", mismatch or "")
+            self.assertIn("7 provider request(s) admitted", mismatch or "")
+
+    def test_resume_recovers_only_prelaunch_transport_successor_monitor_damage(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            ledger_path = Path(str(fixture["ledger_path"]))
+            self.promote_to_six_terminal_one_carried_fixture(fixture)
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="admitted transport is unresolved"
+            )
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+            cloud_sb7.adjudicate_transport_unknown_successor(root, entrant_id)
+            ledger_before = ledger_path.read_bytes()
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="INCOMPLETE",
+                failure=(
+                    f"monitor lease lost: {entrant_id} is not pre-admission restart-safe: "
+                    "7 provider request(s) admitted"
+                ),
+                admitted_requests=7,
+                provider_terminal_requests=6,
+                lifecycle_events=33,
+                lifecycle_ambiguous_request_ids=[str(fixture["request_id"])],
+            )
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+
+            recovered = (
+                cloud_sb7.recover_false_monitor_attention_for_transport_successor(
+                    root,
+                    campaign,
+                    cloud_sb7.read_state(root, entrant_id),
+                )
+            )
+
+            self.assertEqual(recovered["status"], "PLANNED")
+            self.assertIsNone(recovered["failure"])
+            self.assertEqual(recovered["monitor_restart_recovered_from"], "INCOMPLETE")
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            self.assertEqual(
+                cloud_sb7.transport_unknown_carried_request_ids(
+                    root, campaign, entrant_id
+                ),
+                {str(fixture["request_id"])},
+            )
+            recovered_at = recovered["monitor_restart_recovered_at"]
+
+            successor = campaign["transport_unknown"][entrant_id]["successor"]
+            workspace = (root / successor["path"]).parent
+            (workspace / "logs/build.log").write_text("successor started\n")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="INCOMPLETE",
+                failure=(
+                    f"monitor lease lost: {entrant_id} is not pre-admission restart-safe: "
+                    "7 provider request(s) admitted"
+                ),
+                admitted_requests=7,
+                provider_terminal_requests=6,
+                lifecycle_events=33,
+                lifecycle_ambiguous_request_ids=[str(fixture["request_id"])],
+            )
+
+            refused = (
+                cloud_sb7.recover_false_monitor_attention_for_transport_successor(
+                    root,
+                    campaign,
+                    cloud_sb7.read_state(root, entrant_id),
+                )
+            )
+            self.assertEqual(refused["status"], "INCOMPLETE")
+            self.assertEqual(
+                refused["monitor_restart_recovered_at"], recovered_at
+            )
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
 
     def test_transport_unknown_successor_recovers_every_commit_boundary(self) -> None:
         for fault_stage in (
@@ -7611,6 +7820,82 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     SystemExit, "interrupted BUILD_RUNNING"
                 ):
                     cloud_sb7.isolate_transport_unknown(root, entrant_id)
+
+    def test_monitor_never_restart_checks_admitted_work_owned_by_live_manager(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            entrant_id = str(row["id"])
+            state = cloud_sb7.read_state(root, entrant_id)
+            lifecycle = Path(str(state["provider_lifecycle"]))
+            events = []
+            for index in range(6):
+                events.extend(
+                    self.provider_lifecycle_events(
+                        row,
+                        [
+                            "queued",
+                            "admitted",
+                            "first_item",
+                            "usage_reported",
+                            "provider_terminal",
+                        ],
+                        request_id=f"live-manager-terminal-{index}",
+                    )
+                )
+            events.extend(
+                self.provider_lifecycle_events(
+                    row,
+                    ["queued", "admitted", "first_item"],
+                    request_id="live-manager-active",
+                )
+            )
+            lifecycle.write_text("\n".join(map(json.dumps, events)) + "\n")
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_RUNNING",
+                admitted_requests=7,
+                provider_terminal_requests=6,
+            )
+            cloud_sb7.ensure_monitor_progress_ledger(root, create=True)
+            cloud_sb7.manager_state(
+                root,
+                status="RUNNING",
+                pid=os.getpid(),
+                pgid=os.getpgrp(),
+                identity=cloud_sb7.process_identity(os.getpid()),
+            )
+            original_load_json = cloud_sb7.load_json
+            manager_reads = 0
+
+            def stale_then_live(path: Path) -> dict[str, object]:
+                nonlocal manager_reads
+                if Path(path) == root / "manager.json":
+                    manager_reads += 1
+                    if manager_reads == 1:
+                        return {
+                            "status": "STARTING",
+                            "pid": os.getpid(),
+                            "identity": "stale-dead-manager",
+                        }
+                return original_load_json(path)
+
+            with (
+                mock.patch.object(cloud_sb7, "require_smoke_proofs"),
+                mock.patch.object(
+                    cloud_sb7, "load_json", side_effect=stale_then_live
+                ),
+                mock.patch.object(
+                    cloud_sb7, "monitor_progress_tick", return_value=[]
+                ),
+                mock.patch.object(cloud_sb7, "manager_restart_mismatch") as restart,
+            ):
+                self.assertEqual(cloud_sb7.monitor_tick(root), (False, 0))
+            restart.assert_not_called()
+            self.assertGreaterEqual(manager_reads, 2)
 
     def test_monitor_refuses_manager_relaunch_with_ambiguous_admitted_work(
         self,
