@@ -6539,6 +6539,57 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 supervisor_identity=None,
             )
 
+            smoke_state_path = cloud_sb7.smoke_state_file(predecessor, entrant_id)
+            original_smoke_state = cloud_sb7.load_json(smoke_state_path)
+            evidence_path = Path(str(original_smoke_state["attempt_evidence"]))
+            original_evidence_bytes = evidence_path.read_bytes()
+            original_evidence = cloud_sb7.load_json(evidence_path)
+            for field, replacement in (
+                ("smoke_contract_sha256", "0" * 64),
+                ("entrant", "fixture-carried"),
+                ("attempt", 2),
+                ("outstanding_request_ids", []),
+            ):
+                with self.subTest(stale_smoke_evidence=field):
+                    tampered = {**original_evidence, field: replacement}
+                    cloud_sb7.atomic_json(evidence_path, tampered)
+                    cloud_sb7.update_smoke_state(
+                        predecessor,
+                        entrant_id,
+                        attempt_evidence_sha256={
+                            "attempt-1": cloud_sb7.sha256_file(evidence_path)
+                        },
+                    )
+                    _, _, _, problem = cloud_sb7.predecessor_smoke_terminal_usage(
+                        predecessor, entrant_id, row
+                    )
+                    self.assertIsNotNone(problem)
+                    evidence_path.write_bytes(original_evidence_bytes)
+                    cloud_sb7.atomic_json(smoke_state_path, original_smoke_state)
+            for field, replacement in (
+                ("smoke_contract_sha256", "0" * 64),
+                ("budget_outstanding_baseline_request_ids", ["foreign-request"]),
+            ):
+                with self.subTest(stale_smoke_state=field):
+                    cloud_sb7.update_smoke_state(
+                        predecessor,
+                        entrant_id,
+                        **{field: replacement},
+                    )
+                    _, _, _, problem = cloud_sb7.predecessor_smoke_terminal_usage(
+                        predecessor, entrant_id, row
+                    )
+                    self.assertIsNotNone(problem)
+                    cloud_sb7.atomic_json(smoke_state_path, original_smoke_state)
+            _, unknown, launched, problem = (
+                cloud_sb7.predecessor_smoke_terminal_usage(
+                    predecessor, entrant_id, row
+                )
+            )
+            self.assertIsNone(problem)
+            self.assertTrue(launched)
+            self.assertEqual(unknown, [request_id])
+
             successor_campaign = self.supersede_fixture(fixture)
             successor = Path(str(fixture["successor"]))
             self.assertEqual(
@@ -6563,6 +6614,36 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 Path(str(successor_campaign["budget_ledger"]))
             )
             self.assertIn(request_id, successor_ledger["outstanding"])
+            successor_state = cloud_sb7.read_state(successor, entrant_id)
+            successor_lifecycle = Path(str(successor_state["provider_lifecycle"]))
+            for states in (
+                ["queued", "error"],
+                ["queued", "admitted", "usage_reported", "provider_terminal"],
+            ):
+                with self.subTest(reused_smoke_id_states=states):
+                    successor_lifecycle.write_text(
+                        "\n".join(
+                            map(
+                                json.dumps,
+                                self.provider_lifecycle_events(
+                                    row,
+                                    states,
+                                    request_id=request_id,
+                                ),
+                            )
+                        )
+                        + "\n"
+                    )
+                    outstanding, error = (
+                        cloud_sb7.current_full_episode_outstanding_reservations(
+                            successor,
+                            successor_campaign,
+                            cloud_sb7.manifest_row(successor, entrant_id),
+                        )
+                    )
+                    self.assertEqual(outstanding, [])
+                    self.assertIn("reused smoke baseline request IDs", error or "")
+            successor_lifecycle.write_text("")
             new_request_id = "successor-new-outstanding"
             successor_ledger["outstanding"][new_request_id] = {
                 **successor_ledger["outstanding"][request_id],
@@ -6581,6 +6662,32 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
             self.assertIsNone(error)
             self.assertEqual(outstanding, [new_request_id])
+
+            duplicate_id = "successor-cross-attempt-duplicate"
+            duplicate_events = "\n".join(
+                map(
+                    json.dumps,
+                    self.provider_lifecycle_events(
+                        row,
+                        ["queued", "error"],
+                        request_id=duplicate_id,
+                    ),
+                )
+            ) + "\n"
+            successor_lifecycle.write_text(duplicate_events)
+            attempt_lifecycle = self.make_full_attempt_fixture(
+                successor, entrant_id, 1
+            )
+            attempt_lifecycle.write_text(duplicate_events)
+            outstanding, error = (
+                cloud_sb7.current_full_episode_outstanding_reservations(
+                    successor,
+                    successor_campaign,
+                    cloud_sb7.manifest_row(successor, entrant_id),
+                )
+            )
+            self.assertEqual(outstanding, [])
+            self.assertIn("reused full-episode request IDs", error or "")
 
     def test_supersession_rejects_uncorrelated_outstanding_reserve(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
