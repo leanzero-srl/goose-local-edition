@@ -24758,28 +24758,90 @@ impl GooseAgentDispatcher {
                                                 progress,
                                             )
                                         {
-                                            self.events.write_value(serde_json::json!({
-                                                "event": "pre_scheduler_recurrent_source_retired",
-                                                "task_id": activity_key,
-                                                "source_admission_id": source.lifecycle.admission().admission_id,
-                                                "physical_host_id": source.lifecycle.admission().physical_host_id,
-                                                "provider_request": recurrence_provider_request,
-                                                "observed_windows": recurrence.observed_windows,
-                                                "repeated_windows": recurrence.repeated_windows,
-                                                "repeat_share": recurrence.repeat_share,
-                                                "confirmations": pre_scheduler_recurrence_failover.confirmations(),
-                                                "structured_output_chunks": progress.structured_output_chunks,
-                                                "structured_output_bytes": progress.structured_output_bytes,
-                                                "structured_output_active": progress.structured_output_active,
-                                                "continuation": "retire-active-source-and-retry-on-distinct-eligible-host",
-                                                "payload_logged": false,
-                                            }));
-                                            return Err(anyhow!(
-                                                "pre-scheduler research source retired after corroborated full-stream recurrence without structured output: {} repeated of {} windows ({:.4})",
-                                                recurrence.repeated_windows,
-                                                recurrence.observed_windows,
-                                                recurrence.repeat_share,
-                                            ));
+                                            let retirement =
+                                                (|| -> std::result::Result<_, String> {
+                                                    let evidence_request = recurrence_provider_request
+                                                    .as_ref()
+                                                    .ok_or_else(|| "recurrence has no live provider request".to_string())?;
+                                                    let observation_snapshot_hash = content_sha256(
+                                                    &serde_json::json!({
+                                                        "source_admission_id": source.lifecycle.admission().admission_id,
+                                                        "provider_request": evidence_request,
+                                                        "observed_windows": recurrence.observed_windows,
+                                                        "repeated_windows": recurrence.repeated_windows,
+                                                        "repeat_share": recurrence.repeat_share,
+                                                    })
+                                                    .to_string(),
+                                                );
+                                                    let captured = source
+                                                        .lifecycle
+                                                        .capture_live_provider_request(
+                                                            observation_snapshot_hash,
+                                                        )
+                                                        .map_err(|error| error.to_string())?;
+                                                    if &captured.request().key != evidence_request {
+                                                        return Err(
+                                                        "captured provider request changed before recurrence retirement"
+                                                            .to_string(),
+                                                    );
+                                                    }
+                                                    let safety =
+                                                        StructuredOutputNudgeSafetyGate::new(
+                                                            provider_stream_progress.clone(),
+                                                            progress,
+                                                        );
+                                                    let mut reserve = || {
+                                                        ACTIVE_PRE_SCHEDULER_CANCELLATION
+                                                        .try_with(|cancellation| {
+                                                            cancellation.request();
+                                                        })
+                                                        .map_err(|_| {
+                                                            "pre-scheduler cancellation authority is unavailable"
+                                                                .to_string()
+                                                        })
+                                                    };
+                                                    captured
+                                                        .reserve_while_live(&safety, &mut reserve)
+                                                        .map_err(|error| error.to_string())?;
+                                                    Ok(captured.request().key.clone())
+                                                })(
+                                                );
+                                            match retirement {
+                                                Ok(retired_request) => {
+                                                    self.events.write_value(serde_json::json!({
+                                                        "event": "pre_scheduler_recurrent_source_retired",
+                                                        "task_id": activity_key,
+                                                        "source_admission_id": source.lifecycle.admission().admission_id,
+                                                        "physical_host_id": source.lifecycle.admission().physical_host_id,
+                                                        "provider_request": retired_request,
+                                                        "observed_windows": recurrence.observed_windows,
+                                                        "repeated_windows": recurrence.repeated_windows,
+                                                        "repeat_share": recurrence.repeat_share,
+                                                        "confirmations": pre_scheduler_recurrence_failover.confirmations(),
+                                                        "structured_output_chunks": progress.structured_output_chunks,
+                                                        "structured_output_bytes": progress.structured_output_bytes,
+                                                        "structured_output_active": progress.structured_output_active,
+                                                        "continuation": "retire-active-source-and-retry-on-distinct-eligible-host",
+                                                        "payload_logged": false,
+                                                    }));
+                                                    return Err(anyhow!(
+                                                        "pre-scheduler research source retired after corroborated full-stream recurrence without structured output: {} repeated of {} windows ({:.4})",
+                                                        recurrence.repeated_windows,
+                                                        recurrence.observed_windows,
+                                                        recurrence.repeat_share,
+                                                    ));
+                                                }
+                                                Err(reason) => {
+                                                    self.events.write_value(serde_json::json!({
+                                                        "event": "pre_scheduler_recurrent_source_not_retired",
+                                                        "task_id": activity_key,
+                                                        "reason": reason,
+                                                        "provider_request": recurrence_provider_request,
+                                                        "rearm": true,
+                                                        "payload_logged": false,
+                                                    }));
+                                                }
+                                            }
                                         }
                                         next_pre_scheduler_review_check =
                                             tokio::time::Instant::now()
