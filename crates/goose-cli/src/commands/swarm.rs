@@ -17511,9 +17511,10 @@ async fn run_research_host_failover<T, F, Fut, ObserveFailure>(
     priority: usize,
     unit_rank: usize,
     label: String,
+    admission_stop: &tokio_util::sync::CancellationToken,
     mut call: F,
     mut observe_failure: ObserveFailure,
-) -> Result<T>
+) -> Result<Option<T>>
 where
     F: FnMut(ResearchPhysicalLane, usize) -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
@@ -17522,31 +17523,47 @@ where
     let mut failed_tokens = Vec::<String>::new();
     let mut failure_history = Vec::new();
     loop {
+        if admission_stop.is_cancelled() {
+            return Ok(None);
+        }
         let remaining_tokens = eligible_tokens
             .iter()
             .filter(|token| !failed_tokens.contains(token))
             .cloned()
             .collect::<Vec<_>>();
         if remaining_tokens.is_empty() {
+            admission_stop.cancel();
             bail!(
                 "research host failover `{label}` exhausted every eligible physical host: {}",
                 failure_history.join(" | ")
             );
         }
-        let lease = scheduler
-            .acquire(
-                remaining_tokens,
-                priority,
-                unit_rank,
-                format!("{label}:attempt-{}", failed_tokens.len().saturating_add(1)),
-            )
-            .await?;
+        let lease = match acquire_research_host_until_cancelled(
+            scheduler,
+            remaining_tokens,
+            priority,
+            unit_rank,
+            format!("{label}:attempt-{}", failed_tokens.len().saturating_add(1)),
+            admission_stop,
+        )
+        .await
+        {
+            Ok(Some(lease)) => lease,
+            Ok(None) => return Ok(None),
+            Err(error) => {
+                admission_stop.cancel();
+                return Err(error);
+            }
+        };
         let lane = lease.lane.clone();
         let attempt = failed_tokens.len().saturating_add(1);
         let result = call(lane.clone(), attempt).await;
         drop(lease);
+        if admission_stop.is_cancelled() {
+            return Ok(None);
+        }
         match result {
-            Ok(output) => return Ok(output),
+            Ok(output) => return Ok(Some(output)),
             Err(error) => {
                 failed_tokens.push(lane.token.clone());
                 failure_history.push(format!("{}: {error}", lane.physical_host_id));
@@ -24993,12 +25010,16 @@ impl GooseAgentDispatcher {
         pass: &str,
         partition: ResearchClosurePartition,
         excluded_hosts: &HashSet<String>,
-    ) -> Result<CompiledResearchClosurePartition> {
+        admission_stop: &tokio_util::sync::CancellationToken,
+    ) -> Result<Option<CompiledResearchClosurePartition>> {
         let mut failed_hosts = HashSet::new();
         let partition_host_state = Arc::new(tokio::sync::Mutex::new(
             ResearchPartitionHostState::default(),
         ));
         loop {
+            if admission_stop.is_cancelled() {
+                return Ok(None);
+            }
             let eligible_tokens = runtime
                 .lanes
                 .iter()
@@ -25009,20 +25030,29 @@ impl GooseAgentDispatcher {
                 .map(|lane| lane.token.clone())
                 .collect::<Vec<_>>();
             if eligible_tokens.is_empty() {
+                admission_stop.cancel();
                 bail!(
                     "target authority partition `{}` exhausted eligible physical hosts for {pass}",
                     partition.partition_id
                 );
             }
-            let lease = runtime
-                .host_scheduler
-                .acquire(
-                    eligible_tokens,
-                    research_closure_partition_cost(&partition),
-                    2,
-                    format!("{}:{pass}", partition.partition_id),
-                )
-                .await?;
+            let lease = match acquire_research_host_until_cancelled(
+                &runtime.host_scheduler,
+                eligible_tokens,
+                research_closure_partition_cost(&partition),
+                2,
+                format!("{}:{pass}", partition.partition_id),
+                admission_stop,
+            )
+            .await
+            {
+                Ok(Some(lease)) => lease,
+                Ok(None) => return Ok(None),
+                Err(error) => {
+                    admission_stop.cancel();
+                    return Err(error);
+                }
+            };
             let lane = lease.lane.clone();
             let result = self
                 .run_research_closure_semantic_pass_on_lane(
@@ -25037,8 +25067,11 @@ impl GooseAgentDispatcher {
                 )
                 .await;
             drop(lease);
+            if admission_stop.is_cancelled() {
+                return Ok(None);
+            }
             match result {
-                Ok(compiled) => return Ok(compiled),
+                Ok(compiled) => return Ok(Some(compiled)),
                 Err(error) => {
                     failed_hosts.insert(lane.physical_host_id.clone());
                     self.events.write_value(serde_json::json!({
@@ -25219,34 +25252,39 @@ impl GooseAgentDispatcher {
         self: &Arc<Self>,
         runtime: &ResearchAuthorityRuntime,
         partition: ResearchClosurePartition,
-    ) -> Result<(
-        CompiledResearchClosurePartition,
-        CompiledResearchClosurePartition,
-    )> {
+        admission_stop: &tokio_util::sync::CancellationToken,
+    ) -> Result<
+        Option<(
+            CompiledResearchClosurePartition,
+            CompiledResearchClosurePartition,
+        )>,
+    > {
+        if admission_stop.is_cancelled() {
+            return Ok(None);
+        }
         let partition_host_state = Arc::new(tokio::sync::Mutex::new(
             ResearchPartitionHostState::default(),
         ));
-        let admission_stop = tokio_util::sync::CancellationToken::new();
         let first = self.run_research_closure_partition_pair_unit(
             runtime,
             PairedRetryingFanStage::First,
             partition.clone(),
             partition_host_state.clone(),
-            &admission_stop,
+            admission_stop,
         );
         let second = self.run_research_closure_partition_pair_unit(
             runtime,
             PairedRetryingFanStage::Second,
             partition.clone(),
             partition_host_state,
-            &admission_stop,
+            admission_stop,
         );
         let (first, second) = tokio::join!(first, second);
         let (first, second) = match (first, second) {
             (Ok(Some(first)), Ok(Some(second))) => (first, second),
-            (Ok(None), Ok(None)) | (Ok(None), Ok(Some(_))) | (Ok(Some(_)), Ok(None)) => bail!(
-                "target authority pair retired queued juror admission after a terminal sibling failure"
-            ),
+            (Ok(None), Ok(None)) | (Ok(None), Ok(Some(_))) | (Ok(Some(_)), Ok(None)) => {
+                return Ok(None)
+            }
             (Err(first), Err(second)) => bail!(
                 "target authority pair failed after draining both admitted jurors: first={first}; second={second}"
             ),
@@ -25254,6 +25292,9 @@ impl GooseAgentDispatcher {
                 bail!("target authority pair failed after draining both admitted jurors: {error}")
             }
         };
+        if admission_stop.is_cancelled() {
+            return Ok(None);
+        }
         if first.physical_host_id == second.physical_host_id {
             bail!(
                 "target authority partition `{}` reused physical host `{}`",
@@ -25267,7 +25308,7 @@ impl GooseAgentDispatcher {
                 partition.partition_id
             );
         }
-        Ok((first, second))
+        Ok(Some((first, second)))
     }
 
     async fn run_research_target_citation_audit(
@@ -25276,7 +25317,11 @@ impl GooseAgentDispatcher {
         candidates: &[ResearchClosureCandidate],
         decisions: &[ResearchClosureAssessment],
         decision_sources: &HashMap<String, ResearchAuthorityDecisionSources>,
-    ) -> Result<Vec<CompiledResearchClosureCitation>> {
+        admission_stop: &tokio_util::sync::CancellationToken,
+    ) -> Result<Option<Vec<CompiledResearchClosureCitation>>> {
+        if admission_stop.is_cancelled() {
+            return Ok(None);
+        }
         let candidate_by_id = candidates
             .iter()
             .map(|candidate| (candidate.requirement_id.as_str(), candidate))
@@ -25334,7 +25379,7 @@ impl GooseAgentDispatcher {
             });
         }
         if packets.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Some(Vec::new()));
         }
         let mut groups = HashMap::<String, (Vec<String>, Vec<_>, usize)>::new();
         for packet in packets {
@@ -25374,6 +25419,7 @@ impl GooseAgentDispatcher {
             let host_scheduler = runtime.host_scheduler.clone();
             let retry_events = self.events.clone();
             let retry_cycle = runtime.cycle;
+            let admission_stop = admission_stop.clone();
             calls.push(async move {
                 let group_label = packets
                     .iter()
@@ -25398,6 +25444,7 @@ impl GooseAgentDispatcher {
                     group_cost,
                     3,
                     format!("research-target-citation:{group_label}"),
+                    &admission_stop,
                     move |lane, _attempt| {
                         let me = me.clone();
                         let packets = packets.clone();
@@ -25535,7 +25582,11 @@ impl GooseAgentDispatcher {
             .await?
             .into_iter()
             .flatten()
+            .flatten()
             .collect::<Vec<_>>();
+        if admission_stop.is_cancelled() {
+            return Ok(None);
+        }
         self.events.write_value(serde_json::json!({
             "event": "research_target_citation_audit_completed",
             "stage": runtime.stage,
@@ -25548,7 +25599,7 @@ impl GooseAgentDispatcher {
                 "rationale": verdict.rationale,
             })).collect::<Vec<_>>(),
         }));
-        Ok(compiled)
+        Ok(Some(compiled))
     }
 
     async fn resolve_research_target_partition_from_pair(
@@ -25559,7 +25610,35 @@ impl GooseAgentDispatcher {
             CompiledResearchClosurePartition,
             CompiledResearchClosurePartition,
         ),
-    ) -> Result<ResearchTargetPartitionResolution> {
+        admission_stop: &tokio_util::sync::CancellationToken,
+    ) -> Result<Option<ResearchTargetPartitionResolution>> {
+        if admission_stop.is_cancelled() {
+            return Ok(None);
+        }
+        let result = self
+            .resolve_research_target_partition_from_pair_inner(
+                runtime,
+                partition,
+                initial_pair,
+                admission_stop,
+            )
+            .await;
+        if result.is_err() {
+            admission_stop.cancel();
+        }
+        result
+    }
+
+    async fn resolve_research_target_partition_from_pair_inner(
+        self: &Arc<Self>,
+        runtime: &ResearchAuthorityRuntime,
+        partition: ResearchClosurePartition,
+        initial_pair: (
+            CompiledResearchClosurePartition,
+            CompiledResearchClosurePartition,
+        ),
+        admission_stop: &tokio_util::sync::CancellationToken,
+    ) -> Result<Option<ResearchTargetPartitionResolution>> {
         let original_order = partition
             .candidates
             .iter()
@@ -25577,6 +25656,9 @@ impl GooseAgentDispatcher {
         let mut initial_pair = Some(initial_pair);
 
         while !active_candidates.is_empty() {
+            if admission_stop.is_cancelled() {
+                return Ok(None);
+            }
             let active_partition = ResearchClosurePartition {
                 partition_id: if rejury == 0 {
                     partition.partition_id.clone()
@@ -25588,9 +25670,21 @@ impl GooseAgentDispatcher {
             let (first, second) = if let Some(pair) = initial_pair.take() {
                 pair
             } else {
-                self.run_research_closure_partition_pair(runtime, active_partition.clone())
+                let Some(pair) = self
+                    .run_research_closure_partition_pair(
+                        runtime,
+                        active_partition.clone(),
+                        admission_stop,
+                    )
                     .await?
+                else {
+                    return Ok(None);
+                };
+                pair
             };
+            if admission_stop.is_cancelled() {
+                return Ok(None);
+            }
             if first.authority_input_digest != second.authority_input_digest {
                 bail!(
                     "target authority partition `{}` jurors received different immutable decision inputs",
@@ -25670,7 +25764,7 @@ impl GooseAgentDispatcher {
             }
             jury_disagreements = jury_disagreements.saturating_add(disagreement_candidates.len());
             if !disagreement_candidates.is_empty() {
-                let adjudication = self
+                let Some(adjudication) = self
                     .run_research_closure_partition_any_lane(
                         runtime,
                         "adjudication",
@@ -25682,8 +25776,12 @@ impl GooseAgentDispatcher {
                             first.physical_host_id.clone(),
                             second.physical_host_id.clone(),
                         ]),
+                        admission_stop,
                     )
-                    .await?;
+                    .await?
+                else {
+                    return Ok(None);
+                };
                 ledger_corrections =
                     ledger_corrections.saturating_add(adjudication.ledger_corrections);
                 for mut decision in adjudication.assessments {
@@ -25742,14 +25840,19 @@ impl GooseAgentDispatcher {
                         })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let verdicts = self
+            let Some(verdicts) = self
                 .run_research_target_citation_audit(
                     runtime,
                     &active_candidates,
                     &ordered_decisions,
                     &round_sources,
+                    admission_stop,
                 )
                 .await?
+            else {
+                return Ok(None);
+            };
+            let verdicts = verdicts
                 .into_iter()
                 .map(|verdict| (verdict.requirement_id.clone(), verdict))
                 .collect::<HashMap<_, _>>();
@@ -25818,14 +25921,14 @@ impl GooseAgentDispatcher {
                     .ok_or_else(|| anyhow!("target partition omitted final `{requirement_id}`"))
             })
             .collect::<Result<Vec<_>>>()?;
-        Ok(ResearchTargetPartitionResolution {
+        Ok(Some(ResearchTargetPartitionResolution {
             decisions,
             decision_sources: accepted_sources,
             ledger_corrections,
             jury_disagreements,
             citations_verified,
             citations_rejected,
-        })
+        }))
     }
 
     async fn run_research_target_reconciliation(
@@ -25974,10 +26077,10 @@ impl GooseAgentDispatcher {
             tokio::select! {
                 biased;
                 result = resolutions.next(), if !resolutions.is_empty() => {
-                    let result: Result<ResearchTargetPartitionResolution> =
+                    let result: Result<Option<ResearchTargetPartitionResolution>> =
                         result.expect("a non-empty target resolution queue has a completion");
                     match result {
-                        Ok(resolution) => {
+                        Ok(Some(resolution)) => {
                             corrections = corrections.saturating_add(resolution.ledger_corrections);
                             disagreements = disagreements.saturating_add(resolution.jury_disagreements);
                             citations_verified = citations_verified.saturating_add(resolution.citations_verified);
@@ -26013,6 +26116,7 @@ impl GooseAgentDispatcher {
                                 }
                             }
                         }
+                        Ok(None) => {}
                         Err(error) => {
                             terminal_failure = true;
                             jury_admission_stop.cancel();
@@ -26040,12 +26144,14 @@ impl GooseAgentDispatcher {
                     };
                     let dispatcher = self.clone();
                     let resolution_runtime = runtime.clone();
+                    let resolution_stop = jury_admission_stop.clone();
                     resolutions.push(async move {
                         dispatcher
                             .resolve_research_target_partition_from_pair(
                                 &resolution_runtime,
                                 partition,
                                 (first, second),
+                                &resolution_stop,
                             )
                             .await
                     });
@@ -34652,12 +34758,14 @@ mod fan_order_tests {
         ]));
         let provider_calls = Arc::new(Mutex::new(Vec::new()));
         let failures = Arc::new(Mutex::new(Vec::new()));
+        let admission_stop = tokio_util::sync::CancellationToken::new();
         let selected = run_research_host_failover(
             &scheduler,
             vec!["lane-1".to_string(), "lane-2".to_string()],
             1,
             1,
             "jury-2:target-section-runtime-alpha".to_string(),
+            &admission_stop,
             {
                 let provider_calls = provider_calls.clone();
                 move |lane, _attempt| {
@@ -34717,6 +34825,7 @@ mod fan_order_tests {
             },
         )
         .await
+        .unwrap()
         .unwrap();
         assert_eq!(selected, "replacement-c");
         assert_eq!(
@@ -34751,12 +34860,14 @@ mod fan_order_tests {
             "verifier-d",
         ]));
         let provider_calls = Arc::new(Mutex::new(Vec::new()));
+        let admission_stop = tokio_util::sync::CancellationToken::new();
         let selected = run_research_host_failover(
             &scheduler,
             vec!["lane-2".to_string(), "lane-3".to_string()],
             1,
             3,
             "citation-repeat".to_string(),
+            &admission_stop,
             {
                 let provider_calls = provider_calls.clone();
                 move |lane, _attempt| {
@@ -34796,6 +34907,7 @@ mod fan_order_tests {
             |_, _, _, _| {},
         )
         .await
+        .unwrap()
         .unwrap();
         assert_eq!(selected, "verifier-d");
         assert_eq!(
@@ -34819,12 +34931,14 @@ mod fan_order_tests {
         ]));
         let attempts = Arc::new(Mutex::new(Vec::new()));
         let failures = Arc::new(Mutex::new(Vec::new()));
+        let admission_stop = tokio_util::sync::CancellationToken::new();
         let selected = run_research_host_failover(
             &scheduler,
             vec!["lane-2".to_string(), "lane-3".to_string()],
             1,
             3,
             "citation-group".to_string(),
+            &admission_stop,
             {
                 let attempts = attempts.clone();
                 move |lane, attempt| {
@@ -34850,6 +34964,7 @@ mod fan_order_tests {
             },
         )
         .await
+        .unwrap()
         .unwrap();
         assert_eq!(
             *attempts.lock().unwrap(),
@@ -56323,12 +56438,18 @@ mod pre_scheduler_semantic_runtime_tests {
             )
             .await
             .unwrap();
+        let pair_stop = tokio_util::sync::CancellationToken::new();
         let pair = tokio::spawn({
             let dispatcher = harness.dispatcher.clone();
             let runtime = harness.runtime.clone();
+            let admission_stop = pair_stop.clone();
             async move {
                 dispatcher
-                    .run_research_closure_partition_pair(runtime.as_ref(), partition)
+                    .run_research_closure_partition_pair(
+                        runtime.as_ref(),
+                        partition,
+                        &admission_stop,
+                    )
                     .await
             }
         });
@@ -56471,7 +56592,8 @@ mod pre_scheduler_semantic_runtime_tests {
         };
         let (first, second) = pair_result
             .expect("the production pair task panicked")
-            .expect("the production pair failed after retiring the repeated-error host");
+            .expect("the production pair failed after retiring the repeated-error host")
+            .expect("the production pair was not externally retired");
         assert_eq!(
             HashSet::from([first.physical_host_id, second.physical_host_id]),
             HashSet::from([HOST_B.to_string(), HOST_C.to_string()])
@@ -56603,9 +56725,11 @@ mod pre_scheduler_semantic_runtime_tests {
                 &[candidate],
                 &[decision],
                 &decision_sources,
+                &tokio_util::sync::CancellationToken::new(),
             )
             .await
-            .expect("citation verifier did not fail over after a repeated compiler error");
+            .expect("citation verifier did not fail over after a repeated compiler error")
+            .expect("citation verifier was not externally retired");
         assert_eq!(compiled.len(), 1);
         assert_eq!(compiled[0].physical_host_id, HOST_D);
         assert!(compiled[0].supported);
@@ -56628,6 +56752,299 @@ mod pre_scheduler_semantic_runtime_tests {
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
             .expect("citation correction lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_terminal_stop_retires_a_queued_adjudication_before_provider_admission() {
+        const PARTITION: &str = "target-section-runtime-terminal-adjudication";
+        const REQUIREMENT: &str = "REQ-runtime-terminal-adjudication";
+        const MODEL_A: &str = "runtime-terminal-adjudication-model-a";
+        const MODEL_B: &str = "runtime-terminal-adjudication-model-b";
+        const MODEL_C: &str = "runtime-terminal-adjudication-model-c";
+        const HOST_A: &str = "runtime-terminal-adjudication-host-a";
+        const HOST_B: &str = "runtime-terminal-adjudication-host-b";
+        const HOST_C: &str = "runtime-terminal-adjudication-host-c";
+        let mut harness = research_correction_runtime_harness(
+            &[
+                ("terminal-adjudication-lane-a", MODEL_A, HOST_A),
+                ("terminal-adjudication-lane-b", MODEL_B, HOST_B),
+                ("terminal-adjudication-lane-c", MODEL_C, HOST_C),
+            ],
+            HashMap::new(),
+        )
+        .await;
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements =
+            Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        let scheduler = &harness.runtime.host_scheduler;
+        let held_c = scheduler
+            .acquire(
+                vec!["terminal-adjudication-lane-c".to_string()],
+                1,
+                0,
+                "hold-terminal-adjudication-c".to_string(),
+            )
+            .await
+            .unwrap();
+        let complete = ResearchClosureAssessment {
+            requirement_id: REQUIREMENT.to_string(),
+            complete: true,
+            authority_requirement_ids: vec![REQUIREMENT.to_string()],
+            evidence_ids: Vec::new(),
+            gaps: Vec::new(),
+            rationale: "The canonical requirement settles the target.".to_string(),
+        };
+        let incomplete = ResearchClosureAssessment {
+            requirement_id: REQUIREMENT.to_string(),
+            complete: false,
+            authority_requirement_ids: Vec::new(),
+            evidence_ids: Vec::new(),
+            gaps: vec![ResearchAuthorityGap {
+                prior_semantic_gap_id: String::new(),
+                question: "Which runtime fact remains unresolved?".to_string(),
+                kind: "web".to_string(),
+                evidence_needed: "An authoritative runtime statement.".to_string(),
+                applicable_source_ids: vec!["extension:web-search".to_string()],
+                attempted_source_ids: Vec::new(),
+                exhausted_source_ids: Vec::new(),
+                unavailable: false,
+            }],
+            rationale: "A material runtime fact is still unresolved.".to_string(),
+        };
+        let partition = ResearchClosurePartition {
+            partition_id: PARTITION.to_string(),
+            candidates: vec![correction_runtime_candidate(REQUIREMENT)],
+        };
+        let initial_pair = (
+            CompiledResearchClosurePartition {
+                model: MODEL_A.to_string(),
+                physical_host_id: HOST_A.to_string(),
+                authority_input_digest: "terminal-adjudication-authority".to_string(),
+                ledger_corrections: 0,
+                assessments: vec![complete],
+            },
+            CompiledResearchClosurePartition {
+                model: MODEL_B.to_string(),
+                physical_host_id: HOST_B.to_string(),
+                authority_input_digest: "terminal-adjudication-authority".to_string(),
+                ledger_corrections: 0,
+                assessments: vec![incomplete],
+            },
+        );
+        let admission_stop = tokio_util::sync::CancellationToken::new();
+        let resolution = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            let runtime = harness.runtime.clone();
+            let admission_stop = admission_stop.clone();
+            async move {
+                dispatcher
+                    .resolve_research_target_partition_from_pair(
+                        runtime.as_ref(),
+                        partition,
+                        initial_pair,
+                        &admission_stop,
+                    )
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let only_c = HashSet::from(["terminal-adjudication-lane-c".to_string()]);
+                if scheduler
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap()
+                    .pending
+                    .iter()
+                    .any(|request| request.eligible_tokens == only_c)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the production adjudication did not queue on its only independent host");
+        admission_stop.cancel();
+        drop(held_c);
+        let result = tokio::time::timeout(Duration::from_secs(5), resolution)
+            .await
+            .expect("the queued production adjudication did not retire")
+            .unwrap()
+            .expect("external terminal retirement must not manufacture an error");
+        assert!(result.is_none());
+        assert_eq!(harness.provider.call_count(MODEL_A), 0);
+        assert_eq!(harness.provider.call_count(MODEL_B), 0);
+        assert_eq!(harness.provider.call_count(MODEL_C), 0);
+        assert!(!harness.sink.has("broker_provider_request_permitted"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("retired adjudication lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_citation_terminal_stops_queued_rejury_without_post_terminal_admission() {
+        const PARTITION: &str = "target-section-runtime-terminal-citation";
+        const REQUIREMENT: &str = "REQ-runtime-terminal-citation";
+        const MODEL_A: &str = "runtime-terminal-citation-model-a";
+        const MODEL_B: &str = "runtime-terminal-citation-model-b";
+        const MODEL_C: &str = "runtime-terminal-citation-model-c";
+        const HOST_A: &str = "runtime-terminal-citation-host-a";
+        const HOST_B: &str = "runtime-terminal-citation-host-b";
+        const HOST_C: &str = "runtime-terminal-citation-host-c";
+        let mut scripts = HashMap::new();
+        scripts.insert(
+            MODEL_C.to_string(),
+            invalid_citation_runtime_outputs(REQUIREMENT),
+        );
+        let mut harness = research_correction_runtime_harness(
+            &[
+                ("terminal-citation-lane-a", MODEL_A, HOST_A),
+                ("terminal-citation-lane-b", MODEL_B, HOST_B),
+                ("terminal-citation-lane-c", MODEL_C, HOST_C),
+            ],
+            scripts,
+        )
+        .await;
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements =
+            Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        let scheduler = &harness.runtime.host_scheduler;
+        let held_a = scheduler
+            .acquire(
+                vec!["terminal-citation-lane-a".to_string()],
+                1,
+                0,
+                "hold-terminal-citation-a".to_string(),
+            )
+            .await
+            .unwrap();
+        let held_b = scheduler
+            .acquire(
+                vec!["terminal-citation-lane-b".to_string()],
+                1,
+                0,
+                "hold-terminal-citation-b".to_string(),
+            )
+            .await
+            .unwrap();
+        let held_c = scheduler
+            .acquire(
+                vec!["terminal-citation-lane-c".to_string()],
+                1,
+                0,
+                "hold-terminal-citation-c".to_string(),
+            )
+            .await
+            .unwrap();
+        let admission_stop = tokio_util::sync::CancellationToken::new();
+        let pair = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            let runtime = harness.runtime.clone();
+            let admission_stop = admission_stop.clone();
+            async move {
+                dispatcher
+                    .run_research_closure_partition_pair(
+                        runtime.as_ref(),
+                        ResearchClosurePartition {
+                            partition_id: PARTITION.to_string(),
+                            candidates: vec![correction_runtime_candidate(REQUIREMENT)],
+                        },
+                        &admission_stop,
+                    )
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while scheduler.inner.state.lock().unwrap().pending.len() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both production re-jurors did not queue behind the held fleet");
+        let decision = ResearchClosureAssessment {
+            requirement_id: REQUIREMENT.to_string(),
+            complete: true,
+            authority_requirement_ids: vec![REQUIREMENT.to_string()],
+            evidence_ids: Vec::new(),
+            gaps: Vec::new(),
+            rationale: "The canonical requirement settles this target.".to_string(),
+        };
+        let decision_sources = HashMap::from([(
+            REQUIREMENT.to_string(),
+            ResearchAuthorityDecisionSources {
+                models: vec![MODEL_A.to_string(), MODEL_B.to_string()],
+                physical_host_ids: vec![HOST_A.to_string(), HOST_B.to_string()],
+            },
+        )]);
+        let citation = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            let runtime = harness.runtime.clone();
+            let admission_stop = admission_stop.clone();
+            async move {
+                dispatcher
+                    .run_research_target_citation_audit(
+                        runtime.as_ref(),
+                        &[correction_runtime_candidate(REQUIREMENT)],
+                        &[decision],
+                        &decision_sources,
+                        &admission_stop,
+                    )
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let only_c = HashSet::from(["terminal-citation-lane-c".to_string()]);
+                let state = scheduler.inner.state.lock().unwrap();
+                if state.pending.len() == 3
+                    && state
+                        .pending
+                        .iter()
+                        .any(|request| request.eligible_tokens == only_c)
+                {
+                    break;
+                }
+                drop(state);
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("citation and re-jury work did not share the production scheduler");
+        drop(held_c);
+        tokio::time::timeout(Duration::from_secs(5), admission_stop.cancelled())
+            .await
+            .expect("citation host exhaustion did not close shared admission");
+        assert_eq!(harness.provider.call_count(MODEL_A), 0);
+        assert_eq!(harness.provider.call_count(MODEL_B), 0);
+        assert_eq!(harness.provider.call_count(MODEL_C), 2);
+        drop(held_a);
+        drop(held_b);
+        let citation_result = tokio::time::timeout(Duration::from_secs(5), citation)
+            .await
+            .expect("terminal citation group did not drain")
+            .unwrap();
+        let citation_error = match citation_result {
+            Ok(_) => panic!("terminal citation exhaustion unexpectedly succeeded"),
+            Err(error) => error.to_string(),
+        };
+        assert!(citation_error.contains("exhausted every eligible physical host"));
+        let pair_result = tokio::time::timeout(Duration::from_secs(5), pair)
+            .await
+            .expect("queued production re-jury did not retire")
+            .unwrap()
+            .expect("shared cancellation must retire, not fail, queued re-jury work");
+        assert!(pair_result.is_none());
+        assert!(harness
+            .sink
+            .has("research_target_citation_correction_repeat_detected"));
+        assert!(!harness.sink.has("research_target_jury_packet_started"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("terminal citation/re-jury lifecycle did not drain")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
