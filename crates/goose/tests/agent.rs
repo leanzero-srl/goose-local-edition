@@ -2723,6 +2723,11 @@ mod tests {
             empty_count: usize,
         }
 
+        #[derive(Default)]
+        struct TerminalErrorProvider {
+            call_count: AtomicUsize,
+        }
+
         impl EmptyThenTextProvider {
             fn new(empty_count: usize) -> Self {
                 Self {
@@ -2783,6 +2788,26 @@ mod tests {
 
             fn get_name(&self) -> &str {
                 "empty-then-text-mock"
+            }
+        }
+
+        #[async_trait]
+        impl Provider for TerminalErrorProvider {
+            async fn stream(
+                &self,
+                _model_config: &ModelConfig,
+                _system_prompt: &str,
+                _messages: &[Message],
+                _tools: &[Tool],
+            ) -> Result<MessageStream, ProviderError> {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                Err(ProviderError::ExecutionError(
+                    "sealed provider route rejected before dispatch".to_string(),
+                ))
+            }
+
+            fn get_name(&self) -> &str {
+                "terminal-error-mock"
             }
         }
 
@@ -3036,6 +3061,120 @@ mod tests {
                 !text.contains("empty response"),
                 "empty-turn fallback must not pre-empt the final-output nudge: {text:?}"
             );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn test_provider_error_preempts_structured_final_output_continuation() -> Result<()> {
+            use goose::agents::final_output_tool::FINAL_OUTPUT_CONTINUATION_MESSAGE;
+            use goose::recipe::Response;
+
+            let provider = Arc::new(TerminalErrorProvider::default());
+            let agent = Agent::new();
+            let session = agent
+                .config
+                .session_manager
+                .create_session(
+                    PathBuf::default(),
+                    "terminal-error-final-output".to_string(),
+                    SessionType::Hidden,
+                    GooseMode::default(),
+                )
+                .await?;
+            agent
+                .update_provider(
+                    provider.clone(),
+                    ModelConfig::new("mock-model"),
+                    &session.id,
+                )
+                .await?;
+            agent
+                .add_final_output_tool(Response {
+                    json_schema: Some(serde_json::json!({
+                        "type": "object",
+                        "properties": { "result": { "type": "string" } }
+                    })),
+                })
+                .await;
+            let session_config = SessionConfig {
+                id: session.id,
+                schedule_id: None,
+                max_turns: Some(100_000),
+                retry_config: None,
+            };
+            let reply_stream = agent
+                .reply(Message::user().with_text("Hi"), session_config, None)
+                .await?;
+            tokio::pin!(reply_stream);
+            let messages = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                let mut messages = Vec::new();
+                while let Some(event) = reply_stream.next().await {
+                    if let AgentEvent::Message(message) = event? {
+                        messages.push(message);
+                    }
+                }
+                Ok::<Vec<Message>, anyhow::Error>(messages)
+            })
+            .await
+            .expect("terminal provider error must not spin the final-output continuation loop")?;
+
+            let text = concat_text(&messages);
+            assert_eq!(provider.call_count.load(Ordering::SeqCst), 1);
+            assert!(text.contains("sealed provider route rejected before dispatch"));
+            assert!(!text.contains(FINAL_OUTPUT_CONTINUATION_MESSAGE));
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn test_provider_error_without_final_output_preserves_recipe_retry() -> Result<()> {
+            use goose::agents::types::{RetryConfig, SuccessCheck};
+
+            let provider = Arc::new(TerminalErrorProvider::default());
+            let agent = Agent::new();
+            let session = agent
+                .config
+                .session_manager
+                .create_session(
+                    PathBuf::default(),
+                    "provider-error-recipe-retry".to_string(),
+                    SessionType::Hidden,
+                    GooseMode::default(),
+                )
+                .await?;
+            agent
+                .update_provider(
+                    provider.clone(),
+                    ModelConfig::new("mock-model"),
+                    &session.id,
+                )
+                .await?;
+            let session_config = SessionConfig {
+                id: session.id,
+                schedule_id: None,
+                max_turns: Some(5),
+                retry_config: Some(RetryConfig {
+                    max_retries: 1,
+                    checks: vec![SuccessCheck::Shell {
+                        command: "false".to_string(),
+                    }],
+                    on_failure: None,
+                    timeout_seconds: Some(30),
+                    on_failure_timeout_seconds: None,
+                }),
+            };
+            let reply_stream = agent
+                .reply(Message::user().with_text("Hi"), session_config, None)
+                .await?;
+            tokio::pin!(reply_stream);
+            let mut messages = Vec::new();
+            while let Some(event) = reply_stream.next().await {
+                if let AgentEvent::Message(message) = event? {
+                    messages.push(message);
+                }
+            }
+
+            assert!(provider.call_count.load(Ordering::SeqCst) > 1);
+            assert!(concat_text(&messages).contains("Maximum retry attempts"));
             Ok(())
         }
 
