@@ -97,6 +97,69 @@ class TerminalClosureTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def playwright_runtime(self) -> dict:
+        module_root = self.root / "node-runtime" / "lib" / "node_modules" / "playwright"
+        browsers_json = module_root / "node_modules" / "playwright-core" / "browsers.json"
+        package_json = module_root / "package.json"
+        module_entry = module_root / "index.js"
+        installed_browsers = self.root / "installed-playwright-browsers"
+        browser_directory = "chromium_headless_shell-1200"
+        browser_root = installed_browsers / browser_directory
+        executable_relative = pathlib.Path("fixture-platform") / "chrome-headless-shell"
+        executable = browser_root / executable_relative
+        if not module_entry.exists():
+            browsers_json.parent.mkdir(parents=True)
+            browser_root.mkdir(parents=True)
+            package_json.write_text(
+                json.dumps({"name": "playwright", "version": "1.57.0"}),
+                encoding="utf-8",
+            )
+            browsers_json.write_text(
+                json.dumps(
+                    {
+                        "browsers": [
+                            {
+                                "name": "chromium-headless-shell",
+                                "revision": "1200",
+                                "installByDefault": True,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            module_entry.write_text(
+                "const { existsSync } = require('node:fs');\n"
+                "const { join } = require('node:path');\n"
+                "module.exports = { chromium: { launch: async () => {\n"
+                "  const root = process.env.PLAYWRIGHT_BROWSERS_PATH || "
+                "join(process.env.HOME || '', 'Library', 'Caches', 'ms-playwright');\n"
+                "  const executable = join(root, 'chromium_headless_shell-1200', "
+                "'fixture-platform', 'chrome-headless-shell');\n"
+                "  if (!existsSync(executable)) throw new Error('fixture browser executable missing');\n"
+                "  return { newPage: async () => ({ setContent: async () => {}, "
+                "title: async () => 'terminal-closure-playwright-smoke' }), close: async () => {} };\n"
+                "} } };\n",
+                encoding="utf-8",
+            )
+            executable.parent.mkdir(parents=True)
+            executable.write_text("fixture browser runtime\n", encoding="utf-8")
+            executable.chmod(0o500)
+        return {
+            "module_root": str(module_root),
+            "module_tree_sha256": closure.tree_manifest(module_root)["tree_sha256"],
+            "version": "1.57.0",
+            "browsers_json": "node_modules/playwright-core/browsers.json",
+            "browsers_json_sha256": sha(browsers_json),
+            "browser_name": "chromium-headless-shell",
+            "browser_revision": "1200",
+            "installed_browsers_path": str(installed_browsers),
+            "browser_directory": browser_directory,
+            "browser_tree_sha256": closure.tree_manifest(browser_root)["tree_sha256"],
+            "executable": executable_relative.as_posix(),
+            "executable_sha256": sha(executable),
+        }
+
     def config(self, live_root: pathlib.Path, state_dir: pathlib.Path) -> dict:
         publisher = self.root / "publisher.mjs"
         package_lock = self.root / "package-lock.json"
@@ -107,7 +170,10 @@ class TerminalClosureTests(unittest.TestCase):
             package_lock.write_text("{}\n", encoding="utf-8")
         if not package_json.exists():
             package_json.write_text("{}\n", encoding="utf-8")
-        node = pathlib.Path(sys.executable).resolve()
+        node_path = shutil.which("node")
+        if node_path is None:
+            raise RuntimeError("Node is required for terminal-closure tests")
+        node = pathlib.Path(node_path).resolve()
         return {
             "schema_version": 1,
             "controller_sha256": "0" * 64,
@@ -155,7 +221,10 @@ class TerminalClosureTests(unittest.TestCase):
                 "package_json": str(package_json),
                 "package_json_sha256": sha(package_json),
             },
-            "runtime": {"lsof": "/usr/sbin/lsof"},
+            "runtime": {
+                "lsof": "/usr/sbin/lsof",
+                "playwright": self.playwright_runtime(),
+            },
         }
 
     def write_terminal_fixture(self, *, seed: str = "0123456789abcdef") -> tuple[pathlib.Path, pathlib.Path, dict]:
@@ -303,6 +372,45 @@ class TerminalClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(closure.ClosureError, "escaping symlink"):
             closure.tree_manifest(tree)
 
+    def test_empty_home_playwright_fails_closed_until_pinned_runtime_is_mounted(self) -> None:
+        runtime = self.playwright_runtime()
+        node_path = shutil.which("node")
+        self.assertIsNotNone(node_path)
+        node = pathlib.Path(str(node_path)).resolve()
+        runtime_info = closure.validate_playwright_runtime(runtime, node, sha(node))
+        runtime_root = self.root / "isolated-playwright"
+        runtime_home = runtime_root / "empty-home"
+        runtime_tmp = runtime_root / "tmp"
+        empty_view = runtime_root / "empty-browser-view"
+        closure.ensure_secure_dir(empty_view)
+        with self.assertRaisesRegex(closure.ClosureError, "smoke launch failed"):
+            closure.smoke_playwright_runtime(
+                runtime_info,
+                node,
+                runtime_home,
+                runtime_tmp,
+                empty_view,
+                MODULE_PATH,
+                timeout_seconds=10,
+            )
+        pinned_view = closure.prepare_playwright_browser_view(
+            runtime_info, runtime_root / "pinned-browser-view"
+        )
+        receipt = closure.smoke_playwright_runtime(
+            runtime_info,
+            node,
+            runtime_home,
+            runtime_tmp,
+            pinned_view,
+            MODULE_PATH,
+            timeout_seconds=10,
+        )
+        self.assertTrue(receipt["ok"])
+        self.assertTrue(
+            (pinned_view / runtime["browser_directory"]).is_symlink(),
+            "the worker must expose only the pinned browser revision",
+        )
+
     def test_config_refuses_state_or_lock_inside_live_tree(self) -> None:
         live = self.root / "live"
         config = self.config(live, live / "state")
@@ -320,9 +428,16 @@ class TerminalClosureTests(unittest.TestCase):
         template.write_text(json.dumps(fixture_score()), encoding="utf-8")
         scorer = instrument / "score_sb7.py"
         scorer.write_text(
-            "import argparse, json\n"
+            "import argparse, json, os, subprocess\n"
             "p=argparse.ArgumentParser(); p.add_argument('--tree'); p.add_argument('--port'); "
             "p.add_argument('--seed'); p.add_argument('--json-out'); a=p.parse_args()\n"
+            "assert 'NODE_PATH' not in os.environ and 'PLAYWRIGHT_BROWSERS_PATH' not in os.environ\n"
+            "subprocess.run([os.environ['GOOSE_SWARM_RENDER_NODE'], '-e', "
+            "\"const fs=require('fs'),p=require('path'); "
+            "if(!require.resolve('playwright').includes('node-runtime'))process.exit(2); "
+            "if(!fs.existsSync(p.join(process.env.PLAYWRIGHT_BROWSERS_PATH,"
+            "'chromium_headless_shell-1200','fixture-platform','chrome-headless-shell')))"
+            "process.exit(3)\"], check=True)\n"
             "print('api key sk_fixture_vendor_secret')\n"
             f"d=json.load(open({str(template)!r})); d['fixture_seed']=a.seed; "
             "json.dump(d,open(a.json_out,'w'))\n",
@@ -330,14 +445,19 @@ class TerminalClosureTests(unittest.TestCase):
         )
         vendor = instrument / "vendor_service_v3.py"
         vendor.write_text('API_KEY = "sk_fixture_vendor_secret"\n', encoding="utf-8")
+        probe = instrument / "product_probe_v3.mjs"
+        probe.write_text("export {};\n", encoding="utf-8")
         scorer.chmod(0o400)
         vendor.chmod(0o400)
+        probe.chmod(0o400)
         clone = self.root / "attempt" / "tree"
         clone.mkdir(parents=True)
         (clone / "app.txt").write_text("fixture\n", encoding="utf-8")
         raw_sha = closure.tree_manifest(clone)["tree_sha256"]
         result = self.root / "attempt" / "worker-result.json"
-        node = pathlib.Path(sys.executable).resolve()
+        node_path = shutil.which("node")
+        self.assertIsNotNone(node_path)
+        node = pathlib.Path(str(node_path)).resolve()
         job = {
             "schema_version": 1,
             "attempt": 1,
@@ -357,9 +477,13 @@ class TerminalClosureTests(unittest.TestCase):
             "instrument_files": {
                 "score_sb7.py": sha(scorer),
                 "vendor_service_v3.py": sha(vendor),
+                "product_probe_v3.mjs": sha(probe),
             },
             "render_node": str(node),
             "render_node_sha256": sha(node),
+            "playwright_runtime": self.playwright_runtime(),
+            "playwright_probe": str(probe),
+            "playwright_probe_sha256": sha(probe),
             "score_contract": {
                 "raw_scorer_version": "sb-7.0-rc",
                 "check_count": 91,
@@ -379,6 +503,15 @@ class TerminalClosureTests(unittest.TestCase):
         self.assertEqual(worker_result["port"], 18970)
         self.assertTrue(worker_result["descendants_clean"])
         self.assertRegex(worker_result["score_tree_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            worker_result["playwright_browser_tree_sha256"],
+            job["playwright_runtime"]["browser_tree_sha256"],
+        )
+        render_wrapper = self.root / "attempt" / "runtime" / "playwright-node"
+        self.assertEqual(stat.S_IMODE(render_wrapper.stat().st_mode), 0o500)
+        self.assertEqual(
+            worker_result["playwright_node_wrapper_sha256"], sha(render_wrapper)
+        )
         self.assertNotIn(
             "sk_fixture_vendor_secret",
             (self.root / "attempt" / "score.log").read_text(encoding="utf-8"),
