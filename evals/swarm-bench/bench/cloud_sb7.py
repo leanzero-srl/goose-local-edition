@@ -2447,14 +2447,7 @@ def preflight(
     ]
     if busy:
         raise SystemExit(f"vendor ports are already occupied: {', '.join(busy)}")
-    selected_evidence = {
-        provider: {
-            str(row["model"]): rosters["evidence"][provider][str(row["model"])]
-            for row in rows
-            if row["provider"] == provider
-        }
-        for provider in {str(row["provider"]) for row in rows}
-    }
+    selected_evidence = selected_roster_evidence(rows, rosters)
     publisher = publisher_snapshot(publisher_repo, rows)
     scorer_runtime = scorer_runtime_snapshot(publisher["node"], publisher_repo)
     return {
@@ -2468,6 +2461,44 @@ def preflight(
         "publisher": publisher,
         "scorer_runtime": scorer_runtime,
     }
+
+
+def selected_roster_evidence(
+    rows: Iterable[Mapping[str, Any]], rosters: Mapping[str, Any]
+) -> Dict[str, Dict[str, Any]]:
+    all_evidence = rosters.get("evidence")
+    if not isinstance(all_evidence, Mapping):
+        raise SystemExit("authenticated roster evidence is malformed")
+    selected: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        provider = str(row["provider"])
+        model = str(row["model"])
+        provider_evidence = all_evidence.get(provider)
+        if not isinstance(provider_evidence, Mapping):
+            raise SystemExit(
+                f"authenticated roster evidence is missing for {provider}/{model}"
+            )
+        if provider == "meta":
+            roster = provider_evidence.get("roster")
+            catalog = provider_evidence.get("catalog")
+            if (
+                not isinstance(roster, Mapping)
+                or not isinstance(catalog, Mapping)
+                or model not in roster
+                or model not in catalog
+            ):
+                raise SystemExit(
+                    f"authenticated Meta roster evidence is missing for {model}"
+                )
+            evidence = {"roster": roster[model], "catalog": catalog[model]}
+        else:
+            if model not in provider_evidence:
+                raise SystemExit(
+                    f"authenticated roster evidence is missing for {provider}/{model}"
+                )
+            evidence = provider_evidence[model]
+        selected.setdefault(provider, {})[model] = evidence
+    return selected
 
 
 def require_clean_source_worktree() -> None:
@@ -13182,7 +13213,7 @@ def meta_responses_smoke_contract(
 
     payloads: list[Dict[str, Any]] = []
     file_hashes: Dict[str, str] = {}
-    for _, path in indexed:
+    for _, path in reversed(indexed):
         file_hashes[path.name] = sha256_file(path)
         try:
             first_line = path.read_text().splitlines()[0]
