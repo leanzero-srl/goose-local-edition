@@ -1305,29 +1305,78 @@ def publisher_mismatch(campaign: Mapping[str, Any]) -> str | None:
     if not isinstance(expected, dict):
         return "campaign has no pinned publisher"
     try:
+        repo = Path(str(expected["repo"])).resolve()
+        if not repo.is_dir():
+            raise SystemExit(f"publisher repo is missing: {repo}")
+        top = Path(git_value_at(repo, "rev-parse", "--show-toplevel")).resolve()
+        if top != repo:
+            raise SystemExit(
+                f"publisher repo must be its git root: {repo} (found {top})"
+            )
+        tracked_dirty = git_value_at(
+            repo, "status", "--porcelain", "--untracked-files=no"
+        )
+        if tracked_dirty:
+            raise SystemExit("publisher website tracked worktree changed after freeze")
+        if git_value_at(repo, "rev-parse", "HEAD") != expected.get("commit"):
+            raise SystemExit("publisher website commit changed after freeze")
+
+        tracked = expected.get("tracked_hashes")
+        if not isinstance(tracked, dict):
+            raise SystemExit("pinned publisher tracked hashes are malformed")
+        current_tracked = {
+            str(relative): sha256_file(repo / str(relative)) for relative in tracked
+        }
+        if current_tracked != tracked:
+            raise SystemExit("publisher tracked inputs changed after freeze")
+
+        node = expected.get("node")
+        if not isinstance(node, dict):
+            raise SystemExit("pinned publisher node identity is malformed")
+        node_path = Path(str(node.get("path", "")))
+        if (
+            not node_path.is_absolute()
+            or node_path.is_symlink()
+            or not node_path.is_file()
+            or node_path.resolve() != node_path
+            or sha256_file(node_path) != node.get("sha256")
+        ):
+            raise SystemExit("pinned publisher node runtime changed after freeze")
+        node_version = subprocess.run(
+            [str(node_path), "--version"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if (
+            node_version.returncode != 0
+            or node_version.stdout.strip() != node.get("version")
+        ):
+            raise SystemExit("pinned publisher node version changed after freeze")
+
+        current_env = publisher_env_identity(repo)
+        for field in (
+            "env_file",
+            "env_file_mode",
+            "env_file_sha256",
+            "sanity_target",
+        ):
+            if current_env.get(field) != expected.get(field):
+                raise SystemExit(
+                    f"pinned publisher environment changed after freeze: {field}"
+                )
+
         manifest = load_json(Path(str(campaign["entrant_manifest"])))
-        current = publisher_snapshot(Path(str(expected["repo"])), entrants(manifest))
+        publisher_manifest = load_json(repo / str(expected["manifest"]))
+        current_entries = publisher_entries(publisher_manifest, entrants(manifest))
+        if current_entries != expected.get("entries"):
+            raise SystemExit("publisher entrant mapping changed after freeze")
+        if publisher_manifest.get("expectedChecks") != expected.get(
+            "expected_checks"
+        ):
+            raise SystemExit("publisher expected check count changed after freeze")
     except (OSError, json.JSONDecodeError, SystemExit) as error:
         return f"pinned publisher cannot be verified: {error}"
-    compared = (
-        "repo",
-        "commit",
-        "script",
-        "manifest",
-        "tracked_hashes",
-        "runtime_hashes",
-        "instrument_set_sha256",
-        "node",
-        "env_file",
-        "env_file_mode",
-        "env_file_sha256",
-        "sanity_target",
-        "expected_checks",
-        "entries",
-    )
-    changed = [key for key in compared if current.get(key) != expected.get(key)]
-    if changed:
-        return f"publisher changed after freeze: {', '.join(changed)}"
     return None
 
 
@@ -23046,7 +23095,7 @@ def run_publisher(
     )
     result = run_logged_process(
         cmd,
-        cwd=repo,
+        cwd=frozen_repo,
         env=env,
         log_path=log_path,
         timeout_seconds=float(publisher["process_timeout_seconds"]),

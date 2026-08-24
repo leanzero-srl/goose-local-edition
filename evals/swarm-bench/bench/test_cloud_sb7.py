@@ -9835,17 +9835,46 @@ class CloudSb7HarnessTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "must be clean"):
                 cloud_sb7.publisher_snapshot(repo, [row])
 
-    def test_ignored_runtime_javascript_mutation_is_refused(self) -> None:
+    def test_live_runtime_mutation_cannot_affect_frozen_publisher(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            frozen = cloud_sb7.freeze_publisher_runtime(root / "frozen", snapshot)
+            campaign = self.publisher_campaign(root, row, snapshot)
+            campaign["publisher"] = {**snapshot, "frozen": frozen}
+            runtime = repo / "node_modules/@sanity/client/index.js"
+            runtime.write_text("export const client = 'mutated';\n")
+
+            self.assertIsNone(cloud_sb7.publisher_mismatch(campaign))
+            self.assertIsNone(cloud_sb7.frozen_publisher_mismatch(campaign))
+
+    def test_runtime_publisher_accepts_unrelated_untracked_files(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             repo, row = self.make_publisher_repo(root)
             snapshot = cloud_sb7.publisher_snapshot(repo, [row])
             campaign = self.publisher_campaign(root, row, snapshot)
-            runtime = repo / "node_modules/@sanity/client/index.js"
-            runtime.write_text("export const client = 'mutated';\n")
+            (repo / "AGENTS.md").write_text("operator instructions\n")
+            (repo / ".agents").mkdir()
+            (repo / ".agents/notes.md").write_text("operator notes\n")
 
-            mismatch = cloud_sb7.publisher_mismatch(campaign)
-            self.assertIn("runtime_hashes", mismatch or "")
+            self.assertIsNone(cloud_sb7.publisher_mismatch(campaign))
+            with self.assertRaisesRegex(SystemExit, "must be clean"):
+                cloud_sb7.publisher_snapshot(repo, [row])
+
+    def test_runtime_publisher_rejects_tracked_worktree_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo, row = self.make_publisher_repo(root)
+            snapshot = cloud_sb7.publisher_snapshot(repo, [row])
+            campaign = self.publisher_campaign(root, row, snapshot)
+            (repo / "package.json").write_text('{"type":"commonjs"}\n')
+
+            self.assertIn(
+                "tracked worktree changed",
+                cloud_sb7.publisher_mismatch(campaign) or "",
+            )
 
     def test_environment_target_or_token_mutation_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
