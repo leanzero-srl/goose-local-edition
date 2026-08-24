@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import codecs
 import contextlib
+import datetime as datetime_module
 import fcntl
 import hashlib
 import html.parser
@@ -27,6 +28,7 @@ import secrets
 import shutil
 import signal
 import socket
+import sqlite3
 import stat as stat_module
 import subprocess
 import sys
@@ -263,6 +265,8 @@ FORBIDDEN_PUBLIC_SB7_IDENTITY = re.compile(
     re.IGNORECASE,
 )
 PUBLISHER_PUBLIC_IDENTITY_RECEIPT_SCHEMA = 2
+SCORE_TELEMETRY_EVIDENCE_SCHEMA = 1
+SCORE_TELEMETRY_EVIDENCE_FILE = "telemetry-evidence.json"
 DEFAULT_WEBSITE_BASE_URL = "https://leanzero.net"
 DEFAULT_PUBLISH_VERIFY_TIMEOUT_SECONDS = 900.0
 DEFAULT_PUBLISH_VERIFY_INTERVAL_SECONDS = 15.0
@@ -484,6 +488,28 @@ def write_exclusive_json(path: Path, value: Mapping[str, Any]) -> None:
             if path.read_bytes() != payload:
                 raise SystemExit(
                     f"immutable receipt already exists with different content: {path}"
+                ) from None
+        fsync_directory(path.parent)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+
+
+def write_exclusive_bytes(path: Path, payload: bytes, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, mode)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if path.read_bytes() != payload:
+                raise SystemExit(
+                    f"immutable artifact already exists with different content: {path}"
                 ) from None
         fsync_directory(path.parent)
     finally:
@@ -13974,6 +14000,383 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         return 0 if completed else 1
 
 
+def sqlite_wal_bundle_identity(database: Path) -> Dict[str, Dict[str, Any]]:
+    if database.is_symlink() or not database.is_file():
+        raise SystemExit(f"SQLite source is missing or symbolic: {database}")
+    identity: Dict[str, Dict[str, Any]] = {}
+    for suffix in ("", "-wal", "-shm"):
+        path = Path(f"{database}{suffix}")
+        if not path.exists():
+            continue
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(f"SQLite source bundle contains a non-regular entry: {path}")
+        metadata = path.stat()
+        identity[path.name] = {
+            "bytes": metadata.st_size,
+            "mtime_ns": metadata.st_mtime_ns,
+            "sha256": sha256_file(path),
+        }
+    if database.name not in identity:
+        raise SystemExit(f"SQLite source identity omitted its database: {database}")
+    return identity
+
+
+def path_is_same_or_descendant(candidate: str, root: Path) -> bool:
+    try:
+        Path(candidate).relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def session_token_totals_without_source_mutation(
+    database: Path, working_root: Path
+) -> Dict[str, Any]:
+    source_before = sqlite_wal_bundle_identity(database)
+    with tempfile.TemporaryDirectory(prefix="goose-session-telemetry-") as raw:
+        snapshot_root = Path(raw)
+        for name in source_before:
+            shutil.copy2(database.parent / name, snapshot_root / name)
+        source_after_copy = sqlite_wal_bundle_identity(database)
+        if source_after_copy != source_before:
+            raise SystemExit("SQLite source changed while its WAL bundle was copied")
+
+        copied_database = snapshot_root / database.name
+        connection = sqlite3.connect(copied_database)
+        try:
+            quick_check = connection.execute("PRAGMA quick_check").fetchone()
+            if quick_check != ("ok",):
+                raise SystemExit("copied SQLite session bundle failed quick_check")
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
+            }
+            required = {
+                "working_dir",
+                "accumulated_input_tokens",
+                "accumulated_output_tokens",
+            }
+            if not required.issubset(columns):
+                raise SystemExit("copied SQLite sessions table lacks token columns")
+            rows = connection.execute(
+                "SELECT working_dir, accumulated_input_tokens, "
+                "accumulated_output_tokens FROM sessions"
+            ).fetchall()
+        finally:
+            connection.close()
+
+    source_after_query = sqlite_wal_bundle_identity(database)
+    if source_after_query != source_before:
+        raise SystemExit("SQLite source changed while its copied WAL bundle was queried")
+
+    sessions = 0
+    prompt_tokens = 0
+    completion_tokens = 0
+    canonical_root = Path(os.path.normpath(str(working_root)))
+    for working_dir, raw_prompt, raw_completion in rows:
+        if not isinstance(working_dir, str) or not path_is_same_or_descendant(
+            os.path.normpath(working_dir), canonical_root
+        ):
+            continue
+        prompt = 0 if raw_prompt is None else raw_prompt
+        completion = 0 if raw_completion is None else raw_completion
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in (prompt, completion)
+        ):
+            raise SystemExit("copied SQLite session bundle has invalid token totals")
+        sessions += 1
+        prompt_tokens += prompt
+        completion_tokens += completion
+    return {
+        "schema_version": 1,
+        "database": str(database),
+        "working_root": str(working_root),
+        "source_bundle": source_before,
+        "source_unchanged_after_copy": True,
+        "source_unchanged_after_query": True,
+        "quick_check": "ok",
+        "sessions": sessions,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+    }
+
+
+def entrant_lifecycle_paths(root: Path, entrant_id: str) -> list[Path]:
+    attempts = root / "entrants" / entrant_id / "attempts"
+    if attempts.is_symlink() or not attempts.is_dir():
+        raise SystemExit(f"entrant has no regular provider attempt history: {entrant_id}")
+    found: list[tuple[int, Path]] = []
+    for attempt in attempts.iterdir():
+        match = re.fullmatch(r"attempt-([1-9][0-9]*)", attempt.name)
+        if match is None or attempt.is_symlink() or not attempt.is_dir():
+            continue
+        lifecycle = attempt / "provider-lifecycle.jsonl"
+        if lifecycle.is_symlink() or not lifecycle.is_file():
+            raise SystemExit(f"provider attempt has no regular lifecycle: {attempt}")
+        found.append((int(match.group(1)), lifecycle))
+    if not found:
+        raise SystemExit(f"entrant has no provider lifecycle attempts: {entrant_id}")
+    return [path for _, path in sorted(found)]
+
+
+def lifecycle_timestamp(value: Any, *, request_id: str, state: str) -> datetime_module.datetime:
+    if not isinstance(value, str) or not value:
+        raise SystemExit(f"request {request_id} has no {state} timestamp")
+    try:
+        timestamp = datetime_module.datetime.fromisoformat(value)
+    except ValueError:
+        raise SystemExit(f"request {request_id} has malformed {state} timestamp") from None
+    if timestamp.tzinfo is None:
+        raise SystemExit(f"request {request_id} has a timezone-free {state} timestamp")
+    return timestamp
+
+
+def lifecycle_telemetry_evidence(
+    root: Path,
+    entrant_id: str,
+    campaign: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> tuple[Dict[str, Any], bytes]:
+    row = manifest_row(root, entrant_id)
+    provider = str(row["provider"])
+    model = str(row["model"])
+    lifecycle_sources = []
+    requests: Dict[str, Dict[str, Any]] = {}
+    for lifecycle in entrant_lifecycle_paths(root, entrant_id):
+        summary = lifecycle_summary(
+            lifecycle,
+            expected_provider=provider,
+            expected_model=model,
+        )
+        if summary["malformed_lines"] or summary["transition_errors"]:
+            raise SystemExit(
+                f"provider lifecycle cannot supply telemetry: {lifecycle}: "
+                + "; ".join(summary["transition_errors"])
+            )
+        payload = lifecycle.read_bytes()
+        if sha256_bytes(payload) != summary["snapshot_sha256"]:
+            raise SystemExit(f"provider lifecycle changed while read: {lifecycle}")
+        lifecycle_sources.append(
+            {
+                "path": str(lifecycle),
+                "sha256": summary["snapshot_sha256"],
+                "bytes": len(payload),
+                "events": summary["events"],
+            }
+        )
+        for line in payload.decode(errors="strict").splitlines():
+            event = json.loads(line, object_pairs_hook=unique_json_object)
+            request_id = str(event["request_id"])
+            request = requests.setdefault(
+                request_id,
+                {
+                    "provider": event["provider"],
+                    "model": event["model"],
+                    "events": [],
+                },
+            )
+            if (
+                request["provider"] != event["provider"]
+                or request["model"] != event["model"]
+            ):
+                raise SystemExit(f"provider lifecycle request identity drifted: {request_id}")
+            request["events"].append(event)
+
+    ledger_path = Path(str(campaign["budget_ledger"]))
+    if ledger_path.is_symlink() or not ledger_path.is_file():
+        raise SystemExit("telemetry evidence has no regular budget ledger")
+    ledger_payload = ledger_path.read_bytes()
+    ledger = json.loads(ledger_payload, object_pairs_hook=unique_json_object)
+    settled_rows = ledger.get("settled")
+    outstanding_rows = ledger.get("outstanding")
+    if not isinstance(settled_rows, list) or not isinstance(outstanding_rows, dict):
+        raise SystemExit("telemetry evidence budget ledger is malformed")
+    settled: Dict[str, Dict[str, Any]] = {}
+    for settlement in settled_rows:
+        if not isinstance(settlement, dict):
+            raise SystemExit("telemetry evidence budget settlement is malformed")
+        request_id = settlement.get("request_id")
+        if not isinstance(request_id, str) or not request_id or request_id in settled:
+            raise SystemExit("telemetry evidence budget settlements repeat request IDs")
+        settled[request_id] = settlement
+
+    normalized: list[Dict[str, Any]] = []
+    excluded: list[Dict[str, Any]] = []
+    settlement_evidence: list[Dict[str, Any]] = []
+    for request_id, request in requests.items():
+        events = request["events"]
+        by_state = {str(event["state"]): event for event in events}
+        terminal = by_state.get("provider_terminal")
+        settlement = settled.get(request_id)
+        if terminal is None:
+            last_state = str(events[-1]["state"])
+            outstanding = outstanding_rows.get(request_id)
+            admitted = "admitted" in by_state
+            if settlement is not None:
+                raise SystemExit(
+                    f"non-terminal lifecycle request is settled: {request_id}"
+                )
+            if admitted and not isinstance(outstanding, dict):
+                raise SystemExit(
+                    f"admitted non-terminal lifecycle request lost its reserve: {request_id}"
+                )
+            excluded.append(
+                {
+                    "request_id": request_id,
+                    "last_state": last_state,
+                    "reserve_preserved": isinstance(outstanding, dict),
+                }
+            )
+            continue
+        if settlement is None:
+            raise SystemExit(f"terminal lifecycle request is not settled: {request_id}")
+        usage = terminal.get("usage")
+        usage_problem = lifecycle_usage_failure(usage)
+        if usage_problem:
+            raise SystemExit(f"terminal request {request_id} {usage_problem}")
+        assert isinstance(usage, dict)
+        expected_settlement = {
+            "provider": provider,
+            "model": model,
+            "reported_model": usage["reported_model"],
+            "input_tokens": usage["input_tokens"],
+            "output_tokens": usage["output_tokens"],
+            "total_tokens": usage["total_tokens"],
+        }
+        if any(settlement.get(key) != value for key, value in expected_settlement.items()):
+            raise SystemExit(
+                f"terminal lifecycle and budget settlement differ: {request_id}"
+            )
+        admitted_at = lifecycle_timestamp(
+            by_state.get("admitted", {}).get("timestamp"),
+            request_id=request_id,
+            state="admitted",
+        )
+        first_item_at = lifecycle_timestamp(
+            by_state.get("first_item", {}).get("timestamp"),
+            request_id=request_id,
+            state="first_item",
+        )
+        terminal_at = lifecycle_timestamp(
+            terminal.get("timestamp"), request_id=request_id, state="terminal"
+        )
+        if not admitted_at <= first_item_at <= terminal_at:
+            raise SystemExit(f"request lifecycle timestamps are not monotonic: {request_id}")
+        ttft_ms = round((first_item_at - admitted_at).total_seconds() * 1000)
+        total_ms = round((terminal_at - admitted_at).total_seconds() * 1000)
+        normalized.append(
+            {
+                "t": round(terminal_at.timestamp() * 1000),
+                "request_id": request_id,
+                "provider": provider,
+                "model": model,
+                "node": provider,
+                "usage": True,
+                "prompt_tokens": usage["input_tokens"],
+                "completion_tokens": usage["output_tokens"],
+                "ttft_ms": ttft_ms,
+                "total_ms": total_ms,
+                "source": "provider_lifecycle_and_budget_ledger",
+            }
+        )
+        settlement_evidence.append(
+            {"request_id": request_id, **expected_settlement}
+        )
+    normalized.sort(key=lambda value: (value["t"], value["request_id"]))
+    settlement_evidence.sort(key=lambda value: value["request_id"])
+    excluded.sort(key=lambda value: value["request_id"])
+    if not normalized:
+        raise SystemExit(f"entrant has no terminal usage to publish: {entrant_id}")
+
+    telemetry_payload = b"".join(
+        (
+            json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            + "\n"
+        ).encode()
+        for value in normalized
+    )
+    raw_telemetry = Path(str(state["tree"])) / ".swarm/telemetry.jsonl"
+    if raw_telemetry.is_symlink() or not raw_telemetry.is_file():
+        raw_identity = None
+    else:
+        raw_payload = raw_telemetry.read_bytes()
+        raw_usage_rows = []
+        for line in raw_payload.decode(errors="replace").splitlines():
+            try:
+                value = json.loads(line, object_pairs_hook=unique_json_object)
+            except (ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(value, dict) and value.get("usage") is True:
+                raw_usage_rows.append(value)
+        raw_identity = {
+            "path": str(raw_telemetry),
+            "bytes": len(raw_payload),
+            "sha256": sha256_bytes(raw_payload),
+            "usage_rows": len(raw_usage_rows),
+            "prompt_tokens": sum(
+                value.get("prompt_tokens", 0)
+                for value in raw_usage_rows
+                if isinstance(value.get("prompt_tokens"), int)
+            ),
+            "completion_tokens": sum(
+                value.get("completion_tokens", 0)
+                for value in raw_usage_rows
+                if isinstance(value.get("completion_tokens"), int)
+            ),
+        }
+    summary = {
+        "calls": len(normalized),
+        "prompt_tokens": sum(value["prompt_tokens"] for value in normalized),
+        "completion_tokens": sum(
+            value["completion_tokens"] for value in normalized
+        ),
+    }
+    receipt = {
+        "schema_version": SCORE_TELEMETRY_EVIDENCE_SCHEMA,
+        "kind": "score_informational_telemetry",
+        "entrant": entrant_id,
+        "provider": provider,
+        "model": model,
+        "source": "strict provider lifecycle joined to settled budget requests",
+        "lifecycle_sources": lifecycle_sources,
+        "budget_ledger_path": str(ledger_path),
+        "budget_ledger_sha256": sha256_bytes(ledger_payload),
+        "settlements": settlement_evidence,
+        "excluded_unproven_requests": excluded,
+        "raw_engine_telemetry": raw_identity,
+        "summary": summary,
+        "telemetry_bytes": len(telemetry_payload),
+        "telemetry_sha256": sha256_bytes(telemetry_payload),
+        "affects_score": False,
+    }
+    return receipt, telemetry_payload
+
+
+def prepare_score_telemetry_evidence(
+    root: Path,
+    entrant_id: str,
+    campaign: Mapping[str, Any],
+    state: Mapping[str, Any],
+    score_tree: Path,
+) -> Dict[str, Any]:
+    receipt, payload = lifecycle_telemetry_evidence(
+        root, entrant_id, campaign, state
+    )
+    telemetry = score_tree / ".swarm/telemetry.jsonl"
+    write_exclusive_bytes(telemetry, payload)
+    receipt_path = score_tree.parent / SCORE_TELEMETRY_EVIDENCE_FILE
+    write_exclusive_json(receipt_path, receipt)
+    if sha256_file(telemetry) != receipt["telemetry_sha256"]:
+        raise SystemExit("score telemetry changed while its receipt was committed")
+    return receipt
+
+
 RAW_SCORE_EXCLUDED_ENTRY_NAMES = frozenset(
     {
         ".DS_Store",
@@ -25606,6 +26009,110 @@ def screenshot_evidence(shots: Path) -> Dict[str, Any]:
     }
 
 
+def score_telemetry_evidence_seal(
+    attempt_root: Path, verdict: Mapping[str, Any]
+) -> Dict[str, Any] | None:
+    receipt_path = attempt_root / SCORE_TELEMETRY_EVIDENCE_FILE
+    telemetry_path = attempt_root / "tree/.swarm/telemetry.jsonl"
+    if not receipt_path.exists() and not telemetry_path.exists():
+        return None
+    if (
+        receipt_path.is_symlink()
+        or not receipt_path.is_file()
+        or telemetry_path.is_symlink()
+        or not telemetry_path.is_file()
+    ):
+        raise SystemExit("score telemetry receipt and payload are not both regular files")
+    receipt = load_json(receipt_path)
+    expected_keys = {
+        "schema_version",
+        "kind",
+        "entrant",
+        "provider",
+        "model",
+        "source",
+        "lifecycle_sources",
+        "budget_ledger_path",
+        "budget_ledger_sha256",
+        "settlements",
+        "excluded_unproven_requests",
+        "raw_engine_telemetry",
+        "summary",
+        "telemetry_bytes",
+        "telemetry_sha256",
+        "affects_score",
+    }
+    if (
+        set(receipt) != expected_keys
+        or receipt.get("schema_version") != SCORE_TELEMETRY_EVIDENCE_SCHEMA
+        or receipt.get("kind") != "score_informational_telemetry"
+        or receipt.get("affects_score") is not False
+    ):
+        raise SystemExit("score telemetry receipt schema is malformed")
+    payload = telemetry_path.read_bytes()
+    if (
+        receipt.get("telemetry_bytes") != len(payload)
+        or receipt.get("telemetry_sha256") != sha256_bytes(payload)
+    ):
+        raise SystemExit("score telemetry payload differs from its receipt")
+    lifecycle_sources = receipt.get("lifecycle_sources")
+    if not isinstance(lifecycle_sources, list) or not lifecycle_sources:
+        raise SystemExit("score telemetry receipt has no lifecycle sources")
+    for source in lifecycle_sources:
+        if not isinstance(source, dict) or set(source) != {
+            "path",
+            "sha256",
+            "bytes",
+            "events",
+        }:
+            raise SystemExit("score telemetry lifecycle source schema is malformed")
+        path = Path(str(source["path"]))
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_size != source["bytes"]
+            or sha256_file(path) != source["sha256"]
+        ):
+            raise SystemExit("score telemetry lifecycle source changed")
+    raw = receipt.get("raw_engine_telemetry")
+    if raw is not None:
+        if not isinstance(raw, dict) or set(raw) != {
+            "path",
+            "bytes",
+            "sha256",
+            "usage_rows",
+            "prompt_tokens",
+            "completion_tokens",
+        }:
+            raise SystemExit("score raw engine telemetry identity is malformed")
+        raw_path = Path(str(raw["path"]))
+        if (
+            raw_path.is_symlink()
+            or not raw_path.is_file()
+            or raw_path.stat().st_size != raw["bytes"]
+            or sha256_file(raw_path) != raw["sha256"]
+        ):
+            raise SystemExit("raw engine telemetry changed after score preparation")
+    summary = receipt.get("summary")
+    verdict_telemetry = verdict.get("telemetry")
+    if (
+        not isinstance(summary, dict)
+        or set(summary) != {"calls", "prompt_tokens", "completion_tokens"}
+        or not isinstance(verdict_telemetry, dict)
+        or any(
+            verdict_telemetry.get(key) != summary[key]
+            for key in ("calls", "prompt_tokens", "completion_tokens")
+        )
+    ):
+        raise SystemExit("scorer verdict telemetry differs from its sealed source totals")
+    return {
+        "schema_version": SCORE_TELEMETRY_EVIDENCE_SCHEMA,
+        "receipt_sha256": sha256_file(receipt_path),
+        "telemetry_sha256": sha256_file(telemetry_path),
+        **summary,
+    }
+
+
 def score_evidence_seal(
     root: Path,
     entrant_id: str,
@@ -25644,7 +26151,9 @@ def score_evidence_seal(
     sandbox_sha = state.get("score_sandbox_profile_sha256")
     if not isinstance(sandbox_sha, str) or re.fullmatch(r"[0-9a-f]{64}", sandbox_sha) is None:
         raise SystemExit("score sandbox profile identity is missing")
-    return {
+    verdict_payload = load_json(verdict)
+    telemetry = score_telemetry_evidence_seal(attempt_root, verdict_payload)
+    sealed = {
         "schema_version": 1,
         "entrant": entrant_id,
         "score_attempt": attempt,
@@ -25660,6 +26169,9 @@ def score_evidence_seal(
             campaign.get("scorer_runtime")
         ),
     }
+    if telemetry is not None:
+        sealed["telemetry"] = telemetry
+    return sealed
 
 
 def legacy_carried_score_seal_digest_matches(
@@ -25881,6 +26393,13 @@ def score_one(root: Path, entrant_id: str) -> bool:
     try:
         score_tree = clone_for_score(root, entrant_id, score_attempt)
         score_dir = score_tree.parent
+        prepare_score_telemetry_evidence(
+            root,
+            entrant_id,
+            campaign,
+            state,
+            score_tree,
+        )
         scorer_home = score_dir / "scorer-home"
         scorer_tmp = score_dir / "scorer-tmp"
         scorer_home.mkdir()
