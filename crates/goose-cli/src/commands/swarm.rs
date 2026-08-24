@@ -10959,10 +10959,16 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         };
         let mut tracked = Some(first);
         let mut meter = ReasoningRecurrenceMeter::default();
-        let repeated = "the same recurrent reasoning cycle ".repeat(400);
+        // Keep this beyond the meter's distant-evidence reach. The old 400-cycle fixture was only
+        // 14,000 characters, so it could never satisfy the 20,000-character separation invariant.
+        let repeated = "the same recurrent reasoning cycle ".repeat(900);
         meter.push(&repeated);
         let mut recent = repeated;
-        assert!(recurrence_warrants_semantic_review(&meter.snapshot()));
+        let first_turn = meter.snapshot();
+        assert!(
+            recurrence_warrants_semantic_review(&first_turn),
+            "first-turn fixture must contain distant recurrence evidence: {first_turn:?}"
+        );
 
         bind_recurrence_to_provider_request(
             Some(second.clone()),
