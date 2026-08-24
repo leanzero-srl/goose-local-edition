@@ -127,7 +127,9 @@ struct PreSchedulerProviderControlState {
 #[allow(dead_code)]
 pub(crate) struct PreSchedulerNudgeCapture {
     pub(crate) generation: u64,
+    structured_output_chunks: u64,
     structured_output_bytes: u64,
+    structured_output_active: bool,
 }
 
 #[allow(dead_code)]
@@ -204,7 +206,9 @@ impl PreSchedulerProviderControl {
             .as_ref()
             .map(|active| PreSchedulerNudgeCapture {
                 generation: active.generation,
+                structured_output_chunks: progress.structured_output_chunks,
                 structured_output_bytes: progress.structured_output_bytes,
+                structured_output_active: progress.structured_output_active,
             })
     }
 
@@ -214,12 +218,12 @@ impl PreSchedulerProviderControl {
         progress: ProviderStreamProgressSnapshot,
         guidance: String,
     ) -> std::result::Result<(), String> {
-        if progress.structured_output_active
-            || progress.structured_output_bytes > capture.structured_output_bytes
+        if progress.structured_output_active != capture.structured_output_active
+            || progress.structured_output_chunks != capture.structured_output_chunks
+            || progress.structured_output_bytes != capture.structured_output_bytes
         {
             return Err(
-                "provider is decoding structured output; supervision remains observational"
-                    .to_string(),
+                "provider structured output progress changed after semantic capture".to_string(),
             );
         }
         let delivery = self
@@ -340,22 +344,40 @@ impl ProviderStreamProgressMeter {
         self.started.elapsed().as_millis().min(u64::MAX as u128) as u64
     }
 
-    fn reserve_unstructured_nudge(
+    fn provider_request_started(&self) {
+        let mut snapshot = self.state();
+        if !snapshot.structured_output_active {
+            return;
+        }
+        snapshot.revision = snapshot.revision.saturating_add(1);
+        snapshot.structured_output_active = false;
+        snapshot.last_progress_elapsed_ms = self.elapsed_ms();
+        drop(snapshot);
+        self.changed.notify_waiters();
+    }
+
+    fn reserve_progress_stable_nudge(
         &self,
         capture: ProviderStreamProgressSnapshot,
         reserve: &mut dyn FnMut() -> std::result::Result<(), String>,
     ) -> std::result::Result<(), String> {
         let snapshot = self.state();
-        if snapshot.structured_output_active
-            || snapshot.structured_output_bytes > capture.structured_output_bytes
-        {
+        if structured_output_progress_changed(capture, *snapshot) {
             return Err(
-                "provider is decoding structured output; supervision remains observational"
-                    .to_string(),
+                "provider structured output progress changed after semantic capture".to_string(),
             );
         }
         reserve()
     }
+}
+
+pub(crate) fn structured_output_progress_changed(
+    capture: ProviderStreamProgressSnapshot,
+    current: ProviderStreamProgressSnapshot,
+) -> bool {
+    current.structured_output_active != capture.structured_output_active
+        || current.structured_output_chunks != capture.structured_output_chunks
+        || current.structured_output_bytes != capture.structured_output_bytes
 }
 
 pub(crate) struct StructuredOutputNudgeSafetyGate {
@@ -378,7 +400,7 @@ impl ProviderNudgeSafetyGate for StructuredOutputNudgeSafetyGate {
         reserve: &mut dyn FnMut() -> std::result::Result<(), String>,
     ) -> std::result::Result<(), String> {
         self.progress
-            .reserve_unstructured_nudge(self.capture, reserve)
+            .reserve_progress_stable_nudge(self.capture, reserve)
     }
 }
 
@@ -608,6 +630,7 @@ impl Provider for StreamProgressProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
+        self.progress.provider_request_started();
         let stream = self
             .inner
             .stream(model_config, system, messages, tools)
@@ -622,6 +645,7 @@ impl Provider for StreamProgressProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
+        self.progress.provider_request_started();
         let stream = self
             .inner
             .stream_once(model_config, system, messages, tools)
@@ -636,6 +660,7 @@ impl Provider for StreamProgressProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<SingleAttemptStream, ProviderError> {
+        self.progress.provider_request_started();
         let attempt = self
             .inner
             .stream_once_with_terminal_proof(model_config, system, messages, tools)
@@ -1956,6 +1981,71 @@ mod tests {
         assert_eq!(snapshot.structured_output_chunks, 1);
         assert_eq!(snapshot.structured_output_bytes, 4096);
         assert!(snapshot.structured_output_active);
+    }
+
+    #[tokio::test]
+    async fn progress_observer_resets_sticky_structured_state_at_next_request() {
+        let progress = Arc::new(ProviderStreamProgressMeter::new());
+        let provider = bind_current_provider_lifecycle(
+            Arc::new(ProgressOnlyProvider),
+            None,
+            Some(progress.clone()),
+        );
+        let mut first = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .unwrap();
+        first.next().await.unwrap().unwrap();
+        let first = progress.snapshot();
+        assert!(first.structured_output_active);
+        assert_eq!(first.structured_output_chunks, 1);
+
+        let mut second = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .unwrap();
+        let reset = progress.snapshot();
+        assert!(!reset.structured_output_active);
+        assert_eq!(
+            reset.structured_output_chunks,
+            first.structured_output_chunks
+        );
+        assert_eq!(reset.structured_output_bytes, first.structured_output_bytes);
+        assert!(reset.revision > first.revision);
+
+        second.next().await.unwrap().unwrap();
+        let second = progress.snapshot();
+        assert!(second.structured_output_active);
+        assert_eq!(second.structured_output_chunks, 2);
+        assert_eq!(second.structured_output_bytes, 8192);
+    }
+
+    #[test]
+    fn frozen_structured_output_can_reserve_but_one_more_chunk_cannot() {
+        let progress = Arc::new(ProviderStreamProgressMeter::new());
+        progress.record_decoded_chunk(377, ProviderStreamChunkKind::StructuredOutput);
+        let capture = progress.snapshot();
+        assert!(capture.structured_output_active);
+        let gate = StructuredOutputNudgeSafetyGate::new(progress.clone(), capture);
+        let mut reserved = false;
+        gate.reserve(&mut || {
+            reserved = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(reserved);
+
+        progress.record_decoded_chunk(1, ProviderStreamChunkKind::StructuredOutput);
+        let gate = StructuredOutputNudgeSafetyGate::new(progress, capture);
+        let mut reserved_after_growth = false;
+        let error = gate
+            .reserve(&mut || {
+                reserved_after_growth = true;
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(error.contains("structured output progress changed"));
+        assert!(!reserved_after_growth);
     }
 
     #[test]

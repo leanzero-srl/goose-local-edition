@@ -11,8 +11,9 @@ use super::swarm_control_registry::{
 use super::swarm_provider_journal::DurableProviderLifecycleJournal;
 use super::swarm_provider_lifecycle::{
     bind_current_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
-    PreSchedulerJudgeLaunchAdmission, ProviderNudgeDeliveryFactory, ProviderStreamProgressMeter,
-    ProviderStreamProgressSnapshot, StructuredOutputNudgeSafetyGate,
+    structured_output_progress_changed, PreSchedulerJudgeLaunchAdmission,
+    ProviderNudgeDeliveryFactory, ProviderStreamProgressMeter, ProviderStreamProgressSnapshot,
+    StructuredOutputNudgeSafetyGate,
 };
 use super::swarm_semantic::{
     activity_digest_key, ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
@@ -22,6 +23,7 @@ use super::swarm_semantic::{
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use console::style;
+use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, StreamExt};
 use goose::agents::{
     large_text_threshold, Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform,
@@ -10975,7 +10977,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn growing_or_active_structured_output_vetoes_pre_scheduler_nudge() {
+    fn only_unchanged_structured_output_state_can_receive_pre_scheduler_nudge() {
         let captured = ProviderStreamProgressSnapshot {
             structured_output_bytes: 277,
             ..ProviderStreamProgressSnapshot::default()
@@ -10997,6 +10999,25 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         ));
         assert!(!structured_output_blocks_pre_scheduler_nudge(
             captured, captured
+        ));
+        let frozen_partial = ProviderStreamProgressSnapshot {
+            structured_output_chunks: 1,
+            structured_output_bytes: 377,
+            structured_output_active: true,
+            ..ProviderStreamProgressSnapshot::default()
+        };
+        assert!(!structured_output_blocks_pre_scheduler_nudge(
+            frozen_partial,
+            frozen_partial
+        ));
+        let one_more_chunk = ProviderStreamProgressSnapshot {
+            structured_output_chunks: 2,
+            structured_output_bytes: 378,
+            ..frozen_partial
+        };
+        assert!(structured_output_blocks_pre_scheduler_nudge(
+            frozen_partial,
+            one_more_chunk
         ));
     }
 
@@ -20996,6 +21017,19 @@ struct PreSchedulerSourceContext {
     label: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreSchedulerRecurrenceReviewOutcome {
+    Complete,
+    StructuredProgressChanged,
+}
+
+type PreSchedulerRecurrenceReview = Shared<BoxFuture<'static, PreSchedulerRecurrenceReviewOutcome>>;
+
+enum PreSchedulerRecurrenceWake {
+    Review(PreSchedulerRecurrenceReviewOutcome),
+    RetryAdmission,
+}
+
 tokio::task_local! {
     static ACTIVE_PRE_SCHEDULER_SOURCE: PreSchedulerSourceContext;
 }
@@ -21083,7 +21117,7 @@ impl PreSchedulerSemanticRuntime {
         recurrence: ReasoningRecurrenceSnapshot,
         recent_reasoning: String,
         progress: Arc<ProviderStreamProgressMeter>,
-    ) -> Result<Option<tokio::sync::oneshot::Receiver<()>>> {
+    ) -> Result<Option<PreSchedulerRecurrenceReview>> {
         let source_host = source.lifecycle.admission().physical_host_id.as_str();
         let eligible_logical_device_ids = self
             .snapshot
@@ -21271,7 +21305,7 @@ impl PreSchedulerSemanticRuntime {
                         "nudge_delivered": false,
                         "payload_logged": false,
                     }));
-                    let _ = done.send(());
+                    let _ = done.send(PreSchedulerRecurrenceReviewOutcome::Complete);
                     return;
                 }
                 if source_request_closed_before_judge {
@@ -21296,7 +21330,7 @@ impl PreSchedulerSemanticRuntime {
                             "payload_logged": false,
                         })),
                     }
-                    let _ = done.send(());
+                    let _ = done.send(PreSchedulerRecurrenceReviewOutcome::Complete);
                     return;
                 }
                 let review = match review {
@@ -21313,7 +21347,7 @@ impl PreSchedulerSemanticRuntime {
                             "nudge_delivered": false,
                             "payload_logged": false,
                         }));
-                        let _ = done.send(());
+                        let _ = done.send(PreSchedulerRecurrenceReviewOutcome::Complete);
                         return;
                     }
                 };
@@ -21336,7 +21370,7 @@ impl PreSchedulerSemanticRuntime {
                             "nudge_delivered": false,
                             "payload_logged": false,
                         }));
-                        let _ = done.send(());
+                        let _ = done.send(PreSchedulerRecurrenceReviewOutcome::Complete);
                         return;
                     }
                 };
@@ -21348,7 +21382,7 @@ impl PreSchedulerSemanticRuntime {
                         "nudge_delivered": false,
                         "payload_logged": false,
                     }));
-                    let _ = done.send(());
+                    let _ = done.send(PreSchedulerRecurrenceReviewOutcome::Complete);
                     return;
                 }
                 if !omni_judge_says_looping(&review.text) {
@@ -21359,27 +21393,15 @@ impl PreSchedulerSemanticRuntime {
                         "nudge_delivered": false,
                         "payload_logged": false,
                     }));
-                    let _ = done.send(());
+                    let _ = done.send(PreSchedulerRecurrenceReviewOutcome::Complete);
                     return;
                 }
                 let current_progress = progress.snapshot();
-                if structured_output_blocks_pre_scheduler_nudge(
+                let structured_progress_changed_before_reserve =
+                    structured_output_blocks_pre_scheduler_nudge(
                     source_progress_at_capture,
                     current_progress,
-                ) {
-                    events.write_value(serde_json::json!({
-                        "event": "pre_scheduler_semantic_nudge_deferred",
-                        "source_task": source_label,
-                        "reason": "structured_output_active_or_advanced",
-                        "structured_output_bytes_at_capture": source_progress_at_capture.structured_output_bytes,
-                        "structured_output_bytes_now": current_progress.structured_output_bytes,
-                        "structured_output_active": current_progress.structured_output_active,
-                        "nudge_delivered": false,
-                        "payload_logged": false,
-                    }));
-                    let _ = done.send(());
-                    return;
-                }
+                );
                 let parsed = parse_judge_reply(&review.text);
                 let direction = parsed.hint.trim();
                 let direction = if direction.is_empty() {
@@ -21395,7 +21417,7 @@ impl PreSchedulerSemanticRuntime {
                     progress.clone(),
                     source_progress_at_capture,
                 );
-                match source_lifecycle
+                let outcome = match source_lifecycle
                     .deliver_nudge_after_judge(
                         captured_source,
                         completed,
@@ -21404,26 +21426,58 @@ impl PreSchedulerSemanticRuntime {
                     )
                     .await
                 {
-                    Ok(receipt) => events.write_value(serde_json::json!({
-                        "event": "pre_scheduler_semantic_nudge_delivered",
-                        "source_task": source_label,
-                        "receipt": receipt,
-                        "judge_verdict": "looping_high",
-                        "deterministic_stop": false,
-                        "payload_logged": false,
-                    })),
-                    Err(error) => events.write_value(serde_json::json!({
-                        "event": "pre_scheduler_semantic_nudge_not_delivered",
-                        "source_task": source_label,
-                        "reason": error.to_string(),
-                        "nudge_delivered": false,
-                        "payload_logged": false,
-                    })),
-                }
-                let _ = done.send(());
+                    Ok(receipt) => {
+                        events.write_value(serde_json::json!({
+                            "event": "pre_scheduler_semantic_nudge_delivered",
+                            "source_task": source_label,
+                            "receipt": receipt,
+                            "judge_verdict": "looping_high",
+                            "structured_output_active_at_capture": source_progress_at_capture.structured_output_active,
+                            "structured_output_frozen_through_reserve": source_progress_at_capture.structured_output_active,
+                            "deterministic_stop": false,
+                            "payload_logged": false,
+                        }));
+                        PreSchedulerRecurrenceReviewOutcome::Complete
+                    }
+                    Err(error) => {
+                        let progress_after_reserve = progress.snapshot();
+                        let structured_progress_changed =
+                            structured_output_blocks_pre_scheduler_nudge(
+                                source_progress_at_capture,
+                                progress_after_reserve,
+                            );
+                        events.write_value(serde_json::json!({
+                            "event": "pre_scheduler_semantic_nudge_not_delivered",
+                            "source_task": source_label,
+                            "reason": error.to_string(),
+                            "structured_output_progress_changed_before_reserve": structured_progress_changed_before_reserve,
+                            "structured_output_progress_changed_through_reserve": structured_progress_changed,
+                            "structured_output_chunks_at_capture": source_progress_at_capture.structured_output_chunks,
+                            "structured_output_chunks_before_reserve": progress_after_reserve.structured_output_chunks,
+                            "structured_output_bytes_at_capture": source_progress_at_capture.structured_output_bytes,
+                            "structured_output_bytes_before_reserve": progress_after_reserve.structured_output_bytes,
+                            "nudge_delivered": false,
+                            "payload_logged": false,
+                        }));
+                        if structured_progress_changed {
+                            PreSchedulerRecurrenceReviewOutcome::StructuredProgressChanged
+                        } else {
+                            PreSchedulerRecurrenceReviewOutcome::Complete
+                        }
+                    }
+                };
+                let _ = done.send(outcome);
             })
         });
-        Ok(Some(receiver))
+        Ok(Some(
+            async move {
+                receiver
+                    .await
+                    .unwrap_or(PreSchedulerRecurrenceReviewOutcome::Complete)
+            }
+            .boxed()
+            .shared(),
+        ))
     }
 }
 
@@ -22767,8 +22821,44 @@ impl GooseAgentDispatcher {
         let mut observed_structured_output_bytes = 0u64;
         let mut observed_structured_output_active = false;
         let mut last_provider_progress_event_at: Option<tokio::time::Instant> = None;
-        let mut pre_scheduler_review: Option<tokio::sync::oneshot::Receiver<()>> = None;
+        let mut pre_scheduler_review: Option<PreSchedulerRecurrenceReview> = None;
         let mut next_pre_scheduler_review_check = tokio::time::Instant::now();
+        let handle_pre_scheduler_wake =
+            |wake: PreSchedulerRecurrenceWake,
+             review: &mut Option<PreSchedulerRecurrenceReview>,
+             recurrence: &mut ReasoningRecurrenceMeter,
+             next_check: &mut tokio::time::Instant| {
+                match wake {
+                    PreSchedulerRecurrenceWake::Review(
+                        PreSchedulerRecurrenceReviewOutcome::Complete,
+                    ) => {
+                        *review = None;
+                        recurrence.reset();
+                        *next_check = tokio::time::Instant::now();
+                    }
+                    PreSchedulerRecurrenceWake::Review(
+                        PreSchedulerRecurrenceReviewOutcome::StructuredProgressChanged,
+                    ) => {
+                        *review = None;
+                        *next_check = tokio::time::Instant::now();
+                        let progress = provider_stream_progress.snapshot();
+                        self.events.write_value(serde_json::json!({
+                            "event": "pre_scheduler_semantic_review_rearmed",
+                            "task_id": activity_key,
+                            "reason": "structured_output_progress_changed",
+                            "structured_output_chunks": progress.structured_output_chunks,
+                            "structured_output_bytes": progress.structured_output_bytes,
+                            "structured_output_active": progress.structured_output_active,
+                            "semantic_evidence_preserved": true,
+                            "deterministic_stop": false,
+                            "payload_logged": false,
+                        }));
+                    }
+                    PreSchedulerRecurrenceWake::RetryAdmission => {
+                        *next_check = tokio::time::Instant::now();
+                    }
+                }
+            };
         loop {
             if let Ok(source) = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone) {
                 let current_request = source
@@ -22782,57 +22872,6 @@ impl GooseAgentDispatcher {
                     &mut reasoning_recurrence,
                     &mut recurrence_recent_reasoning,
                 );
-            }
-            if let Some(review) = pre_scheduler_review.as_mut() {
-                match review.try_recv() {
-                    Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                        pre_scheduler_review = None;
-                        reasoning_recurrence.reset();
-                        next_pre_scheduler_review_check = tokio::time::Instant::now();
-                    }
-                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
-                }
-            }
-            if pre_scheduler_review.is_none()
-                && tokio::time::Instant::now() >= next_pre_scheduler_review_check
-            {
-                let recurrence = reasoning_recurrence.snapshot();
-                if recurrence_warrants_semantic_review(&recurrence) {
-                    if let Ok(source) = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone) {
-                        if let Some(evidence_request) = recurrence_provider_request.clone() {
-                            match source
-                                .runtime
-                                .try_spawn_recurrence_review(
-                                    &source,
-                                    evidence_request,
-                                    recurrence,
-                                    recurrence_recent_reasoning.clone(),
-                                    provider_stream_progress.clone(),
-                                )
-                                .await
-                            {
-                                Ok(Some(review)) => pre_scheduler_review = Some(review),
-                                Ok(None) => {
-                                    // This cadence only rechecks idle-route availability. It never ends,
-                                    // truncates, or advances the source call and leaves no broker work queued.
-                                    next_pre_scheduler_review_check = tokio::time::Instant::now()
-                                        + std::time::Duration::from_secs(1);
-                                }
-                                Err(error) => {
-                                    self.events.write_value(serde_json::json!({
-                                        "event": "pre_scheduler_semantic_judge_not_admitted",
-                                        "task_id": activity_key,
-                                        "reason": error.to_string(),
-                                        "nudge_delivered": false,
-                                        "payload_logged": false,
-                                    }));
-                                    next_pre_scheduler_review_check = tokio::time::Instant::now()
-                                        + std::time::Duration::from_secs(1);
-                                }
-                            }
-                        }
-                    }
-                }
             }
             // #136: cut a REPEATED-IDENTICAL-CALL loop — the same tool call returning the same result N times
             // in a row over at least the time floor. This is the ONLY guard that sees it: each repeat is a
@@ -23101,6 +23140,67 @@ impl GooseAgentDispatcher {
                 quiet_budget.map(|budget| tokio::time::Instant::now() + budget);
             let mut next_agent_event = Box::pin(stream.next());
             let (next_event, timed_out) = loop {
+                if pre_scheduler_review.is_none()
+                    && tokio::time::Instant::now() >= next_pre_scheduler_review_check
+                {
+                    let recurrence = reasoning_recurrence.snapshot();
+                    if recurrence_warrants_semantic_review(&recurrence) {
+                        if let Ok(source) = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone) {
+                            if let Some(evidence_request) = recurrence_provider_request.clone() {
+                                match source
+                                    .runtime
+                                    .try_spawn_recurrence_review(
+                                        &source,
+                                        evidence_request,
+                                        recurrence,
+                                        recurrence_recent_reasoning.clone(),
+                                        provider_stream_progress.clone(),
+                                    )
+                                    .await
+                                {
+                                    Ok(Some(review)) => pre_scheduler_review = Some(review),
+                                    Ok(None) => {
+                                        // This cadence only rechecks idle-route availability. It never ends,
+                                        // truncates, or advances the source call and leaves no broker work queued.
+                                        next_pre_scheduler_review_check =
+                                            tokio::time::Instant::now()
+                                                + std::time::Duration::from_secs(1);
+                                    }
+                                    Err(error) => {
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "pre_scheduler_semantic_judge_not_admitted",
+                                            "task_id": activity_key,
+                                            "reason": error.to_string(),
+                                            "nudge_delivered": false,
+                                            "payload_logged": false,
+                                        }));
+                                        next_pre_scheduler_review_check =
+                                            tokio::time::Instant::now()
+                                                + std::time::Duration::from_secs(1);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let review = pre_scheduler_review.clone();
+                let recurrence_waiting_for_route = pre_scheduler_review.is_none()
+                    && recurrence_warrants_semantic_review(&reasoning_recurrence.snapshot());
+                let retry_at = recurrence_waiting_for_route
+                    .then_some(next_pre_scheduler_review_check)
+                    .filter(|deadline| *deadline > tokio::time::Instant::now());
+                let pre_scheduler_wake = async move {
+                    if let Some(review) = review {
+                        PreSchedulerRecurrenceWake::Review(review.await)
+                    } else if let Some(deadline) = retry_at {
+                        tokio::time::sleep_until(deadline).await;
+                        PreSchedulerRecurrenceWake::RetryAdmission
+                    } else {
+                        std::future::pending::<PreSchedulerRecurrenceWake>().await
+                    }
+                };
+                tokio::pin!(pre_scheduler_wake);
                 let deadline = match (quiet_deadline, sink_deadline) {
                     (Some(quiet), Some(sink)) => Some(quiet.min(sink)),
                     (Some(quiet), None) => Some(quiet),
@@ -23112,11 +23212,29 @@ impl GooseAgentDispatcher {
                     Some(deadline) => tokio::select! {
                         event = &mut next_agent_event => Some(Ok(event)),
                         snapshot = progress => Some(Err(snapshot)),
+                        wake = &mut pre_scheduler_wake => {
+                            handle_pre_scheduler_wake(
+                                wake,
+                                &mut pre_scheduler_review,
+                                &mut reasoning_recurrence,
+                                &mut next_pre_scheduler_review_check,
+                            );
+                            continue;
+                        },
                         _ = tokio::time::sleep_until(deadline) => None,
                     },
                     None => tokio::select! {
                         event = &mut next_agent_event => Some(Ok(event)),
                         snapshot = progress => Some(Err(snapshot)),
+                        wake = &mut pre_scheduler_wake => {
+                            handle_pre_scheduler_wake(
+                                wake,
+                                &mut pre_scheduler_review,
+                                &mut reasoning_recurrence,
+                                &mut next_pre_scheduler_review_check,
+                            );
+                            continue;
+                        },
                     },
                 };
                 let Some(wait_result) = wait_result else {
@@ -33286,8 +33404,7 @@ fn structured_output_blocks_pre_scheduler_nudge(
     captured: ProviderStreamProgressSnapshot,
     current: ProviderStreamProgressSnapshot,
 ) -> bool {
-    current.structured_output_active
-        || current.structured_output_bytes > captured.structured_output_bytes
+    structured_output_progress_changed(captured, current)
 }
 
 /// Parse the semantic judge's one-line `VERDICT|CONFIDENCE|hint` reply. Conservative: anything not a
@@ -51417,7 +51534,8 @@ mod pre_scheduler_semantic_runtime_tests {
     use super::*;
     use futures::stream;
     use goose::providers::base::{
-        MessageStream, ProviderUsage, SingleAttemptFailureProvenance, SingleAttemptStream,
+        record_current_provider_stream_chunk, MessageStream, ProviderStreamChunkKind,
+        ProviderUsage, SingleAttemptFailureProvenance, SingleAttemptStream,
         SingleAttemptTerminalProof, Usage,
     };
     use goose_provider_types::errors::ProviderError;
@@ -51481,6 +51599,36 @@ mod pre_scheduler_semantic_runtime_tests {
                 )
             })
         }
+
+        async fn wait_for_count(
+            &self,
+            event_name: &str,
+            expected: usize,
+        ) -> Vec<serde_json::Value> {
+            tokio::time::timeout(Duration::from_secs(8), async {
+                loop {
+                    let matching = self
+                        .events
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|event| event["event"] == event_name)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if matching.len() >= expected {
+                        return matching;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "timed out waiting for {expected} {event_name} events; observed events: {:?}",
+                    self.values()
+                )
+            })
+        }
     }
 
     impl EventSink for RuntimeRecordingSink {
@@ -51503,6 +51651,8 @@ mod pre_scheduler_semantic_runtime_tests {
         RecurrentSourceSilentJudge,
         CloseCapturedTurn,
         SuccessfulNudge,
+        StructuredStartsAfterCaptureThenFreezes,
+        GrowingStructuredBeforeReserve,
         FinishedText,
         StartPanic,
     }
@@ -51510,8 +51660,10 @@ mod pre_scheduler_semantic_runtime_tests {
     struct RuntimeScriptedProvider {
         mode: RuntimeProviderMode,
         source_calls: AtomicUsize,
+        judge_calls: AtomicUsize,
         judge_started: Arc<Notify>,
         source_turn_two_started: Arc<Notify>,
+        structured_growth_recorded: Arc<Notify>,
     }
 
     impl RuntimeScriptedProvider {
@@ -51519,8 +51671,10 @@ mod pre_scheduler_semantic_runtime_tests {
             Self {
                 mode,
                 source_calls: AtomicUsize::new(0),
+                judge_calls: AtomicUsize::new(0),
                 judge_started: Arc::new(Notify::new()),
                 source_turn_two_started: Arc::new(Notify::new()),
+                structured_growth_recorded: Arc::new(Notify::new()),
             }
         }
 
@@ -51546,6 +51700,60 @@ mod pre_scheduler_semantic_runtime_tests {
         fn finished_text(model: &str, text: &str) -> SingleAttemptStream {
             let message = Message::assistant().with_text(text.to_string());
             let usage = ProviderUsage::new(model.to_string(), Usage::default());
+            SingleAttemptStream::finished(Box::pin(stream::once(async move {
+                Ok((Some(message), Some(usage)))
+            })))
+        }
+
+        fn structured_starts_after_recurrence_capture(
+            &self,
+            grow_again_during_rearmed_review: bool,
+        ) -> SingleAttemptStream {
+            let (terminal, reporter) = SingleAttemptTerminalProof::channel();
+            let judge_started = self.judge_started.clone();
+            let structured_growth_recorded = self.structured_growth_recorded.clone();
+            let recurrent =
+                "the same semantic reasoning cycle repeats without new evidence ".repeat(500);
+            let message =
+                Message::assistant().with_thinking(recurrent, "late-structured-signature");
+            let output = async_stream::stream! {
+                yield Ok((Some(message), None));
+                judge_started.notified().await;
+                record_current_provider_stream_chunk(
+                    377,
+                    ProviderStreamChunkKind::StructuredOutput,
+                );
+                structured_growth_recorded.notify_one();
+                if grow_again_during_rearmed_review {
+                    judge_started.notified().await;
+                    record_current_provider_stream_chunk(
+                        1,
+                        ProviderStreamChunkKind::StructuredOutput,
+                    );
+                    structured_growth_recorded.notify_one();
+                    judge_started.notified().await;
+                    reporter.mark_finished();
+                    let tool_call = CallToolRequestParams::new(FINAL_OUTPUT_TOOL)
+                        .with_arguments(object!({"status": "recovered"}));
+                    let final_output = Message::assistant()
+                        .with_tool_request("runtime-organic-final-output", Ok(tool_call));
+                    yield Ok((
+                        Some(final_output),
+                        Some(ProviderUsage::new(SOURCE_MODEL.to_string(), Usage::default())),
+                    ));
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
+            SingleAttemptStream::new(Box::pin(output), terminal)
+        }
+
+        fn finished_final_output() -> SingleAttemptStream {
+            let tool_call = CallToolRequestParams::new(FINAL_OUTPUT_TOOL)
+                .with_arguments(object!({"status": "recovered"}));
+            let message =
+                Message::assistant().with_tool_request("runtime-final-output", Ok(tool_call));
+            let usage = ProviderUsage::new(SOURCE_MODEL.to_string(), Usage::default());
             SingleAttemptStream::finished(Box::pin(stream::once(async move {
                 Ok((Some(message), Some(usage)))
             })))
@@ -51619,12 +51827,33 @@ mod pre_scheduler_semantic_runtime_tests {
             _tools: &[Tool],
         ) -> Result<SingleAttemptStream, ProviderError> {
             if model_config.model_name == JUDGE_MODEL {
+                let judge_call = self.judge_calls.fetch_add(1, AtomicOrdering::SeqCst);
                 self.judge_started.notify_one();
                 return match self.mode {
                     RuntimeProviderMode::SuccessfulNudge => Ok(Self::finished_text(
                         JUDGE_MODEL,
                         "VERDICT|LOOPING|HIGH|use the established evidence and advance",
                     )),
+                    RuntimeProviderMode::StructuredStartsAfterCaptureThenFreezes => {
+                        if judge_call == 0 {
+                            self.structured_growth_recorded.notified().await;
+                        }
+                        Ok(Self::finished_text(
+                            JUDGE_MODEL,
+                            "VERDICT|LOOPING|HIGH|use the established evidence and advance",
+                        ))
+                    }
+                    RuntimeProviderMode::GrowingStructuredBeforeReserve => {
+                        if judge_call < 2 {
+                            self.structured_growth_recorded.notified().await;
+                            Ok(Self::finished_text(
+                                JUDGE_MODEL,
+                                "VERDICT|LOOPING|HIGH|use the established evidence and advance",
+                            ))
+                        } else {
+                            Ok(Self::pending())
+                        }
+                    }
                     RuntimeProviderMode::FinishedText => {
                         Ok(Self::finished_text(JUDGE_MODEL, "finished"))
                     }
@@ -51657,6 +51886,22 @@ mod pre_scheduler_semantic_runtime_tests {
                         SOURCE_MODEL,
                         "source completed after semantic steer",
                     ))
+                }
+                RuntimeProviderMode::StructuredStartsAfterCaptureThenFreezes
+                    if source_call == 0 =>
+                {
+                    Ok(self.structured_starts_after_recurrence_capture(false))
+                }
+                RuntimeProviderMode::StructuredStartsAfterCaptureThenFreezes => {
+                    self.source_turn_two_started.notify_one();
+                    Ok(Self::finished_final_output())
+                }
+                RuntimeProviderMode::GrowingStructuredBeforeReserve if source_call == 0 => {
+                    Ok(self.structured_starts_after_recurrence_capture(true))
+                }
+                RuntimeProviderMode::GrowingStructuredBeforeReserve => {
+                    self.source_turn_two_started.notify_one();
+                    Ok(Self::finished_final_output())
                 }
                 RuntimeProviderMode::FinishedText => {
                     Ok(Self::finished_text(SOURCE_MODEL, "research complete"))
@@ -51788,6 +52033,30 @@ mod pre_scheduler_semantic_runtime_tests {
                 None,
                 None,
                 None,
+            )
+            .await
+    }
+
+    async fn run_typed_structured_source(
+        dispatcher: Arc<GooseAgentDispatcher>,
+    ) -> Result<RunAgentOut> {
+        dispatcher
+            .run_response_only_agent(
+                SOURCE_MODEL,
+                "runtime typed source system".to_string(),
+                "return the recovered typed result".to_string(),
+                Some(Response {
+                    json_schema: Some(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "status": {"type": "string", "const": "recovered"}
+                        },
+                        "required": ["status"],
+                        "additionalProperties": false
+                    })),
+                }),
+                dispatcher.planner_timeout_secs,
+                Some("research-saturation-frozen-runtime"),
             )
             .await
     }
@@ -52066,6 +52335,152 @@ mod pre_scheduler_semantic_runtime_tests {
                 && record["provider_request_id"] == cancelled_request_id
                 && record["terminal_kind"] == "cancelled"
         }));
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_structured_output_start_after_capture_rearms_and_recovers_when_frozen() {
+        let harness =
+            runtime_harness(RuntimeProviderMode::StructuredStartsAfterCaptureThenFreezes).await;
+        let output = tokio::time::timeout(
+            Duration::from_secs(8),
+            run_typed_structured_source(harness.dispatcher.clone()),
+        )
+        .await
+        .expect("structured output that froze after capture did not recover")
+        .expect("structured output recovery failed");
+        let final_output = output
+            .final_output
+            .expect("same-session turn two did not return typed final_output");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&final_output).unwrap()["status"],
+            "recovered"
+        );
+        assert!(!output.session_id.is_empty());
+        assert_eq!(
+            harness.provider.source_calls.load(AtomicOrdering::SeqCst),
+            2
+        );
+        assert_eq!(
+            harness.provider.judge_calls.load(AtomicOrdering::SeqCst),
+            2,
+            "the progress-changing first review must be followed by one review of the frozen state"
+        );
+
+        let events = harness.sink.values();
+        let rejected_index = events
+            .iter()
+            .position(|event| event["event"] == "pre_scheduler_semantic_nudge_not_delivered")
+            .expect("the review captured before structured output started was not vetoed");
+        let rejected = &events[rejected_index];
+        assert_eq!(rejected["structured_output_chunks_at_capture"], 0);
+        assert_eq!(rejected["structured_output_bytes_at_capture"], 0);
+        assert_eq!(rejected["structured_output_chunks_before_reserve"], 1);
+        assert_eq!(rejected["structured_output_bytes_before_reserve"], 377);
+        let rearmed_index = events
+            .iter()
+            .position(|event| event["event"] == "pre_scheduler_semantic_review_rearmed")
+            .expect("progress veto discarded recurrence evidence instead of rearming review");
+        assert_eq!(events[rearmed_index]["semantic_evidence_preserved"], true);
+        let nudge_index = events
+            .iter()
+            .position(|event| event["event"] == "pre_scheduler_semantic_nudge_delivered")
+            .expect("frozen structured output did not receive the semantic redirect");
+        assert!(rejected_index < rearmed_index);
+        assert!(rearmed_index < nudge_index);
+        let nudge = &events[nudge_index];
+        assert_eq!(nudge["structured_output_active_at_capture"], true);
+        assert_eq!(nudge["structured_output_frozen_through_reserve"], true);
+        assert_eq!(
+            nudge["receipt"]["source_cancel_terminal"]["kind"],
+            "cancelled"
+        );
+        let cancelled_request_id = nudge["receipt"]["source_cancel_terminal"]["key"]
+            ["provider_request_id"]
+            .as_str()
+            .unwrap();
+        let cancelled_terminal_index = events
+            .iter()
+            .position(|event| {
+                event["event"] == "broker_provider_terminal_observed"
+                    && event["receipt"]["key"]["provider_request_id"] == cancelled_request_id
+                    && event["receipt"]["kind"] == "cancelled"
+            })
+            .expect("frozen source cancellation was not terminal-proven");
+        assert!(cancelled_terminal_index < nudge_index);
+        assert_eq!(released_completion_for(&events, SOURCE_MODEL), ["success"]);
+
+        let journal = std::fs::read_to_string(&harness.journal_path).unwrap();
+        assert!(journal.lines().any(|line| {
+            let record = serde_json::from_str::<serde_json::Value>(line).unwrap();
+            record["transition"] == "terminal"
+                && record["provider_request_id"] == cancelled_request_id
+                && record["terminal_kind"] == "cancelled"
+        }));
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_one_more_structured_chunk_vetoes_atomic_nudge_reservation() {
+        let harness = runtime_harness(RuntimeProviderMode::GrowingStructuredBeforeReserve).await;
+        let source = tokio::spawn(run_typed_structured_source(harness.dispatcher.clone()));
+        let rejected = harness
+            .sink
+            .wait_for_count("pre_scheduler_semantic_nudge_not_delivered", 2)
+            .await;
+        let late_start = &rejected[0];
+        assert!(late_start["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("structured output progress changed")));
+        assert_eq!(late_start["structured_output_chunks_at_capture"], 0);
+        assert_eq!(late_start["structured_output_chunks_before_reserve"], 1);
+        assert_eq!(late_start["structured_output_bytes_at_capture"], 0);
+        assert_eq!(late_start["structured_output_bytes_before_reserve"], 377);
+        let one_more_byte = &rejected[1];
+        assert_eq!(
+            one_more_byte["structured_output_progress_changed_before_reserve"],
+            true
+        );
+        assert_eq!(one_more_byte["structured_output_chunks_at_capture"], 1);
+        assert_eq!(one_more_byte["structured_output_chunks_before_reserve"], 2);
+        assert_eq!(one_more_byte["structured_output_bytes_at_capture"], 377);
+        assert_eq!(one_more_byte["structured_output_bytes_before_reserve"], 378);
+        assert!(!harness.sink.has("pre_scheduler_semantic_nudge_delivered"));
+        assert_eq!(
+            harness.provider.source_calls.load(AtomicOrdering::SeqCst),
+            1
+        );
+        let rearmed = harness
+            .sink
+            .wait_for_count("pre_scheduler_semantic_review_rearmed", 2)
+            .await;
+        assert!(rearmed
+            .iter()
+            .all(|event| event["semantic_evidence_preserved"] == true));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while harness.provider.judge_calls.load(AtomicOrdering::SeqCst) < 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the stale review was vetoed but its recurrence evidence was not rearmed");
+        assert!(!harness.sink.has("pre_scheduler_semantic_nudge_delivered"));
+
+        let organic_output = tokio::time::timeout(Duration::from_secs(8), source)
+            .await
+            .expect("the exact source request did not finish after the stale review was vetoed")
+            .expect("source runtime task panicked")
+            .expect("organic typed output failed after the stale review was vetoed");
+        assert!(organic_output.final_output.is_some());
+        assert_eq!(
+            harness.provider.source_calls.load(AtomicOrdering::SeqCst),
+            1,
+            "a stale structured snapshot must not open a same-session nudge turn"
+        );
+        tokio::time::timeout(Duration::from_secs(8), harness.control.wait_until_drained())
+            .await
+            .expect("structured race cleanup did not drain")
+            .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
