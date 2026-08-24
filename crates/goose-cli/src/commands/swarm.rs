@@ -6586,8 +6586,7 @@ mod tests {
         ];
         let error =
             compile_generic_target_decision(candidate.clone(), &requirements, &[], invented)
-                .err()
-                .expect("an adjudicator must not synthesize a third decision")
+                .expect_err("an adjudicator must not synthesize a third decision")
                 .to_string();
         assert!(
             error.contains("invented a third whole-ledger decision"),
@@ -6886,8 +6885,7 @@ mod tests {
             "runtime-jury-host".to_string(),
             "runtime-authority-input".to_string(),
         )
-        .err()
-        .expect("the aggregate bit cannot contradict its target rows")
+        .expect_err("the aggregate bit cannot contradict its target rows")
         .to_string();
         assert!(error.contains("aggregate completion"));
     }
