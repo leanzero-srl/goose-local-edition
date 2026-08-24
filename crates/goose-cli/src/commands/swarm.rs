@@ -17428,8 +17428,11 @@ impl ResearchHostScheduler {
                         preferred_devices: vec![true; available_tokens.len()],
                     })
                     .collect::<Vec<_>>();
-                let assignments =
-                    maximum_cardinality_fleet_dispatch(available_tokens.len(), &candidates);
+                let assignments = maximum_cardinality_fleet_dispatch(
+                    available_tokens.len(),
+                    &candidates,
+                    FleetDispatchOrder::RequestAgeThenAuthoredCost,
+                );
                 if assignments.is_empty() {
                     return;
                 }
@@ -34120,10 +34123,14 @@ mod fan_order_tests {
                 preferred_devices: vec![true, true],
             },
         ];
-        let assignment = maximum_cardinality_fleet_dispatch(2, &candidates)
-            .into_iter()
-            .map(|(device, pending)| (pending, device))
-            .collect::<HashMap<_, _>>();
+        let assignment = maximum_cardinality_fleet_dispatch(
+            2,
+            &candidates,
+            FleetDispatchOrder::AuthoredCostThenSource,
+        )
+        .into_iter()
+        .map(|(device, pending)| (pending, device))
+        .collect::<HashMap<_, _>>();
         assert_eq!(assignment.len(), 2);
         assert_eq!(assignment[&0], 1, "the flexible unit must move aside");
         assert_eq!(assignment[&1], 0, "the constrained unit needs device zero");
@@ -34186,12 +34193,16 @@ mod fan_order_tests {
                     candidate
                 })
                 .collect::<Vec<_>>();
-            let assignment = maximum_cardinality_fleet_dispatch(2, &candidates)
-                .into_iter()
-                .map(|(device_index, pending_position)| {
-                    (device_index, candidates[pending_position].source_index)
-                })
-                .collect::<HashMap<_, _>>();
+            let assignment = maximum_cardinality_fleet_dispatch(
+                2,
+                &candidates,
+                FleetDispatchOrder::RequestAgeThenAuthoredCost,
+            )
+            .into_iter()
+            .map(|(device_index, pending_position)| {
+                (device_index, candidates[pending_position].source_index)
+            })
+            .collect::<HashMap<_, _>>();
             assert_eq!(assignment.len(), 2, "permutation {permutation:?}");
             assert_eq!(
                 assignment[&0], 0,
@@ -34202,6 +34213,36 @@ mod fan_order_tests {
                 "the flexible request must preserve maximum-cardinality cover in permutation {permutation:?}"
             );
         }
+    }
+
+    #[test]
+    fn fleet_matching_retains_authored_cost_order_for_non_scheduler_fans() {
+        let candidates = vec![
+            FleetDispatchCandidate {
+                pending_position: 0,
+                priority: 1,
+                source_index: 0,
+                unit_rank: 0,
+                constraint_width: 1,
+                eligible_devices: vec![true],
+                preferred_devices: vec![true],
+            },
+            FleetDispatchCandidate {
+                pending_position: 1,
+                priority: 10_000,
+                source_index: 1,
+                unit_rank: 0,
+                constraint_width: 1,
+                eligible_devices: vec![true],
+                preferred_devices: vec![true],
+            },
+        ];
+        let assignment = maximum_cardinality_fleet_dispatch(
+            1,
+            &candidates,
+            FleetDispatchOrder::AuthoredCostThenSource,
+        );
+        assert_eq!(assignment, vec![(0, 1)]);
     }
 
     #[tokio::test]
@@ -36325,9 +36366,16 @@ struct FleetDispatchCandidate {
     preferred_devices: Vec<bool>,
 }
 
+#[derive(Clone, Copy)]
+enum FleetDispatchOrder {
+    AuthoredCostThenSource,
+    RequestAgeThenAuthoredCost,
+}
+
 fn maximum_cardinality_fleet_dispatch(
     device_count: usize,
     candidates: &[FleetDispatchCandidate],
+    order: FleetDispatchOrder,
 ) -> Vec<(usize, usize)> {
     fn augment(
         candidate_index: usize,
@@ -36376,12 +36424,18 @@ fn maximum_cardinality_fleet_dispatch(
         candidates[*left]
             .constraint_width
             .cmp(&candidates[*right].constraint_width)
-            .then_with(|| {
-                candidates[*left]
+            .then_with(|| match order {
+                FleetDispatchOrder::AuthoredCostThenSource => retrying_fan_priority_cmp(
+                    candidates[*left].priority,
+                    candidates[*left].source_index,
+                    candidates[*right].priority,
+                    candidates[*right].source_index,
+                ),
+                FleetDispatchOrder::RequestAgeThenAuthoredCost => candidates[*left]
                     .source_index
                     .cmp(&candidates[*right].source_index)
+                    .then_with(|| candidates[*right].priority.cmp(&candidates[*left].priority)),
             })
-            .then_with(|| candidates[*right].priority.cmp(&candidates[*left].priority))
             .then_with(|| {
                 candidates[*left]
                     .unit_rank
@@ -36532,8 +36586,11 @@ where
                         .collect(),
                 })
                 .collect::<Vec<_>>();
-            let assignments =
-                maximum_cardinality_fleet_dispatch(available_devices.len(), &candidates);
+            let assignments = maximum_cardinality_fleet_dispatch(
+                available_devices.len(),
+                &candidates,
+                FleetDispatchOrder::AuthoredCostThenSource,
+            );
             let assigned_device_by_pending = assignments
                 .iter()
                 .map(|(device_index, pending_position)| (*pending_position, *device_index))
@@ -37157,8 +37214,11 @@ where
                     }
                 })
                 .collect::<Vec<_>>();
-            let assignments =
-                maximum_cardinality_fleet_dispatch(available_devices.len(), &candidates);
+            let assignments = maximum_cardinality_fleet_dispatch(
+                available_devices.len(),
+                &candidates,
+                FleetDispatchOrder::AuthoredCostThenSource,
+            );
             let assigned_device_by_pending = assignments
                 .iter()
                 .map(|(device_index, pending_position)| (*pending_position, *device_index))
