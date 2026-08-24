@@ -3473,6 +3473,32 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 ),
                 baseline,
             )
+            supervised = {
+                **continued,
+                "supervisor_pid": 1234,
+                "supervisor_pgid": 1234,
+                "supervisor_sid": 1234,
+                "supervisor_identity": "sealed-supervisor",
+                "launched_at": cloud_sb7.utc_now(),
+            }
+            self.assertIsNone(
+                cloud_sb7.transport_continuation_pristine_tree_sha256(
+                    root, campaign, entrant_id, supervised
+                )
+            )
+            with mock.patch.object(
+                cloud_sb7, "launched_child_ownership_failure", return_value=None
+            ):
+                self.assertEqual(
+                    cloud_sb7.transport_continuation_pristine_tree_sha256(
+                        root,
+                        campaign,
+                        entrant_id,
+                        supervised,
+                        allow_current_supervisor=True,
+                    ),
+                    baseline,
+                )
             application_file = tree / "application.txt"
             application_file.write_text("must remain a hard failure\n")
             self.assertNotEqual(
