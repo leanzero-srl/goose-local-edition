@@ -7297,6 +7297,52 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertEqual(smoke[smoke.index("--provider") + 1], row["provider"])
         self.assertEqual(smoke[smoke.index("--model") + 1], row["model"])
 
+    def test_kimi_child_environment_is_provider_isolated_and_omits_sampling(self) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-kimi-k3-entrant.json"
+            )
+        )[0]
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            profile = root / "profile"
+            tree = root / "tree"
+            profile.mkdir()
+            tree.mkdir()
+            state = {
+                "profile": str(profile),
+                "tree": str(tree),
+                "campaign_root": str(root),
+                "provider_lifecycle": str(root / "provider-lifecycle.jsonl"),
+                "budget_config_sha256": "fixture-budget-config",
+                "sandbox_denied_local_ports": [],
+            }
+            hostile = {
+                "ZHIPU_API_KEY": "unrelated-zai",
+                "GOOGLE_API_KEY": "unrelated-google",
+                "DEEPSEEK_API_KEY": "unrelated-deepseek",
+                "GOOSE_TEMPERATURE": "0.7",
+                "GOOSE_SWARM_TOP_P": "0.8",
+            }
+            with mock.patch.dict(os.environ, hostile, clear=True):
+                env = cloud_sb7.child_env(row, state, "in-memory-moonshot")
+
+        self.assertEqual(env["GOOSE_PROVIDER"], "moonshot")
+        self.assertEqual(env["GOOSE_MODEL"], "kimi-k3")
+        self.assertEqual(env["GOOSE_FAST_MODEL"], "kimi-k3")
+        self.assertEqual(env["MOONSHOT_BASE_URL"], "https://api.moonshot.ai/v1")
+        self.assertEqual(env["GOOSE_THINKING_EFFORT"], "max")
+        self.assertEqual(env["GOOSE_MAX_TOKENS"], "131072")
+        self.assertEqual(env["MOONSHOT_API_KEY"], "in-memory-moonshot")
+        for forbidden in (
+            "ZHIPU_API_KEY",
+            "GOOGLE_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "GOOSE_TEMPERATURE",
+            "GOOSE_SWARM_TOP_P",
+        ):
+            self.assertNotIn(forbidden, env)
+
     def test_smoke_environment_uses_shared_budget_and_isolated_paths(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw).resolve()
@@ -7809,6 +7855,25 @@ class CloudSb7HarnessTest(unittest.TestCase):
             Path(str(first["proof"])).write_text("{}\n")
             with self.assertRaisesRegex(SystemExit, "untampered smoke PASS"):
                 cloud_sb7.require_smoke_proofs(root)
+
+    def test_build_gate_accepts_one_frozen_entrant_with_its_exact_smoke_proof(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            state = self.complete_smoke_attempt(root, row)
+            raw_hash = cloud_sb7.sha256_tree_exact(
+                root / "entrants" / str(row["id"]) / "tree"
+            )
+            cloud_sb7.update_campaign(
+                root,
+                smoke_status="PASS",
+                smoke_proof_sha256={str(row["id"]): state["proof_sha256"]},
+                smoke_raw_tree_sha256_before={str(row["id"]): raw_hash},
+                smoke_raw_tree_sha256_after={str(row["id"]): raw_hash},
+            )
+            cloud_sb7.require_smoke_proofs(root)
 
     def test_successor_contract_carries_terminal_crash_reserve_conservatively(
         self,
@@ -9183,6 +9248,107 @@ class CloudSb7HarnessTest(unittest.TestCase):
         row["max_output_tokens"] = 65_535
         with self.assertRaises(SystemExit):
             cloud_sb7.validate_rosters([row], roster)
+
+    def test_moonshot_roster_binds_exact_kimi_identity_and_contract(self) -> None:
+        row = {
+            "provider": "moonshot",
+            "model": "kimi-k3",
+            "accepted_reported_models": ["kimi-k3"],
+            "secret_env": "MOONSHOT_API_KEY",
+            "context_limit": 1_048_576,
+            "thinking_effort": "max",
+        }
+        metadata = {
+            "id": "kimi-k3",
+            "owned_by": "moonshot",
+            "context_length": 1_048_576,
+            "supports_reasoning": True,
+            "supports_dynamic_tools": True,
+            "reasoning_efforts": {
+                "support": True,
+                "default_effort": "max",
+                "valid_efforts": ["low", "high", "max"],
+            },
+        }
+        with mock.patch.object(
+            cloud_sb7,
+            "fetch_json",
+            return_value={"data": [metadata]},
+        ) as fetch:
+            roster = cloud_sb7.authenticated_rosters(
+                {"MOONSHOT_API_KEY": "fixture-secret"}, [row]
+            )
+        fetch.assert_called_once_with(
+            "https://api.moonshot.ai/v1/models",
+            {"Authorization": "Bearer fixture-secret"},
+        )
+        cloud_sb7.validate_rosters([row], roster)
+
+        for field, value in (
+            ("context_length", 1_048_575),
+            ("supports_dynamic_tools", False),
+        ):
+            with self.subTest(field=field):
+                changed = json.loads(json.dumps(metadata))
+                changed[field] = value
+                roster["evidence"]["moonshot"]["kimi-k3"] = changed
+                with self.assertRaises(SystemExit):
+                    cloud_sb7.validate_rosters([row], roster)
+        roster["evidence"]["moonshot"]["kimi-k3"] = metadata
+
+    def test_keychain_provider_secret_is_memory_only_and_unambiguous(self) -> None:
+        row = {
+            "id": "kimi-k3",
+            "secret_env": "MOONSHOT_API_KEY",
+            "secret_keychain": {
+                "account": "goose-sb7-kimi-k3",
+                "service": "goose-benchmark-moonshot-api",
+            },
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "cloud.env"
+            path.write_text("")
+            path.chmod(0o600)
+            completed = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="fixture-keychain-secret\n", stderr=""
+            )
+            with mock.patch.object(
+                cloud_sb7.subprocess, "run", return_value=completed
+            ) as run:
+                values = cloud_sb7.provider_secret_values(path, [row])
+            self.assertEqual(values, {"MOONSHOT_API_KEY": "fixture-keychain-secret"})
+            self.assertEqual(
+                run.call_args.args[0],
+                [
+                    "/usr/bin/security",
+                    "find-generic-password",
+                    "-a",
+                    "goose-sb7-kimi-k3",
+                    "-s",
+                    "goose-benchmark-moonshot-api",
+                    "-w",
+                ],
+            )
+            self.assertNotIn("fixture-keychain-secret", repr(run.call_args))
+
+            path.write_text("MOONSHOT_API_KEY=duplicate\n")
+            with mock.patch.object(cloud_sb7.subprocess, "run") as duplicate_run:
+                with self.assertRaisesRegex(SystemExit, "must not also exist"):
+                    cloud_sb7.provider_secret_values(path, [row])
+            duplicate_run.assert_not_called()
+
+            unavailable = subprocess.CompletedProcess(
+                args=[], returncode=44, stdout="", stderr="keychain detail"
+            )
+            with mock.patch.object(
+                cloud_sb7.subprocess, "run", return_value=unavailable
+            ):
+                path.write_text("")
+                with self.assertRaisesRegex(
+                    SystemExit, "credential is unavailable"
+                ) as error:
+                    cloud_sb7.provider_secret_values(path, [row])
+            self.assertNotIn("keychain detail", str(error.exception))
 
     def test_secret_parser_rejects_group_readable_file(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

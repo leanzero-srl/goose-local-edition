@@ -574,6 +574,56 @@ def parse_secret_file(path: Path) -> Dict[str, str]:
     return values
 
 
+def provider_secret_values(
+    path: Path, rows: Iterable[Mapping[str, Any]]
+) -> Dict[str, str]:
+    values = parse_secret_file(path)
+    for row in rows:
+        binding = row.get("secret_keychain")
+        if binding is None:
+            continue
+        if (
+            not isinstance(binding, dict)
+            or set(binding) != {"account", "service"}
+            or any(
+                not isinstance(binding.get(key), str)
+                or not re.fullmatch(r"[A-Za-z0-9._-]+", str(binding[key]))
+                for key in ("account", "service")
+            )
+        ):
+            raise SystemExit(
+                f"invalid Keychain credential binding: {row.get('id')}"
+            )
+        secret_env = str(row["secret_env"])
+        if values.get(secret_env):
+            raise SystemExit(
+                f"Keychain-backed credential must not also exist in the secret file: "
+                f"{secret_env}"
+            )
+        proc = subprocess.run(
+            [
+                "/usr/bin/security",
+                "find-generic-password",
+                "-a",
+                str(binding["account"]),
+                "-s",
+                str(binding["service"]),
+                "-w",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+        )
+        secret = proc.stdout.rstrip("\n")
+        if proc.returncode != 0 or not secret:
+            raise SystemExit(
+                f"Keychain credential is unavailable for {row.get('id')}"
+            )
+        values[secret_env] = secret
+    return values
+
+
 def parse_env_file(path: Path) -> Dict[str, str]:
     if not path.is_file():
         raise SystemExit(f"environment file is missing: {path}")
@@ -2070,32 +2120,44 @@ def fetch_json(url: str, headers: Mapping[str, str]) -> Dict[str, Any]:
 def authenticated_rosters(
     secret_values: Mapping[str, str], rows: Iterable[Mapping[str, Any]]
 ) -> Dict[str, Any]:
-    required = ("ZHIPU_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY")
+    rows = list(rows)
+    required = sorted({str(row["secret_env"]) for row in rows})
     missing = [name for name in required if not secret_values.get(name)]
     if missing:
         raise SystemExit(f"secret file is missing variables: {', '.join(missing)}")
 
-    rows = list(rows)
-    zai_endpoints = {
-        str(row["endpoint_family"]).rstrip("/")
-        for row in rows
-        if row["provider"] == "zai_api"
-    }
-    if len(zai_endpoints) != 1:
-        raise SystemExit("Z.AI entrants must share one explicit endpoint family")
-    zai_endpoint = next(iter(zai_endpoints))
-    zai = fetch_json(
-        f"{zai_endpoint}/models",
-        {"Authorization": f"Bearer {secret_values['ZHIPU_API_KEY']}"},
-    )
-    google = fetch_json(
-        "https://generativelanguage.googleapis.com/v1beta/models",
-        {"x-goog-api-key": secret_values["GOOGLE_API_KEY"]},
-    )
-    deepseek = fetch_json(
-        "https://api.deepseek.com/models",
-        {"Authorization": f"Bearer {secret_values['DEEPSEEK_API_KEY']}"},
-    )
+    providers = {str(row["provider"]) for row in rows}
+    zai: Dict[str, Any] = {"data": []}
+    google: Dict[str, Any] = {"models": []}
+    deepseek: Dict[str, Any] = {"data": []}
+    moonshot: Dict[str, Any] = {"data": []}
+    if "zai_api" in providers:
+        zai_endpoints = {
+            str(row["endpoint_family"]).rstrip("/")
+            for row in rows
+            if row["provider"] == "zai_api"
+        }
+        if len(zai_endpoints) != 1:
+            raise SystemExit("Z.AI entrants must share one explicit endpoint family")
+        zai = fetch_json(
+            f"{next(iter(zai_endpoints))}/models",
+            {"Authorization": f"Bearer {secret_values['ZHIPU_API_KEY']}"},
+        )
+    if "google" in providers:
+        google = fetch_json(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            {"x-goog-api-key": secret_values["GOOGLE_API_KEY"]},
+        )
+    if "custom_deepseek" in providers:
+        deepseek = fetch_json(
+            "https://api.deepseek.com/models",
+            {"Authorization": f"Bearer {secret_values['DEEPSEEK_API_KEY']}"},
+        )
+    if "moonshot" in providers:
+        moonshot = fetch_json(
+            "https://api.moonshot.ai/v1/models",
+            {"Authorization": f"Bearer {secret_values['MOONSHOT_API_KEY']}"},
+        )
     zai_rows = {
         str(row.get("id", "")): dict(row)
         for row in zai.get("data", [])
@@ -2111,10 +2173,16 @@ def authenticated_rosters(
         for row in deepseek.get("data", [])
         if isinstance(row, dict) and row.get("id")
     }
+    moonshot_rows = {
+        str(row.get("id", "")): dict(row)
+        for row in moonshot.get("data", [])
+        if isinstance(row, dict) and row.get("id")
+    }
     reported_models: Dict[str, Dict[str, list[str]]] = {
         "zai_api": {model: [model] for model in zai_rows},
         "google": {},
         "custom_deepseek": {model: [model] for model in deepseek_rows},
+        "moonshot": {model: [model] for model in moonshot_rows},
     }
     for model, metadata in google_rows.items():
         aliases = {model}
@@ -2127,12 +2195,14 @@ def authenticated_rosters(
             "zai_api": set(zai_rows),
             "google": set(google_rows),
             "custom_deepseek": set(deepseek_rows),
+            "moonshot": set(moonshot_rows),
         },
         "accepted_reported_models": reported_models,
         "evidence": {
             "zai_api": zai_rows,
             "google": google_rows,
             "custom_deepseek": deepseek_rows,
+            "moonshot": moonshot_rows,
         },
     }
 
@@ -2193,6 +2263,42 @@ def validate_rosters(
                         f"{roster_key} for {model}: {row[manifest_key]} != "
                         f"{authenticated_limit}"
                     )
+        if provider == "moonshot":
+            provider_evidence = evidence.get(provider)
+            metadata = (
+                provider_evidence.get(model)
+                if isinstance(provider_evidence, dict)
+                else None
+            )
+            if not isinstance(metadata, dict):
+                raise SystemExit(
+                    f"authenticated Moonshot roster has no metadata for exact model: {model}"
+                )
+            context_length = metadata.get("context_length")
+            if (
+                isinstance(context_length, bool)
+                or not isinstance(context_length, int)
+                or context_length != int(row["context_limit"])
+            ):
+                raise SystemExit(
+                    f"manifest context_limit does not match authenticated Moonshot "
+                    f"context_length for {model}"
+                )
+            reasoning = metadata.get("reasoning_efforts")
+            configured_effort = str(row["thinking_effort"])
+            if (
+                metadata.get("owned_by") != "moonshot"
+                or metadata.get("supports_reasoning") is not True
+                or metadata.get("supports_dynamic_tools") is not True
+                or not isinstance(reasoning, dict)
+                or reasoning.get("support") is not True
+                or reasoning.get("default_effort") != "max"
+                or configured_effort not in reasoning.get("valid_efforts", [])
+            ):
+                raise SystemExit(
+                    f"authenticated Moonshot roster does not prove the required "
+                    f"reasoning/tool contract for {model}"
+                )
 
 
 def preflight(
@@ -2220,7 +2326,7 @@ def preflight(
         raise SystemExit(
             "cloud benchmark source worktree must be clean before it is frozen"
         )
-    secret_values = parse_secret_file(secret_path)
+    secret_values = provider_secret_values(secret_path, rows)
     rosters = authenticated_rosters(secret_values, rows)
     validate_rosters(rows, rosters)
     busy = [
@@ -3445,7 +3551,9 @@ def persisted_entrant_secret_hits(
     if not (root / "entrants" / entrant_id).is_dir():
         return [f"missing:{root / 'entrants' / entrant_id}"]
     secret_path = Path(str(campaign["secret_file"]))
-    secret_values = parse_secret_file(secret_path).values()
+    secret_values = provider_secret_values(
+        secret_path, [manifest_row(root, entrant_id)]
+    ).values()
     return secret_occurrences([root], secret_values, [secret_path])
 
 
@@ -10100,7 +10208,7 @@ def supersede_campaign(
         manifest = load_json(manifest_path)
         rows = entrants(manifest)
         row_ids = {str(row["id"]) for row in rows}
-        secret_values = parse_secret_file(secret_path)
+        secret_values = provider_secret_values(secret_path, rows)
         evidence, artifacts, evidence_sha = validate_defect_evidence(
             evidence_path, predecessor, binary, row_ids, secret_values.values()
         )
@@ -10711,7 +10819,7 @@ def qualification_restart_campaign(
                     states, source_ledger = validate_stopped_qualification_source(
                         source_root, source, rows
                     )
-                    secret_values = parse_secret_file(secret_path)
+                    secret_values = provider_secret_values(secret_path, rows)
                     evidence, artifacts, evidence_sha = validate_defect_evidence(
                         evidence_path,
                         source,
@@ -12229,7 +12337,7 @@ def orchestrator_recovery_campaign(
                                 source_root, source, rows
                             )
                         )
-                        secret_values = parse_secret_file(secret_path)
+                        secret_values = provider_secret_values(secret_path, rows)
                         evidence, artifacts, evidence_sha = (
                             validate_orchestrator_recovery_evidence(
                                 evidence_path,
@@ -13110,7 +13218,9 @@ def smoke_attempt_evidence(
 
     secret_hits: list[str] = []
     try:
-        secret_values = parse_secret_file(Path(str(campaign["secret_file"])))
+        secret_values = provider_secret_values(
+            Path(str(campaign["secret_file"])), [manifest_row(root, entrant_id)]
+        )
         secret_hits = secret_occurrences(
             [root / "smoke" / entrant_id],
             secret_values.values(),
@@ -13314,8 +13424,10 @@ def finalize_smoke_attempt(
         else:
             atomic_json(proof_path, proof)
         try:
-            secret_values = parse_secret_file(
-                Path(str(load_json(campaign_file(root))["secret_file"]))
+            current_campaign = load_json(campaign_file(root))
+            secret_values = provider_secret_values(
+                Path(str(current_campaign["secret_file"])),
+                [manifest_row(root, entrant_id)],
             )
             sealed_secret_hits = secret_occurrences(
                 [root / "smoke" / entrant_id], secret_values.values()
@@ -13566,7 +13678,9 @@ def smoke_proof_mismatch(
     if sealed_smoke_admission_history(history) != proof.get("admission_history"):
         return "cumulative smoke admission evidence differs from the sealed proof"
     try:
-        secrets_map = parse_secret_file(Path(str(campaign["secret_file"])))
+        secrets_map = provider_secret_values(
+            Path(str(campaign["secret_file"])), [row]
+        )
     except (OSError, KeyError, SystemExit) as error:
         return f"smoke proof secret scan cannot be repeated: {error}"
     secret_hits = secret_occurrences(
@@ -13594,8 +13708,6 @@ def require_smoke_proofs(
         raise SystemExit("frozen entrant manifest changed before smoke gate")
     manifest = load_json(manifest_path)
     rows = entrants(manifest)
-    if len(rows) != 5:
-        raise SystemExit("cloud builds require exactly five smoke contracts")
     if smoke_max_turns(manifest) != campaign.get("smoke_max_turns"):
         raise SystemExit("campaign smoke max-turns differs from the frozen manifest")
     try:
@@ -13614,7 +13726,7 @@ def require_smoke_proofs(
     raw_before = campaign.get("smoke_raw_tree_sha256_before")
     raw_after = campaign.get("smoke_raw_tree_sha256_after")
     if not isinstance(raw_before, dict) or raw_before != raw_after:
-        raise SystemExit("smoke did not preserve all five raw benchmark trees")
+        raise SystemExit("smoke did not preserve every raw benchmark tree")
     entrant_states = {
         str(row["id"]): read_state(root, str(row["id"])) for row in rows
     }
@@ -13720,7 +13832,7 @@ def require_smoke_proofs(
             failures.append(f"{entrant_id}: {mismatch}")
     if failures:
         raise SystemExit(
-            "cloud builds require five untampered smoke PASS proofs or an "
+            "cloud builds require untampered smoke PASS proofs or an "
             "explicit typed carried proof: "
             + "; ".join(failures)
         )
@@ -13854,7 +13966,9 @@ def smoke_supervise_claimed(root: Path, entrant_id: str) -> int:
         update_smoke_state(root, entrant_id, status="FAILED", failure=ambiguity)
         return 2
     try:
-        secret_values = parse_secret_file(Path(str(campaign["secret_file"])))
+        secret_values = provider_secret_values(
+            Path(str(campaign["secret_file"])), [row]
+        )
     except (OSError, KeyError, SystemExit) as error:
         update_smoke_state(
             root,
@@ -14128,7 +14242,7 @@ def supervise_claimed(root: Path, entrant_id: str) -> int:
         update_state(root, entrant_id, status="PRE_ADMISSION_FAILURE", failure=mismatch)
         return 2
     secret_path = Path(str(campaign["secret_file"]))
-    secret_values = parse_secret_file(secret_path)
+    secret_values = provider_secret_values(secret_path, [row])
     secret_name = str(row["secret_env"])
     secret_value = secret_values.get(secret_name, "")
     if not secret_value:
@@ -22842,8 +22956,6 @@ def smoke(root: Path) -> int:
         campaign = load_json(campaign_file(root))
         manifest = load_json(Path(str(campaign["entrant_manifest"])))
         rows = entrants(manifest)
-        if len(rows) != 5:
-            raise SystemExit("cloud SB7 smoke requires exactly five frozen entrants")
         build_states = [read_state(root, str(row["id"])) for row in rows]
         dirty_builds = full_build_activity_before_smoke(root, campaign, build_states)
         if dirty_builds:
@@ -28052,8 +28164,6 @@ def published_campaign_mismatch(root: Path) -> str | None:
         return f"published campaign smoke proof failed: {error}"
     manifest = load_json(Path(str(campaign["entrant_manifest"])))
     rows = entrants(manifest)
-    if len(rows) != 5:
-        return "published campaign does not contain exactly five entrants"
     for row in rows:
         entrant_id = str(row["id"])
         state = read_state(root, entrant_id)
