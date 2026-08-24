@@ -25880,7 +25880,7 @@ impl GooseAgentDispatcher {
             "jury_model_calls": partition_count.saturating_mul(2),
             "topology": "maximum-cardinality-host-aware-individual-juror-work-steal-adjudication-proof-without-cover-barriers",
             "jury_units_per_packet": 2,
-            "dispatch_basis": "maximum-cardinality-before-authored-cost-and-speed-with-distinct-pair-host-authority",
+            "dispatch_basis": "maximum-cardinality-then-constraint-width-then-request-age-before-authored-cost-and-speed-with-distinct-pair-host-authority",
             "open_pair_cap": null,
             "fixed_packet_count": null,
             "gap_count_cap": null,
@@ -34129,6 +34129,81 @@ mod fan_order_tests {
         assert_eq!(assignment[&1], 0, "the constrained unit needs device zero");
     }
 
+    #[test]
+    fn fleet_matching_keeps_oldest_equal_constraint_work_across_input_permutations() {
+        let templates = [
+            FleetDispatchCandidate {
+                pending_position: 0,
+                priority: 1,
+                source_index: 0,
+                unit_rank: 1,
+                constraint_width: 1,
+                eligible_devices: vec![true, false],
+                preferred_devices: vec![true, true],
+            },
+            FleetDispatchCandidate {
+                pending_position: 0,
+                priority: 20_000,
+                source_index: 1,
+                unit_rank: 3,
+                constraint_width: 1,
+                eligible_devices: vec![true, false],
+                preferred_devices: vec![true, true],
+            },
+            FleetDispatchCandidate {
+                pending_position: 0,
+                priority: 30_000,
+                source_index: 2,
+                unit_rank: 3,
+                constraint_width: 1,
+                eligible_devices: vec![true, false],
+                preferred_devices: vec![true, true],
+            },
+            FleetDispatchCandidate {
+                pending_position: 0,
+                priority: 40_000,
+                source_index: 3,
+                unit_rank: 0,
+                constraint_width: 2,
+                eligible_devices: vec![true, true],
+                preferred_devices: vec![true, true],
+            },
+        ];
+        for permutation in [
+            [0usize, 1, 2, 3],
+            [0, 2, 3, 1],
+            [1, 0, 3, 2],
+            [1, 3, 2, 0],
+            [2, 1, 0, 3],
+            [3, 2, 1, 0],
+        ] {
+            let candidates = permutation
+                .into_iter()
+                .enumerate()
+                .map(|(pending_position, template_index)| {
+                    let mut candidate = templates[template_index].clone();
+                    candidate.pending_position = pending_position;
+                    candidate
+                })
+                .collect::<Vec<_>>();
+            let assignment = maximum_cardinality_fleet_dispatch(2, &candidates)
+                .into_iter()
+                .map(|(device_index, pending_position)| {
+                    (device_index, candidates[pending_position].source_index)
+                })
+                .collect::<HashMap<_, _>>();
+            assert_eq!(assignment.len(), 2, "permutation {permutation:?}");
+            assert_eq!(
+                assignment[&0], 0,
+                "the oldest singleton must beat both newer, costlier singleton citations in permutation {permutation:?}"
+            );
+            assert_eq!(
+                assignment[&1], 3,
+                "the flexible request must preserve maximum-cardinality cover in permutation {permutation:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn shared_host_scheduler_keeps_a_later_flexible_host_for_constrained_work() {
         let lanes = ["host-a", "host-b"]
@@ -34195,6 +34270,111 @@ mod fan_order_tests {
         drop(held_b);
         let flexible = flexible.await.unwrap();
         assert_eq!(flexible.lane.token, "lane-1");
+    }
+
+    #[tokio::test]
+    async fn shared_host_scheduler_admits_old_juror_before_two_newer_citations() {
+        let scheduler = ResearchHostScheduler::new(vec![ResearchPhysicalLane {
+            token: "lane-mac".to_string(),
+            model_id: "model-mac".to_string(),
+            physical_host_id: "host-mac".to_string(),
+        }]);
+        let held = scheduler
+            .acquire(
+                vec!["lane-mac".to_string()],
+                1,
+                0,
+                "active-work".to_string(),
+            )
+            .await
+            .unwrap();
+        let old_juror = tokio::spawn({
+            let scheduler = scheduler.clone();
+            async move {
+                scheduler
+                    .acquire(
+                        vec!["lane-mac".to_string()],
+                        1_001,
+                        1,
+                        "old-jury-2".to_string(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while scheduler.inner.state.lock().unwrap().pending.len() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the old juror queued behind the active host");
+        let first_citation = tokio::spawn({
+            let scheduler = scheduler.clone();
+            async move {
+                scheduler
+                    .acquire(
+                        vec!["lane-mac".to_string()],
+                        20_000,
+                        3,
+                        "newer-citation-1".to_string(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while scheduler.inner.state.lock().unwrap().pending.len() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the first newer citation queued behind the old juror");
+        let second_citation = tokio::spawn({
+            let scheduler = scheduler.clone();
+            async move {
+                scheduler
+                    .acquire(
+                        vec!["lane-mac".to_string()],
+                        30_000,
+                        3,
+                        "newer-citation-2".to_string(),
+                    )
+                    .await
+                    .unwrap()
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while scheduler.inner.state.lock().unwrap().pending.len() != 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both newer citations queued behind the old juror");
+
+        drop(held);
+        let old_juror = tokio::time::timeout(std::time::Duration::from_secs(2), old_juror)
+            .await
+            .expect("the old juror received the first released host")
+            .unwrap();
+        assert_eq!(old_juror.lane.token, "lane-mac");
+        assert!(!first_citation.is_finished());
+        assert!(!second_citation.is_finished());
+
+        drop(old_juror);
+        let first_citation =
+            tokio::time::timeout(std::time::Duration::from_secs(2), first_citation)
+                .await
+                .expect("the older citation received the next release")
+                .unwrap();
+        assert!(!second_citation.is_finished());
+        drop(first_citation);
+        let second_citation =
+            tokio::time::timeout(std::time::Duration::from_secs(2), second_citation)
+                .await
+                .expect("the final citation received the final release")
+                .unwrap();
+        drop(second_citation);
     }
 
     #[tokio::test]
@@ -36197,13 +36377,11 @@ fn maximum_cardinality_fleet_dispatch(
             .constraint_width
             .cmp(&candidates[*right].constraint_width)
             .then_with(|| {
-                retrying_fan_priority_cmp(
-                    candidates[*left].priority,
-                    candidates[*left].source_index,
-                    candidates[*right].priority,
-                    candidates[*right].source_index,
-                )
+                candidates[*left]
+                    .source_index
+                    .cmp(&candidates[*right].source_index)
             })
+            .then_with(|| candidates[*right].priority.cmp(&candidates[*left].priority))
             .then_with(|| {
                 candidates[*left]
                     .unit_rank
@@ -56020,7 +56198,7 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
-    async fn production_pair_repeat_retires_failed_host_before_stale_sibling_admission() {
+    async fn production_old_juror_closes_pair_before_two_newer_single_host_citations() {
         const PARTITION: &str = "target-section-runtime-alpha";
         const REQUIREMENT: &str = "REQ-runtime-jury";
         const MODEL_A: &str = "runtime-jury-model-a";
@@ -56124,17 +56302,131 @@ mod pre_scheduler_semantic_runtime_tests {
         assert_eq!(stale["provider_call_started"], false);
         assert_eq!(harness.provider.call_count(MODEL_A), 2);
         drop(held_b);
+        let jury_priority = research_closure_partition_cost(&ResearchClosurePartition {
+            partition_id: PARTITION.to_string(),
+            candidates: vec![correction_runtime_candidate(REQUIREMENT)],
+        });
+        let old_juror_ordinal = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = scheduler.inner.state.lock().unwrap();
+                let only_mac = HashSet::from(["jury-lane-c".to_string()]);
+                if harness.provider.call_count(MODEL_B) == 1
+                    && state.pending.len() == 1
+                    && state.pending[0].eligible_tokens == only_mac
+                {
+                    break state.pending[0].ordinal;
+                }
+                drop(state);
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the surviving old juror did not queue for the only unclaimed host");
+        assert_eq!(
+            scheduler.inner.state.lock().unwrap().pending[0].priority,
+            jury_priority
+        );
+
+        let (citation_sender, mut citation_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<&'static str>();
+        let first_citation = tokio::spawn({
+            let scheduler = scheduler.clone();
+            let citation_sender = citation_sender.clone();
+            async move {
+                let lease = scheduler
+                    .acquire(
+                        vec!["jury-lane-c".to_string()],
+                        jury_priority.saturating_add(20_000),
+                        3,
+                        "newer-citation-1".to_string(),
+                    )
+                    .await
+                    .unwrap();
+                citation_sender.send("newer-citation-1").unwrap();
+                drop(lease);
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while scheduler.inner.state.lock().unwrap().pending.len() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the first newer citation did not queue behind the old juror");
+        let second_citation = tokio::spawn({
+            let scheduler = scheduler.clone();
+            let citation_sender = citation_sender.clone();
+            async move {
+                let lease = scheduler
+                    .acquire(
+                        vec!["jury-lane-c".to_string()],
+                        jury_priority.saturating_add(30_000),
+                        3,
+                        "newer-citation-2".to_string(),
+                    )
+                    .await
+                    .unwrap();
+                citation_sender.send("newer-citation-2").unwrap();
+                drop(lease);
+            }
+        });
+        drop(citation_sender);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while scheduler.inner.state.lock().unwrap().pending.len() != 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both newer citations did not queue behind the old juror");
+        assert_eq!(
+            scheduler
+                .inner
+                .state
+                .lock()
+                .unwrap()
+                .pending
+                .iter()
+                .map(|request| request.ordinal)
+                .collect::<Vec<_>>(),
+            vec![
+                old_juror_ordinal,
+                old_juror_ordinal.saturating_add(1),
+                old_juror_ordinal.saturating_add(2),
+            ]
+        );
+
         drop(held_c);
-        let (first, second) = tokio::time::timeout(Duration::from_secs(5), pair)
-            .await
-            .expect("the production pair did not complete after distinct hosts became free")
-            .unwrap()
+        let pair_result = tokio::select! {
+            biased;
+            result = pair => result,
+            citation = citation_receiver.recv() => {
+                panic!("newer citation {citation:?} overtook the older production juror")
+            }
+        };
+        let (first, second) = pair_result
+            .expect("the production pair task panicked")
             .expect("the production pair failed after retiring the repeated-error host");
         assert_eq!(
             HashSet::from([first.physical_host_id, second.physical_host_id]),
             HashSet::from([HOST_B.to_string(), HOST_C.to_string()])
         );
         assert_eq!(first.authority_input_digest, second.authority_input_digest);
+        let first_citation_label =
+            tokio::time::timeout(Duration::from_secs(5), citation_receiver.recv())
+                .await
+                .expect("the first citation did not run after pair closure")
+                .expect("the citation admission channel closed early");
+        let second_citation_label =
+            tokio::time::timeout(Duration::from_secs(5), citation_receiver.recv())
+                .await
+                .expect("the second citation did not run after pair closure")
+                .expect("the citation admission channel closed early");
+        assert_eq!(
+            [first_citation_label, second_citation_label],
+            ["newer-citation-1", "newer-citation-2"]
+        );
+        first_citation.await.unwrap();
+        second_citation.await.unwrap();
         assert_eq!(harness.provider.call_count(MODEL_A), 2);
         assert_eq!(harness.provider.call_count(MODEL_B), 1);
         assert_eq!(harness.provider.call_count(MODEL_C), 1);
