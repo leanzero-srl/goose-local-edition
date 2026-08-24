@@ -107,6 +107,7 @@ ORCHESTRATOR_RECOVERY_EVIDENCE = "orchestrator-recovery-evidence"
 ORCHESTRATOR_RECOVERY_PATH = "recovery/orchestrator-recovery.json"
 TRANSPORT_UNKNOWN_SCHEMA = 1
 TRANSPORT_UNKNOWN_PATH = "lineage/transport-unknown"
+TRANSPORT_CONTINUATION_SCHEMA = 1
 PRE_SMOKE_INSTRUMENT_REPAIR_SCHEMA = 1
 PRE_SMOKE_INSTRUMENT_REPAIR_PATH = "lineage/pre-smoke-instrument-repair"
 BUDGET_BLOCKED_CARRIED_SMOKE_SCHEMA = 1
@@ -4349,6 +4350,274 @@ def transport_unknown_pointer(
     }
 
 
+def transport_unknown_continuations_root(root: Path, entrant_id: str) -> Path:
+    return transport_unknown_bundle(root, entrant_id) / "successor-run/continuations"
+
+
+def transport_unknown_continuation_pointer(
+    root: Path, entrant_id: str, directory: Path
+) -> Dict[str, Any]:
+    receipt_path = directory / "receipt.json"
+    receipt = load_json(receipt_path)
+    return {
+        "path": str(receipt_path.relative_to(root)),
+        "sha256": sha256_file(receipt_path),
+        "transition_id": str(receipt["transition_id"]),
+        "ordinal": int(receipt["ordinal"]),
+    }
+
+
+def transport_unknown_continuation_chain(
+    root: Path,
+    campaign: Mapping[str, Any],
+    entrant_id: str,
+    *,
+    require_state_pointer: bool = True,
+) -> tuple[list[Dict[str, Any]], str | None]:
+    entry = transport_unknown_entry(campaign, entrant_id)
+    successor = entry.get("successor") if entry is not None else None
+    if not isinstance(successor, dict):
+        return [], None
+    successor_path = root / str(successor.get("path", ""))
+    try:
+        if (
+            successor_path.is_symlink()
+            or not successor_path.is_file()
+            or sha256_file(successor_path) != successor.get("sha256")
+        ):
+            return [], f"transport continuation has no sealed successor: {entrant_id}"
+        base = load_json(successor_path)
+        carried = base.get("carried_request_ids")
+        reservations = base.get("carried_reservations")
+        limit = base.get("successor_episode_limit")
+        if (
+            not isinstance(carried, list)
+            or carried != sorted(set(carried))
+            or not carried
+            or not isinstance(reservations, dict)
+            or sorted(reservations) != carried
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+        ):
+            return [], f"transport continuation base is malformed: {entrant_id}"
+        current_pointer: Dict[str, Any] = dict(successor)
+        previous_continuation_pointer: Dict[str, Any] | None = None
+        carried_ids = set(carried)
+        carried_reservations = dict(reservations)
+        directory = transport_unknown_continuations_root(root, entrant_id)
+        if not directory.exists():
+            if require_state_pointer and read_state(root, entrant_id).get(
+                "transport_unknown_continuation"
+            ) is not None:
+                return [], f"transport continuation state has no receipt: {entrant_id}"
+            return [], None
+        if directory.is_symlink() or not directory.is_dir():
+            return [], f"transport continuation registry is missing or linked: {entrant_id}"
+        candidates = []
+        for child in directory.iterdir():
+            match = re.fullmatch(r"([1-9][0-9]*)-([0-9a-f]{64})", child.name)
+            if match is None or child.is_symlink() or not child.is_dir():
+                return [], f"transport continuation registry has an unexpected entry: {entrant_id}"
+            candidates.append((int(match.group(1)), match.group(2), child))
+        candidates.sort()
+        current_ledger = load_json(Path(str(campaign["budget_ledger"])))
+        config = load_json(Path(str(campaign["budget_config"])))
+        ledger_problem = budget_ledger_failure(current_ledger, config)
+        if ledger_problem:
+            return [], ledger_problem
+        row = manifest_row(root, entrant_id)
+        chain: list[Dict[str, Any]] = []
+        for expected, (ordinal, directory_id, child) in enumerate(candidates, start=1):
+            if ordinal != expected:
+                return [], f"transport continuation ordinals are not contiguous: {entrant_id}"
+            receipt_path = child / "receipt.json"
+            source_state_path = child / "source-state.json"
+            source_ledger_path = child / "source-budget-ledger.json"
+            source_lifecycle_copy = child / "source-lifecycle.jsonl"
+            if {path.name for path in child.iterdir()} != {
+                "receipt.json",
+                "source-state.json",
+                "source-budget-ledger.json",
+                "source-lifecycle.jsonl",
+            } or any(
+                path.is_symlink() or not path.is_file()
+                for path in (
+                    receipt_path,
+                    source_state_path,
+                    source_ledger_path,
+                    source_lifecycle_copy,
+                )
+            ):
+                return [], f"transport continuation bundle is incomplete: {entrant_id}"
+            receipt = load_json(receipt_path)
+            expected_keys = {
+                "schema_version",
+                "kind",
+                "transition_id",
+                "ordinal",
+                "continued_at",
+                "root",
+                "campaign_id",
+                "entrant",
+                "provider",
+                "model",
+                "parent",
+                "source_state_sha256",
+                "source_ledger_sha256",
+                "source_lifecycle_path",
+                "source_lifecycle_sha256",
+                "request_ids",
+                "request_event_sha256",
+                "reservations",
+                "reservations_sha256",
+                "carried_request_ids_after",
+                "carried_reservations_after_sha256",
+                "provider_episode_attempts",
+                "successor_episode_limit",
+                "workspace_root",
+                "tree",
+                "profile",
+                "build_log",
+                "vendor_trace",
+                "scores_sha256",
+                "publish_sha256",
+                "reservation_released",
+                "settled_or_spend_rewritten",
+            }
+            if (
+                set(receipt) != expected_keys
+                or receipt.get("schema_version") != TRANSPORT_CONTINUATION_SCHEMA
+                or receipt.get("kind") != "provider_transport_unknown_continuation"
+                or receipt.get("transition_id") != directory_id
+                or receipt.get("ordinal") != ordinal
+                or receipt.get("root") != str(root.resolve())
+                or receipt.get("campaign_id") != campaign.get("campaign_id")
+                or receipt.get("entrant") != entrant_id
+                or receipt.get("provider") != row.get("provider")
+                or receipt.get("model") != row.get("model")
+                or receipt.get("parent") != current_pointer
+                or receipt.get("reservation_released") is not False
+                or receipt.get("settled_or_spend_rewritten") is not False
+                or sha256_file(source_state_path)
+                != receipt.get("source_state_sha256")
+                or sha256_file(source_ledger_path)
+                != receipt.get("source_ledger_sha256")
+                or sha256_file(source_lifecycle_copy)
+                != receipt.get("source_lifecycle_sha256")
+            ):
+                return [], f"transport continuation receipt is malformed: {entrant_id}"
+            source_state = load_json(source_state_path)
+            source_ledger = load_json(source_ledger_path)
+            lifecycle_path = Path(str(receipt.get("source_lifecycle_path", "")))
+            if (
+                lifecycle_path.is_symlink()
+                or not lifecycle_path.is_file()
+                or sha256_file(lifecycle_path) != receipt.get("source_lifecycle_sha256")
+                or lifecycle_path.read_bytes() != source_lifecycle_copy.read_bytes()
+            ):
+                return [], f"transport continuation lifecycle changed: {entrant_id}"
+            lifecycle = lifecycle_summary(
+                source_lifecycle_copy,
+                expected_provider=str(row["provider"]),
+                expected_model=str(row["model"]),
+            )
+            request_ids = receipt.get("request_ids")
+            added = receipt.get("reservations")
+            after = receipt.get("carried_request_ids_after")
+            if (
+                source_state.get("status") != "BUILD_RUNNING"
+                or source_state.get("transport_unknown_continuation")
+                != previous_continuation_pointer
+                or source_state.get("provider_lifecycle") != str(lifecycle_path)
+                or source_state.get("provider_episode_attempts") != limit
+                or source_state.get("score") is not None
+                or source_state.get("verdict") not in {None, ""}
+                or not isinstance(request_ids, list)
+                or request_ids != sorted(set(request_ids))
+                or not request_ids
+                or carried_ids.intersection(request_ids)
+                or lifecycle.get("ambiguous_request_ids") != request_ids
+                or lifecycle.get("request_event_sha256")
+                != receipt.get("request_event_sha256")
+                or lifecycle.get("malformed_lines") != 0
+                or lifecycle.get("transition_errors")
+                or not isinstance(added, dict)
+                or sorted(added) != request_ids
+                or canonical_json_sha256(added)
+                != receipt.get("reservations_sha256")
+                or after != sorted(carried_ids | set(request_ids))
+                or receipt.get("provider_episode_attempts") != limit
+                or receipt.get("successor_episode_limit") != limit + 1
+            ):
+                return [], f"transport continuation provenance is malformed: {entrant_id}"
+            for request_id, reservation in added.items():
+                if (
+                    source_ledger.get("outstanding", {}).get(request_id) != reservation
+                    or current_ledger.get("outstanding", {}).get(request_id)
+                    != reservation
+                ):
+                    return [], f"transport continuation reserve changed: {entrant_id}/{request_id}"
+            carried_reservations.update(added)
+            if (
+                canonical_json_sha256(carried_reservations)
+                != receipt.get("carried_reservations_after_sha256")
+                or any(
+                    source_ledger.get("outstanding", {}).get(request_id)
+                    != reservation
+                    or current_ledger.get("outstanding", {}).get(request_id)
+                    != reservation
+                    for request_id, reservation in carried_reservations.items()
+                )
+            ):
+                return [], f"transport continuation exposure changed: {entrant_id}"
+            exact_paths = {
+                "workspace_root": str(successor_path.parent),
+                "tree": base.get("tree"),
+                "profile": base.get("profile"),
+                "build_log": base.get("build_log"),
+                "vendor_trace": base.get("vendor_trace"),
+            }
+            if any(receipt.get(key) != value for key, value in exact_paths.items()):
+                return [], f"transport continuation workspace escaped: {entrant_id}"
+            pointer = transport_unknown_continuation_pointer(root, entrant_id, child)
+            chain.append({"receipt": receipt, "pointer": pointer})
+            current_pointer = pointer
+            previous_continuation_pointer = pointer
+            carried_ids.update(request_ids)
+            limit += 1
+        state = read_state(root, entrant_id)
+        if require_state_pointer:
+            expected_pointer = chain[-1]["pointer"] if chain else None
+            if state.get("transport_unknown_continuation") != expected_pointer:
+                return [], f"transport continuation state pointer differs: {entrant_id}"
+            if chain and state.get("transport_unknown_carried_request_ids") != sorted(
+                carried_ids
+            ):
+                return [], f"transport continuation carried state differs: {entrant_id}"
+            if chain and state.get("status") in {
+                "PLANNED",
+                "PRE_ADMISSION_FAILURE",
+                "WAITING_PROVIDER_LANE",
+                "BUILD_RUNNING",
+            } and (
+                optional_artifact_tree_sha256(root / "scores" / entrant_id)
+                != chain[-1]["receipt"].get("scores_sha256")
+                or optional_artifact_tree_sha256(root / "publish" / entrant_id)
+                != chain[-1]["receipt"].get("publish_sha256")
+            ):
+                return [], f"transport continuation gained premature score evidence: {entrant_id}"
+        return chain, None
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ) as error:
+        return [], f"transport continuation cannot be verified: {entrant_id}: {error}"
+
+
 def transport_unknown_carried_request_ids(
     root: Path, campaign: Mapping[str, Any], entrant_id: str
 ) -> set[str]:
@@ -4378,7 +4647,15 @@ def transport_unknown_carried_request_ids(
             or not request_ids
         ):
             return set()
-        return set(request_ids)
+        carried = set(request_ids)
+        chain, problem = transport_unknown_continuation_chain(
+            root, campaign, entrant_id
+        )
+        if problem:
+            return set()
+        for continuation in chain:
+            carried.update(continuation["receipt"]["request_ids"])
+        return carried
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return set()
 
@@ -4413,6 +4690,13 @@ def transport_unknown_episode_limit(
             or limit != baseline + 1
         ):
             return default_limit
+        chain, problem = transport_unknown_continuation_chain(
+            root, campaign, entrant_id
+        )
+        if problem:
+            return default_limit
+        if chain:
+            limit = chain[-1]["receipt"]["successor_episode_limit"]
         return max(default_limit, limit)
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return default_limit
@@ -4508,6 +4792,59 @@ def sealed_unstarted_transport_successor(
             == receipt.get("scores_sha256")
             and optional_artifact_tree_sha256(root / "publish" / entrant_id)
             == receipt.get("publish_sha256")
+        )
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        SystemExit,
+    ):
+        return False
+
+
+def sealed_unstarted_transport_continuation(
+    root: Path,
+    campaign: Mapping[str, Any],
+    entrant_id: str,
+    state: Mapping[str, Any],
+    lifecycle: Mapping[str, Any],
+) -> bool:
+    try:
+        chain, problem = transport_unknown_continuation_chain(
+            root, campaign, entrant_id
+        )
+        if problem or not chain:
+            return False
+        latest = chain[-1]
+        receipt = latest["receipt"]
+        lifecycle_path = Path(str(state.get("provider_lifecycle", "")))
+        return bool(
+            state.get("status") == "PLANNED"
+            and state.get("transport_unknown_continuation") == latest["pointer"]
+            and state.get("transport_unknown_carried_request_ids")
+            == receipt.get("carried_request_ids_after")
+            and state.get("provider_episode_attempts")
+            == receipt.get("provider_episode_attempts")
+            and lifecycle.get("ambiguous_request_ids") == receipt.get("request_ids")
+            and lifecycle.get("malformed_lines") == 0
+            and not lifecycle.get("transition_errors")
+            and lifecycle_path.is_file()
+            and not lifecycle_path.is_symlink()
+            and sha256_file(lifecycle_path)
+            == receipt.get("source_lifecycle_sha256")
+            and not any(build_runtime_ownership(state))
+            and all(
+                state.get(field) is None or state.get(field) == ""
+                for field in (
+                    "started_at",
+                    "finished_at",
+                    "command",
+                    "prompt_sha256",
+                    "raw_tree_sha256",
+                )
+            )
         )
     except (
         OSError,
@@ -4891,12 +5228,28 @@ def transport_unknown_successor_failure(
             return f"transport-unknown successor accounting snapshot changed: {entrant_id}"
         state = read_state(root, entrant_id)
         attempts = int(state.get("provider_episode_attempts", -1))
+        continuations, continuation_problem = transport_unknown_continuation_chain(
+            root, campaign, entrant_id
+        )
+        if continuation_problem:
+            return continuation_problem
+        episode_limit = int(receipt["successor_episode_limit"])
+        carried_after = set(request_ids)
+        if continuations:
+            episode_limit = int(
+                continuations[-1]["receipt"]["successor_episode_limit"]
+            )
+            carried_after.update(
+                continuations[-1]["receipt"]["carried_request_ids_after"]
+            )
         if (
             state.get("transport_unknown_successor") != dict(pointer)
             or state.get("transport_unknown_isolation") != dict(isolation)
             or state.get("status") == TRANSPORT_UNKNOWN_STATUS
             or attempts < int(receipt["provider_episode_attempts"])
-            or attempts > int(receipt["successor_episode_limit"])
+            or attempts > episode_limit
+            or state.get("transport_unknown_carried_request_ids")
+            != sorted(carried_after)
             or state.get("tree") != receipt.get("tree")
             or state.get("profile") != receipt.get("profile")
             or state.get("build_log") != receipt.get("build_log")
@@ -21718,6 +22071,329 @@ def adjudicate_transport_unknown_successor(
         return apply_transport_unknown_successor(root, entrant_id)
 
 
+def apply_transport_unknown_continuation(
+    root: Path, entrant_id: str
+) -> Dict[str, Any]:
+    campaign = load_json(campaign_file(root))
+    chain, problem = transport_unknown_continuation_chain(
+        root, campaign, entrant_id, require_state_pointer=False
+    )
+    if problem or not chain:
+        raise SystemExit(problem or "transport continuation receipt is missing")
+    latest = chain[-1]
+    receipt = latest["receipt"]
+    pointer = latest["pointer"]
+    state = read_state(root, entrant_id)
+    if state.get("transport_unknown_continuation") != pointer:
+        source_state = (
+            root / str(pointer["path"])
+        ).parent / "source-state.json"
+        if sha256_file(state_file(root, entrant_id)) != receipt.get(
+            "source_state_sha256"
+        ) or sha256_file(source_state) != receipt.get("source_state_sha256"):
+            raise SystemExit("transport continuation state changed before application")
+        update_state(
+            root,
+            entrant_id,
+            status="PLANNED",
+            failure=None,
+            transport_unknown_continuation=pointer,
+            transport_unknown_carried_request_ids=receipt[
+                "carried_request_ids_after"
+            ],
+            admitted_requests=0,
+            provider_terminal_requests=0,
+            lifecycle_events=0,
+            lifecycle_malformed_lines=0,
+            lifecycle_transition_errors=[],
+            lifecycle_ambiguous_request_ids=[],
+            budget_outstanding_request_ids=[],
+            supervisor_pid=None,
+            supervisor_pgid=None,
+            supervisor_identity=None,
+            goose_pid=None,
+            process_group=None,
+            goose_identity=None,
+            goose_process_inventory=[],
+            started_at=None,
+            finished_at=None,
+            exit_code=None,
+            elapsed_seconds=None,
+            prompt_sha256=None,
+            command=None,
+            raw_tree_sha256=None,
+            transport_continued_at=receipt["continued_at"],
+        )
+    transport_unknown_fault("continuation_state_committed")
+    lineage_problem = lineage_failure(root)
+    if lineage_problem:
+        raise SystemExit(
+            "transport continuation failed validation: " + lineage_problem
+        )
+    return load_json(campaign_file(root))
+
+
+def continue_transport_unknown_successor(
+    root: Path, entrant_id: str
+) -> Dict[str, Any]:
+    root = root.resolve()
+    with contextlib.ExitStack() as locks:
+        for relative in (
+            "locks/manager-launch.claim",
+            "locks/supersession.claim",
+            "locks/monitor-launch.claim",
+            "locks/resume.claim",
+            "locks/smoke-launch.claim",
+            "locks/smoke-run.claim",
+            "locks/transport-unknown.claim",
+        ):
+            if not locks.enter_context(exclusive_claim(root / relative, blocking=True)):
+                raise SystemExit("cannot claim transport continuation boundary")
+        for relative in ("locks/manager-run.claim", "locks/monitor-run.claim"):
+            if not locks.enter_context(exclusive_claim(root / relative)):
+                raise SystemExit(
+                    "transport continuation runtime claim is held: " + relative
+                )
+        campaign = load_json(campaign_file(root))
+        manifest = load_json(Path(str(campaign["entrant_manifest"])))
+        for lane in sorted({str(row["provider_lane"]) for row in entrants(manifest)}):
+            locks.enter_context(provider_lane(root, lane))
+        ledger_path = Path(str(campaign["budget_ledger"]))
+        if not locks.enter_context(
+            exclusive_claim(ledger_path.with_suffix(".lock"), blocking=True)
+        ):
+            raise SystemExit("cannot claim transport continuation budget boundary")
+
+        continuations = transport_unknown_continuations_root(root, entrant_id)
+        if continuations.exists():
+            if continuations.is_symlink() or not continuations.is_dir():
+                raise SystemExit("transport continuation registry is missing or linked")
+            discard_uncommitted_transport_staging(
+                continuations,
+                continuations / "__no_committed_destination__",
+                ".continuation-",
+                allowed_files={
+                    "receipt.json",
+                    "source-state.json",
+                    "source-budget-ledger.json",
+                    "source-lifecycle.jsonl",
+                },
+            )
+            existing, existing_problem = transport_unknown_continuation_chain(
+                root, campaign, entrant_id, require_state_pointer=False
+            )
+            if existing_problem:
+                raise SystemExit(existing_problem)
+            if existing:
+                latest_pointer = existing[-1]["pointer"]
+                state = read_state(root, entrant_id)
+                if state.get("transport_unknown_continuation") != latest_pointer:
+                    return apply_transport_unknown_continuation(root, entrant_id)
+                if state.get("status") == "PLANNED":
+                    return campaign
+
+        require_lineage(root)
+        campaign = load_json(campaign_file(root))
+        if campaign.get("status") != "ATTENTION":
+            raise SystemExit("transport continuation requires an ATTENTION campaign")
+        quiescence_problem = transport_unknown_quiescence_failure(root, campaign)
+        if quiescence_problem:
+            raise SystemExit(quiescence_problem)
+        state = read_state(root, entrant_id)
+        if state.get("status") != "BUILD_RUNNING":
+            raise SystemExit(
+                "transport continuation requires an interrupted BUILD_RUNNING entrant"
+            )
+        entry = transport_unknown_entry(campaign, entrant_id)
+        successor = entry.get("successor") if entry is not None else None
+        if (
+            not isinstance(successor, dict)
+            or state.get("transport_unknown_successor") != successor
+        ):
+            raise SystemExit("transport continuation has no sealed successor ancestry")
+        for other in status_rows(root):
+            if (
+                other["entrant"] != entrant_id
+                and other["status"]
+                not in BUILD_SUCCESS_STATES | {TRANSPORT_UNKNOWN_STATUS}
+            ):
+                raise SystemExit(
+                    "transport continuation waits for every unrelated entrant to "
+                    "finish successfully"
+                )
+        row = manifest_row(root, entrant_id)
+        lifecycle_path = Path(str(state.get("provider_lifecycle", "")))
+        lifecycle = lifecycle_summary(
+            lifecycle_path,
+            expected_provider=str(row["provider"]),
+            expected_model=str(row["model"]),
+        )
+        request_ids = list(lifecycle.get("ambiguous_request_ids") or [])
+        if (
+            lifecycle_path.is_symlink()
+            or not lifecycle_path.is_file()
+            or not request_ids
+            or request_ids != sorted(set(request_ids))
+            or lifecycle.get("malformed_lines") != 0
+            or lifecycle.get("transition_errors")
+        ):
+            raise SystemExit(
+                "transport continuation requires exact unresolved lifecycle evidence"
+            )
+        carried = transport_unknown_carried_request_ids(
+            root, campaign, entrant_id
+        )
+        if not carried or carried.intersection(request_ids):
+            raise SystemExit("transport continuation request ancestry is ambiguous")
+        current_outstanding, outstanding_problem = (
+            current_full_episode_outstanding_reservations(
+                root, campaign, row
+            )
+        )
+        if outstanding_problem or current_outstanding != request_ids:
+            raise SystemExit(
+                outstanding_problem
+                or "transport continuation lifecycle and current reserves differ"
+            )
+        accounting_problem = anchored_generation_two_entrant_accounting_failure(
+            root, campaign, row
+        )
+        if accounting_problem:
+            raise SystemExit(accounting_problem)
+        ledger = load_json(ledger_path)
+        config = load_json(Path(str(campaign["budget_config"])))
+        ledger_problem = budget_ledger_failure(ledger, config)
+        if ledger_problem:
+            raise SystemExit(ledger_problem)
+        reserve_problem = replacement_reserve_failure(ledger, config, [row])
+        if reserve_problem:
+            raise SystemExit(reserve_problem)
+        added = {request_id: ledger["outstanding"].get(request_id) for request_id in request_ids}
+        if any(
+            not isinstance(reservation, dict)
+            or reservation.get("provider") != row["provider"]
+            or reservation.get("model") != row["model"]
+            for reservation in added.values()
+        ):
+            raise SystemExit("transport continuation reservations escaped its entrant")
+        all_carried = sorted(carried | set(request_ids))
+        all_reservations = {
+            request_id: ledger["outstanding"].get(request_id)
+            for request_id in all_carried
+        }
+        if any(not isinstance(value, dict) for value in all_reservations.values()):
+            raise SystemExit("transport continuation lost a carried reservation")
+        existing, existing_problem = transport_unknown_continuation_chain(
+            root, campaign, entrant_id
+        )
+        if existing_problem:
+            raise SystemExit(existing_problem)
+        current_limit = transport_unknown_episode_limit(
+            root,
+            campaign,
+            entrant_id,
+            int(manifest["spend_policy"]["max_full_episodes_per_model"]),
+        )
+        attempts = int(state.get("provider_episode_attempts", -1))
+        if attempts != current_limit:
+            raise SystemExit(
+                "transport continuation is not at its exact episode boundary"
+            )
+        continuations.mkdir(parents=True, exist_ok=True)
+        ordinal = len(existing) + 1
+        parent_pointer = existing[-1]["pointer"] if existing else dict(successor)
+        source_state_sha = sha256_file(state_file(root, entrant_id))
+        source_ledger_sha = sha256_file(ledger_path)
+        source_lifecycle_sha = sha256_file(lifecycle_path)
+        transition_id = sha256_bytes(
+            json.dumps(
+                {
+                    "kind": "provider_transport_unknown_continuation",
+                    "root": str(root),
+                    "campaign_id": campaign["campaign_id"],
+                    "entrant": entrant_id,
+                    "ordinal": ordinal,
+                    "parent": parent_pointer,
+                    "source_state_sha256": source_state_sha,
+                    "source_ledger_sha256": source_ledger_sha,
+                    "source_lifecycle_sha256": source_lifecycle_sha,
+                    "request_ids": request_ids,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        )
+        destination = continuations / f"{ordinal}-{transition_id}"
+        if destination.exists() or destination.is_symlink():
+            return apply_transport_unknown_continuation(root, entrant_id)
+        staging = Path(
+            tempfile.mkdtemp(prefix=".continuation-", dir=continuations)
+        )
+        try:
+            atomic_copy(state_file(root, entrant_id), staging / "source-state.json", 0o600)
+            atomic_copy(ledger_path, staging / "source-budget-ledger.json", 0o600)
+            atomic_copy(lifecycle_path, staging / "source-lifecycle.jsonl", 0o600)
+            successor_receipt = load_json(root / str(successor["path"]))
+            receipt = {
+                "schema_version": TRANSPORT_CONTINUATION_SCHEMA,
+                "kind": "provider_transport_unknown_continuation",
+                "transition_id": transition_id,
+                "ordinal": ordinal,
+                "continued_at": utc_now(),
+                "root": str(root),
+                "campaign_id": campaign["campaign_id"],
+                "entrant": entrant_id,
+                "provider": row["provider"],
+                "model": row["model"],
+                "parent": parent_pointer,
+                "source_state_sha256": source_state_sha,
+                "source_ledger_sha256": source_ledger_sha,
+                "source_lifecycle_path": str(lifecycle_path),
+                "source_lifecycle_sha256": source_lifecycle_sha,
+                "request_ids": request_ids,
+                "request_event_sha256": lifecycle["request_event_sha256"],
+                "reservations": added,
+                "reservations_sha256": canonical_json_sha256(added),
+                "carried_request_ids_after": all_carried,
+                "carried_reservations_after_sha256": canonical_json_sha256(
+                    all_reservations
+                ),
+                "provider_episode_attempts": attempts,
+                "successor_episode_limit": attempts + 1,
+                "workspace_root": str((root / str(successor["path"])).parent),
+                "tree": successor_receipt["tree"],
+                "profile": successor_receipt["profile"],
+                "build_log": successor_receipt["build_log"],
+                "vendor_trace": successor_receipt["vendor_trace"],
+                "scores_sha256": optional_artifact_tree_sha256(
+                    root / "scores" / entrant_id
+                ),
+                "publish_sha256": optional_artifact_tree_sha256(
+                    root / "publish" / entrant_id
+                ),
+                "reservation_released": False,
+                "settled_or_spend_rewritten": False,
+            }
+            atomic_json(staging / "receipt.json", receipt)
+            transport_unknown_fault("continuation_staged")
+            fsync_directory(staging)
+            if (
+                sha256_file(state_file(root, entrant_id)) != source_state_sha
+                or sha256_file(ledger_path) != source_ledger_sha
+                or sha256_file(lifecycle_path) != source_lifecycle_sha
+            ):
+                raise SystemExit(
+                    "transport continuation evidence changed while staging"
+                )
+            os.replace(staging, destination)
+            fsync_directory(continuations)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+        transport_unknown_fault("continuation_receipt_committed")
+        return apply_transport_unknown_continuation(root, entrant_id)
+
+
 def repair_post_smoke_coordinator(
     root: Path,
     coordinator_source: Path | None = None,
@@ -22659,8 +23335,13 @@ def manager_restart_mismatch(root: Path) -> str | None:
         )
         pending_transport_successor = bool(
             status == "PLANNED"
-            and sealed_unstarted_transport_successor(
-                root, campaign, entrant_id, state, lifecycle
+            and (
+                sealed_unstarted_transport_successor(
+                    root, campaign, entrant_id, state, lifecycle
+                )
+                or sealed_unstarted_transport_continuation(
+                    root, campaign, entrant_id, state, lifecycle
+                )
             )
         )
         reasons = []
@@ -28301,6 +28982,9 @@ def main() -> int:
     p_transport_successor = sub.add_parser("adjudicate-transport-successor")
     root_arg(p_transport_successor)
     p_transport_successor.add_argument("--entrant", required=True)
+    p_transport_continuation = sub.add_parser("continue-transport-successor")
+    root_arg(p_transport_continuation)
+    p_transport_continuation.add_argument("--entrant", required=True)
     p_workspace_recovery = sub.add_parser("recover-pre-admission-workspace")
     root_arg(p_workspace_recovery)
     p_workspace_recovery.add_argument("--entrant", required=True)
@@ -28456,6 +29140,13 @@ def main() -> int:
         value = adjudicate_transport_unknown_successor(args.root, args.entrant)
         print(
             f"authorized carried-exposure successor for {args.entrant} in "
+            f"{value['campaign_id']}"
+        )
+        return 0
+    if args.command == "continue-transport-successor":
+        value = continue_transport_unknown_successor(args.root, args.entrant)
+        print(
+            f"continued transport-unknown entrant {args.entrant} in "
             f"{value['campaign_id']}"
         )
         return 0
