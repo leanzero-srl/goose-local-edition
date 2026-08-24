@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
 import datetime as dt
 import fcntl
 import hashlib
@@ -22,6 +23,7 @@ import shutil
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -41,9 +43,15 @@ SENSITIVE_TEXT_PATTERNS = (
 )
 TERMINAL_PHASES = {"complete", "failed", "stopped"}
 SB7_TIERS = frozenset({"A", "B", "C", "D", "J", "V", "P", "T", "X", "R", "E"})
+PROBE_DEGRADATION_RE = re.compile(
+    r"(?:probe[\s_-]*(?:unavailable|error)|_probe_error|harness[\s_-]*(?:missing|failure)|"
+    r"product_probe[^\n]*(?:missing|failed|error|unavailable))",
+    re.I,
+)
 PLAYWRIGHT_SMOKE_SOURCE = r"""
 const { createRequire } = require('node:module');
 const { join, sep } = require('node:path');
+const { realpathSync } = require('node:fs');
 
 const moduleRoot = process.argv[1];
 const expectedVersion = process.argv[2];
@@ -56,8 +64,14 @@ const probeLoad = createRequire(probeScript);
   if (packageJson.version !== expectedVersion) {
     throw new Error(`Playwright version ${packageJson.version} differs from ${expectedVersion}`);
   }
-  const resolvedEntry = probeLoad.resolve('playwright');
-  if (!resolvedEntry.startsWith(`${moduleRoot}${sep}`)) {
+  const expectedPackage = realpathSync(join(moduleRoot, 'package.json'));
+  const resolvedPackage = realpathSync(probeLoad.resolve('playwright/package.json'));
+  if (resolvedPackage !== expectedPackage) {
+    throw new Error(`probe resolved an unpinned Playwright package: ${resolvedPackage}`);
+  }
+  const resolvedEntry = realpathSync(probeLoad.resolve('playwright'));
+  const realModuleRoot = realpathSync(moduleRoot);
+  if (!resolvedEntry.startsWith(`${realModuleRoot}${sep}`)) {
     throw new Error(`probe resolved an unpinned Playwright module: ${resolvedEntry}`);
   }
   const playwright = probeLoad('playwright');
@@ -76,12 +90,147 @@ const probeLoad = createRequire(probeScript);
     browser: 'chromium',
     headless: true,
     pinnedModule: true,
+    modulePackage: resolvedPackage,
     version: packageJson.version,
   }));
 })().catch((error) => {
   process.stderr.write(`${error && error.message ? error.message : String(error)}\n`);
   process.exitCode = 1;
 });
+"""
+SCORER_GATE_SOURCE = r"""
+import ctypes
+import hashlib
+import json
+import os
+import runpy
+import signal
+import struct
+import subprocess
+import sys
+
+gate_fd = int(sys.argv[1])
+gate_token = os.read(gate_fd, 1)
+os.close(gate_fd)
+if gate_token != b"1":
+    raise SystemExit(126)
+
+spawn_journal = sys.argv[2]
+scorer_argv = sys.argv[3:]
+real_popen = subprocess.Popen
+
+
+def process_identity_sha256(pid):
+    probe = real_popen(
+        ["ps", "-p", str(pid), "-o", "pid=", "-o", "lstart=", "-o", "comm="],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    stdout, _ = probe.communicate()
+    identity = stdout.strip()
+    if probe.returncode != 0 or not identity:
+        return None
+    return hashlib.sha256(identity).hexdigest()
+
+
+def process_birth_sha256(pid):
+    if sys.platform == "darwin":
+        buffer = ctypes.create_string_buffer(136)
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        proc_pidinfo = libproc.proc_pidinfo
+        proc_pidinfo.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        proc_pidinfo.restype = ctypes.c_int
+        if proc_pidinfo(pid, 3, 0, buffer, len(buffer)) != len(buffer):
+            return None
+        observed_pid = struct.unpack_from("=I", buffer.raw, 12)[0]
+        started_seconds, started_microseconds = struct.unpack_from(
+            "=QQ", buffer.raw, 120
+        )
+        if observed_pid != pid or started_seconds <= 0:
+            return None
+        birth = f"{pid}:{started_seconds}:{started_microseconds}".encode()
+        return hashlib.sha256(birth).hexdigest()
+    if sys.platform.startswith("linux"):
+        try:
+            boot_id = open("/proc/sys/kernel/random/boot_id", "rb").read().strip()
+            stat_line = open(f"/proc/{pid}/stat", "rb").read().strip()
+            fields = stat_line[stat_line.rfind(b")") + 2 :].split()
+            start_ticks = fields[19]
+        except (OSError, IndexError):
+            return None
+        return hashlib.sha256(
+            str(pid).encode() + b":" + boot_id + b":" + start_ticks
+        ).hexdigest()
+    return None
+
+
+def append_owned_identity(pid, identity, birth):
+    entry = json.dumps(
+        {
+            "pid": pid,
+            "identity_sha256s": [identity],
+            "birth_sha256s": [birth],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode() + b"\n"
+    output = os.open(spawn_journal, os.O_WRONLY | os.O_APPEND)
+    try:
+        if os.write(output, entry) != len(entry):
+            raise RuntimeError("spawn identity journal write was incomplete")
+        os.fsync(output)
+    finally:
+        os.close(output)
+
+
+def terminate_failed_spawn(process):
+    try:
+        process_group = os.getpgid(process.pid)
+    except OSError:
+        process_group = None
+    separate_group = process_group == process.pid
+    try:
+        if separate_group:
+            os.killpg(process_group, signal.SIGKILL)
+        elif process.poll() is None:
+            process.kill()
+    except OSError:
+        pass
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except OSError:
+            pass
+        process.wait()
+
+
+class TrackedPopen(real_popen):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            identity = process_identity_sha256(self.pid)
+            birth = process_birth_sha256(self.pid)
+            if identity is None or birth is None:
+                if self.poll() is None:
+                    raise RuntimeError("spawned process identity could not be authenticated")
+                return
+            append_owned_identity(self.pid, identity, birth)
+        except BaseException:
+            terminate_failed_spawn(self)
+            raise
+
+
+subprocess.Popen = TrackedPopen
+sys.argv = scorer_argv
+runpy.run_path(scorer_argv[0], run_name="__main__")
 """
 
 
@@ -107,6 +256,41 @@ def sha256_file(path: pathlib.Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def process_birth_sha256(pid: int) -> str | None:
+    if sys.platform == "darwin":
+        buffer = ctypes.create_string_buffer(136)
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        proc_pidinfo = libproc.proc_pidinfo
+        proc_pidinfo.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        proc_pidinfo.restype = ctypes.c_int
+        if proc_pidinfo(pid, 3, 0, buffer, len(buffer)) != len(buffer):
+            return None
+        observed_pid = struct.unpack_from("=I", buffer.raw, 12)[0]
+        started_seconds, started_microseconds = struct.unpack_from(
+            "=QQ", buffer.raw, 120
+        )
+        if observed_pid != pid or started_seconds <= 0:
+            return None
+        birth = f"{pid}:{started_seconds}:{started_microseconds}".encode()
+        return sha256_bytes(birth)
+    if sys.platform.startswith("linux"):
+        try:
+            boot_id = pathlib.Path("/proc/sys/kernel/random/boot_id").read_bytes().strip()
+            stat_line = pathlib.Path(f"/proc/{pid}/stat").read_bytes().strip()
+            fields = stat_line[stat_line.rfind(b")") + 2 :].split()
+            start_ticks = fields[19]
+        except (OSError, IndexError):
+            return None
+        return sha256_bytes(str(pid).encode() + b":" + boot_id + b":" + start_ticks)
+    return None
 
 
 def ensure_secure_dir(path: pathlib.Path) -> None:
@@ -249,6 +433,25 @@ def safe_process_receipt(pid: int) -> dict[str, Any] | None:
     if completed.returncode != 0 or not identity:
         return None
     return {"pid": pid, "identity_sha256": sha256_bytes(identity)}
+
+
+def stable_process_receipt(
+    pid: int, timeout_seconds: float = 2, stable_seconds: float = 0.15
+) -> dict[str, Any] | None:
+    deadline = time.monotonic() + timeout_seconds
+    previous: dict[str, Any] | None = None
+    stable_since = time.monotonic()
+    while time.monotonic() < deadline:
+        observed = safe_process_receipt(pid)
+        if observed is None:
+            return None
+        if observed != previous:
+            previous = observed
+            stable_since = time.monotonic()
+        elif time.monotonic() - stable_since >= stable_seconds:
+            return observed
+        time.sleep(0.02)
+    return None
 
 
 def validate_authenticated_process(role: str, receipt: dict[str, Any]) -> bool:
@@ -592,6 +795,9 @@ def smoke_playwright_runtime(
         "browser": "chromium",
         "headless": True,
         "pinnedModule": True,
+        "modulePackage": str(
+            (pathlib.Path(str(runtime_info["module_root"])) / "package.json").resolve()
+        ),
         "version": runtime_info["version"],
     }:
         raise ClosureError("pinned Playwright browser smoke receipt differs")
@@ -612,7 +818,7 @@ def preflight_playwright_runtime(
         browser_view = prepare_playwright_browser_view(
             before, runtime_root / "playwright-browsers"
         )
-        smoke_playwright_runtime(
+        resolution_receipt = smoke_playwright_runtime(
             before,
             render_node,
             runtime_home,
@@ -623,7 +829,7 @@ def preflight_playwright_runtime(
     after = validate_playwright_runtime(runtime, render_node, render_node_sha256)
     if before != after:
         raise ClosureError("Playwright runtime changed during its preflight launch")
-    return before
+    return {**before, "resolution_receipt": resolution_receipt}
 
 
 def finite_number(value: Any, minimum: float | None = None, maximum: float | None = None) -> bool:
@@ -665,6 +871,14 @@ def validate_sb7_score_payload(
     checks = score.get("checks")
     if not isinstance(checks, list) or len(checks) != expected["check_count"]:
         raise ClosureError("score check count differs")
+    for field in ("probe_unavailable", "harness_missing"):
+        evidence = score.get(field)
+        if not isinstance(evidence, list):
+            raise ClosureError(f"score {field} evidence is missing or malformed")
+        if evidence:
+            raise ClosureError(f"score contains degraded product-probe evidence in {field}")
+    if not isinstance(score.get("sched_unreached"), list):
+        raise ClosureError("score sched_unreached evidence is missing or malformed")
     names: set[str] = set()
     for index, row in enumerate(checks):
         if not isinstance(row, dict):
@@ -676,6 +890,13 @@ def validate_sb7_score_payload(
             raise ClosureError(f"score check {name} is malformed")
         if not isinstance(row.get("detail"), str):
             raise ClosureError(f"score check {name} lacks detail evidence")
+        if row.get("unavailable") is True:
+            raise ClosureError(f"score check {name} is probe-unavailable")
+        evidence_text = "\n".join(
+            str(row.get(field, "")) for field in ("detail", "consequence", "reason")
+        )
+        if PROBE_DEGRADATION_RE.search(evidence_text):
+            raise ClosureError(f"score check {name} contains degraded product-probe evidence")
         names.add(name)
     excellence = score.get("excellence")
     if not isinstance(excellence, dict):
@@ -1179,22 +1400,39 @@ class TerminalClosure:
         result_path = attempt / "worker-result.json"
         score_path = attempt / "raw-score.json"
         seal_path = attempt / "score-tree-seal.json"
+        inventory_path = attempt / "descendants.json"
+        spawn_journal_path = attempt / "spawn-journal.txt"
         clone = attempt / "tree"
         render_wrapper = attempt / "runtime" / "playwright-node"
         if any(
             path.is_symlink()
-            for path in (result_path, score_path, seal_path, render_wrapper)
+            for path in (
+                result_path,
+                score_path,
+                seal_path,
+                inventory_path,
+                spawn_journal_path,
+                render_wrapper,
+            )
         ):
             raise ClosureError("successful scoring evidence contains a symbolic link")
         if clone.is_symlink() or not clone.is_dir():
             raise ClosureError("successful scoring clone is not a real directory")
-        if not result_path.is_file() or not score_path.is_file() or not seal_path.is_file():
+        if (
+            not result_path.is_file()
+            or not score_path.is_file()
+            or not seal_path.is_file()
+            or not inventory_path.is_file()
+            or not spawn_journal_path.is_file()
+        ):
             return None
         result = read_json(result_path)
         if (
             result.get("exit_code") != 0
             or result.get("scorer_exit_code") != 0
             or result.get("descendants_clean") is not True
+            or result.get("descendant_cleanup_proven") is not True
+            or result.get("descendants_survived_scorer") != 0
             or result.get("fixture_seed") is None
             or result.get("port") != self.config["expected"]["vendor_port"]
             or result.get("scorer_sha256")
@@ -1207,6 +1445,13 @@ class TerminalClosure:
             != self.config["runtime"]["playwright"]["browser_tree_sha256"]
             or result.get("playwright_executable_sha256")
             != self.config["runtime"]["playwright"]["executable_sha256"]
+            or not re.fullmatch(
+                r"[0-9a-f]{64}", str(result.get("descendant_inventory_sha256", ""))
+            )
+            or sha256_file(inventory_path)
+            != result.get("descendant_inventory_sha256")
+            or sha256_file(spawn_journal_path)
+            != result.get("spawn_journal_sha256")
             or not render_wrapper.is_file()
             or stat.S_IMODE(render_wrapper.stat().st_mode) != 0o500
             or sha256_file(render_wrapper)
@@ -1222,6 +1467,31 @@ class TerminalClosure:
             return None
         if not manifests_equal(seal, tree_manifest(clone)):
             raise ClosureError("successful scoring clone changed after its evidence seal")
+        descendant_receipts = validate_attempt_process_inventory(inventory_path)
+        journal_receipts = read_spawn_journal_receipts(spawn_journal_path)
+        inventoried = {receipt["pid"]: receipt for receipt in descendant_receipts}
+        if any(
+            receipt["pid"] not in inventoried
+            or not set(receipt["identity_sha256s"]).issubset(
+                set(inventoried[receipt["pid"]]["identity_sha256s"])
+            )
+            or not set(receipt["birth_sha256s"]).issubset(
+                set(inventoried[receipt["pid"]]["birth_sha256s"])
+            )
+            for receipt in journal_receipts
+        ):
+            raise ClosureError("successful scoring attempt lost journaled identity evidence")
+        descendant_statuses = [
+            process_receipt_status(receipt) for receipt in descendant_receipts
+        ]
+        if "unavailable" in descendant_statuses:
+            raise ClosureError(
+                "successful scoring attempt descendant identity probe is unavailable"
+            )
+        if "match" in descendant_statuses:
+            raise ClosureError("successful scoring attempt still has a live descendant")
+        if not port_is_available(int(self.config["expected"]["vendor_port"])):
+            raise ClosureError("successful scoring attempt did not leave its port isolated")
         return score_path, result
 
     def successful_score(self) -> tuple[pathlib.Path, dict[str, Any]] | None:
@@ -1233,6 +1503,23 @@ class TerminalClosure:
             if success is not None:
                 return success
         return None
+
+    def prove_attempt_cleanup_before_retry(
+        self, attempt_dir: pathlib.Path, result: Mapping[str, Any]
+    ) -> None:
+        cleanup = cleanup_persisted_attempt_processes(
+            attempt_dir / "descendants.json",
+            attempt_dir / "spawn-journal.txt",
+            int(self.config["expected"]["vendor_port"]),
+        )
+        if result.get("descendant_cleanup_proven") is not True:
+            raise ClosureError(
+                f"{attempt_dir.name} did not prove descendant cleanup; refusing retry"
+            )
+        if not cleanup["cleanup_proven"]:
+            raise ClosureError(
+                f"{attempt_dir.name} has live descendants or a contaminated port; refusing retry"
+            )
 
     def start_score_attempt(
         self,
@@ -1348,17 +1635,34 @@ class TerminalClosure:
                         attempt=attempt_dir.name,
                         process_group_id=pgid,
                     )
+                descendant_cleanup = cleanup_persisted_attempt_processes(
+                    attempt_dir / "descendants.json",
+                    attempt_dir / "spawn-journal.txt",
+                    int(self.config["expected"]["vendor_port"]),
+                )
+                if descendant_cleanup["inventory_present"]:
+                    self.events.emit(
+                        "orphaned_attempt_descendants_cleaned",
+                        attempt=attempt_dir.name,
+                        live_before=descendant_cleanup["live_before_cleanup"],
+                        live_after=descendant_cleanup["live_after_cleanup"],
+                        cleanup_proven=descendant_cleanup["cleanup_proven"],
+                    )
                 recovered = {
                     "schema_version": SCHEMA_VERSION,
                     "attempt": int(attempt_dir.name.removeprefix("attempt-")),
                     "completed_at": utc_now(),
                     "exit_code": 125,
                     "failure": (
-                        "score worker exited without a durable result; attempt rejected"
+                        "score worker exited and attempt descendant cleanup could not be proven"
+                        if not descendant_cleanup["cleanup_proven"]
+                        else "score worker exited without a durable result; attempt rejected"
                         if not group_alive or scorer_alive
                         else "score worker exited and an unauthenticated process group remains; "
                         "attempt rejected without signalling it"
                     ),
+                    "descendant_cleanup_proven": descendant_cleanup["cleanup_proven"],
+                    "descendants_clean": descendant_cleanup["cleanup_proven"],
                     "score_sha256": None,
                 }
                 atomic_json(result_path, recovered)
@@ -1383,6 +1687,7 @@ class TerminalClosure:
                     if validated is not None:
                         successful = validated
                         break
+                    self.prove_attempt_cleanup_before_retry(attempt_dir, result)
                     continue
                 pid_path = attempt_dir / "worker.pid.json"
                 if pid_path.is_file():
@@ -1396,6 +1701,7 @@ class TerminalClosure:
                     if validated is not None:
                         successful = validated
                         break
+                self.prove_attempt_cleanup_before_retry(attempt_dir, result)
             if successful is None:
                 raise ClosureError("authoritative scorer exhausted its bounded attempts")
         score_path, worker_result = successful
@@ -1728,6 +2034,506 @@ def port_is_available(port: int) -> bool:
     return True
 
 
+def process_parent_pairs() -> list[tuple[int, int]]:
+    completed = subprocess.run(
+        ["ps", "-axo", "pid=", "-o", "ppid="],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        raise ClosureError("could not inventory scorer descendants")
+    pairs: list[tuple[int, int]] = []
+    for raw_line in completed.stdout.splitlines():
+        fields = raw_line.split()
+        if len(fields) != 2:
+            continue
+        try:
+            pid, parent_pid = (int(field) for field in fields)
+        except ValueError:
+            continue
+        if pid > 1 and parent_pid >= 0:
+            pairs.append((pid, parent_pid))
+    return pairs
+
+
+def pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def pid_requires_cleanup(pid: int) -> bool:
+    try:
+        completed = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "stat="],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return pid_exists(pid)
+    state = completed.stdout.strip()
+    if completed.returncode == 0 and state:
+        return not state.startswith(b"Z")
+    return pid_exists(pid)
+
+
+def process_receipt_status(receipt: Mapping[str, Any]) -> str:
+    pid = receipt.get("pid")
+    births = receipt.get("birth_sha256s")
+    if births is None and isinstance(receipt.get("birth_sha256"), str):
+        births = [receipt["birth_sha256"]]
+    if births is not None:
+        if (
+            not isinstance(pid, int)
+            or pid <= 1
+            or not isinstance(births, list)
+            or not births
+            or any(
+                not isinstance(birth, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", birth)
+                for birth in births
+            )
+        ):
+            return "invalid"
+        try:
+            observed_birth = process_birth_sha256(pid)
+        except Exception:
+            observed_birth = None
+        if observed_birth is None:
+            return "unavailable" if pid_requires_cleanup(pid) else "absent"
+        return "match" if observed_birth in births else "mismatch"
+    identities = receipt.get("identity_sha256s")
+    if identities is None and isinstance(receipt.get("identity_sha256"), str):
+        identities = [receipt["identity_sha256"]]
+    if (
+        not isinstance(pid, int)
+        or pid <= 1
+        or not isinstance(identities, list)
+        or not identities
+        or any(
+            not isinstance(identity, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", identity)
+            for identity in identities
+        )
+    ):
+        return "invalid"
+    try:
+        observed = safe_process_receipt(pid)
+    except Exception:
+        observed = None
+    if observed is None:
+        return "unavailable" if pid_requires_cleanup(pid) else "absent"
+    return "match" if observed["identity_sha256"] in identities else "mismatch"
+
+
+def process_receipt_matches(receipt: Mapping[str, Any]) -> bool:
+    return process_receipt_status(receipt) == "match"
+
+
+def validate_attempt_process_inventory(path: pathlib.Path) -> list[dict[str, Any]]:
+    if path.is_symlink():
+        raise ClosureError("attempt descendant inventory is symbolic")
+    if not path.is_file():
+        return []
+    inventory = read_json(path)
+    if (
+        not isinstance(inventory, dict)
+        or inventory.get("schema_version") != SCHEMA_VERSION
+        or not isinstance(inventory.get("root_pid"), int)
+        or not isinstance(inventory.get("processes"), list)
+        or len(inventory["processes"]) > 4096
+    ):
+        raise ClosureError("attempt descendant inventory is malformed")
+    receipts: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for receipt in inventory["processes"]:
+        if not isinstance(receipt, dict):
+            raise ClosureError("attempt descendant receipt is malformed")
+        pid = receipt.get("pid")
+        identities = receipt.get("identity_sha256s")
+        births = receipt.get("birth_sha256s")
+        if (
+            not isinstance(pid, int)
+            or pid <= 1
+            or pid in seen
+            or not isinstance(identities, list)
+            or not identities
+            or len(identities) > 32
+            or len(set(identities)) != len(identities)
+            or not isinstance(births, list)
+            or not births
+            or len(births) > 32
+            or len(set(births)) != len(births)
+            or any(
+                not isinstance(identity, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", identity)
+                for identity in identities
+            )
+            or any(
+                not isinstance(birth, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", birth)
+                for birth in births
+            )
+        ):
+            raise ClosureError("attempt descendant receipt is malformed")
+        seen.add(pid)
+        receipts.append(
+            {
+                "pid": pid,
+                "identity_sha256s": identities,
+                "birth_sha256s": births,
+            }
+        )
+    if inventory["root_pid"] not in seen:
+        raise ClosureError("attempt descendant inventory lost its scorer root")
+    return receipts
+
+
+def signal_authenticated_receipts(
+    receipts: Sequence[Mapping[str, Any]], process_signal: signal.Signals
+) -> int:
+    signalled = 0
+    for receipt in receipts:
+        pid = receipt.get("pid")
+        if not isinstance(pid, int) or pid in {os.getpid(), os.getppid()}:
+            continue
+        if not process_receipt_matches(receipt):
+            continue
+        try:
+            os.kill(pid, process_signal)
+            signalled += 1
+        except (ProcessLookupError, PermissionError):
+            continue
+    return signalled
+
+
+def terminate_authenticated_receipts(
+    receipts: Sequence[Mapping[str, Any]], grace_seconds: float = 3
+) -> dict[str, Any]:
+    probe_unavailable = False
+
+    def live_receipts() -> list[dict[str, Any]]:
+        nonlocal probe_unavailable
+        live: list[dict[str, Any]] = []
+        for receipt in receipts:
+            status = process_receipt_status(receipt)
+            if status == "unavailable":
+                probe_unavailable = True
+            elif status == "match":
+                live.append(dict(receipt))
+        return live
+
+    live_before = live_receipts()
+    signalled = signal_authenticated_receipts(live_before, signal.SIGTERM)
+    deadline = time.monotonic() + grace_seconds
+    live_after = live_receipts()
+    while live_after and time.monotonic() < deadline:
+        time.sleep(0.05)
+        live_after = live_receipts()
+    if live_after:
+        signalled += signal_authenticated_receipts(live_after, signal.SIGKILL)
+        kill_deadline = time.monotonic() + min(grace_seconds, 2)
+        while live_after and time.monotonic() < kill_deadline:
+            time.sleep(0.05)
+            live_after = live_receipts()
+    return {
+        "live_before_cleanup": len(live_before),
+        "live_after_cleanup": len(live_after),
+        "signals_sent": signalled,
+        "identity_probe_unavailable": probe_unavailable,
+    }
+
+
+def read_spawn_journal_receipts(path: pathlib.Path) -> list[dict[str, Any]]:
+    if path.is_symlink():
+        raise ClosureError("attempt spawn journal is symbolic")
+    if not path.is_file():
+        return []
+    payload = path.read_bytes()
+    if len(payload) > 128 * 1024 or (payload and not payload.endswith(b"\n")):
+        raise ClosureError("attempt spawn journal is malformed")
+    identities_by_pid: dict[int, list[str]] = {}
+    births_by_pid: dict[int, list[str]] = {}
+    for raw_line in payload.splitlines():
+        try:
+            entry = json.loads(raw_line)
+        except json.JSONDecodeError as error:
+            raise ClosureError("attempt spawn journal is malformed") from error
+        if not isinstance(entry, dict) or set(entry) != {
+            "pid",
+            "identity_sha256s",
+            "birth_sha256s",
+        }:
+            raise ClosureError("attempt spawn journal is malformed")
+        pid = entry["pid"]
+        identities = entry["identity_sha256s"]
+        births = entry["birth_sha256s"]
+        if (
+            not isinstance(pid, int)
+            or pid <= 1
+            or not isinstance(identities, list)
+            or not identities
+            or len(identities) > 32
+            or not isinstance(births, list)
+            or not births
+            or len(births) > 32
+            or any(
+                not isinstance(identity, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", identity)
+                for identity in identities
+            )
+            or any(
+                not isinstance(birth, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", birth)
+                for birth in births
+            )
+        ):
+            raise ClosureError("attempt spawn journal is malformed")
+        owned = identities_by_pid.setdefault(pid, [])
+        for identity in identities:
+            if identity not in owned:
+                owned.append(identity)
+        owned_births = births_by_pid.setdefault(pid, [])
+        for birth in births:
+            if birth not in owned_births:
+                owned_births.append(birth)
+    if len(identities_by_pid) > 4096:
+        raise ClosureError("attempt spawn journal is too large")
+    return [
+        {
+            "pid": pid,
+            "identity_sha256s": identities_by_pid[pid],
+            "birth_sha256s": births_by_pid[pid],
+        }
+        for pid in sorted(identities_by_pid)
+    ]
+
+
+class AttemptProcessTracker:
+    def __init__(
+        self,
+        root_receipt: Mapping[str, Any],
+        inventory_path: pathlib.Path,
+        spawn_journal_path: pathlib.Path,
+        poll_seconds: float = 0.05,
+    ) -> None:
+        if not process_receipt_matches(root_receipt):
+            raise ClosureError("scorer root could not be authenticated for descendant containment")
+        self.root_pid = int(root_receipt["pid"])
+        root_birth = process_birth_sha256(self.root_pid)
+        if root_birth is None:
+            raise ClosureError("scorer root birth identity could not be authenticated")
+        self.inventory_path = inventory_path
+        self.spawn_journal_path = spawn_journal_path
+        self.poll_seconds = poll_seconds
+        self.processes: dict[int, dict[str, Any]] = {
+            self.root_pid: {
+                "pid": self.root_pid,
+                "identity_sha256s": [str(root_receipt["identity_sha256"])],
+                "birth_sha256s": [root_birth],
+            }
+        }
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.error: str | None = None
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self._persist()
+
+    def _persist(self) -> None:
+        with self.lock:
+            payload = {
+                "schema_version": SCHEMA_VERSION,
+                "root_pid": self.root_pid,
+                "updated_at": utc_now(),
+                "processes": [self.processes[pid] for pid in sorted(self.processes)],
+            }
+        atomic_json(self.inventory_path, payload)
+
+    def _merge_receipt(self, receipt: Mapping[str, Any]) -> bool:
+        pid = receipt.get("pid")
+        identities = receipt.get("identity_sha256s")
+        if identities is None and isinstance(receipt.get("identity_sha256"), str):
+            identities = [receipt["identity_sha256"]]
+        births = receipt.get("birth_sha256s")
+        if births is None and isinstance(receipt.get("birth_sha256"), str):
+            births = [receipt["birth_sha256"]]
+        if (
+            not isinstance(pid, int)
+            or not isinstance(identities, list)
+            or not isinstance(births, list)
+        ):
+            raise ClosureError("attempt descendant receipt is malformed")
+        changed = False
+        with self.lock:
+            stored = self.processes.setdefault(
+                pid,
+                {"pid": pid, "identity_sha256s": [], "birth_sha256s": []},
+            )
+            for identity in identities:
+                if identity not in stored["identity_sha256s"]:
+                    stored["identity_sha256s"].append(identity)
+                    changed = True
+            for birth in births:
+                if birth not in stored["birth_sha256s"]:
+                    stored["birth_sha256s"].append(birth)
+                    changed = True
+        return changed
+
+    def _record_probe_unavailable(self, pid: int) -> None:
+        if self.error is None:
+            self.error = f"descendant birth identity probe unavailable for live pid {pid}"
+
+    def _live_receipts(self) -> list[dict[str, Any]]:
+        live: list[dict[str, Any]] = []
+        for receipt in self.receipts():
+            status = process_receipt_status(receipt)
+            if status == "unavailable":
+                self._record_probe_unavailable(int(receipt["pid"]))
+            elif status == "match":
+                live.append(receipt)
+        return live
+
+    def scan(self) -> None:
+        pairs = process_parent_pairs()
+        changed = False
+        for receipt in read_spawn_journal_receipts(self.spawn_journal_path):
+            changed = self._merge_receipt(receipt) or changed
+        active = {receipt["pid"] for receipt in self._live_receipts()}
+        while True:
+            discovered = False
+            for pid, parent_pid in pairs:
+                if pid in active or parent_pid not in active:
+                    continue
+                receipt = stable_process_receipt(pid, timeout_seconds=0.5)
+                if receipt is None:
+                    continue
+                try:
+                    birth = process_birth_sha256(pid)
+                except Exception:
+                    birth = None
+                if birth is None:
+                    if pid_requires_cleanup(pid):
+                        self._record_probe_unavailable(pid)
+                    continue
+                changed = self._merge_receipt(
+                    {**receipt, "birth_sha256": birth}
+                ) or changed
+                active.add(pid)
+                discovered = True
+            if not discovered:
+                break
+        if changed:
+            self._persist()
+
+    def _run(self) -> None:
+        try:
+            while not self.stop_event.wait(self.poll_seconds):
+                self.scan()
+        except BaseException as error:
+            if self.error is None:
+                self.error = f"{type(error).__name__}: {redact_text(error)}"
+
+    def start(self) -> None:
+        self.scan()
+        self.thread.start()
+
+    def receipts(self) -> list[dict[str, Any]]:
+        with self.lock:
+            return [dict(self.processes[pid]) for pid in sorted(self.processes)]
+
+    def cleanup(self, port: int, grace_seconds: float = 3) -> dict[str, Any]:
+        self.scan()
+        live_before = self._live_receipts()
+        deadline = time.monotonic() + grace_seconds
+        signals_sent = 0
+        while True:
+            self.scan()
+            live = self._live_receipts()
+            if not live or time.monotonic() >= deadline:
+                break
+            signals_sent += signal_authenticated_receipts(live, signal.SIGTERM)
+            time.sleep(0.05)
+        live = self._live_receipts()
+        if live:
+            signals_sent += signal_authenticated_receipts(live, signal.SIGKILL)
+            kill_deadline = time.monotonic() + min(grace_seconds, 2)
+            while live and time.monotonic() < kill_deadline:
+                self.scan()
+                time.sleep(0.05)
+                live = self._live_receipts()
+        self.stop_event.set()
+        self.thread.join(timeout=2)
+        self.scan()
+        live_after = self._live_receipts()
+        port_free = port_is_available(port)
+        cleanup_proven = not live_after and port_free and self.error is None
+        self._persist()
+        return {
+            "observed_count": len(self.receipts()),
+            "live_before_cleanup": len(live_before),
+            "live_after_cleanup": len(live_after),
+            "signals_sent": signals_sent,
+            "port_free_after_cleanup": port_free,
+            "cleanup_proven": cleanup_proven,
+            "tracker_error": self.error,
+        }
+
+
+def cleanup_persisted_attempt_processes(
+    inventory_path: pathlib.Path,
+    spawn_journal_path: pathlib.Path,
+    port: int,
+    grace_seconds: float = 3,
+) -> dict[str, Any]:
+    receipts = validate_attempt_process_inventory(inventory_path)
+    by_pid = {receipt["pid"]: receipt for receipt in receipts}
+    for journal_receipt in read_spawn_journal_receipts(spawn_journal_path):
+        stored = by_pid.get(journal_receipt["pid"])
+        if stored is None:
+            stored = {
+                "pid": journal_receipt["pid"],
+                "identity_sha256s": [],
+                "birth_sha256s": [],
+            }
+            receipts.append(stored)
+            by_pid[journal_receipt["pid"]] = stored
+        for identity in journal_receipt["identity_sha256s"]:
+            if identity not in stored["identity_sha256s"]:
+                stored["identity_sha256s"].append(identity)
+        for birth in journal_receipt["birth_sha256s"]:
+            if birth not in stored["birth_sha256s"]:
+                stored["birth_sha256s"].append(birth)
+    if not receipts:
+        port_free = port_is_available(port)
+        return {
+            "inventory_present": False,
+            "live_before_cleanup": 0,
+            "live_after_cleanup": 0,
+            "signals_sent": 0,
+            "identity_probe_unavailable": False,
+            "port_free_after_cleanup": port_free,
+            "cleanup_proven": port_free,
+        }
+    cleanup = terminate_authenticated_receipts(receipts, grace_seconds)
+    port_free = port_is_available(port)
+    return {
+        "inventory_present": True,
+        **cleanup,
+        "port_free_after_cleanup": port_free,
+        "cleanup_proven": (
+            cleanup["live_after_cleanup"] == 0
+            and not cleanup["identity_probe_unavailable"]
+            and port_free
+        ),
+    }
+
+
 def process_group_exists(process_group_id: int) -> bool:
     try:
         os.killpg(process_group_id, 0)
@@ -1741,13 +2547,13 @@ def process_group_exists(process_group_id: int) -> bool:
 def terminate_process_group(process_group_id: Any, grace_seconds: float = 10) -> None:
     if not isinstance(process_group_id, int) or process_group_id <= 1:
         return
-    with contextlib.suppress(ProcessLookupError):
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(process_group_id, signal.SIGTERM)
     deadline = time.monotonic() + grace_seconds
     while process_group_exists(process_group_id) and time.monotonic() < deadline:
         time.sleep(0.1)
     if process_group_exists(process_group_id):
-        with contextlib.suppress(ProcessLookupError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process_group_id, signal.SIGKILL)
 
 
@@ -1870,7 +2676,7 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
             or sha256_file(probe_script) != job["playwright_probe_sha256"]
         ):
             raise ClosureError("score worker frozen Playwright product probe changed")
-        smoke_playwright_runtime(
+        playwright_smoke_before = smoke_playwright_runtime(
             playwright_info,
             render_node,
             runtime_home,
@@ -1909,18 +2715,44 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
         log_descriptor = os.open(log_path, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
         os.fchmod(log_descriptor, 0o600)
         with os.fdopen(log_descriptor, "ab", buffering=0) as score_log:
-            scorer_process = subprocess.Popen(
-                command,
-                cwd=scorer.parent,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=score_environment,
-                start_new_session=True,
+            spawn_journal_path = attempt_dir / "spawn-journal.txt"
+            if spawn_journal_path.is_symlink():
+                raise ClosureError("attempt spawn journal is symbolic")
+            spawn_journal_descriptor = os.open(
+                spawn_journal_path, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600
             )
+            os.fchmod(spawn_journal_descriptor, 0o600)
+            os.close(spawn_journal_descriptor)
+            gate_read, gate_write = os.pipe()
+            os.set_inheritable(gate_read, True)
+            try:
+                scorer_process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-B",
+                        "-u",
+                        "-c",
+                        SCORER_GATE_SOURCE,
+                        str(gate_read),
+                        str(spawn_journal_path),
+                        *command[3:],
+                    ],
+                    cwd=scorer.parent,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    env=score_environment,
+                    start_new_session=True,
+                    pass_fds=(gate_read,),
+                )
+            except BaseException:
+                os.close(gate_write)
+                raise
+            finally:
+                os.close(gate_read)
             started_epoch = time.time()
             deadline_epoch = started_epoch + float(job["timeout_seconds"])
-            scorer_receipt = safe_process_receipt(scorer_process.pid)
+            scorer_receipt = stable_process_receipt(scorer_process.pid)
             scorer_state = {
                 "schema_version": SCHEMA_VERSION,
                 "pid": scorer_process.pid,
@@ -1930,8 +2762,31 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
                 "deadline_epoch": deadline_epoch,
             }
             atomic_json(attempt_dir / "scorer-state.json", scorer_state)
-            if scorer_receipt is not None:
-                atomic_json(attempt_dir / "scorer.pid.json", scorer_receipt)
+            if scorer_receipt is None:
+                os.close(gate_write)
+                terminate_process_group(scorer_process.pid)
+                scorer_process.wait()
+                raise ClosureError(
+                    "scorer did not remain alive long enough to authenticate containment"
+                )
+            atomic_json(attempt_dir / "scorer.pid.json", scorer_receipt)
+            descendant_inventory_path = attempt_dir / "descendants.json"
+            try:
+                descendant_tracker = AttemptProcessTracker(
+                    scorer_receipt,
+                    descendant_inventory_path,
+                    spawn_journal_path,
+                )
+                descendant_tracker.start()
+            except BaseException:
+                os.close(gate_write)
+                terminate_process_group(scorer_process.pid)
+                scorer_process.wait()
+                raise
+            try:
+                os.write(gate_write, b"1")
+            finally:
+                os.close(gate_write)
             reader_outcome: dict[str, Any] = {}
             if scorer_process.stdout is None:
                 raise ClosureError("score worker did not receive the scorer output channel")
@@ -1942,21 +2797,25 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
             )
             reader.start()
             termination_reason: str | None = None
-            while scorer_process.poll() is None:
-                if stop_path.exists():
-                    termination_reason = "closure stop requested during authoritative scoring"
-                    break
-                if time.time() >= deadline_epoch:
-                    termination_reason = "authoritative scorer exceeded its frozen timeout"
-                    break
-                time.sleep(0.5)
-            if termination_reason:
-                terminate_process_group(scorer_process.pid)
-            scorer_exit = scorer_process.wait()
-            reader.join(timeout=5)
-            had_survivors = process_group_exists(scorer_process.pid)
-            if had_survivors:
-                terminate_process_group(scorer_process.pid)
+            try:
+                while scorer_process.poll() is None:
+                    if stop_path.exists():
+                        termination_reason = (
+                            "closure stop requested during authoritative scoring"
+                        )
+                        break
+                    if time.time() >= deadline_epoch:
+                        termination_reason = (
+                            "authoritative scorer exceeded its frozen timeout"
+                        )
+                        break
+                    time.sleep(0.5)
+            finally:
+                if scorer_process.poll() is None:
+                    terminate_process_group(scorer_process.pid)
+                scorer_exit = scorer_process.wait()
+                descendant_cleanup = descendant_tracker.cleanup(port)
+                reader.join(timeout=5)
             if reader.is_alive():
                 raise ClosureError("score output channel did not reach EOF")
             if reader_outcome.get("error"):
@@ -1971,6 +2830,16 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
         )
         if playwright_after != playwright_info:
             raise ClosureError("Playwright runtime changed during authoritative scoring")
+        playwright_smoke_after = smoke_playwright_runtime(
+            playwright_after,
+            render_node,
+            runtime_home,
+            runtime_tmp,
+            browser_view,
+            probe_script,
+        )
+        if playwright_smoke_after != playwright_smoke_before:
+            raise ClosureError("Playwright resolution changed during authoritative scoring")
         if (
             render_wrapper.is_symlink()
             or not render_wrapper.is_file()
@@ -1982,9 +2851,14 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
         failure = termination_reason
         if termination_reason:
             accepted_exit = 75 if stop_path.exists() else 124
-        if had_survivors:
+        descendants_survived_scorer = descendant_cleanup["live_before_cleanup"]
+        descendant_cleanup_proven = descendant_cleanup["cleanup_proven"]
+        if descendants_survived_scorer:
             accepted_exit = 70
             failure = "authoritative scorer left descendant processes; attempt rejected"
+        if not descendant_cleanup_proven:
+            accepted_exit = 70
+            failure = "authoritative scorer descendant cleanup could not be proven"
         score_output = pathlib.Path(str(job["score_output"]))
         score_tree_seal_path = result_path.parent / "score-tree-seal.json"
         score_tree_sha256 = None
@@ -2020,7 +2894,22 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
             "raw_tree_sha256": job["raw_tree_sha256"],
             "fixture_seed": seed,
             "port": port,
-            "descendants_clean": not had_survivors,
+            "descendants_clean": (
+                descendants_survived_scorer == 0 and descendant_cleanup_proven
+            ),
+            "descendant_cleanup_proven": descendant_cleanup_proven,
+            "descendants_observed": descendant_cleanup["observed_count"],
+            "descendants_survived_scorer": descendants_survived_scorer,
+            "descendants_live_after_cleanup": descendant_cleanup[
+                "live_after_cleanup"
+            ],
+            "descendant_cleanup_signals": descendant_cleanup["signals_sent"],
+            "descendant_tracker_error": descendant_cleanup["tracker_error"],
+            "port_free_after_cleanup": descendant_cleanup[
+                "port_free_after_cleanup"
+            ],
+            "descendant_inventory_sha256": sha256_file(descendant_inventory_path),
+            "spawn_journal_sha256": sha256_file(spawn_journal_path),
             "score_sha256": sha256_file(score_output)
             if accepted_exit == 0 and score_output.is_file()
             else None,
@@ -2265,6 +3154,12 @@ def preflight(config_path: pathlib.Path) -> int:
                     "browser": playwright["browser_name"],
                     "revision": playwright["browser_revision"],
                     "module_tree_sha256": playwright["module_tree_sha256"],
+                    "module_package": playwright["resolution_receipt"][
+                        "modulePackage"
+                    ],
+                    "module_resolution_exact": playwright["resolution_receipt"][
+                        "pinnedModule"
+                    ],
                     "browser_tree_sha256": playwright["browser_tree_sha256"],
                     "executable_sha256": playwright["executable_sha256"],
                     "empty_home_smoke": True,
