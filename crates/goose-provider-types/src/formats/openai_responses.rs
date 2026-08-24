@@ -1200,7 +1200,6 @@ where
                     );
                     final_usage = Some(ProviderUsage::new(model.to_string(), usage));
                     response_id = Some(response.id.clone());
-                    model_name = Some(model.to_string());
 
                     // For complete output, use the response output items
                     if !response.output.is_empty() {
@@ -1227,7 +1226,6 @@ where
                                 response.model.clone()
                             };
                             response_id = Some(response.id.clone());
-                            model_name = Some(model.clone());
                             final_usage = Some(usage.unwrap_or_else(|| {
                                 ProviderUsage::new(model, Usage::default())
                             }));

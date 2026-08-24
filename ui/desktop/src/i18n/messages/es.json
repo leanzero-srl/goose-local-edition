@@ -4525,5 +4525,245 @@
   },
   "userMessage.forkSessionTitle": {
     "defaultMessage": "Crear una nueva sesión con el mensaje editado"
+  },
+  "baseChat.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
+  "baseChat.promptFailed": {
+    "defaultMessage": "That message did not go through"
+  },
+  "baseChat.promptFailedHint": {
+    "defaultMessage": "Your conversation is safe. Send again to retry."
+  },
+  "editionSelector.edition": {
+    "defaultMessage": "Edition"
+  },
+  "editionSelector.local": {
+    "defaultMessage": "Local"
+  },
+  "editionSelector.standard": {
+    "defaultMessage": "Standard"
+  },
+  "loopModal.browseYaml": {
+    "defaultMessage": "Browse for YAML file..."
+  },
+  "loopModal.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "loopModal.createLoop": {
+    "defaultMessage": "Create Loop"
+  },
+  "loopModal.createNewLoop": {
+    "defaultMessage": "Create New Loop"
+  },
+  "loopModal.creating": {
+    "defaultMessage": "Creating..."
+  },
+  "loopModal.deepLink": {
+    "defaultMessage": "Deep link"
+  },
+  "loopModal.deepLinkPlaceholder": {
+    "defaultMessage": "Paste goose://recipe link here..."
+  },
+  "loopModal.failedParseRecipe": {
+    "defaultMessage": "Failed to parse recipe from file."
+  },
+  "loopModal.failedReadFile": {
+    "defaultMessage": "Failed to read the selected file."
+  },
+  "loopModal.invalidDeepLink": {
+    "defaultMessage": "Invalid deep link. Please use a goose://recipe link."
+  },
+  "loopModal.invalidFileType": {
+    "defaultMessage": "Invalid file type: Please select a YAML file (.yaml or .yml)"
+  },
+  "loopModal.loopIdRequired": {
+    "defaultMessage": "Loop name is required."
+  },
+  "loopModal.maxIterationsHelp": {
+    "defaultMessage": "Hard cap on iterations regardless of the stop check."
+  },
+  "loopModal.maxIterationsLabel": {
+    "defaultMessage": "Max iterations:"
+  },
+  "loopModal.maxIterationsRequired": {
+    "defaultMessage": "Max iterations must be at least 1."
+  },
+  "loopModal.nameLabel": {
+    "defaultMessage": "Name:"
+  },
+  "loopModal.namePlaceholder": {
+    "defaultMessage": "e.g., nightly-refine-loop"
+  },
+  "loopModal.provideValidRecipe": {
+    "defaultMessage": "Please provide a valid recipe source."
+  },
+  "loopModal.recipeDescription": {
+    "defaultMessage": "Description: {description}"
+  },
+  "loopModal.recipeParsed": {
+    "defaultMessage": "Recipe parsed successfully"
+  },
+  "loopModal.recipeTitle": {
+    "defaultMessage": "Title: {title}"
+  },
+  "loopModal.scheduleLabel": {
+    "defaultMessage": "Schedule:"
+  },
+  "loopModal.selected": {
+    "defaultMessage": "Selected: {path}"
+  },
+  "loopModal.sourceLabel": {
+    "defaultMessage": "Recipe:"
+  },
+  "loopModal.stateArtifactHelp": {
+    "defaultMessage": "Optional file the recipe writes each iteration; its contents carry into the next."
+  },
+  "loopModal.stateArtifactLabel": {
+    "defaultMessage": "State artifact:"
+  },
+  "loopModal.stateArtifactPlaceholder": {
+    "defaultMessage": "e.g., state.md"
+  },
+  "loopModal.stopCheckHelp": {
+    "defaultMessage": "Optional shell command run after each iteration; exit 0 stops the loop."
+  },
+  "loopModal.stopCheckLabel": {
+    "defaultMessage": "Stop check command:"
+  },
+  "loopModal.stopCheckPlaceholder": {
+    "defaultMessage": "e.g., test -f done.flag"
+  },
+  "loopModal.subtitle": {
+    "defaultMessage": "A loop runs a recipe repeatedly until a stop check passes or the iteration cap is reached."
+  },
+  "loopModal.yaml": {
+    "defaultMessage": "YAML"
+  },
+  "loopView.confirmDelete": {
+    "defaultMessage": "Remove loop \"{id}\"? The recipe will be kept."
+  },
+  "loopView.createLoop": {
+    "defaultMessage": "Create Loop"
+  },
+  "loopView.deleteConfirm": {
+    "defaultMessage": "Remove"
+  },
+  "loopView.deleteTitle": {
+    "defaultMessage": "Remove loop"
+  },
+  "loopView.description": {
+    "defaultMessage": "Loops run a recipe repeatedly on a schedule until a stop check passes or the iteration cap is reached."
+  },
+  "loopView.errorPrefix": {
+    "defaultMessage": "Error: {error}"
+  },
+  "loopView.lastRun": {
+    "defaultMessage": "Last run: {date}"
+  },
+  "loopView.loop": {
+    "defaultMessage": "Loop"
+  },
+  "loopView.loopCreated": {
+    "defaultMessage": "Loop Created"
+  },
+  "loopView.loopCreatedMsg": {
+    "defaultMessage": "Successfully created loop \"{id}\""
+  },
+  "loopView.maxIterations": {
+    "defaultMessage": "{count} max iterations"
+  },
+  "loopView.noLoops": {
+    "defaultMessage": "No loops yet"
+  },
+  "loopView.refresh": {
+    "defaultMessage": "Refresh"
+  },
+  "loopView.refreshing": {
+    "defaultMessage": "Refreshing..."
+  },
+  "loopView.stateArtifact": {
+    "defaultMessage": "State: {file}"
+  },
+  "loopView.stopCheck": {
+    "defaultMessage": "Stop check: {command}"
+  },
+  "modelsBottomBar.changeProvider": {
+    "defaultMessage": "Change Provider"
+  },
+  "modelsBottomBar.leanzeroWebsite": {
+    "defaultMessage": "LeanZero website"
+  },
+  "modelsBottomBar.swarmDocs": {
+    "defaultMessage": "Documentation"
+  },
+  "navigation.itemLoop": {
+    "defaultMessage": "Loop"
+  },
+  "navigation.itemMemories": {
+    "defaultMessage": "Memories"
+  },
+  "navigationPanel.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "navigationPanel.chatDeleted": {
+    "defaultMessage": "Chat deleted"
+  },
+  "navigationPanel.confirmDelete": {
+    "defaultMessage": "Confirm delete"
+  },
+  "navigationPanel.copyPath": {
+    "defaultMessage": "Copy folder path"
+  },
+  "navigationPanel.deleteChat": {
+    "defaultMessage": "Delete chat"
+  },
+  "navigationPanel.deleteFailed": {
+    "defaultMessage": "Could not delete chat"
+  },
+  "navigationPanel.hasError": {
+    "defaultMessage": "Ended with an error"
+  },
+  "navigationPanel.kindBuild": {
+    "defaultMessage": "build"
+  },
+  "navigationPanel.kindRecipe": {
+    "defaultMessage": "recipe"
+  },
+  "navigationPanel.messages": {
+    "defaultMessage": "{count} msg"
+  },
+  "navigationPanel.moreActions": {
+    "defaultMessage": "More actions"
+  },
+  "navigationPanel.openNewWindow": {
+    "defaultMessage": "Open in new window"
+  },
+  "navigationPanel.pathCopied": {
+    "defaultMessage": "Folder path copied"
+  },
+  "navigationPanel.rename": {
+    "defaultMessage": "Rename"
+  },
+  "navigationPanel.revealInFinder": {
+    "defaultMessage": "Reveal folder in Finder"
+  },
+  "navigationPanel.streaming": {
+    "defaultMessage": "Working now"
+  },
+  "sessionActionsHeader.makeRecipe": {
+    "defaultMessage": "Make recipe from this conversation"
+  },
+  "sessionActionsHeader.makeRecipeError": {
+    "defaultMessage": "Could not create a recipe from this conversation"
+  },
+  "settings.edition.description": {
+    "defaultMessage": "The Goose Local Edition skin — LeanZero branding, the fleet fan-in view, and azure accents. This is the look and identity only; it is separate from the engine. To actually build with your local fleet, pick Swarm LeanZero in the model selector. The Swarm LeanZero settings tab stays available whenever you run local models, regardless of this setting."
+  },
+  "settings.edition.preview": {
+    "defaultMessage": "Swarm LeanZero — the fan-in view"
+  },
+  "settings.edition.title": {
+    "defaultMessage": "Goose Local Edition"
   }
 }
