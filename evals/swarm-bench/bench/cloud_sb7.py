@@ -19491,7 +19491,8 @@ def adjudicate_transport_unknown_successor(
         for other in status_rows(root):
             if (
                 other["entrant"] != entrant_id
-                and other["status"] not in BUILD_SUCCESS_STATES
+                and other["status"]
+                not in BUILD_SUCCESS_STATES | {TRANSPORT_UNKNOWN_STATUS}
             ):
                 raise SystemExit(
                     "transport-unknown successor waits for every unrelated entrant "
