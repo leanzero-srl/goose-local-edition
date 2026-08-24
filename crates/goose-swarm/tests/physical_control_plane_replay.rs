@@ -1524,6 +1524,12 @@ async fn explicit_provider_not_started_closes_once_and_releases_without_a_phanto
         .provider_not_started("provider adapter rejected the request before dispatch")
         .await
         .unwrap();
+    let duplicate = admitted
+        .lifecycle()
+        .provider_not_started("duplicate provider-not-started receipt")
+        .await
+        .expect_err("an accepted terminal receipt cannot be replayed");
+    assert!(duplicate.to_string().contains("already closed"));
     admitted
         .complete_local(LocalCompletionKind::Error)
         .await
@@ -1546,6 +1552,16 @@ async fn explicit_provider_not_started_closes_once_and_releases_without_a_phanto
         events
             .iter()
             .filter(|event| event["event"] == "broker_provider_not_started")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event["event"] == "broker_receipt_rejected"
+                    && event["receipt_kind"] == "provider_not_started"
+            })
             .count(),
         1
     );

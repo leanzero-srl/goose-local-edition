@@ -262,6 +262,7 @@ pub(crate) fn bind_current_provider_lifecycle(
                 inner: provider.clone(),
                 lifecycle: lifecycle.clone(),
                 nudge_factory: nudge_factory.clone(),
+                terminal_preflight_error: tokio::sync::Mutex::new(None),
             }) as Arc<dyn Provider>
         })
         .unwrap_or(provider);
@@ -278,6 +279,7 @@ struct LifecycleProvider {
     inner: Arc<dyn Provider>,
     lifecycle: ProviderLifecycle,
     nudge_factory: Option<Arc<dyn ProviderNudgeDeliveryFactory>>,
+    terminal_preflight_error: tokio::sync::Mutex<Option<ProviderError>>,
 }
 
 #[allow(dead_code)]
@@ -1007,6 +1009,30 @@ impl Provider for PreSchedulerLifecycleProvider {
     }
 }
 
+impl LifecycleProvider {
+    async fn cached_terminal_preflight_error(&self) -> Option<ProviderError> {
+        self.terminal_preflight_error.lock().await.clone()
+    }
+
+    async fn terminate_before_provider_start(
+        &self,
+        detail: String,
+        terminal_error: ProviderError,
+    ) -> ProviderError {
+        let mut cached = self.terminal_preflight_error.lock().await;
+        if let Some(error) = cached.as_ref() {
+            return error.clone();
+        }
+        match self.lifecycle.provider_not_started(detail).await {
+            Ok(()) => {
+                *cached = Some(terminal_error.clone());
+                terminal_error
+            }
+            Err(error) => lifecycle_error("provider-not-started receipt", error),
+        }
+    }
+}
+
 #[async_trait]
 impl Provider for LifecycleProvider {
     fn get_name(&self) -> &str {
@@ -1037,17 +1063,21 @@ impl Provider for LifecycleProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
+        if let Some(error) = self.cached_terminal_preflight_error().await {
+            return Err(error);
+        }
         if model_config.model_name != self.lifecycle.admission().model_id {
             let detail = format!(
                 "model {:?} does not match sealed physical admission model {:?}",
                 model_config.model_name,
                 self.lifecycle.admission().model_id
             );
-            self.lifecycle
-                .provider_not_started(detail.clone())
-                .await
-                .map_err(|error| lifecycle_error("provider-not-started receipt", error))?;
-            return Err(ProviderError::ExecutionError(detail));
+            return Err(self
+                .terminate_before_provider_start(
+                    detail.clone(),
+                    ProviderError::ExecutionError(detail),
+                )
+                .await);
         }
         if self
             .inner
@@ -1059,11 +1089,12 @@ impl Provider for LifecycleProvider {
                 "provider `{}` transport does not match its sealed physical admission",
                 self.inner.get_name()
             );
-            self.lifecycle
-                .provider_not_started(detail.clone())
-                .await
-                .map_err(|error| lifecycle_error("provider-not-started receipt", error))?;
-            return Err(ProviderError::ExecutionError(detail));
+            return Err(self
+                .terminate_before_provider_start(
+                    detail.clone(),
+                    ProviderError::ExecutionError(detail),
+                )
+                .await);
         }
         if !self
             .inner
@@ -1073,11 +1104,12 @@ impl Provider for LifecycleProvider {
                 "provider `{}` has no terminal-proven single-attempt stream boundary",
                 self.inner.get_name()
             );
-            self.lifecycle
-                .provider_not_started(detail.clone())
-                .await
-                .map_err(|error| lifecycle_error("provider-not-started receipt", error))?;
-            return Err(ProviderError::NotImplemented(detail));
+            return Err(self
+                .terminate_before_provider_start(
+                    detail.clone(),
+                    ProviderError::NotImplemented(detail),
+                )
+                .await);
         }
         let started = self
             .lifecycle
@@ -1343,10 +1375,10 @@ mod tests {
     use goose::conversation::message::Message;
     use goose::providers::base::{ProviderUsage, Usage};
     use goose_swarm::{
-        AuthorityScope, HostCapacityEvidence, LocalCompletionKind, NullSink,
+        AuthorityScope, EventSink, HostCapacityEvidence, LocalCompletionKind, NullSink,
         PhysicalAdmissionControl, PhysicalFleetSnapshot, ProviderRequestReceipt, ProviderStartKey,
-        ProviderStartLookupError, ProviderTerminalReceipt, SourceRevisionKind, TaskVersion,
-        VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
+        ProviderStartLookupError, ProviderTerminalReceipt, SourceRevisionKind, SwarmEvent,
+        TaskVersion, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -1375,7 +1407,35 @@ mod tests {
 
     struct RetryOnlyProvider;
 
-    struct WrongTransportProvider;
+    #[derive(Default)]
+    struct WrongTransportProvider {
+        calls: AtomicUsize,
+    }
+
+    #[derive(Default)]
+    struct RecordingSink {
+        events: Mutex<Vec<serde_json::Value>>,
+    }
+
+    impl RecordingSink {
+        fn count(&self, event: &str) -> usize {
+            self.events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|value| value["event"] == event)
+                .count()
+        }
+    }
+
+    impl EventSink for RecordingSink {
+        fn emit(&self, event: &SwarmEvent) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(serde_json::to_value(event).unwrap());
+        }
+    }
 
     struct ProgressOnlyProvider;
 
@@ -1781,6 +1841,7 @@ mod tests {
             _messages: &[Message],
             _tools: &[Tool],
         ) -> Result<MessageStream, ProviderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             Err(ProviderError::ExecutionError(
                 "transport-drift provider must not be called".to_string(),
             ))
@@ -1793,6 +1854,7 @@ mod tests {
             _messages: &[Message],
             _tools: &[Tool],
         ) -> Result<MessageStream, ProviderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             Err(ProviderError::ExecutionError(
                 "transport-drift provider must not be called".to_string(),
             ))
@@ -1800,6 +1862,12 @@ mod tests {
     }
 
     async fn admitted() -> (PhysicalAdmissionControl, goose_swarm::AdmittedWork) {
+        admitted_with_sink(Arc::new(NullSink)).await
+    }
+
+    async fn admitted_with_sink(
+        sink: Arc<dyn EventSink>,
+    ) -> (PhysicalAdmissionControl, goose_swarm::AdmittedWork) {
         let identity = VerifiedPhysicalIdentity {
             host_id: "host-a".to_string(),
             model_instance_id: "instance-a".to_string(),
@@ -1815,7 +1883,7 @@ mod tests {
             vec![identity.into_lane("device-a".to_string(), "model-a".to_string(), 1)],
         )
         .unwrap();
-        let control = PhysicalAdmissionControl::new("test", snapshot, Arc::new(NullSink)).unwrap();
+        let control = PhysicalAdmissionControl::new("test", snapshot, sink).unwrap();
         let source = TaskVersion {
             authority_scope: AuthorityScope::new("provider-lifecycle-replay", "build"),
             phase_epoch: 0,
@@ -2282,22 +2350,118 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transport_drift_is_rejected_before_a_request_starts() {
-        let (control, work) = admitted().await;
+    async fn transport_drift_is_terminal_once_without_replaying_not_started_receipt() {
+        let sink = Arc::new(RecordingSink::default());
+        let (control, work) = admitted_with_sink(sink.clone()).await;
+        let inner = Arc::new(WrongTransportProvider::default());
         let provider = scope_provider_lifecycle(work.lifecycle(), async {
-            bind_current_provider_lifecycle(Arc::new(WrongTransportProvider), None, None)
+            bind_current_provider_lifecycle(inner.clone(), None, None)
         })
         .await;
-        let error = provider
+        let first = provider
             .stream(&ModelConfig::new("model-a"), "", &[], &[])
             .await
             .err()
             .expect("provider transport drift must fail closed");
-        assert!(error.to_string().contains("transport"));
+        let second = provider
+            .stream(&ModelConfig::new("model-a"), "", &[], &[])
+            .await
+            .err()
+            .expect("terminal preflight failure must stay terminal");
+        assert_eq!(first, second);
+        assert!(first.to_string().contains("transport"));
+        assert!(!goose_provider_types::retry::should_retry(
+            &first,
+            &RetryConfig::default()
+        ));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(sink.count("broker_provider_not_started"), 1);
+        assert_eq!(sink.count("broker_provider_request_permitted"), 0);
+        assert_eq!(sink.count("broker_receipt_rejected"), 0);
         work.complete_local(LocalCompletionKind::Error)
             .await
             .unwrap();
         assert_eq!(control.occupancy().await, (0, 0));
+        assert_eq!(sink.count("broker_admission_released"), 1);
+    }
+
+    #[tokio::test]
+    async fn transport_drift_exits_structured_agent_after_one_terminal_receipt(
+    ) -> anyhow::Result<()> {
+        use goose::agents::{Agent, AgentEvent, SessionConfig};
+        use goose::recipe::Response;
+        use goose::session::session_manager::SessionType;
+        use std::path::PathBuf;
+
+        let sink = Arc::new(RecordingSink::default());
+        let (control, work) = admitted_with_sink(sink.clone()).await;
+        let inner = Arc::new(WrongTransportProvider::default());
+        let provider = scope_provider_lifecycle(work.lifecycle(), async {
+            bind_current_provider_lifecycle(inner.clone(), None, None)
+        })
+        .await;
+        let agent = Agent::new();
+        let session = agent
+            .config
+            .session_manager
+            .create_session(
+                PathBuf::default(),
+                "transport-drift-structured-agent".to_string(),
+                SessionType::Hidden,
+                GooseMode::default(),
+            )
+            .await?;
+        agent
+            .update_provider(provider, ModelConfig::new("model-a"), &session.id)
+            .await?;
+        agent
+            .add_final_output_tool(Response {
+                json_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": { "result": { "type": "string" } }
+                })),
+            })
+            .await;
+        let reply = agent
+            .reply(
+                Message::user().with_text("return a structured result"),
+                SessionConfig {
+                    id: session.id,
+                    schedule_id: None,
+                    max_turns: Some(100_000),
+                    retry_config: None,
+                },
+                None,
+            )
+            .await?;
+        tokio::pin!(reply);
+        let messages = tokio::time::timeout(Duration::from_secs(2), async {
+            let mut messages = Vec::new();
+            while let Some(event) = reply.next().await {
+                if let AgentEvent::Message(message) = event? {
+                    messages.push(message);
+                }
+            }
+            Ok::<_, anyhow::Error>(messages)
+        })
+        .await
+        .expect("terminal route rejection must not spin the structured-output continuation loop")?;
+        let text = messages
+            .iter()
+            .map(Message::as_concat_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("transport"));
+        assert!(!text.contains(goose::agents::final_output_tool::FINAL_OUTPUT_CONTINUATION_MESSAGE));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(sink.count("broker_provider_not_started"), 1);
+        assert_eq!(sink.count("broker_provider_request_permitted"), 0);
+        assert_eq!(sink.count("broker_receipt_rejected"), 0);
+        work.complete_local(LocalCompletionKind::Error).await?;
+        assert_eq!(control.occupancy().await, (0, 0));
+        assert_eq!(sink.count("broker_admission_released"), 1);
+        Ok(())
     }
 
     #[tokio::test]
