@@ -13,7 +13,10 @@ use futures::Stream;
 use rmcp::model::{object, CallToolRequestParams, RawContent, Role, Tool};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::ops::Deref;
+
+const RESPONSES_REASONING_PASSBACK_PREFIX: &str = "openai-responses-reasoning:";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResponsesApiResponse {
@@ -29,7 +32,7 @@ pub struct ResponsesApiResponse {
     pub usage: Option<ResponseUsage>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub struct SummaryText {
     pub text: String,
@@ -48,6 +51,59 @@ fn reasoning_from_summary(summary: &[SummaryText]) -> Option<MessageContent> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResponsesReasoningPassback {
+    #[serde(rename = "type")]
+    item_type: String,
+    id: String,
+    #[serde(default)]
+    summary: Vec<SummaryText>,
+    encrypted_content: String,
+}
+
+fn reasoning_content(
+    id: Option<&str>,
+    summary: &[SummaryText],
+    encrypted_content: Option<&str>,
+) -> anyhow::Result<Vec<MessageContent>> {
+    let mut content = Vec::new();
+    content.extend(reasoning_from_summary(summary));
+
+    if let Some(encrypted_content) = encrypted_content.filter(|value| !value.is_empty()) {
+        let id = id.filter(|value| !value.is_empty()).ok_or_else(|| {
+            anyhow!("Responses reasoning output has encrypted_content without an id")
+        })?;
+        let passback = ResponsesReasoningPassback {
+            item_type: "reasoning".to_string(),
+            id: id.to_string(),
+            summary: summary.to_vec(),
+            encrypted_content: encrypted_content.to_string(),
+        };
+        let encoded = serde_json::to_string(&passback)?;
+        content.push(MessageContent::redacted_thinking(format!(
+            "{RESPONSES_REASONING_PASSBACK_PREFIX}{encoded}"
+        )));
+    }
+
+    Ok(content)
+}
+
+fn decode_reasoning_passback(data: &str) -> anyhow::Result<Option<ResponsesReasoningPassback>> {
+    let Some(encoded) = data.strip_prefix(RESPONSES_REASONING_PASSBACK_PREFIX) else {
+        return Ok(None);
+    };
+    let passback: ResponsesReasoningPassback = serde_json::from_str(encoded)
+        .map_err(|_| anyhow!("Stored Responses reasoning passback is malformed"))?;
+    if passback.item_type != "reasoning"
+        || passback.id.is_empty()
+        || passback.encrypted_content.is_empty()
+    {
+        return Err(anyhow!("Stored Responses reasoning passback is invalid"));
+    }
+    Ok(Some(passback))
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
@@ -57,6 +113,8 @@ pub enum ResponseOutputItem {
         id: Option<String>,
         #[serde(default)]
         summary: Vec<SummaryText>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encrypted_content: Option<String>,
     },
     Message {
         // `id` and `status` are required when the OpenAI API emits these
@@ -321,6 +379,8 @@ pub enum ResponseOutputItemInfo {
         id: Option<String>,
         #[serde(default)]
         summary: Vec<SummaryText>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encrypted_content: Option<String>,
     },
     Message {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -363,7 +423,8 @@ pub enum ContentPart {
     },
 }
 
-fn add_message_items(input_items: &mut Vec<Value>, messages: &[Message]) {
+fn add_message_items(input_items: &mut Vec<Value>, messages: &[Message]) -> anyhow::Result<()> {
+    let mut reasoning_by_id: HashMap<String, ResponsesReasoningPassback> = HashMap::new();
     for message in messages.iter().filter(|m| m.is_agent_visible()) {
         let role = match message.role {
             Role::User => "user",
@@ -384,6 +445,28 @@ fn add_message_items(input_items: &mut Vec<Value>, messages: &[Message]) {
                         "type": content_type,
                         "text": text.text
                     }));
+                }
+                MessageContent::RedactedThinking(redacted) if message.role == Role::Assistant => {
+                    let Some(passback) = decode_reasoning_passback(&redacted.data)? else {
+                        continue;
+                    };
+                    if !text_items.is_empty() {
+                        input_items.push(json!({
+                            "role": role,
+                            "content": text_items
+                        }));
+                        text_items = Vec::new();
+                    }
+                    if let Some(previous) = reasoning_by_id.get(&passback.id) {
+                        if previous != &passback {
+                            return Err(anyhow!(
+                                "Stored Responses reasoning id was reused with different content"
+                            ));
+                        }
+                        continue;
+                    }
+                    input_items.push(serde_json::to_value(&passback)?);
+                    reasoning_by_id.insert(passback.id.clone(), passback);
                 }
                 MessageContent::ToolRequest(request) if message.role == Role::Assistant => {
                     if !text_items.is_empty() {
@@ -558,6 +641,7 @@ fn add_message_items(input_items: &mut Vec<Value>, messages: &[Message]) {
             }));
         }
     }
+    Ok(())
 }
 
 pub fn create_responses_request(
@@ -578,7 +662,7 @@ pub fn create_responses_request(
         }));
     }
 
-    add_message_items(&mut input_items, messages);
+    add_message_items(&mut input_items, messages)?;
 
     let (model_name, legacy_reasoning_effort) = extract_reasoning_effort(&model_config.model_name);
     // All models routed here are responses-capable; temperature is rejected
@@ -660,8 +744,16 @@ pub fn responses_api_to_message(response: &ResponsesApiResponse) -> anyhow::Resu
 
     for item in &response.output {
         match item {
-            ResponseOutputItem::Reasoning { summary, .. } => {
-                content.extend(reasoning_from_summary(summary));
+            ResponseOutputItem::Reasoning {
+                id,
+                summary,
+                encrypted_content,
+            } => {
+                content.extend(reasoning_content(
+                    id.as_deref(),
+                    summary,
+                    encrypted_content.as_deref(),
+                )?);
             }
             ResponseOutputItem::Message {
                 content: msg_content,
@@ -736,8 +828,16 @@ fn process_streaming_output_items(
 
     for item in output_items {
         match item {
-            ResponseOutputItemInfo::Reasoning { summary, .. } => {
-                content.extend(reasoning_from_summary(&summary));
+            ResponseOutputItemInfo::Reasoning {
+                id,
+                summary,
+                encrypted_content,
+            } => {
+                content.extend(reasoning_content(
+                    id.as_deref(),
+                    &summary,
+                    encrypted_content.as_deref(),
+                )?);
             }
             ResponseOutputItemInfo::Message { content: parts, .. } => {
                 for part in parts {
@@ -2066,5 +2166,206 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("malformed arguments"));
+    }
+
+    #[test]
+    fn responses_reasoning_round_trips_encrypted_content_with_tool_results() {
+        use rmcp::model::{CallToolResult, Content};
+
+        let response: ResponsesApiResponse = serde_json::from_value(json!({
+            "id": "resp_meta_1",
+            "object": "response",
+            "created_at": 0,
+            "status": "completed",
+            "model": "muse-spark-1.2",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "id": "reasoning_meta_1",
+                    "summary": [{"type": "summary_text", "text": "Checked the workspace."}],
+                    "encrypted_content": "opaque-encrypted-reasoning"
+                },
+                {
+                    "type": "function_call",
+                    "id": "fc_meta_1",
+                    "status": "completed",
+                    "call_id": "call_meta_1",
+                    "name": "shell",
+                    "arguments": "{\"command\":\"pwd\"}"
+                }
+            ]
+        }))
+        .unwrap();
+
+        let assistant = responses_api_to_message(&response).unwrap();
+        assert_eq!(assistant.content.len(), 3);
+        assert!(matches!(assistant.content[0], MessageContent::Thinking(_)));
+        assert!(matches!(
+            assistant.content[1],
+            MessageContent::RedactedThinking(_)
+        ));
+        assert!(matches!(
+            assistant.content[2],
+            MessageContent::ToolRequest(_)
+        ));
+        assert!(!assistant
+            .as_concat_text()
+            .contains("opaque-encrypted-reasoning"));
+        assert_eq!(format!("{}", assistant.content[1]), "[RedactedThinking]");
+
+        let tool_result = Message::user().with_tool_response(
+            "call_meta_1",
+            Ok(CallToolResult::success(vec![Content::text(
+                "workspace path",
+            )])),
+        );
+        let payload = create_responses_request(
+            &ModelConfig::new("muse-spark-1.2"),
+            "",
+            &[assistant, tool_result],
+            &[],
+        )
+        .unwrap();
+        let input = payload["input"].as_array().unwrap();
+
+        assert_eq!(input.len(), 3);
+        assert_eq!(
+            input[0],
+            json!({
+                "type": "reasoning",
+                "id": "reasoning_meta_1",
+                "summary": [{"type": "summary_text", "text": "Checked the workspace."}],
+                "encrypted_content": "opaque-encrypted-reasoning"
+            })
+        );
+        assert_eq!(input[1]["type"], "function_call");
+        assert_eq!(input[1]["call_id"], "call_meta_1");
+        assert_eq!(input[2]["type"], "function_call_output");
+        assert_eq!(input[2]["call_id"], "call_meta_1");
+        assert_eq!(input[2]["output"], "workspace path");
+    }
+
+    #[test]
+    fn responses_reasoning_replay_deduplicates_split_tool_messages() {
+        let reasoning =
+            reasoning_content(Some("reasoning_shared"), &[], Some("opaque-shared-content"))
+                .unwrap()
+                .pop()
+                .unwrap();
+        let messages = vec![
+            Message::assistant()
+                .with_content(reasoning.clone())
+                .with_tool_request(
+                    "call_a",
+                    Ok(CallToolRequestParams::new("shell")
+                        .with_arguments(object!({"command": "pwd"}))),
+                ),
+            Message::assistant()
+                .with_content(reasoning)
+                .with_tool_request(
+                    "call_b",
+                    Ok(CallToolRequestParams::new("shell")
+                        .with_arguments(object!({"command": "ls"}))),
+                ),
+        ];
+
+        let payload =
+            create_responses_request(&ModelConfig::new("muse-spark-1.2"), "", &messages, &[])
+                .unwrap();
+        let input = payload["input"].as_array().unwrap();
+        let reasoning_count = input
+            .iter()
+            .filter(|item| item["type"] == "reasoning")
+            .count();
+        let function_count = input
+            .iter()
+            .filter(|item| item["type"] == "function_call")
+            .count();
+        assert_eq!(reasoning_count, 1);
+        assert_eq!(function_count, 2);
+    }
+
+    #[test]
+    fn responses_reasoning_rejects_reused_id_with_different_content() {
+        let first = reasoning_content(Some("reasoning_1"), &[], Some("opaque-a"))
+            .unwrap()
+            .pop()
+            .unwrap();
+        let second = reasoning_content(Some("reasoning_1"), &[], Some("opaque-b"))
+            .unwrap()
+            .pop()
+            .unwrap();
+        let error = create_responses_request(
+            &ModelConfig::new("muse-spark-1.2"),
+            "",
+            &[
+                Message::assistant().with_content(first),
+                Message::assistant().with_content(second),
+            ],
+            &[],
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("reasoning id was reused with different content"));
+    }
+
+    #[test]
+    fn responses_reasoning_rejects_encrypted_content_without_id() {
+        let response: ResponsesApiResponse = serde_json::from_value(json!({
+            "id": "resp_meta_missing_id",
+            "object": "response",
+            "created_at": 0,
+            "status": "completed",
+            "model": "muse-spark-1.2",
+            "output": [{
+                "type": "reasoning",
+                "summary": [],
+                "encrypted_content": "opaque-without-id"
+            }]
+        }))
+        .unwrap();
+
+        let error = responses_api_to_message(&response).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("encrypted_content without an id"));
+    }
+
+    #[tokio::test]
+    async fn streamed_responses_preserve_meta_reasoning_model_and_usage() -> anyhow::Result<()> {
+        let lines = vec![
+            r#"data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_meta_stream","object":"response","created_at":0,"status":"in_progress","model":"muse-spark-1.2","output":[]}}"#.to_string(),
+            r#"data: {"type":"response.completed","sequence_number":2,"response":{"id":"resp_meta_stream","object":"response","created_at":0,"status":"completed","model":"muse-spark-1.2","output":[{"type":"reasoning","id":"reasoning_stream_1","summary":[],"encrypted_content":"opaque-stream-content"},{"type":"function_call","id":"fc_stream_1","status":"completed","call_id":"call_stream_1","name":"shell","arguments":"{\"command\":\"pwd\"}"}],"usage":{"input_tokens":120,"output_tokens":33,"total_tokens":153,"input_tokens_details":{"cached_tokens":20}}}}"#.to_string(),
+            "data: [DONE]".to_string(),
+        ];
+        let messages =
+            responses_api_to_streaming_message(tokio_stream::iter(lines.into_iter().map(Ok)));
+        futures::pin_mut!(messages);
+        let mut final_message = None;
+        let mut final_usage = None;
+        while let Some(item) = messages.next().await {
+            let (message, usage) = item?;
+            if message.is_some() {
+                final_message = message;
+            }
+            if usage.is_some() {
+                final_usage = usage;
+            }
+        }
+
+        let message = final_message.expect("stream should yield terminal message");
+        assert!(matches!(
+            message.content[0],
+            MessageContent::RedactedThinking(_)
+        ));
+        assert!(matches!(message.content[1], MessageContent::ToolRequest(_)));
+        let usage = final_usage.expect("stream should yield provider usage");
+        assert_eq!(usage.model, "muse-spark-1.2");
+        assert_eq!(usage.usage.input_tokens, Some(120));
+        assert_eq!(usage.usage.output_tokens, Some(33));
+        assert_eq!(usage.usage.cache_read_input_tokens, Some(20));
+        Ok(())
     }
 }

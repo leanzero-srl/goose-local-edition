@@ -1,0 +1,26 @@
+{
+  "name": "meta",
+  "engine": "openai",
+  "display_name": "Meta Model API",
+  "description": "Muse Spark models through Meta's native Responses API.",
+  "api_key_env": "META_API_KEY",
+  "base_url": "${META_API_BASE_URL}",
+  "base_path": "v1/responses",
+  "env_vars": [
+    {
+      "name": "META_API_BASE_URL",
+      "required": false,
+      "secret": false,
+      "default": "https://api.meta.ai/v1",
+      "description": "Meta Model API base URL."
+    }
+  ],
+  "catalog_provider_id": "meta",
+  "model_doc_link": "https://dev.meta.ai/docs/getting-started/models",
+  "preserves_thinking": true,
+  "openai_request_profile": "meta_muse",
+  "models": [
+    {"name": "muse-spark-1.2", "context_limit": 1007997, "reasoning": true}
+  ],
+  "supports_streaming": true
+}
