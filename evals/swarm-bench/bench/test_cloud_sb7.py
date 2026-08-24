@@ -3370,6 +3370,97 @@ class CloudSb7HarnessTest(unittest.TestCase):
             with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
                 self.assertIsNone(cloud_sb7.manager_restart_mismatch(root))
 
+    def test_transport_successor_continuation_carries_repeated_unknown_exposure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            row = fixture["row"]
+            self.assertIsInstance(row, dict)
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="first transport is unresolved"
+            )
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+            campaign = cloud_sb7.adjudicate_transport_unknown_successor(
+                root, entrant_id
+            )
+            state = cloud_sb7.read_state(root, entrant_id)
+            attempt, attempt_root, lifecycle = cloud_sb7.prepare_full_provider_attempt(
+                root, entrant_id, state, campaign
+            )
+            second_request = "second-unknown-request"
+            lifecycle.write_text(
+                "\n".join(
+                    map(
+                        json.dumps,
+                        self.provider_lifecycle_events(
+                            row,
+                            ["queued", "admitted", "first_item"],
+                            request_id=second_request,
+                        ),
+                    )
+                )
+                + "\n"
+            )
+            cloud_sb7.update_state(
+                root,
+                entrant_id,
+                status="BUILD_RUNNING",
+                provider_launch_attempts=attempt,
+                provider_attempt=attempt,
+                provider_attempt_root=str(attempt_root),
+                provider_lifecycle=str(lifecycle),
+                provider_episode_attempts=int(state["provider_episode_attempts"]) + 1,
+                admitted_requests=1,
+                lifecycle_ambiguous_request_ids=[second_request],
+            )
+            ledger_path = Path(str(campaign["budget_ledger"]))
+            ledger = cloud_sb7.load_json(ledger_path)
+            first_reservation = ledger["outstanding"][str(fixture["request_id"])]
+            ledger["outstanding"][second_request] = {
+                **first_reservation,
+                "request_id": second_request,
+                "created_at_unix_ms": 3,
+            }
+            cloud_sb7.atomic_json(ledger_path, ledger)
+            ledger_before = ledger_path.read_bytes()
+            with mock.patch.object(
+                cloud_sb7, "replacement_reserve_failure", return_value=None
+            ):
+                cloud_sb7.continue_transport_unknown_successor(root, entrant_id)
+
+            continued = cloud_sb7.read_state(root, entrant_id)
+            campaign = cloud_sb7.load_json(cloud_sb7.campaign_file(root))
+            self.assertEqual(continued["status"], "PLANNED")
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            self.assertEqual(
+                cloud_sb7.transport_unknown_carried_request_ids(
+                    root, campaign, entrant_id
+                ),
+                {str(fixture["request_id"]), second_request},
+            )
+            self.assertEqual(
+                cloud_sb7.transport_unknown_episode_limit(
+                    root, campaign, entrant_id, 2
+                ),
+                int(continued["provider_episode_attempts"]) + 1,
+            )
+            continuation = continued["transport_unknown_continuation"]
+            receipt = cloud_sb7.load_json(root / continuation["path"])
+            self.assertEqual(receipt["request_ids"], [second_request])
+            self.assertEqual(receipt["carried_request_ids_after"], sorted({
+                str(fixture["request_id"]),
+                second_request,
+            }))
+            self.assertIsNone(cloud_sb7.lineage_failure(root))
+            cloud_sb7.continue_transport_unknown_successor(root, entrant_id)
+            self.assertEqual(ledger_path.read_bytes(), ledger_before)
+            cloud_sb7.update_campaign(root, status="INITIALIZED", failure=None)
+            with mock.patch.object(cloud_sb7, "require_smoke_proofs"):
+                self.assertIsNone(cloud_sb7.manager_restart_mismatch(root))
+
     def test_transport_successor_restart_ignores_only_its_sealed_carried_lifecycle(
         self,
     ) -> None:
