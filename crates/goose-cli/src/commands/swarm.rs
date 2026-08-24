@@ -56308,15 +56308,21 @@ mod pre_scheduler_semantic_runtime_tests {
         });
         let old_juror_ordinal = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let state = scheduler.inner.state.lock().unwrap();
-                let only_mac = HashSet::from(["jury-lane-c".to_string()]);
-                if harness.provider.call_count(MODEL_B) == 1
-                    && state.pending.len() == 1
-                    && state.pending[0].eligible_tokens == only_mac
-                {
-                    break state.pending[0].ordinal;
+                let queued_ordinal = {
+                    let state = scheduler.inner.state.lock().unwrap();
+                    let only_mac = HashSet::from(["jury-lane-c".to_string()]);
+                    if harness.provider.call_count(MODEL_B) == 1
+                        && state.pending.len() == 1
+                        && state.pending[0].eligible_tokens == only_mac
+                    {
+                        Some(state.pending[0].ordinal)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(ordinal) = queued_ordinal {
+                    break ordinal;
                 }
-                drop(state);
                 tokio::task::yield_now().await;
             }
         })
