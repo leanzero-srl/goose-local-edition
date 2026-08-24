@@ -3275,6 +3275,42 @@ class CloudSb7HarnessTest(unittest.TestCase):
             ):
                 cloud_sb7.adjudicate_transport_unknown_successor(root, entrant_id)
 
+    def test_transport_unknown_successor_allows_isolated_sibling(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fixture = self.make_dead_queued_reconciliation_fixture(Path(raw))
+            root = Path(str(fixture["root"]))
+            entrant_id = str(fixture["entrant_id"])
+            cloud_sb7.update_campaign(
+                root, status="ATTENTION", failure="queued transport is unresolved"
+            )
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+            unrelated = next(
+                state
+                for state in cloud_sb7.status_rows(root)
+                if state["entrant"] != entrant_id
+            )
+            cloud_sb7.update_state(
+                root,
+                unrelated["entrant"],
+                status=cloud_sb7.TRANSPORT_UNKNOWN_STATUS,
+            )
+
+            with (
+                mock.patch.object(cloud_sb7, "require_lineage"),
+                mock.patch.object(cloud_sb7, "lineage_failure", return_value=None),
+            ):
+                cloud_sb7.adjudicate_transport_unknown_successor(
+                    root, entrant_id
+                )
+
+            self.assertEqual(
+                cloud_sb7.read_state(root, entrant_id)["status"], "PLANNED"
+            )
+            self.assertEqual(
+                cloud_sb7.read_state(root, unrelated["entrant"])["status"],
+                cloud_sb7.TRANSPORT_UNKNOWN_STATUS,
+            )
+
     def test_normalize_retries_dead_empty_prelaunch_without_touching_ledger(
         self,
     ) -> None:
