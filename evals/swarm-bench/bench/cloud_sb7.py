@@ -16094,6 +16094,75 @@ def stop_group_members(
     return not [pid for pid, _ in process_group_members(pgid) if pid not in excluded]
 
 
+def transport_unknown_candidate_failure(
+    root: Path,
+    campaign: Mapping[str, Any],
+    row: Mapping[str, Any],
+    state: Mapping[str, Any],
+    lifecycle: Mapping[str, Any],
+    outstanding: list[str],
+    budget_error: str | None,
+    accounting_error: str | None,
+    *,
+    topology_clean: bool,
+) -> str | None:
+    entrant_id = str(row.get("id", ""))
+    request_states = lifecycle.get("request_states")
+    request_ids = lifecycle.get("ambiguous_request_ids")
+    if state.get("status") != "BUILD_RUNNING":
+        return "transport-unknown candidate is not BUILD_RUNNING"
+    if not topology_clean:
+        return "transport-unknown candidate topology is not clean"
+    if state.get("score") is not None or state.get("verdict") not in {None, ""}:
+        return "transport-unknown candidate has score evidence"
+    try:
+        if (
+            optional_artifact_tree_sha256(root / "scores" / entrant_id)
+            is not None
+            or optional_artifact_tree_sha256(root / "publish" / entrant_id)
+            is not None
+        ):
+            return "transport-unknown candidate has score or publication artifacts"
+    except (OSError, SystemExit) as error:
+        return f"transport-unknown candidate artifacts cannot be verified: {error}"
+    if (
+        not isinstance(request_states, dict)
+        or not isinstance(request_ids, list)
+        or not request_ids
+        or request_ids != sorted(set(request_ids))
+        or any(request_id not in request_states for request_id in request_ids)
+        or lifecycle.get("malformed_lines") != 0
+        or lifecycle.get("transition_errors")
+    ):
+        return "transport-unknown candidate lifecycle is not exact"
+    if budget_error:
+        return budget_error
+    if accounting_error:
+        return accounting_error
+    if outstanding != request_ids:
+        return "transport-unknown candidate lifecycle and reserves differ"
+    try:
+        ledger = load_json(Path(str(campaign["budget_ledger"])))
+        config = load_json(Path(str(campaign["budget_config"])))
+        ledger_problem = budget_ledger_failure(ledger, config)
+    except (OSError, KeyError, TypeError, json.JSONDecodeError, SystemExit) as error:
+        return f"transport-unknown candidate ledger cannot be verified: {error}"
+    if ledger_problem:
+        return ledger_problem
+    reservations = {
+        request_id: ledger["outstanding"].get(request_id)
+        for request_id in request_ids
+    }
+    if any(
+        not isinstance(reservation, dict)
+        or reservation.get("provider") != row.get("provider")
+        or reservation.get("model") != row.get("model")
+        for reservation in reservations.values()
+    ):
+        return "transport-unknown candidate reservations escaped its entrant"
+    return None
+
+
 def manager_monitor_attention(root: Path, lease_failure: str) -> None:
     campaign = load_json(campaign_file(root))
     cleanup_failures: list[str] = []
@@ -16136,6 +16205,17 @@ def manager_monitor_attention(root: Path, lease_failure: str) -> None:
             or not pre_admission_proven
             or not group_clean
         )
+        transport_candidate_problem = transport_unknown_candidate_failure(
+            root,
+            campaign,
+            row,
+            state,
+            lifecycle,
+            outstanding,
+            budget_error,
+            accounting_error,
+            topology_clean=group_clean,
+        )
         reasons = [f"monitor lease lost: {lease_failure}"]
         if lifecycle["admitted"]:
             reasons.append(f"{lifecycle['admitted']} provider request(s) admitted")
@@ -16151,8 +16231,16 @@ def manager_monitor_attention(root: Path, lease_failure: str) -> None:
             reasons.append("pre-admission termination is not explicitly proven")
         if not group_clean:
             reasons.append("owned build topology survived cleanup")
+        if transport_candidate_problem is None:
+            reasons.append(
+                "exact unresolved transport is preserved for typed isolation"
+            )
         changes: Dict[str, Any] = {
-            "status": "INCOMPLETE" if ambiguous else "PRE_ADMISSION_FAILURE",
+            "status": (
+                "BUILD_RUNNING"
+                if transport_candidate_problem is None
+                else "INCOMPLETE" if ambiguous else "PRE_ADMISSION_FAILURE"
+            ),
             "failure": "; ".join(reasons),
             "admitted_requests": lifecycle["admitted"],
             "provider_terminal_requests": lifecycle["terminal"],
@@ -20032,6 +20120,25 @@ def isolate_transport_unknown(root: Path, entrant_id: str) -> Dict[str, Any]:
         if outstanding_problem or entrant_outstanding != request_ids:
             raise SystemExit(
                 "transport-unknown isolation requires the exact entrant reserve set"
+            )
+        accounting_problem = anchored_generation_two_entrant_accounting_failure(
+            root, campaign, row
+        )
+        candidate_problem = transport_unknown_candidate_failure(
+            root,
+            campaign,
+            row,
+            state,
+            lifecycle,
+            entrant_outstanding,
+            outstanding_problem,
+            accounting_problem,
+            topology_clean=True,
+        )
+        if candidate_problem:
+            raise SystemExit(
+                "transport-unknown isolation candidate is invalid: "
+                + candidate_problem
             )
         registry_root.mkdir(parents=True, exist_ok=True)
         staging = Path(

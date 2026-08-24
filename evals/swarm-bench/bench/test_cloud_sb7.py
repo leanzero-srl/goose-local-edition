@@ -2964,6 +2964,99 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
             self.assertIsNone(cloud_sb7.lineage_failure(root))
 
+    def test_monitor_classified_transport_isolation_replays_without_sibling_drift(
+        self,
+    ) -> None:
+        for fault_stage in (
+            "isolation_receipt_committed",
+            "isolation_state_committed",
+            "isolation_campaign_committed",
+        ):
+            with self.subTest(fault_stage=fault_stage), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_dead_queued_reconciliation_fixture(
+                    Path(raw)
+                )
+                root = Path(str(fixture["root"]))
+                entrant_id = str(fixture["entrant_id"])
+                request_id = str(fixture["request_id"])
+                state = cloud_sb7.read_state(root, entrant_id)
+                lifecycle = Path(str(state["provider_lifecycle"]))
+                lifecycle.write_text(
+                    "\n".join(
+                        map(
+                            json.dumps,
+                            self.provider_lifecycle_events(
+                                fixture["row"],
+                                ["queued", "admitted", "first_item"],
+                                request_id=request_id,
+                            ),
+                        )
+                    )
+                    + "\n"
+                )
+                exact = "runtime integrity failed before manager completion"
+                cloud_sb7.update_campaign(root, status="RUNNING")
+                self.assertEqual(
+                    cloud_sb7.monitor_attention(root, exact), (True, 1)
+                )
+                self.assertEqual(
+                    cloud_sb7.read_state(root, entrant_id)["status"],
+                    "BUILD_RUNNING",
+                )
+                sibling_id = next(
+                    str(row["entrant"])
+                    for row in cloud_sb7.status_rows(root)
+                    if str(row["entrant"]) != entrant_id
+                )
+                sibling_before = cloud_sb7.state_file(
+                    root, sibling_id
+                ).read_bytes()
+                ledger_path = Path(str(fixture["ledger_path"]))
+                ledger_before = ledger_path.read_bytes()
+
+                def fail(stage: str) -> None:
+                    if stage == fault_stage:
+                        raise RuntimeError(stage)
+
+                with mock.patch.object(
+                    cloud_sb7, "transport_unknown_fault", side_effect=fail
+                ):
+                    with self.assertRaisesRegex(RuntimeError, fault_stage):
+                        cloud_sb7.isolate_transport_unknown(root, entrant_id)
+
+                self.assertEqual(
+                    cloud_sb7.state_file(root, sibling_id).read_bytes(),
+                    sibling_before,
+                )
+                self.assertEqual(ledger_path.read_bytes(), ledger_before)
+
+                cloud_sb7.isolate_transport_unknown(root, entrant_id)
+
+                isolated = cloud_sb7.read_state(root, entrant_id)
+                ledger = cloud_sb7.load_json(ledger_path)
+                self.assertEqual(
+                    isolated["status"], cloud_sb7.TRANSPORT_UNKNOWN_STATUS
+                )
+                self.assertEqual(
+                    cloud_sb7.state_file(root, sibling_id).read_bytes(),
+                    sibling_before,
+                )
+                self.assertEqual(ledger_path.read_bytes(), ledger_before)
+                self.assertIn(request_id, ledger["outstanding"])
+                self.assertFalse(
+                    any(
+                        row.get("request_id") == request_id
+                        for row in ledger["settled"]
+                    )
+                )
+                self.assertEqual(
+                    cloud_sb7.read_monitor_state(root)["first_failure"][
+                        "failure"
+                    ],
+                    exact,
+                )
+                self.assertIsNone(cloud_sb7.lineage_failure(root))
+
     def test_transport_unknown_isolation_recovers_every_commit_boundary(self) -> None:
         for fault_stage in (
             "isolation_receipt_committed",
@@ -6916,10 +7009,33 @@ class CloudSb7HarnessTest(unittest.TestCase):
             ledger = cloud_sb7.load_json(Path(str(fixture["ledger_path"])))
             self.assertEqual(monitor["failure"], exact)
             self.assertEqual(monitor["first_failure"]["failure"], exact)
-            self.assertEqual(recovered["status"], "INCOMPLETE")
+            self.assertEqual(recovered["status"], "BUILD_RUNNING")
             self.assertEqual(recovered["admitted_requests"], 1)
             self.assertIn(str(fixture["request_id"]), ledger["outstanding"])
             self.assertIn("retain reserves", recovered["failure"])
+            self.assertIn("typed isolation", recovered["failure"])
+
+            cloud_sb7.isolate_transport_unknown(root, entrant_id)
+
+            isolated = cloud_sb7.read_state(root, entrant_id)
+            final_monitor = cloud_sb7.read_monitor_state(root)
+            final_ledger = cloud_sb7.load_json(
+                Path(str(fixture["ledger_path"]))
+            )
+            self.assertEqual(
+                isolated["status"], cloud_sb7.TRANSPORT_UNKNOWN_STATUS
+            )
+            self.assertEqual(final_monitor["first_failure"]["failure"], exact)
+            self.assertIn(
+                str(fixture["request_id"]), final_ledger["outstanding"]
+            )
+            self.assertFalse(
+                any(
+                    row.get("request_id") == str(fixture["request_id"])
+                    for row in final_ledger["settled"]
+                )
+            )
+            self.assertIsNone(cloud_sb7.lineage_failure(root))
 
     def test_monitor_persists_exact_first_failure_before_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -6941,6 +7057,61 @@ class CloudSb7HarnessTest(unittest.TestCase):
             self.assertEqual(monitor["first_failure"]["failure"], exact)
             self.assertIsNone(monitor["exit_code"])
             self.assertIsNone(monitor["finished_at"])
+
+    def test_monitor_preserves_only_exact_unscored_transport_candidates(
+        self,
+    ) -> None:
+        for defect in (
+            "missing-reserve",
+            "score-state",
+            "score-artifact",
+            "malformed-lifecycle",
+        ):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                fixture = self.make_dead_queued_reconciliation_fixture(
+                    Path(raw)
+                )
+                root = Path(str(fixture["root"]))
+                entrant_id = str(fixture["entrant_id"])
+                state = cloud_sb7.read_state(root, entrant_id)
+                lifecycle = Path(str(state["provider_lifecycle"]))
+                lifecycle.write_text(
+                    "\n".join(
+                        map(
+                            json.dumps,
+                            self.provider_lifecycle_events(
+                                fixture["row"],
+                                ["queued", "admitted", "first_item"],
+                                request_id=str(fixture["request_id"]),
+                            ),
+                        )
+                    )
+                    + "\n"
+                )
+                if defect == "missing-reserve":
+                    ledger_path = Path(str(fixture["ledger_path"]))
+                    ledger = cloud_sb7.load_json(ledger_path)
+                    del ledger["outstanding"][str(fixture["request_id"])]
+                    cloud_sb7.atomic_json(ledger_path, ledger)
+                elif defect == "score-state":
+                    cloud_sb7.update_state(root, entrant_id, score=0.1)
+                elif defect == "score-artifact":
+                    score_dir = root / "scores" / entrant_id
+                    score_dir.mkdir(parents=True)
+                    (score_dir / "unexpected").write_text("score evidence\n")
+                else:
+                    with lifecycle.open("a") as stream:
+                        stream.write("{malformed\n")
+                cloud_sb7.update_campaign(root, status="RUNNING")
+
+                cloud_sb7.monitor_attention(root, f"fixture {defect}")
+
+                state = cloud_sb7.read_state(root, entrant_id)
+                self.assertEqual(state["status"], "INCOMPLETE")
+                with self.assertRaisesRegex(
+                    SystemExit, "interrupted BUILD_RUNNING"
+                ):
+                    cloud_sb7.isolate_transport_unknown(root, entrant_id)
 
     def test_monitor_refuses_manager_relaunch_with_ambiguous_admitted_work(
         self,
