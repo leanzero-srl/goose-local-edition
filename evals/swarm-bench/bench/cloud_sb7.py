@@ -2131,6 +2131,8 @@ def authenticated_rosters(
     google: Dict[str, Any] = {"models": []}
     deepseek: Dict[str, Any] = {"data": []}
     moonshot: Dict[str, Any] = {"data": []}
+    meta: Dict[str, Any] = {"data": []}
+    meta_catalog: Dict[str, Any] = {"data": []}
     if "zai_api" in providers:
         zai_endpoints = {
             str(row["endpoint_family"]).rstrip("/")
@@ -2158,6 +2160,17 @@ def authenticated_rosters(
             "https://api.moonshot.ai/v1/models",
             {"Authorization": f"Bearer {secret_values['MOONSHOT_API_KEY']}"},
         )
+    if "meta" in providers:
+        meta_endpoints = {
+            str(row["endpoint_family"]).rstrip("/")
+            for row in rows
+            if row["provider"] == "meta"
+        }
+        if meta_endpoints != {"https://api.meta.ai/v1"}:
+            raise SystemExit("Meta entrants require the exact international API endpoint")
+        headers = {"Authorization": f"Bearer {secret_values['META_API_KEY']}"}
+        meta = fetch_json("https://api.meta.ai/v1/models", headers)
+        meta_catalog = fetch_json("https://api.meta.ai/muse-code/models", headers)
     zai_rows = {
         str(row.get("id", "")): dict(row)
         for row in zai.get("data", [])
@@ -2178,11 +2191,22 @@ def authenticated_rosters(
         for row in moonshot.get("data", [])
         if isinstance(row, dict) and row.get("id")
     }
+    meta_rows = {
+        str(row.get("id", "")): dict(row)
+        for row in meta.get("data", [])
+        if isinstance(row, dict) and row.get("id")
+    }
+    meta_catalog_rows = {
+        str(row.get("id", "")): dict(row)
+        for row in meta_catalog.get("data", [])
+        if isinstance(row, dict) and row.get("id")
+    }
     reported_models: Dict[str, Dict[str, list[str]]] = {
         "zai_api": {model: [model] for model in zai_rows},
         "google": {},
         "custom_deepseek": {model: [model] for model in deepseek_rows},
         "moonshot": {model: [model] for model in moonshot_rows},
+        "meta": {model: [model] for model in meta_rows},
     }
     for model, metadata in google_rows.items():
         aliases = {model}
@@ -2196,6 +2220,7 @@ def authenticated_rosters(
             "google": set(google_rows),
             "custom_deepseek": set(deepseek_rows),
             "moonshot": set(moonshot_rows),
+            "meta": set(meta_rows),
         },
         "accepted_reported_models": reported_models,
         "evidence": {
@@ -2203,6 +2228,7 @@ def authenticated_rosters(
             "google": google_rows,
             "custom_deepseek": deepseek_rows,
             "moonshot": moonshot_rows,
+            "meta": {"roster": meta_rows, "catalog": meta_catalog_rows},
         },
     }
 
@@ -2298,6 +2324,91 @@ def validate_rosters(
                 raise SystemExit(
                     f"authenticated Moonshot roster does not prove the required "
                     f"reasoning/tool contract for {model}"
+                )
+        if provider == "meta":
+            provider_evidence = evidence.get(provider)
+            roster_rows = (
+                provider_evidence.get("roster")
+                if isinstance(provider_evidence, dict)
+                else None
+            )
+            catalog_rows = (
+                provider_evidence.get("catalog")
+                if isinstance(provider_evidence, dict)
+                else None
+            )
+            roster_metadata = (
+                roster_rows.get(model) if isinstance(roster_rows, dict) else None
+            )
+            catalog_metadata = (
+                catalog_rows.get(model) if isinstance(catalog_rows, dict) else None
+            )
+            muse = (
+                catalog_metadata.get("metadata", {}).get("muse-code")
+                if isinstance(catalog_metadata, dict)
+                else None
+            )
+            if (
+                not isinstance(roster_metadata, dict)
+                or roster_metadata.get("owned_by") != "meta"
+                or not isinstance(catalog_metadata, dict)
+                or catalog_metadata.get("owned_by") != "meta"
+                or not isinstance(muse, dict)
+            ):
+                raise SystemExit(
+                    f"authenticated Meta roster/catalog has no exact model identity: {model}"
+                )
+            limit = muse.get("limit")
+            options = muse.get("options")
+            modalities = muse.get("modalities")
+            variants = muse.get("variants")
+            cost = muse.get("cost")
+            pricing = row.get("pricing")
+            try:
+                catalog_rates = (
+                    float(cost["input"]),
+                    float(cost["cached"]),
+                    float(cost["output"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                catalog_rates = None
+            try:
+                manifest_rates = (
+                    float(pricing["input_per_million"]),
+                    float(pricing["cached_input_per_million"]),
+                    float(pricing["output_per_million"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                manifest_rates = None
+            if (
+                not isinstance(limit, dict)
+                or limit.get("context") != int(row["context_limit"])
+                or limit.get("output") != int(row["max_output_tokens"])
+                or muse.get("reasoning") is not True
+                or muse.get("tool_call") is not True
+                or muse.get("attachment") is not True
+                or muse.get("temperature") is not False
+                or muse.get("release_date") != "2026-08-05"
+                or not isinstance(options, dict)
+                or options.get("forceReasoning") is not True
+                or options.get("reasoningEffort") != str(row["thinking_effort"])
+                or options.get("include") != ["reasoning.encrypted_content"]
+                or options.get("temperature") != 0.9
+                or options.get("top_p") != 0.9
+                or not isinstance(variants, dict)
+                or variants.get("high", {}).get("reasoningEffort") != "high"
+                or not isinstance(modalities, dict)
+                or modalities.get("input") != ["text", "image"]
+                or modalities.get("output") != ["text"]
+                or not isinstance(cost, dict)
+                or cost.get("currency") != "USD"
+                or not isinstance(pricing, dict)
+                or catalog_rates is None
+                or catalog_rates != manifest_rates
+            ):
+                raise SystemExit(
+                    f"authenticated Meta catalog does not prove the required "
+                    f"reasoning/tool/sampling/limit/pricing contract for {model}"
                 )
 
 
@@ -13046,6 +13157,162 @@ def _regular_file_bytes(path: Path) -> bytes | None:
         return None
 
 
+def meta_responses_smoke_contract(
+    profile: Path, row: Mapping[str, Any]
+) -> Dict[str, Any]:
+    errors: list[str] = []
+    logs_root = profile / "state/logs"
+    indexed: list[tuple[int, Path]] = []
+    if logs_root.is_symlink() or not logs_root.is_dir():
+        errors.append("Meta request-log directory is missing or linked")
+    else:
+        for path in logs_root.iterdir():
+            match = re.fullmatch(r"llm_request[.]([0-9]+)[.]jsonl", path.name)
+            if match is None:
+                continue
+            if path.is_symlink() or not path.is_file():
+                errors.append(f"Meta request log is not regular: {path.name}")
+                continue
+            indexed.append((int(match.group(1)), path))
+    indexed.sort()
+    if [index for index, _ in indexed] != list(range(len(indexed))):
+        errors.append("Meta request-log indexes are not contiguous from zero")
+    if len(indexed) < 2:
+        errors.append("Meta smoke did not record a multi-turn tool replay")
+
+    payloads: list[Dict[str, Any]] = []
+    file_hashes: Dict[str, str] = {}
+    for _, path in indexed:
+        file_hashes[path.name] = sha256_file(path)
+        try:
+            first_line = path.read_text().splitlines()[0]
+            record = json.loads(first_line, object_pairs_hook=unique_json_object)
+            payload = record.get("input") if isinstance(record, dict) else None
+        except (IndexError, OSError, ValueError, json.JSONDecodeError) as error:
+            errors.append(
+                f"Meta request log cannot be decoded: {path.name}: "
+                f"{type(error).__name__}"
+            )
+            continue
+        if not isinstance(payload, dict):
+            errors.append(f"Meta request log has no request payload: {path.name}")
+            continue
+        payloads.append(payload)
+
+    unsupported = {
+        "temperature",
+        "top_p",
+        "presence_penalty",
+        "frequency_penalty",
+        "seed",
+    }
+    for index, payload in enumerate(payloads):
+        tools = payload.get("tools")
+        request_errors: list[str] = []
+        if payload.get("model") != row.get("model"):
+            request_errors.append("model")
+        if payload.get("stream") is not True:
+            request_errors.append("stream")
+        if payload.get("store") is not False:
+            request_errors.append("store")
+        if payload.get("max_output_tokens") != int(row["max_output_tokens"]):
+            request_errors.append("max_output_tokens")
+        if payload.get("reasoning") != {"effort": "high", "summary": "auto"}:
+            request_errors.append("reasoning")
+        if payload.get("include") != ["reasoning.encrypted_content"]:
+            request_errors.append("include")
+        if not isinstance(payload.get("instructions"), str) or not payload["instructions"]:
+            request_errors.append("instructions")
+        if not isinstance(payload.get("input"), list):
+            request_errors.append("input")
+        if not isinstance(tools, list) or not tools:
+            request_errors.append("tools")
+        if payload.get("tool_choice") != "auto":
+            request_errors.append("tool_choice")
+        if payload.get("parallel_tool_calls") is not False:
+            request_errors.append("parallel_tool_calls")
+        present_unsupported = sorted(unsupported & payload.keys())
+        if present_unsupported:
+            request_errors.append(
+                "sampling:" + ",".join(present_unsupported)
+            )
+        if request_errors:
+            errors.append(
+                f"Meta request {index} violates Responses contract: "
+                + ", ".join(request_errors)
+            )
+
+    replay: Dict[str, Any] | None = None
+    for request_index, payload in enumerate(payloads[1:], start=1):
+        input_items = payload.get("input")
+        if not isinstance(input_items, list):
+            continue
+        reasoning_items = [
+            (index, item)
+            for index, item in enumerate(input_items)
+            if isinstance(item, dict) and item.get("type") == "reasoning"
+        ]
+        function_calls = [
+            (index, item)
+            for index, item in enumerate(input_items)
+            if isinstance(item, dict) and item.get("type") == "function_call"
+        ]
+        function_outputs = [
+            (index, item)
+            for index, item in enumerate(input_items)
+            if isinstance(item, dict) and item.get("type") == "function_call_output"
+        ]
+        if not reasoning_items or not function_calls or not function_outputs:
+            continue
+        reasoning_index, reasoning = reasoning_items[-1]
+        matching = [
+            (call_index, output_index, call)
+            for call_index, call in function_calls
+            for output_index, output in function_outputs
+            if call.get("call_id")
+            and call.get("call_id") == output.get("call_id")
+        ]
+        if not matching:
+            continue
+        call_index, output_index, call = matching[-1]
+        reasoning_id = reasoning.get("id")
+        encrypted = reasoning.get("encrypted_content")
+        summary = reasoning.get("summary")
+        if (
+            not isinstance(reasoning_id, str)
+            or not reasoning_id
+            or not isinstance(encrypted, str)
+            or not encrypted
+            or not isinstance(summary, list)
+            or not reasoning_index < call_index < output_index
+        ):
+            continue
+        replay = {
+            "request_index": request_index,
+            "reasoning_id_sha256": sha256_bytes(reasoning_id.encode()),
+            "encrypted_content_sha256": sha256_bytes(encrypted.encode()),
+            "call_id_sha256": sha256_bytes(str(call["call_id"]).encode()),
+            "order": ["reasoning", "function_call", "function_call_output"],
+        }
+        break
+    if replay is None:
+        errors.append(
+            "Meta smoke has no ordered encrypted-reasoning/function/tool-output replay"
+        )
+
+    return {
+        "required": True,
+        "valid": not errors,
+        "errors": errors,
+        "request_count": len(payloads),
+        "request_log_sha256": file_hashes,
+        "tool_replay": replay,
+        "sampling_omitted": bool(payloads) and not any(
+            unsupported & payload.keys() for payload in payloads
+        ),
+    }
+
+
 def smoke_attempt_evidence(
     root: Path,
     entrant_id: str,
@@ -13155,6 +13422,19 @@ def smoke_attempt_evidence(
     if lifecycle["admitted"] != lifecycle["terminal"]:
         reasons.append("not every admitted provider request reached a proven terminal")
 
+    provider_contract: Dict[str, Any] = {
+        "required": False,
+        "valid": True,
+        "provider": row["provider"],
+    }
+    if row["provider"] == "meta":
+        provider_contract = meta_responses_smoke_contract(paths["profile"], row)
+        if not provider_contract["valid"]:
+            reasons.extend(
+                f"provider contract: {error}"
+                for error in provider_contract["errors"]
+            )
+
     outstanding, settled, budget_error = current_smoke_budget_requests(campaign, row)
     terminal_ids = sorted(
         request_id
@@ -13248,6 +13528,7 @@ def smoke_attempt_evidence(
         "reasons": reasons,
         "stream": stream,
         "lifecycle": lifecycle,
+        "provider_contract": provider_contract,
         "outstanding_request_ids": outstanding,
         "settled_request_ids": settled,
         "terminal_request_ids": terminal_ids,
@@ -13613,6 +13894,20 @@ def smoke_proof_mismatch(
         return "smoke lifecycle no longer proves admitted terminal requests"
     if lifecycle != evidence.get("lifecycle"):
         return "smoke lifecycle evidence differs from the sealed proof"
+    expected_provider_contract: Dict[str, Any] = {
+        "required": False,
+        "valid": True,
+        "provider": row["provider"],
+    }
+    if row["provider"] == "meta":
+        expected_provider_contract = meta_responses_smoke_contract(
+            Path(str(state.get("profile", ""))), row
+        )
+    if (
+        expected_provider_contract.get("valid") is not True
+        or expected_provider_contract != evidence.get("provider_contract")
+    ):
+        return "provider-specific smoke contract is invalid or changed"
 
     nonce = _regular_file_bytes(paths["nonce"])
     try:

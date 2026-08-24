@@ -7343,6 +7343,49 @@ class CloudSb7HarnessTest(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, env)
 
+    def test_muse_child_environment_is_provider_isolated_and_omits_sampling(self) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-muse-spark-12-entrant.json"
+            )
+        )[0]
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            profile = root / "profile"
+            tree = root / "tree"
+            profile.mkdir()
+            tree.mkdir()
+            state = {
+                "profile": str(profile),
+                "tree": str(tree),
+                "campaign_root": str(root),
+                "provider_lifecycle": str(root / "provider-lifecycle.jsonl"),
+                "budget_config_sha256": "fixture-budget-config",
+                "sandbox_denied_local_ports": [],
+            }
+            hostile = {
+                "MOONSHOT_API_KEY": "unrelated-moonshot",
+                "ZHIPU_API_KEY": "unrelated-zai",
+                "GOOGLE_API_KEY": "unrelated-google",
+                "DEEPSEEK_API_KEY": "unrelated-deepseek",
+                "LMSTUDIO_API_KEY": "unrelated-local",
+                "GOOSE_TEMPERATURE": "0.7",
+                "GOOSE_SWARM_TOP_P": "0.8",
+            }
+            with mock.patch.dict(os.environ, hostile, clear=True):
+                env = cloud_sb7.child_env(row, state, "in-memory-meta")
+
+        self.assertEqual(env["GOOSE_PROVIDER"], "meta")
+        self.assertEqual(env["GOOSE_MODEL"], "muse-spark-1.2")
+        self.assertEqual(env["GOOSE_FAST_MODEL"], "muse-spark-1.2")
+        self.assertEqual(env["META_API_BASE_URL"], "https://api.meta.ai/v1")
+        self.assertEqual(env["GOOSE_THINKING_EFFORT"], "high")
+        self.assertEqual(env["GOOSE_CONTEXT_LIMIT"], "1007997")
+        self.assertEqual(env["GOOSE_MAX_TOKENS"], "128000")
+        self.assertEqual(env["META_API_KEY"], "in-memory-meta")
+        for forbidden in (*hostile, "MOONSHOT_BASE_URL", "ZAI_API_BASE_URL"):
+            self.assertNotIn(forbidden, env)
+
     def test_smoke_environment_uses_shared_budget_and_isolated_paths(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw).resolve()
@@ -9295,6 +9338,259 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     cloud_sb7.validate_rosters([row], roster)
         roster["evidence"]["moonshot"]["kimi-k3"] = metadata
+
+    def test_meta_roster_binds_exact_muse_identity_and_contract(self) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-muse-spark-12-entrant.json"
+            )
+        )[0]
+        roster_metadata = {
+            "id": "muse-spark-1.2",
+            "object": "model",
+            "created": 0,
+            "owned_by": "meta",
+        }
+        muse_metadata = {
+            "id": "muse-spark-1.2",
+            "object": "model",
+            "created": 1785432700,
+            "owned_by": "meta",
+            "metadata": {
+                "muse-code": {
+                    "attachment": True,
+                    "cost": {
+                        "cached": "0.15",
+                        "currency": "USD",
+                        "input": "1.25",
+                        "output": "4.25",
+                    },
+                    "family": "avocado",
+                    "is_hidden": False,
+                    "limit": {"context": 1_007_997, "output": 128_000},
+                    "modalities": {"input": ["text", "image"], "output": ["text"]},
+                    "name": "muse-spark-1.2",
+                    "options": {
+                        "forceReasoning": True,
+                        "include": ["reasoning.encrypted_content"],
+                        "reasoningEffort": "high",
+                        "temperature": 0.9,
+                        "top_p": 0.9,
+                    },
+                    "reasoning": True,
+                    "release_date": "2026-08-05",
+                    "temperature": False,
+                    "tool_call": True,
+                    "variants": {
+                        "high": {"reasoningEffort": "high"},
+                        "low": {"reasoningEffort": "low"},
+                    },
+                }
+            },
+        }
+        with mock.patch.object(
+            cloud_sb7,
+            "fetch_json",
+            side_effect=[
+                {"object": "list", "data": [roster_metadata]},
+                {"object": "list", "data": [muse_metadata]},
+            ],
+        ) as fetch:
+            roster = cloud_sb7.authenticated_rosters(
+                {"META_API_KEY": "fixture-secret"}, [row]
+            )
+        self.assertEqual(
+            fetch.call_args_list,
+            [
+                mock.call(
+                    "https://api.meta.ai/v1/models",
+                    {"Authorization": "Bearer fixture-secret"},
+                ),
+                mock.call(
+                    "https://api.meta.ai/muse-code/models",
+                    {"Authorization": "Bearer fixture-secret"},
+                ),
+            ],
+        )
+        cloud_sb7.validate_rosters([row], roster)
+
+        for field, value in (
+            ("tool_call", False),
+            ("temperature", True),
+            ("release_date", "2026-08-04"),
+        ):
+            with self.subTest(field=field):
+                changed = json.loads(json.dumps(muse_metadata))
+                changed["metadata"]["muse-code"][field] = value
+                roster["evidence"]["meta"]["catalog"]["muse-spark-1.2"] = changed
+                with self.assertRaises(SystemExit):
+                    cloud_sb7.validate_rosters([row], roster)
+        roster["evidence"]["meta"]["catalog"]["muse-spark-1.2"] = muse_metadata
+
+    def test_meta_roster_rejects_noncanonical_endpoint_without_provider_calls(self) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-muse-spark-12-entrant.json"
+            )
+        )[0]
+        row["endpoint_family"] = "https://example.invalid/v1"
+        with mock.patch.object(cloud_sb7, "fetch_json") as fetch:
+            with self.assertRaisesRegex(SystemExit, "exact international API endpoint"):
+                cloud_sb7.authenticated_rosters(
+                    {"META_API_KEY": "fixture-secret"}, [row]
+                )
+        fetch.assert_not_called()
+
+    def test_meta_smoke_contract_proves_exact_encrypted_reasoning_tool_replay(
+        self,
+    ) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-muse-spark-12-entrant.json"
+            )
+        )[0]
+        with tempfile.TemporaryDirectory() as raw:
+            profile = Path(raw) / "profile"
+            logs = profile / "state/logs"
+            logs.mkdir(parents=True)
+            common = {
+                "model": "muse-spark-1.2",
+                "stream": True,
+                "store": False,
+                "max_output_tokens": 128_000,
+                "reasoning": {"effort": "high", "summary": "auto"},
+                "include": ["reasoning.encrypted_content"],
+                "instructions": "Use the shell tool and report the result.",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "shell",
+                        "description": "Run a command",
+                        "parameters": {"type": "object"},
+                    }
+                ],
+                "tool_choice": "auto",
+                "parallel_tool_calls": False,
+            }
+            first = {
+                **common,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Run pwd."}],
+                    }
+                ],
+            }
+            second = {
+                **common,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Run pwd."}],
+                    },
+                    {
+                        "type": "reasoning",
+                        "id": "reasoning-fixture-1",
+                        "summary": [
+                            {
+                                "type": "summary_text",
+                                "text": "I should inspect the directory.",
+                            }
+                        ],
+                        "encrypted_content": "opaque-fixture-reasoning",
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "call-fixture-1",
+                        "name": "shell",
+                        "arguments": '{"command":"pwd"}',
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call-fixture-1",
+                        "output": "/workspace",
+                    },
+                ],
+            }
+            for index, payload in enumerate((first, second)):
+                (logs / f"llm_request.{index}.jsonl").write_text(
+                    json.dumps({"input": payload, "model_config": {}}) + "\n"
+                )
+
+            contract = cloud_sb7.meta_responses_smoke_contract(profile, row)
+
+            self.assertTrue(contract["valid"], contract["errors"])
+            self.assertEqual(contract["request_count"], 2)
+            self.assertTrue(contract["sampling_omitted"])
+            self.assertEqual(
+                contract["tool_replay"]["order"],
+                ["reasoning", "function_call", "function_call_output"],
+            )
+            serialized = json.dumps(contract, sort_keys=True)
+            self.assertNotIn("reasoning-fixture-1", serialized)
+            self.assertNotIn("opaque-fixture-reasoning", serialized)
+            self.assertNotIn("call-fixture-1", serialized)
+
+    def test_meta_smoke_contract_rejects_sampling_or_incomplete_reasoning_replay(
+        self,
+    ) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-muse-spark-12-entrant.json"
+            )
+        )[0]
+        with tempfile.TemporaryDirectory() as raw:
+            profile = Path(raw) / "profile"
+            logs = profile / "state/logs"
+            logs.mkdir(parents=True)
+            payload = {
+                "model": "muse-spark-1.2",
+                "stream": True,
+                "store": False,
+                "max_output_tokens": 128_000,
+                "reasoning": {"effort": "high", "summary": "auto"},
+                "include": ["reasoning.encrypted_content"],
+                "instructions": "Use the shell tool.",
+                "tools": [{"type": "function", "name": "shell"}],
+                "tool_choice": "auto",
+                "parallel_tool_calls": False,
+                "temperature": 0.9,
+                "input": [
+                    {
+                        "type": "reasoning",
+                        "id": "reasoning-fixture-1",
+                        "summary": [],
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "call-fixture-1",
+                        "name": "shell",
+                        "arguments": "{}",
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call-fixture-1",
+                        "output": "ok",
+                    },
+                ],
+            }
+            for index in range(2):
+                (logs / f"llm_request.{index}.jsonl").write_text(
+                    json.dumps({"input": payload, "model_config": {}}) + "\n"
+                )
+
+            contract = cloud_sb7.meta_responses_smoke_contract(profile, row)
+
+            self.assertFalse(contract["valid"])
+            self.assertFalse(contract["sampling_omitted"])
+            self.assertIsNone(contract["tool_replay"])
+            self.assertTrue(
+                any("sampling:temperature" in error for error in contract["errors"])
+            )
+            self.assertIn(
+                "Meta smoke has no ordered encrypted-reasoning/function/tool-output replay",
+                contract["errors"],
+            )
 
     def test_keychain_provider_secret_is_memory_only_and_unambiguous(self) -> None:
         row = {
