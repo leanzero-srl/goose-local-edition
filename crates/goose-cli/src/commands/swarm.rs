@@ -17718,13 +17718,24 @@ struct ResearchClosurePartition {
     candidates: Vec<ResearchClosureCandidate>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct CompiledResearchClosurePartition {
     model: String,
     physical_host_id: String,
     authority_input_digest: String,
     ledger_corrections: u64,
     assessments: Vec<ResearchClosureAssessment>,
+}
+
+enum ResearchPartitionPairOutcome {
+    Complete {
+        first: CompiledResearchClosurePartition,
+        second: CompiledResearchClosurePartition,
+    },
+    Degraded {
+        partial_ledgers: Vec<CompiledResearchClosurePartition>,
+        reason: String,
+    },
 }
 
 struct ResearchTargetPartitionResolution {
@@ -18057,6 +18068,7 @@ async fn acquire_research_host_until_cancelled(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_research_host_failover<T, F, Fut, ObserveFailure>(
     scheduler: &ResearchHostScheduler,
     eligible_tokens: Vec<String>,
@@ -18106,6 +18118,10 @@ where
                 return Err(error);
             }
         };
+        if admission_stop.is_cancelled() {
+            drop(lease);
+            return Ok(None);
+        }
         let lane = lease.lane.clone();
         let attempt = failed_tokens.len().saturating_add(1);
         let result = call(lane.clone(), attempt).await;
@@ -19343,6 +19359,82 @@ fn degraded_research_target_partition_resolution(
         citations_verified: 0,
         citations_rejected: 0,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn degraded_research_target_partition_resolution_with_accepted(
+    partition_id: &str,
+    original_order: &[String],
+    active_candidates: &[ResearchClosureCandidate],
+    partial_ledgers: Vec<CompiledResearchClosurePartition>,
+    mut accepted: HashMap<String, ResearchClosureAssessment>,
+    mut accepted_sources: HashMap<String, ResearchAuthorityDecisionSources>,
+    reason: String,
+    ledger_corrections: u64,
+    jury_disagreements: usize,
+    citations_verified: usize,
+    citations_rejected: usize,
+) -> Result<ResearchTargetPartitionResolution> {
+    let citation_rejections = active_candidates
+        .iter()
+        .filter(|candidate| !candidate.citation_rejection.trim().is_empty())
+        .map(|candidate| {
+            format!(
+                "{}: {}",
+                candidate.requirement_id,
+                candidate.citation_rejection.trim()
+            )
+        })
+        .collect::<Vec<_>>();
+    let reason = if citation_rejections.is_empty() {
+        reason
+    } else {
+        format!(
+            "{reason}; prior independent citation rejection: {}",
+            citation_rejections.join(" | ")
+        )
+    };
+    let active_partition = ResearchClosurePartition {
+        partition_id: partition_id.to_string(),
+        candidates: active_candidates.to_vec(),
+    };
+    let mut resolution =
+        degraded_research_target_partition_resolution(&active_partition, partial_ledgers, reason);
+    let degraded_ids = resolution
+        .degradations
+        .iter()
+        .map(|degradation| degradation.requirement_id.as_str())
+        .collect::<HashSet<_>>();
+    let mut decisions = Vec::new();
+    for requirement_id in original_order {
+        if let Some(decision) = accepted.remove(requirement_id) {
+            if degraded_ids.contains(requirement_id.as_str()) {
+                bail!(
+                    "target partition both accepted and degraded canonical target `{requirement_id}`"
+                );
+            }
+            decisions.push(decision);
+        } else if !degraded_ids.contains(requirement_id.as_str()) {
+            bail!("target partition degradation omitted canonical target `{requirement_id}`");
+        }
+    }
+    if !accepted.is_empty() {
+        bail!("target partition degradation retained unknown accepted targets");
+    }
+    let accepted_ids = decisions
+        .iter()
+        .map(|decision| decision.requirement_id.as_str())
+        .collect::<HashSet<_>>();
+    accepted_sources.retain(|requirement_id, _| accepted_ids.contains(requirement_id.as_str()));
+    resolution.decisions = decisions;
+    resolution.decision_sources = accepted_sources;
+    resolution.ledger_corrections = resolution
+        .ledger_corrections
+        .saturating_add(ledger_corrections);
+    resolution.jury_disagreements = jury_disagreements;
+    resolution.citations_verified = citations_verified;
+    resolution.citations_rejected = citations_rejected;
+    Ok(resolution)
 }
 
 fn apply_research_saturation_target_decisions(
@@ -25603,6 +25695,7 @@ impl GooseAgentDispatcher {
         sources: Arc<Vec<ResearchAuthoritySource>>,
         lane: ResearchPhysicalLane,
         partition_host_state: Arc<tokio::sync::Mutex<ResearchPartitionHostState>>,
+        admission_stop: &tokio_util::sync::CancellationToken,
     ) -> Result<CompiledResearchClosurePartition> {
         let started = std::time::Instant::now();
         let immutable_prefix = format!(
@@ -25625,6 +25718,9 @@ impl GooseAgentDispatcher {
         let mut correction_feedback = String::new();
         let mut correction = 0u64;
         loop {
+            if admission_stop.is_cancelled() {
+                bail!("target authority correction retired after terminal admission closure");
+            }
             let variable_packet = serde_json::to_string_pretty(&serde_json::json!({
                 "partition_id": partition.partition_id,
                 "target_candidates": partition.candidates,
@@ -25703,6 +25799,9 @@ impl GooseAgentDispatcher {
                     Some(&activity_key),
                 )
                 .await?;
+            if admission_stop.is_cancelled() {
+                bail!("target authority correction retired after its admitted call drained");
+            }
             if output.physical_host_id.as_deref() != Some(lane.physical_host_id.as_str()) {
                 bail!(
                     "target authority packet was not proven on assigned physical host `{}`",
@@ -25855,6 +25954,7 @@ impl GooseAgentDispatcher {
                     runtime.sources.clone(),
                     lane.clone(),
                     partition_host_state.clone(),
+                    admission_stop,
                 )
                 .await;
             drop(lease);
@@ -25998,6 +26098,7 @@ impl GooseAgentDispatcher {
                     runtime.sources.clone(),
                     lane.clone(),
                     partition_host_state.clone(),
+                    admission_stop,
                 )
                 .await;
             let (claimed_hosts, failed_hosts) = {
@@ -26049,12 +26150,7 @@ impl GooseAgentDispatcher {
         runtime: &ResearchAuthorityRuntime,
         partition: ResearchClosurePartition,
         admission_stop: &tokio_util::sync::CancellationToken,
-    ) -> Result<
-        Option<(
-            CompiledResearchClosurePartition,
-            CompiledResearchClosurePartition,
-        )>,
-    > {
+    ) -> Result<Option<ResearchPartitionPairOutcome>> {
         if admission_stop.is_cancelled() {
             return Ok(None);
         }
@@ -26082,27 +26178,44 @@ impl GooseAgentDispatcher {
                 return Ok(None);
             }
             (Err(first), Err(second)) => {
-                if is_research_authority_exhaustion(&first) {
-                    return Err(first.context(format!(
-                        "target authority pair drained both jurors; sibling failure: {second}"
-                    )));
-                }
-                if is_research_authority_exhaustion(&second) {
-                    return Err(second.context(format!(
-                        "target authority pair drained both jurors; sibling failure: {first}"
-                    )));
+                if is_research_authority_exhaustion(&first)
+                    || is_research_authority_exhaustion(&second)
+                {
+                    return Ok(Some(ResearchPartitionPairOutcome::Degraded {
+                        partial_ledgers: Vec::new(),
+                        reason: format!(
+                            "target authority pair exhausted after both admitted jurors drained: first={first}; second={second}"
+                        ),
+                    }));
                 }
                 bail!(
                     "target authority pair failed after draining both admitted jurors: first={first}; second={second}"
                 )
             }
-            (Err(error), Ok(_)) | (Ok(_), Err(error)) => {
+            (Err(error), Ok(Some(partial))) | (Ok(Some(partial)), Err(error)) => {
                 if is_research_authority_exhaustion(&error) {
-                    return Err(error.context(
-                        "target authority pair exhausted after its admitted sibling drained",
-                    ));
+                    return Ok(Some(ResearchPartitionPairOutcome::Degraded {
+                        partial_ledgers: vec![partial],
+                        reason: format!(
+                            "target authority pair exhausted after its admitted sibling drained: {error}"
+                        ),
+                    }));
                 }
                 bail!("target authority pair failed after draining both admitted jurors: {error}")
+            }
+            (Err(error), Ok(None)) | (Ok(None), Err(error)) => {
+                if admission_stop.is_cancelled() {
+                    return Ok(None);
+                }
+                if is_research_authority_exhaustion(&error) {
+                    return Ok(Some(ResearchPartitionPairOutcome::Degraded {
+                        partial_ledgers: Vec::new(),
+                        reason: format!(
+                            "target authority pair exhausted after its sibling retired: {error}"
+                        ),
+                    }));
+                }
+                bail!("target authority pair failed after its sibling retired: {error}")
             }
         };
         if admission_stop.is_cancelled() {
@@ -26121,7 +26234,10 @@ impl GooseAgentDispatcher {
                 partition.partition_id
             );
         }
-        Ok(Some((first, second)))
+        Ok(Some(ResearchPartitionPairOutcome::Complete {
+            first,
+            second,
+        }))
     }
 
     async fn run_research_target_citation_audit(
@@ -26251,6 +26367,7 @@ impl GooseAgentDispatcher {
                 let call_stage = stage.clone();
                 let failure_stage = stage.clone();
                 let failure_label = group_label.clone();
+                let correction_admission_stop = admission_stop.clone();
                 run_research_host_failover(
                     &host_scheduler,
                     eligible_tokens,
@@ -26265,12 +26382,16 @@ impl GooseAgentDispatcher {
                         let target_ids = target_ids.clone();
                         let immutable_prefix = immutable_prefix.clone();
                         let stage = call_stage.clone();
+                        let correction_admission_stop = correction_admission_stop.clone();
                         async move {
                             let mut correction_feedback = String::new();
                             let mut correction_guard =
                                 ResearchCompilerCorrectionGuard::default();
                             let mut correction = 0u64;
                             loop {
+                                if correction_admission_stop.is_cancelled() {
+                                    bail!("target citation correction retired after terminal admission closure");
+                                }
                                 let user = format!(
                                     "{}\n\nVARIABLE WHOLE-TARGET CITATION PACKETS:\n{}\n\nCOMPILER FEEDBACK:\n{}",
                                     immutable_prefix,
@@ -26316,6 +26437,9 @@ impl GooseAgentDispatcher {
                                         Some(&activity_key),
                                     )
                                     .await?;
+                                if correction_admission_stop.is_cancelled() {
+                                    bail!("target citation correction retired after its admitted call drained");
+                                }
                                 if output.physical_host_id.as_deref()
                                     != Some(lane.physical_host_id.as_str())
                                 {
@@ -26429,6 +26553,7 @@ impl GooseAgentDispatcher {
             return Ok(None);
         }
         let degraded_partition = partition.clone();
+        let degraded_partial_ledgers = vec![initial_pair.0.clone(), initial_pair.1.clone()];
         let result = self
             .resolve_research_target_partition_from_pair_inner(
                 runtime,
@@ -26450,7 +26575,7 @@ impl GooseAgentDispatcher {
                 }));
                 Ok(Some(degraded_research_target_partition_resolution(
                     &degraded_partition,
-                    Vec::new(),
+                    degraded_partial_ledgers,
                     error.to_string(),
                 )))
             }
@@ -26472,6 +26597,7 @@ impl GooseAgentDispatcher {
         ),
         admission_stop: &tokio_util::sync::CancellationToken,
     ) -> Result<Option<ResearchTargetPartitionResolution>> {
+        let original_partition_id = partition.partition_id.clone();
         let original_order = partition
             .candidates
             .iter()
@@ -26485,6 +26611,7 @@ impl GooseAgentDispatcher {
         let mut jury_disagreements = 0usize;
         let mut citations_verified = 0usize;
         let mut citations_rejected = 0usize;
+        let mut observed_partial_ledgers = Vec::new();
         let mut rejury = 0u64;
         let mut initial_pair = Some(initial_pair);
 
@@ -26503,7 +26630,7 @@ impl GooseAgentDispatcher {
             let (first, second) = if let Some(pair) = initial_pair.take() {
                 pair
             } else {
-                let Some(pair) = self
+                let Some(pair_outcome) = self
                     .run_research_closure_partition_pair(
                         runtime,
                         active_partition.clone(),
@@ -26513,7 +26640,29 @@ impl GooseAgentDispatcher {
                 else {
                     return Ok(None);
                 };
-                pair
+                match pair_outcome {
+                    ResearchPartitionPairOutcome::Complete { first, second } => (first, second),
+                    ResearchPartitionPairOutcome::Degraded {
+                        partial_ledgers,
+                        reason,
+                    } => {
+                        observed_partial_ledgers.extend(partial_ledgers);
+                        return degraded_research_target_partition_resolution_with_accepted(
+                            &original_partition_id,
+                            &original_order,
+                            &active_candidates,
+                            observed_partial_ledgers,
+                            accepted,
+                            accepted_sources,
+                            reason,
+                            ledger_corrections,
+                            jury_disagreements,
+                            citations_verified,
+                            citations_rejected,
+                        )
+                        .map(Some);
+                    }
+                }
             };
             if admission_stop.is_cancelled() {
                 return Ok(None);
@@ -26527,6 +26676,7 @@ impl GooseAgentDispatcher {
             ledger_corrections = ledger_corrections
                 .saturating_add(first.ledger_corrections)
                 .saturating_add(second.ledger_corrections);
+            observed_partial_ledgers.extend([first.clone(), second.clone()]);
             let first_by_id = first
                 .assessments
                 .into_iter()
@@ -26597,7 +26747,7 @@ impl GooseAgentDispatcher {
             }
             jury_disagreements = jury_disagreements.saturating_add(disagreement_candidates.len());
             if !disagreement_candidates.is_empty() {
-                let Some(adjudication) = self
+                let adjudication = self
                     .run_research_closure_partition_any_lane(
                         runtime,
                         "adjudication",
@@ -26611,12 +26761,32 @@ impl GooseAgentDispatcher {
                         ]),
                         admission_stop,
                     )
-                    .await?
-                else {
+                    .await;
+                let Some(adjudication) = (match adjudication {
+                    Ok(adjudication) => adjudication,
+                    Err(error) if is_research_authority_exhaustion(&error) => {
+                        return degraded_research_target_partition_resolution_with_accepted(
+                            &original_partition_id,
+                            &original_order,
+                            &active_candidates,
+                            observed_partial_ledgers,
+                            accepted,
+                            accepted_sources,
+                            error.to_string(),
+                            ledger_corrections,
+                            jury_disagreements,
+                            citations_verified,
+                            citations_rejected,
+                        )
+                        .map(Some);
+                    }
+                    Err(error) => return Err(error),
+                }) else {
                     return Ok(None);
                 };
                 ledger_corrections =
                     ledger_corrections.saturating_add(adjudication.ledger_corrections);
+                observed_partial_ledgers.push(adjudication.clone());
                 for mut decision in adjudication.assessments {
                     let (first_prior, second_prior) = disagreement_pairs
                         .get(&decision.requirement_id)
@@ -26673,7 +26843,7 @@ impl GooseAgentDispatcher {
                         })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let Some(verdicts) = self
+            let verdicts = self
                 .run_research_target_citation_audit(
                     runtime,
                     &active_candidates,
@@ -26681,8 +26851,27 @@ impl GooseAgentDispatcher {
                     &round_sources,
                     admission_stop,
                 )
-                .await?
-            else {
+                .await;
+            let Some(verdicts) = (match verdicts {
+                Ok(verdicts) => verdicts,
+                Err(error) if is_research_authority_exhaustion(&error) => {
+                    return degraded_research_target_partition_resolution_with_accepted(
+                        &original_partition_id,
+                        &original_order,
+                        &active_candidates,
+                        observed_partial_ledgers,
+                        accepted,
+                        accepted_sources,
+                        error.to_string(),
+                        ledger_corrections,
+                        jury_disagreements,
+                        citations_verified,
+                        citations_rejected,
+                    )
+                    .map(Some);
+                }
+                Err(error) => return Err(error),
+            }) else {
                 return Ok(None);
             };
             let verdicts = verdicts
@@ -56850,6 +57039,9 @@ mod pre_scheduler_semantic_runtime_tests {
     struct ResearchCorrectionRuntimeProvider {
         scripts: Mutex<HashMap<String, VecDeque<serde_json::Value>>>,
         calls: Mutex<Vec<String>>,
+        blocked_models: Mutex<HashSet<String>>,
+        blocked_call_started: Notify,
+        blocked_call_release: tokio::sync::Semaphore,
     }
 
     impl ResearchCorrectionRuntimeProvider {
@@ -56862,6 +57054,9 @@ mod pre_scheduler_semantic_runtime_tests {
                         .collect(),
                 ),
                 calls: Mutex::new(Vec::new()),
+                blocked_models: Mutex::new(HashSet::new()),
+                blocked_call_started: Notify::new(),
+                blocked_call_release: tokio::sync::Semaphore::new(0),
             }
         }
 
@@ -56872,6 +57067,21 @@ mod pre_scheduler_semantic_runtime_tests {
                 .iter()
                 .filter(|called| called.as_str() == model)
                 .count()
+        }
+
+        fn block_next_call(&self, model: &str) {
+            self.blocked_models
+                .lock()
+                .unwrap()
+                .insert(model.to_string());
+        }
+
+        async fn wait_for_blocked_call(&self) {
+            self.blocked_call_started.notified().await;
+        }
+
+        fn release_blocked_call(&self) {
+            self.blocked_call_release.add_permits(1);
         }
 
         fn finished_final_output(model: &str, value: serde_json::Value) -> SingleAttemptStream {
@@ -56936,6 +57146,15 @@ mod pre_scheduler_semantic_runtime_tests {
         ) -> Result<SingleAttemptStream, ProviderError> {
             let model = model_config.model_name.clone();
             self.calls.lock().unwrap().push(model.clone());
+            let should_block = self.blocked_models.lock().unwrap().remove(&model);
+            if should_block {
+                self.blocked_call_started.notify_one();
+                self.blocked_call_release
+                    .acquire()
+                    .await
+                    .expect("research correction blocked call semaphore closed")
+                    .forget();
+            }
             let output = self
                 .scripts
                 .lock()
@@ -57352,6 +57571,163 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
+    async fn production_terminal_after_active_invalid_jury_does_not_admit_correction() {
+        const PARTITION: &str = "target-section-runtime-active-terminal-jury";
+        const REQUIREMENT: &str = "REQ-runtime-active-terminal-jury";
+        const MODEL: &str = "runtime-active-terminal-jury-model";
+        const HOST: &str = "runtime-active-terminal-jury-host";
+        let mut scripts = HashMap::new();
+        scripts.insert(
+            MODEL.to_string(),
+            invalid_jury_runtime_outputs(PARTITION, REQUIREMENT),
+        );
+        let mut harness = research_correction_runtime_harness(
+            &[("active-terminal-jury-lane", MODEL, HOST)],
+            scripts,
+        )
+        .await;
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements =
+            Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        harness.provider.block_next_call(MODEL);
+        let admission_stop = tokio_util::sync::CancellationToken::new();
+        let run = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            let runtime = harness.runtime.clone();
+            let admission_stop = admission_stop.clone();
+            async move {
+                dispatcher
+                    .run_research_closure_partition_pair_unit(
+                        runtime.as_ref(),
+                        PairedRetryingFanStage::First,
+                        ResearchClosurePartition {
+                            partition_id: PARTITION.to_string(),
+                            candidates: vec![correction_runtime_candidate(REQUIREMENT)],
+                        },
+                        Arc::new(tokio::sync::Mutex::new(
+                            ResearchPartitionHostState::default(),
+                        )),
+                        &admission_stop,
+                    )
+                    .await
+            }
+        });
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            harness.provider.wait_for_blocked_call(),
+        )
+        .await
+        .expect("the first admitted jury call did not become active");
+        admission_stop.cancel();
+        harness.provider.release_blocked_call();
+        let result = tokio::time::timeout(Duration::from_secs(5), run)
+            .await
+            .expect("the active jury call did not drain after terminal closure")
+            .unwrap()
+            .expect("terminal retirement must not manufacture a jury failure");
+        assert!(result.is_none());
+        assert_eq!(harness.provider.call_count(MODEL), 1);
+        assert_eq!(
+            harness
+                .sink
+                .values()
+                .iter()
+                .filter(|event| event["event"] == "broker_provider_request_permitted")
+                .count(),
+            1
+        );
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the active jury lifecycle did not drain")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_terminal_after_active_invalid_citation_does_not_admit_correction() {
+        const REQUIREMENT: &str = "REQ-runtime-active-terminal-citation";
+        const MODEL_A: &str = "runtime-active-terminal-citation-model-a";
+        const MODEL_B: &str = "runtime-active-terminal-citation-model-b";
+        const MODEL_C: &str = "runtime-active-terminal-citation-model-c";
+        const HOST_A: &str = "runtime-active-terminal-citation-host-a";
+        const HOST_B: &str = "runtime-active-terminal-citation-host-b";
+        const HOST_C: &str = "runtime-active-terminal-citation-host-c";
+        let mut scripts = HashMap::new();
+        scripts.insert(
+            MODEL_C.to_string(),
+            invalid_citation_runtime_outputs(REQUIREMENT),
+        );
+        let mut harness = research_correction_runtime_harness(
+            &[
+                ("active-terminal-citation-lane-a", MODEL_A, HOST_A),
+                ("active-terminal-citation-lane-b", MODEL_B, HOST_B),
+                ("active-terminal-citation-lane-c", MODEL_C, HOST_C),
+            ],
+            scripts,
+        )
+        .await;
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements =
+            Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        harness.provider.block_next_call(MODEL_C);
+        let admission_stop = tokio_util::sync::CancellationToken::new();
+        let run = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            let runtime = harness.runtime.clone();
+            let admission_stop = admission_stop.clone();
+            async move {
+                dispatcher
+                    .run_research_target_citation_audit(
+                        runtime.as_ref(),
+                        &[correction_runtime_candidate(REQUIREMENT)],
+                        &[ResearchClosureAssessment {
+                            requirement_id: REQUIREMENT.to_string(),
+                            complete: true,
+                            authority_requirement_ids: vec![REQUIREMENT.to_string()],
+                            evidence_ids: Vec::new(),
+                            gaps: Vec::new(),
+                            rationale: "The canonical requirement settles this target.".to_string(),
+                        }],
+                        &HashMap::from([(
+                            REQUIREMENT.to_string(),
+                            ResearchAuthorityDecisionSources {
+                                models: vec![MODEL_A.to_string(), MODEL_B.to_string()],
+                                physical_host_ids: vec![HOST_A.to_string(), HOST_B.to_string()],
+                            },
+                        )]),
+                        &admission_stop,
+                    )
+                    .await
+            }
+        });
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            harness.provider.wait_for_blocked_call(),
+        )
+        .await
+        .expect("the first admitted citation call did not become active");
+        admission_stop.cancel();
+        harness.provider.release_blocked_call();
+        let result = tokio::time::timeout(Duration::from_secs(5), run)
+            .await
+            .expect("the active citation call did not drain after terminal closure")
+            .unwrap()
+            .expect("terminal retirement must not manufacture a citation failure");
+        assert!(result.is_none());
+        assert_eq!(harness.provider.call_count(MODEL_C), 1);
+        assert_eq!(
+            harness
+                .sink
+                .values()
+                .iter()
+                .filter(|event| event["event"] == "broker_provider_request_permitted")
+                .count(),
+            1
+        );
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the active citation lifecycle did not drain")
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn production_jury_specs_share_host_history_only_with_partition_sibling() {
         let partitions = ["REQ-runtime-state-a", "REQ-runtime-state-b"]
             .into_iter()
@@ -57630,10 +58006,13 @@ mod pre_scheduler_semantic_runtime_tests {
                 panic!("newer citation {citation:?} overtook the older production juror")
             }
         };
-        let (first, second) = pair_result
+        let pair_outcome = pair_result
             .expect("the production pair task panicked")
             .expect("the production pair failed after retiring the repeated-error host")
             .expect("the production pair was not externally retired");
+        let ResearchPartitionPairOutcome::Complete { first, second } = pair_outcome else {
+            panic!("the production pair degraded despite two successful distinct jurors")
+        };
         assert_eq!(
             HashSet::from([first.physical_host_id, second.physical_host_id]),
             HashSet::from([HOST_B.to_string(), HOST_C.to_string()])
@@ -57867,6 +58246,118 @@ mod pre_scheduler_semantic_runtime_tests {
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
             .expect("typed degraded partition lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_nested_exhaustion_preserves_accepted_sibling_and_partial_authority() {
+        const ACCEPTED: &str = "REQ-runtime-nested-accepted";
+        const DEGRADED: &str = "REQ-runtime-nested-degraded";
+        const MODEL_A: &str = "runtime-nested-model-a";
+        const MODEL_B: &str = "runtime-nested-model-b";
+        const MODEL_C: &str = "runtime-nested-model-c";
+        const HOST_A: &str = "runtime-nested-host-a";
+        const HOST_B: &str = "runtime-nested-host-b";
+        const HOST_C: &str = "runtime-nested-host-c";
+        let candidates = vec![
+            correction_runtime_candidate(ACCEPTED),
+            correction_runtime_candidate(DEGRADED),
+        ];
+        let partitions = plan_research_closure_section_partitions(&candidates);
+        assert_eq!(partitions.len(), 1);
+        let partition_id = partitions[0].partition_id.clone();
+        let rejury_partition_id = format!("{partition_id}-rejury-1");
+        let initial_ledger = serde_json::json!({
+            "partition_id": partition_id,
+            "complete": true,
+            "assessments": [
+                correction_runtime_assessment(ACCEPTED),
+                correction_runtime_assessment(DEGRADED)
+            ]
+        });
+        let citation_verdict = serde_json::json!({
+            "complete": true,
+            "verdicts": [
+                {
+                    "requirement_id": ACCEPTED,
+                    "supported": true,
+                    "rationale": "The accepted canonical citation is exact."
+                },
+                {
+                    "requirement_id": DEGRADED,
+                    "supported": false,
+                    "rationale": "The degraded canonical citation does not entail the claim."
+                }
+            ]
+        });
+        let mut scripts = HashMap::new();
+        scripts.insert(
+            MODEL_A.to_string(),
+            vec![
+                initial_ledger.clone(),
+                valid_jury_runtime_output(&rejury_partition_id, DEGRADED),
+            ],
+        );
+        let mut model_b = vec![initial_ledger];
+        model_b.extend(invalid_jury_runtime_outputs(&rejury_partition_id, DEGRADED));
+        scripts.insert(MODEL_B.to_string(), model_b);
+        let mut model_c = vec![citation_verdict];
+        model_c.extend(invalid_jury_runtime_outputs(&rejury_partition_id, DEGRADED));
+        scripts.insert(MODEL_C.to_string(), model_c);
+        let harness = research_correction_runtime_harness(
+            &[
+                ("nested-lane-a", MODEL_A, HOST_A),
+                ("nested-lane-b", MODEL_B, HOST_B),
+                ("nested-lane-c", MODEL_C, HOST_C),
+            ],
+            scripts,
+        )
+        .await;
+        let outcome = harness
+            .dispatcher
+            .run_research_target_reconciliation(
+                "runtime-nested-stage".to_string(),
+                Some(0),
+                candidates,
+                vec![
+                    correction_runtime_requirement(ACCEPTED),
+                    correction_runtime_requirement(DEGRADED),
+                ],
+                vec![
+                    MODEL_A.to_string(),
+                    MODEL_B.to_string(),
+                    MODEL_C.to_string(),
+                ],
+                ResearchSeedLookupRoutes {
+                    attached_extensions: Vec::new(),
+                    spec_document_urls: Vec::new(),
+                    codebase_shell: false,
+                },
+            )
+            .await
+            .expect("nested distinct-host exhaustion must degrade only unresolved authority");
+        assert_eq!(outcome.decisions.len(), 1);
+        assert_eq!(outcome.decisions[0].requirement_id, ACCEPTED);
+        assert_eq!(outcome.degradations.len(), 1);
+        let degradation = &outcome.degradations[0];
+        assert_eq!(degradation.requirement_id, DEGRADED);
+        assert!(!degradation.partial_assessments.is_empty());
+        assert!(degradation
+            .partial_assessments
+            .iter()
+            .all(|assessment| assessment.requirement_id == DEGRADED));
+        assert!(degradation
+            .reason
+            .contains("prior independent citation rejection"));
+        assert_eq!(
+            outcome.decisions.len() + outcome.degradations.len(),
+            2,
+            "accepted and degraded outcomes must exactly cover the original partition"
+        );
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("nested exhaustion lifecycle did not drain")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
@@ -58109,16 +58600,17 @@ mod pre_scheduler_semantic_runtime_tests {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let only_c = HashSet::from(["terminal-citation-lane-c".to_string()]);
-                let state = scheduler.inner.state.lock().unwrap();
-                if state.pending.len() == 3
-                    && state
-                        .pending
-                        .iter()
-                        .any(|request| request.eligible_tokens == only_c)
-                {
+                let shared_scheduler_has_all_requests = {
+                    let state = scheduler.inner.state.lock().unwrap();
+                    state.pending.len() == 3
+                        && state
+                            .pending
+                            .iter()
+                            .any(|request| request.eligible_tokens == only_c)
+                };
+                if shared_scheduler_has_all_requests {
                     break;
                 }
-                drop(state);
                 tokio::task::yield_now().await;
             }
         })
