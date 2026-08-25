@@ -7827,6 +7827,52 @@ class CloudSb7HarnessTest(unittest.TestCase):
         )
         self.assertIs(row["billing"]["budget_guard_is_actual_charge"], False)
 
+    def test_minimax_m3_subscription_credits_manifest_is_append_only_and_exact(
+        self,
+    ) -> None:
+        manifest = cloud_sb7.load_json(
+            cloud_sb7.HERE / "cloud-sb7-minimax-m3-cp-entrant.json"
+        )
+        row = cloud_sb7.entrants(manifest)[0]
+        policy = cloud_sb7.spend_policy(manifest, [row])
+        self.assertEqual(row["id"], "minimax-m3-cp")
+        self.assertEqual(row["model"], "MiniMax-M3")
+        self.assertEqual(row["endpoint_family"], "https://api.minimax.io/v1")
+        self.assertEqual(
+            row["secret_keychain"],
+            {
+                "service": "goose-benchmark-minimax-api",
+                "account": "goose-sb7-minimax-m3-cp",
+            },
+        )
+        self.assertEqual(row["provider_lane"], "minimax-subscription-credits-m3")
+        self.assertEqual(row["billing"]["mode"], "subscription_key_credits")
+        self.assertEqual(row["billing"]["actual_charge_unit"], "Credits")
+        self.assertEqual(row["billing"]["credits_per_usd"], 1000)
+        self.assertIs(row["billing"]["budget_guard_is_actual_charge"], False)
+        self.assertEqual(
+            row["pricing"]["purpose"],
+            "conservative_credit_equivalent_guard_not_observed_charge",
+        )
+        self.assertEqual(policy["total_cap"], 25.0)
+        self.assertEqual(policy["provider_caps"], {"minimax_api": 25.0})
+
+        for field, value in (
+            (
+                "billing",
+                {**row["billing"], "credits_per_usd": 999},
+            ),
+            (
+                "pricing",
+                {**row["pricing"], "purpose": "actual subscription charge"},
+            ),
+        ):
+            with self.subTest(field=field):
+                changed = json.loads(json.dumps(manifest))
+                changed["entrants"][0][field] = value
+                with self.assertRaisesRegex(SystemExit, "Subscription Key|pricing"):
+                    cloud_sb7.spend_policy(changed, cloud_sb7.entrants(changed))
+
     def test_smoke_environment_uses_shared_budget_and_isolated_paths(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw).resolve()
@@ -10031,6 +10077,108 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     with self.assertRaisesRegex(SystemExit, "exact"):
                         cloud_sb7.authenticated_rosters(secret_values, [changed])
                 blocked.assert_not_called()
+
+    def test_minimax_subscription_key_roster_defers_capacity_to_smoke_without_payg_aliasing(
+        self,
+    ) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-minimax-m3-cp-entrant.json"
+            )
+        )[0]
+        metadata = {
+            "id": "MiniMax-M3",
+            "object": "model",
+            "created": 1_780_272_000,
+            "owned_by": "minimax",
+        }
+        remains = {
+            "base_resp": {
+                "status_code": 2062,
+                "status_msg": "no active token plan subscription",
+            },
+            "model_remains": None,
+        }
+        with mock.patch.object(
+            cloud_sb7,
+            "fetch_json",
+            side_effect=[remains, {"object": "list", "data": [metadata]}],
+        ) as fetch:
+            roster = cloud_sb7.authenticated_rosters(
+                {"MINIMAX_API_KEY": "sk-cp-fixture-secret"}, [row]
+            )
+        self.assertEqual(
+            fetch.call_args_list,
+            [
+                mock.call(
+                    "https://www.minimax.io/v1/token_plan/remains",
+                    {"Authorization": "Bearer sk-cp-fixture-secret"},
+                ),
+                mock.call(
+                    "https://api.minimax.io/v1/models",
+                    {"Authorization": "Bearer sk-cp-fixture-secret"},
+                ),
+            ],
+        )
+        credential_evidence = {
+            "endpoint": "https://www.minimax.io/v1/token_plan/remains",
+            "key_class": "subscription_key",
+            "accounting_status": "no_active_token_plan_subscription",
+            "base_resp": remains["base_resp"],
+            "model_remains_present": False,
+            "credits_balance_observable_via_remains": False,
+            "inference_capacity_proven": False,
+            "capacity_gate": "isolated_contract_smoke",
+        }
+        expected_metadata = {
+            **metadata,
+            "credential_evidence": credential_evidence,
+        }
+        cloud_sb7.validate_rosters([row], roster)
+        self.assertEqual(
+            cloud_sb7.selected_roster_evidence([row], roster),
+            {"minimax_api": {"MiniMax-M3": expected_metadata}},
+        )
+
+        changed_evidence = json.loads(json.dumps(expected_metadata))
+        changed_evidence["credential_evidence"]["inference_capacity_proven"] = True
+        roster["evidence"]["minimax_api"]["MiniMax-M3"] = changed_evidence
+        with self.assertRaisesRegex(SystemExit, "exact MiniMax-M3"):
+            cloud_sb7.validate_rosters([row], roster)
+        roster["evidence"]["minimax_api"]["MiniMax-M3"] = expected_metadata
+
+        with mock.patch.object(cloud_sb7, "fetch_json") as blocked:
+            with self.assertRaisesRegex(SystemExit, "Subscription Key identity"):
+                cloud_sb7.authenticated_rosters(
+                    {"MINIMAX_API_KEY": "fixture-payg-secret"}, [row]
+                )
+        blocked.assert_not_called()
+
+        payg_row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-minimax-m3-entrant.json"
+            )
+        )[0]
+        with mock.patch.object(cloud_sb7, "fetch_json") as blocked:
+            with self.assertRaisesRegex(SystemExit, "not interchangeable"):
+                cloud_sb7.authenticated_rosters(
+                    {"MINIMAX_API_KEY": "sk-cp-fixture-secret"}, [payg_row]
+                )
+        blocked.assert_not_called()
+
+        with mock.patch.object(
+            cloud_sb7,
+            "fetch_json",
+            return_value={
+                "base_resp": {"status_code": 0, "status_msg": "success"},
+                "model_remains": [],
+            },
+        ) as fetch:
+            with self.assertRaisesRegex(SystemExit, "Credits-only manifest"):
+                cloud_sb7.authenticated_rosters(
+                    {"MINIMAX_API_KEY": "sk-cp-fixture-secret"}, [row]
+                )
+        fetch.assert_called_once()
 
     def test_qwen_budget_surfaces_cannot_present_shadow_guard_as_actual_spend(
         self,
