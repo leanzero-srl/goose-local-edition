@@ -440,6 +440,19 @@ impl OpenAiProvider {
         }
         if is_xai_grok {
             obj.remove("stop");
+            if let Some(tools) = obj
+                .get_mut("tools")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for tool in tools {
+                    let Some(tool) = tool.as_object_mut() else {
+                        continue;
+                    };
+                    if tool.get("type").and_then(serde_json::Value::as_str) == Some("function") {
+                        tool.remove("strict");
+                    }
+                }
+            }
         }
 
         if is_meta_muse {
@@ -471,12 +484,16 @@ impl OpenAiProvider {
         }
 
         obj.insert("store".to_string(), serde_json::json!(false));
-        let reasoning_effort =
-            if is_xai_grok && model_config.thinking_effort() == Some(ThinkingEffort::Max) {
-                "xhigh"
-            } else {
-                "high"
-            };
+        let reasoning_effort = if is_xai_grok {
+            match model_config.thinking_effort() {
+                Some(ThinkingEffort::Low) => "low",
+                Some(ThinkingEffort::Medium) => "medium",
+                Some(ThinkingEffort::Max) => "xhigh",
+                Some(ThinkingEffort::High | ThinkingEffort::Off) | None => "high",
+            }
+        } else {
+            "high"
+        };
         let reasoning = if is_xai_grok {
             serde_json::json!({"effort": reasoning_effort})
         } else {
@@ -1157,6 +1174,7 @@ fn ends_with_version_segment(path: &str) -> bool {
 mod tests {
     use super::*;
     use crate::api_client::AuthMethod;
+    use rmcp::object;
     use serde_json::json;
 
     fn make_provider(name: &str) -> OpenAiProvider {
@@ -1837,8 +1855,7 @@ mod tests {
                     "type": "function",
                     "name": "shell",
                     "description": "Run a command",
-                    "parameters": {"type": "object"},
-                    "strict": false
+                    "parameters": {"type": "object"}
                 }],
                 "store": false,
                 "stream": true,
@@ -1852,10 +1869,52 @@ mod tests {
     }
 
     #[test]
+    fn xai_grok_assembled_request_pins_output_limit_and_wire_tool_contract() {
+        let provider = make_profile_provider(OpenAiRequestProfile::XaiGrok);
+        let model_config = ModelConfig::new("grok-4.6")
+            .with_temperature(Some(0.7))
+            .with_max_tokens(Some(131_072))
+            .with_thinking_effort(ThinkingEffort::Max);
+        let messages = vec![Message::user().with_text("build it")];
+        let tool = Tool::new(
+            "shell",
+            "Run a command",
+            object!({
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"}
+                },
+                "required": ["command"]
+            }),
+        );
+
+        let payload =
+            create_responses_request(&model_config, "system instructions", &messages, &[tool])
+                .unwrap();
+        assert_eq!(payload["tools"][0]["strict"], false);
+
+        let result = provider.sanitize_responses_request_for_compat(payload, &model_config);
+
+        assert_eq!(result["model"], "grok-4.6");
+        assert_eq!(result["max_output_tokens"], 131_072);
+        assert_eq!(result["store"], false);
+        assert_eq!(result["reasoning"], json!({"effort": "xhigh"}));
+        assert_eq!(result["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(result["tool_choice"], "auto");
+        assert_eq!(result["parallel_tool_calls"], false);
+        assert!(result.get("temperature").is_none());
+        assert!(result["tools"][0].get("strict").is_none());
+        assert_eq!(result["input"][0]["role"], "system");
+        assert_eq!(result["input"][1]["role"], "user");
+    }
+
+    #[test]
     fn xai_grok_profile_configures_reasoning_and_stays_exactly_scoped() {
         let provider = make_profile_provider(OpenAiRequestProfile::XaiGrok);
 
         for (effort, expected) in [
+            (ThinkingEffort::Low, "low"),
+            (ThinkingEffort::Medium, "medium"),
             (ThinkingEffort::High, "high"),
             (ThinkingEffort::Max, "xhigh"),
             (ThinkingEffort::Off, "high"),
@@ -1878,7 +1937,13 @@ mod tests {
         let unrelated = json!({
             "model": "grok-4.5",
             "input": [],
-            "temperature": 0.9
+            "temperature": 0.9,
+            "tools": [{
+                "type": "function",
+                "name": "shell",
+                "parameters": {"type": "object"},
+                "strict": false
+            }]
         });
         assert_eq!(
             provider.sanitize_responses_request_for_compat(
