@@ -2760,6 +2760,11 @@ mod tests {
             .reconcile_cancelled_after_drop()
             .await
             .unwrap_err();
+        assert!(matches!(
+            &error,
+            goose_swarm::ProviderLifecycleStartError::UnprovenProviderRequest(receipt)
+                if receipt.physical_host_id == "worker-host"
+        ));
         assert!(error.to_string().contains("no proven cancelled terminal"));
         let quarantine = work.quarantine_unproven(error.to_string()).await.unwrap();
         assert_eq!(quarantine.unresolved.provider_requests_started, 1);

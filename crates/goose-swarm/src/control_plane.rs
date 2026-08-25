@@ -2002,6 +2002,7 @@ impl std::error::Error for ProviderLifecycleTransitionError {}
 pub enum ProviderLifecycleStartError {
     Operation(ProviderLifecycleOperationError),
     TerminalReconciliation(ProviderLifecycleTransitionError),
+    UnprovenProviderRequest(ProviderRequestReceipt),
 }
 
 impl std::fmt::Display for ProviderLifecycleStartError {
@@ -2014,6 +2015,11 @@ impl std::fmt::Display for ProviderLifecycleStartError {
                     "prior provider terminal reconciliation failed: {error}"
                 )
             }
+            Self::UnprovenProviderRequest(receipt) => write!(
+                formatter,
+                "outstanding provider request `{}` has no proven cancelled terminal",
+                receipt.key.provider_request_id
+            ),
         }
     }
 }
@@ -2399,7 +2405,7 @@ enum ProviderDropReconcileAction {
     None,
     Claim(RecoverableProviderRequest),
     Wait,
-    Unproven,
+    Unproven(ProviderRequestReceipt),
     Failed(String),
 }
 
@@ -2492,8 +2498,9 @@ impl ProviderLifecycle {
                         ProviderDropReconcileAction::Claim(request)
                     }
                     Some(OutstandingProviderRequest::Recoverable(request)) => {
+                        let receipt = request.request.receipt.as_ref().clone();
                         *outstanding = Some(OutstandingProviderRequest::Recoverable(request));
-                        ProviderDropReconcileAction::Unproven
+                        ProviderDropReconcileAction::Unproven(receipt)
                     }
                     Some(OutstandingProviderRequest::Starting) => {
                         *outstanding = Some(OutstandingProviderRequest::Starting);
@@ -2516,12 +2523,9 @@ impl ProviderLifecycle {
                     tokio::task::yield_now().await;
                     continue;
                 }
-                ProviderDropReconcileAction::Unproven => {
-                    return Err(ProviderLifecycleStartError::Operation(
-                        ProviderLifecycleOperationError::Unresolved(
-                            "outstanding provider request has no proven cancelled terminal"
-                                .to_string(),
-                        ),
+                ProviderDropReconcileAction::Unproven(receipt) => {
+                    return Err(ProviderLifecycleStartError::UnprovenProviderRequest(
+                        receipt,
                     ));
                 }
                 ProviderDropReconcileAction::Failed(reason) => {
