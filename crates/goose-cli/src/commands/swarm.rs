@@ -25,7 +25,6 @@ use async_trait::async_trait;
 use console::style;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, StreamExt};
-use goose::agents::final_output_tool::FinalOutputValidationEvidence;
 use goose::agents::{
     large_text_threshold, Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform,
     SessionConfig,
@@ -3855,13 +3854,91 @@ fn canonical_json_digest(value: &str) -> String {
     content_sha256(&canonical)
 }
 
+#[derive(Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", content = "children", rename_all = "snake_case")]
+enum RedactedFinalOutputShape {
+    Null,
+    Boolean,
+    Integer,
+    Number,
+    String,
+    Array(Vec<Self>),
+    Object(Vec<Self>),
+}
+
+impl RedactedFinalOutputShape {
+    fn from_value(value: &serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Null => Self::Null,
+            serde_json::Value::Bool(_) => Self::Boolean,
+            serde_json::Value::Number(number) if number.is_i64() || number.is_u64() => {
+                Self::Integer
+            }
+            serde_json::Value::Number(_) => Self::Number,
+            serde_json::Value::String(_) => Self::String,
+            serde_json::Value::Array(values) => {
+                Self::Array(values.iter().map(Self::from_value).collect())
+            }
+            serde_json::Value::Object(values) => {
+                let mut children = values.values().map(Self::from_value).collect::<Vec<_>>();
+                children.sort_unstable();
+                Self::Object(children)
+            }
+        }
+    }
+}
+
+fn domain_sha256(domain: &[u8], value: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(value);
+    lowercase_hex(hasher.finalize().as_slice())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FinalOutputValidationEvidence {
+    error_fingerprint: String,
+    argument_shape_fingerprint: String,
+    private_error_fingerprint: String,
+    private_argument_fingerprint: String,
+}
+
+impl FinalOutputValidationEvidence {
+    fn from_tool_error(
+        error: &rmcp::model::ErrorData,
+        arguments: &str,
+        response_schema_fingerprint: &str,
+    ) -> Option<Self> {
+        if error.code != rmcp::model::ErrorCode::INVALID_PARAMS
+            || !error.message.starts_with("Validation failed:\n")
+        {
+            return None;
+        }
+        let arguments_value = serde_json::from_str::<serde_json::Value>(arguments).ok()?;
+        let shape = serde_json::to_vec(&RedactedFinalOutputShape::from_value(&arguments_value))
+            .expect("a redacted JSON shape always serializes");
+        Some(Self {
+            error_fingerprint: response_schema_fingerprint.to_string(),
+            argument_shape_fingerprint: domain_sha256(
+                b"goose.swarm.final_output.argument_shape.v1\0",
+                &shape,
+            ),
+            private_error_fingerprint: domain_sha256(
+                b"goose.swarm.final_output.private_validation_error.v1\0",
+                error.message.as_bytes(),
+            ),
+            private_argument_fingerprint: canonical_json_digest(arguments),
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FinalOutputValidationFailure {
     provider_request: ProviderRequestKey,
     error_fingerprint: String,
     argument_shape_fingerprint: String,
+    private_error_fingerprint: String,
     private_argument_fingerprint: String,
-    value_sensitive: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3870,7 +3947,6 @@ struct RepeatedFinalOutputValidationFailure {
     provider_request: ProviderRequestKey,
     error_fingerprint: String,
     argument_shape_fingerprint: String,
-    value_sensitive: bool,
 }
 
 #[derive(Default)]
@@ -3883,23 +3959,20 @@ impl FinalOutputValidationRepeatGate {
         &mut self,
         provider_request: ProviderRequestKey,
         evidence: &FinalOutputValidationEvidence,
-        arguments: &str,
     ) -> Option<RepeatedFinalOutputValidationFailure> {
         let current = FinalOutputValidationFailure {
             provider_request,
             error_fingerprint: evidence.error_fingerprint.clone(),
             argument_shape_fingerprint: evidence.argument_shape_fingerprint.clone(),
-            private_argument_fingerprint: canonical_json_digest(arguments),
-            value_sensitive: evidence.value_sensitive,
+            private_error_fingerprint: evidence.private_error_fingerprint.clone(),
+            private_argument_fingerprint: evidence.private_argument_fingerprint.clone(),
         };
         let repeated = self.previous.as_ref().is_some_and(|previous| {
             previous.provider_request != current.provider_request
                 && previous.error_fingerprint == current.error_fingerprint
                 && previous.argument_shape_fingerprint == current.argument_shape_fingerprint
-                && previous.value_sensitive == current.value_sensitive
-                && (!current.value_sensitive
-                    || previous.private_argument_fingerprint
-                        == current.private_argument_fingerprint)
+                && previous.private_error_fingerprint == current.private_error_fingerprint
+                && previous.private_argument_fingerprint == current.private_argument_fingerprint
         });
         if repeated {
             let previous = self
@@ -3911,7 +3984,6 @@ impl FinalOutputValidationRepeatGate {
                 provider_request: current.provider_request,
                 error_fingerprint: current.error_fingerprint,
                 argument_shape_fingerprint: current.argument_shape_fingerprint,
-                value_sensitive: current.value_sensitive,
             });
         }
         self.previous = Some(current);
@@ -5539,18 +5611,100 @@ mod tests {
     fn final_output_validation_evidence(
         error_fingerprint: &str,
         argument_shape_fingerprint: &str,
-        value_sensitive: bool,
+        private_argument_fingerprint: &str,
     ) -> FinalOutputValidationEvidence {
         FinalOutputValidationEvidence {
-            evidence_type: "goose.final_output.schema_validation".to_string(),
-            version: 1,
             error_fingerprint: error_fingerprint.to_string(),
             argument_shape_fingerprint: argument_shape_fingerprint.to_string(),
-            value_sensitive,
-            root_kind: "object".to_string(),
-            node_count: 2,
-            error_count: 1,
+            private_error_fingerprint: format!("private-{error_fingerprint}"),
+            private_argument_fingerprint: private_argument_fingerprint.to_string(),
         }
+    }
+
+    fn invalid_final_output_error(message: &'static str) -> rmcp::model::ErrorData {
+        rmcp::model::ErrorData {
+            code: rmcp::model::ErrorCode::INVALID_PARAMS,
+            message: std::borrow::Cow::Borrowed(message),
+            data: None,
+        }
+    }
+
+    #[test]
+    fn final_output_validation_evidence_keeps_payload_derived_digests_private() {
+        const FIRST_KEY: &str = "private-first-key";
+        const SECOND_KEY: &str = "private-second-key";
+        const FIRST_LEAF: &str = "private-first-leaf";
+        const SECOND_LEAF: &str = "private-second-leaf";
+        let schema_fingerprint = "public-response-schema-fingerprint";
+        let first_error = invalid_final_output_error(
+            "Validation failed:\n- /field: private-first-leaf is invalid",
+        );
+        let second_error = invalid_final_output_error(
+            "Validation failed:\n- /field: private-second-leaf is invalid",
+        );
+        let first_arguments = serde_json::json!({(FIRST_KEY): [FIRST_LEAF]}).to_string();
+        let second_arguments = serde_json::json!({(SECOND_KEY): [SECOND_LEAF]}).to_string();
+
+        let first = FinalOutputValidationEvidence::from_tool_error(
+            &first_error,
+            &first_arguments,
+            schema_fingerprint,
+        )
+        .unwrap();
+        let second = FinalOutputValidationEvidence::from_tool_error(
+            &second_error,
+            &second_arguments,
+            schema_fingerprint,
+        )
+        .unwrap();
+
+        assert_eq!(first.error_fingerprint, schema_fingerprint);
+        assert_eq!(first.error_fingerprint, second.error_fingerprint);
+        assert_eq!(
+            first.argument_shape_fingerprint, second.argument_shape_fingerprint,
+            "public shape evidence must omit object keys and leaf values",
+        );
+        assert_ne!(
+            first.private_argument_fingerprint,
+            second.private_argument_fingerprint,
+        );
+        assert_ne!(
+            first.private_error_fingerprint,
+            second.private_error_fingerprint
+        );
+        let public_evidence = format!(
+            "{}:{}",
+            first.error_fingerprint, first.argument_shape_fingerprint
+        );
+        for sentinel in [FIRST_KEY, SECOND_KEY, FIRST_LEAF, SECOND_LEAF] {
+            assert!(!public_evidence.contains(sentinel));
+        }
+    }
+
+    #[test]
+    fn final_output_validation_evidence_rejects_non_validation_errors() {
+        let wrong_code = rmcp::model::ErrorData {
+            code: rmcp::model::ErrorCode::INTERNAL_ERROR,
+            message: std::borrow::Cow::Borrowed("Validation failed:\n- /field: invalid"),
+            data: None,
+        };
+        let wrong_message = rmcp::model::ErrorData {
+            code: rmcp::model::ErrorCode::INVALID_PARAMS,
+            message: std::borrow::Cow::Borrowed("Another tool error"),
+            data: None,
+        };
+        assert!(FinalOutputValidationEvidence::from_tool_error(
+            &wrong_code,
+            r#"{"field":1}"#,
+            "schema",
+        )
+        .is_none());
+        assert!(FinalOutputValidationEvidence::from_tool_error(
+            &wrong_message,
+            r#"{"field":1}"#,
+            "schema",
+        )
+        .is_none());
     }
 
     fn provider_request(ordinal: u32) -> ProviderRequestKey {
@@ -5562,63 +5716,40 @@ mod tests {
 
     #[test]
     fn final_output_validation_repeat_requires_distinct_completed_provider_turns() {
-        let evidence = final_output_validation_evidence("error-a", "shape-a", false);
+        let evidence = final_output_validation_evidence("error-a", "shape-a", "args-a");
         let mut gate = FinalOutputValidationRepeatGate::default();
-        assert!(gate
-            .observe(provider_request(1), &evidence, r#"{"status":1}"#)
-            .is_none());
-        assert!(gate
-            .observe(provider_request(1), &evidence, r#"{"status":1}"#)
-            .is_none());
+        assert!(gate.observe(provider_request(1), &evidence).is_none());
+        assert!(gate.observe(provider_request(1), &evidence).is_none());
         let repeated = gate
-            .observe(provider_request(2), &evidence, r#"{"status":2}"#)
-            .expect("a second completed provider turn corroborates a structural schema failure");
+            .observe(provider_request(2), &evidence)
+            .expect("a second completed provider turn corroborates an identical schema failure");
         assert_eq!(repeated.first_provider_request.ordinal, 1);
         assert_eq!(repeated.provider_request.ordinal, 2);
     }
 
     #[test]
     fn final_output_validation_repeat_is_consecutive_and_resets_on_changed_evidence() {
-        let first = final_output_validation_evidence("error-a", "shape-a", false);
-        let changed = final_output_validation_evidence("error-b", "shape-a", false);
+        let first = final_output_validation_evidence("error-a", "shape-a", "args-a");
+        let changed = final_output_validation_evidence("error-b", "shape-a", "args-a");
         let mut gate = FinalOutputValidationRepeatGate::default();
-        assert!(gate
-            .observe(provider_request(1), &first, r#"{"status":1}"#)
-            .is_none());
-        assert!(gate
-            .observe(provider_request(2), &changed, r#"{"status":2}"#)
-            .is_none());
-        assert!(gate
-            .observe(provider_request(3), &first, r#"{"status":3}"#)
-            .is_none());
+        assert!(gate.observe(provider_request(1), &first).is_none());
+        assert!(gate.observe(provider_request(2), &changed).is_none());
+        assert!(gate.observe(provider_request(3), &first).is_none());
     }
 
     #[test]
-    fn value_sensitive_validation_repeat_requires_canonical_argument_equality() {
-        let evidence = final_output_validation_evidence("enum-error", "shape-a", true);
+    fn validation_repeat_requires_private_canonical_argument_equality() {
+        let first = final_output_validation_evidence("enum-error", "shape-a", "args-a");
+        let changed_args = final_output_validation_evidence("enum-error", "shape-a", "args-b");
         let mut changed = FinalOutputValidationRepeatGate::default();
+        assert!(changed.observe(provider_request(1), &first).is_none());
         assert!(changed
-            .observe(provider_request(1), &evidence, r#"{"choice":"alpha"}"#)
-            .is_none());
-        assert!(changed
-            .observe(provider_request(2), &evidence, r#"{"choice":"beta"}"#)
+            .observe(provider_request(2), &changed_args)
             .is_none());
 
         let mut identical = FinalOutputValidationRepeatGate::default();
-        assert!(identical
-            .observe(
-                provider_request(1),
-                &evidence,
-                r#"{"choice":"alpha","nested":{"count":1}}"#,
-            )
-            .is_none());
-        assert!(identical
-            .observe(
-                provider_request(2),
-                &evidence,
-                r#"{"nested":{"count":1},"choice":"alpha"}"#,
-            )
-            .is_some());
+        assert!(identical.observe(provider_request(1), &first).is_none());
+        assert!(identical.observe(provider_request(2), &first).is_some());
     }
 
     #[test]
@@ -24190,6 +24321,20 @@ impl GooseAgentDispatcher {
         // Captured before the strings move into the message/session below — feeds the
         // prefill-aware first-token budget at the watchdog site.
         let prompt_chars = system_prompt.len() + user_text.len();
+        let response_schema_failover_source = (tool_surface == AgentToolSurface::ResponseOnly)
+            .then(|| ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone).ok())
+            .flatten()
+            .filter(pre_scheduler_recurrence_failover_eligible);
+        let response_schema_fingerprint = response_schema_failover_source
+            .as_ref()
+            .and_then(|_| response.as_ref())
+            .and_then(|response| response.json_schema.as_ref())
+            .map(|schema| {
+                domain_sha256(
+                    b"goose.swarm.final_output.response_schema.v1\0",
+                    &serde_json::to_vec(schema).expect("a response schema always serializes"),
+                )
+            });
         let agent_config = AgentConfig::new(
             self.session_manager.clone(),
             self.permission_manager.clone(),
@@ -24535,10 +24680,6 @@ impl GooseAgentDispatcher {
         let pre_scheduler_semantic_source = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(|_| ()).is_ok();
         let pre_scheduler_semantic_call = pre_scheduler_semantic_source
             || activity_key.is_some_and(|key| key.starts_with("pre-scheduler-judge:"));
-        let response_schema_failover_source = (tool_surface == AgentToolSurface::ResponseOnly)
-            .then(|| ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone).ok())
-            .flatten()
-            .filter(pre_scheduler_recurrence_failover_eligible);
         // PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS): the `idle` watchdog above only fires when the
         // stream goes SILENT. A task that streams THINKING tokens continuously resets it forever — measured
         // live, tasks ran 899s/348s/26min while emitting reasoning tokens and were never cut (the pathology
@@ -25358,14 +25499,14 @@ impl GooseAgentDispatcher {
                                         && name == FINAL_OUTPUT_TOOL
                                         && !ok
                                     {
-                                        let evidence = resp
-                                            .tool_result
-                                            .as_ref()
-                                            .err()
-                                            .and_then(|error| error.data.as_ref())
-                                            .and_then(
-                                                FinalOutputValidationEvidence::from_error_data,
-                                            );
+                                        let evidence =
+                                            resp.tool_result.as_ref().err().and_then(|error| {
+                                                FinalOutputValidationEvidence::from_tool_error(
+                                                    error,
+                                                    &request_text,
+                                                    response_schema_fingerprint.as_deref()?,
+                                                )
+                                            });
                                         let terminal_request = provider_stream_progress
                                             .last_terminal_request()
                                             .filter(|(_, kind)| {
@@ -25376,11 +25517,8 @@ impl GooseAgentDispatcher {
                                             (evidence, terminal_request)
                                         {
                                             final_output_validation_repeat =
-                                                final_output_validation_repeat_gate.observe(
-                                                    provider_request,
-                                                    &evidence,
-                                                    &request_text,
-                                                );
+                                                final_output_validation_repeat_gate
+                                                    .observe(provider_request, &evidence);
                                         }
                                     }
                                     let full_result = tool_result_full_text(&resp.tool_result);
@@ -25494,7 +25632,7 @@ impl GooseAgentDispatcher {
                     "confirmations": 2,
                     "error_fingerprint": repeat.error_fingerprint,
                     "argument_shape_fingerprint": repeat.argument_shape_fingerprint,
-                    "value_sensitive": repeat.value_sensitive,
+                    "private_exact_error_and_arguments_matched": true,
                     "provider_terminals_proven": true,
                     "payload_logged": false,
                     "retry_authority": "exclude-failed-physical-host-and-reschedule-distinct-host",
@@ -58456,7 +58594,6 @@ mod pre_scheduler_semantic_runtime_tests {
         const HOST_A: &str = "runtime-schema-repeat-host-a";
         const HOST_B: &str = "runtime-schema-repeat-host-b";
         const SECRET_A: &str = "private-schema-value-alpha";
-        const SECRET_B: &str = "private-schema-value-beta";
 
         let mut scripts = HashMap::new();
         scripts.insert(
@@ -58470,7 +58607,7 @@ mod pre_scheduler_semantic_runtime_tests {
                 serde_json::json!({
                     "partition_id": PARTITION,
                     "complete": false,
-                    "assessments": SECRET_B,
+                    "assessments": SECRET_A,
                 }),
             ],
         );
@@ -58534,7 +58671,6 @@ mod pre_scheduler_semantic_runtime_tests {
         assert_eq!(harness.provider.call_count(MODEL_A), 2);
         let encoded_repeat = repeat.to_string();
         assert!(!encoded_repeat.contains(SECRET_A));
-        assert!(!encoded_repeat.contains(SECRET_B));
 
         drop(held_b);
         let compiled = tokio::time::timeout(Duration::from_secs(5), unit)
