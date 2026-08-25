@@ -49,6 +49,7 @@ pub(crate) mod declarative_providers {
         together,
         venice,
         vercel_ai_gateway,
+        xai_api,
         zai,
         zai_api,
         zhipu,
@@ -104,6 +105,7 @@ pub enum OpenAiRequestProfile {
     DeepseekV4,
     MetaMuse,
     MinimaxM3,
+    XaiGrok,
     ZaiGlm,
 }
 
@@ -466,6 +468,24 @@ mod tests {
         assert_eq!(meta.models[0].name, "muse-spark-1.2");
         assert_eq!(meta.models[0].context_limit, 1_007_997);
         assert!(meta.models[0].reasoning);
+
+        let xai = deserialize_provider_config(include_str!("declarative/definitions/xai_api.json"))
+            .unwrap();
+        assert_eq!(xai.name, "xai_api");
+        assert_eq!(xai.engine, ProviderEngine::OpenAI);
+        assert_eq!(xai.base_url, "${XAI_API_BASE_URL}");
+        assert_eq!(xai.base_path.as_deref(), Some("v1/responses"));
+        assert_eq!(
+            xai.env_vars.as_ref().unwrap()[0].default.as_deref(),
+            Some("https://api.x.ai/v1")
+        );
+        assert_eq!(xai.catalog_provider_id.as_deref(), Some("xai"));
+        assert_eq!(xai.openai_request_profile, OpenAiRequestProfile::XaiGrok);
+        assert!(xai.preserves_thinking);
+        assert_eq!(xai.models.len(), 1);
+        assert_eq!(xai.models[0].name, "grok-4.6");
+        assert_eq!(xai.models[0].context_limit, 500_000);
+        assert!(xai.models[0].reasoning);
 
         let alibaba =
             deserialize_provider_config(include_str!("declarative/definitions/alibaba.json"))
