@@ -91,7 +91,9 @@ pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{
     qa_enabled, salvage_require_critical, salvage_spin_enabled, sink_review_enabled,
     tail_review_enabled, testgen_enabled, AttemptRecord, DeviceCfg, DeviceSummary, RunReport,
-    Scheduler, TaskOutcome,
+    Scheduler, SchedulerCheckpointError, SchedulerCheckpointReceipt, SchedulerCheckpointStore,
+    SchedulerCompletedTaskEvidence, SchedulerDagResealReceipt, SchedulerRestoreSummary,
+    TaskOutcome,
 };
 pub use semantic_control::{
     semantic_observation_task_version, AdmittedSemanticObservationHandle,
