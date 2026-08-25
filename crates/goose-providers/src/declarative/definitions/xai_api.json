@@ -6,6 +6,7 @@
   "api_key_env": "XAI_API_KEY",
   "base_url": "${XAI_API_BASE_URL}",
   "base_path": "v1/responses",
+  "timeout_seconds": 3600,
   "env_vars": [
     {
       "name": "XAI_API_BASE_URL",

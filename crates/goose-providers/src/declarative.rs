@@ -475,6 +475,7 @@ mod tests {
         assert_eq!(xai.engine, ProviderEngine::OpenAI);
         assert_eq!(xai.base_url, "${XAI_API_BASE_URL}");
         assert_eq!(xai.base_path.as_deref(), Some("v1/responses"));
+        assert_eq!(xai.timeout_seconds, Some(3600));
         assert_eq!(
             xai.env_vars.as_ref().unwrap()[0].default.as_deref(),
             Some("https://api.x.ai/v1")
