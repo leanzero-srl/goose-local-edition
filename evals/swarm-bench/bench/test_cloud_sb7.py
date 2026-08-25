@@ -7666,7 +7666,6 @@ class CloudSb7HarnessTest(unittest.TestCase):
         )
         self.assertEqual(row["context_limit"], 1_000_000)
         self.assertEqual(row["max_output_tokens"], 131_072)
-        self.assertEqual(row["api_max_completion_tokens"], 524_288)
         self.assertEqual(row["billing"]["actual_charge_unit"], "Credits")
         self.assertIs(row["billing"]["budget_guard_is_actual_charge"], False)
         self.assertEqual(policy["currency"], "USD")
@@ -7742,6 +7741,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         self.assertIs(row["stream_usage"], True)
         self.assertEqual(row["context_limit"], 1_000_000)
         self.assertEqual(row["max_output_tokens"], 131_072)
+        self.assertEqual(row["api_max_completion_tokens"], 524_288)
         self.assertEqual(row["pricing"]["cached_input_per_million"], 0.06)
         self.assertEqual(
             row["pricing"]["cached_input_over_threshold_per_million"], 0.12
@@ -9989,6 +9989,16 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "exact MiniMax-M3"):
                     cloud_sb7.validate_rosters([row], roster)
         roster["evidence"]["minimax_api"]["MiniMax-M3"] = metadata
+
+        for value in (131_072, None):
+            with self.subTest(api_max_completion_tokens=value):
+                changed = dict(row)
+                if value is None:
+                    changed.pop("api_max_completion_tokens")
+                else:
+                    changed["api_max_completion_tokens"] = value
+                with self.assertRaisesRegex(SystemExit, "exact MiniMax-M3"):
+                    cloud_sb7.validate_rosters([changed], roster)
 
         for field, value in (
             ("endpoint_family", "https://example.invalid/v1"),
