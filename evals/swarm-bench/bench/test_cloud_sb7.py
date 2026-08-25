@@ -18815,6 +18815,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
             changed_log["input"]["stop"] = ["done"]
             changed_log["input"]["instructions"] = "unsupported top-level system"
             changed_log["input"]["input"][0]["role"] = "assistant"
+            changed_log["input"]["tools"][0]["strict"] = False
             changed_log["input"]["reasoning"]["effort"] = "high"
             (logs / "llm_request.0.jsonl").write_text(json.dumps(changed_log) + "\n")
             wrong_usage = dict(terminal_usage)
@@ -18842,6 +18843,9 @@ class CloudSb7HarnessTest(unittest.TestCase):
             )
             self.assertTrue(
                 any("system/user input" in error for error in rejected["errors"])
+            )
+            self.assertTrue(
+                any("function tool strict" in error for error in rejected["errors"])
             )
             self.assertTrue(
                 any("unexpected model identity" in error for error in rejected["errors"])
