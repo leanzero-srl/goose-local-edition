@@ -28,9 +28,9 @@ MODELS = [
     "workhorse-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
 ]
 NEW_MODELS = [
-    "gabee-qwen3.8-27b-brainwaves-v18-synthetic",
-    "mihai-qwen3.8-27b-brainwaves-v18-synthetic",
-    "workhorse-qwen3.8-27b-brainwaves-v18-synthetic",
+    "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
+    "mihai-qwen3.8-27b-brainwaves-mxfp8-mlx",
+    "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx",
 ]
 
 
@@ -243,6 +243,7 @@ class TerminalClosureTests(unittest.TestCase):
         *,
         fixture_seed: str | None = "0123456789abcdef",
         model_ids: list[str] | None = None,
+        context_lengths: dict[str, int] | None = None,
     ) -> tuple[pathlib.Path, dict, contextlib.ExitStack]:
         live_root = self.root / "local-sb7-engine-v18"
         run_dir = live_root / "swarm-3node-qwen38-brainwaves-r0"
@@ -303,22 +304,28 @@ class TerminalClosureTests(unittest.TestCase):
             }
         )
         models = list(model_ids or MODELS)
-        model_rows = [
-            {
-                "identifier": identifier,
-                "deviceIdentifier": None if identifier.startswith("mihai-") else identifier,
-                "role": "local"
+        model_rows = []
+        for identifier in models:
+            role = (
+                "local"
                 if identifier.startswith("mihai-")
                 else "workhorse"
                 if identifier.startswith("workhorse-")
-                else "mac",
-                "path": "/fixture/model.gguf",
-                "contextLength": 262144,
-                "parallel": 2,
-                "quantization": {"bits": 6, "name": "fixture"},
-            }
-            for identifier in models
-        ]
+                else "mac"
+            )
+            model_rows.append(
+                {
+                    "identifier": identifier,
+                    "deviceIdentifier": (
+                        None if identifier.startswith("mihai-") else identifier
+                    ),
+                    "role": role,
+                    "path": "/fixture/model.gguf",
+                    "contextLength": (context_lengths or {}).get(role, 262144),
+                    "parallel": 2,
+                    "quantization": {"bits": 6, "name": "fixture"},
+                }
+            )
         planner = models[2]
         fleet_seal = {
             "schema_version": 1,
@@ -964,8 +971,10 @@ class TerminalClosureTests(unittest.TestCase):
             )
 
     def test_v18_binding_accepts_new_family_aliases_and_pins_exact_pool(self) -> None:
+        contexts = {"mac": 262144, "local": 135936, "workhorse": 262144}
         template_path, _config, patches = self.v18_binding_fixture(
-            model_ids=NEW_MODELS
+            model_ids=NEW_MODELS,
+            context_lengths=contexts,
         )
         with patches:
             target, created = closure.bind_v18(template_path)
@@ -978,6 +987,22 @@ class TerminalClosureTests(unittest.TestCase):
             self.assertEqual(
                 armed["binding"]["fleet_binding_sha256"],
                 armed["expected"]["fleet_binding_sha256"],
+            )
+            self.assertEqual(
+                {
+                    row["role"]: row["context_length"]
+                    for row in armed["binding"]["fleet_binding"]["models"]
+                },
+                contexts,
+            )
+            self.assertEqual(
+                len(
+                    {
+                        row["artifact_identity_sha256"]
+                        for row in armed["binding"]["fleet_binding"]["models"]
+                    }
+                ),
+                1,
             )
 
     def test_v18_fleet_binding_rejects_model_and_artifact_tampering(self) -> None:
@@ -993,20 +1018,13 @@ class TerminalClosureTests(unittest.TestCase):
                 "identity_hash": lambda binding: binding["models"][0].__setitem__(
                     "artifact_identity_sha256", "0" * 64
                 ),
-                "context_drift": lambda binding: binding["models"][0].update(
+                "artifact_path_drift": lambda binding: binding["models"][0].update(
                     {
-                        "context_length": binding["models"][0]["context_length"] * 2,
+                        "artifact_path_sha256": "1" * 64,
                         "artifact_identity_sha256": closure.sha256_bytes(
                             closure.canonical_json(
                                 {
-                                    "artifact_path_sha256": binding["models"][0][
-                                        "artifact_path_sha256"
-                                    ],
-                                    "context_length": binding["models"][0][
-                                        "context_length"
-                                    ]
-                                    * 2,
-                                    "parallel": binding["models"][0]["parallel"],
+                                    "artifact_path_sha256": "1" * 64,
                                     "quantization_sha256": binding["models"][0][
                                         "quantization_sha256"
                                     ],
