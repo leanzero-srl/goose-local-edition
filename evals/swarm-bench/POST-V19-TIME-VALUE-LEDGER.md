@@ -11,7 +11,7 @@ V19 evidence identity:
 - run: `swarm-20260825-074635151`
 - source: `4dac4737dd0c8386bebc3feb4efd1cb9f6989995`
 - binary: `0a2b49258a4a3e383d9aaaa28174a8fcf211147324e0fe8da8fcee3aed2b0729`
-- snapshot boundary: sequence 1687 at `2026-08-25T11:22:19.305030Z`
+- terminal boundary: sequence 1736 at `2026-08-25T11:56:39.688122Z`
 
 The optimization objective is lower wall time to a runnable application without buying speed
 with weaker evidence, looser validation, arbitrary call/time/token caps, reduced benchmark
@@ -26,10 +26,48 @@ requirements, or hidden degraded authority.
   skeleton.
 - Three planning audits ran concurrently for 886.253 seconds of wall time. Acceptance/evidence
   found 9 issues, DAG/interfaces found 0, and requirements/coverage found 4.
-- Canonical revision began at `10:58:04.509602Z`. Its first two generations consumed
-  1,454.707 provider-seconds, were both cancelled after semantic `looping_high` verdicts, and
-  produced no accepted plan. The third generation was live at the snapshot boundary.
-- No build task had been dispatched 3:35:44 after run start at the snapshot boundary.
+- Canonical revision began at `10:58:04.509602Z`. Three generations consumed 1,900.654
+  provider-seconds and were cancelled after semantic recurrence review. The fourth finished in
+  263.364 seconds; strict compilation rejected one duplicate semantic-role assignment, and two
+  short correction calls allowed requirement binding to begin.
+- No build task was ever dispatched. V19 terminated 15,004.534 seconds (4:10:04.534) after run
+  start while still in pre-scheduler requirement binding.
+
+## Proven terminal failure
+
+Workhorse admission `00000128` started exactly one provider request for
+`reqbind-artifact-evidence-v3:pre-scheduler:128` at `11:36:56.443312Z`. The last stream progress
+was sequence 1733 at `11:46:39.678859Z`. After 600.009 seconds with no further progress, the local
+work ended `error` with one provider start and zero proven provider terminals (sequences
+1734-1735). Sequence 1736 quarantined the admission because the outstanding request had no proven
+cancelled terminal. Goose then exited without `run_finished`; the authenticated monitor captured
+that exact incident at `11:56:40.008466Z`.
+
+This is an ambiguous-transport abort, not a model-quality verdict or a context-window error. The
+engine correctly refused to release unresolved lifecycle authority, but typed task compilation
+failed before dispatch. Consequently V19 has no build, repair, score, publication, or no-cache
+result and must never be represented as a completed baseline. Evidence: `run.jsonl` sequences
+1732-1736, `engine-console.log`, and `.swarm-monitor/watch.jsonl` in the frozen V19 run tree.
+
+## Context-window and compaction evidence
+
+- Authenticated preflight sealed the loaded windows as Local/Mihai `262144`, Mac/Gabee `135936`,
+  and Workhorse `262144` tokens (`fleet-seal.json`, sealed `07:46:31.914849Z`). V19 did not bind
+  those per-host allocations into sessions: `levers_resolved.context_cap` was null and all 128
+  hidden V19 sessions persisted `model_config.context_limit=null`.
+- With no global hard cap, the unbound Goose model fallback was `128000` tokens and the default
+  0.8 auto-compaction threshold was `102400`. V19 emitted no per-call resolved-limit evidence, so
+  the fallback is reconstructible from source and session state but a host-specific effective
+  limit is not. This observability gap is itself a V20 requirement.
+- Completed prompt-token maxima were Local `38894`, Mac/Gabee `38888`, and Workhorse `43397`.
+  Gabee's largest completed prompt plus output was `46655`, 34.3% of its loaded allocation. The
+  aborted requirement-binding request had `208169` serialized input bytes and no terminal usage
+  row, so its exact token count is unavailable.
+- No compaction event, diagnostic, or context overflow occurred in the run log, matching CLI log,
+  activity snapshots, or session metadata. That is not proof that continuity works: pre-scheduler
+  calls were predominantly fresh response-only requests, and V19 dispatched zero execution
+  workers. The longest persisted pre-scheduler conversation was session `20260825_298` with 11
+  messages and a `43397`-token final prompt.
 
 ## Demonstrated low-marginal-value work
 
@@ -55,11 +93,12 @@ unchanged correction state. A materially improving correction must remain on the
 
 ### Canonical revision regeneration
 
-Two Workhorse revision generations used 1,454.707 provider-seconds, entered no structured output,
-and were cancelled by semantic judges. The judges prevented worse looping and are not the waste.
-The candidate change is to make revision consume a smaller, deterministic merge input and preserve
-accepted skeleton content, so a nudge does not force the model to re-derive the entire plan. The
-strict one-plan compiler and semantic recurrence guard remain mandatory.
+Three Workhorse revision generations used 1,900.654 provider-seconds, entered no accepted
+structured output, and were cancelled after semantic recurrence review. The judges prevented worse
+looping and are not the waste. The candidate change is to make revision consume a smaller,
+deterministic merge input and preserve accepted skeleton content, so a nudge does not force the
+model to re-derive the entire plan. The strict one-plan compiler and semantic recurrence guard
+remain mandatory.
 
 ### DAG/interfaces audit observation
 
@@ -124,6 +163,13 @@ All candidate changes are confined to `crates/goose-cli/src/commands/swarm.rs`.
   compile.
 - One `looping_high` followed by `continue` does not cancel; two corroborated highs over the same
   recurring tail cancel once; advancing tail or structured output prevents cancellation.
+- A forced low-cap, long-lived execution worker crosses the compaction threshold and emits
+  task/session/host-linked pre/post token and message counts, resolved loaded/effective limits, the
+  trigger reason, and retained-tail evidence. It must preserve tool request/response pairing,
+  requirement and file-contract continuity, avoid duplicate calls, and finish the runnable task.
+- A separate oversized fresh response-only request is rejected or routed before admission from
+  loaded-window plus output-reserve evidence; conversational compaction is not credited for that
+  case.
 - Existing false-spec citation reopening, distinct-host failover, structured-output race, and full
   lifecycle-drain regressions remain green.
 
@@ -141,9 +187,13 @@ Any post-V19 change must prove all of the following before an append-only launch
    rule or hiding provider work.
 5. Lifecycle, tool-call, recurrence, compiler, build, repair, hermetic-score, publication, and
    no-cache verification gates all remain exact.
-6. The final result is a runnable application; latency improvement alone is not success.
+6. At least one forced low-cap worker compaction is directly observed with continuity telemetry;
+   absence of a context failure or a low final prompt is not evidence that compaction works.
+7. The final result is a runnable application; latency improvement alone is not success.
 
-## Terminal addendum required
+## Terminal disposition
 
-Append V19's final phase durations, task/build/repair results, exact score, telemetry, impairment
-disclosure, and publication verification before selecting or implementing the next-run changes.
+The terminal addendum is closed as an impaired pre-build failure. There are no task/build/repair,
+score, publication, or no-cache values to append. Preserve the frozen incident and context evidence;
+V20 must prove natural terminal lifecycle balance and forced compaction continuity before any score
+or publication decision.
