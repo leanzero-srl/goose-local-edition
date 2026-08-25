@@ -212,9 +212,12 @@ impl ProviderTestConfig {
 
 impl ProviderFixture {
     async fn setup(config: &ProviderTestConfig, mode: GooseMode) -> Result<Self> {
+        let temp_dir = tempfile::tempdir()?;
+        let config_root = temp_dir.path().to_string_lossy().into_owned();
         let mut env_vars: Vec<(&'static str, Option<&str>)> = vec![
             ("GOOSE_MODE", Some(<&str>::from(mode))),
             ("GOOSE_DISABLE_KEYRING", Some("1")),
+            ("GOOSE_PATH_ROOT", Some(config_root.as_str())),
         ];
         for &var in config.clear_env {
             env_vars.push((var, None));
@@ -246,7 +249,6 @@ impl ProviderFixture {
             config.model_name,
         )?;
 
-        let temp_dir = tempfile::tempdir()?;
         let session_manager = Arc::new(SessionManager::new(temp_dir.path().to_path_buf()));
         let permission_manager = Arc::new(PermissionManager::new(temp_dir.path().to_path_buf()));
 
