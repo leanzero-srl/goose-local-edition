@@ -56,6 +56,20 @@ V18_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
 V18_PROTECTED_DOCUMENT_IDS = frozenset(
     {"brun-fleet-qwen38-sb70", "brun-fleet-qwen-sb70"}
 )
+V18_PRIOR_MODEL_ALIASES = frozenset(
+    {
+        "gabee-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
+        "mihai-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
+        "workhorse-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
+    }
+)
+V18_MIN_CONTEXT_LENGTH = 65_536
+V18_ROLE_PREFIXES = {
+    "local": "mihai-",
+    "workhorse": "workhorse-",
+    "mac": "gabee-",
+}
+V18_MODEL_FAMILY_PREFIX = "qwen3.8-27b-brainwaves"
 V18_CANDIDATE_COMMIT = "10f446dfa7e4cf4c9ec8cb0648e0bbdfc0100116"
 V18_CANDIDATE_TREE = "19e5ecc3bf62e334a754ad93a83165781c3f4f82"
 V18_BINARY = V18_LIVE_ROOT / "bin/goose-2aedd0debf84"
@@ -1229,6 +1243,7 @@ def validate_v18_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         "run_started_sha256",
         "trace_header_sha256",
         "fleet_seal_sha256",
+        "fleet_binding_sha256",
     )
     if not armed:
         if not allow_unarmed:
@@ -1305,6 +1320,18 @@ def validate_v18_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         raise ClosureError("armed v18 binding trace-header hash differs")
     if binding.get("fleet_seal_sha256") != expected["fleet_seal_sha256"]:
         raise ClosureError("armed v18 binding fleet-seal hash differs")
+    fleet_binding = binding.get("fleet_binding")
+    validate_v18_fleet_binding(
+        fleet_binding,
+        fleet_seal_sha256=expected["fleet_seal_sha256"],
+        model_ids=models,
+    )
+    fleet_binding_sha256 = sha256_bytes(canonical_json(fleet_binding))
+    if (
+        fleet_binding_sha256 != expected["fleet_binding_sha256"]
+        or binding.get("fleet_binding_sha256") != fleet_binding_sha256
+    ):
+        raise ClosureError("armed v18 fleet binding hash differs")
 
 
 def validate_config(config: dict[str, Any], *, allow_unarmed: bool = False) -> None:
@@ -1448,6 +1475,7 @@ def validate_v18_fleet_seal(
 ) -> list[str]:
     models = seal.get("models")
     model_ids = seal.get("model_ids")
+    prior_model_aliases_reused = seal.get("prior_model_aliases_reused")
     if (
         seal.get("schema_version") != SCHEMA_VERSION
         or seal.get("source") != "authenticated-live-lm-studio-preflight"
@@ -1457,15 +1485,16 @@ def validate_v18_fleet_seal(
         or len(model_ids) != 3
         or len(set(model_ids)) != 3
         or seal.get("api_model_ids") != sorted(model_ids)
-        or seal.get("prior_model_aliases_reused") != sorted(model_ids)
+        or prior_model_aliases_reused
+        != sorted(set(model_ids) & V18_PRIOR_MODEL_ALIASES)
         or "protected_prior_aliases_reused" in seal
     ):
         raise ClosureError("v18 authenticated fleet seal is malformed or stale")
     identifiers: list[str] = []
     paths: set[str] = set()
     quantizations: set[bytes] = set()
+    context_lengths: set[int] = set()
     roles: set[str] = set()
-    prefixes = {"local": "mihai-", "workhorse": "workhorse-", "mac": "gabee-"}
     for row in models:
         if not isinstance(row, dict):
             raise ClosureError("v18 fleet seal model row is malformed")
@@ -1474,28 +1503,31 @@ def validate_v18_fleet_seal(
         if (
             not isinstance(identifier, str)
             or not isinstance(role, str)
-            or role not in prefixes
-            or not identifier.casefold().startswith(prefixes[role])
-            or "qwen3.8" not in identifier.casefold()
-            or "27b" not in identifier.casefold()
-            or "brainwaves" not in identifier.casefold()
+            or role not in V18_ROLE_PREFIXES
+            or not identifier.casefold().startswith(
+                V18_ROLE_PREFIXES[role] + V18_MODEL_FAMILY_PREFIX
+            )
             or not isinstance(row.get("path"), str)
             or not row.get("path")
             or not isinstance(row.get("contextLength"), int)
-            or row["contextLength"] <= 0
+            or row["contextLength"] < V18_MIN_CONTEXT_LENGTH
             or row.get("parallel") != 2
             or not isinstance(row.get("quantization"), dict)
+            or not isinstance(row["quantization"].get("bits"), int)
+            or row["quantization"]["bits"] <= 0
         ):
             raise ClosureError("v18 fleet seal model row changed")
         identifiers.append(identifier)
         roles.add(role)
         paths.add(row["path"])
         quantizations.add(canonical_json(row["quantization"]))
+        context_lengths.add(row["contextLength"])
     if (
-        roles != set(prefixes)
+        roles != set(V18_ROLE_PREFIXES)
         or sorted(identifiers) != sorted(model_ids)
         or len(paths) != 1
         or len(quantizations) != 1
+        or len(context_lengths) != 1
         or seal.get("planner_model") not in model_ids
     ):
         raise ClosureError("v18 fleet seal physical/model identity does not reconcile")
@@ -1508,6 +1540,101 @@ def validate_v18_fleet_seal(
     ):
         raise ClosureError("v18 launch/fleet-seal identity differs")
     return sorted(model_ids)
+
+
+def v18_fleet_binding(
+    seal: Mapping[str, Any], fleet_seal_sha256: str
+) -> dict[str, Any]:
+    if not SHA256_RE.fullmatch(fleet_seal_sha256):
+        raise ClosureError("v18 fleet binding lacks its sealed source hash")
+    rows: list[dict[str, Any]] = []
+    for model in seal["models"]:
+        artifact = {
+            "artifact_path_sha256": sha256_bytes(str(model["path"]).encode()),
+            "context_length": model["contextLength"],
+            "parallel": model["parallel"],
+            "quantization_sha256": sha256_bytes(canonical_json(model["quantization"])),
+        }
+        rows.append(
+            {
+                "model_id": model["identifier"],
+                "role": model["role"],
+                **artifact,
+                "artifact_identity_sha256": sha256_bytes(canonical_json(artifact)),
+            }
+        )
+    rows.sort(key=lambda row: (row["role"], row["model_id"]))
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "fleet_seal_sha256": fleet_seal_sha256,
+        "model_ids": sorted(str(model_id) for model_id in seal["model_ids"]),
+        "models": rows,
+    }
+
+
+def validate_v18_fleet_binding(
+    binding: Any,
+    *,
+    fleet_seal_sha256: str,
+    model_ids: list[str],
+) -> None:
+    if (
+        not isinstance(binding, dict)
+        or set(binding)
+        != {"schema_version", "fleet_seal_sha256", "model_ids", "models"}
+        or binding.get("schema_version") != SCHEMA_VERSION
+        or binding.get("fleet_seal_sha256") != fleet_seal_sha256
+        or binding.get("model_ids") != sorted(model_ids)
+        or not isinstance(binding.get("models"), list)
+        or len(binding["models"]) != 3
+    ):
+        raise ClosureError("v18 fleet binding identity is malformed")
+    roles: set[str] = set()
+    bound_model_ids: list[str] = []
+    artifact_identities: set[str] = set()
+    for row in binding["models"]:
+        if not isinstance(row, dict) or set(row) != {
+            "model_id",
+            "role",
+            "artifact_path_sha256",
+            "context_length",
+            "parallel",
+            "quantization_sha256",
+            "artifact_identity_sha256",
+        }:
+            raise ClosureError("v18 fleet binding model row is malformed")
+        role = row.get("role")
+        model_id = row.get("model_id")
+        prefix = V18_ROLE_PREFIXES.get(role)
+        artifact = {
+            "artifact_path_sha256": row.get("artifact_path_sha256"),
+            "context_length": row.get("context_length"),
+            "parallel": row.get("parallel"),
+            "quantization_sha256": row.get("quantization_sha256"),
+        }
+        if (
+            not prefix
+            or not isinstance(model_id, str)
+            or not model_id.casefold().startswith(prefix + V18_MODEL_FAMILY_PREFIX)
+            or not SHA256_RE.fullmatch(str(artifact["artifact_path_sha256"]))
+            or not isinstance(artifact["context_length"], int)
+            or artifact["context_length"] < V18_MIN_CONTEXT_LENGTH
+            or artifact["parallel"] != 2
+            or not SHA256_RE.fullmatch(str(artifact["quantization_sha256"]))
+            or row.get("artifact_identity_sha256")
+            != sha256_bytes(canonical_json(artifact))
+        ):
+            raise ClosureError("v18 fleet binding model row changed")
+        roles.add(role)
+        bound_model_ids.append(model_id)
+        artifact_identities.add(row["artifact_identity_sha256"])
+    if (
+        roles != set(V18_ROLE_PREFIXES)
+        or sorted(bound_model_ids) != sorted(model_ids)
+        or len(set(bound_model_ids)) != 3
+        or len(artifact_identities) != 1
+    ):
+        raise ClosureError("v18 fleet binding physical/artifact identity differs")
 
 
 def v18_binding_evidence(
@@ -1609,6 +1736,13 @@ def v18_binding_evidence(
         raise ClosureError("v18 fleet seal differs from its launch receipt")
     fleet = decode_json_object(fleet_payload, str(V18_FLEET_SEAL))
     models = validate_v18_fleet_seal(fleet, launch)
+    fleet_binding = v18_fleet_binding(fleet, fleet_sha256)
+    validate_v18_fleet_binding(
+        fleet_binding,
+        fleet_seal_sha256=fleet_sha256,
+        model_ids=models,
+    )
+    fleet_binding_sha256 = sha256_bytes(canonical_json(fleet_binding))
 
     run_log_path = V18_RUN_DIR / "run.jsonl"
     run_started, run_started_sha256 = read_private_jsonl_first(run_log_path)
@@ -1670,6 +1804,8 @@ def v18_binding_evidence(
         "trace_header_sha256": trace_header_sha256,
         "fleet_seal_path": str(V18_FLEET_SEAL),
         "fleet_seal_sha256": fleet_sha256,
+        "fleet_binding_sha256": fleet_binding_sha256,
+        "fleet_binding": fleet_binding,
     }
     observed = {
         "run_id": run_started["run_id"],
@@ -1700,6 +1836,7 @@ def bind_v18(template_path: pathlib.Path) -> tuple[pathlib.Path, bool]:
             "run_started_sha256": binding["run_started_sha256"],
             "trace_header_sha256": binding["trace_header_sha256"],
             "fleet_seal_sha256": binding["fleet_seal_sha256"],
+            "fleet_binding_sha256": binding["fleet_binding_sha256"],
         }
     )
     armed["binding"] = {**binding, "bound_at": utc_now()}
@@ -1812,6 +1949,35 @@ class TerminalClosure:
         self.events.emit(f"{role}_exit_observed", pid=pid, exit_code_observable=False)
         return receipt
 
+    def authenticated_v18_fleet_binding(
+        self, launch: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        expected = self.config["expected"]
+        fleet_payload = read_private_bytes(V18_FLEET_SEAL)
+        fleet_seal_sha256 = sha256_bytes(fleet_payload)
+        if fleet_seal_sha256 != expected["fleet_seal_sha256"]:
+            raise ClosureError("bound fleet seal changed")
+        fleet = decode_json_object(fleet_payload, str(V18_FLEET_SEAL))
+        model_ids = validate_v18_fleet_seal(fleet, launch)
+        if model_ids != sorted(expected["models"]):
+            raise ClosureError("bound v18 model inventory changed")
+        binding = v18_fleet_binding(fleet, fleet_seal_sha256)
+        validate_v18_fleet_binding(
+            binding,
+            fleet_seal_sha256=fleet_seal_sha256,
+            model_ids=model_ids,
+        )
+        binding_sha256 = sha256_bytes(canonical_json(binding))
+        if (
+            binding_sha256 != expected["fleet_binding_sha256"]
+            or self.config["binding"].get("fleet_binding_sha256")
+            != binding_sha256
+            or canonical_json(self.config["binding"].get("fleet_binding"))
+            != canonical_json(binding)
+        ):
+            raise ClosureError("bound v18 fleet binding changed")
+        return binding
+
     def validate_frozen_inputs(self) -> tuple[dict[str, Any], dict[str, Any]]:
         expected = self.config["expected"]
         launch_path = self.live_root / "launch.json"
@@ -1843,12 +2009,7 @@ class TerminalClosure:
                 or run_started.get("run_id") != expected["run_id"]
             ):
                 raise ClosureError("bound run_started identity changed")
-            fleet_payload = read_private_bytes(V18_FLEET_SEAL)
-            if sha256_bytes(fleet_payload) != expected["fleet_seal_sha256"]:
-                raise ClosureError("bound fleet seal changed")
-            fleet = decode_json_object(fleet_payload, str(V18_FLEET_SEAL))
-            if validate_v18_fleet_seal(fleet, launch) != sorted(expected["models"]):
-                raise ClosureError("bound v18 model inventory changed")
+            self.authenticated_v18_fleet_binding(launch)
             self.bound_trace_header()
         if launch.get("publication_document_id") != self.config["publication"]["target_document_id"]:
             raise ClosureError("launch publication identity changed")
@@ -2466,6 +2627,21 @@ class TerminalClosure:
         if worker_result.get("fixture_seed") != expected_seed:
             raise ClosureError("score worker receipt used a different fixture_seed")
         auto = read_json(self.run_dir / "verdict.json")
+        fleet_closure: dict[str, Any] = {}
+        fleet_provenance: dict[str, Any] = {}
+        if self.config.get("closure_generation") == V18_GENERATION:
+            fleet_binding = self.authenticated_v18_fleet_binding(launch)
+            fleet_binding_sha256 = sha256_bytes(canonical_json(fleet_binding))
+            fleet_closure = {
+                "fleet_seal_sha256": self.config["expected"][
+                    "fleet_seal_sha256"
+                ],
+                "fleet_binding_sha256": fleet_binding_sha256,
+            }
+            fleet_provenance = {
+                "fleet_binding": fleet_binding,
+                "fleet_binding_sha256": fleet_binding_sha256,
+            }
         safe_agent = {
             "exit": auto["agent"]["exit"],
             "timed_out": auto["agent"]["timed_out"],
@@ -2496,6 +2672,7 @@ class TerminalClosure:
                         "playwright_node_wrapper_sha256"
                     ],
                     "auto_verdict_sha256": terminal["auto_verdict_sha256"],
+                    **fleet_closure,
                 },
             }
         )
@@ -2530,8 +2707,10 @@ class TerminalClosure:
             "engine_events": terminal["engine_events"],
             "run_started_at": terminal["run_started_at"],
             "run_finished_at": terminal["run_finished_at"],
+            **fleet_provenance,
             "authoritative_verdict_sha256": sha256_file(authoritative_path),
         }
+        self.validate_v18_publication_fleet(score, provenance)
         provenance_path = self.state_dir / "scoring-provenance.json"
         if provenance_path.is_file():
             existing_provenance = read_json(provenance_path)
@@ -2543,6 +2722,36 @@ class TerminalClosure:
         if not manifests_equal(raw_seal, current_raw):
             raise ClosureError("raw tree changed during authoritative scoring")
         return authoritative_path, provenance
+
+    def validate_v18_publication_fleet(
+        self,
+        authoritative: Mapping[str, Any],
+        provenance: Mapping[str, Any],
+    ) -> None:
+        if self.config.get("closure_generation") != V18_GENERATION:
+            return
+        expected = self.config["expected"]
+        fleet_binding = provenance.get("fleet_binding")
+        validate_v18_fleet_binding(
+            fleet_binding,
+            fleet_seal_sha256=expected["fleet_seal_sha256"],
+            model_ids=expected["models"],
+        )
+        fleet_binding_sha256 = sha256_bytes(canonical_json(fleet_binding))
+        score_closure = authoritative.get("closure")
+        actual_pool = authoritative.get("actual_pool")
+        if (
+            fleet_binding_sha256 != expected["fleet_binding_sha256"]
+            or provenance.get("fleet_binding_sha256") != fleet_binding_sha256
+            or not isinstance(score_closure, dict)
+            or score_closure.get("fleet_seal_sha256")
+            != expected["fleet_seal_sha256"]
+            or score_closure.get("fleet_binding_sha256")
+            != fleet_binding_sha256
+            or not isinstance(actual_pool, list)
+            or sorted(actual_pool) != sorted(expected["models"])
+        ):
+            raise ClosureError("v18 authoritative fleet provenance differs")
 
     def validate_score(self, score: dict[str, Any], terminal: dict[str, Any]) -> None:
         expected_seed = self.expected_fixture_seed(terminal.get("fixture_seed"))
@@ -2694,6 +2903,7 @@ class TerminalClosure:
         provenance = read_json(self.state_dir / "scoring-provenance.json")
         if provenance.get("fixture_seed") != expected_seed:
             raise ClosureError("publication provenance used a different fixture_seed")
+        self.validate_v18_publication_fleet(authoritative, provenance)
         if receipt.get("authoritative_verdict_sha256") != sha256_file(authoritative_path):
             raise ClosureError("publisher receipt does not identify the authoritative verdict")
         if receipt.get("create_only") is not True:
