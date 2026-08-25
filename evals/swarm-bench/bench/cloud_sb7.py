@@ -14070,6 +14070,13 @@ def responses_smoke_contract(
                 request_errors.append("system/user input")
         if not isinstance(tools, list) or not tools:
             request_errors.append("tools")
+        elif provider == "xai_api" and any(
+            isinstance(tool, dict)
+            and tool.get("type") == "function"
+            and "strict" in tool
+            for tool in tools
+        ):
+            request_errors.append("function tool strict")
         if payload.get("tool_choice") != "auto":
             request_errors.append("tool_choice")
         if payload.get("parallel_tool_calls") is not False:
