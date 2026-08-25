@@ -5,6 +5,7 @@ import {
   FORMATION_PHASES,
   FORMATION_RAMP,
   SWARM_STATUS,
+  type FormationEvidence,
   formationPhaseState,
   phaseStepIndex,
 } from './formationVisualState';
@@ -29,7 +30,7 @@ export function FormationRibbon({
   nodes: FormationRibbonNode[];
   activeColor?: string;
   metrics?: React.ReactNode;
-  evidence?: { integrationObserved: boolean; repairObserved: boolean };
+  evidence?: FormationEvidence;
 }) {
   const activeIndex = phaseStepIndex(phase);
   const workingCount = nodes.filter((node) => node.working).length;

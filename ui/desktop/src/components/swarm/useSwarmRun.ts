@@ -428,7 +428,12 @@ export interface SwarmRunState {
   /** Friendly current-phase label (Planning research / Building / Verifying / Done…). */
   phase: string;
   /** Engine-event evidence for stages that the Formation Ribbon may truthfully mark skipped. */
-  formation?: { integrationObserved: boolean; repairObserved: boolean };
+  formation?: {
+    researchObserved: boolean;
+    planObserved: boolean;
+    integrationObserved: boolean;
+    repairObserved: boolean;
+  };
   /** Cross-draft-agreement plan confidence (0-100) — how sure the planner was about the decomposition.
    *  null before planning finishes / when not computed. Updates live as the swarm retargets to raise it. */
   planConfidence: number | null;
@@ -2347,6 +2352,25 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           // that matters to someone watching is not which task is next, it is "is this thing working or not".
           phase: held ? 'Paused' : phase,
           formation: {
+            researchObserved: data.events.some((event) => {
+              const eventType = String(event['event'] ?? '');
+              return (
+                eventType.startsWith('pillar_opening_') ||
+                eventType.startsWith('pillar_research_') ||
+                eventType === 'scouts_planned' ||
+                eventType === 'research_planned' ||
+                eventType === 'research_completed'
+              );
+            }),
+            planObserved: data.events.some((event) => {
+              const eventType = String(event['event'] ?? '');
+              return (
+                eventType.startsWith('pillar_synthesis_plan_') ||
+                eventType === 'plan_loaded' ||
+                eventType === 'pillars' ||
+                eventType === 'contracts'
+              );
+            }),
             integrationObserved: data.events.some(
               (event) =>
                 event['event'] === 'task_dispatched' && event['task_id'] === 'integrate-verify'
