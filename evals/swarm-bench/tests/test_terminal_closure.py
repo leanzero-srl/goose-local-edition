@@ -1015,6 +1015,12 @@ class TerminalClosureTests(unittest.TestCase):
                 "arbitrary_model": lambda binding: binding["models"][0].__setitem__(
                     "model_id", "gabee-not-the-bound-brainwaves-model"
                 ),
+                "family_impostor": lambda binding: binding["models"][1].__setitem__(
+                    "model_id", "gabee-qwen3.8-27b-brainwavesevil"
+                ),
+                "wrong_role_prefix": lambda binding: binding["models"][1].__setitem__(
+                    "model_id", "mihai-qwen3.8-27b-brainwaves-mxfp8-mlx"
+                ),
                 "identity_hash": lambda binding: binding["models"][0].__setitem__(
                     "artifact_identity_sha256", "0" * 64
                 ),
