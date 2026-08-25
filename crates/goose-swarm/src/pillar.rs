@@ -54,9 +54,6 @@ pub fn authored_requirements_require_integration(requirements: &[AuthoredRequire
         "independent deliverables",
         "independent outputs",
         "standalone deliverables",
-        "standalone outputs",
-        "separate artifacts",
-        "separate deliverables",
         "do not integrate",
         "must not integrate",
         "no integration required",
@@ -71,6 +68,13 @@ pub struct ResearchPillarOpening {
     pub requirements: Vec<AuthoredRequirement>,
     pub pillars: Vec<ResearchPillar>,
     pub integration_contract: IntegrationContract,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PillarImplementationTaskCoverage {
+    pub task_id: String,
+    pub requirement_ids: Vec<String>,
+    pub is_validated_strongest_terminal: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -361,6 +365,89 @@ pub fn validate_pillar_opening_against(
     Ok(())
 }
 
+pub fn validate_pillar_integration_task_ownership(
+    opening: &ResearchPillarOpening,
+    implementation_tasks: &[PillarImplementationTaskCoverage],
+) -> Result<(), PillarDomainError> {
+    validate_pillar_opening(opening)?;
+    if !opening.integration_contract.integration_required {
+        return Ok(());
+    }
+
+    let requirement_pillars = opening
+        .pillars
+        .iter()
+        .flat_map(|pillar| {
+            pillar
+                .requirement_ids
+                .iter()
+                .map(move |requirement_id| (requirement_id.as_str(), pillar.id.as_str()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut integration_tasks = Vec::new();
+
+    for task in implementation_tasks {
+        require_text("pillar implementation task id", &task.task_id)?;
+        let mut covered_pillars = BTreeSet::new();
+        for requirement_id in &task.requirement_ids {
+            let pillar_id = requirement_pillars.get(requirement_id.as_str()).ok_or_else(|| {
+                PillarDomainError::new(
+                    "pillar_task_requirement_unknown",
+                    format!(
+                        "implementation task {:?} references requirement {:?} outside the pillar opening",
+                        task.task_id, requirement_id
+                    ),
+                )
+            })?;
+            covered_pillars.insert(*pillar_id);
+        }
+
+        match covered_pillars.len() {
+            0 => {
+                return Err(PillarDomainError::new(
+                    "pillar_task_coverage_empty",
+                    format!(
+                        "implementation task {:?} must cover exactly one pillar or be the single integration task",
+                        task.task_id
+                    ),
+                ));
+            }
+            1 => {
+                if task.is_validated_strongest_terminal {
+                    return Err(PillarDomainError::new(
+                        "pillar_integration_terminal_not_cross_pillar",
+                        format!(
+                            "validated strongest terminal {:?} does not integrate multiple pillars",
+                            task.task_id
+                        ),
+                    ));
+                }
+            }
+            _ => integration_tasks.push(task),
+        }
+    }
+
+    if integration_tasks.len() != 1 {
+        return Err(PillarDomainError::new(
+            "pillar_integration_task_count",
+            format!(
+                "pillar integration requires exactly one multi-pillar implementation task, found {}",
+                integration_tasks.len()
+            ),
+        ));
+    }
+    if !integration_tasks[0].is_validated_strongest_terminal {
+        return Err(PillarDomainError::new(
+            "pillar_integration_task_not_strongest_terminal",
+            format!(
+                "multi-pillar implementation task {:?} is not the validated strongest-node terminal",
+                integration_tasks[0].task_id
+            ),
+        ));
+    }
+    Ok(())
+}
+
 pub fn evidence_source_digest(text: &str) -> String {
     let mut encoded = String::with_capacity(71);
     encoded.push_str("sha256:");
@@ -549,8 +636,110 @@ pub fn render_synthesis_input(reports: &[CompiledPillarReport], max_chars: usize
         return String::new();
     }
 
+    let mut reports = reports.iter().collect::<Vec<_>>();
+    reports.sort_by_key(|report| report.pillar_id.as_str());
+
+    const HEADER: &str = "PILLAR RESEARCH SYNTHESIS";
+    const OWNER_SPEC_HEADER: &str = "[OWNER SPECS: INTERFACES AND ACCEPTANCE]";
+    let essential_line_count = reports.len().saturating_mul(2);
+    let essential_overhead = HEADER
+        .len()
+        .saturating_add(OWNER_SPEC_HEADER.len())
+        .saturating_add(essential_line_count.saturating_add(1));
+    let essential_line_budget = if essential_line_count == 0 {
+        0
+    } else {
+        max_chars
+            .saturating_sub(essential_overhead)
+            .checked_div(essential_line_count)
+            .unwrap_or(0)
+            .min(4_096)
+    };
+
+    let mut lines = vec![HEADER.to_string(), OWNER_SPEC_HEADER.to_string()];
+    for report in &reports {
+        lines.push(bounded_synthesis_list_line(
+            &format!("- {}/interfaces: ", report.pillar_id),
+            &report.interfaces,
+            essential_line_budget,
+        ));
+        lines.push(bounded_synthesis_list_line(
+            &format!("- {}/acceptance-tests: ", report.pillar_id),
+            &report.acceptance_tests,
+            essential_line_budget,
+        ));
+    }
+
+    let low_confidence = reports
+        .iter()
+        .copied()
+        .filter(|report| report.effective_confidence == Confidence::Low)
+        .collect::<Vec<_>>();
+    if !low_confidence.is_empty() {
+        lines.push("[LOW CONFIDENCE]".to_string());
+        for report in low_confidence {
+            let mut reasons = Vec::new();
+            if report.reported_confidence == Confidence::Low {
+                reasons.push("reported low".to_string());
+            }
+            if !report.missing_requirement_ids.is_empty() {
+                reasons.push(format!(
+                    "missing {}",
+                    report.missing_requirement_ids.join(",")
+                ));
+            }
+            if !report.unresolved_uncertainties.is_empty() {
+                reasons.push(format!(
+                    "{} unresolved item(s)",
+                    report.unresolved_uncertainties.len()
+                ));
+            }
+            if reasons.is_empty() {
+                reasons.push("evidence provenance not verified".to_string());
+            }
+            lines.push(bounded_synthesis_line(
+                &format!("- {}: {}", report.pillar_id, reasons.join("; ")),
+                2_048,
+            ));
+        }
+    }
+
+    lines.push("[OWNER CONSTRAINTS AND UNRESOLVED RATIONALES]".to_string());
+    for report in &reports {
+        for exclusion in &report.exclusions {
+            lines.push(bounded_synthesis_line(
+                &format!(
+                    "- {}/exclusion: {}",
+                    report.pillar_id,
+                    canonical_whitespace(exclusion)
+                ),
+                2_048,
+            ));
+        }
+        for uncertainty in &report.unresolved_uncertainties {
+            lines.push(bounded_synthesis_line(
+                &format!(
+                    "- {}/unresolved-rationale: {}",
+                    report.pillar_id,
+                    canonical_whitespace(uncertainty)
+                ),
+                2_048,
+            ));
+        }
+        if !report.missing_requirement_ids.is_empty() {
+            lines.push(bounded_synthesis_line(
+                &format!(
+                    "- {}/missing-requirements: {}",
+                    report.pillar_id,
+                    report.missing_requirement_ids.join(", ")
+                ),
+                2_048,
+            ));
+        }
+    }
+
     let mut grouped = BTreeMap::<EvidenceClass, Vec<(&str, &CompiledResearchClaim)>>::new();
-    for report in reports {
+    for report in &reports {
         for claim in &report.claims {
             grouped
                 .entry(claim.effective_class)
@@ -573,52 +762,25 @@ pub fn render_synthesis_input(reports: &[CompiledPillarReport], max_chars: usize
         });
     }
 
-    let mut lines = vec!["PILLAR RESEARCH SYNTHESIS".to_string()];
     for class in [
         EvidenceClass::Unresolved,
         EvidenceClass::Proven,
         EvidenceClass::Supported,
     ] {
+        let Some(class_claims) = grouped.get(&class) else {
+            continue;
+        };
         lines.push(format!("[{}]", evidence_label(class)));
-        for (pillar_id, claim) in grouped.get(&class).into_iter().flatten() {
-            lines.push(format!(
-                "- {pillar_id}/{}: {}",
-                claim.requirement_id, claim.statement
+        for (pillar_id, claim) in class_claims {
+            lines.push(bounded_synthesis_line(
+                &format!(
+                    "- {pillar_id}/{}: {}",
+                    claim.requirement_id,
+                    canonical_whitespace(&claim.statement)
+                ),
+                2_048,
             ));
         }
-    }
-
-    let mut low_confidence = reports
-        .iter()
-        .filter(|report| report.effective_confidence == Confidence::Low)
-        .collect::<Vec<_>>();
-    low_confidence.sort_by_key(|report| report.pillar_id.as_str());
-    if !low_confidence.is_empty() {
-        let insertion_index = 1;
-        let mut warning_lines = vec!["[LOW CONFIDENCE]".to_string()];
-        for report in low_confidence {
-            let mut reasons = Vec::new();
-            if report.reported_confidence == Confidence::Low {
-                reasons.push("reported low".to_string());
-            }
-            if !report.missing_requirement_ids.is_empty() {
-                reasons.push(format!(
-                    "missing {}",
-                    report.missing_requirement_ids.join(",")
-                ));
-            }
-            if !report.unresolved_uncertainties.is_empty() {
-                reasons.push(format!(
-                    "{} unresolved item(s)",
-                    report.unresolved_uncertainties.len()
-                ));
-            }
-            if reasons.is_empty() {
-                reasons.push("evidence provenance not verified".to_string());
-            }
-            warning_lines.push(format!("- {}: {}", report.pillar_id, reasons.join("; ")));
-        }
-        lines.splice(insertion_index..insertion_index, warning_lines);
     }
 
     bound_lines(lines, max_chars)
@@ -881,6 +1043,34 @@ fn evidence_label(class: EvidenceClass) -> &'static str {
         EvidenceClass::Supported => "SUPPORTED",
         EvidenceClass::Unresolved => "UNRESOLVED",
     }
+}
+
+fn bounded_synthesis_list_line(prefix: &str, values: &[String], max_bytes: usize) -> String {
+    let body = if values.is_empty() {
+        "(none declared)".to_string()
+    } else {
+        values
+            .iter()
+            .map(|value| canonical_whitespace(value))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    bounded_synthesis_line(&format!("{prefix}{body}"), max_bytes)
+}
+
+fn bounded_synthesis_line(line: &str, max_bytes: usize) -> String {
+    if line.len() <= max_bytes {
+        return line.to_string();
+    }
+    const MARKER: &str = "…";
+    if max_bytes < MARKER.len() {
+        return String::new();
+    }
+    let mut end = max_bytes - MARKER.len();
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &line[..end], MARKER)
 }
 
 fn bound_lines(lines: Vec<String>, max_chars: usize) -> String {
@@ -1152,10 +1342,81 @@ mod tests {
             }]),
         )
         .unwrap();
-        let rendered = render_synthesis_input(&[compiled], 120);
-        assert!(rendered.len() <= 120);
+        let rendered = render_synthesis_input(&[compiled], 1_000);
+        assert!(rendered.len() <= 1_000);
+        assert!(rendered.contains("ui/interfaces: StatusView"));
+        assert!(rendered.contains("ui/acceptance-tests: Render the dashboard"));
+        assert!(rendered.contains("ui/exclusion: Persistence implementation"));
         assert!(rendered.contains("[SUPPORTED]"));
         assert!(!rendered.contains(secret_receipt_body));
+    }
+
+    #[test]
+    fn tight_synthesis_bound_prioritizes_every_owner_interface_and_acceptance_test() {
+        let source_body = "PRIVATE SOURCE BODY: the API status transition is atomic.";
+        let api_report = compile_pillar_report_with_sources(
+            &opening(),
+            &[EvidenceSourceSection {
+                id: "source-api".to_string(),
+                requirement_id: "req-api".to_string(),
+                text: source_body.to_string(),
+                content_sha256: evidence_source_digest(source_body),
+                authority: EvidenceSourceAuthority::EngineReceipt,
+            }],
+            PillarReportDraft {
+                pillar_id: "api".to_string(),
+                reported_confidence: Confidence::High,
+                claims: vec![ResearchClaimDraft {
+                    requirement_id: "req-api".to_string(),
+                    statement: format!("Atomic API contract {}", "bulk-claim ".repeat(100)),
+                    reported_class: EvidenceClass::Proven,
+                    source_section_id: Some("source-api".to_string()),
+                    source_quote: Some("API status transition is atomic".to_string()),
+                }],
+                unresolved_uncertainties: vec!["API timeout remains unproven".to_string()],
+                acceptance_tests: vec!["run api smoke".to_string()],
+                interfaces: vec!["StatusApi".to_string()],
+                exclusions: vec!["UI rendering".to_string()],
+            },
+        )
+        .unwrap();
+        let compiled = [
+            api_report,
+            CompiledPillarReport {
+                pillar_id: "ui".to_string(),
+                reported_confidence: Confidence::High,
+                effective_confidence: Confidence::High,
+                claims: vec![CompiledResearchClaim {
+                    requirement_id: "req-ui".to_string(),
+                    statement: "A bulk UI claim that should lose to the owner specification"
+                        .to_string(),
+                    reported_class: EvidenceClass::Supported,
+                    effective_class: EvidenceClass::Supported,
+                    provenance: ProvenanceMatch::NotClaimed,
+                }],
+                missing_requirement_ids: Vec::new(),
+                unresolved_uncertainties: Vec::new(),
+                acceptance_tests: vec!["run ui smoke".to_string()],
+                interfaces: vec!["StatusView".to_string()],
+                exclusions: vec!["Persistence".to_string()],
+            },
+        ];
+
+        let rendered = render_synthesis_input(&compiled, 250);
+        assert!(rendered.len() <= 250);
+        for essential in [
+            "api/interfaces: StatusApi",
+            "api/acceptance-tests: run api smoke",
+            "ui/interfaces: StatusView",
+            "ui/acceptance-tests: run ui smoke",
+        ] {
+            assert!(
+                rendered.contains(essential),
+                "missing {essential}: {rendered}"
+            );
+        }
+        assert!(!rendered.contains(source_body));
+        assert!(!rendered.contains("bulk UI claim"));
     }
 
     #[test]
@@ -1170,7 +1431,7 @@ mod tests {
         draft.reported_confidence = Confidence::Low;
         draft.unresolved_uncertainties = vec!["Renderer availability is unknown".to_string()];
         let compiled = compile_pillar_report(&opening(), draft).unwrap();
-        let rendered = render_synthesis_input(&[compiled], 105);
+        let rendered = render_synthesis_input(&[compiled], 700);
         assert!(rendered.contains("[LOW CONFIDENCE]"));
         assert!(rendered.contains("[UNRESOLVED]"));
         assert!(!rendered.contains("[SUPPORTED]"));
@@ -1211,6 +1472,71 @@ mod tests {
     }
 
     #[test]
+    fn integration_requires_one_strongest_terminal_cross_pillar_implementation() {
+        let opening = opening();
+        let tasks = vec![
+            PillarImplementationTaskCoverage {
+                task_id: "build-ui".to_string(),
+                requirement_ids: vec!["req-ui".to_string()],
+                is_validated_strongest_terminal: false,
+            },
+            PillarImplementationTaskCoverage {
+                task_id: "build-api".to_string(),
+                requirement_ids: vec!["req-api".to_string()],
+                is_validated_strongest_terminal: false,
+            },
+            PillarImplementationTaskCoverage {
+                task_id: "integrate".to_string(),
+                requirement_ids: vec!["req-ui".to_string(), "req-api".to_string()],
+                is_validated_strongest_terminal: true,
+            },
+        ];
+
+        validate_pillar_integration_task_ownership(&opening, &tasks).unwrap();
+    }
+
+    #[test]
+    fn integration_rejects_two_cross_pillar_implementation_tasks() {
+        let opening = opening();
+        let tasks = vec![
+            PillarImplementationTaskCoverage {
+                task_id: "integrate-modules".to_string(),
+                requirement_ids: vec!["req-ui".to_string(), "req-api".to_string()],
+                is_validated_strongest_terminal: false,
+            },
+            PillarImplementationTaskCoverage {
+                task_id: "integrate-entry".to_string(),
+                requirement_ids: vec!["req-ui".to_string(), "req-api".to_string()],
+                is_validated_strongest_terminal: true,
+            },
+        ];
+
+        assert_eq!(
+            validate_pillar_integration_task_ownership(&opening, &tasks)
+                .unwrap_err()
+                .code,
+            "pillar_integration_task_count"
+        );
+    }
+
+    #[test]
+    fn cross_pillar_implementation_must_be_the_validated_strongest_terminal() {
+        let opening = opening();
+        let tasks = vec![PillarImplementationTaskCoverage {
+            task_id: "integrate".to_string(),
+            requirement_ids: vec!["req-ui".to_string(), "req-api".to_string()],
+            is_validated_strongest_terminal: false,
+        }];
+
+        assert_eq!(
+            validate_pillar_integration_task_ownership(&opening, &tasks)
+                .unwrap_err()
+                .code,
+            "pillar_integration_task_not_strongest_terminal"
+        );
+    }
+
+    #[test]
     fn fallback_integration_is_disabled_only_by_explicit_independence() {
         let ordinary_product = vec![AuthoredRequirement {
             id: "req-cli".to_string(),
@@ -1225,5 +1551,20 @@ mod tests {
             critical: false,
         }];
         assert!(!authored_requirements_require_integration(&independent));
+
+        for text in [
+            "Generate standalone outputs for every supported format",
+            "Write separate artifacts for the client and server packages",
+            "Create separate deliverables, then hook them into one application",
+        ] {
+            assert!(
+                authored_requirements_require_integration(&[AuthoredRequirement {
+                    id: "req-ambiguous".to_string(),
+                    text: text.to_string(),
+                    critical: false,
+                }]),
+                "ambiguous wording must not veto integration: {text}"
+            );
+        }
     }
 }

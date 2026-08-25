@@ -41,19 +41,20 @@ use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
     authored_requirements_require_integration, compile_pillar_report_with_sources,
     deterministic_verdict, evidence_source_digest, is_split_candidate, pillar_frozen_spec_digest,
-    render_synthesis_input, validate_pillar_opening, validate_pillar_opening_against,
-    AdmissionReceipt, AdmittedWork, AuthoredRequirement, AuthorityScope, ChildSpec,
-    CompiledPillarReport, CompletedProviderRequest, Confidence, Dag, DeviceCfg, DispatchError,
-    DispatchRequest, EventSink, EvidenceClass, EvidenceSourceAuthority, EvidenceSourceSection,
-    HostCapacityEvidence, IntegrationContract, Judge, JudgeConfig, JudgeInput, JudgeOutcome,
-    JudgeRequest, LocalCompletionKind, NullSink, PhysicalAdmissionControl,
-    PhysicalExecutionAuthority, PhysicalFleetSnapshot, PillarAttemptCheckpoint,
-    PillarCheckpointStore, PillarReportDraft, PillarResumeDecision, PreReviewOutput,
-    PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
-    ProviderLifecycleStartError, ProviderNudgeDelivery, ProviderRequestKey, ProviderRequestReceipt,
-    ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
-    ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport,
-    Scheduler, SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
+    render_synthesis_input, validate_pillar_integration_task_ownership, validate_pillar_opening,
+    validate_pillar_opening_against, AdmissionReceipt, AdmittedWork, AuthoredRequirement,
+    AuthorityScope, ChildSpec, CompiledPillarReport, CompletedProviderRequest, Confidence, Dag,
+    DeviceCfg, DispatchError, DispatchRequest, EventSink, EvidenceClass, EvidenceSourceAuthority,
+    EvidenceSourceSection, HostCapacityEvidence, IntegrationContract, Judge, JudgeConfig,
+    JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
+    PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
+    PillarAttemptCheckpoint, PillarCheckpointStore, PillarImplementationTaskCoverage,
+    PillarReportDraft, PillarResumeDecision, PreReviewOutput, PreReviewRequest, PreReviewer,
+    ProviderLifecycle, ProviderLifecycleDispatcher, ProviderLifecycleStartError,
+    ProviderNudgeDelivery, ProviderRequestKey, ProviderRequestReceipt, ProviderTerminalKind,
+    ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner,
+    ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport, Scheduler,
+    SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
     SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, TaskVersion,
     ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
 };
@@ -12895,6 +12896,89 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }
     }
 
+    fn two_pillar_opening_draft(integration_required: bool) -> PillarOpeningDraft {
+        PillarOpeningDraft {
+            pillars: vec![
+                ResearchPillar {
+                    id: "frontend".to_string(),
+                    title: "Frontend".to_string(),
+                    objective: "Implement the user interface".to_string(),
+                    requirement_ids: vec!["REQ-ui".to_string()],
+                    dependencies: Vec::new(),
+                    research_questions: vec!["Which UI boundary owns the interaction?".to_string()],
+                    acceptance_criteria: vec!["The interaction is executable".to_string()],
+                    exclusions: vec!["Do not implement persistence".to_string()],
+                },
+                ResearchPillar {
+                    id: "storage".to_string(),
+                    title: "Storage".to_string(),
+                    objective: "Implement persistence".to_string(),
+                    requirement_ids: vec!["REQ-store".to_string()],
+                    dependencies: Vec::new(),
+                    research_questions: vec!["Which storage boundary owns persistence?".to_string()],
+                    acceptance_criteria: vec!["Persistence has an executable test".to_string()],
+                    exclusions: vec!["Do not implement the UI".to_string()],
+                },
+            ],
+            integration_contract: IntegrationContract {
+                owner: "model-claim".to_string(),
+                integration_required,
+                objective: "Connect the deliverables when authored intent requires it".to_string(),
+                interface_invariants: vec!["Use one explicit storage interface".to_string()],
+                acceptance_criteria: vec!["The authored result is runnable".to_string()],
+            },
+        }
+    }
+
+    #[test]
+    fn authored_single_product_intent_forces_conditional_integration() {
+        let requirements = vec![
+            RequirementRecord {
+                id: "REQ-ui".to_string(),
+                section: "UI".to_string(),
+                quote: "Build the interface for one runnable application".to_string(),
+            },
+            RequirementRecord {
+                id: "REQ-store".to_string(),
+                section: "Storage".to_string(),
+                quote: "Persist the application's records".to_string(),
+            },
+        ];
+        let opening = compile_pillar_opening_draft(
+            &requirements,
+            two_pillar_opening_draft(false),
+            "strongest-model",
+            3,
+        )
+        .unwrap();
+        assert!(opening.integration_contract.integration_required);
+        assert_eq!(opening.integration_contract.owner, "strongest-model");
+    }
+
+    #[test]
+    fn explicit_independent_deliverables_do_not_gain_an_integrator() {
+        let requirements = vec![
+            RequirementRecord {
+                id: "REQ-ui".to_string(),
+                section: "UI".to_string(),
+                quote: "Produce the UI as one of two independent deliverables".to_string(),
+            },
+            RequirementRecord {
+                id: "REQ-store".to_string(),
+                section: "Storage".to_string(),
+                quote: "Produce storage as a separate artifact; do not integrate".to_string(),
+            },
+        ];
+        let opening = compile_pillar_opening_draft(
+            &requirements,
+            two_pillar_opening_draft(true),
+            "strongest-model",
+            3,
+        )
+        .unwrap();
+        assert!(!opening.integration_contract.integration_required);
+    }
+
     fn pillar_task_spec(task_id: &str) -> PillarPlanTaskSpecDraft {
         PillarPlanTaskSpecDraft {
             task_id: task_id.to_string(),
@@ -12963,7 +13047,6 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
         let mut original_files = build
             .iter()
-            .filter(|spec| spec.id != "integrate" && spec.id != "test-e2e")
             .flat_map(|spec| spec.owned_files.iter().cloned())
             .collect::<Vec<_>>();
         let mut repaired_files = repair
@@ -12977,6 +13060,16 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             repaired_files.iter().collect::<HashSet<_>>().len(),
             repaired_files.len()
         );
+        for integration_file in ["src/main.rs", "tests/e2e.rs"] {
+            assert_eq!(
+                repaired_files
+                    .iter()
+                    .filter(|file| file.as_str() == integration_file)
+                    .count(),
+                1,
+                "integration artifact `{integration_file}` must be audited exactly once"
+            );
+        }
 
         let mut reversed = build;
         reversed.reverse();
@@ -13201,14 +13294,39 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             {"id":"b", "description":"B", "model":"mac", "depends_on":[], "files":["b.rs"]},
             {"id":"hook", "description":"Hook A and B", "model":"workhorse", "depends_on":["a","b"], "files":["main.rs"]}
         ]});
-        validate_pillar_integration_owner(&opening, &plan).unwrap();
+        let coverages = vec![
+            CanonicalPlanTaskCoverageDraft {
+                task_id: "a".to_string(),
+                owns_requirement_ids: vec!["REQ-a".to_string()],
+                applies_requirement_ids: Vec::new(),
+                verifies_requirement_ids: Vec::new(),
+                evidence_ids: Vec::new(),
+            },
+            CanonicalPlanTaskCoverageDraft {
+                task_id: "b".to_string(),
+                owns_requirement_ids: vec!["REQ-b".to_string()],
+                applies_requirement_ids: Vec::new(),
+                verifies_requirement_ids: Vec::new(),
+                evidence_ids: Vec::new(),
+            },
+            CanonicalPlanTaskCoverageDraft {
+                task_id: "hook".to_string(),
+                owns_requirement_ids: Vec::new(),
+                applies_requirement_ids: vec!["REQ-a".to_string(), "REQ-b".to_string()],
+                verifies_requirement_ids: Vec::new(),
+                evidence_ids: Vec::new(),
+            },
+        ];
+        validate_pillar_integration_owner(&opening, &plan, &coverages).unwrap();
 
         let mut disconnected = plan;
         disconnected["subtasks"][2]["depends_on"] = serde_json::json!(["a"]);
-        assert!(validate_pillar_integration_owner(&opening, &disconnected)
-            .unwrap_err()
-            .to_string()
-            .contains("exactly one non-test terminal owner"));
+        assert!(
+            validate_pillar_integration_owner(&opening, &disconnected, &coverages)
+                .unwrap_err()
+                .to_string()
+                .contains("exactly one non-test terminal owner")
+        );
     }
 
     #[test]
@@ -13343,6 +13461,58 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(description.contains("UNRESOLVED REQUIREMENT ROUTE"));
         assert!(description.contains("[REQ-core] ISOLATION"));
         assert!(description.contains("Keep the unproven parser behind the core interface"));
+    }
+
+    #[test]
+    fn fallback_plan_preserves_owner_resolved_interfaces_and_acceptance_evidence() {
+        let opening = pillar_plan_test_opening(false);
+        let report =
+            compile_pillar_report_with_sources(
+                &opening,
+                &[],
+                PillarReportDraft {
+                    pillar_id: "core".to_string(),
+                    reported_confidence: Confidence::High,
+                    claims: vec![ResearchClaimDraft {
+                        requirement_id: "REQ-core".to_string(),
+                        statement: "Expose the resolved CorePort boundary from src/core.rs"
+                            .to_string(),
+                        reported_class: EvidenceClass::Supported,
+                        source_section_id: None,
+                        source_quote: None,
+                    }],
+                    unresolved_uncertainties: Vec::new(),
+                    acceptance_tests: vec![
+                        "cargo test --test owner_resolved_core_contract".to_string()
+                    ],
+                    interfaces: vec![
+                        "CorePort::run(input) returns the exact authored core result".to_string(),
+                    ],
+                    exclusions: vec!["Do not own the application entry point".to_string()],
+                },
+            )
+            .unwrap();
+        let (_, dag, routes) = fallback_pillar_plan(
+            "Implement the core behavior in Rust",
+            &opening,
+            &[report],
+            "qwen",
+            &["qwen".to_string()],
+        )
+        .unwrap();
+        assert!(routes.is_empty());
+        let description = &dag.tasks["pillar-build-01"].spec.description;
+        for exact_owner_contract in [
+            "Expose the resolved CorePort boundary from src/core.rs",
+            "CorePort::run(input) returns the exact authored core result",
+            "cargo test --test owner_resolved_core_contract",
+        ] {
+            assert!(
+                description.contains(exact_owner_contract),
+                "fallback worker contract lost `{exact_owner_contract}`: {description}"
+            );
+        }
+        assert!(!description.contains("Which exact interface owns the behavior?"));
     }
 
     #[test]
@@ -18846,6 +19016,7 @@ struct ResearchPhysicalLane {
     token: String,
     model_id: String,
     physical_host_id: String,
+    verified_physical: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -18921,6 +19092,7 @@ struct PillarPlanDraft {
 struct PillarResearchOutcome {
     opening: ResearchPillarOpening,
     reports: Vec<CompiledPillarReport>,
+    lanes: Vec<ResearchPhysicalLane>,
     synthesis: String,
     verified_facts: String,
     worker_context: String,
@@ -25045,6 +25217,58 @@ impl GooseAgentDispatcher {
     }
 
     #[allow(clippy::too_many_arguments)]
+    async fn run_pillar_agent_on_lane(
+        &self,
+        lane: &ResearchPhysicalLane,
+        system_prompt: String,
+        user_text: String,
+        response: Option<Response>,
+        extensions: &[ExtensionConfig],
+        idle_secs: u64,
+        activity_key: Option<&str>,
+    ) -> Result<RunAgentOut> {
+        let run = self.run_agent_in(
+            self.working_dir.clone(),
+            &lane.model_id,
+            system_prompt,
+            user_text,
+            response,
+            Some(UNBOUNDED_AGENT_TURNS),
+            extensions,
+            AgentToolSurface::ResponseOnly,
+            idle_secs,
+            activity_key,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        if lane.verified_physical {
+            PRE_SCHEDULER_REQUIRED_HOST
+                .scope(lane.physical_host_id.clone(), run)
+                .await
+        } else {
+            run.await
+        }
+    }
+
+    fn validate_pillar_lane_output(
+        lane: &ResearchPhysicalLane,
+        output: &RunAgentOut,
+    ) -> Result<()> {
+        if lane.verified_physical
+            && output.physical_host_id.as_deref() != Some(lane.physical_host_id.as_str())
+        {
+            bail!(
+                "pillar output was not proven on assigned physical host `{}`",
+                lane.physical_host_id
+            );
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn run_requirement_binding_authority(
         self: &Arc<Self>,
         planner_model: &str,
@@ -27489,8 +27713,24 @@ impl GooseAgentDispatcher {
                 token: format!("research-physical-lane-{}", index + 1),
                 model_id: lane.model_id,
                 physical_host_id: lane.host_id,
+                verified_physical: true,
             })
             .collect())
+    }
+
+    fn pillar_research_lanes(
+        &self,
+        worker_devices: &[(String, String)],
+    ) -> Result<Vec<ResearchPhysicalLane>> {
+        let has_verified_broker = self.pre_scheduler_semantic.lock().unwrap().is_some();
+        if has_verified_broker {
+            let worker_models = worker_devices
+                .iter()
+                .map(|(_, model)| model.clone())
+                .collect::<Vec<_>>();
+            return self.research_physical_lanes(&one_lane_per_host(worker_models));
+        }
+        logical_pillar_research_lanes(worker_devices)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -29182,36 +29422,20 @@ impl GooseAgentDispatcher {
             "owned_requirement_ids": pillar.requirement_ids,
             "scope": "one-exclusive-pillar",
         }));
-        let output = PRE_SCHEDULER_REQUIRED_HOST
-            .scope(
-                lane.physical_host_id.clone(),
-                self.run_agent_in(
-                    self.working_dir.clone(),
-                    &lane.model_id,
-                    system.to_string(),
-                    user,
-                    Some(Response {
-                        json_schema: Some(pillar_report_schema()),
-                    }),
-                    Some(UNBOUNDED_AGENT_TURNS),
-                    &research_extensions,
-                    AgentToolSurface::ResponseOnly,
-                    self.planner_timeout_secs,
-                    Some(&activity_key),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
+        let output = self
+            .run_pillar_agent_on_lane(
+                &lane,
+                system.to_string(),
+                user,
+                Some(Response {
+                    json_schema: Some(pillar_report_schema()),
+                }),
+                &research_extensions,
+                self.planner_timeout_secs,
+                Some(&activity_key),
             )
             .await?;
-        if output.physical_host_id.as_deref() != Some(lane.physical_host_id.as_str()) {
-            bail!(
-                "pillar owner output was not proven on assigned physical host `{}`",
-                lane.physical_host_id
-            );
-        }
+        Self::validate_pillar_lane_output(&lane, &output)?;
         let raw = output
             .final_output
             .filter(|value| !value.trim().is_empty())
@@ -29251,7 +29475,7 @@ impl GooseAgentDispatcher {
         self: &Arc<Self>,
         user_prompt: &str,
         research_extensions: Arc<Vec<ExtensionConfig>>,
-        worker_models: Vec<String>,
+        worker_devices: Vec<(String, String)>,
         planner_model: &str,
     ) -> Result<PillarResearchOutcome> {
         let requirements = normalized_requirement_inventory(user_prompt);
@@ -29259,14 +29483,14 @@ impl GooseAgentDispatcher {
             bail!("pillar opening cannot inventory any authored requirement");
         }
         let authored_requirements = pillar_authored_requirements(&requirements);
-        let lanes = self.research_physical_lanes(&one_lane_per_host(worker_models))?;
+        let lanes = self.pillar_research_lanes(&worker_devices)?;
         let planner_lane = lanes
             .iter()
             .find(|lane| lane.model_id == planner_model)
             .cloned()
             .ok_or_else(|| {
                 anyhow!(
-                    "configured strongest planner `{planner_model}` has no verified physical lane"
+                    "configured strongest planner `{planner_model}` has no available pillar lane"
                 )
             })?;
         let max_pillars = lanes.len().min(requirements.len()).max(1);
@@ -29303,24 +29527,20 @@ impl GooseAgentDispatcher {
                 "required_integration_owner": planner_model,
             }))?;
             let result = self
-                .run_response_only_agent_on_physical_host(
-                    &planner_lane.model_id,
-                    &planner_lane.physical_host_id,
+                .run_pillar_agent_on_lane(
+                    &planner_lane,
                     system.to_string(),
                     user,
                     Some(Response {
                         json_schema: Some(pillar_opening_schema()),
                     }),
+                    &[],
                     self.planner_timeout_secs,
                     Some("pillar-opening-authority"),
                 )
                 .await
                 .and_then(|output| {
-                    if output.physical_host_id.as_deref()
-                        != Some(planner_lane.physical_host_id.as_str())
-                    {
-                        bail!("pillar opening did not return from its assigned physical host");
-                    }
+                    Self::validate_pillar_lane_output(&planner_lane, &output)?;
                     let raw = output
                         .final_output
                         .filter(|value| !value.trim().is_empty())
@@ -29355,6 +29575,11 @@ impl GooseAgentDispatcher {
             "event": "pillar_research_started",
             "pillars": opening.pillars.len(),
             "physical_hosts": lanes.iter().map(|lane| lane.physical_host_id.as_str()).collect::<Vec<_>>(),
+            "lane_authority": if lanes.iter().all(|lane| lane.verified_physical) {
+                "verified-physical"
+            } else {
+                "logical-model-route"
+            },
             "primary_calls": opening.pillars.len(),
             "retry_policy": "exactly-one-only-after-low-confidence",
         }));
@@ -29444,11 +29669,19 @@ impl GooseAgentDispatcher {
                 .into_iter()
                 .next()
                 .ok_or_else(|| anyhow!("focused retry lost its primary checkpoint"))?;
-            let eligible = lanes
+            let distinct = lanes
                 .iter()
                 .filter(|lane| lane.physical_host_id != primary.physical_host)
                 .map(|lane| lane.token.clone())
                 .collect::<Vec<_>>();
+            let eligible = if distinct.is_empty() {
+                lanes
+                    .iter()
+                    .map(|lane| lane.token.clone())
+                    .collect::<Vec<_>>()
+            } else {
+                distinct
+            };
             if eligible.is_empty() {
                 checkpoint.persist_attempt(PillarAttemptCheckpoint {
                     pillar_id: pillar.id.clone(),
@@ -29458,7 +29691,7 @@ impl GooseAgentDispatcher {
                     report: unresolved_pillar_report(
                         &opening,
                         &pillar,
-                        "low-confidence pillar had no distinct physical host for its one focused retry",
+                        "low-confidence pillar had no runnable lane for its one focused retry",
                     )?,
                 })?;
                 continue;
@@ -29570,6 +29803,7 @@ impl GooseAgentDispatcher {
         Ok(PillarResearchOutcome {
             opening: Arc::unwrap_or_clone(opening),
             reports,
+            lanes,
             synthesis,
             verified_facts,
             worker_context,
@@ -29583,20 +29817,19 @@ impl GooseAgentDispatcher {
         user_prompt: &str,
         outcome: &PillarResearchOutcome,
         planner_model: &str,
-        worker_models: &[String],
     ) -> Result<(String, Dag)> {
-        let lanes = self.research_physical_lanes(&one_lane_per_host(worker_models.to_vec()))?;
+        let lanes = outcome.lanes.clone();
         let planner_lane = lanes
             .iter()
             .find(|lane| lane.model_id == planner_model)
             .cloned()
             .ok_or_else(|| {
                 anyhow!(
-                    "configured strongest planner `{planner_model}` has no verified physical lane"
+                    "configured strongest planner `{planner_model}` has no available pillar lane"
                 )
             })?;
         let mut allowed_runtime_models = std::iter::once(planner_model.to_string())
-            .chain(worker_models.iter().cloned())
+            .chain(lanes.iter().map(|lane| lane.model_id.clone()))
             .collect::<Vec<_>>();
         let mut seen = HashSet::new();
         allowed_runtime_models.retain(|model| seen.insert(model.clone()));
@@ -29608,6 +29841,10 @@ impl GooseAgentDispatcher {
             "integration_contract": outcome.opening.integration_contract,
             "bounded_pillar_synthesis": outcome.synthesis,
             "engine_verified_facts_only": outcome.verified_facts,
+            "unresolved_requirement_ids": pillar_unresolved_requirement_ids(
+                &outcome.opening,
+                &outcome.reports,
+            ),
             "allowed_runtime_models": allowed_runtime_models,
         }))?;
         self.events.write_value(serde_json::json!({
@@ -29619,24 +29856,20 @@ impl GooseAgentDispatcher {
             "input_chars": user.chars().count(),
         }));
         let model_plan = self
-            .run_response_only_agent_on_physical_host(
-                &planner_lane.model_id,
-                &planner_lane.physical_host_id,
+            .run_pillar_agent_on_lane(
+                &planner_lane,
                 system.to_string(),
                 user,
                 Some(Response {
                     json_schema: Some(pillar_plan_schema()),
                 }),
+                &[],
                 self.planner_timeout_secs,
                 Some("pillar-synthesis-plan"),
             )
             .await
             .and_then(|output| {
-                if output.physical_host_id.as_deref()
-                    != Some(planner_lane.physical_host_id.as_str())
-                {
-                    bail!("pillar synthesis plan did not return from its assigned physical host");
-                }
+                Self::validate_pillar_lane_output(&planner_lane, &output)?;
                 let raw = output
                     .final_output
                     .filter(|value| !value.trim().is_empty())
@@ -37053,6 +37286,27 @@ fn one_lane_per_host(models: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+fn logical_pillar_research_lanes(
+    worker_devices: &[(String, String)],
+) -> Result<Vec<ResearchPhysicalLane>> {
+    let mut seen_models = HashSet::new();
+    let lanes = worker_devices
+        .iter()
+        .filter(|(_, model)| seen_models.insert(model.clone()))
+        .enumerate()
+        .map(|(index, (_, model))| ResearchPhysicalLane {
+            token: format!("pillar-logical-lane-{}", index + 1),
+            model_id: model.clone(),
+            physical_host_id: format!("logical-model-route-{}", short_digest(model)),
+            verified_physical: false,
+        })
+        .collect::<Vec<_>>();
+    if lanes.is_empty() {
+        bail!("pillar research has no logical worker lane");
+    }
+    Ok(lanes)
+}
+
 fn order_fleet_by_speed(
     devices: Vec<String>,
     weights: &std::collections::HashMap<String, u32>,
@@ -37167,6 +37421,36 @@ mod fan_order_tests {
             vec!["a-q", "b-q"],
             "prologue fans run ONE call per host"
         );
+    }
+
+    #[test]
+    fn brokerless_pillar_flow_uses_distinct_logical_model_lanes() {
+        let lanes = logical_pillar_research_lanes(&[
+            ("node-a".to_string(), "model-a".to_string()),
+            ("node-b".to_string(), "model-b".to_string()),
+            ("node-c".to_string(), "model-c".to_string()),
+        ])
+        .unwrap();
+        assert_eq!(
+            lanes
+                .iter()
+                .map(|lane| lane.model_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["model-a", "model-b", "model-c"]
+        );
+        assert!(lanes.iter().all(|lane| !lane.verified_physical));
+        assert_ne!(lanes[0].physical_host_id, lanes[1].physical_host_id);
+        let same_route = logical_pillar_research_lanes(&[
+            ("node-a".to_string(), "same-model".to_string()),
+            ("node-b".to_string(), "same-model".to_string()),
+            ("node-c".to_string(), "same-model".to_string()),
+        ])
+        .unwrap();
+        assert_eq!(same_route.len(), 1);
+        assert!(logical_pillar_research_lanes(&[]).is_err());
+        assert!(pillar_prebuild_selected(false, true));
+        assert!(complete_phase_selected(true, false));
+        assert!(!complete_phase_selected(false, false));
     }
 
     #[test]
@@ -37906,6 +38190,7 @@ mod fan_order_tests {
                 token: format!("lane-{index}"),
                 model_id: format!("model-{index}"),
                 physical_host_id: host.to_string(),
+                verified_physical: true,
             })
             .collect::<Vec<_>>();
         let scheduler = ResearchHostScheduler::new(lanes);
@@ -37971,6 +38256,7 @@ mod fan_order_tests {
             token: "lane-mac".to_string(),
             model_id: "model-mac".to_string(),
             physical_host_id: "host-mac".to_string(),
+            verified_physical: true,
         }]);
         let held = scheduler
             .acquire(
@@ -38079,6 +38365,7 @@ mod fan_order_tests {
                 token: format!("lane-{index}"),
                 model_id: format!("model-{index}"),
                 physical_host_id: host.to_string(),
+                verified_physical: true,
             })
             .collect::<Vec<_>>();
         let scheduler = ResearchHostScheduler::new(lanes);
@@ -38153,6 +38440,7 @@ mod fan_order_tests {
                 token: format!("lane-{index}"),
                 model_id: format!("model-{index}"),
                 physical_host_id: (*host).to_string(),
+                verified_physical: true,
             })
             .collect()
     }
@@ -46050,7 +46338,7 @@ fn capability_repair_specs(
             .collect::<HashSet<_>>();
         ordered.retain(|spec| !integration_ids.contains(spec.id.as_str()));
     }
-    let components = capability_components(ordered)
+    let mut repair_groups = capability_components(ordered)
         .into_iter()
         .filter(|component| {
             component
@@ -46058,14 +46346,20 @@ fn capability_repair_specs(
                 .any(|capability| !capability.owned_files.is_empty())
         })
         .collect::<Vec<_>>();
-    if components.is_empty() && integration_bundle.is_empty() {
+    if integration_bundle
+        .iter()
+        .any(|capability| !capability.owned_files.is_empty())
+    {
+        repair_groups.push(integration_bundle);
+    }
+    if repair_groups.is_empty() {
         return Ok(Vec::new());
     }
 
-    let root_count = components.len().min(fleet_models.len()).min(3);
+    let root_count = repair_groups.len().min(fleet_models.len()).min(3);
     let mut bins = vec![Vec::<TaskSpec>::new(); root_count];
     let mut bin_weight = vec![0usize; root_count];
-    for component in components {
+    for component in repair_groups {
         let index = bin_weight
             .iter()
             .enumerate()
@@ -46325,6 +46619,17 @@ fn default_on_environment_gate(name: &str) -> bool {
         true,
     )
     .value
+}
+
+fn pillar_prebuild_selected(
+    _broker_enforcement_requested: bool,
+    pillar_gate_enabled: bool,
+) -> bool {
+    pillar_gate_enabled
+}
+
+fn complete_phase_selected(pillar_flow_on: bool, configured_complete: bool) -> bool {
+    pillar_flow_on || configured_complete
 }
 
 fn idle_judge_enabled() -> bool {
@@ -49770,9 +50075,12 @@ fn compile_pillar_opening_draft(
     {
         bail!("research pillars must be independent; dependencies belong in the build plan");
     }
+    let authored_requirements = pillar_authored_requirements(requirements);
     draft.integration_contract.owner = integration_owner.to_string();
+    draft.integration_contract.integration_required = draft.pillars.len() > 1
+        && authored_requirements_require_integration(&authored_requirements);
     let opening = ResearchPillarOpening {
-        requirements: pillar_authored_requirements(requirements),
+        requirements: authored_requirements,
         pillars: draft.pillars,
         integration_contract: draft.integration_contract,
     };
@@ -49966,9 +50274,6 @@ fn pillar_unresolved_requirement_ids(
             continue;
         };
         unresolved.extend(report.missing_requirement_ids.iter().cloned());
-        if report.effective_confidence == Confidence::Low {
-            unresolved.extend(pillar.requirement_ids.iter().cloned());
-        }
         unresolved.extend(
             report
                 .claims
@@ -50194,6 +50499,7 @@ fn validate_no_cross_pillar_integration(
 fn validate_pillar_integration_owner(
     opening: &ResearchPillarOpening,
     canonical_plan: &serde_json::Value,
+    task_coverages: &[CanonicalPlanTaskCoverageDraft],
 ) -> Result<()> {
     if !opening.integration_contract.integration_required {
         return Ok(());
@@ -50257,6 +50563,40 @@ fn validate_pillar_integration_owner(
             terminal.id,
         );
     }
+    let coverage_by_task = task_coverages
+        .iter()
+        .map(|coverage| (coverage.task_id.as_str(), coverage))
+        .collect::<HashMap<_, _>>();
+    let implementation_tasks = participating
+        .iter()
+        .map(|spec| {
+            let coverage = coverage_by_task.get(spec.id.as_str()).ok_or_else(|| {
+                anyhow!(
+                    "pillar implementation task `{}` has no typed requirement coverage",
+                    spec.id
+                )
+            })?;
+            let mut requirement_ids = coverage
+                .owns_requirement_ids
+                .iter()
+                .chain(coverage.applies_requirement_ids.iter())
+                .cloned()
+                .collect::<Vec<_>>();
+            requirement_ids.sort();
+            requirement_ids.dedup();
+            Ok(
+                (!requirement_ids.is_empty()).then(|| PillarImplementationTaskCoverage {
+                    task_id: spec.id.clone(),
+                    requirement_ids,
+                    is_validated_strongest_terminal: spec.id == terminal.id,
+                }),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    validate_pillar_integration_task_ownership(opening, &implementation_tasks)?;
     Ok(())
 }
 
@@ -50306,7 +50646,7 @@ fn compile_pillar_plan(
     let mut draft: PillarPlanDraft = serde_json::from_str(raw.trim())
         .map_err(|error| anyhow!("pillar plan was not valid typed JSON: {error}"))?;
     compile_pillar_task_specs(&mut draft.canonical_plan, draft.task_specs)?;
-    validate_pillar_integration_owner(opening, &draft.canonical_plan)?;
+    validate_pillar_integration_owner(opening, &draft.canonical_plan, &draft.task_coverage)?;
     if !opening.integration_contract.integration_required {
         validate_no_cross_pillar_integration(opening, &draft.canonical_plan, &draft.task_coverage)?;
     }
@@ -50456,6 +50796,10 @@ fn fallback_pillar_plan(
         .iter()
         .map(|requirement| (requirement.id.as_str(), requirement.text.as_str()))
         .collect::<HashMap<_, _>>();
+    let report_by_pillar = reports
+        .iter()
+        .map(|report| (report.pillar_id.as_str(), report))
+        .collect::<HashMap<_, _>>();
     let unresolved = pillar_unresolved_requirement_ids(opening, reports);
     let mut subtasks = Vec::new();
     let mut coverage = Vec::new();
@@ -50463,6 +50807,7 @@ fn fallback_pillar_plan(
     let mut uncertainty_routes = Vec::new();
     let mut producer_ids = Vec::new();
     for (index, pillar) in opening.pillars.iter().enumerate() {
+        let report = report_by_pillar.get(pillar.id.as_str()).copied();
         let task_id = format!("pillar-build-{:02}", index + 1);
         let model = allowed_runtime_models
             .get(index % allowed_runtime_models.len().max(1))
@@ -50484,17 +50829,75 @@ fn fallback_pillar_plan(
             })
             .collect::<Vec<_>>()
             .join("\n");
+        let resolved_decisions = report
+            .map(|report| {
+                report
+                    .claims
+                    .iter()
+                    .filter(|claim| claim.effective_class != EvidenceClass::Unresolved)
+                    .map(|claim| {
+                        format!(
+                            "[{}={:?}] {}",
+                            claim.requirement_id, claim.effective_class, claim.statement
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let unresolved_rationales = report
+            .map(|report| report.unresolved_uncertainties.clone())
+            .unwrap_or_else(|| {
+                vec!["No owner report survived; keep every unproven detail isolated behind this pillar boundary".to_string()]
+            });
+        let edge_cases = if unresolved_rationales.is_empty() {
+            vec![format!(
+                "Reject or isolate behavior outside the exclusive {} owner boundary",
+                pillar.id
+            )]
+        } else {
+            unresolved_rationales.clone()
+        };
+        let interfaces = report
+            .map(|report| report.interfaces.clone())
+            .filter(|values| !values.is_empty())
+            .unwrap_or_else(|| {
+                if opening.integration_contract.integration_required {
+                    opening.integration_contract.interface_invariants.clone()
+                } else {
+                    vec![format!(
+                        "{} remains an independent deliverable with no sibling implementation dependency",
+                        pillar.id
+                    )]
+                }
+            });
+        let acceptance = report
+            .map(|report| report.acceptance_tests.clone())
+            .filter(|values| !values.is_empty())
+            .unwrap_or_else(|| pillar.acceptance_criteria.clone());
+        let mut exclusions = report
+            .map(|report| report.exclusions.clone())
+            .unwrap_or_default();
+        exclusions.extend(pillar.exclusions.iter().cloned());
+        let mut seen_exclusions = HashSet::new();
+        exclusions.retain(|value| seen_exclusions.insert(value.clone()));
+        let decision_contract = if resolved_decisions.is_empty() {
+            "No owner-resolved implementation decision survived; use the authored requirement text and isolate unproven choices rather than rediscovering sibling scope".to_string()
+        } else {
+            resolved_decisions.join("\n")
+        };
         subtasks.push(serde_json::json!({
             "id": task_id,
             "description": format!(
-                "PILLAR {} — {}\nExclusive objective: {}\nBinding requirements:\n{}\nSpecific research/spec decisions: {}\nAcceptance evidence: {}\nExplicit exclusions: {}\nImplement only this boundary in the owned file(s), run the relevant acceptance checks, and leave sibling ownership untouched.",
+                "PILLAR {} — {}\nExclusive objective: {}\nBinding requirements:\n{}\nOwner-resolved research/spec decisions:\n{}\nProducer/consumer interfaces: {}\nAcceptance evidence: {}\nExplicit exclusions: {}\nRemaining uncertainty: {}\nImplement only this boundary in the owned file(s), run the exact acceptance checks, and leave sibling ownership untouched.",
                 pillar.id,
                 pillar.title,
                 pillar.objective,
                 requirement_trace,
-                pillar.research_questions.join("; "),
-                pillar.acceptance_criteria.join("; "),
-                pillar.exclusions.join("; "),
+                decision_contract,
+                interfaces.join("; "),
+                acceptance.join("; "),
+                exclusions.join("; "),
+                unresolved_rationales.join("; "),
             ),
             "difficulty": "hard",
             "model": model,
@@ -50506,14 +50909,14 @@ fn fallback_pillar_plan(
             "objective": format!("Implement the exclusive {} pillar without taking sibling scope", pillar.title),
             "module_boundary": format!("Own only {} and the requirements assigned to {}", files.join(", "), pillar.id),
             "concrete_steps": [
-                format!("Implement the authored requirements assigned to {}", pillar.id),
-                format!("Honor the pillar decisions: {}", pillar.research_questions.join("; ")),
-                "Run the pillar's executable acceptance checks and retain their evidence"
+                format!("Implement the owner-resolved contract for {}: {}", pillar.id, decision_contract),
+                format!("Honor these exact interfaces without taking sibling scope: {}", interfaces.join("; ")),
+                format!("Run these executable acceptance checks and retain their evidence: {}", acceptance.join("; "))
             ],
-            "interfaces": opening.integration_contract.interface_invariants,
-            "edge_cases": pillar.acceptance_criteria,
-            "acceptance_evidence": pillar.acceptance_criteria,
-            "exclusions": pillar.exclusions,
+            "interfaces": interfaces,
+            "edge_cases": edge_cases,
+            "acceptance_evidence": acceptance,
+            "exclusions": exclusions,
         }));
         coverage.push(CanonicalPlanTaskCoverageDraft {
             task_id: task_id.clone(),
@@ -50531,7 +50934,10 @@ fn fallback_pillar_plan(
                 requirement_id: requirement_id.clone(),
                 task_id: task_id.clone(),
                 kind: PillarUncertaintyRouteKind::Isolation,
-                rationale: "Keep the unproven detail behind the pillar boundary and implement the safest authored-spec-compatible behavior without blocking the build".to_string(),
+                rationale: format!(
+                    "Keep the unproven detail behind the pillar boundary and implement the safest authored-spec-compatible behavior without blocking the build. Owner evidence: {}",
+                    unresolved_rationales.join("; ")
+                ),
             });
         }
         producer_ids.push(task_id);
@@ -56388,8 +56794,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // V21 replaces the legacy whole-target jury/adjudication/citation topology with the operator-authored
     // pillar flow. This is a shipped architecture, not an assured-profile lever: an explicit environment
     // override remains available for recorded legacy comparisons, while ordinary runs take the new path.
-    let pillar_flow_on =
-        broker_enforcement_requested && default_on_environment_gate("GOOSE_SWARM_PILLAR_FLOW");
+    let pillar_flow_on = pillar_prebuild_selected(
+        broker_enforcement_requested,
+        default_on_environment_gate("GOOSE_SWARM_PILLAR_FLOW"),
+    );
     let mut pillar_research_outcome: Option<PillarResearchOutcome> = None;
     let mut research_findings = String::new();
     // DOC-PREFETCH (Phase 1, Move 2): the GROUNDED research findings, VERBATIM, to hand to every worker. Stays
@@ -56404,7 +56812,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // research_findings is deliberately the channel: it renders as "Prior research findings", which reads
     // ADVISORY. The spec and the user's decisions are appended later to opts.prompt and framed BINDING, so a
     // learned skill can never outrank what the user actually asked for.
-    let persona_on = swarm_gate_cfg("GOOSE_SWARM_PERSONA", cfg.persona);
+    let persona_on = !pillar_flow_on && swarm_gate_cfg("GOOSE_SWARM_PERSONA", cfg.persona);
     let mut persona_snapshot = PersonaSnapshot::default();
     if persona_on {
         if let Some(key) = detect_stack_key(&opts.prompt, &[]) {
@@ -56444,11 +56852,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(build_research_exts(
             swarm_gate_cfg("GOOSE_SWARM_RESEARCH_TOOLS", cfg.research_tools),
         ));
-        let mut worker_models = std::iter::once(cfg.planner_model.clone())
-            .chain(fleet_slot_models(&devices))
+        let mut worker_devices = devices
+            .iter()
+            .map(|device| (device.id.clone(), device.model_id.clone()))
             .collect::<Vec<_>>();
-        let mut seen_models = HashSet::new();
-        worker_models.retain(|model| seen_models.insert(model.clone()));
+        if !worker_devices
+            .iter()
+            .any(|(_, model)| model == &cfg.planner_model)
+        {
+            worker_devices.push((
+                "pillar-planner-authority".to_string(),
+                cfg.planner_model.clone(),
+            ));
+        }
         phase_banner(
             "PILLAR OPENING + RESEARCH",
             "one opener defines an exact cover; one owner researches each non-overlapping pillar",
@@ -56457,7 +56873,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .research_by_pillars(
                 &raw_user_spec,
                 research_exts,
-                worker_models,
+                worker_devices,
                 &cfg.planner_model,
             )
             .await?;
@@ -57214,13 +57630,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "ONE SYNTHESIS PLAN",
             "the strongest node writes the final exact task DAG; no model verification round follows",
         );
-        let mut worker_models = std::iter::once(cfg.planner_model.clone())
-            .chain(fleet_slot_models(&devices))
-            .collect::<Vec<_>>();
-        let mut seen_models = HashSet::new();
-        worker_models.retain(|model| seen_models.insert(model.clone()));
         let (plan_json, dag) = dispatcher
-            .plan_from_pillars(&raw_user_spec, outcome, &cfg.planner_model, &worker_models)
+            .plan_from_pillars(&raw_user_spec, outcome, &cfg.planner_model)
             .await?;
         (plan_json, dag, PlanConf::default(), false)
     } else {
@@ -58597,10 +59008,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         v
     };
     let t_exec = std::time::Instant::now();
+    let mut capability_repair_checkpoint_reseal: Option<(
+        Vec<TaskSpec>,
+        Vec<SchedulerCompletedTaskEvidence>,
+    )> = None;
 
     if pillar_flow_on && report.failed.is_empty() {
         match capability_repair_specs(&build_specs, pillar_integration_required, &fleet_models) {
             Ok(repair_specs) if !repair_specs.is_empty() => {
+                let checkpoint_specs = repair_specs.clone();
                 let repair_tasks = repair_specs
                     .iter()
                     .map(|spec| {
@@ -58626,6 +59042,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     .with_sink(sink.clone())
                     .with_doc_facts(doc_facts.clone())
                     .with_pause_file(working_dir.join(".swarm").join("pause"))
+                    .with_checkpoint_store(
+                        scheduler_checkpoint_store
+                            .as_ref()
+                            .expect("pillar flow armed a scheduler checkpoint store")
+                            .clone(),
+                    )
                     .with_degrade_on_stall();
                 let repair_result = if broker_enforcement_requested {
                     repair_scheduler
@@ -58655,12 +59077,25 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         .await
                 };
                 match repair_result {
-                    Ok(report) => sink.write_value(serde_json::json!({
-                        "event": "capability_repair_completed",
-                        "planned_files": report.planned_files,
-                        "status": "drained",
-                        "next": "deterministic-whole-product-ruler",
-                    })),
+                    Ok(report) => {
+                        match completed_checkpoint_evidence(&checkpoint_specs, &report) {
+                            Ok(evidence) => {
+                                capability_repair_checkpoint_reseal =
+                                    Some((checkpoint_specs, evidence));
+                            }
+                            Err(error) => sink.write_value(serde_json::json!({
+                                "event": "capability_repair_checkpoint_reseal_unavailable",
+                                "reason": error.to_string(),
+                                "status": "nonfatal",
+                            })),
+                        }
+                        sink.write_value(serde_json::json!({
+                            "event": "capability_repair_completed",
+                            "planned_files": report.planned_files,
+                            "status": "drained",
+                            "next": "deterministic-whole-product-ruler",
+                        }));
+                    }
                     Err(error) => sink.write_value(serde_json::json!({
                         "event": "capability_repair_degraded",
                         "error": error.to_string(),
@@ -58694,8 +59129,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // against the distilled failure and RE-VERIFY — up to GOOSE_SWARM_COMPLETE_ROUNDS, capped by
     // GOOSE_SWARM_COMPLETE_CAP_SECS. Unlike GOOSE_SWARM_SMOKE (advisory, one-shot) the FINAL verdict is fed
     // into the run's exit code below, so a still-red app can no longer exit 0 and get delivered as "done".
-    // Off by default => this block never runs and the exit path stays byte-identical.
-    let complete_on = swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete);
+    // Legacy runs keep the opt-in toggle. Pillar runs always execute this ruler after their evidence-first
+    // repair wave so a repair can neither bypass runnable verification nor leave stale task checkpoints.
+    let complete_on = complete_phase_selected(
+        pillar_flow_on,
+        swarm_gate_cfg("GOOSE_SWARM_COMPLETE", load_config().complete),
+    );
     let mut complete_failed = false;
     let mut sealed_complete: Option<SealedCompleteTree> = None;
     // Hoisted for the end-of-run OVERVIEW: whether the verify oracle actually RAN the built app green (not
@@ -58891,7 +59330,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .collect();
         let failed_planned = green_blocking_failed(&report.failed, &report.bonus, &owns_nothing);
         let failed_task_findings: Vec<String> = if !failed_planned.is_empty()
-            && (delivery_on
+            && (pillar_flow_on
+                || delivery_on
                 || swarm_gate_cfg(
                     "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
                     load_config().failed_tasks_block_green,
@@ -58924,7 +59364,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
         // Missing deliverables are re-statted by the canonical ruler on every tree. A frozen pre-loop
         // list once kept repaired files red forever; this boolean is policy only, never a cached verdict.
-        let missing_deliverable_gate = delivery_on
+        let missing_deliverable_gate = pillar_flow_on
+            || delivery_on
             || swarm_gate_cfg(
                 "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
                 load_config().failed_tasks_block_green,
@@ -58949,6 +59390,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let mut force_race_next = false;
         let mut force_shard_next = false;
         let mut strategy_switched = false;
+        let mut reusable_green_ruler: Option<(String, CompleteRulerResult)> = None;
         loop {
             let ruler = run_complete_ruler(
                 &cwd,
@@ -58984,7 +59426,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             last_verify_ran = ruler.verdict.ran;
             last_verify_count = ruler.verdict.findings.len();
             last_verify_established = ruler.verdict.established();
-            let verdict = ruler.verdict;
+            let verdict = &ruler.verdict;
             // F835: record what THIS verify measured, and snapshot the tree when a RAN verify
             // posts the fewest findings yet. A ran:false verify never snapshots — promoting an
             // UNCHECKED tree is the vacuous-pass trap the speculative-twin path already refuses.
@@ -59091,6 +59533,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         .yellow()
                     );
                 }
+                reusable_green_ruler = Some((repair_tree_snapshot(&cwd)?.sha256, ruler));
                 break;
             }
             // STALL EXIT, count-based (speed hunt 2026-08-16). The old predicate compared finding
@@ -60225,25 +60668,45 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 load_config().unwired_demotes_verified,
             );
 
-        // This is the first authoritative decision: every boot/wire candidate is now behind us,
-        // and the exact same ruler used at the loop head and in promotion previews judges the tree.
+        // Bind the final bytes to a canonical ruler decision after every possible writer. When the
+        // loop already proved this exact tree green and no later writer changed a byte, reuse that
+        // result instead of running the same expensive suite a second time.
         let authoritative_round = round.saturating_add(1);
-        let authoritative = run_complete_ruler(
-            &cwd,
-            &final_binding_spec,
-            complete_lang,
-            &smoke_all_files,
-            delivery_on || spec_contract_enabled(),
-            missing_deliverable_gate,
-            &failed_task_findings,
-        )
-        .await;
-        emit_complete_ruler_observations(
-            sink.as_ref(),
-            authoritative_round,
-            complete_lang,
-            &authoritative,
-        );
+        let authoritative_tree_hash = repair_tree_snapshot(&cwd)?.sha256;
+        let authoritative = match reusable_green_ruler
+            .take()
+            .filter(|(ruled_hash, _)| ruled_hash == &authoritative_tree_hash)
+        {
+            Some((ruled_hash, ruler)) => {
+                sink.write_value(serde_json::json!({
+                    "event": "complete_ruler_reused",
+                    "reason": "no tree bytes changed after the green repair-loop ruling",
+                    "tree_hash": ruled_hash,
+                    "saved_model_calls": 0,
+                    "saved_test_rounds": 1,
+                }));
+                ruler
+            }
+            None => {
+                let ruler = run_complete_ruler(
+                    &cwd,
+                    &final_binding_spec,
+                    complete_lang,
+                    &smoke_all_files,
+                    delivery_on || spec_contract_enabled(),
+                    missing_deliverable_gate,
+                    &failed_task_findings,
+                )
+                .await;
+                emit_complete_ruler_observations(
+                    sink.as_ref(),
+                    authoritative_round,
+                    complete_lang,
+                    &ruler,
+                );
+                ruler
+            }
+        };
         let ruling =
             repair_tree.record_ruling(&authoritative, "post-repair-floor", sink.as_ref())?;
         emit_complete_verify(
@@ -60267,6 +60730,21 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let checkpoint_store = scheduler_checkpoint_store
                 .as_ref()
                 .expect("pillar flow armed a scheduler checkpoint store");
+            if let Some((repair_specs, repair_evidence)) =
+                capability_repair_checkpoint_reseal.as_ref()
+            {
+                let repair_receipt =
+                    checkpoint_store.reseal_completed_dag(repair_specs, repair_evidence)?;
+                sink.write_value(serde_json::json!({
+                    "event": "scheduler_capability_repair_checkpoints_resealed",
+                    "tasks": repair_receipt.tasks,
+                    "first_sequence": repair_receipt.first_sequence,
+                    "next_sequence": repair_receipt.next_sequence,
+                    "tree_hash": ruling.tree_hash,
+                    "artifact_bytes": "exact-final-authoritative-tree",
+                    "restore_order": "after-main-build",
+                }));
+            }
             let evidence = completed_checkpoint_evidence(&build_specs, &report)?;
             let receipt = checkpoint_store.reseal_completed_dag(&build_specs, &evidence)?;
             sink.write_value(serde_json::json!({
@@ -61397,6 +61875,319 @@ mod pre_scheduler_semantic_runtime_tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    struct PillarReplayProviderCall {
+        model: String,
+        phase: String,
+        user_chars: usize,
+        user: String,
+    }
+
+    #[derive(Default)]
+    struct PillarReplayProvider {
+        calls: Mutex<Vec<PillarReplayProviderCall>>,
+    }
+
+    impl PillarReplayProvider {
+        fn calls(&self) -> Vec<PillarReplayProviderCall> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn last_user_text(messages: &[Message]) -> String {
+            messages
+                .iter()
+                .rev()
+                .flat_map(|message| message.content.iter().rev())
+                .find_map(|content| match content {
+                    MessageContent::Text(text) => Some(text.text.clone()),
+                    _ => None,
+                })
+                .expect("pillar replay provider call had no user text")
+        }
+
+        fn opening_output(user: &str) -> serde_json::Value {
+            let request: serde_json::Value = serde_json::from_str(user)
+                .expect("pillar replay opening request must remain typed JSON");
+            let requirements = request["frozen_authored_requirements"]
+                .as_array()
+                .expect("pillar replay opening lost authored requirements");
+            assert_eq!(requirements.len(), 197);
+            let requirement_ids = requirements
+                .iter()
+                .map(|requirement| {
+                    requirement["id"]
+                        .as_str()
+                        .expect("authored requirement lost its id")
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            let planner = request["required_integration_owner"]
+                .as_str()
+                .expect("pillar replay opening lost integration owner");
+            let mut cursor = 0usize;
+            let pillars = (0..3)
+                .map(|index| {
+                    let size = requirement_ids.len() / 3
+                        + usize::from(index < requirement_ids.len() % 3);
+                    let owned = requirement_ids[cursor..cursor + size].to_vec();
+                    cursor += size;
+                    serde_json::json!({
+                        "id": format!("pillar-{:02}", index + 1),
+                        "title": format!("Exclusive capability {}", index + 1),
+                        "objective": format!("Resolve only capability {} without sibling scope", index + 1),
+                        "requirement_ids": owned,
+                        "dependencies": [],
+                        "research_questions": [format!("Which exact implementation boundary satisfies capability {}?", index + 1)],
+                        "acceptance_criteria": [format!("Capability {} has executable acceptance evidence", index + 1)],
+                        "exclusions": [format!("All requirements assigned to the other two capabilities, excluding pillar-{:02}", index + 1)],
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(cursor, requirement_ids.len());
+            serde_json::json!({
+                "pillars": pillars,
+                "integration_contract": {
+                    "owner": planner,
+                    "integration_required": true,
+                    "objective": "Hook the three independently produced capabilities into one runnable application",
+                    "interface_invariants": ["Each capability owns one disjoint module and exposes one explicit interface"],
+                    "acceptance_criteria": ["The integrated application starts and reaches every capability"]
+                }
+            })
+        }
+
+        fn report_output(user: &str) -> serde_json::Value {
+            let request: serde_json::Value = serde_json::from_str(user)
+                .expect("pillar replay owner request must remain typed JSON");
+            let pillar = &request["pillar"];
+            let pillar_id = pillar["id"]
+                .as_str()
+                .expect("pillar replay owner lost pillar id");
+            let requirement_ids = pillar["requirement_ids"]
+                .as_array()
+                .expect("pillar replay owner lost requirement ids")
+                .iter()
+                .map(|id| id.as_str().unwrap().to_string())
+                .collect::<Vec<_>>();
+            let low_confidence = pillar_id == "pillar-03" || requirement_ids.len() == 197;
+            let unresolved_id = low_confidence.then(|| requirement_ids[0].clone());
+            let claims = requirement_ids
+                .iter()
+                .map(|requirement_id| {
+                    let unresolved = unresolved_id.as_deref() == Some(requirement_id.as_str());
+                    serde_json::json!({
+                        "requirement_id": requirement_id,
+                        "statement": if unresolved {
+                            "The exact optional rendering fallback cannot be proven from available engine evidence"
+                        } else {
+                            "The authored requirement is binding within this exclusive capability boundary"
+                        },
+                        "reported_class": if unresolved { "unresolved" } else { "supported" },
+                        "source_section_id": null,
+                        "source_quote": null
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "pillar_id": pillar_id,
+                "reported_confidence": if low_confidence { "low" } else { "high" },
+                "claims": claims,
+                "unresolved_uncertainties": unresolved_id
+                    .map(|id| vec![format!("{id} remains intentionally isolated behind a safe fallback")])
+                    .unwrap_or_default(),
+                "acceptance_tests": [format!("Run the exclusive acceptance path for {pillar_id}")],
+                "interfaces": [format!("{pillar_id} exposes one stable capability interface")],
+                "exclusions": ["Do not implement requirements owned by sibling pillars"]
+            })
+        }
+
+        fn plan_output(user: &str) -> serde_json::Value {
+            let request: serde_json::Value = serde_json::from_str(user)
+                .expect("pillar replay synthesis request must remain typed JSON");
+            let pillars = request["disjoint_pillars"]
+                .as_array()
+                .expect("pillar replay synthesis lost disjoint pillars");
+            let requirements = request["frozen_requirements"]
+                .as_array()
+                .expect("pillar replay synthesis lost frozen requirements");
+            let models = request["allowed_runtime_models"]
+                .as_array()
+                .expect("pillar replay synthesis lost runtime models")
+                .iter()
+                .map(|model| model.as_str().unwrap().to_string())
+                .collect::<Vec<_>>();
+            let all_requirement_ids = requirements
+                .iter()
+                .map(|requirement| requirement["id"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>();
+            let unresolved_ids = request["unresolved_requirement_ids"]
+                .as_array()
+                .expect("pillar replay exact unresolved requirement ids disappeared")
+                .iter()
+                .map(|requirement| requirement.as_str().unwrap().to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                unresolved_ids.len(),
+                1,
+                "one uncertain owner item must not poison its entire pillar"
+            );
+
+            let mut subtasks = Vec::new();
+            let mut task_coverage = Vec::new();
+            let mut task_specs = Vec::new();
+            let mut build_ids = Vec::new();
+            for (index, pillar) in pillars.iter().enumerate() {
+                let task_id = format!("build-pillar-{:02}", index + 1);
+                let owned = pillar["requirement_ids"].as_array().unwrap().clone();
+                build_ids.push(task_id.clone());
+                subtasks.push(serde_json::json!({
+                    "id": task_id,
+                    "description": format!("Build exclusive capability {}", index + 1),
+                    "difficulty": "hard",
+                    "model": models[index % models.len()],
+                    "depends_on": [],
+                    "files": [format!("src/capability_{:02}.rs", index + 1)]
+                }));
+                task_coverage.push(serde_json::json!({
+                    "task_id": task_id,
+                    "owns_requirement_ids": owned,
+                    "applies_requirement_ids": [],
+                    "verifies_requirement_ids": [],
+                    "evidence_ids": []
+                }));
+                task_specs.push(serde_json::json!({
+                    "task_id": task_id,
+                    "objective": format!("Implement only capability {}", index + 1),
+                    "module_boundary": format!("Own only src/capability_{:02}.rs", index + 1),
+                    "concrete_steps": [format!("Implement the typed capability {} contract", index + 1)],
+                    "interfaces": [format!("Export capability_{:02} for the integration owner", index + 1)],
+                    "edge_cases": ["Return an explicit degraded value when optional evidence remains unavailable"],
+                    "acceptance_evidence": [format!("Exercise capability {} through its public interface", index + 1)],
+                    "exclusions": ["Do not edit the shared entry point or sibling capability modules"]
+                }));
+            }
+            subtasks.push(serde_json::json!({
+                "id": "integrate-app",
+                "description": "Hook the three completed capabilities into one runnable entry point",
+                "difficulty": "hard",
+                "model": models[0],
+                "depends_on": build_ids,
+                "files": ["src/main.rs"]
+            }));
+            task_coverage.push(serde_json::json!({
+                "task_id": "integrate-app",
+                "owns_requirement_ids": [],
+                "applies_requirement_ids": all_requirement_ids,
+                "verifies_requirement_ids": [],
+                "evidence_ids": []
+            }));
+            task_specs.push(serde_json::json!({
+                "task_id": "integrate-app",
+                "objective": "Wire all completed capabilities into one runnable application",
+                "module_boundary": "Own only src/main.rs and consume, never reimplement, capability modules",
+                "concrete_steps": ["Import each capability module", "Expose one runnable entry point"],
+                "interfaces": ["Consume every capability export after its producer task completes"],
+                "edge_cases": ["Fail clearly when a required capability cannot initialize"],
+                "acceptance_evidence": ["Start the integrated application and exercise all three capability paths"],
+                "exclusions": ["Do not duplicate capability-owned behavior"]
+            }));
+            let uncertainty_routes = unresolved_ids
+                .into_iter()
+                .map(|requirement_id| {
+                    serde_json::json!({
+                        "requirement_id": requirement_id,
+                        "task_id": "build-pillar-03",
+                        "kind": "isolation",
+                        "rationale": "Keep the unproven optional behavior behind the capability boundary and continue with an explicit safe alternative"
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "task_coverage": task_coverage,
+                "task_specs": task_specs,
+                "uncertainty_routes": uncertainty_routes,
+                "canonical_plan": {
+                    "subtasks": subtasks,
+                    "integration": "Run the integrated entry point and exercise each capability contract"
+                }
+            })
+        }
+    }
+
+    #[async_trait]
+    impl Provider for PillarReplayProvider {
+        fn get_name(&self) -> &str {
+            "frozen-v20-pillar-replay"
+        }
+
+        fn transport_identity(&self, _model_name: &str) -> Option<String> {
+            Some(VERIFIED_TRANSPORT.to_string())
+        }
+
+        fn supports_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn supports_terminal_proven_single_attempt_streaming(&self) -> bool {
+            true
+        }
+
+        fn single_attempt_failure_provenance(
+            &self,
+            _error: &ProviderError,
+        ) -> SingleAttemptFailureProvenance {
+            SingleAttemptFailureProvenance::Unresolved
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            Err(ProviderError::ExecutionError(
+                "frozen V20 replay must use terminal-proven single-attempt streaming".to_string(),
+            ))
+        }
+
+        async fn stream_once_with_terminal_proof(
+            &self,
+            model_config: &ModelConfig,
+            system: &str,
+            messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<SingleAttemptStream, ProviderError> {
+            assert!(
+                !tools.is_empty(),
+                "pillar replay unexpectedly left the response-only tool boundary"
+            );
+            let user = Self::last_user_text(messages);
+            let (phase, output) = if system.contains("sole opening architect") {
+                ("opening", Self::opening_output(&user))
+            } else if system.contains("one non-overlapping research and implementation-spec pillar")
+            {
+                ("owner", Self::report_output(&user))
+            } else if system.contains("sole and final synthesis planner") {
+                ("planner", Self::plan_output(&user))
+            } else {
+                panic!(
+                    "legacy or unexpected model round reached frozen V20 pillar replay: {system}"
+                );
+            };
+            self.calls.lock().unwrap().push(PillarReplayProviderCall {
+                model: model_config.model_name.clone(),
+                phase: phase.to_string(),
+                user_chars: user.chars().count(),
+                user,
+            });
+            Ok(ResearchCorrectionRuntimeProvider::finished_final_output(
+                &model_config.model_name,
+                output,
+            ))
+        }
+    }
+
     #[async_trait]
     impl Provider for RuntimeScriptedProvider {
         fn get_name(&self) -> &str {
@@ -61718,6 +62509,7 @@ mod pre_scheduler_semantic_runtime_tests {
                 token: (*token).to_string(),
                 model_id: (*model).to_string(),
                 physical_host_id: (*host).to_string(),
+                verified_physical: true,
             })
             .collect::<Vec<_>>();
         let runtime = Arc::new(ResearchAuthorityRuntime {
@@ -61736,6 +62528,394 @@ mod pre_scheduler_semantic_runtime_tests {
             provider,
             runtime,
         }
+    }
+
+    struct PillarReplayRuntimeHarness {
+        _working_dir: TempDir,
+        dispatcher: Arc<GooseAgentDispatcher>,
+        control: PhysicalAdmissionControl,
+        sink: Arc<RuntimeRecordingSink>,
+        provider: Arc<PillarReplayProvider>,
+    }
+
+    async fn pillar_replay_runtime_harness(
+        lanes: &[(&str, &str, &str)],
+    ) -> PillarReplayRuntimeHarness {
+        let working_dir = tempfile::tempdir().unwrap();
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let provider = Arc::new(PillarReplayProvider::default());
+        let planner_model = lanes.first().expect("pillar replay needs a lane").1;
+        let mut dispatcher = GooseAgentDispatcher::new(
+            working_dir.path().to_path_buf(),
+            sink.clone(),
+            0,
+            4,
+            Vec::new(),
+            HashMap::new(),
+            HashMap::new(),
+            planner_model.to_string(),
+            1,
+            3,
+            false,
+            SamplingParams::default(),
+            false,
+            false,
+            None,
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+        dispatcher.provider = provider.clone();
+        dispatcher.activity_sink_health.activate().unwrap();
+        let dispatcher = Arc::new(dispatcher);
+        let snapshot = PhysicalFleetSnapshot::new(
+            "frozen-v20-pillar-replay-snapshot",
+            lanes
+                .iter()
+                .map(|(token, model, host)| lane(&format!("device-{token}"), model, host))
+                .collect(),
+        )
+        .unwrap();
+        let journal = Arc::new(
+            DurableProviderLifecycleJournal::open(
+                working_dir.path(),
+                "frozen-v20-pillar-replay-run",
+                &snapshot.snapshot_id,
+            )
+            .unwrap(),
+        );
+        let control = PhysicalAdmissionControl::new_with_journal(
+            "frozen-v20-pillar-replay-control",
+            snapshot.clone(),
+            sink.clone(),
+            journal,
+        )
+        .unwrap();
+        dispatcher.set_pre_scheduler_semantic(Some(Arc::new(PreSchedulerSemanticRuntime::new(
+            control.clone(),
+            snapshot,
+            "frozen-v20-pillar-replay-run".to_string(),
+            Arc::downgrade(&dispatcher),
+        ))));
+        PillarReplayRuntimeHarness {
+            _working_dir: working_dir,
+            dispatcher,
+            control,
+            sink,
+            provider,
+        }
+    }
+
+    struct PillarLogicalReplayHarness {
+        _working_dir: TempDir,
+        dispatcher: Arc<GooseAgentDispatcher>,
+        provider: Arc<PillarReplayProvider>,
+    }
+
+    async fn pillar_logical_replay_harness(planner_model: &str) -> PillarLogicalReplayHarness {
+        let working_dir = tempfile::tempdir().unwrap();
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let provider = Arc::new(PillarReplayProvider::default());
+        let mut dispatcher = GooseAgentDispatcher::new(
+            working_dir.path().to_path_buf(),
+            sink,
+            0,
+            4,
+            Vec::new(),
+            HashMap::new(),
+            HashMap::new(),
+            planner_model.to_string(),
+            1,
+            3,
+            false,
+            SamplingParams::default(),
+            false,
+            false,
+            None,
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+        dispatcher.provider = provider.clone();
+        dispatcher.activity_sink_health.activate().unwrap();
+        PillarLogicalReplayHarness {
+            _working_dir: working_dir,
+            dispatcher: Arc::new(dispatcher),
+            provider,
+        }
+    }
+
+    #[tokio::test]
+    async fn brokerless_one_lane_runs_one_real_low_confidence_retry() {
+        const MODEL: &str = "single-logical-model";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+        let harness = pillar_logical_replay_harness(MODEL).await;
+        let outcome = harness
+            .dispatcher
+            .research_by_pillars(
+                FROZEN_SPEC,
+                Arc::new(Vec::new()),
+                vec![("single-device".to_string(), MODEL.to_string())],
+                MODEL,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome.opening.pillars.len(), 1);
+        assert_eq!(outcome.reports.len(), 1);
+        assert_eq!(outcome.retries, 1);
+        assert_eq!(outcome.provider_calls, 3);
+        assert_eq!(outcome.reports[0].effective_confidence, Confidence::Low);
+        assert!(!outcome.reports[0].unresolved_uncertainties.is_empty());
+        let owner_calls = harness
+            .provider
+            .calls()
+            .into_iter()
+            .filter(|call| call.phase == "owner")
+            .collect::<Vec<_>>();
+        assert_eq!(owner_calls.len(), 2);
+        assert!(owner_calls.iter().all(|call| call.model == MODEL));
+    }
+
+    #[tokio::test]
+    async fn frozen_v20_replay_selects_pillars_once_retries_only_low_confidence_and_dispatches_build(
+    ) {
+        const PLANNER_MODEL: &str = "v20-replay-planner";
+        const WORKER_B: &str = "v20-replay-worker-b";
+        const WORKER_C: &str = "v20-replay-worker-c";
+        const HOST_A: &str = "v20-replay-host-a";
+        const HOST_B: &str = "v20-replay-host-b";
+        const HOST_C: &str = "v20-replay-host-c";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+
+        assert_eq!(
+            content_sha256(FROZEN_SPEC),
+            "56f66c21c3557e9cbf6bccc4d4d01059ad88e4ee610e71f4cf67a8a34c330129"
+        );
+        let requirement_inventory = normalized_requirement_inventory(FROZEN_SPEC);
+        assert_eq!(requirement_inventory.len(), 197);
+        assert!(pillar_prebuild_selected(true, true));
+        assert!(pillar_prebuild_selected(false, true));
+        assert!(!pillar_prebuild_selected(true, false));
+
+        let lanes = [
+            ("pillar-replay-lane-a", PLANNER_MODEL, HOST_A),
+            ("pillar-replay-lane-b", WORKER_B, HOST_B),
+            ("pillar-replay-lane-c", WORKER_C, HOST_C),
+        ];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        let worker_devices = vec![
+            ("device-a".to_string(), PLANNER_MODEL.to_string()),
+            ("device-b".to_string(), WORKER_B.to_string()),
+            ("device-c".to_string(), WORKER_C.to_string()),
+        ];
+        let outcome = harness
+            .dispatcher
+            .research_by_pillars(
+                FROZEN_SPEC,
+                Arc::new(Vec::new()),
+                worker_devices,
+                PLANNER_MODEL,
+            )
+            .await
+            .expect("frozen V20 fixture did not finish the production pillar research path");
+
+        assert_eq!(outcome.opening.requirements.len(), 197);
+        assert_eq!(outcome.opening.pillars.len(), 3);
+        let exact_cover = outcome
+            .opening
+            .pillars
+            .iter()
+            .flat_map(|pillar| pillar.requirement_ids.iter().cloned())
+            .collect::<Vec<_>>();
+        assert_eq!(exact_cover.len(), 197);
+        assert_eq!(
+            exact_cover.iter().cloned().collect::<HashSet<_>>().len(),
+            197,
+            "the opener overlapped authored requirements between pillars"
+        );
+        assert_eq!(
+            outcome.provider_calls, 5,
+            "one opener plus four owner calls"
+        );
+        assert_eq!(outcome.retries, 1);
+        assert!(outcome.synthesis.chars().count() <= 32_000);
+        assert!(outcome.worker_context.chars().count() <= 40_000);
+
+        let research_events = harness.sink.values();
+        let owner_starts = research_events
+            .iter()
+            .filter(|event| event["event"] == "pillar_owner_attempt_started")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            owner_starts
+                .iter()
+                .filter(|event| event["attempt_ordinal"] == 1)
+                .count(),
+            3
+        );
+        let retries = owner_starts
+            .iter()
+            .filter(|event| event["attempt_ordinal"] == 2)
+            .collect::<Vec<_>>();
+        assert_eq!(retries.len(), 1);
+        assert_eq!(retries[0]["pillar_id"], "pillar-03");
+        let primary_host = owner_starts
+            .iter()
+            .find(|event| event["pillar_id"] == "pillar-03" && event["attempt_ordinal"] == 1)
+            .and_then(|event| event["physical_host_id"].as_str())
+            .expect("low-confidence primary attempt lost its physical host");
+        assert_ne!(
+            retries[0]["physical_host_id"].as_str(),
+            Some(primary_host),
+            "the focused retry reused the same physical host"
+        );
+
+        let (_plan_json, dag) = harness
+            .dispatcher
+            .plan_from_pillars(FROZEN_SPEC, &outcome, PLANNER_MODEL)
+            .await
+            .expect("frozen V20 fixture did not finish its one production synthesis call");
+        let calls = harness.provider.calls();
+        assert_eq!(
+            calls.iter().filter(|call| call.phase == "opening").count(),
+            1
+        );
+        assert_eq!(calls.iter().filter(|call| call.phase == "owner").count(), 4);
+        assert_eq!(
+            calls.iter().filter(|call| call.phase == "planner").count(),
+            1
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call.phase == "planner")
+                .map(|call| call.model.as_str())
+                .collect::<Vec<_>>(),
+            [PLANNER_MODEL]
+        );
+        let planner_prompt = calls
+            .iter()
+            .find(|call| call.phase == "planner")
+            .map(|call| call.user.as_str())
+            .expect("the one planner call lost its exact input");
+        assert!(planner_prompt.contains("pillar-01 exposes one stable capability interface"));
+        assert!(planner_prompt.contains("Run the exclusive acceptance path for pillar-01"));
+        assert!(
+            calls.iter().all(|call| call.user_chars > 0),
+            "a production model round lost its typed input"
+        );
+
+        let unresolved_requirement = outcome.opening.pillars[2].requirement_ids[0].clone();
+        let routed_task = dag.tasks.get("build-pillar-03").unwrap_or_else(|| {
+            let degraded = harness
+                .sink
+                .values()
+                .into_iter()
+                .find(|event| event["event"] == "pillar_synthesis_plan_degraded")
+                .and_then(|event| event["reason"].as_str().map(str::to_string));
+            panic!(
+                "low-confidence capability task disappeared; tasks={:?}; degraded={degraded:?}",
+                dag.tasks.keys().collect::<Vec<_>>(),
+            )
+        });
+        assert!(routed_task
+            .spec
+            .description
+            .contains("UNRESOLVED REQUIREMENT ROUTE"));
+        assert!(routed_task
+            .spec
+            .description
+            .contains(&unresolved_requirement));
+
+        let events = harness.sink.values();
+        assert!(
+            !events
+                .iter()
+                .any(|event| event["event"] == "pillar_synthesis_plan_degraded"),
+            "the recorded synthesis must compile directly, not enter the deterministic fallback"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "pillar_synthesis_plan_started")
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "pillar_synthesis_plan_completed")
+                .count(),
+            1
+        );
+        for forbidden in [
+            "jury",
+            "adjudication",
+            "citation",
+            "detail",
+            "plan_review",
+            "planning_audit",
+            "prereview",
+        ] {
+            assert!(
+                !events.iter().any(|event| event["event"]
+                    .as_str()
+                    .is_some_and(|name| name.contains(forbidden))),
+                "legacy `{forbidden}` round leaked into the pillar replay"
+            );
+        }
+
+        let build_dispatcher = Arc::new(RuntimeBuildDispatchProbe {
+            starts: AtomicUsize::new(0),
+        });
+        let report = Scheduler::new(
+            vec![
+                DeviceCfg {
+                    id: "v20-build-a".to_string(),
+                    model_id: PLANNER_MODEL.to_string(),
+                    weight: 1,
+                    enabled: true,
+                    speed_weight: 1,
+                    supervision: false,
+                },
+                DeviceCfg {
+                    id: "v20-build-b".to_string(),
+                    model_id: WORKER_B.to_string(),
+                    weight: 1,
+                    enabled: true,
+                    speed_weight: 1,
+                    supervision: false,
+                },
+                DeviceCfg {
+                    id: "v20-build-c".to_string(),
+                    model_id: WORKER_C.to_string(),
+                    weight: 1,
+                    enabled: true,
+                    speed_weight: 1,
+                    supervision: false,
+                },
+            ],
+            1,
+        )
+        .run(
+            dag,
+            build_dispatcher.clone() as Arc<dyn TaskDispatcher>,
+            FROZEN_SPEC.to_string(),
+        )
+        .await
+        .expect("frozen V20 pillar replay never reached real Scheduler build dispatch");
+        assert_eq!(build_dispatcher.starts.load(AtomicOrdering::SeqCst), 4);
+        assert_eq!(report.done.len(), 4);
+        assert!(report.failed.is_empty());
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("frozen V20 replay did not drain provider lifecycle")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
     fn requirement_binding_runtime_fixture(
