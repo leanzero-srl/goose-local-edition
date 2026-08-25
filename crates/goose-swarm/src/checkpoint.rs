@@ -282,6 +282,12 @@ impl SchedulerCheckpointStore {
             ));
         }
         validate_task_spec_for_checkpoint(spec)?;
+        if spec.owned_files.is_empty() {
+            return Err(SchedulerCheckpointError::new(format!(
+                "task {:?} has no owned artifact bytes to checkpoint",
+                spec.id
+            )));
+        }
         let artifacts = capture_owned_artifacts(&self.root, &spec.owned_files)?;
         let mut state = lock(&self.state);
         if let Some(error) = &state.poisoned {
@@ -293,8 +299,15 @@ impl SchedulerCheckpointStore {
         let dependency_checkpoints = spec
             .deps
             .iter()
-            .filter_map(|task_id| state.active.get(task_id).cloned())
-            .collect::<Vec<_>>();
+            .map(|task_id| {
+                state.active.get(task_id).cloned().ok_or_else(|| {
+                    SchedulerCheckpointError::new(format!(
+                        "task {:?} dependency {task_id:?} has no restorable checkpoint",
+                        spec.id
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         let material = WalMaterial {
             schema_version: SCHEMA_VERSION,
@@ -320,6 +333,24 @@ impl SchedulerCheckpointStore {
             completion_order: material.completion_order,
             artifact_count: material.artifacts.len(),
         })
+    }
+
+    pub fn can_persist_done(&self, spec: &TaskSpec) -> Result<bool, SchedulerCheckpointError> {
+        validate_task_spec_for_checkpoint(spec)?;
+        if spec.owned_files.is_empty() {
+            return Ok(false);
+        }
+        let state = lock(&self.state);
+        if let Some(error) = &state.poisoned {
+            return Err(SchedulerCheckpointError::new(format!(
+                "scheduler checkpoint is latched after a prior durability failure: {error}"
+            )));
+        }
+        verify_live_file(&self.wal_path, &state.wal, state.expected_len)?;
+        Ok(spec
+            .deps
+            .iter()
+            .all(|dependency| state.active.contains_key(dependency)))
     }
 
     fn append_material(
@@ -367,14 +398,14 @@ impl SchedulerCheckpointStore {
         state.previous_hash = entry_hash;
         state.records.push(material);
 
-        if let Err(error) = write_head_atomic(
+        if let Err(_error) = write_head_atomic(
             &self.head_path,
             &self.root,
             state.next_sequence,
             &state.previous_hash,
         ) {
-            state.poisoned = Some(error.to_string());
-            return Err(error);
+            // The synced hash-linked WAL is authoritative. The head is a recoverable index cache,
+            // and reopening promotes it to the verified WAL tip before restoration.
         }
         Ok(())
     }
@@ -592,8 +623,15 @@ fn capture_artifact(
     root: &Path,
     relative: &str,
 ) -> Result<OwnedArtifactCheckpoint, SchedulerCheckpointError> {
-    let path = contained_owned_file(root, relative)?;
-    let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+    validate_owned_file_path(relative)?;
+    let path = root.join(relative);
+    let mut file = open_artifact_no_follow(&path).map_err(|error| {
+        SchedulerCheckpointError::io(
+            &format!("cannot open completed task artifact {relative:?}"),
+            error,
+        )
+    })?;
+    let metadata = file.metadata().map_err(|error| {
         SchedulerCheckpointError::io(
             &format!("cannot inspect completed task artifact {relative:?}"),
             error,
@@ -604,7 +642,20 @@ fn capture_artifact(
             "completed task artifact is not a regular file: {relative:?}"
         )));
     }
-    let bytes = std::fs::read(&path).map_err(|error| {
+    let opened_path = opened_artifact_path(&file).map_err(|error| {
+        SchedulerCheckpointError::io(
+            &format!("cannot resolve opened task artifact {relative:?}"),
+            error,
+        )
+    })?;
+    let expected_path = root.join(relative);
+    if opened_path != expected_path || !opened_path.starts_with(root) {
+        return Err(SchedulerCheckpointError::new(format!(
+            "task artifact resolves outside its exact owned path: {relative:?}"
+        )));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|error| {
         SchedulerCheckpointError::io(
             &format!("cannot read completed task artifact {relative:?}"),
             error,
@@ -646,7 +697,7 @@ fn artifact_set_matches(
     Ok(true)
 }
 
-fn contained_owned_file(root: &Path, relative: &str) -> Result<PathBuf, SchedulerCheckpointError> {
+fn validate_owned_file_path(relative: &str) -> Result<(), SchedulerCheckpointError> {
     let relative_path = Path::new(relative);
     if relative_path.as_os_str().is_empty()
         || relative_path.is_absolute()
@@ -662,34 +713,51 @@ fn contained_owned_file(root: &Path, relative: &str) -> Result<PathBuf, Schedule
             "task artifact path is not a safe project-relative file: {relative:?}"
         )));
     }
-    let joined = root.join(relative_path);
-    let mut current = root.to_path_buf();
-    for component in relative_path.components() {
-        current.push(component.as_os_str());
-        let metadata = std::fs::symlink_metadata(&current).map_err(|error| {
-            SchedulerCheckpointError::io(
-                &format!("cannot inspect completed task artifact path {relative:?}"),
-                error,
-            )
-        })?;
-        if metadata.file_type().is_symlink() {
-            return Err(SchedulerCheckpointError::new(format!(
-                "completed task artifact path contains a symlink: {relative:?}"
-            )));
-        }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn open_artifact_no_follow(path: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    options.open(path)
+}
+
+#[cfg(not(unix))]
+fn open_artifact_no_follow(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().read(true).open(path)
+}
+
+#[cfg(target_os = "macos")]
+fn opened_artifact_path(file: &File) -> std::io::Result<PathBuf> {
+    use std::ffi::CStr;
+    use std::os::fd::AsRawFd;
+
+    let mut buffer = vec![0_i8; libc::PATH_MAX as usize];
+    let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buffer.as_mut_ptr()) };
+    if result == -1 {
+        return Err(std::io::Error::last_os_error());
     }
-    let canonical = std::fs::canonicalize(&joined).map_err(|error| {
-        SchedulerCheckpointError::io(
-            &format!("cannot resolve completed task artifact {relative:?}"),
-            error,
-        )
-    })?;
-    if !canonical.starts_with(root) {
-        return Err(SchedulerCheckpointError::new(format!(
-            "task artifact escapes the checkpoint root: {relative:?}"
-        )));
-    }
-    Ok(canonical)
+    let path = unsafe { CStr::from_ptr(buffer.as_ptr()) };
+    Ok(PathBuf::from(path.to_string_lossy().into_owned()))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn opened_artifact_path(file: &File) -> std::io::Result<PathBuf> {
+    use std::os::fd::AsRawFd;
+    std::fs::canonicalize(format!("/proc/self/fd/{}", file.as_raw_fd()))
+}
+
+#[cfg(not(unix))]
+fn opened_artifact_path(file: &File) -> std::io::Result<PathBuf> {
+    let _ = file;
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "opened-file path verification is unavailable on this platform",
+    ))
 }
 
 #[cfg(unix)]
@@ -712,9 +780,20 @@ fn replay_wal(wal: &mut File, root: &Path) -> Result<ReplayState, SchedulerCheck
         SchedulerCheckpointError::io("cannot read scheduler checkpoint WAL", error)
     })?;
     if !bytes.is_empty() && !bytes.ends_with(b"\n") {
-        return Err(SchedulerCheckpointError::new(
-            "scheduler checkpoint WAL has a torn final record",
-        ));
+        let valid_len = bytes
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |index| index + 1);
+        bytes.truncate(valid_len);
+        wal.set_len(valid_len as u64).map_err(|error| {
+            SchedulerCheckpointError::io(
+                "cannot truncate torn scheduler checkpoint WAL tail",
+                error,
+            )
+        })?;
+        wal.sync_all().map_err(|error| {
+            SchedulerCheckpointError::io("cannot sync repaired scheduler checkpoint WAL", error)
+        })?;
     }
 
     let mut next_sequence = 0_u64;
@@ -1235,23 +1314,24 @@ mod tests {
     }
 
     #[test]
-    fn fileless_completed_tasks_are_re_run() {
+    fn fileless_completed_tasks_are_not_misrepresented_as_durable() {
         let root = tempfile::tempdir().unwrap();
         let verify = spec("integrate-verify", &[], &[]);
         let store = SchedulerCheckpointStore::open(root.path()).unwrap();
-        store.persist_done(&verify, "looks good", 1).unwrap();
+        assert!(!store.can_persist_done(&verify).unwrap());
+        assert!(store.persist_done(&verify, "looks good", 1).is_err());
         let mut dag = Dag::from_specs(vec![verify]).unwrap();
         let mut context = SharedContext::new();
 
         let summary = store.restore_into(&mut dag, &mut context).unwrap();
 
         assert!(summary.restored.is_empty());
-        assert_eq!(summary.invalidated, vec!["integrate-verify"]);
+        assert!(summary.invalidated.is_empty());
         assert_eq!(dag.tasks["integrate-verify"].state, TaskState::Ready);
     }
 
     #[test]
-    fn torn_and_corrupt_wals_are_rejected() {
+    fn torn_tail_is_truncated_but_complete_corruption_is_rejected() {
         let torn_root = tempfile::tempdir().unwrap();
         write_artifact(torn_root.path(), "a.txt", "a");
         let store = SchedulerCheckpointStore::open(torn_root.path()).unwrap();
@@ -1266,10 +1346,12 @@ mod tests {
             .unwrap()
             .write_all(b"{\"torn\"")
             .unwrap();
-        let torn_error = SchedulerCheckpointStore::open(torn_root.path())
-            .err()
-            .expect("a torn WAL must be rejected");
-        assert!(torn_error.to_string().contains("torn final record"));
+        let recovered = SchedulerCheckpointStore::open(torn_root.path()).unwrap();
+        let mut dag = Dag::from_specs(vec![spec("a", &[], &["a.txt"])]).unwrap();
+        let mut context = SharedContext::new();
+        let summary = recovered.restore_into(&mut dag, &mut context).unwrap();
+        assert_eq!(summary.restored, vec!["a"]);
+        assert!(std::fs::read(&recovered.wal_path).unwrap().ends_with(b"\n"));
 
         let corrupt_root = tempfile::tempdir().unwrap();
         write_artifact(corrupt_root.path(), "a.txt", "a");
