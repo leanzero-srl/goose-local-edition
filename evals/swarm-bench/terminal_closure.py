@@ -77,8 +77,8 @@ V18_BINARY_SHA256 = "2aedd0debf848f047e1c26839f7ad1cb936b7cdb48426487d7b04845f61
 V18_INSTRUMENT_MANIFEST_SHA256 = (
     "96dc2c43a963e8ef62abaeef2d51e3adbad6c4454e4b4e09963afd3de191b730"
 )
-V18_PUBLISHER_COMMIT = "eba9e214a1ca1bd2cf980cfcad04b792733fd163"
-V18_PUBLISHER_SHA256 = "d53a5eb9becd2cbbfbf94d46cdc5c40e5e43377f626af38807aa0dec8cfd5bc7"
+V18_PUBLISHER_COMMIT = "3fe730a58f81e63b3279d7b2cb5a11dd27f27b57"
+V18_PUBLISHER_SHA256 = "3a17e4fc535478905bc6c88c450d49723af813d6b2e630a9c324c1316f2bb80e"
 V18_PUBLISHER_MARKER = "Brainwaves v18"
 V18_PUBLISHER_ROOT = pathlib.Path("/Users/mihaiperdum/Projects/LeanZero-website")
 V18_PUBLISHER_PATH = V18_PUBLISHER_ROOT / "scripts/seed-fleet-brainwaves-sb70.mjs"
@@ -1470,6 +1470,22 @@ def git_head(repository: pathlib.Path) -> str:
     return head
 
 
+def valid_v18_model_id(model_id: Any, role: Any) -> bool:
+    prefix = V18_ROLE_PREFIXES.get(role)
+    if (
+        not prefix
+        or not isinstance(model_id, str)
+        or len(model_id) > 200
+        or re.fullmatch(r"[a-z0-9][a-z0-9._-]*", model_id) is None
+        or not model_id.startswith(prefix)
+    ):
+        return False
+    family_alias = model_id[len(prefix) :]
+    return family_alias == V18_MODEL_FAMILY_PREFIX or family_alias.startswith(
+        f"{V18_MODEL_FAMILY_PREFIX}-"
+    )
+
+
 def validate_v18_fleet_seal(
     seal: Mapping[str, Any], launch: Mapping[str, Any]
 ) -> list[str]:
@@ -1500,12 +1516,7 @@ def validate_v18_fleet_seal(
         identifier = row.get("identifier")
         role = row.get("role")
         if (
-            not isinstance(identifier, str)
-            or not isinstance(role, str)
-            or role not in V18_ROLE_PREFIXES
-            or not identifier.casefold().startswith(
-                V18_ROLE_PREFIXES[role] + V18_MODEL_FAMILY_PREFIX
-            )
+            not valid_v18_model_id(identifier, role)
             or not isinstance(row.get("path"), str)
             or not row.get("path")
             or not isinstance(row.get("contextLength"), int)
@@ -1602,15 +1613,12 @@ def validate_v18_fleet_binding(
             raise ClosureError("v18 fleet binding model row is malformed")
         role = row.get("role")
         model_id = row.get("model_id")
-        prefix = V18_ROLE_PREFIXES.get(role)
         artifact = {
             "artifact_path_sha256": row.get("artifact_path_sha256"),
             "quantization_sha256": row.get("quantization_sha256"),
         }
         if (
-            not prefix
-            or not isinstance(model_id, str)
-            or not model_id.casefold().startswith(prefix + V18_MODEL_FAMILY_PREFIX)
+            not valid_v18_model_id(model_id, role)
             or not SHA256_RE.fullmatch(str(artifact["artifact_path_sha256"]))
             or not isinstance(row.get("context_length"), int)
             or row["context_length"] < V18_MIN_CONTEXT_LENGTH
