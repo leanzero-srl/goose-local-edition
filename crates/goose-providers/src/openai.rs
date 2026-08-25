@@ -1024,7 +1024,10 @@ fn ends_with_version_segment(path: &str) -> bool {
 mod tests {
     use super::*;
     use crate::api_client::AuthMethod;
+    use futures::StreamExt;
     use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
     fn make_provider(name: &str) -> OpenAiProvider {
         OpenAiProvider {
@@ -1395,6 +1398,49 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(ProviderError::ServerError(_))));
+    }
+
+    #[tokio::test]
+    async fn production_single_attempt_proves_truncated_response_body_failed() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = r#"data: {"model":"test-model","choices":[{"delta":{"content":"partial"},"index":0,"finish_reason":null}]}
+
+"#;
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = socket.read(&mut request).unwrap();
+            let content_length = body.len() + 64;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n{body}"
+            )
+            .unwrap();
+        });
+        let provider = from_declarative_config(
+            custom_config(&format!("http://{address}/v1")),
+            None,
+            crate::declarative::EnvKeyResolver,
+        )
+        .unwrap()
+        .build();
+
+        let attempt = provider
+            .stream_once_with_terminal_proof(
+                &ModelConfig::new("test-model"),
+                "single-attempt system",
+                &[Message::user().with_text("single-attempt request")],
+                &[],
+            )
+            .await
+            .unwrap();
+        let terminal = attempt.terminal;
+        let mut stream = attempt.stream;
+        assert!(stream.next().await.unwrap().is_ok());
+        assert!(stream.next().await.unwrap().is_err());
+        assert_eq!(terminal.outcome(), SingleAttemptStreamOutcome::Failed);
+        server.join().unwrap();
     }
 
     #[test]
