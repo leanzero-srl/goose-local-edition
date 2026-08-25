@@ -427,6 +427,8 @@ export interface SwarmRunState {
   smoke: SmokeResult | null;
   /** Friendly current-phase label (Planning research / Building / Verifying / Done…). */
   phase: string;
+  /** Engine-event evidence for stages that the Formation Ribbon may truthfully mark skipped. */
+  formation?: { integrationObserved: boolean; repairObserved: boolean };
   /** Cross-draft-agreement plan confidence (0-100) — how sure the planner was about the decomposition.
    *  null before planning finishes / when not computed. Updates live as the swarm retargets to raise it. */
   planConfidence: number | null;
@@ -2344,6 +2346,20 @@ export function useSwarmRun(workingDir: string | undefined, pollMs = 500): Swarm
           // scheduler has actually reached the hold it OVERRIDES the progress-derived label. The distinction
           // that matters to someone watching is not which task is next, it is "is this thing working or not".
           phase: held ? 'Paused' : phase,
+          formation: {
+            integrationObserved: data.events.some(
+              (event) =>
+                event['event'] === 'task_dispatched' && event['task_id'] === 'integrate-verify'
+            ),
+            repairObserved: data.events.some((event) => {
+              const eventType = String(event['event'] ?? '');
+              return (
+                (eventType === 'complete_verify' && (num(event['findings']) ?? 0) > 0) ||
+                eventType.startsWith('complete_fix_') ||
+                eventType === 'spec_repair_wave'
+              );
+            }),
+          },
           planConfidence,
           confidence,
           askFloor,
