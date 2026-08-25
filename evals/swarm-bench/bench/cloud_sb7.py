@@ -815,20 +815,48 @@ def spend_policy(
                     "budget guard, not an actual Token Plan charge"
                 )
         if provider == "minimax_api" and row.get("model") == "MiniMax-M3":
-            expected_billing = {
-                "mode": "pay_as_you_go",
-                "actual_charge_unit": "USD",
-                "actual_charge_observable_via_inference_api": False,
-                "budget_guard_unit": "USD",
-                "budget_guard_basis": (
-                    "conservative_full_input_payg_list_price_upper_bound"
-                ),
-                "budget_guard_is_actual_charge": False,
-            }
+            billing_mode = billing.get("mode") if isinstance(billing, dict) else None
+            if billing_mode == "pay_as_you_go":
+                expected_billing = {
+                    "mode": "pay_as_you_go",
+                    "actual_charge_unit": "USD",
+                    "actual_charge_observable_via_inference_api": False,
+                    "budget_guard_unit": "USD",
+                    "budget_guard_basis": (
+                        "conservative_full_input_payg_list_price_upper_bound"
+                    ),
+                    "budget_guard_is_actual_charge": False,
+                }
+                pricing_purpose = (
+                    "conservative_full_input_upper_bound_excludes_cache_discount"
+                )
+                billing_error = "MiniMax-M3 PAYG billing"
+            elif billing_mode == "subscription_key_credits":
+                expected_billing = {
+                    "mode": "subscription_key_credits",
+                    "actual_charge_unit": "Credits",
+                    "actual_charge_observable_via_inference_api": False,
+                    "budget_guard_unit": "USD",
+                    "budget_guard_basis": (
+                        "conservative_payg_list_price_credit_equivalent"
+                    ),
+                    "budget_guard_is_actual_charge": False,
+                    "credits_per_usd": 1000,
+                    "source": (
+                        "https://platform.minimax.io/docs/guides/"
+                        "pricing-token-plan"
+                    ),
+                }
+                pricing_purpose = (
+                    "conservative_credit_equivalent_guard_not_observed_charge"
+                )
+                billing_error = "MiniMax-M3 Subscription Key billing"
+            else:
+                raise SystemExit("MiniMax-M3 billing mode is unsupported")
             if billing != expected_billing:
                 raise SystemExit(
-                    "MiniMax-M3 PAYG billing must distinguish the account charge "
-                    "from the conservative token-derived budget guard"
+                    f"{billing_error} must distinguish the account charge from "
+                    "the conservative token-derived budget guard"
                 )
             expected_pricing = {
                 "input_per_million": 0.3,
@@ -840,7 +868,7 @@ def spend_policy(
                 "output_over_threshold_per_million": 2.4,
                 "source": "https://platform.minimax.io/docs/guides/pricing-paygo",
                 "verified_at": "2026-08-25",
-                "purpose": "conservative_full_input_upper_bound_excludes_cache_discount",
+                "purpose": pricing_purpose,
             }
             if pricing != expected_pricing:
                 raise SystemExit(
@@ -2190,6 +2218,7 @@ def authenticated_rosters(
     meta_catalog: Dict[str, Any] = {"data": []}
     alibaba: Dict[str, Any] = {"data": []}
     minimax: Dict[str, Any] = {"data": []}
+    minimax_credential_evidence: Dict[str, Any] | None = None
     if "zai_api" in providers:
         zai_endpoints = {
             str(row["endpoint_family"]).rstrip("/")
@@ -2270,9 +2299,51 @@ def authenticated_rosters(
             raise SystemExit(
                 "MiniMax entrants require the exact credential and base URL bindings"
             )
+        minimax_secret = secret_values["MINIMAX_API_KEY"]
+        billing_modes = {
+            str(row.get("billing", {}).get("mode")) for row in minimax_rows
+        }
+        if len(billing_modes) != 1:
+            raise SystemExit("MiniMax entrants must share one credential billing mode")
+        billing_mode = next(iter(billing_modes))
+        if billing_mode == "pay_as_you_go":
+            if minimax_secret.startswith("sk-cp-"):
+                raise SystemExit(
+                    "MiniMax Subscription Keys are not interchangeable with PAYG keys"
+                )
+        elif billing_mode == "subscription_key_credits":
+            if not minimax_secret.startswith("sk-cp-"):
+                raise SystemExit("MiniMax Subscription Key identity is invalid")
+            remains_endpoint = "https://www.minimax.io/v1/token_plan/remains"
+            remains = fetch_json(
+                remains_endpoint,
+                {"Authorization": f"Bearer {minimax_secret}"},
+            )
+            base_resp = remains.get("base_resp")
+            model_remains = remains.get("model_remains")
+            if base_resp != {
+                "status_code": 2062,
+                "status_msg": "no active token plan subscription",
+            } or model_remains is not None:
+                raise SystemExit(
+                    "MiniMax Subscription Key accounting response does not prove "
+                    "the Credits-only manifest"
+                )
+            minimax_credential_evidence = {
+                "endpoint": remains_endpoint,
+                "key_class": "subscription_key",
+                "accounting_status": "no_active_token_plan_subscription",
+                "base_resp": dict(base_resp),
+                "model_remains_present": model_remains is not None,
+                "credits_balance_observable_via_remains": False,
+                "inference_capacity_proven": False,
+                "capacity_gate": "isolated_contract_smoke",
+            }
+        else:
+            raise SystemExit("MiniMax credential billing mode is unsupported")
         minimax = fetch_json(
             "https://api.minimax.io/v1/models",
-            {"Authorization": f"Bearer {secret_values['MINIMAX_API_KEY']}"},
+            {"Authorization": f"Bearer {minimax_secret}"},
         )
     zai_rows = {
         str(row.get("id", "")): dict(row)
@@ -2314,6 +2385,9 @@ def authenticated_rosters(
         for row in minimax.get("data", [])
         if isinstance(row, dict) and row.get("id")
     }
+    if minimax_credential_evidence is not None:
+        for metadata in minimax_roster_rows.values():
+            metadata["credential_evidence"] = dict(minimax_credential_evidence)
     reported_models: Dict[str, Dict[str, list[str]]] = {
         "zai_api": {model: [model] for model in zai_rows},
         "google": {},
@@ -2560,6 +2634,31 @@ def validate_rosters(
                 if isinstance(provider_evidence, dict)
                 else None
             )
+            billing = row.get("billing")
+            billing_mode = billing.get("mode") if isinstance(billing, dict) else None
+            credential_evidence = (
+                metadata.get("credential_evidence")
+                if isinstance(metadata, dict)
+                else None
+            )
+            if billing_mode == "pay_as_you_go":
+                credential_contract_valid = credential_evidence is None
+            elif billing_mode == "subscription_key_credits":
+                credential_contract_valid = credential_evidence == {
+                    "endpoint": "https://www.minimax.io/v1/token_plan/remains",
+                    "key_class": "subscription_key",
+                    "accounting_status": "no_active_token_plan_subscription",
+                    "base_resp": {
+                        "status_code": 2062,
+                        "status_msg": "no active token plan subscription",
+                    },
+                    "model_remains_present": False,
+                    "credits_balance_observable_via_remains": False,
+                    "inference_capacity_proven": False,
+                    "capacity_gate": "isolated_contract_smoke",
+                }
+            else:
+                credential_contract_valid = False
             if (
                 model != "MiniMax-M3"
                 or not isinstance(metadata, dict)
@@ -2577,6 +2676,7 @@ def validate_rosters(
                 or row.get("reasoning_split") is not False
                 or row.get("tool_calling") is not True
                 or row.get("stream_usage") is not True
+                or not credential_contract_valid
             ):
                 raise SystemExit(
                     "authenticated MiniMax roster and frozen manifest do not prove "
