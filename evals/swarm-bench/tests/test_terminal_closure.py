@@ -321,7 +321,7 @@ class TerminalClosureTests(unittest.TestCase):
             "model_ids": sorted(models),
             "planner_model": planner,
             "api_model_ids": sorted(models),
-            "protected_prior_aliases_reused": True,
+            "prior_model_aliases_reused": sorted(models),
         }
         fleet_path = live_root / "fleet-seal.json"
         closure.atomic_json(fleet_path, fleet_seal)
@@ -907,6 +907,21 @@ class TerminalClosureTests(unittest.TestCase):
             )
             template_path.write_text(json.dumps(config), encoding="utf-8")
             with self.assertRaisesRegex(closure.ClosureError, "stale v17"):
+                closure.bind_v18(template_path)
+
+    def test_v18_binding_rejects_legacy_alias_boolean_provenance(self) -> None:
+        template_path, _config, patches = self.v18_binding_fixture()
+        with patches:
+            fleet_path = closure.V18_FLEET_SEAL
+            fleet = closure.read_json(fleet_path)
+            fleet.pop("prior_model_aliases_reused")
+            fleet["protected_prior_aliases_reused"] = False
+            closure.atomic_json(fleet_path, fleet)
+            launch_path = closure.V18_LIVE_ROOT / "launch.json"
+            launch = closure.read_json(launch_path)
+            launch["fleet_seal"]["sha256"] = sha(fleet_path)
+            closure.atomic_json(launch_path, launch)
+            with self.assertRaisesRegex(closure.ClosureError, "fleet seal"):
                 closure.bind_v18(template_path)
 
     def test_v18_fixture_seed_is_checked_in_each_closure_representation(self) -> None:

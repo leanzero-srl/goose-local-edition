@@ -1457,6 +1457,8 @@ def validate_v18_fleet_seal(
         or len(model_ids) != 3
         or len(set(model_ids)) != 3
         or seal.get("api_model_ids") != sorted(model_ids)
+        or seal.get("prior_model_aliases_reused") != sorted(model_ids)
+        or "protected_prior_aliases_reused" in seal
     ):
         raise ClosureError("v18 authenticated fleet seal is malformed or stale")
     identifiers: list[str] = []
