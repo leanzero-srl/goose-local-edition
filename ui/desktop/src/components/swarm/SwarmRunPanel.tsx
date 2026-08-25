@@ -34,11 +34,19 @@ import {
   type RunOverview as RunOverviewData,
 } from './useSwarmRun';
 import { ZoneHeader, ZONE_HUES } from './ZoneHeader';
-import { useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
+import { SWARM_LOG_MODES, useSwarmLogMode, type SwarmLogMode } from './useVerboseSwarm';
 import { useFleetStatus } from './useFleet';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/Tooltip';
 import InlineMarkdown from './InlineMarkdown';
 import StructuredContent, { CodeBlock } from './StructuredContent';
+import FormationRibbon from './FormationRibbon';
+import {
+  FORMATION_RAMP,
+  SWARM_STATUS,
+  nextRevealedText,
+  phaseStepIndex,
+  usePrefersReducedMotion,
+} from './formationVisualState';
 
 /**
  * Tip — a hover explainer for an icon/glyph, reusing the app's Radix tooltip so every swarm-panel affordance
@@ -62,11 +70,10 @@ const Tip: React.FC<{ label: React.ReactNode; children: React.ReactElement }> = 
  */
 
 // Node identity ramp — matches FanInCard so a node reads the same across the fleet + run views.
-const FORMATION_RAMP = ['#17c4c4', '#2e8bff', '#6a5cff', '#b14cff', '#ff3ea5', '#ff5c7a'];
 const STATUS_COLOR: Record<TurnStatus, string> = {
-  running: '#f5a623',
-  done: '#2ecc71',
-  error: '#ff3b30',
+  running: SWARM_STATUS.running,
+  done: SWARM_STATUS.done,
+  error: SWARM_STATUS.error,
 };
 // A worker rewrites its digest each turn, but a single long tool call (cargo build, a big pytest run)
 // produces no write while it runs. Keep this above realistic single-tool durations so a live worker isn't
@@ -75,19 +82,19 @@ const STALE_MS = 300_000;
 // With a liveness heartbeat present, a dead engine is detectable in seconds (the ticker touches every ~5s),
 // so a much shorter window is safe and doesn't false-positive on long tool calls.
 const HEARTBEAT_STALE_MS = 45_000;
-const CALL_OK = '#2ecc71';
-const CALL_ERR = '#ff3b30';
+const CALL_OK = SWARM_STATUS.done;
+const CALL_ERR = SWARM_STATUS.error;
 const CALL_PENDING = '#8a8a8a';
-const AMBER = '#f5a623';
-const BLUE = '#2e8bff';
+const AMBER = SWARM_STATUS.running;
+const BLUE = SWARM_STATUS.action;
 // A solid slate for a run that stopped without finishing — neutral (not an error) but dark enough for white
 // banner text (grey #8a8a8a fails contrast on white). Distinct from the amber "running" and red "failed".
-const STOPPED = '#4b5563';
+const STOPPED = SWARM_STATUS.stopped;
 // Body colour for MODEL-GENERATED text (live generations, reasoning). Solid, never a tint or an opacity
 // fade. --color-text-secondary (#969696, 5.72:1 on the panel) clears AA and is correct for labels, but a
 // paragraph of 13px prose in it reads dulled; this is 10.6:1 — bright enough to read at length without the
 // glare of pure #fff. Chrome (labels, counts, hints) deliberately stays on the secondary token.
-const GEN_TEXT = '#c9cdd3';
+const GEN_TEXT = 'var(--color-text-primary)';
 
 // Human duration from minutes: seconds under a minute, else "Nm Ss".
 function fmtDuration(min: number): string {
@@ -718,10 +725,19 @@ const ActivityLine: React.FC<{ it: ActivityItem; wrap?: boolean; workingDir?: st
 // call, or the tail window slid past what we've shown), we resync to the longest shared prefix and continue.
 function useSmoothText(target: string, charsPerSec = 110): string {
   const [shown, setShown] = useState('');
+  const reduceMotion = usePrefersReducedMotion();
   const targetRef = useRef(target);
   targetRef.current = target;
   const shownRef = useRef('');
+
   useEffect(() => {
+    if (!reduceMotion) return;
+    shownRef.current = target;
+    setShown(target);
+  }, [reduceMotion, target]);
+
+  useEffect(() => {
+    if (reduceMotion) return;
     let raf = 0;
     let last = Date.now();
     const tick = () => {
@@ -729,16 +745,13 @@ function useSmoothText(target: string, charsPerSec = 110): string {
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       const tgt = targetRef.current || '';
-      let cur = shownRef.current;
-      if (!tgt.startsWith(cur)) {
-        // Any non-append change — a new tool call, or the tail window SLID past what we've shown (long
-        // thinking) — SNAP to the latest snapshot. Never re-type from a shrunken prefix: that made the text
-        // jump backward and retype, which looked broken.
-        cur = tgt;
-      } else if (cur.length < tgt.length) {
-        const step = Math.max(1, Math.round(charsPerSec * dt));
-        cur = tgt.slice(0, Math.min(tgt.length, cur.length + step));
-      }
+      const cur = nextRevealedText({
+        target: tgt,
+        current: shownRef.current,
+        charsPerSec,
+        deltaSeconds: dt,
+        reduceMotion: false,
+      });
       if (cur !== shownRef.current) {
         shownRef.current = cur;
         setShown(cur);
@@ -747,8 +760,8 @@ function useSmoothText(target: string, charsPerSec = 110): string {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [charsPerSec]);
-  return shown;
+  }, [charsPerSec, reduceMotion]);
+  return reduceMotion ? target : shown;
 }
 
 // The per-node live-generation line — typewriter-smoothed so it flows instead of jumping every poll, and
@@ -970,7 +983,6 @@ const FleetStrip: React.FC<{
                       <div
                         className="text-text-secondary whitespace-pre-wrap break-words mt-0.5"
                         style={{
-                          opacity: 0.6,
                           display: '-webkit-box',
                           WebkitLineClamp: dev ? 5 : 2,
                           WebkitBoxOrient: 'vertical',
@@ -1412,37 +1424,23 @@ const ConfPill: React.FC<{ value: number; askFloor?: number | null }> = ({ value
     label={`Planner confidence in how it broke this app down — ${value}/100. ${confVerdict(value, askFloor)}.`}
   >
     <span
-      className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium tabular-nums"
-      style={{ backgroundColor: confColorVsFloor(value, askFloor), borderRadius: 2 }}
+      className="text-xs px-2 py-1 flex items-center gap-1 shrink-0 text-white font-semibold tabular-nums"
+      style={{
+        backgroundColor:
+          askFloor == null || askFloor <= 0 || value >= askFloor
+            ? SWARM_STATUS.solidDone
+            : value >= askFloor - 20
+              ? SWARM_STATUS.solidRunning
+              : SWARM_STATUS.solidError,
+        borderRadius: 3,
+      }}
     >
-      <Gauge className="h-2.5 w-2.5" />
+      <Gauge className="h-3 w-3" />
       conf {value}
     </span>
   </Tip>
 );
 
-// The fixed pipeline every build moves through, so the free-text `phase` label reads as PROGRESS, not a
-// mystery. The active step is filled; passed steps get a check; upcoming steps stay muted.
-const PHASE_STEPS = ['Research', 'Plan', 'Contracts', 'Build', 'Verify', 'Done'] as const;
-// What each pipeline step actually is — the labels alone (esp. "Contracts") are opaque without this.
-const PHASE_TIPS: Record<(typeof PHASE_STEPS)[number], string> = {
-  Research: 'Scouts research the problem — libraries, architecture, edge cases — before any code is written.',
-  Plan: 'The planner drafts and picks a task breakdown, and scores its confidence in the decomposition.',
-  Contracts: 'Per-module interface stubs are drafted so nodes building in parallel agree on shared APIs.',
-  Build: 'Worker nodes build the tasks in parallel across the fleet.',
-  Verify: 'Integration, review, and an end-to-end smoke test that actually runs the program.',
-  Done: 'The run finished.',
-};
-function phaseStepIndex(phase: string): number {
-  const p = phase.toLowerCase();
-  if (/done|finished|complete/.test(p)) return 5;
-  if (/verif|integrat/.test(p)) return 4;
-  if (/contract/.test(p)) return 2;
-  if (/build|execut|dispatch|working/.test(p)) return 3;
-  if (/plan/.test(p)) return 1;
-  if (/research|scout|start/.test(p)) return 0;
-  return 3;
-}
 function fmtElapsed(min: number): string {
   const totalSec = Math.max(0, Math.round(min * 60));
   const h = Math.floor(totalSec / 3600);
@@ -1504,38 +1502,6 @@ const HeaderMetrics: React.FC<{
         </span>
       </Tip>
     </span>
-  );
-};
-
-const PhaseSteps: React.FC<{ phase: string; activeColor?: string; live?: boolean }> = ({
-  phase,
-  activeColor = STATUS_COLOR.running,
-  live = false,
-}) => {
-  const active = phaseStepIndex(phase);
-  return (
-    <div className="flex items-center gap-1 px-3 py-1.5 overflow-x-auto min-w-0">
-      {PHASE_STEPS.map((step, i) => (
-        <React.Fragment key={step}>
-          {i > 0 && <span className="text-text-secondary text-[10px] shrink-0">›</span>}
-          <Tip label={PHASE_TIPS[step]}>
-            <span
-              className={`text-[10px] px-1.5 py-0.5 whitespace-nowrap shrink-0 inline-flex items-center gap-0.5 ${
-                i === active
-                  ? `text-white font-semibold${live ? ' animate-pulse' : ''}`
-                  : i < active
-                    ? 'text-text-primary'
-                    : 'text-text-secondary opacity-60'
-              }`}
-              style={i === active ? { backgroundColor: activeColor, borderRadius: 2 } : undefined}
-            >
-              {i < active ? <Check className="h-2.5 w-2.5" strokeWidth={3} style={{ color: STATUS_COLOR.done }} /> : null}
-              {step}
-            </span>
-          </Tip>
-        </React.Fragment>
-      ))}
-    </div>
   );
 };
 
@@ -1739,7 +1705,7 @@ const PhaseTodoRow: React.FC<{
         ) : null}
       </div>
       {open && hasDetail ? (
-        <div className="ml-5 mt-1 mb-1.5 space-y-1.5 border-l-0">
+        <div className="ml-5 mt-1 mb-1.5 space-y-1.5">
           {planTask && (planTask.difficulty || planTask.deps.length) ? (
             <div className="text-[10px] text-text-secondary flex flex-wrap gap-x-3">
               {planTask.difficulty ? (
@@ -2086,7 +2052,7 @@ const WorkZone: React.FC<{
         }
       />
       {board.stuck ? (
-        <div className="mx-3 mb-2 px-2 py-1.5 text-[11px] text-white flex items-center gap-1.5" style={{ backgroundColor: STATUS_COLOR.error, borderRadius: 3 }}>
+        <div className="mx-3 mb-2 px-2 py-1.5 text-xs text-white flex items-center gap-1.5" style={{ backgroundColor: SWARM_STATUS.solidError, borderRadius: 3 }}>
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           {board.stuck}
         </div>
@@ -2257,7 +2223,7 @@ const ClarifyPrompt: React.FC<{
     return (
       <div
         className="flex items-center gap-2 px-3 py-2 text-xs text-white"
-        style={{ backgroundColor: STATUS_COLOR.done }}
+        style={{ backgroundColor: SWARM_STATUS.solidDone }}
       >
         <Check className="h-4 w-4 shrink-0" />
         Sent — goose is building with your answers.
@@ -2268,7 +2234,7 @@ const ClarifyPrompt: React.FC<{
   const canSend = answers.some((a) => a.trim().length > 0) || guidance.trim().length > 0;
   return (
     <div className="border-b border-border-primary">
-      <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: AMBER }}>
+      <div className="flex items-center gap-2 px-3 py-2 text-white" style={{ backgroundColor: SWARM_STATUS.solidRunning }}>
         <MessageCircleQuestion className="h-4 w-4 shrink-0" />
         <span className="text-xs font-semibold">Review the plan &amp; steer the build</span>
         {typeof clarify.planConfidence === 'number' ? (
@@ -2614,7 +2580,7 @@ const RunOverview: React.FC<{
       {!verified ? (
         <div
           className="mt-1 px-2 py-1.5 text-[11px] text-white flex items-center gap-1.5"
-          style={{ backgroundColor: AMBER, borderRadius: 3 }}
+          style={{ backgroundColor: SWARM_STATUS.solidRunning, borderRadius: 3 }}
         >
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           Not yet verified — the program was built but never run. Everything below describes the code, not
@@ -2723,9 +2689,9 @@ const TerminalBanner: React.FC<{
   const failed = summary?.failed ?? totals.failed;
   const tasks = totals.tasks;
   const cfg = {
-    done: { color: STATUS_COLOR.done, Icon: Check, title: 'Build complete' },
-    failed: { color: STATUS_COLOR.error, Icon: AlertTriangle, title: `Finished — ${failed} task${failed === 1 ? '' : 's'} failed` },
-    stopped: { color: STOPPED, Icon: CircleSlash, title: 'Run stopped' },
+    done: { color: SWARM_STATUS.solidDone, Icon: Check, title: 'Build complete' },
+    failed: { color: SWARM_STATUS.solidError, Icon: AlertTriangle, title: `Finished — ${failed} task${failed === 1 ? '' : 's'} failed` },
+    stopped: { color: SWARM_STATUS.solidStopped, Icon: CircleSlash, title: 'Run stopped' },
   }[outcome];
   const { color, Icon, title } = cfg;
   const parts = [
@@ -2787,6 +2753,46 @@ const TerminalBanner: React.FC<{
   );
 };
 
+const DETAIL_MODE_LABEL: Record<SwarmLogMode, string> = {
+  compact: 'Compact',
+  verbose: 'Verbose',
+  developer: 'Developer',
+};
+
+const DetailModeChooser: React.FC<{
+  mode: SwarmLogMode;
+  onChange: (mode: SwarmLogMode) => void;
+}> = ({ mode, onChange }) => (
+  <div
+    role="radiogroup"
+    aria-label="Run detail"
+    className="flex items-center border border-border-primary bg-background-primary"
+    style={{ borderRadius: 3 }}
+  >
+    <span className="flex h-7 w-7 items-center justify-center border-r border-border-primary text-text-secondary">
+      <AlignLeft className="h-3.5 w-3.5" aria-hidden />
+    </span>
+    {SWARM_LOG_MODES.map((option, index) => {
+      const selected = option === mode;
+      return (
+        <button
+          key={option}
+          type="button"
+          role="radio"
+          aria-checked={selected}
+          onClick={() => onChange(option)}
+          className={`h-7 px-2 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[#0b5bd3] focus-visible:ring-inset ${
+            index < SWARM_LOG_MODES.length - 1 ? 'border-r border-border-primary' : ''
+          } ${selected ? 'text-white' : 'text-text-secondary hover:bg-background-secondary hover:text-text-primary'}`}
+          style={{ backgroundColor: selected ? SWARM_STATUS.action : 'transparent' }}
+        >
+          {DETAIL_MODE_LABEL[option]}
+        </button>
+      );
+    })}
+  </div>
+);
+
 export const SwarmRunPanel: React.FC<{
   workingDir: string | undefined;
   run?: SwarmRunState;
@@ -2803,11 +2809,6 @@ export const SwarmRunPanel: React.FC<{
   const [mode, setMode] = useSwarmLogMode();
   const verbose = mode !== 'compact';
   const dev = mode === 'developer';
-  const nextMode: Record<SwarmLogMode, SwarmLogMode> = {
-    compact: 'verbose',
-    verbose: 'developer',
-    developer: 'compact',
-  };
 
   // Show whenever a run is present — including the PLANNING phase, before any worker executes (no lanes yet).
   if (!run.present) return null;
@@ -2890,6 +2891,29 @@ export const SwarmRunPanel: React.FC<{
         ? (run.mtime - run.startedAt) / 60000
         : null;
   const durationLabel = durationMin != null ? fmtDuration(durationMin) : null;
+  const activePhaseColor = ended
+    ? outcome === 'done'
+      ? SWARM_STATUS.solidDone
+      : outcome === 'failed'
+        ? SWARM_STATUS.solidError
+        : SWARM_STATUS.solidStopped
+    : SWARM_STATUS.action;
+  const formationNodes = deviceOrder.map((device) => {
+    const shortName = device.match(/^([^-]+)/)?.[1] ?? device;
+    const liveStatus = nodeStatus[shortName];
+    return {
+      device,
+      working:
+        run.inProgress &&
+        !stale &&
+        !ended &&
+        !run.held &&
+        !clarifyPending &&
+        (fleet.workingByDevice.has(device) ||
+          liveStatus === 'generating' ||
+          liveStatus === 'processingPrompt'),
+    };
+  });
 
   return (
     <div
@@ -2900,8 +2924,8 @@ export const SwarmRunPanel: React.FC<{
       {/* ── RUN HEADER zone — identity + state in ONE band: what is being built, the phase, counts,
           elapsed/ETA, pause + display mode. Replaces the floating fragments (brand pill, metrics strip,
           breadcrumb) Mihai read as "lacking any visual definition". */}
-      <div className="border-b border-border-primary">
-      <div className="flex items-center justify-between px-3 py-2 gap-2">
+      <div className="sticky top-0 z-20 border-b border-border-primary bg-background-secondary">
+      <div className="flex flex-wrap items-center justify-between px-3 py-2 gap-2">
         <span className="flex items-center gap-2 min-w-0">
           <span
             aria-hidden
@@ -2909,7 +2933,7 @@ export const SwarmRunPanel: React.FC<{
             style={{ width: 8, height: 8, background: ZONE_HUES.run, borderRadius: 1 }}
           />
           <span
-            className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] shrink-0"
+            className="font-mono text-xs font-bold uppercase tracking-[0.14em] shrink-0"
             style={{ color: ZONE_HUES.run }}
           >
             Swarm run
@@ -2930,10 +2954,10 @@ export const SwarmRunPanel: React.FC<{
             // (the old code showed a spinning "Planning" here, implying it was still churning).
             <Tip label="The build is paused, waiting for your answers in the prompt below.">
               <span
-                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
-                style={{ backgroundColor: AMBER, borderRadius: 2 }}
+                className="text-xs px-2 py-1 flex items-center gap-1 shrink-0 text-white font-semibold"
+                style={{ backgroundColor: SWARM_STATUS.solidRunning, borderRadius: 3 }}
               >
-                <MessageCircleQuestion size={10} /> Waiting for you
+                <MessageCircleQuestion size={12} /> Waiting for you
               </span>
             </Tip>
           ) : run.held ? (
@@ -2944,24 +2968,24 @@ export const SwarmRunPanel: React.FC<{
             // someone asks when nothing is moving.
             <Tip label="Held at a task boundary. In-flight work finished and nothing was lost — press ▶ to resume.">
               <span
-                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
-                style={{ backgroundColor: AMBER, borderRadius: 2 }}
+                className="text-xs px-2 py-1 flex items-center gap-1 shrink-0 text-white font-semibold"
+                style={{ backgroundColor: SWARM_STATUS.solidRunning, borderRadius: 3 }}
               >
-                <Pause size={10} /> Paused
+                <Pause size={12} /> Paused
               </span>
             </Tip>
           ) : run.inProgress && !stale && !ended && run.phase ? (
             <Tip label={`Current phase: ${run.phase}`}>
               <span
-                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 shrink-0 text-white font-medium"
-                style={{ backgroundColor: STATUS_COLOR.running, borderRadius: 2 }}
+                className="text-xs px-2 py-1 flex items-center gap-1 shrink-0 text-white font-semibold"
+                style={{ backgroundColor: SWARM_STATUS.solidRunning, borderRadius: 3 }}
               >
-                <Loader2 size={10} className="animate-spin" /> {run.phase}
+                <Loader2 size={12} className="animate-spin" /> {run.phase}
               </span>
             </Tip>
           ) : null}
         </span>
-        <span className="flex items-center gap-2 shrink-0">
+        <span className="flex flex-wrap items-center justify-end gap-2 shrink-0">
           <span className="text-xs text-text-secondary tabular-nums">
             {tasks > 0 && (
               <>
@@ -2996,12 +3020,12 @@ export const SwarmRunPanel: React.FC<{
             // terminal ■ stop. "Held" is engine-truth (run_paused event); "Pausing…" is the pending request.
             <button
               onClick={() => runDir && window.electron.swarmSetPaused(runDir, !run.pauseRequested)}
-              className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 border transition-colors"
+              className="flex h-7 items-center gap-1 px-2 text-xs font-semibold border transition-colors focus-visible:ring-2 focus-visible:ring-[#0b5bd3] focus-visible:ring-inset outline-none"
               style={{
                 borderRadius: 2,
                 borderColor: AMBER,
                 color: run.pauseRequested ? '#fff' : AMBER,
-                backgroundColor: run.pauseRequested ? AMBER : 'transparent',
+                backgroundColor: run.pauseRequested ? SWARM_STATUS.solidRunning : 'transparent',
               }}
               title={
                 !run.pauseRequested
@@ -3013,61 +3037,34 @@ export const SwarmRunPanel: React.FC<{
             >
               {!run.pauseRequested ? (
                 <>
-                  <Pause size={11} /> Pause
+                  <Pause size={12} /> Pause
                 </>
               ) : run.held ? (
                 <>
-                  <Play size={11} /> Resume
+                  <Play size={12} /> Resume
                 </>
               ) : (
                 <>
-                  <Loader2 size={11} className="animate-spin" /> Pausing…
+                  <Loader2 size={12} className="animate-spin" /> Pausing…
                 </>
               )}
             </button>
           ) : null}
-          <button
-            onClick={() => setMode(nextMode[mode])}
-            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 border transition-colors capitalize"
-            style={
-              dev
-                ? { borderRadius: 2, borderColor: '#b14cff', color: '#b14cff' }
-                : verbose
-                  ? { borderRadius: 2, borderColor: '#2e8bff', color: '#2e8bff' }
-                  : { borderRadius: 2, borderColor: 'var(--color-border-primary)', color: 'var(--color-text-secondary)' }
-            }
-            title={
-              dev
-                ? 'Developer — everything expanded + raw. Click for Compact.'
-                : verbose
-                  ? 'Verbose — the full timeline. Click for Developer.'
-                  : 'Compact — headlines only. Click for Verbose.'
-            }
-          >
-            <AlignLeft size={11} /> {mode}
-          </button>
+          <DetailModeChooser mode={mode} onChange={setMode} />
         </span>
       </div>
-      {/* Row 2 of the band: the pipeline breadcrumb + live timing — progress and time read together. */}
+      {/* The phase route and real fleet occupy one formation: progress and utilization read together. */}
       {(run.inProgress || ended) && (
-        <div className="flex items-center justify-between gap-2 pr-3 border-t border-border-primary/50">
-          <PhaseSteps
-            phase={run.phase}
-            live={run.inProgress && !stale && !ended && !clarifyPending}
-            activeColor={
-              ended
-                ? outcome === 'done'
-                  ? STATUS_COLOR.done
-                  : outcome === 'failed'
-                    ? STATUS_COLOR.error
-                    : STOPPED
-                : STATUS_COLOR.running
-            }
-          />
-          {run.inProgress && !stale && !ended && !clarifyPending ? (
-            <HeaderMetrics startedAt={run.startedAt} phaseTodo={run.phaseTodo} />
-          ) : null}
-        </div>
+        <FormationRibbon
+          phase={run.phase}
+          nodes={formationNodes}
+          activeColor={activePhaseColor}
+          metrics={
+            run.inProgress && !stale && !ended && !clarifyPending ? (
+              <HeaderMetrics startedAt={run.startedAt} phaseTodo={run.phaseTodo} />
+            ) : null
+          }
+        />
       )}
       </div>
 
@@ -3124,7 +3121,7 @@ export const SwarmRunPanel: React.FC<{
             label="Fleet"
             explain="what each node is doing right now"
             right={
-              <span className="text-[10px] tabular-nums text-text-secondary">
+              <span className="text-xs tabular-nums text-text-secondary">
                 {deviceOrder.length} node{deviceOrder.length === 1 ? '' : 's'}
                 {run.inProgress && !stale && !ended ? ` · ${fleet.workingByDevice.size} working` : ''}
               </span>

@@ -2,7 +2,7 @@ import React from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 /**
- * The ONE header register every zone of the swarm run view uses — a solid color mark, a 10px mono
+ * The ONE header register every zone of the swarm run view uses — a solid color mark, a 12px mono
  * uppercase name, and a plain-language explainer of what the zone IS. Mihai's critique of the old view
  * was that its parts "float" with no visual definition or explanation; this applies the same treatment
  * to every zone (run header, planning, fleet, work, event log) AND to the benchmark chrome around the
@@ -12,12 +12,12 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 
 /** The zone palette — one solid, saturated hue per zone, used for its mark and name. */
 export const ZONE_HUES = {
-  run: '#2e8bff',
-  planning: '#b14cff',
-  fleet: '#17c4c4',
-  work: '#f5a623',
-  log: '#8a8a8a',
-  bench: '#ff3ea5',
+  run: 'var(--color-accent-local, #0b5bd3)',
+  planning: 'var(--color-node-4, #b14cff)',
+  fleet: 'var(--color-node-1, #17c4c4)',
+  work: 'var(--color-status-warn, #9a4d00)',
+  log: 'var(--color-text-secondary)',
+  bench: 'var(--color-node-5, #ff3ea5)',
 } as const;
 
 export const ZoneHeader: React.FC<{
@@ -39,13 +39,13 @@ export const ZoneHeader: React.FC<{
         style={{ width: 8, height: 8, background: hue, borderRadius: 1 }}
       />
       <span
-        className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] shrink-0"
+        className="font-mono text-xs font-bold uppercase tracking-[0.14em] shrink-0"
         style={{ color: hue }}
       >
         {label}
       </span>
       {explain ? (
-        <span className="text-[10px] text-text-secondary normal-case truncate">— {explain}</span>
+        <span className="text-xs text-text-secondary normal-case truncate">— {explain}</span>
       ) : null}
       <span className="ml-auto flex items-center gap-2 shrink-0 min-w-0">{right}</span>
       {onToggle ? (
@@ -61,12 +61,12 @@ export const ZoneHeader: React.FC<{
     <button
       type="button"
       onClick={onToggle}
-      className={`w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-background-primary/40 transition-colors ${className}`}
+      className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-background-primary transition-colors ${className}`}
     >
       {body}
     </button>
   ) : (
-    <div className={`flex items-center gap-2 px-3 py-1.5 ${className}`}>{body}</div>
+    <div className={`flex items-center gap-2 px-3 py-2 ${className}`}>{body}</div>
   );
 };
 
