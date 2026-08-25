@@ -1,21 +1,22 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
-use goose::agents::{Agent, AgentEvent, SessionConfig};
-use goose::config::GooseMode;
+use goose::agents::{Agent, AgentConfig, AgentEvent, GoosePlatform, SessionConfig};
+use goose::config::{ExtensionConfig, GooseMode, PermissionManager};
 use goose::conversation::message::{Message, MessageContent};
 use goose::conversation::Conversation;
 use goose::providers::base::{
     stream_from_single_message, MessageStream, Provider, ProviderDef, ProviderMetadata,
 };
 use goose::session::session_manager::SessionType;
-use goose::session::Session;
+use goose::session::{Session, SessionManager};
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
-use rmcp::model::Tool;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use rmcp::model::{CallToolRequestParams, Tool};
+use rmcp::object;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 struct MockCompactionProvider {
@@ -856,5 +857,294 @@ async fn keep_tail_survives_compaction_verbatim_and_zero_is_identity() -> Result
         !legacy_text.contains("expected 42 got 41"),
         "K=0 must not keep the tool tail (byte-identical legacy): {legacy_text}"
     );
+    Ok(())
+}
+
+struct ProactiveCompactionProvider {
+    main_calls: AtomicUsize,
+    observed_context_limits: Mutex<Vec<Option<usize>>>,
+    call_sequence: Mutex<Vec<&'static str>>,
+    second_turn_messages: Mutex<Option<Vec<Message>>>,
+}
+
+impl ProactiveCompactionProvider {
+    fn new() -> Self {
+        Self {
+            main_calls: AtomicUsize::new(0),
+            observed_context_limits: Mutex::new(Vec::new()),
+            call_sequence: Mutex::new(Vec::new()),
+            second_turn_messages: Mutex::new(None),
+        }
+    }
+
+    fn is_compaction_call(messages: &[Message]) -> bool {
+        messages.len() == 1
+            && messages[0].content.iter().any(|content| {
+                matches!(
+                    content,
+                    MessageContent::Text(text)
+                        if text.text == "Please summarize the conversation history provided in the system prompt."
+                )
+            })
+    }
+
+    fn response(message: Message, usage: Usage) -> MessageStream {
+        stream_from_single_message(
+            message,
+            ProviderUsage::new("forced-low-cap-model".to_string(), usage),
+        )
+    }
+}
+
+#[async_trait]
+impl Provider for ProactiveCompactionProvider {
+    async fn stream(
+        &self,
+        model_config: &ModelConfig,
+        _system_prompt: &str,
+        messages: &[Message],
+        _tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        self.observed_context_limits
+            .lock()
+            .unwrap()
+            .push(model_config.context_limit);
+
+        if Self::is_compaction_call(messages) {
+            self.call_sequence.lock().unwrap().push("compact");
+            return Ok(Self::response(
+                Message::assistant().with_text("forced proactive summary"),
+                Usage::new(Some(700), Some(40), Some(740)),
+            ));
+        }
+
+        match self.main_calls.fetch_add(1, Ordering::SeqCst) {
+            0 => {
+                self.call_sequence.lock().unwrap().push("main-1");
+                let request = CallToolRequestParams::new("developer__shell")
+                    .with_arguments(object!({"command": "printf compaction-tail-marker"}));
+                Ok(Self::response(
+                    Message::assistant().with_tool_request("continuity-call", Ok(request)),
+                    Usage::new(Some(850), Some(50), Some(900)),
+                ))
+            }
+            1 => {
+                self.call_sequence.lock().unwrap().push("main-2");
+                *self.second_turn_messages.lock().unwrap() = Some(messages.to_vec());
+                Ok(Self::response(
+                    Message::assistant().with_text("completed after proactive compaction"),
+                    Usage::new(Some(300), Some(30), Some(330)),
+                ))
+            }
+            call => Err(ProviderError::ExecutionError(format!(
+                "unexpected main provider call {call}"
+            ))),
+        }
+    }
+
+    fn get_name(&self) -> &str {
+        "forced-low-cap-provider"
+    }
+}
+
+/// The swarm depends on the per-turn proactive hook, not just reactive recovery after a provider
+/// rejects an oversized request. Force the first tool turn over a small ModelConfig limit and prove
+/// that compaction happens before turn two while the exact request/response tail remains usable.
+#[tokio::test]
+async fn forced_low_cap_compacts_between_tool_turns_and_preserves_exact_tail() -> Result<()> {
+    let _env = env_lock::lock_env(
+        [
+            ("GOOSE_AUTO_COMPACT_THRESHOLD", Some("0.8")),
+            ("GOOSE_LOCAL_CONTEXT_CAP", Some("0")),
+            ("GOOSE_COMPACT_KEEP_TAIL", Some("3")),
+            ("GOOSE_FAST_MODEL", Some("")),
+            ("GOOSE_TOOL_PAIR_SUMMARIZATION", Some("false")),
+        ]
+        .into_iter(),
+    );
+
+    let temp_dir = TempDir::new()?;
+    let session_manager = Arc::new(SessionManager::new(temp_dir.path().join("sessions")));
+    let agent = Agent::with_config(AgentConfig::new(
+        Arc::clone(&session_manager),
+        Arc::new(PermissionManager::new(temp_dir.path().join("config"))),
+        None,
+        GooseMode::Auto,
+        true,
+        GoosePlatform::GooseCli,
+    ));
+    let session = session_manager
+        .create_session(
+            temp_dir.path().to_path_buf(),
+            "forced-low-cap".to_string(),
+            SessionType::Hidden,
+            GooseMode::Auto,
+        )
+        .await?;
+    let initial_usage = Usage::new(Some(80), Some(20), Some(100));
+    session_manager
+        .update(&session.id)
+        .usage(initial_usage.clone())
+        .accumulated_usage(initial_usage)
+        .apply()
+        .await?;
+
+    agent
+        .add_extension(
+            ExtensionConfig::Builtin {
+                name: "developer".to_string(),
+                description: String::new(),
+                display_name: Some("Developer".to_string()),
+                timeout: None,
+                bundled: Some(true),
+                available_tools: vec!["shell".to_string()],
+            },
+            &session.id,
+        )
+        .await?;
+
+    const FORCED_CONTEXT_LIMIT: usize = 1_000;
+    let provider = Arc::new(ProactiveCompactionProvider::new());
+    agent
+        .update_provider(
+            provider.clone(),
+            ModelConfig::new("forced-low-cap-model").with_context_limit(Some(FORCED_CONTEXT_LIMIT)),
+            &session.id,
+        )
+        .await?;
+
+    let reply = agent
+        .reply(
+            Message::user().with_text("Run the marker command, then finish."),
+            SessionConfig {
+                id: session.id.clone(),
+                schedule_id: None,
+                max_turns: Some(3),
+                retry_config: None,
+            },
+            None,
+        )
+        .await?;
+    tokio::pin!(reply);
+
+    let mut history_replacements = 0;
+    let mut original_request = None;
+    let mut original_response = None;
+    let mut final_response_seen = false;
+    while let Some(event) = reply.next().await {
+        match event? {
+            AgentEvent::HistoryReplaced(_) => history_replacements += 1,
+            AgentEvent::Message(message) => {
+                if message.content.iter().any(|content| {
+                    matches!(content, MessageContent::ToolRequest(request) if request.id == "continuity-call")
+                }) {
+                    original_request = Some(message.clone());
+                }
+                if message.content.iter().any(|content| {
+                    matches!(content, MessageContent::ToolResponse(response) if response.id == "continuity-call")
+                }) {
+                    original_response = Some(message.clone());
+                }
+                if message
+                    .as_concat_text()
+                    .contains("completed after proactive compaction")
+                {
+                    final_response_seen = true;
+                }
+            }
+            AgentEvent::McpNotification(_) | AgentEvent::Usage(_) => {}
+        }
+    }
+
+    assert_eq!(
+        history_replacements, 1,
+        "the first 900-token tool turn must cross 80% of the forced 1,000-token limit exactly once"
+    );
+    assert!(
+        final_response_seen,
+        "the agent must continue to a successful final response after compaction"
+    );
+    assert_eq!(provider.main_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        *provider.call_sequence.lock().unwrap(),
+        vec!["main-1", "compact", "main-2"],
+        "compaction must occur between the two provider turns"
+    );
+
+    let observed_limits = provider.observed_context_limits.lock().unwrap().clone();
+    assert_eq!(observed_limits.len(), 3);
+    assert!(
+        observed_limits
+            .iter()
+            .all(|limit| *limit == Some(FORCED_CONTEXT_LIMIT)),
+        "the forced ModelConfig limit must survive session persistence and the compaction call: {observed_limits:?}"
+    );
+
+    let second_turn = provider
+        .second_turn_messages
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the post-compaction provider turn must be captured");
+    let visible: Vec<&Message> = second_turn
+        .iter()
+        .filter(|message| message.is_agent_visible())
+        .collect();
+    assert!(
+        visible
+            .iter()
+            .any(|message| message.as_concat_text() == "forced proactive summary"),
+        "turn two must receive the compacted summary"
+    );
+
+    let request_index = visible
+        .iter()
+        .position(|message| {
+            message.content.iter().any(|content| {
+                matches!(content, MessageContent::ToolRequest(request) if request.id == "continuity-call")
+            })
+        })
+        .expect("the exact kept-tail tool request must reach turn two");
+    let response_index = visible
+        .iter()
+        .position(|message| {
+            message.content.iter().any(|content| {
+                matches!(content, MessageContent::ToolResponse(response) if response.id == "continuity-call")
+            })
+        })
+        .expect("the exact kept-tail tool response must reach turn two");
+    assert!(
+        request_index < response_index,
+        "the kept tail may not put a tool response before its request"
+    );
+
+    let original_request = original_request.expect("the first turn must emit its tool request");
+    let original_response = original_response.expect("the tool must emit its response");
+    assert_eq!(
+        visible[request_index].content, original_request.content,
+        "K=3 must preserve the tool request content exactly"
+    );
+    assert_eq!(
+        visible[response_index].content, original_response.content,
+        "K=3 must preserve the tool response content exactly"
+    );
+
+    let mut open_requests = std::collections::HashSet::new();
+    for message in visible {
+        for content in &message.content {
+            match content {
+                MessageContent::ToolRequest(request) => {
+                    open_requests.insert(request.id.clone());
+                }
+                MessageContent::ToolResponse(response) => assert!(
+                    open_requests.contains(&response.id),
+                    "orphan tool response {} reached the post-compaction turn",
+                    response.id
+                ),
+                _ => {}
+            }
+        }
+    }
+
     Ok(())
 }
