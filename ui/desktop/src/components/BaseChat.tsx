@@ -40,6 +40,7 @@ import SessionActionsHeader from './SessionActionsHeader';
 import SwarmRunPanel from './swarm/SwarmRunPanel';
 import RunSamplingStrip from './swarm/RunSamplingStrip';
 import { useSwarmRun } from './swarm/useSwarmRun';
+import SwarmWorkspace from './swarm/SwarmWorkspace';
 
 const i18n = defineMessages({
   failedToLoadSession: {
@@ -103,7 +104,7 @@ export default function BaseChat({
   const navContext = useNavigationContextSafe();
   const setView = useNavigation();
   const isNavCollapsed = !navContext?.isNavExpanded;
-  const contentClassName = cn('pr-1 pb-10 pt-12', (isMobile || isNavCollapsed) && 'pt-16');
+  const headerSpacingClassName = isMobile || isNavCollapsed ? 'pt-16' : 'pt-12';
   const { droppedFiles, setDroppedFiles, handleDrop, handleDragOver } = useFileDrop();
   const onStreamFinish = useCallback(() => {}, []);
 
@@ -415,6 +416,151 @@ export default function BaseChat({
     );
   }
 
+  const showSwarmWorkspace = isLocal && swarmRun.present;
+  const conversationPane = (
+    <div
+      className="relative flex flex-1 min-h-0 min-w-0 flex-col bg-background-primary"
+      data-testid="conversation-pane"
+    >
+      <ScrollArea
+        ref={scrollRef}
+        className={cn(
+          'flex-1 min-h-0 relative pr-1 pb-10',
+          !showSwarmWorkspace && headerSpacingClassName
+        )}
+        autoScroll
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        data-drop-zone="true"
+        paddingX={6}
+        paddingY={0}
+      >
+        {recipe?.title && (
+          <div className="sticky top-0 z-10 bg-background-primary px-0 -mx-6 mb-6 pt-6">
+            <RecipeHeader title={recipe.title} />
+          </div>
+        )}
+
+        {recipe && (
+          <div className={hasStartedUsingRecipe ? 'mb-6' : ''}>
+            <RecipeActivities
+              append={(text: string) => handleSubmit({ msg: text, images: [] })}
+              activities={Array.isArray(recipe.activities) ? recipe.activities : null}
+              title={recipe.title}
+              parameterValues={session?.user_recipe_values || {}}
+            />
+          </div>
+        )}
+
+        {messages.length > 0 || recipe ? (
+          <>
+            <SearchView>
+              <ProgressiveMessageList
+                messages={messages}
+                chat={{ sessionId }}
+                toolCallNotifications={toolCallNotifications}
+                append={(text: string) => handleSubmit({ msg: text, images: [] })}
+                isUserMessage={(m: Message) => m.role === 'user'}
+                isStreamingMessage={chatState !== ChatState.Idle}
+                onRenderingComplete={handleRenderingComplete}
+                onMessageUpdate={onMessageUpdate}
+                submitElicitationResponse={submitElicitationResponse}
+              />
+            </SearchView>
+
+            <div className="block h-8" />
+          </>
+        ) : null}
+
+        {isLocal && !showSwarmWorkspace && (
+          <RunSamplingStrip
+            workingDir={session?.working_dir}
+            active={swarmRun.inProgress}
+            className="mb-2"
+          />
+        )}
+        {isLocal && !showSwarmWorkspace && (
+          <SwarmRunPanel workingDir={session?.working_dir} run={swarmRun} className="mb-2" />
+        )}
+      </ScrollArea>
+
+      {chatState !== ChatState.Idle && (
+        <div className="absolute bottom-1 left-4 z-20 pointer-events-none">
+          <LoadingGoose
+            chatState={chatState}
+            message={
+              swarmRun.held
+                ? 'swarm paused — nothing is running until you resume'
+                : messages.length > 0
+                  ? getThinkingMessage(messages[messages.length - 1])
+                  : undefined
+            }
+          />
+        </div>
+      )}
+
+      <ChatInputCard
+        className={cn(
+          'relative z-10 mx-4 mb-4',
+          !disableAnimation && 'animate-[fadein_400ms_ease-in_forwards]'
+        )}
+      >
+        <ChatInput
+          inputRef={chatInputRef}
+          sessionId={sessionId}
+          handleSubmit={chatInputSubmit}
+          chatState={chatState}
+          onStop={stopStreaming}
+          onSteerQueuedMessage={onSteerQueuedMessage}
+          pauseQueueOnStop={pauseQueueOnStop}
+          queueProcessingBlocked={queueProcessingBlocked}
+          commandHistory={commandHistory}
+          initialValue={initialPrompt}
+          setView={setView}
+          totalTokens={tokenState?.totalTokens ?? session?.usage?.total_tokens ?? undefined}
+          accumulatedInputTokens={
+            tokenState?.accumulatedInputTokens ??
+            session?.accumulated_usage?.input_tokens ??
+            undefined
+          }
+          accumulatedOutputTokens={
+            tokenState?.accumulatedOutputTokens ??
+            session?.accumulated_usage?.output_tokens ??
+            undefined
+          }
+          accumulatedCost={tokenState?.accumulatedCost ?? session?.accumulated_cost ?? undefined}
+          droppedFiles={droppedFiles}
+          onFilesProcessed={() => setDroppedFiles([])}
+          messages={messages}
+          disableAnimation={disableAnimation}
+          recipe={recipe}
+          recipeAccepted={!hasNotAcceptedRecipe}
+          initialPrompt={initialPrompt}
+          sessionModel={sessionModel}
+          sessionProvider={sessionProvider}
+          sessionLoaded={sessionLoaded}
+          workingDir={session?.working_dir}
+          onWorkingDirChange={handleWorkingDirChange}
+          latestInference={latestInference}
+          {...customChatInputProps}
+        />
+      </ChatInputCard>
+    </div>
+  );
+
+  const runPane = showSwarmWorkspace ? (
+    <ScrollArea className="flex-1 min-h-0" paddingX={3} paddingY={0}>
+      <div className="pb-4">
+        <RunSamplingStrip
+          workingDir={session?.working_dir}
+          active={swarmRun.inProgress}
+          className="mb-3"
+        />
+        <SwarmRunPanel workingDir={session?.working_dir} run={swarmRun} />
+      </div>
+    </ScrollArea>
+  ) : null;
+
   return (
     <div className="h-full flex flex-col min-h-0">
       <MainPanelLayout
@@ -434,7 +580,9 @@ export default function BaseChat({
             <div className="min-w-0 flex-1">
               <p className="text-xs font-bold">{intl.formatMessage(i18n.promptFailed)}</p>
               <p className="text-xs opacity-90 break-words">{submitError}</p>
-              <p className="text-xs opacity-90 mt-0.5">{intl.formatMessage(i18n.promptFailedHint)}</p>
+              <p className="text-xs opacity-90 mt-0.5">
+                {intl.formatMessage(i18n.promptFailedHint)}
+              </p>
             </div>
             <button
               onClick={() => acpChatSessionActions.clearSubmitError(sessionId)}
@@ -492,132 +640,14 @@ export default function BaseChat({
 
           <SessionActionsHeader session={session} onSessionChange={updateSession} />
 
-          <ScrollArea
-            ref={scrollRef}
-            className={`flex-1 min-h-0 relative ${contentClassName}`}
-            autoScroll
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            data-drop-zone="true"
-            paddingX={6}
-            paddingY={0}
-          >
-            {recipe?.title && (
-              <div className="sticky top-0 z-10 bg-background-primary px-0 -mx-6 mb-6 pt-6">
-                <RecipeHeader title={recipe.title} />
-              </div>
-            )}
-
-            {recipe && (
-              <div className={hasStartedUsingRecipe ? 'mb-6' : ''}>
-                <RecipeActivities
-                  append={(text: string) => handleSubmit({ msg: text, images: [] })}
-                  activities={Array.isArray(recipe.activities) ? recipe.activities : null}
-                  title={recipe.title}
-                  parameterValues={session?.user_recipe_values || {}}
-                />
-              </div>
-            )}
-
-            {messages.length > 0 || recipe ? (
-              <>
-                <SearchView>
-                  <ProgressiveMessageList
-                    messages={messages}
-                    chat={{ sessionId }}
-                    toolCallNotifications={toolCallNotifications}
-                    append={(text: string) => handleSubmit({ msg: text, images: [] })}
-                    isUserMessage={(m: Message) => m.role === 'user'}
-                    isStreamingMessage={chatState !== ChatState.Idle}
-                    onRenderingComplete={handleRenderingComplete}
-                    onMessageUpdate={onMessageUpdate}
-                    submitElicitationResponse={submitElicitationResponse}
-                  />
-                </SearchView>
-
-                <div className="block h-8" />
-              </>
-            ) : null}
-
-            {/* Inside the scroll area so the whole chat scrolls as ONE — the panel flows with the messages
-                at its natural height instead of overflowing a fixed bottom region. */}
-            {/* Per-run sampling knobs for the NEXT swarm build in this directory — editable until a
-                run is live, then read-only with the values that run launched with (env beats
-                config, run beats the Settings default). */}
-            {isLocal && (
-              <RunSamplingStrip
-                workingDir={session?.working_dir}
-                active={swarmRun.inProgress}
-                className="mb-2"
-              />
-            )}
-            {isLocal && <SwarmRunPanel workingDir={session?.working_dir} className="mb-2" />}
-          </ScrollArea>
-
-          {chatState !== ChatState.Idle && (
-            <div className="absolute bottom-1 left-4 z-20 pointer-events-none">
-              <LoadingGoose
-                chatState={chatState}
-                message={
-                  // A HELD swarm run outranks whatever the chat layer believes: the provider call is still
-                  // open (so chatState is Streaming) but nothing is being computed. Say so plainly.
-                  swarmRun.held
-                    ? 'swarm paused — nothing is running until you resume'
-                    : messages.length > 0
-                      ? getThinkingMessage(messages[messages.length - 1])
-                      : undefined
-                }
-              />
+          {showSwarmWorkspace ? (
+            <div className={cn('flex flex-1 min-h-0 flex-col', headerSpacingClassName)}>
+              <SwarmWorkspace conversation={conversationPane} run={runPane} />
             </div>
+          ) : (
+            conversationPane
           )}
         </div>
-
-        <ChatInputCard
-          className={cn(
-            'relative z-10 mx-4 mb-4',
-            !disableAnimation && 'animate-[fadein_400ms_ease-in_forwards]'
-          )}
-        >
-          <ChatInput
-            inputRef={chatInputRef}
-            sessionId={sessionId}
-            handleSubmit={chatInputSubmit}
-            chatState={chatState}
-            onStop={stopStreaming}
-            onSteerQueuedMessage={onSteerQueuedMessage}
-            pauseQueueOnStop={pauseQueueOnStop}
-            queueProcessingBlocked={queueProcessingBlocked}
-            commandHistory={commandHistory}
-            initialValue={initialPrompt}
-            setView={setView}
-            totalTokens={tokenState?.totalTokens ?? session?.usage?.total_tokens ?? undefined}
-            accumulatedInputTokens={
-              tokenState?.accumulatedInputTokens ??
-              session?.accumulated_usage?.input_tokens ??
-              undefined
-            }
-            accumulatedOutputTokens={
-              tokenState?.accumulatedOutputTokens ??
-              session?.accumulated_usage?.output_tokens ??
-              undefined
-            }
-            accumulatedCost={tokenState?.accumulatedCost ?? session?.accumulated_cost ?? undefined}
-            droppedFiles={droppedFiles}
-            onFilesProcessed={() => setDroppedFiles([])} // Clear dropped files after processing
-            messages={messages}
-            disableAnimation={disableAnimation}
-            recipe={recipe}
-            recipeAccepted={!hasNotAcceptedRecipe}
-            initialPrompt={initialPrompt}
-            sessionModel={sessionModel}
-            sessionProvider={sessionProvider}
-            sessionLoaded={sessionLoaded}
-            workingDir={session?.working_dir}
-            onWorkingDirChange={handleWorkingDirChange}
-            latestInference={latestInference}
-            {...customChatInputProps}
-          />
-        </ChatInputCard>
       </MainPanelLayout>
 
       {recipe && isActiveSession && session?.session_type !== 'scheduled' && (

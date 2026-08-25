@@ -2787,11 +2787,13 @@ const TerminalBanner: React.FC<{
   );
 };
 
-export const SwarmRunPanel: React.FC<{ workingDir: string | undefined; className?: string }> = ({
-  workingDir,
-  className = '',
-}) => {
-  const run = useSwarmRun(workingDir);
+export const SwarmRunPanel: React.FC<{
+  workingDir: string | undefined;
+  run?: SwarmRunState;
+  className?: string;
+}> = ({ workingDir, run: providedRun, className = '' }) => {
+  const observedRun = useSwarmRun(providedRun ? undefined : workingDir);
+  const run = providedRun ?? observedRun;
   // The run's OWN directory. The engine redirects the build out of the spawn dir when that dir is
   // $HOME, so everything run-relative — the pause sentinel, the notes inbox, activity file paths —
   // must target this. Passing the session dir instead writes where the engine never looks.
