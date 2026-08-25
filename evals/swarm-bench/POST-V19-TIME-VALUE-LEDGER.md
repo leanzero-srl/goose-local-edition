@@ -81,6 +81,52 @@ solely from this zero.
 - Twenty-two stale-host admission rejections started no provider call and therefore are scheduler
   bookkeeping, not a meaningful latency target.
 
+## Swarm-only implementation map
+
+All candidate changes are confined to `crates/goose-cli/src/commands/swarm.rs`.
+
+### High-confidence candidates
+
+1. Compact successful research evidence without removing any call or authority check. Keep
+   `rationale` in `research_closure_schema` and `research_closure_citation_schema`, permit an empty
+   value only for positive `complete`/`supported` verdicts, and synthesize deterministic provenance
+   from target, evidence, and physical-host IDs during compilation. Continue requiring substantive
+   rationale for incomplete, gap, adjudication, and unsupported verdicts. The relevant compilers are
+   `compile_research_closure_partition` and `compile_research_closure_citations`; semantic agreement
+   already ignores positive rationale text.
+2. Preserve all three planning audits but route the broad requirements/coverage role to the fastest
+   physical host. `run_planning_pod_audits` currently derives priority partly from the short role
+   brief, while `order_fleet_by_speed` cannot resolve V19 device-keyed speed weights against model
+   IDs and falls back to equal weights. Replace accidental prompt-length ordering with explicit
+   semantic cost and resolve configured device/model identity before applying speed weight. Add a
+   V19-shaped assignment regression.
+3. Keep early semantic-judge observation, but require two consecutive `looping_high` verdicts over
+   the same provider request and recurring tail before destructive cancel/re-prefill. A `continue`
+   verdict, request change, advancing tail, or structured-output progress clears the candidate.
+   Reuse the existing two-verdict/tail policy rather than inventing a time, turn, token, or repeat-
+   share cap. The production path is `PreSchedulerSemanticRuntime::try_spawn_recurrence_review`.
+
+### Measure before adoption
+
+- Compact the repeated immutable research JSON serialization in
+  `run_research_closure_semantic_pass_on_lane` and the citation path, then compare schema-correction
+  quality before adoption. Semantic content is unchanged, but compact JSON may be harder for a weak
+  local model to read.
+- Do not coalesce authored section partitions until a bounded A/B proves that mixed-section output
+  preserves or improves compiler acceptance. Do not skip a juror, verifier, citation check, or
+  planning audit based on provisional `SpecSufficient` evidence.
+
+### Required regression families
+
+- Positive empty rationale accepted and given deterministic provenance; incomplete or unsupported
+  empty rationale rejected.
+- Requirements/coverage assigned to the fastest mapped host while all three audits still run and
+  compile.
+- One `looping_high` followed by `continue` does not cancel; two corroborated highs over the same
+  recurring tail cancel once; advancing tail or structured output prevents cancellation.
+- Existing false-spec citation reopening, distinct-host failover, structured-output race, and full
+  lifecycle-drain regressions remain green.
+
 ## Next-run acceptance gates
 
 Any post-V19 change must prove all of the following before an append-only launch:
