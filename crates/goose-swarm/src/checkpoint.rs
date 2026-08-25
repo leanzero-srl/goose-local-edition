@@ -18,6 +18,7 @@ const HEAD_FILE: &str = "tasks.head.json";
 const LOCK_FILE: &str = "control.lock";
 const ARTIFACT_DIRECTORY: &str = "artifacts";
 const ARTIFACT_OBJECT_DIRECTORY: &str = "sha256";
+const GENERATION_DIRECTORY: &str = "generations";
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -175,6 +176,37 @@ pub struct SchedulerRestoreSummary {
 
 impl SchedulerCheckpointStore {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, SchedulerCheckpointError> {
+        Self::open_in_generation(root, None)
+    }
+
+    pub fn open_for_generation(
+        root: impl AsRef<Path>,
+        frozen_spec_digest: &str,
+        compiled_plan_json: &str,
+    ) -> Result<Self, SchedulerCheckpointError> {
+        if !canonical_digest(frozen_spec_digest) {
+            return Err(SchedulerCheckpointError::new(
+                "scheduler checkpoint frozen spec digest is not canonical",
+            ));
+        }
+        serde_json::from_str::<serde_json::Value>(compiled_plan_json).map_err(|error| {
+            SchedulerCheckpointError::new(format!(
+                "scheduler checkpoint compiled plan identity is not valid JSON: {error}"
+            ))
+        })?;
+        let compiled_plan_digest = sha256_digest(compiled_plan_json.as_bytes());
+        let generation_digest = hash_serializable(&(
+            "scheduler-checkpoint-generation-v1",
+            frozen_spec_digest,
+            compiled_plan_digest,
+        ))?;
+        Self::open_in_generation(root, Some(&generation_digest))
+    }
+
+    fn open_in_generation(
+        root: impl AsRef<Path>,
+        generation_digest: Option<&str>,
+    ) -> Result<Self, SchedulerCheckpointError> {
         let root = std::fs::canonicalize(root.as_ref()).map_err(|error| {
             SchedulerCheckpointError::io("cannot canonicalize scheduler checkpoint root", error)
         })?;
@@ -186,13 +218,35 @@ impl SchedulerCheckpointStore {
         }
 
         let swarm_directory = root.join(".swarm");
-        let directory = swarm_directory.join(CHECKPOINT_DIRECTORY);
+        let checkpoint_directory = swarm_directory.join(CHECKPOINT_DIRECTORY);
         ensure_control_directory(&root, &swarm_directory, "swarm state directory")?;
         ensure_control_directory(
             &swarm_directory,
-            &directory,
+            &checkpoint_directory,
             "scheduler checkpoint directory",
         )?;
+        let directory = if let Some(generation_digest) = generation_digest {
+            if !canonical_digest(generation_digest) {
+                return Err(SchedulerCheckpointError::new(
+                    "scheduler checkpoint generation digest is not canonical",
+                ));
+            }
+            let generations = checkpoint_directory.join(GENERATION_DIRECTORY);
+            ensure_control_directory(
+                &checkpoint_directory,
+                &generations,
+                "scheduler checkpoint generations directory",
+            )?;
+            let generation = generations.join(&generation_digest[7..]);
+            ensure_control_directory(
+                &generations,
+                &generation,
+                "scheduler checkpoint generation directory",
+            )?;
+            generation
+        } else {
+            checkpoint_directory
+        };
         let artifact_directory = directory.join(ARTIFACT_DIRECTORY);
         ensure_control_directory(
             &directory,
@@ -1784,6 +1838,66 @@ mod tests {
         assert!(summary.restored.is_empty());
         assert_eq!(summary.invalidated, vec!["a"]);
         assert_eq!(dag.tasks["a"].state, TaskState::Ready);
+    }
+
+    #[test]
+    fn generation_binding_rejects_foreign_spec_or_plan_and_resumes_exact_generation() {
+        let root = tempfile::tempdir().unwrap();
+        let task = spec("same-task", &[], &["a.txt"]);
+        let spec_a = sha256_digest(b"frozen spec A");
+        let spec_b = sha256_digest(b"frozen spec B");
+        let plan_a = r#"{"tasks":[{"id":"same-task","description":"same shape"}]}"#;
+        let plan_b = r#"{"tasks":[{"id":"same-task","description":"different generation"}]}"#;
+
+        write_artifact(root.path(), "a.txt", "generation-a-bytes");
+        let store =
+            SchedulerCheckpointStore::open_for_generation(root.path(), &spec_a, plan_a).unwrap();
+        store.persist_done(&task, "generation A output", 3).unwrap();
+        drop(store);
+
+        write_artifact(root.path(), "a.txt", "current-workspace-bytes");
+        for (frozen_spec_digest, compiled_plan_json) in [(&spec_b, plan_a), (&spec_a, plan_b)] {
+            let store = SchedulerCheckpointStore::open_for_generation(
+                root.path(),
+                frozen_spec_digest,
+                compiled_plan_json,
+            )
+            .unwrap();
+            let mut dag = Dag::from_specs(vec![task.clone()]).unwrap();
+            let mut context = SharedContext::new();
+            let summary = store.restore_into(&mut dag, &mut context).unwrap();
+            assert!(summary.restored.is_empty());
+            assert!(summary.invalidated.is_empty());
+            assert_eq!(dag.tasks["same-task"].state, TaskState::Ready);
+            assert_eq!(
+                std::fs::read(root.path().join("a.txt")).unwrap(),
+                b"current-workspace-bytes"
+            );
+        }
+
+        let store =
+            SchedulerCheckpointStore::open_for_generation(root.path(), &spec_a, plan_a).unwrap();
+        let mut dag = Dag::from_specs(vec![task]).unwrap();
+        let mut context = SharedContext::new();
+        let summary = store.restore_into(&mut dag, &mut context).unwrap();
+
+        assert_eq!(summary.restored, vec!["same-task"]);
+        assert!(summary.invalidated.is_empty());
+        assert_eq!(dag.tasks["same-task"].state, TaskState::Done);
+        assert_eq!(dag.tasks["same-task"].attempts, 3);
+        assert_eq!(
+            dag.tasks["same-task"].result.as_deref(),
+            Some("generation A output")
+        );
+        assert_eq!(context.completed(), &["same-task"]);
+        assert_eq!(
+            context.to_json()["summaries"]["same-task"],
+            "generation A output"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("a.txt")).unwrap(),
+            b"generation-a-bytes"
+        );
     }
 
     #[tokio::test]
