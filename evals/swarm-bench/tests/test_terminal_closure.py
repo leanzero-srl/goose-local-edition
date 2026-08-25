@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import contextlib
 import json
 import os
 import pathlib
@@ -231,6 +232,218 @@ class TerminalClosureTests(unittest.TestCase):
                 "playwright": self.playwright_runtime(),
             },
         }
+
+    def v18_binding_fixture(
+        self, *, fixture_seed: str | None = "0123456789abcdef"
+    ) -> tuple[pathlib.Path, dict, contextlib.ExitStack]:
+        live_root = self.root / "local-sb7-engine-v18"
+        run_dir = live_root / "swarm-3node-qwen38-brainwaves-r0"
+        state_dir = self.root / "local-sb7-engine-v18-terminal-closure"
+        publisher_root = self.root / "LeanZero-website"
+        publisher = publisher_root / "scripts" / "seed-fleet-brainwaves-sb70.mjs"
+        publisher.parent.mkdir(parents=True)
+        publisher.write_text("export const generation = 'Brainwaves v18';\n", encoding="utf-8")
+        launcher = live_root / "launch_local_v18.py"
+        binary = live_root / "bin" / "goose-fixture"
+        instrument_file = live_root / "instrument" / "evals/swarm-bench/bench/score_sb7.py"
+        run_dir.mkdir(parents=True)
+        launcher.write_text("raise SystemExit('fixture launcher must not run')\n", encoding="utf-8")
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b"fixture goose binary\n")
+        instrument_file.parent.mkdir(parents=True)
+        instrument_file.write_text("# frozen scorer fixture\n", encoding="utf-8")
+        for path in (launcher, binary, instrument_file):
+            path.chmod(0o400)
+        config = self.config(live_root, state_dir)
+        config.update(
+            {
+                "closure_generation": "v18",
+                "armed": False,
+                "binding": None,
+                "bound_config_path": str(state_dir / "config.json"),
+                "controller_sha256": sha(MODULE_PATH),
+                "score_lock_path": str(self.root / "local-sb7-engine-v18-score.lock"),
+            }
+        )
+        config["publication"]["provenance_marker"] = "Brainwaves v18"
+        config["publisher"].update(
+            {
+                "path": str(publisher),
+                "sha256": sha(publisher),
+                "site_root": str(publisher_root),
+                "git_commit": closure.V18_PUBLISHER_COMMIT,
+            }
+        )
+        config["expected"].update(
+            {
+                "candidate_commit": closure.V18_CANDIDATE_COMMIT,
+                "candidate_tree": closure.V18_CANDIDATE_TREE,
+                "binary_path": str(binary),
+                "binary_sha256": sha(binary),
+                "launch_controller_path": str(launcher),
+                "launch_controller_sha256": sha(launcher),
+                "run_id": None,
+                "fixture_seed": None,
+                "models": None,
+                "launch_sha256": None,
+                "instrument_manifest_sha256": None,
+                "run_started_sha256": None,
+                "trace_header_sha256": None,
+                "fleet_seal_sha256": None,
+                "instrument_files": {},
+            }
+        )
+        models = [
+            "gabee-qwen3.8-27b-brainwaves-v18-fixture",
+            "mihai-qwen3.8-27b-brainwaves-v18-fixture",
+            "workhorse-qwen3.8-27b-brainwaves-v18-fixture",
+        ]
+        model_rows = [
+            {
+                "identifier": identifier,
+                "deviceIdentifier": None if identifier.startswith("mihai-") else identifier,
+                "role": "local"
+                if identifier.startswith("mihai-")
+                else "workhorse"
+                if identifier.startswith("workhorse-")
+                else "mac",
+                "path": "/fixture/model.gguf",
+                "contextLength": 262144,
+                "parallel": 2,
+                "quantization": {"bits": 6, "name": "fixture"},
+            }
+            for identifier in models
+        ]
+        planner = models[2]
+        fleet_seal = {
+            "schema_version": 1,
+            "sealed_at": "2026-08-25T06:00:00+00:00",
+            "source": "authenticated-live-lm-studio-preflight",
+            "local_device_identifier": "fixture-local",
+            "preferred_device_identifier": "fixture-workhorse",
+            "models": sorted(model_rows, key=lambda row: row["role"]),
+            "model_ids": sorted(models),
+            "planner_model": planner,
+            "api_model_ids": sorted(models),
+            "protected_prior_aliases_reused": False,
+        }
+        fleet_path = live_root / "fleet-seal.json"
+        closure.atomic_json(fleet_path, fleet_seal)
+        manifest = {
+            "schema_version": 1,
+            "candidate_commit": closure.V18_CANDIDATE_COMMIT,
+            "candidate_tree": closure.V18_CANDIDATE_TREE,
+            "binary": {"path": str(binary), "sha256": sha(binary)},
+            "files": {
+                "evals/swarm-bench/bench/score_sb7.py": sha(instrument_file)
+            },
+            "sb7_policy": {
+                "spec_and_scorer_unchanged_from_v6": True,
+                "website_surface": "stable-sb7",
+                "publish_from_run_build_auto_score": False,
+                "entrant": config["expected"]["entrant"],
+                "publication_document_id": closure.V18_TARGET_DOCUMENT_ID,
+                "protected_document_ids": config["publication"][
+                    "protected_document_ids"
+                ],
+            },
+        }
+        manifest_path = live_root / "instrument-manifest.json"
+        closure.atomic_json(manifest_path, manifest, 0o400)
+        run_started = {
+            "event": "run_started",
+            "seq": 0,
+            "assured": False,
+            "run_id": "swarm-20260825-123456789",
+            "working_dir": str(run_dir),
+            "telemetry_file": str(run_dir / ".swarm/telemetry.jsonl"),
+            "endpoint": "http://localhost:1234",
+            "max_attempts": 3,
+            "max_turns": 100000,
+            "planner_model": planner,
+            "pool": [{"model_id": model} for model in models],
+        }
+        (run_dir / "run.jsonl").write_text(
+            json.dumps(run_started) + "\n", encoding="utf-8"
+        )
+        trace_path = live_root / "trace-swarm-3node-qwen38-brainwaves-r0.jsonl"
+        trace_path.write_text(
+            json.dumps(
+                {
+                    "trace_header": "meridian-v3",
+                    "seq": 1,
+                    "fixture_seed": fixture_seed,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        for path in (fleet_path, run_dir / "run.jsonl", trace_path):
+            path.chmod(0o600)
+        launch = {
+            "schema_version": 1,
+            "candidate": {
+                "commit": closure.V18_CANDIDATE_COMMIT,
+                "tree": closure.V18_CANDIDATE_TREE,
+            },
+            "binary": {"path": str(binary), "sha256": sha(binary)},
+            "launch_controller_sha256": sha(launcher),
+            "instrument_manifest_sha256": sha(manifest_path),
+            "vendor_port": 18970,
+            "entrant": config["expected"]["entrant"],
+            "publication_document_id": closure.V18_TARGET_DOCUMENT_ID,
+            "run_started_identity": {
+                "run_id": run_started["run_id"],
+                "planner_model": planner,
+                "pool_models": sorted(models),
+            },
+            "fleet_seal": {
+                "path": str(fleet_path),
+                "sha256": sha(fleet_path),
+                "model_ids": sorted(models),
+                "planner_model": planner,
+            },
+            "harness": {"pid": 101, "identity_sha256": "1" * 64},
+            "goose": {"pid": 102, "identity_sha256": "2" * 64},
+            "monitor": {"pid": 103, "identity_sha256": "3" * 64},
+        }
+        closure.atomic_json(live_root / "launch.json", launch)
+        template_path = self.root / "terminal-closure-v18.unarmed.json"
+        template_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        patches = contextlib.ExitStack()
+        patches.enter_context(mock.patch.object(closure, "V18_LIVE_ROOT", live_root))
+        patches.enter_context(mock.patch.object(closure, "V18_RUN_DIR", run_dir))
+        patches.enter_context(mock.patch.object(closure, "V18_STATE_DIR", state_dir))
+        patches.enter_context(
+            mock.patch.object(closure, "V18_BOUND_CONFIG", state_dir / "config.json")
+        )
+        patches.enter_context(
+            mock.patch.object(
+                closure,
+                "V18_SCORE_LOCK",
+                self.root / "local-sb7-engine-v18-score.lock",
+            )
+        )
+        patches.enter_context(mock.patch.object(closure, "V18_LAUNCHER", launcher))
+        patches.enter_context(mock.patch.object(closure, "V18_FLEET_SEAL", fleet_path))
+        patches.enter_context(mock.patch.object(closure, "V18_BINARY", binary))
+        patches.enter_context(
+            mock.patch.object(closure, "V18_BINARY_SHA256", sha(binary))
+        )
+        patches.enter_context(
+            mock.patch.object(closure, "V18_PUBLISHER_ROOT", publisher_root)
+        )
+        patches.enter_context(mock.patch.object(closure, "V18_PUBLISHER_PATH", publisher))
+        patches.enter_context(
+            mock.patch.object(closure, "V18_PUBLISHER_SHA256", sha(publisher))
+        )
+        patches.enter_context(
+            mock.patch.object(closure, "git_head", return_value=closure.V18_PUBLISHER_COMMIT)
+        )
+        patches.enter_context(
+            mock.patch.object(closure, "validate_authenticated_process", return_value=True)
+        )
+        return template_path, config, patches
 
     def write_terminal_fixture(self, *, seed: str = "0123456789abcdef") -> tuple[pathlib.Path, pathlib.Path, dict]:
         live_root = self.root / "live"
@@ -594,6 +807,115 @@ class TerminalClosureTests(unittest.TestCase):
         config["score_lock_path"] = str(live / "score.lock")
         with self.assertRaisesRegex(closure.ClosureError, "scorer lock"):
             closure.validate_config(config)
+
+    def test_v18_unarmed_config_and_null_evidence_refuse_binding(self) -> None:
+        template_path, config, patches = self.v18_binding_fixture(fixture_seed=None)
+        with patches:
+            closure.validate_config(config, allow_unarmed=True)
+            with self.assertRaisesRegex(closure.ClosureError, "unarmed"):
+                closure.validate_config(config)
+            with self.assertRaisesRegex(closure.ClosureError, "original exact fixture_seed"):
+                closure.bind_v18(template_path)
+            (closure.V18_LIVE_ROOT / "launch.json").unlink()
+            with self.assertRaisesRegex(closure.ClosureError, "missing or linked"):
+                closure.bind_v18(template_path)
+
+    def test_v18_binding_is_create_only_private_and_exactly_once(self) -> None:
+        template_path, _config, patches = self.v18_binding_fixture()
+        with patches:
+            target, created = closure.bind_v18(template_path)
+            self.assertTrue(created)
+            self.assertEqual(target, closure.V18_BOUND_CONFIG)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o400)
+            armed = closure.read_json(target)
+            self.assertTrue(armed["armed"])
+            self.assertEqual(armed["expected"]["fixture_seed"], "0123456789abcdef")
+            self.assertEqual(
+                armed["expected"]["run_id"], "swarm-20260825-123456789"
+            )
+            self.assertNotIn("local-sb7-engine-v17", target.read_text(encoding="utf-8"))
+            same_target, second_created = closure.bind_v18(template_path)
+            self.assertEqual(same_target, target)
+            self.assertFalse(second_created)
+            target.chmod(0o600)
+            armed["expected"]["fixture_seed"] = "fedcba9876543210"
+            closure.atomic_json(target, armed, 0o400)
+            with self.assertRaises(closure.ClosureError):
+                closure.bind_v18(template_path)
+
+    def test_v18_binding_rejects_stale_v17_provenance(self) -> None:
+        template_path, config, patches = self.v18_binding_fixture()
+        with patches:
+            config["live_root"] = "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17"
+            config["run_dir"] = (
+                "/Users/mihaiperdum/goose-builds/local-sb7-engine-v17/"
+                "swarm-3node-qwen38-brainwaves-r0"
+            )
+            template_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(closure.ClosureError, "stale v17"):
+                closure.bind_v18(template_path)
+
+    def test_v18_fixture_seed_is_checked_in_each_closure_representation(self) -> None:
+        template_path, _config, patches = self.v18_binding_fixture()
+        with patches:
+            bound_path, _created = closure.bind_v18(template_path)
+            supervisor = closure.TerminalClosure(bound_path)
+            self.addCleanup(supervisor.events.handle.close)
+            expected_seed = "0123456789abcdef"
+            wrong_seed = "fedcba9876543210"
+
+            trace_path = closure.V18_LIVE_ROOT / (
+                "trace-swarm-3node-qwen38-brainwaves-r0.jsonl"
+            )
+            trace_path.write_text(
+                json.dumps(
+                    {
+                        "trace_header": "meridian-v3",
+                        "seq": 1,
+                        "fixture_seed": wrong_seed,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            trace_path.chmod(0o600)
+            with self.assertRaisesRegex(closure.ClosureError, "first trace evidence"):
+                supervisor.bound_trace_header()
+
+            score = fixture_score(wrong_seed)
+            with self.assertRaisesRegex(closure.ClosureError, "fixture_seed"):
+                supervisor.validate_score(score, {"fixture_seed": expected_seed})
+
+            authoritative_path = supervisor.state_dir / "authoritative-verdict.json"
+            provenance_path = supervisor.state_dir / "scoring-provenance.json"
+            publication_receipt = {
+                "target_document_id": closure.V18_TARGET_DOCUMENT_ID,
+                "protected_document_ids": sorted(closure.V18_PROTECTED_DOCUMENT_IDS),
+                "protected_before_sha256": "0" * 64,
+                "protected_after_sha256": "0" * 64,
+            }
+            closure.atomic_json(authoritative_path, fixture_score(wrong_seed))
+            closure.atomic_json(
+                provenance_path,
+                {"fixture_seed": expected_seed},
+            )
+            with self.assertRaisesRegex(closure.ClosureError, "fixture_seed"):
+                supervisor.validate_publication_receipt(publication_receipt)
+
+            closure.atomic_json(authoritative_path, fixture_score(expected_seed))
+            closure.atomic_json(provenance_path, {"fixture_seed": wrong_seed})
+            with self.assertRaisesRegex(closure.ClosureError, "provenance"):
+                supervisor.validate_publication_receipt(publication_receipt)
+
+    def test_v18_terminal_rejects_auto_verdict_seed_different_from_binding(self) -> None:
+        _live, _state, fixture = self.write_terminal_fixture(seed="fedcba9876543210")
+        fixture["config"]["expected"]["fixture_seed"] = "0123456789abcdef"
+        config_path = self.root / "bound-seed-config.json"
+        config_path.write_text(json.dumps(fixture["config"]), encoding="utf-8")
+        supervisor = closure.TerminalClosure(config_path)
+        self.addCleanup(supervisor.events.handle.close)
+        with self.assertRaisesRegex(closure.ClosureError, "armed closure identity"):
+            supervisor.terminal_evidence(fixture["launch"])
 
     def score_worker_fixture(
         self, scorer_extra_source: str = ""

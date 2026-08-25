@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Detached, restart-safe terminal closure for the immutable v17 SB7 run.
+"""Detached, restart-safe terminal closure for an immutable SB7 run.
 
 The live run is read-only. This controller authenticates its already-running processes from the
 launch receipt, waits for natural terminal evidence, seals the complete raw tree, scores only a
@@ -34,6 +34,43 @@ from typing import Any, Iterable, Mapping, Sequence
 
 SCHEMA_VERSION = 1
 SEED_RE = re.compile(r"^[0-9a-f]{16}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+RUN_ID_RE = re.compile(r"^swarm-\d{8}-\d{9}$")
+V18_GENERATION = "v18"
+V18_LIVE_ROOT = pathlib.Path(
+    "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18"
+)
+V18_RUN_DIR = V18_LIVE_ROOT / "swarm-3node-qwen38-brainwaves-r0"
+V18_STATE_DIR = pathlib.Path(
+    "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-terminal-closure"
+)
+V18_BOUND_CONFIG = V18_STATE_DIR / "config.json"
+V18_SCORE_LOCK = pathlib.Path(
+    "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-score.lock"
+)
+V18_LAUNCHER = V18_LIVE_ROOT / "launch_local_v18.py"
+V18_FLEET_SEAL = V18_LIVE_ROOT / "fleet-seal.json"
+V18_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
+V18_PROTECTED_DOCUMENT_IDS = frozenset(
+    {"brun-fleet-qwen38-sb70", "brun-fleet-qwen-sb70"}
+)
+V18_CANDIDATE_COMMIT = "10f446dfa7e4cf4c9ec8cb0648e0bbdfc0100116"
+V18_CANDIDATE_TREE = "19e5ecc3bf62e334a754ad93a83165781c3f4f82"
+V18_BINARY = V18_LIVE_ROOT / "bin/goose-2aedd0debf84"
+V18_BINARY_SHA256 = "2aedd0debf848f047e1c26839f7ad1cb936b7cdb48426487d7b04845f611fc56"
+V18_PUBLISHER_COMMIT = "eba9e214a1ca1bd2cf980cfcad04b792733fd163"
+V18_PUBLISHER_SHA256 = "d53a5eb9becd2cbbfbf94d46cdc5c40e5e43377f626af38807aa0dec8cfd5bc7"
+V18_PUBLISHER_MARKER = "Brainwaves v18"
+V18_PUBLISHER_ROOT = pathlib.Path("/Users/mihaiperdum/Projects/LeanZero-website")
+V18_PUBLISHER_PATH = V18_PUBLISHER_ROOT / "scripts/seed-fleet-brainwaves-sb70.mjs"
+V18_PROTECTED_MODEL_ALIASES = frozenset(
+    {
+        "mihai-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
+        "workhorse-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
+        "gabee-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
+    }
+)
 SENSITIVE_NAME_RE = re.compile(r"(?:token|secret|authorization|api[_-]?key|password)", re.I)
 SENSITIVE_TEXT_PATTERNS = (
     re.compile(r"(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+", re.I),
@@ -321,6 +358,46 @@ def atomic_write(path: pathlib.Path, payload: bytes, mode: int = 0o600) -> None:
             temporary.unlink()
 
 
+def create_once(path: pathlib.Path, payload: bytes, mode: int = 0o400) -> bool:
+    ensure_secure_dir(path.parent)
+    if path.is_symlink():
+        raise ClosureError(f"create-only target is symbolic: {path}")
+    if path.exists():
+        if not path.is_file() or path.read_bytes() != payload:
+            raise ClosureError(f"create-only target already exists with different content: {path}")
+        if stat.S_IMODE(path.stat().st_mode) != mode:
+            raise ClosureError(f"create-only target mode changed: {path}")
+        return False
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{os.urandom(6).hex()}.tmp")
+    descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(mode)
+        try:
+            os.link(temporary, path, follow_symlinks=False)
+            created = True
+        except FileExistsError:
+            if path.is_symlink() or not path.is_file() or path.read_bytes() != payload:
+                raise ClosureError(
+                    f"create-only target won a race with different content: {path}"
+                )
+            if stat.S_IMODE(path.stat().st_mode) != mode:
+                raise ClosureError(f"create-only target mode changed: {path}")
+            created = False
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return created
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def atomic_json(path: pathlib.Path, value: Any, mode: int = 0o600) -> None:
     atomic_write(path, json.dumps(value, indent=2, sort_keys=True).encode() + b"\n", mode)
 
@@ -336,6 +413,123 @@ def read_json(path: pathlib.Path) -> Any:
 
     with path.open(encoding="utf-8") as handle:
         return json.load(handle, object_pairs_hook=unique_object)
+
+
+def decode_json_object(payload: bytes, identity: str) -> dict[str, Any]:
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ClosureError(f"{identity} repeats JSON key {key!r}")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(payload, object_pairs_hook=unique_object)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ClosureError(f"{identity} is malformed JSON") from error
+    if not isinstance(value, dict):
+        raise ClosureError(f"{identity} is not a JSON object")
+    return value
+
+
+def read_private_bytes(
+    path: pathlib.Path,
+    *,
+    immutable: bool = False,
+    maximum_bytes: int = 32 * 1024 * 1024,
+) -> bytes:
+    if path.is_symlink() or not path.is_file():
+        raise ClosureError(f"private evidence is missing or linked: {path}")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(descriptor)
+        mode = stat.S_IMODE(before.st_mode)
+        if not stat.S_ISREG(before.st_mode):
+            raise ClosureError(f"private evidence is not a regular file: {path}")
+        if mode & 0o077:
+            raise ClosureError(f"private evidence is group/world accessible: {path}")
+        if immutable and mode & 0o222:
+            raise ClosureError(f"immutable evidence is writable: {path}")
+        if before.st_size > maximum_bytes:
+            raise ClosureError(f"private evidence exceeds its size bound: {path}")
+        chunks: list[bytes] = []
+        size = 0
+        while True:
+            chunk = os.read(descriptor, min(1024 * 1024, maximum_bytes + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > maximum_bytes:
+                raise ClosureError(f"private evidence exceeds its size bound: {path}")
+        after_descriptor = os.fstat(descriptor)
+        after_path = path.lstat()
+    finally:
+        os.close(descriptor)
+    identity_before = (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    descriptor_after = (
+        after_descriptor.st_dev,
+        after_descriptor.st_ino,
+        after_descriptor.st_mode,
+        after_descriptor.st_size,
+        after_descriptor.st_mtime_ns,
+    )
+    path_after = (
+        after_path.st_dev,
+        after_path.st_ino,
+        after_path.st_mode,
+        after_path.st_size,
+        after_path.st_mtime_ns,
+    )
+    if identity_before != descriptor_after or identity_before != path_after:
+        raise ClosureError(f"private evidence changed while it was read: {path}")
+    return b"".join(chunks)
+
+
+def read_private_json(path: pathlib.Path, *, immutable: bool = False) -> dict[str, Any]:
+    return decode_json_object(
+        read_private_bytes(path, immutable=immutable), str(path)
+    )
+
+
+def read_private_jsonl_first(path: pathlib.Path) -> tuple[dict[str, Any], str]:
+    if path.is_symlink() or not path.is_file():
+        raise ClosureError(f"first-trace evidence is missing or linked: {path}")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(descriptor)
+        if stat.S_IMODE(before.st_mode) & 0o077:
+            raise ClosureError(f"first-trace evidence is group/world accessible: {path}")
+        line = b""
+        while b"\n" not in line and len(line) <= 1024 * 1024:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            line += chunk
+        if b"\n" not in line or len(line) > 1024 * 1024:
+            raise ClosureError(f"first-trace evidence lacks a bounded complete row: {path}")
+        first = line.split(b"\n", 1)[0]
+        after_path = path.lstat()
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+        ) != (
+            after_path.st_dev,
+            after_path.st_ino,
+            after_path.st_mode,
+        ):
+            raise ClosureError(f"first-trace evidence identity changed: {path}")
+    finally:
+        os.close(descriptor)
+    return decode_json_object(first, f"{path}:1"), sha256_bytes(first)
 
 
 def redact_text(value: Any, secrets: Iterable[str] = ()) -> str:
@@ -811,7 +1005,7 @@ def preflight_playwright_runtime(
     probe_script: pathlib.Path,
 ) -> dict[str, Any]:
     before = validate_playwright_runtime(runtime, render_node, render_node_sha256)
-    with tempfile.TemporaryDirectory(prefix="v17-playwright-preflight-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sb7-playwright-preflight-") as temporary:
         runtime_root = pathlib.Path(temporary)
         runtime_home = runtime_root / "home"
         runtime_tmp = runtime_root / "tmp"
@@ -972,7 +1166,143 @@ def load_config(path: pathlib.Path) -> dict[str, Any]:
     return config
 
 
-def validate_config(config: dict[str, Any]) -> None:
+def validate_v18_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
+    expected = config["expected"]
+    publication = config["publication"]
+    publisher = config["publisher"]
+    if config.get("closure_generation") != V18_GENERATION:
+        raise ClosureError("v18 closure generation identity changed")
+    if "local-sb7-engine-v17" in canonical_json(config).decode("utf-8"):
+        raise ClosureError("v18 closure config contains stale v17 run provenance")
+    if "Brainwaves v17" in canonical_json(config).decode("utf-8"):
+        raise ClosureError("v18 closure config contains stale v17 publication provenance")
+    exact_paths = {
+        "live_root": V18_LIVE_ROOT,
+        "run_dir": V18_RUN_DIR,
+        "state_dir": V18_STATE_DIR,
+        "score_lock_path": V18_SCORE_LOCK,
+        "bound_config_path": V18_BOUND_CONFIG,
+    }
+    for field, exact in exact_paths.items():
+        if config.get(field) != str(exact):
+            raise ClosureError(f"v18 {field} differs from its exact closure path")
+    exact_expected = {
+        "candidate_commit": V18_CANDIDATE_COMMIT,
+        "candidate_tree": V18_CANDIDATE_TREE,
+        "binary_path": str(V18_BINARY),
+        "binary_sha256": V18_BINARY_SHA256,
+        "launch_controller_path": str(V18_LAUNCHER),
+    }
+    for field, exact in exact_expected.items():
+        if expected.get(field) != exact:
+            raise ClosureError(f"v18 expected.{field} changed")
+    if not SHA256_RE.fullmatch(str(expected.get("launch_controller_sha256", ""))):
+        raise ClosureError("v18 launcher source hash is not pinned")
+    if publication.get("target_document_id") != V18_TARGET_DOCUMENT_ID:
+        raise ClosureError("v18 publication target changed")
+    if set(publication.get("protected_document_ids") or []) != set(
+        V18_PROTECTED_DOCUMENT_IDS
+    ):
+        raise ClosureError("v18 protected publication identities changed")
+    if publication.get("provenance_marker") != V18_PUBLISHER_MARKER:
+        raise ClosureError("v18 publication provenance marker changed")
+    if publisher.get("git_commit") != V18_PUBLISHER_COMMIT:
+        raise ClosureError("v18 publisher Git commit changed")
+    if publisher.get("sha256") != V18_PUBLISHER_SHA256:
+        raise ClosureError("v18 publisher source hash changed")
+    if publisher.get("site_root") != str(V18_PUBLISHER_ROOT):
+        raise ClosureError("v18 publisher repository path changed")
+    if publisher.get("path") != str(V18_PUBLISHER_PATH):
+        raise ClosureError("v18 publisher path changed")
+    armed = config.get("armed")
+    if not isinstance(armed, bool):
+        raise ClosureError("v18 closure armed state is not boolean")
+    dynamic_hashes = (
+        "launch_sha256",
+        "instrument_manifest_sha256",
+        "run_started_sha256",
+        "trace_header_sha256",
+        "fleet_seal_sha256",
+    )
+    if not armed:
+        if not allow_unarmed:
+            raise ClosureError("v18 closure config is unarmed")
+        if config.get("binding") is not None:
+            raise ClosureError("unarmed v18 closure config already contains binding evidence")
+        if expected.get("run_id") is not None or expected.get("fixture_seed") is not None:
+            raise ClosureError("unarmed v18 closure config already contains run identity")
+        if expected.get("models") is not None or expected.get("instrument_files") not in (
+            None,
+            {},
+        ):
+            raise ClosureError("unarmed v18 closure config already contains live inventory")
+        if any(expected.get(field) is not None for field in dynamic_hashes):
+            raise ClosureError("unarmed v18 closure config already contains live evidence hashes")
+        return
+    if not RUN_ID_RE.fullmatch(str(expected.get("run_id", ""))):
+        raise ClosureError("armed v18 closure run_id is malformed")
+    if not SEED_RE.fullmatch(str(expected.get("fixture_seed", ""))):
+        raise ClosureError("armed v18 closure fixture_seed must be exact 16-hex")
+    if any(not SHA256_RE.fullmatch(str(expected.get(field, ""))) for field in dynamic_hashes):
+        raise ClosureError("armed v18 closure lacks an exact bound evidence hash")
+    models = expected.get("models")
+    if (
+        not isinstance(models, list)
+        or len(models) != 3
+        or len(set(models)) != 3
+        or any(not isinstance(model, str) or not model for model in models)
+        or set(models) & set(V18_PROTECTED_MODEL_ALIASES)
+    ):
+        raise ClosureError("armed v18 closure model inventory is malformed or stale")
+    instrument_files = expected.get("instrument_files")
+    if (
+        not isinstance(instrument_files, dict)
+        or not instrument_files
+        or any(
+            not isinstance(relative, str)
+            or not relative
+            or pathlib.Path(relative).is_absolute()
+            or ".." in pathlib.Path(relative).parts
+            or not SHA256_RE.fullmatch(str(digest))
+            for relative, digest in instrument_files.items()
+        )
+    ):
+        raise ClosureError("armed v18 closure instrument inventory is malformed")
+    binding = config.get("binding")
+    if not isinstance(binding, dict):
+        raise ClosureError("armed v18 closure lacks binding evidence")
+    expected_binding = {
+        "generation": V18_GENERATION,
+        "launch_path": str(V18_LIVE_ROOT / "launch.json"),
+        "instrument_manifest_path": str(V18_LIVE_ROOT / "instrument-manifest.json"),
+        "run_log_path": str(V18_RUN_DIR / "run.jsonl"),
+        "trace_path": str(
+            V18_LIVE_ROOT / "trace-swarm-3node-qwen38-brainwaves-r0.jsonl"
+        ),
+        "fleet_seal_path": str(V18_FLEET_SEAL),
+    }
+    for field, exact in expected_binding.items():
+        if binding.get(field) != exact:
+            raise ClosureError(f"armed v18 binding {field} changed")
+    if binding.get("template_sha256") is None or not SHA256_RE.fullmatch(
+        str(binding.get("template_sha256"))
+    ):
+        raise ClosureError("armed v18 binding template hash is malformed")
+    if binding.get("launch_sha256") != expected["launch_sha256"]:
+        raise ClosureError("armed v18 binding launch hash differs")
+    if binding.get("instrument_manifest_sha256") != expected[
+        "instrument_manifest_sha256"
+    ]:
+        raise ClosureError("armed v18 binding manifest hash differs")
+    if binding.get("run_started_sha256") != expected["run_started_sha256"]:
+        raise ClosureError("armed v18 binding run_started hash differs")
+    if binding.get("trace_header_sha256") != expected["trace_header_sha256"]:
+        raise ClosureError("armed v18 binding trace-header hash differs")
+    if binding.get("fleet_seal_sha256") != expected["fleet_seal_sha256"]:
+        raise ClosureError("armed v18 binding fleet-seal hash differs")
+
+
+def validate_config(config: dict[str, Any], *, allow_unarmed: bool = False) -> None:
     required_sections = {"expected", "publication", "publisher", "runtime"}
     if not required_sections.issubset(config):
         missing = sorted(required_sections - set(config))
@@ -986,7 +1316,7 @@ def validate_config(config: dict[str, Any]) -> None:
     state_dir = configured_state_dir.resolve()
     run_dir = configured_run_dir.resolve()
     if path_is_within(state_dir, live_root):
-        raise ClosureError("closure state must be outside the immutable live v17 root")
+        raise ClosureError("closure state must be outside the immutable live run root")
     if not path_is_within(run_dir, live_root):
         raise ClosureError("configured run_dir is not inside the authenticated live root")
     score_lock = pathlib.Path(config["score_lock_path"]).resolve()
@@ -1003,19 +1333,19 @@ def validate_config(config: dict[str, Any]) -> None:
     }:
         raise ClosureError("protected benchmark document set changed")
     if config["expected"]["vendor_port"] != 18970:
-        raise ClosureError("v17 advertised/scoring port must remain 18970")
+        raise ClosureError("advertised/scoring port must remain 18970")
     if config["expected"].get("entrant") != "swarm-3node-qwen38-brainwaves":
-        raise ClosureError("v17 entrant identity changed")
+        raise ClosureError("entrant identity changed")
     if config["expected"].get("raw_scorer_version") != "sb-7.0-rc":
-        raise ClosureError("v17 raw scorer convention changed")
+        raise ClosureError("raw scorer convention changed")
     if config["expected"].get("check_count") != 91:
-        raise ClosureError("v17 frozen scorer check count changed")
+        raise ClosureError("frozen scorer check count changed")
     if sorted(config["expected"].get("telemetry_nodes") or []) != [
         "gabee",
         "mihai",
         "workhorse",
     ]:
-        raise ClosureError("v17 telemetry node contract changed")
+        raise ClosureError("telemetry node contract changed")
     for field in ("controller_sha256",):
         if not re.fullmatch(r"[0-9a-f]{64}", str(config.get(field, ""))):
             raise ClosureError(f"{field} must be a frozen SHA-256")
@@ -1036,13 +1366,352 @@ def validate_config(config: dict[str, Any]) -> None:
     for field in ("module_root", "installed_browsers_path"):
         runtime_path = pathlib.Path(str(playwright_runtime.get(field, ""))).resolve()
         if path_is_within(runtime_path, live_root):
-            raise ClosureError(f"runtime.playwright.{field} must be outside the live v17 tree")
+            raise ClosureError(f"runtime.playwright.{field} must be outside the live run tree")
     if int(config.get("max_score_attempts", 0)) < 1:
         raise ClosureError("max_score_attempts must be positive")
     if int(config.get("max_publish_attempts", 0)) < 1:
         raise ClosureError("max_publish_attempts must be positive")
     if float(config.get("score_timeout_seconds", 0)) <= 0:
         raise ClosureError("score_timeout_seconds must be positive")
+    if config.get("closure_generation") == V18_GENERATION or "armed" in config:
+        validate_v18_config(config, allow_unarmed=allow_unarmed)
+
+
+def verify_immutable_file(
+    path: pathlib.Path, expected_sha256: str, *, require_read_only: bool = True
+) -> None:
+    if path.is_symlink() or not path.is_file():
+        raise ClosureError(f"immutable input is missing or linked: {path}")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ClosureError(f"immutable input is not a regular file: {path}")
+        if require_read_only and stat.S_IMODE(before.st_mode) & 0o222:
+            raise ClosureError(f"immutable input is writable: {path}")
+        digest_state = hashlib.sha256()
+        while True:
+            block = os.read(descriptor, 1024 * 1024)
+            if not block:
+                break
+            digest_state.update(block)
+        after_descriptor = os.fstat(descriptor)
+        after_path = path.lstat()
+    finally:
+        os.close(descriptor)
+    before_identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    if before_identity != (
+        after_descriptor.st_dev,
+        after_descriptor.st_ino,
+        after_descriptor.st_mode,
+        after_descriptor.st_size,
+        after_descriptor.st_mtime_ns,
+    ) or before_identity != (
+        after_path.st_dev,
+        after_path.st_ino,
+        after_path.st_mode,
+        after_path.st_size,
+        after_path.st_mtime_ns,
+    ):
+        raise ClosureError(f"immutable input changed while it was hashed: {path}")
+    if digest_state.hexdigest() != expected_sha256:
+        raise ClosureError(f"immutable input hash changed: {path}")
+
+
+def git_head(repository: pathlib.Path) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env=safe_environment(),
+    )
+    head = completed.stdout.decode("ascii", "strict").strip()
+    if completed.returncode != 0 or not GIT_COMMIT_RE.fullmatch(head):
+        raise ClosureError("publisher Git identity could not be authenticated")
+    return head
+
+
+def validate_v18_fleet_seal(
+    seal: Mapping[str, Any], launch: Mapping[str, Any]
+) -> list[str]:
+    models = seal.get("models")
+    model_ids = seal.get("model_ids")
+    if (
+        seal.get("schema_version") != SCHEMA_VERSION
+        or seal.get("source") != "authenticated-live-lm-studio-preflight"
+        or seal.get("protected_prior_aliases_reused") is not False
+        or not isinstance(models, list)
+        or len(models) != 3
+        or not isinstance(model_ids, list)
+        or len(model_ids) != 3
+        or len(set(model_ids)) != 3
+        or set(model_ids) & set(V18_PROTECTED_MODEL_ALIASES)
+        or seal.get("api_model_ids") != sorted(model_ids)
+    ):
+        raise ClosureError("v18 authenticated fleet seal is malformed or stale")
+    identifiers: list[str] = []
+    paths: set[str] = set()
+    quantizations: set[bytes] = set()
+    roles: set[str] = set()
+    prefixes = {"local": "mihai-", "workhorse": "workhorse-", "mac": "gabee-"}
+    for row in models:
+        if not isinstance(row, dict):
+            raise ClosureError("v18 fleet seal model row is malformed")
+        identifier = row.get("identifier")
+        role = row.get("role")
+        if (
+            not isinstance(identifier, str)
+            or not isinstance(role, str)
+            or role not in prefixes
+            or not identifier.casefold().startswith(prefixes[role])
+            or "qwen3.8" not in identifier.casefold()
+            or "27b" not in identifier.casefold()
+            or "brainwaves" not in identifier.casefold()
+            or not isinstance(row.get("path"), str)
+            or not row.get("path")
+            or not isinstance(row.get("contextLength"), int)
+            or row["contextLength"] <= 0
+            or row.get("parallel") != 2
+            or not isinstance(row.get("quantization"), dict)
+        ):
+            raise ClosureError("v18 fleet seal model row changed")
+        identifiers.append(identifier)
+        roles.add(role)
+        paths.add(row["path"])
+        quantizations.add(canonical_json(row["quantization"]))
+    if (
+        roles != set(prefixes)
+        or sorted(identifiers) != sorted(model_ids)
+        or len(paths) != 1
+        or len(quantizations) != 1
+        or seal.get("planner_model") not in model_ids
+    ):
+        raise ClosureError("v18 fleet seal physical/model identity does not reconcile")
+    launch_seal = launch.get("fleet_seal")
+    if (
+        not isinstance(launch_seal, dict)
+        or launch_seal.get("path") != str(V18_FLEET_SEAL)
+        or sorted(launch_seal.get("model_ids") or []) != sorted(model_ids)
+        or launch_seal.get("planner_model") != seal.get("planner_model")
+    ):
+        raise ClosureError("v18 launch/fleet-seal identity differs")
+    return sorted(model_ids)
+
+
+def v18_binding_evidence(
+    template_path: pathlib.Path, config: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    validate_config(config, allow_unarmed=True)
+    if config.get("armed") is not False:
+        raise ClosureError("v18 binder requires the unarmed template")
+    if template_path.is_symlink() or not template_path.is_file():
+        raise ClosureError("v18 closure template is missing or linked")
+    if sha256_file(pathlib.Path(__file__).resolve()) != config["controller_sha256"]:
+        raise ClosureError("v18 closure controller differs from its unarmed template")
+    launcher = pathlib.Path(config["expected"]["launch_controller_path"])
+    verify_immutable_file(
+        launcher, config["expected"]["launch_controller_sha256"]
+    )
+    publisher = pathlib.Path(config["publisher"]["path"])
+    verify_immutable_file(
+        publisher, config["publisher"]["sha256"], require_read_only=False
+    )
+    if git_head(pathlib.Path(config["publisher"]["site_root"])) != config[
+        "publisher"
+    ]["git_commit"]:
+        raise ClosureError("v18 publisher repository is not at the accepted commit")
+
+    launch_path = V18_LIVE_ROOT / "launch.json"
+    manifest_path = V18_LIVE_ROOT / "instrument-manifest.json"
+    launch_payload = read_private_bytes(launch_path)
+    manifest_payload = read_private_bytes(manifest_path, immutable=True)
+    launch = decode_json_object(launch_payload, str(launch_path))
+    manifest = decode_json_object(manifest_payload, str(manifest_path))
+    launch_sha256 = sha256_bytes(launch_payload)
+    manifest_sha256 = sha256_bytes(manifest_payload)
+    expected = config["expected"]
+    if launch.get("schema_version") != SCHEMA_VERSION:
+        raise ClosureError("v18 launch receipt schema changed")
+    if launch.get("launch_controller_sha256") != expected[
+        "launch_controller_sha256"
+    ]:
+        raise ClosureError("v18 launch receipt used a different launcher")
+    candidate = launch.get("candidate")
+    if not isinstance(candidate, dict) or candidate.get("commit") != V18_CANDIDATE_COMMIT:
+        raise ClosureError("v18 launch candidate commit changed")
+    if candidate.get("tree") != V18_CANDIDATE_TREE:
+        raise ClosureError("v18 launch candidate tree changed")
+    if (
+        launch.get("binary")
+        != {"path": str(V18_BINARY), "sha256": V18_BINARY_SHA256}
+        or launch.get("vendor_port") != 18970
+        or launch.get("entrant") != expected["entrant"]
+        or launch.get("publication_document_id") != V18_TARGET_DOCUMENT_ID
+        or launch.get("instrument_manifest_sha256") != manifest_sha256
+    ):
+        raise ClosureError("v18 launch static identity differs")
+    verify_immutable_file(V18_BINARY, V18_BINARY_SHA256)
+    if (
+        manifest.get("schema_version") != SCHEMA_VERSION
+        or manifest.get("candidate_commit") != V18_CANDIDATE_COMMIT
+        or manifest.get("candidate_tree") != V18_CANDIDATE_TREE
+        or manifest.get("binary")
+        != {"path": str(V18_BINARY), "sha256": V18_BINARY_SHA256}
+    ):
+        raise ClosureError("v18 instrument manifest identity differs")
+    policy = manifest.get("sb7_policy")
+    if not isinstance(policy, dict) or policy != {
+        "spec_and_scorer_unchanged_from_v6": True,
+        "website_surface": "stable-sb7",
+        "publish_from_run_build_auto_score": False,
+        "entrant": expected["entrant"],
+        "publication_document_id": V18_TARGET_DOCUMENT_ID,
+        "protected_document_ids": list(config["publication"]["protected_document_ids"]),
+    }:
+        raise ClosureError("v18 instrument publication policy changed")
+    instrument_files = manifest.get("files")
+    if not isinstance(instrument_files, dict) or not instrument_files:
+        raise ClosureError("v18 instrument manifest has no frozen files")
+    for relative, digest in instrument_files.items():
+        relative_path = pathlib.Path(str(relative))
+        if (
+            relative_path.is_absolute()
+            or ".." in relative_path.parts
+            or not SHA256_RE.fullmatch(str(digest))
+        ):
+            raise ClosureError("v18 instrument manifest contains an invalid path/hash")
+        verify_immutable_file(V18_LIVE_ROOT / "instrument" / relative_path, digest)
+
+    fleet_receipt = launch.get("fleet_seal")
+    if not isinstance(fleet_receipt, dict) or fleet_receipt.get("path") != str(
+        V18_FLEET_SEAL
+    ):
+        raise ClosureError("v18 launch lacks its exact fleet-seal path")
+    fleet_payload = read_private_bytes(V18_FLEET_SEAL)
+    fleet_sha256 = sha256_bytes(fleet_payload)
+    if fleet_receipt.get("sha256") != fleet_sha256:
+        raise ClosureError("v18 fleet seal differs from its launch receipt")
+    fleet = decode_json_object(fleet_payload, str(V18_FLEET_SEAL))
+    models = validate_v18_fleet_seal(fleet, launch)
+
+    run_log_path = V18_RUN_DIR / "run.jsonl"
+    run_started, run_started_sha256 = read_private_jsonl_first(run_log_path)
+    if (
+        run_started.get("event") != "run_started"
+        or run_started.get("seq") != 0
+        or run_started.get("assured") is not False
+        or run_started.get("working_dir") != str(V18_RUN_DIR)
+        or run_started.get("telemetry_file")
+        != str(V18_RUN_DIR / ".swarm/telemetry.jsonl")
+        or run_started.get("endpoint") != "http://localhost:1234"
+        or run_started.get("max_attempts") != 3
+        or run_started.get("max_turns") != 100000
+        or not RUN_ID_RE.fullmatch(str(run_started.get("run_id", "")))
+    ):
+        raise ClosureError("v18 run_started identity is malformed")
+    run_pool = run_started.get("pool")
+    run_models = (
+        sorted(str(row.get("model_id")) for row in run_pool)
+        if isinstance(run_pool, list) and all(isinstance(row, dict) for row in run_pool)
+        else []
+    )
+    launch_started = launch.get("run_started_identity")
+    if (
+        len(run_models) != 3
+        or run_models != models
+        or not isinstance(launch_started, dict)
+        or launch_started.get("run_id") != run_started["run_id"]
+        or sorted(launch_started.get("pool_models") or []) != models
+        or launch_started.get("planner_model") != fleet.get("planner_model")
+        or run_started.get("planner_model") != fleet.get("planner_model")
+    ):
+        raise ClosureError("v18 launch/run_started/fleet identity differs")
+    for role in ("harness", "goose", "monitor"):
+        receipt = launch.get(role)
+        if not isinstance(receipt, dict) or not validate_authenticated_process(role, receipt):
+            raise ClosureError(f"v18 {role} is not live at the binding boundary")
+
+    trace_path = V18_LIVE_ROOT / f"trace-{expected['entrant']}-r0.jsonl"
+    trace_header, trace_header_sha256 = read_private_jsonl_first(trace_path)
+    fixture_seed = trace_header.get("fixture_seed")
+    if (
+        trace_header.get("trace_header") != "meridian-v3"
+        or trace_header.get("seq") != 1
+        or not isinstance(fixture_seed, str)
+        or not SEED_RE.fullmatch(fixture_seed)
+    ):
+        raise ClosureError("v18 first trace row lacks its original exact fixture_seed")
+    binding = {
+        "generation": V18_GENERATION,
+        "template_sha256": sha256_file(template_path),
+        "launch_path": str(launch_path),
+        "launch_sha256": launch_sha256,
+        "instrument_manifest_path": str(manifest_path),
+        "instrument_manifest_sha256": manifest_sha256,
+        "run_log_path": str(run_log_path),
+        "run_started_sha256": run_started_sha256,
+        "trace_path": str(trace_path),
+        "trace_header_sha256": trace_header_sha256,
+        "fleet_seal_path": str(V18_FLEET_SEAL),
+        "fleet_seal_sha256": fleet_sha256,
+    }
+    observed = {
+        "run_id": run_started["run_id"],
+        "fixture_seed": fixture_seed,
+        "models": models,
+        "instrument_files": instrument_files,
+        "binding": binding,
+    }
+    return observed, binding
+
+
+def bind_v18(template_path: pathlib.Path) -> tuple[pathlib.Path, bool]:
+    template_path = template_path.resolve()
+    template = load_config(template_path)
+    observed, binding = v18_binding_evidence(template_path, template)
+    armed = json.loads(json.dumps(template))
+    armed["armed"] = True
+    armed["expected"].update(
+        {
+            "run_id": observed["run_id"],
+            "fixture_seed": observed["fixture_seed"],
+            "models": observed["models"],
+            "instrument_files": observed["instrument_files"],
+            "launch_sha256": binding["launch_sha256"],
+            "instrument_manifest_sha256": binding[
+                "instrument_manifest_sha256"
+            ],
+            "run_started_sha256": binding["run_started_sha256"],
+            "trace_header_sha256": binding["trace_header_sha256"],
+            "fleet_seal_sha256": binding["fleet_seal_sha256"],
+        }
+    )
+    armed["binding"] = {**binding, "bound_at": utc_now()}
+    validate_config(armed)
+    target = pathlib.Path(armed["bound_config_path"])
+    if target.exists():
+        existing = read_private_json(target, immutable=True)
+        validate_config(existing)
+        comparable_existing = json.loads(json.dumps(existing))
+        comparable_new = json.loads(json.dumps(armed))
+        comparable_existing.get("binding", {}).pop("bound_at", None)
+        comparable_new.get("binding", {}).pop("bound_at", None)
+        if comparable_existing != comparable_new:
+            raise ClosureError("v18 closure was already bound to different evidence")
+        return target, False
+    payload = json.dumps(armed, indent=2, sort_keys=True).encode() + b"\n"
+    created = create_once(target, payload, 0o400)
+    persisted = read_private_json(target, immutable=True)
+    if canonical_json(persisted) != canonical_json(armed):
+        raise ClosureError("v18 armed closure config differs after create-only binding")
+    return target, created
 
 
 class DurableEvents:
@@ -1093,6 +1762,29 @@ class TerminalClosure:
             self.checkpoint("stopped")
             raise SystemExit(75)
 
+    def expected_fixture_seed(self, observed: Any = None) -> str:
+        configured = self.config["expected"].get("fixture_seed")
+        if configured is None:
+            configured = observed
+        if not isinstance(configured, str) or not SEED_RE.fullmatch(configured):
+            raise ClosureError("closure lacks an exact 16-hex fixture_seed")
+        if observed is not None and observed != configured:
+            raise ClosureError("fixture_seed differs from the armed closure identity")
+        return configured
+
+    def bound_trace_header(self) -> dict[str, Any] | None:
+        expected_hash = self.config["expected"].get("trace_header_sha256")
+        if expected_hash is None:
+            return None
+        trace_path = self.live_root / f"trace-{self.config['expected']['entrant']}-r0.jsonl"
+        header, digest = read_private_jsonl_first(trace_path)
+        if digest != expected_hash:
+            raise ClosureError("first trace evidence changed after v18 binding")
+        if header.get("trace_header") != "meridian-v3" or header.get("seq") != 1:
+            raise ClosureError("first trace evidence header identity changed")
+        self.expected_fixture_seed(header.get("fixture_seed"))
+        return header
+
     def record_process_exit_observation(self, role: str, pid: int) -> dict[str, Any]:
         path = self.state_dir / f"{role}-exit-observation.json"
         if path.is_file():
@@ -1116,11 +1808,39 @@ class TerminalClosure:
         launch_path = self.live_root / "launch.json"
         manifest_path = self.live_root / "instrument-manifest.json"
         if sha256_file(launch_path) != expected["launch_sha256"]:
-            raise ClosureError("v17 launch receipt changed")
+            raise ClosureError("launch receipt changed")
         if sha256_file(manifest_path) != expected["instrument_manifest_sha256"]:
-            raise ClosureError("v17 instrument manifest changed")
+            raise ClosureError("instrument manifest changed")
         launch = read_json(launch_path)
         manifest = read_json(manifest_path)
+        if self.config.get("closure_generation") == V18_GENERATION:
+            verify_immutable_file(
+                pathlib.Path(expected["launch_controller_path"]),
+                expected["launch_controller_sha256"],
+            )
+            if launch.get("launch_controller_sha256") != expected[
+                "launch_controller_sha256"
+            ]:
+                raise ClosureError("launch receipt used a different frozen launcher")
+            if launch.get("candidate", {}).get("tree") != expected["candidate_tree"]:
+                raise ClosureError("candidate tree changed")
+            if launch.get("binary", {}).get("path") != expected["binary_path"]:
+                raise ClosureError("frozen binary path changed")
+            run_started, run_started_sha256 = read_private_jsonl_first(
+                self.run_dir / "run.jsonl"
+            )
+            if (
+                run_started_sha256 != expected["run_started_sha256"]
+                or run_started.get("run_id") != expected["run_id"]
+            ):
+                raise ClosureError("bound run_started identity changed")
+            fleet_payload = read_private_bytes(V18_FLEET_SEAL)
+            if sha256_bytes(fleet_payload) != expected["fleet_seal_sha256"]:
+                raise ClosureError("bound fleet seal changed")
+            fleet = decode_json_object(fleet_payload, str(V18_FLEET_SEAL))
+            if validate_v18_fleet_seal(fleet, launch) != sorted(expected["models"]):
+                raise ClosureError("bound v18 model inventory changed")
+            self.bound_trace_header()
         if launch.get("publication_document_id") != self.config["publication"]["target_document_id"]:
             raise ClosureError("launch publication identity changed")
         policy = manifest.get("sb7_policy") or {}
@@ -1172,6 +1892,10 @@ class TerminalClosure:
         publisher = pathlib.Path(self.config["publisher"]["path"])
         if publisher.is_symlink() or sha256_file(publisher) != self.config["publisher"]["sha256"]:
             raise ClosureError("guarded publisher hash changed")
+        if self.config.get("closure_generation") == V18_GENERATION and git_head(
+            pathlib.Path(self.config["publisher"]["site_root"])
+        ) != self.config["publisher"]["git_commit"]:
+            raise ClosureError("guarded publisher Git commit changed")
         if sha256_file(pathlib.Path(__file__).resolve()) != self.config["controller_sha256"]:
             raise ClosureError("terminal closure controller hash changed")
         node = pathlib.Path(self.config["publisher"]["node"])
@@ -1250,6 +1974,10 @@ class TerminalClosure:
         seed = auto_verdict.get("fixture_seed")
         if not isinstance(seed, str) or not SEED_RE.fullmatch(seed):
             raise ClosureError("raw auto-verdict lacks an exact 16-hex fixture_seed")
+        seed = self.expected_fixture_seed(seed)
+        trace_header = self.bound_trace_header()
+        if trace_header is not None and trace_header.get("fixture_seed") != seed:
+            raise ClosureError("raw auto-verdict fixture_seed differs from first trace evidence")
         validate_sb7_score_payload(auto_verdict, self.config["expected"], seed)
         if (
             auto_verdict.get("entrant") != self.config["expected"]["entrant"]
@@ -1328,7 +2056,7 @@ class TerminalClosure:
     def monitor_terminal_row(self) -> dict[str, Any]:
         monitor_rows = read_jsonl(self.run_dir / ".swarm-monitor" / "watch.jsonl")
         if any(row.get("event") in {"incident_detected", "incident_captured"} for row in monitor_rows):
-            raise ClosureError("v17 monitor recorded an incident")
+            raise ClosureError("run monitor recorded an incident")
         terminal = [
             row
             for row in monitor_rows
@@ -1427,6 +2155,7 @@ class TerminalClosure:
         ):
             return None
         result = read_json(result_path)
+        configured_seed = self.config["expected"].get("fixture_seed")
         if (
             result.get("exit_code") != 0
             or result.get("scorer_exit_code") != 0
@@ -1434,6 +2163,10 @@ class TerminalClosure:
             or result.get("descendant_cleanup_proven") is not True
             or result.get("descendants_survived_scorer") != 0
             or result.get("fixture_seed") is None
+            or (
+                configured_seed is not None
+                and result.get("fixture_seed") != configured_seed
+            )
             or result.get("port") != self.config["expected"]["vendor_port"]
             or result.get("scorer_sha256")
             != self.config["expected"]["instrument_files"][
@@ -1535,7 +2268,7 @@ class TerminalClosure:
             "clone": str(clone),
             "raw_tree": str(self.run_dir),
             "raw_tree_sha256": raw_seal["tree_sha256"],
-            "seed": terminal["fixture_seed"],
+            "seed": self.expected_fixture_seed(terminal.get("fixture_seed")),
             "scorer": str(
                 self.live_root
                 / "instrument"
@@ -1711,7 +2444,8 @@ class TerminalClosure:
         overlap = sorted(parent_owned & set(score))
         if overlap:
             raise ClosureError(f"raw scorer attempted to supply parent-owned fields: {overlap}")
-        if worker_result.get("fixture_seed") != terminal["fixture_seed"]:
+        expected_seed = self.expected_fixture_seed(terminal.get("fixture_seed"))
+        if worker_result.get("fixture_seed") != expected_seed:
             raise ClosureError("score worker receipt used a different fixture_seed")
         auto = read_json(self.run_dir / "verdict.json")
         safe_agent = {
@@ -1747,11 +2481,18 @@ class TerminalClosure:
                 },
             }
         )
+        if score.get("fixture_seed") != expected_seed:
+            raise ClosureError("authoritative verdict used a different fixture_seed")
         authoritative_path = self.state_dir / "authoritative-verdict.json"
-        atomic_json(authoritative_path, score)
+        if authoritative_path.is_file():
+            existing_authoritative = read_json(authoritative_path)
+            if canonical_json(existing_authoritative) != canonical_json(score):
+                raise ClosureError("authoritative verdict differs from its durable receipt")
+        else:
+            atomic_json(authoritative_path, score)
         provenance = {
             "schema_version": SCHEMA_VERSION,
-            "fixture_seed": terminal["fixture_seed"],
+            "fixture_seed": expected_seed,
             "raw_tree_sha256": raw_seal["tree_sha256"],
             "scorer_sha256": worker_result["scorer_sha256"],
             "score_tree_sha256": worker_result["score_tree_sha256"],
@@ -1774,15 +2515,23 @@ class TerminalClosure:
             "authoritative_verdict_sha256": sha256_file(authoritative_path),
         }
         provenance_path = self.state_dir / "scoring-provenance.json"
-        atomic_json(provenance_path, provenance)
+        if provenance_path.is_file():
+            existing_provenance = read_json(provenance_path)
+            if canonical_json(existing_provenance) != canonical_json(provenance):
+                raise ClosureError("scoring provenance differs from its durable receipt")
+        else:
+            atomic_json(provenance_path, provenance)
         current_raw = tree_manifest(self.run_dir)
         if not manifests_equal(raw_seal, current_raw):
             raise ClosureError("raw tree changed during authoritative scoring")
         return authoritative_path, provenance
 
     def validate_score(self, score: dict[str, Any], terminal: dict[str, Any]) -> None:
-        validate_sb7_score_payload(score, self.config["expected"], terminal["fixture_seed"])
+        expected_seed = self.expected_fixture_seed(terminal.get("fixture_seed"))
+        validate_sb7_score_payload(score, self.config["expected"], expected_seed)
         raw_score = read_json(self.run_dir / "verdict.json")
+        if raw_score.get("fixture_seed") != expected_seed:
+            raise ClosureError("raw auto-verdict fixture_seed changed before publication")
         raw_registry = [
             (row.get("check"), row.get("tier")) for row in raw_score.get("checks", [])
         ]
@@ -1922,6 +2671,11 @@ class TerminalClosure:
         if receipt.get("protected_before_sha256") != receipt.get("protected_after_sha256"):
             raise ClosureError("protected document receipts changed")
         authoritative_path = self.state_dir / "authoritative-verdict.json"
+        authoritative = read_json(authoritative_path)
+        expected_seed = self.expected_fixture_seed(authoritative.get("fixture_seed"))
+        provenance = read_json(self.state_dir / "scoring-provenance.json")
+        if provenance.get("fixture_seed") != expected_seed:
+            raise ClosureError("publication provenance used a different fixture_seed")
         if receipt.get("authoritative_verdict_sha256") != sha256_file(authoritative_path):
             raise ClosureError("publisher receipt does not identify the authoritative verdict")
         if receipt.get("create_only") is not True:
@@ -1996,7 +2750,7 @@ class TerminalClosure:
             ),
             "protected_documents_unchanged": True,
             "rendered_verified": True,
-            "fixture_seed": terminal["fixture_seed"],
+            "fixture_seed": self.expected_fixture_seed(terminal.get("fixture_seed")),
             "scorer_sha256": provenance["scorer_sha256"],
             "score_tree_sha256": provenance["score_tree_sha256"],
             "playwright_module_tree_sha256": provenance[
@@ -3115,7 +3869,7 @@ def stop(config_path: pathlib.Path) -> int:
     config = load_config(config_path)
     stop_path = pathlib.Path(config["state_dir"]) / "STOP"
     atomic_write(stop_path, (utc_now() + "\n").encode())
-    print("closure stop requested; the live v17 run will not be signalled")
+    print("closure stop requested; the live benchmark run will not be signalled")
     return 0
 
 
@@ -3180,6 +3934,8 @@ def parser() -> argparse.ArgumentParser:
     for name in ("preflight", "start", "resume", "status", "watch", "results", "stop", "run"):
         sub = commands.add_parser(name)
         sub.add_argument("--config", type=pathlib.Path, required=True)
+    binder = commands.add_parser("bind-v18")
+    binder.add_argument("--template", type=pathlib.Path, required=True)
     worker = commands.add_parser("score-worker")
     worker.add_argument("--job", type=pathlib.Path, required=True)
     return root
@@ -3188,6 +3944,23 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     os.umask(0o077)
     args = parser().parse_args(argv)
+    if args.command == "bind-v18":
+        path, created = bind_v18(args.template)
+        config = load_config(path)
+        print(
+            json.dumps(
+                {
+                    "armed_config": str(path),
+                    "created": created,
+                    "fixture_seed": config["expected"]["fixture_seed"],
+                    "run_id": config["expected"]["run_id"],
+                    "sha256": sha256_file(path),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command == "preflight":
         return preflight(args.config)
     if args.command == "start":
