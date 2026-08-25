@@ -8111,6 +8111,83 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     self.assertIs(result["valid"], False)
                     self.assertTrue(result["errors"])
 
+    def test_minimax_smoke_reconciles_only_provider_bound_text(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            row = self.make_smoke_campaign(root, entrant_count=1)[0]
+            state = cloud_sb7.prepare_smoke_attempt(root, str(row["id"]), row)
+            log = Path(str(state["log"]))
+            events = self.smoke_stream_events(state)
+            preface = "I will run the command"
+            events[0]["message"]["content"].insert(
+                0, {"type": "text", "text": preface}
+            )
+            events[-2]["message"]["content"][0]["text"] += "\n\n"
+            log.write_text("\n".join(map(json.dumps, events)) + "\n")
+            stream = cloud_sb7.parse_smoke_stream(
+                log,
+                expected_command=str(state["expected_command"]),
+                expected_marker=str(state["final_marker"]),
+                expected_tool_output=str(state["expected_tool_output"]),
+            )
+            self.assertIs(stream["valid"], False)
+            self.assertIs(stream["final_text_normalized_exact"], True)
+            self.assertEqual(
+                stream["pre_tool_assistant_text_sha256"],
+                cloud_sb7.sha256_bytes(preface.encode()),
+            )
+
+            contract = {
+                "required": True,
+                "valid": True,
+                "errors": [],
+                "adaptive_thinking": True,
+                "reasoning_split_disabled": True,
+                "tool_replay": {
+                    "order": [
+                        "think_content",
+                        "assistant_tool_call",
+                        "tool_output",
+                    ],
+                    "call_id_sha256": stream["request_id_sha256"],
+                    "stream_request_id_sha256": stream["request_id_sha256"],
+                    "tool_output_sha256": stream["tool_response_text_sha256"],
+                    "stream_tool_response_sha256": stream[
+                        "tool_response_text_sha256"
+                    ],
+                    "assistant_text_sha256": stream[
+                        "pre_tool_assistant_text_sha256"
+                    ],
+                },
+            }
+            minimax_row = {
+                "provider": "minimax_api",
+                "model": "MiniMax-M3",
+                "reasoning_split": False,
+            }
+            reconciled = cloud_sb7.reconcile_minimax_m3_smoke_stream(
+                stream, minimax_row, contract
+            )
+            self.assertIs(reconciled["valid"], True)
+            self.assertIs(reconciled["minimax_reasoning_text_bound"], True)
+            self.assertIs(reconciled["final_text_whitespace_normalized"], True)
+
+            changed_text = json.loads(json.dumps(contract))
+            changed_text["tool_replay"]["assistant_text_sha256"] = "wrong"
+            self.assertIs(
+                cloud_sb7.reconcile_minimax_m3_smoke_stream(
+                    stream, minimax_row, changed_text
+                )["valid"],
+                False,
+            )
+            generic_row = dict(minimax_row, provider="openai")
+            self.assertIs(
+                cloud_sb7.reconcile_minimax_m3_smoke_stream(
+                    stream, generic_row, contract
+                )["valid"],
+                False,
+            )
+
     def test_process_group_inspector_runs_outside_the_group_it_measures(self) -> None:
         completed = subprocess.CompletedProcess([], 0, stdout="1 1 S\n", stderr="")
         with mock.patch.object(
