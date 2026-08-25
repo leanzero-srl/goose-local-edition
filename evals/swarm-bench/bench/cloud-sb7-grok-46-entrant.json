@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "suite": "sb-7.0-rc",
+  "calibration": "uncalibrated",
+  "spec": "../spec-build-sb7.md",
+  "smoke_max_turns": 3,
+  "spend_policy": {
+    "currency": "USD",
+    "total_cap": 100.0,
+    "provider_caps": {
+      "xai_api": 100.0
+    },
+    "launch_all_entrants_concurrently": true,
+    "max_full_episodes_per_model": 2,
+    "terminal_safe_retry_limit": 0
+  },
+  "entrants": [
+    {
+      "id": "grok-4.6",
+      "provider": "xai_api",
+      "model": "grok-4.6",
+      "accepted_reported_models": [
+        "grok-4.6"
+      ],
+      "secret_env": "XAI_API_KEY",
+      "secret_keychain": {
+        "service": "goose-sb7-xai-api",
+        "account": "goose-sb7-xai"
+      },
+      "provider_lane": "xai-grok-4.6",
+      "endpoint_family": "https://api.x.ai/v1",
+      "base_url_env": "XAI_API_BASE_URL",
+      "thinking_effort": "xhigh",
+      "responses_api": true,
+      "encrypted_reasoning_replay": true,
+      "tool_calling": true,
+      "stream_usage": true,
+      "context_limit": 500000,
+      "max_output_tokens": 131072,
+      "vendor_port": 9134,
+      "pricing": {
+        "input_per_million": 2.0,
+        "cached_input_per_million": 0.5,
+        "output_per_million": 6.0,
+        "tier_threshold_tokens": 200000,
+        "tier_threshold_inclusive": true,
+        "input_over_threshold_per_million": 4.0,
+        "cached_input_over_threshold_per_million": 1.0,
+        "output_over_threshold_per_million": 12.0,
+        "source": "https://docs.x.ai/developers/models/grok-4.6",
+        "verified_at": "2026-08-25",
+        "purpose": "official_grok_4_6_standard_and_long_context_rates"
+      }
+    }
+  ]
+}
