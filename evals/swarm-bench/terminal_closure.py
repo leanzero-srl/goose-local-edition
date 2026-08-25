@@ -49,8 +49,8 @@ V18_BOUND_CONFIG = V18_STATE_DIR / "config.json"
 V18_SCORE_LOCK = pathlib.Path(
     "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-score.lock"
 )
-V18_LAUNCHER = V18_LIVE_ROOT / "launch_local_v18.py"
-V18_LAUNCHER_SHA256 = "7ebae93df025ee0f77d321e12f51feae23f68174361f2828a8ba8ce5b594c2e4"
+V18_LAUNCHER = V18_LIVE_ROOT / "launch_local_v18_r2.py"
+V18_LAUNCHER_SHA256 = "ad90c3e7293a2da9c8c1840200985ec7f17e11eb1f68241ad81c605cda95c1a0"
 V18_FLEET_SEAL = V18_LIVE_ROOT / "fleet-seal.json"
 V18_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
 V18_PROTECTED_DOCUMENT_IDS = frozenset(
@@ -1493,7 +1493,6 @@ def validate_v18_fleet_seal(
     identifiers: list[str] = []
     paths: set[str] = set()
     quantizations: set[bytes] = set()
-    context_lengths: set[int] = set()
     roles: set[str] = set()
     for row in models:
         if not isinstance(row, dict):
@@ -1521,13 +1520,11 @@ def validate_v18_fleet_seal(
         roles.add(role)
         paths.add(row["path"])
         quantizations.add(canonical_json(row["quantization"]))
-        context_lengths.add(row["contextLength"])
     if (
         roles != set(V18_ROLE_PREFIXES)
         or sorted(identifiers) != sorted(model_ids)
         or len(paths) != 1
         or len(quantizations) != 1
-        or len(context_lengths) != 1
         or seal.get("planner_model") not in model_ids
     ):
         raise ClosureError("v18 fleet seal physical/model identity does not reconcile")
@@ -1551,8 +1548,6 @@ def v18_fleet_binding(
     for model in seal["models"]:
         artifact = {
             "artifact_path_sha256": sha256_bytes(str(model["path"]).encode()),
-            "context_length": model["contextLength"],
-            "parallel": model["parallel"],
             "quantization_sha256": sha256_bytes(canonical_json(model["quantization"])),
         }
         rows.append(
@@ -1560,6 +1555,8 @@ def v18_fleet_binding(
                 "model_id": model["identifier"],
                 "role": model["role"],
                 **artifact,
+                "context_length": model["contextLength"],
+                "parallel": model["parallel"],
                 "artifact_identity_sha256": sha256_bytes(canonical_json(artifact)),
             }
         )
@@ -1608,8 +1605,6 @@ def validate_v18_fleet_binding(
         prefix = V18_ROLE_PREFIXES.get(role)
         artifact = {
             "artifact_path_sha256": row.get("artifact_path_sha256"),
-            "context_length": row.get("context_length"),
-            "parallel": row.get("parallel"),
             "quantization_sha256": row.get("quantization_sha256"),
         }
         if (
@@ -1617,9 +1612,9 @@ def validate_v18_fleet_binding(
             or not isinstance(model_id, str)
             or not model_id.casefold().startswith(prefix + V18_MODEL_FAMILY_PREFIX)
             or not SHA256_RE.fullmatch(str(artifact["artifact_path_sha256"]))
-            or not isinstance(artifact["context_length"], int)
-            or artifact["context_length"] < V18_MIN_CONTEXT_LENGTH
-            or artifact["parallel"] != 2
+            or not isinstance(row.get("context_length"), int)
+            or row["context_length"] < V18_MIN_CONTEXT_LENGTH
+            or row.get("parallel") != 2
             or not SHA256_RE.fullmatch(str(artifact["quantization_sha256"]))
             or row.get("artifact_identity_sha256")
             != sha256_bytes(canonical_json(artifact))
