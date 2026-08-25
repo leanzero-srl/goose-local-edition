@@ -833,6 +833,26 @@ class TerminalClosureTests(unittest.TestCase):
             same_target, second_created = closure.bind_v18(template_path)
             self.assertEqual(same_target, target)
             self.assertFalse(second_created)
+            _script, frozen_config = closure.snapshot_instrument(target)
+            frozen = closure.load_config(frozen_config)
+            self.assertIn(
+                pathlib.Path(frozen["publisher"]["path"]).resolve(),
+                {
+                    closure.V18_PUBLISHER_PATH.resolve(),
+                    (
+                        closure.V18_STATE_DIR
+                        / "closure-instrument/seed-fleet-brainwaves-sb70.mjs"
+                    ).resolve(),
+                },
+            )
+            closure.validate_config(frozen)
+            self.assertEqual(
+                pathlib.Path(frozen["publisher"]["path"]).resolve(),
+                (
+                    closure.V18_STATE_DIR
+                    / "closure-instrument/seed-fleet-brainwaves-sb70.mjs"
+                ).resolve(),
+            )
             target.chmod(0o600)
             armed["expected"]["fixture_seed"] = "fedcba9876543210"
             closure.atomic_json(target, armed, 0o400)
