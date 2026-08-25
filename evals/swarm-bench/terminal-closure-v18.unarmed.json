@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "closure_generation": "v18",
+  "armed": false,
+  "binding": null,
+  "bound_config_path": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-terminal-closure/config.json",
+  "controller_sha256": "5cdea5b310555ea26abc79cf973ac1796b9633bb850efed423d765f76e1a2dec",
+  "live_root": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18",
+  "run_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18/swarm-3node-qwen38-brainwaves-r0",
+  "state_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-terminal-closure",
+  "score_lock_path": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-score.lock",
+  "poll_seconds": 10,
+  "seal_settle_seconds": 5,
+  "max_score_attempts": 2,
+  "score_timeout_seconds": 21600,
+  "max_publish_attempts": 3,
+  "publish_timeout_seconds": 1800,
+  "expected": {
+    "vendor_port": 18970,
+    "entrant": "swarm-3node-qwen38-brainwaves",
+    "raw_scorer_version": "sb-7.0-rc",
+    "check_count": 91,
+    "telemetry_nodes": [
+      "gabee",
+      "mihai",
+      "workhorse"
+    ],
+    "run_id": null,
+    "fixture_seed": null,
+    "models": null,
+    "candidate_commit": "10f446dfa7e4cf4c9ec8cb0648e0bbdfc0100116",
+    "candidate_tree": "19e5ecc3bf62e334a754ad93a83165781c3f4f82",
+    "launch_controller_path": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18/launch_local_v18.py",
+    "launch_controller_sha256": "7ebae93df025ee0f77d321e12f51feae23f68174361f2828a8ba8ce5b594c2e4",
+    "launch_sha256": null,
+    "instrument_manifest_sha256": "96dc2c43a963e8ef62abaeef2d51e3adbad6c4454e4b4e09963afd3de191b730",
+    "binary_path": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18/bin/goose-2aedd0debf84",
+    "binary_sha256": "2aedd0debf848f047e1c26839f7ad1cb936b7cdb48426487d7b04845f611fc56",
+    "instrument_files": {},
+    "run_started_sha256": null,
+    "trace_header_sha256": null,
+    "fleet_seal_sha256": null
+  },
+  "publication": {
+    "target_document_id": "brun-fleet-qwen38-brainwaves-sb70",
+    "protected_document_ids": [
+      "brun-fleet-qwen38-sb70",
+      "brun-fleet-qwen-sb70"
+    ],
+    "provenance_marker": "Brainwaves v18"
+  },
+  "publisher": {
+    "path": "/Users/mihaiperdum/Projects/LeanZero-website/scripts/seed-fleet-brainwaves-sb70.mjs",
+    "sha256": "d53a5eb9becd2cbbfbf94d46cdc5c40e5e43377f626af38807aa0dec8cfd5bc7",
+    "git_commit": "eba9e214a1ca1bd2cf980cfcad04b792733fd163",
+    "node": "/Users/mihaiperdum/.nvm/versions/node/v22.22.0/bin/node",
+    "node_sha256": "913b144fdb40638b1acef7974ab3c33fbd527cc0974cb5da467ab1e6ac51b4d4",
+    "site_root": "/Users/mihaiperdum/Projects/LeanZero-website",
+    "env_file": "/Users/mihaiperdum/Projects/LeanZero-website/.env.local",
+    "base_url": "https://leanzero.net",
+    "package_lock": "/Users/mihaiperdum/Projects/LeanZero-website/package-lock.json",
+    "package_lock_sha256": "3f1463f43e8a36232fa64796c5a979d8a1a36784c930f6aead92e6d3d212748d",
+    "package_json": "/Users/mihaiperdum/Projects/LeanZero-website/package.json",
+    "package_json_sha256": "34aeea73e7ebfdbdb08e8845819034a7afd55706a0796ec4ff86e3fcd05ae513"
+  },
+  "runtime": {
+    "lsof": "/usr/sbin/lsof",
+    "playwright": {
+      "module_root": "/Users/mihaiperdum/.nvm/versions/node/v22.22.0/lib/node_modules/playwright",
+      "module_tree_sha256": "4d68fed0312075da8d9dfeafadca4741c72479bfb3c8cad94e0554bbfeebf645",
+      "version": "1.57.0",
+      "browsers_json": "node_modules/playwright-core/browsers.json",
+      "browsers_json_sha256": "b509d013de89d621a142818e0937de356fbb0169096922c08581a4f83e463b8e",
+      "browser_name": "chromium-headless-shell",
+      "browser_revision": "1200",
+      "installed_browsers_path": "/Users/mihaiperdum/Library/Caches/ms-playwright",
+      "browser_directory": "chromium_headless_shell-1200",
+      "browser_tree_sha256": "55b4892f42b70576e0ce296bb4f8b49ba5cb5464e548fb07e4cc613027c7196c",
+      "executable": "chrome-headless-shell-mac-arm64/chrome-headless-shell",
+      "executable_sha256": "8d6921aef8cc4c7bc48b03d4e709f9b563f8d1fd1ed08bc7fd5fd9784ffc2545"
+    }
+  }
+}
