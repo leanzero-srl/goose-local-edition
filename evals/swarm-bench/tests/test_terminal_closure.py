@@ -293,11 +293,7 @@ class TerminalClosureTests(unittest.TestCase):
                 "instrument_files": {},
             }
         )
-        models = [
-            "gabee-qwen3.8-27b-brainwaves-v18-fixture",
-            "mihai-qwen3.8-27b-brainwaves-v18-fixture",
-            "workhorse-qwen3.8-27b-brainwaves-v18-fixture",
-        ]
+        models = list(MODELS)
         model_rows = [
             {
                 "identifier": identifier,
@@ -325,7 +321,7 @@ class TerminalClosureTests(unittest.TestCase):
             "model_ids": sorted(models),
             "planner_model": planner,
             "api_model_ids": sorted(models),
-            "protected_prior_aliases_reused": False,
+            "protected_prior_aliases_reused": True,
         }
         fleet_path = live_root / "fleet-seal.json"
         closure.atomic_json(fleet_path, fleet_seal)
