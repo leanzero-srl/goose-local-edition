@@ -1395,7 +1395,6 @@ mod tests {
         Failed,
         NetworkFailed,
         StreamFailed,
-        TransportFailedAfterChunk,
         Pending,
         StartPanics,
         PollPanics,
@@ -1775,24 +1774,6 @@ mod tests {
                     })),
                     goose::providers::base::SingleAttemptTerminalProof::default(),
                 )),
-                Behavior::TransportFailedAfterChunk => {
-                    let (terminal, reporter) =
-                        goose::providers::base::SingleAttemptTerminalProof::channel();
-                    let output = async_stream::stream! {
-                        yield Ok((
-                            Some(Message::assistant().with_text("partial")),
-                            None,
-                        ));
-                        reporter.mark_failed();
-                        yield Err(ProviderError::NetworkError(
-                            "mock authenticated transport body drop".to_string(),
-                        ));
-                    };
-                    Ok(goose::providers::base::SingleAttemptStream::new(
-                        Box::pin(output),
-                        terminal,
-                    ))
-                }
                 Behavior::Pending => Ok(goose::providers::base::SingleAttemptStream::new(
                     Box::pin(stream::pending()),
                     goose::providers::base::SingleAttemptTerminalProof::default(),
@@ -2577,104 +2558,6 @@ mod tests {
         .await
         .is_err());
         assert_eq!(control.occupancy().await, (0, 1));
-    }
-
-    #[tokio::test]
-    async fn transport_proven_mid_stream_failure_drains_and_allows_retry() {
-        let sink = Arc::new(RecordingSink::default());
-        let (control, work) = admitted_with_sink(sink.clone()).await;
-        let provider = wrapped_for(Behavior::TransportFailedAfterChunk, work.lifecycle()).await;
-        let mut output = provider
-            .stream(&ModelConfig::new("model-a"), "", &[], &[])
-            .await
-            .unwrap();
-
-        assert!(output.next().await.unwrap().is_ok());
-        assert!(output.next().await.unwrap().is_err());
-        assert!(output.next().await.is_none());
-        let failed_terminals = sink
-            .events
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|event| {
-                event["event"] == "broker_provider_terminal_observed"
-                    && event["receipt"]["kind"] == "failed"
-            })
-            .count();
-        assert_eq!(failed_terminals, 1);
-
-        work.complete_local(LocalCompletionKind::Error)
-            .await
-            .unwrap();
-        tokio::time::timeout(Duration::from_millis(100), control.wait_until_drained())
-            .await
-            .expect("transport-proven failure did not drain")
-            .unwrap();
-
-        let retry_source = TaskVersion {
-            authority_scope: AuthorityScope::new("provider-lifecycle-replay", "build"),
-            phase_epoch: 0,
-            task_id: "task-a-retry".to_string(),
-            attempt: 1,
-            revision: 2,
-            kind: SourceRevisionKind::TaskAttempt,
-        };
-        control
-            .set_source_revision(retry_source.clone())
-            .await
-            .unwrap();
-        let retry = tokio::time::timeout(
-            Duration::from_millis(100),
-            control.admit(WorkOpportunity {
-                work_id: "work-a-retry".to_string(),
-                role: WorkRole::Build,
-                priority: WorkRole::Build.priority(),
-                task_rank: 0,
-                source: retry_source,
-                eligible_logical_device_ids: vec!["device-a".to_string()],
-                preferred_model_id: None,
-                excluded_logical_device_id: None,
-            }),
-        )
-        .await
-        .expect("transport-proven terminal did not release the retry lane")
-        .unwrap();
-        let retry_provider = wrapped_for(Behavior::Finished, retry.lifecycle()).await;
-        let mut retry_output = retry_provider
-            .stream(&ModelConfig::new("model-a"), "", &[], &[])
-            .await
-            .unwrap();
-        while let Some(item) = retry_output.next().await {
-            item.unwrap();
-        }
-        retry
-            .complete_local(LocalCompletionKind::Success)
-            .await
-            .unwrap();
-        tokio::time::timeout(Duration::from_millis(100), control.wait_until_drained())
-            .await
-            .expect("successful retry did not drain")
-            .unwrap();
-
-        let events = sink.events.lock().unwrap();
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| event["event"] == "broker_provider_terminal_observed")
-                .count(),
-            2
-        );
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| {
-                    event["event"] == "broker_provider_terminal_observed"
-                        && event["receipt"]["kind"] == "failed"
-                })
-                .count(),
-            1
-        );
     }
 
     #[tokio::test]

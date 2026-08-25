@@ -2420,6 +2420,17 @@ impl ProviderLifecycle {
         Arc::ptr_eq(&self.control.inner, &other.control.inner)
     }
 
+    fn has_unproven_live_request(&self) -> bool {
+        matches!(
+            self.outstanding
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_ref(),
+            Some(OutstandingProviderRequest::Recoverable(request))
+                if request.pending_terminal.is_none()
+        )
+    }
+
     /// Capture the exact provider turn that was live when semantic evidence was observed.
     pub fn capture_live_provider_request(
         &self,
@@ -3014,6 +3025,20 @@ impl TaskDispatcher for BrokeredTaskDispatcher {
             .inner
             .run_admitted(req, admitted.receipt().clone(), admitted.lifecycle())
             .await;
+        if let Err(error) = &result {
+            if admitted.lifecycle().has_unproven_live_request() {
+                let reason = error.to_string();
+                admitted
+                    .quarantine_unproven(reason)
+                    .await
+                    .map_err(|quarantine_error| {
+                        DispatchError::Terminal(format!(
+                            "physical lifecycle could not quarantine an unproven provider request after {error}: {quarantine_error}"
+                        ))
+                    })?;
+                return result;
+            }
+        }
         self.control
             .close_provider_starts(&admitted.receipt().admission_id)
             .await
@@ -3046,7 +3071,7 @@ mod provider_start_registry_tests {
         AuthorityScope, SourceRevisionKind, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
     };
     use crate::event::NullSink;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
 
     fn request_authority(admission_id: &str) -> Arc<ProviderRequestAuthority> {
         ProviderRequestAuthority::new(ProviderRequestReceipt {
@@ -3242,6 +3267,186 @@ mod provider_start_registry_tests {
             })
             .await
             .unwrap()
+    }
+
+    struct DispatchAuthority {
+        eligible_logical_device_ids: Vec<String>,
+    }
+
+    #[async_trait]
+    impl PhysicalDispatchAuthority for DispatchAuthority {
+        async fn opportunity(
+            &self,
+            req: &DispatchRequest,
+        ) -> Result<WorkOpportunity, DispatchError> {
+            Ok(WorkOpportunity {
+                work_id: format!("work-{}-{}", req.task_id, req.attempt),
+                role: WorkRole::Build,
+                priority: WorkRole::Build.priority(),
+                task_rank: 0,
+                source: TaskVersion {
+                    authority_scope: AuthorityScope::new("dispatcher-test", "build"),
+                    phase_epoch: 0,
+                    task_id: req.task_id.clone(),
+                    attempt: req.attempt,
+                    revision: u64::from(req.attempt) + 1,
+                    kind: SourceRevisionKind::TaskAttempt,
+                },
+                eligible_logical_device_ids: self.eligible_logical_device_ids.clone(),
+                preferred_model_id: None,
+                excluded_logical_device_id: None,
+            })
+        }
+
+        async fn route_admitted(
+            &self,
+            req: &mut DispatchRequest,
+            admission: &AdmissionReceipt,
+        ) -> Result<(), DispatchError> {
+            req.device_id = admission.logical_device_id.clone();
+            req.model_id = admission.model_id.clone();
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct DropFirstProviderBody {
+        calls: AtomicUsize,
+        physical_hosts: StdMutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl ProviderLifecycleDispatcher for DropFirstProviderBody {
+        async fn run_admitted(
+            &self,
+            _req: DispatchRequest,
+            admission: AdmissionReceipt,
+            lifecycle: ProviderLifecycle,
+        ) -> Result<TaskRunOutput, DispatchError> {
+            self.physical_hosts
+                .lock()
+                .unwrap()
+                .push(admission.physical_host_id);
+            let request = lifecycle
+                .start_provider_request()
+                .await
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                drop(request);
+                return Err(DispatchError::Transient(
+                    "error decoding response body after streamed chunks".to_string(),
+                ));
+            }
+            request
+                .provider_terminal(ProviderTerminalKind::Finished)
+                .await
+                .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+            Ok("completed on a distinct physical host".to_string().into())
+        }
+    }
+
+    fn dispatch_request(attempt: u32) -> DispatchRequest {
+        DispatchRequest {
+            task_id: "truncated-body-build".to_string(),
+            description: "reproduce a truncated LM Studio stream".to_string(),
+            device_id: String::new(),
+            model_id: String::new(),
+            context_slice: String::new(),
+            dependency_files: Vec::new(),
+            attempt,
+            owned_files: vec!["src/lib.rs".to_string()],
+            all_files: vec!["src/lib.rs".to_string()],
+            prior_hint: None,
+            subsplit: Vec::new(),
+            speculative: false,
+            user_decisions: String::new(),
+            doc_facts: String::new(),
+            neighborhood: vec!["truncated-body-build".to_string()],
+            replan_authority: None,
+            activity_publisher: None,
+        }
+    }
+
+    fn body_drop_dispatcher(
+        same_physical_host: bool,
+    ) -> (
+        PhysicalAdmissionControl,
+        Arc<DropFirstProviderBody>,
+        BrokeredTaskDispatcher,
+    ) {
+        let control = nudge_control(same_physical_host);
+        let inner = Arc::new(DropFirstProviderBody::default());
+        let authority = Arc::new(DispatchAuthority {
+            eligible_logical_device_ids: vec![
+                "source-device".to_string(),
+                "judge-device".to_string(),
+            ],
+        });
+        let dispatcher = BrokeredTaskDispatcher::new(control.clone(), inner.clone(), authority);
+        (control, inner, dispatcher)
+    }
+
+    #[tokio::test]
+    async fn unproven_body_drop_quarantines_host_then_retries_distinct_host() {
+        let (control, inner, dispatcher) = body_drop_dispatcher(false);
+        let first = dispatch_request(0);
+        dispatcher.prepare(&first).await;
+        let error = dispatcher.run(first).await.unwrap_err();
+        assert!(matches!(
+            error,
+            DispatchError::Transient(ref detail)
+                if detail == "error decoding response body after streamed chunks"
+        ));
+        assert_eq!(control.occupancy().await, (0, 1));
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            control.wait_until_drained(),
+        )
+        .await
+        .expect("quarantined transport drop blocked drain")
+        .unwrap();
+
+        let retry = dispatch_request(1);
+        dispatcher.prepare(&retry).await;
+        dispatcher.run(retry).await.unwrap();
+        let physical_hosts = inner.physical_hosts.lock().unwrap();
+        assert_eq!(physical_hosts.len(), 2);
+        assert_ne!(physical_hosts[0], physical_hosts[1]);
+        drop(physical_hosts);
+        assert_eq!(control.occupancy().await, (0, 1));
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            control.wait_until_drained(),
+        )
+        .await
+        .expect("distinct-host retry did not drain")
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn unproven_body_drop_rejects_retry_when_only_one_physical_host_exists() {
+        let (control, _inner, dispatcher) = body_drop_dispatcher(true);
+        let first = dispatch_request(0);
+        dispatcher.prepare(&first).await;
+        assert!(matches!(
+            dispatcher.run(first).await.unwrap_err(),
+            DispatchError::Transient(_)
+        ));
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            control.wait_until_drained(),
+        )
+        .await
+        .expect("quarantined one-host admission blocked drain")
+        .unwrap();
+
+        let retry = dispatch_request(1);
+        dispatcher.prepare(&retry).await;
+        let rejected = dispatcher.run(retry).await.unwrap_err();
+        assert!(matches!(
+            rejected,
+            DispatchError::Terminal(ref detail) if detail.contains("every eligible physical host is quarantined")
+        ));
     }
 
     #[test]
