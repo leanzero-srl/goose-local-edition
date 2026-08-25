@@ -35,4 +35,24 @@ describe('FormationRibbon', () => {
     expect(screen.getByLabelText('Node A, gabee, working')).toBeInTheDocument();
     expect(screen.getByText('1 working · 1 idle')).toBeInTheDocument();
   });
+
+  it('does not claim conditional integration or repair completed without engine evidence', () => {
+    render(
+      <FormationRibbon
+        phase="done"
+        evidence={{ integrationObserved: false, repairObserved: false }}
+        nodes={[]}
+      />
+    );
+
+    expect(screen.getByText('Integrate — skipped').closest('li')).toHaveAttribute(
+      'data-state',
+      'skipped'
+    );
+    expect(screen.getByText('Repair — skipped').closest('li')).toHaveAttribute(
+      'data-state',
+      'skipped'
+    );
+    expect(screen.getByText('Done').closest('li')).toHaveAttribute('data-state', 'active');
+  });
 });

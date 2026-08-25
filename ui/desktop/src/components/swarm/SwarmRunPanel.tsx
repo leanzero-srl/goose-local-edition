@@ -3091,6 +3091,7 @@ export const SwarmRunPanel: React.FC<{
         <FormationRibbon
           phase={run.phase}
           nodes={formationNodes}
+          evidence={run.formation}
           activeColor={activePhaseColor}
           metrics={
             run.inProgress && !stale && !ended && !clarifyPending ? (

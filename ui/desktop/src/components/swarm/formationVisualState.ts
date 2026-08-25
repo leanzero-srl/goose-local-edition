@@ -24,7 +24,7 @@ export const FORMATION_PHASES = [
   { label: 'Done', tip: 'The run has finished.' },
 ] as const;
 
-export type FormationPhaseState = 'complete' | 'active' | 'upcoming';
+export type FormationPhaseState = 'complete' | 'active' | 'upcoming' | 'skipped';
 
 export const FORMATION_FALLBACKS = [
   '#17c4c4',
@@ -88,8 +88,14 @@ export function contrastRatio(foreground: string, background: string): number {
   );
 }
 
-export function formationPhaseState(phase: string, index: number): FormationPhaseState {
+export function formationPhaseState(
+  phase: string,
+  index: number,
+  evidence?: { integrationObserved: boolean; repairObserved: boolean }
+): FormationPhaseState {
   const active = phaseStepIndex(phase);
+  if (index < active && index === 3 && evidence && !evidence.integrationObserved) return 'skipped';
+  if (index < active && index === 4 && evidence && !evidence.repairObserved) return 'skipped';
   if (index < active) return 'complete';
   if (index === active) return 'active';
   return 'upcoming';

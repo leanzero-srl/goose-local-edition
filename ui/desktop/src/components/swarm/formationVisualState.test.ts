@@ -34,6 +34,18 @@ describe('formation phase truth', () => {
     expect(formationPhaseState('build', 3)).toBe('upcoming');
   });
 
+  it('marks conditional stages skipped at Done unless the engine emitted evidence', () => {
+    const noConditionalStages = { integrationObserved: false, repairObserved: false };
+    expect(formationPhaseState('done', 3, noConditionalStages)).toBe('skipped');
+    expect(formationPhaseState('done', 4, noConditionalStages)).toBe('skipped');
+    expect(
+      formationPhaseState('done', 3, {
+        integrationObserved: true,
+        repairObserved: false,
+      })
+    ).toBe('complete');
+  });
+
   it('keeps the 12px node glyph ramp at normal-text contrast', () => {
     for (const background of FORMATION_FALLBACKS) {
       expect(contrastRatio('#0b0b0b', background)).toBeGreaterThanOrEqual(4.5);

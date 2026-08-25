@@ -23,11 +23,13 @@ export function FormationRibbon({
   nodes,
   activeColor = SWARM_STATUS.action,
   metrics,
+  evidence,
 }: {
   phase: string;
   nodes: FormationRibbonNode[];
   activeColor?: string;
   metrics?: React.ReactNode;
+  evidence?: { integrationObserved: boolean; repairObserved: boolean };
 }) {
   const activeIndex = phaseStepIndex(phase);
   const workingCount = nodes.filter((node) => node.working).length;
@@ -47,7 +49,7 @@ export function FormationRibbon({
         </div>
         <ol className="grid grid-cols-6 gap-1" aria-label="Run phases">
           {FORMATION_PHASES.map((step, index) => {
-            const state = formationPhaseState(phase, index);
+            const state = formationPhaseState(phase, index, evidence);
             return (
               <li key={step.label} data-state={state} className="min-w-0">
                 <Tooltip>
@@ -61,18 +63,25 @@ export function FormationRibbon({
                             ? activeColor
                             : state === 'complete'
                               ? SWARM_STATUS.done
-                              : 'var(--color-border-primary)',
+                              : state === 'skipped'
+                                ? SWARM_STATUS.stopped
+                                : 'var(--color-border-primary)',
                         backgroundColor: state === 'active' ? activeColor : 'transparent',
                         color:
                           state === 'active'
                             ? '#ffffff'
                             : state === 'complete'
                               ? SWARM_STATUS.done
-                              : 'var(--color-text-secondary)',
+                              : state === 'skipped'
+                                ? SWARM_STATUS.stopped
+                                : 'var(--color-text-secondary)',
                       }}
                     >
                       {state === 'complete' ? <Check className="h-3 w-3" strokeWidth={3} /> : null}
-                      <span className="truncate">{step.label}</span>
+                      <span className="truncate">
+                        {step.label}
+                        {state === 'skipped' ? ' — skipped' : ''}
+                      </span>
                     </div>
                   </TooltipTrigger>
                   <TooltipContent>{step.tip}</TooltipContent>
