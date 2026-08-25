@@ -2788,6 +2788,7 @@ mod tests {
             toolshim_model: None,
             request_params: None,
             reasoning: None,
+            supports_vision: None,
             request_headers: None,
         })
         .unwrap();
