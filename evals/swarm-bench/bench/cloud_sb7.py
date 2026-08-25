@@ -814,6 +814,39 @@ def spend_policy(
                     "qwen3.8-max pricing must be explicitly marked as a shadow "
                     "budget guard, not an actual Token Plan charge"
                 )
+        if provider == "minimax_api" and row.get("model") == "MiniMax-M3":
+            expected_billing = {
+                "mode": "pay_as_you_go",
+                "actual_charge_unit": "USD",
+                "actual_charge_observable_via_inference_api": False,
+                "budget_guard_unit": "USD",
+                "budget_guard_basis": (
+                    "conservative_full_input_payg_list_price_upper_bound"
+                ),
+                "budget_guard_is_actual_charge": False,
+            }
+            if billing != expected_billing:
+                raise SystemExit(
+                    "MiniMax-M3 PAYG billing must distinguish the account charge "
+                    "from the conservative token-derived budget guard"
+                )
+            expected_pricing = {
+                "input_per_million": 0.3,
+                "cached_input_per_million": 0.06,
+                "output_per_million": 1.2,
+                "tier_threshold_tokens": 512_000,
+                "input_over_threshold_per_million": 0.6,
+                "cached_input_over_threshold_per_million": 0.12,
+                "output_over_threshold_per_million": 2.4,
+                "source": "https://platform.minimax.io/docs/guides/pricing-paygo",
+                "verified_at": "2026-08-25",
+                "purpose": "conservative_full_input_upper_bound_excludes_cache_discount",
+            }
+            if pricing != expected_pricing:
+                raise SystemExit(
+                    "MiniMax-M3 pricing must match the verified PAYG tier and "
+                    "cache-read contract"
+                )
         reported_models = row["accepted_reported_models"]
         if (
             not isinstance(reported_models, list)
@@ -2156,6 +2189,7 @@ def authenticated_rosters(
     meta: Dict[str, Any] = {"data": []}
     meta_catalog: Dict[str, Any] = {"data": []}
     alibaba: Dict[str, Any] = {"data": []}
+    minimax: Dict[str, Any] = {"data": []}
     if "zai_api" in providers:
         zai_endpoints = {
             str(row["endpoint_family"]).rstrip("/")
@@ -2217,6 +2251,29 @@ def authenticated_rosters(
             f"{token_plan_endpoint}/models",
             {"Authorization": f"Bearer {token_plan_secret}"},
         )
+    if "minimax_api" in providers:
+        minimax_rows = [
+            row for row in rows if row["provider"] == "minimax_api"
+        ]
+        minimax_endpoints = {
+            str(row["endpoint_family"]).rstrip("/") for row in minimax_rows
+        }
+        if minimax_endpoints != {"https://api.minimax.io/v1"}:
+            raise SystemExit(
+                "MiniMax entrants require the exact international OpenAI API endpoint"
+            )
+        if any(
+            row.get("secret_env") != "MINIMAX_API_KEY"
+            or row.get("base_url_env") != "MINIMAX_API_BASE_URL"
+            for row in minimax_rows
+        ):
+            raise SystemExit(
+                "MiniMax entrants require the exact credential and base URL bindings"
+            )
+        minimax = fetch_json(
+            "https://api.minimax.io/v1/models",
+            {"Authorization": f"Bearer {secret_values['MINIMAX_API_KEY']}"},
+        )
     zai_rows = {
         str(row.get("id", "")): dict(row)
         for row in zai.get("data", [])
@@ -2252,6 +2309,11 @@ def authenticated_rosters(
         for row in alibaba.get("data", [])
         if isinstance(row, dict) and row.get("id")
     }
+    minimax_roster_rows = {
+        str(row.get("id", "")): dict(row)
+        for row in minimax.get("data", [])
+        if isinstance(row, dict) and row.get("id")
+    }
     reported_models: Dict[str, Dict[str, list[str]]] = {
         "zai_api": {model: [model] for model in zai_rows},
         "google": {},
@@ -2259,6 +2321,7 @@ def authenticated_rosters(
         "moonshot": {model: [model] for model in moonshot_rows},
         "meta": {model: [model] for model in meta_rows},
         "alibaba": {model: [model] for model in alibaba_rows},
+        "minimax_api": {model: [model] for model in minimax_roster_rows},
     }
     for model, metadata in google_rows.items():
         aliases = {model}
@@ -2274,6 +2337,7 @@ def authenticated_rosters(
             "moonshot": set(moonshot_rows),
             "meta": set(meta_rows),
             "alibaba": set(alibaba_rows),
+            "minimax_api": set(minimax_roster_rows),
         },
         "accepted_reported_models": reported_models,
         "evidence": {
@@ -2283,6 +2347,7 @@ def authenticated_rosters(
             "moonshot": moonshot_rows,
             "meta": {"roster": meta_rows, "catalog": meta_catalog_rows},
             "alibaba": alibaba_rows,
+            "minimax_api": minimax_roster_rows,
         },
     }
 
@@ -2487,6 +2552,34 @@ def validate_rosters(
                 raise SystemExit(
                     "authenticated Alibaba roster and frozen manifest do not prove "
                     f"the exact qwen3.8-max Token Plan identity: {model}"
+                )
+        if provider == "minimax_api":
+            provider_evidence = evidence.get(provider)
+            metadata = (
+                provider_evidence.get(model)
+                if isinstance(provider_evidence, dict)
+                else None
+            )
+            if (
+                model != "MiniMax-M3"
+                or not isinstance(metadata, dict)
+                or metadata.get("id") != model
+                or metadata.get("object") != "model"
+                or metadata.get("owned_by") != "minimax"
+                or row.get("endpoint_family") != "https://api.minimax.io/v1"
+                or row.get("base_url_env") != "MINIMAX_API_BASE_URL"
+                or row.get("secret_env") != "MINIMAX_API_KEY"
+                or int(row["context_limit"]) != 1_000_000
+                or int(row["max_output_tokens"]) != 131_072
+                or str(row["thinking_effort"]) != "max"
+                or row.get("reasoning_mode") != "adaptive"
+                or row.get("reasoning_split") is not False
+                or row.get("tool_calling") is not True
+                or row.get("stream_usage") is not True
+            ):
+                raise SystemExit(
+                    "authenticated MiniMax roster and frozen manifest do not prove "
+                    f"the exact MiniMax-M3 OpenAI contract: {model}"
                 )
 
 
