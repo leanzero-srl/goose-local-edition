@@ -3409,10 +3409,9 @@ mod provider_start_registry_tests {
         let retry = dispatch_request(1);
         dispatcher.prepare(&retry).await;
         dispatcher.run(retry).await.unwrap();
-        let physical_hosts = inner.physical_hosts.lock().unwrap();
+        let physical_hosts = inner.physical_hosts.lock().unwrap().clone();
         assert_eq!(physical_hosts.len(), 2);
         assert_ne!(physical_hosts[0], physical_hosts[1]);
-        drop(physical_hosts);
         assert_eq!(control.occupancy().await, (0, 1));
         tokio::time::timeout(
             std::time::Duration::from_millis(100),
