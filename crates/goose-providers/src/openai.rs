@@ -1401,7 +1401,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn production_single_attempt_proves_truncated_response_body_failed() {
+    async fn production_single_attempt_keeps_truncated_response_body_unproven() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let body = r#"data: {"model":"test-model","choices":[{"delta":{"content":"partial"},"index":0,"finish_reason":null}]}
@@ -1439,7 +1439,7 @@ mod tests {
         let mut stream = attempt.stream;
         assert!(stream.next().await.unwrap().is_ok());
         assert!(stream.next().await.unwrap().is_err());
-        assert_eq!(terminal.outcome(), SingleAttemptStreamOutcome::Failed);
+        assert_eq!(terminal.outcome(), SingleAttemptStreamOutcome::Pending);
         server.join().unwrap();
     }
 
