@@ -1023,7 +1023,7 @@ async fn forced_low_cap_compacts_between_tool_turns_and_preserves_exact_tail() -
     let initial_usage = Usage::new(Some(80), Some(20), Some(100));
     session_manager
         .update(&session.id)
-        .usage(initial_usage.clone())
+        .usage(initial_usage)
         .accumulated_usage(initial_usage)
         .apply()
         .await?;

@@ -17433,9 +17433,46 @@ fn compaction_trigger_kind(message: &str) -> Option<&'static str> {
     }
 }
 
+#[derive(Default)]
+struct CompactionEventState {
+    active: Option<u32>,
+    awaiting_continuation: Option<u32>,
+    sequence: u32,
+}
+
+struct CompactionStart {
+    sequence: u32,
+    superseded_active: Option<u32>,
+    superseded_awaiting_continuation: Option<u32>,
+}
+
+impl CompactionEventState {
+    fn start(&mut self) -> CompactionStart {
+        let superseded_active = self.active.take();
+        let superseded_awaiting_continuation = self.awaiting_continuation.take();
+        self.sequence = self.sequence.saturating_add(1);
+        self.active = Some(self.sequence);
+        CompactionStart {
+            sequence: self.sequence,
+            superseded_active,
+            superseded_awaiting_continuation,
+        }
+    }
+
+    fn complete(&mut self) -> Option<u32> {
+        let sequence = self.active.take()?;
+        self.awaiting_continuation = Some(sequence);
+        Some(sequence)
+    }
+
+    fn take_continuation(&mut self) -> Option<u32> {
+        self.awaiting_continuation.take()
+    }
+}
+
 #[cfg(test)]
 mod compaction_event_tests {
-    use super::compaction_trigger_kind;
+    use super::{compaction_trigger_kind, CompactionEventState};
 
     #[test]
     fn classifies_only_real_agent_compaction_notices() {
@@ -17456,6 +17493,24 @@ mod compaction_event_tests {
             Some("proactive_turn")
         );
         assert_eq!(compaction_trigger_kind("Compaction complete"), None);
+    }
+
+    #[test]
+    fn supersedes_failed_attempt_and_uncontinued_completion_before_restart() {
+        let mut state = CompactionEventState::default();
+        let first = state.start();
+        assert_eq!(first.sequence, 1);
+        assert_eq!(first.superseded_active, None);
+
+        let second = state.start();
+        assert_eq!(second.sequence, 2);
+        assert_eq!(second.superseded_active, Some(1));
+        assert_eq!(state.complete(), Some(2));
+
+        let third = state.start();
+        assert_eq!(third.sequence, 3);
+        assert_eq!(third.superseded_active, None);
+        assert_eq!(third.superseded_awaiting_continuation, Some(2));
     }
 }
 
@@ -24958,9 +25013,7 @@ impl GooseAgentDispatcher {
         let mut recurrence_provider_request: Option<ProviderRequestKey> = None;
         let mut recurrence_recent_reasoning = String::new();
         let mut final_output: Option<String> = None;
-        let mut compaction_in_progress = false;
-        let mut compaction_sequence = 0u32;
-        let mut awaiting_post_compaction_progress = None;
+        let mut compaction_events = CompactionEventState::default();
         let mut pending: HashMap<String, PendingToolCall> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
         let mut source_receipts = Vec::new();
@@ -25971,22 +26024,41 @@ impl GooseAgentDispatcher {
                             }
                             MessageContent::SystemNotification(notification) => {
                                 if let Some(trigger) = compaction_trigger_kind(&notification.msg) {
-                                    if !compaction_in_progress {
-                                        compaction_sequence = compaction_sequence.saturating_add(1);
-                                        compaction_in_progress = true;
+                                    let start = compaction_events.start();
+                                    if let Some(sequence) = start.superseded_active {
                                         self.events.write_value(serde_json::json!({
-                                            "event": "context_compaction_started",
+                                            "event": "context_compaction_incomplete",
                                             "session_id": session_id,
                                             "task_id": activity_key,
                                             "model": model_id,
-                                            "sequence": compaction_sequence,
-                                            "trigger": trigger,
-                                            "effective_context_limit": local_compaction_policy.map(|policy| policy.0),
-                                            "compaction_threshold": local_compaction_policy.map(|policy| policy.1),
-                                            "auto_compaction_enabled": local_compaction_policy.map(|policy| policy.2),
+                                            "sequence": sequence,
+                                            "reason": "superseded_by_new_compaction_trigger",
                                             "payload_logged": false,
                                         }));
                                     }
+                                    if let Some(sequence) = start.superseded_awaiting_continuation {
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "context_compaction_continuation_missing",
+                                            "session_id": session_id,
+                                            "task_id": activity_key,
+                                            "model": model_id,
+                                            "sequence": sequence,
+                                            "reason": "superseded_by_new_compaction_trigger",
+                                            "payload_logged": false,
+                                        }));
+                                    }
+                                    self.events.write_value(serde_json::json!({
+                                        "event": "context_compaction_started",
+                                        "session_id": session_id,
+                                        "task_id": activity_key,
+                                        "model": model_id,
+                                        "sequence": start.sequence,
+                                        "trigger": trigger,
+                                        "effective_context_limit": local_compaction_policy.map(|policy| policy.0),
+                                        "compaction_threshold": local_compaction_policy.map(|policy| policy.1),
+                                        "auto_compaction_enabled": local_compaction_policy.map(|policy| policy.2),
+                                        "payload_logged": false,
+                                    }));
                                 }
                             }
                             _ => {}
@@ -25994,7 +26066,7 @@ impl GooseAgentDispatcher {
                     }
                     if productive {
                         last_productive_at = tokio::time::Instant::now();
-                        if let Some(sequence) = awaiting_post_compaction_progress.take() {
+                        if let Some(sequence) = compaction_events.take_continuation() {
                             self.events.write_value(serde_json::json!({
                                 "event": "context_compaction_continued",
                                 "session_id": session_id,
@@ -26008,7 +26080,7 @@ impl GooseAgentDispatcher {
                     }
                 }
                 Ok(AgentEvent::HistoryReplaced(conversation)) => {
-                    if compaction_in_progress {
+                    if let Some(compaction_sequence) = compaction_events.complete() {
                         let mut tool_request_ids = HashSet::new();
                         let mut kept_tool_requests = 0usize;
                         let mut kept_tool_responses = 0usize;
@@ -26053,8 +26125,6 @@ impl GooseAgentDispatcher {
                             "orphan_tool_responses": orphan_tool_responses,
                             "payload_logged": false,
                         }));
-                        compaction_in_progress = false;
-                        awaiting_post_compaction_progress = Some(compaction_sequence);
                     }
                 }
                 // An MCP tool streaming a progress/log NOTIFICATION during a single long-running call is proof
@@ -26065,7 +26135,7 @@ impl GooseAgentDispatcher {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    if compaction_in_progress {
+                    if let Some(compaction_sequence) = compaction_events.active {
                         self.events.write_value(serde_json::json!({
                             "event": "context_compaction_incomplete",
                             "session_id": session_id,
@@ -26142,7 +26212,7 @@ impl GooseAgentDispatcher {
                 ));
             }
         }
-        if compaction_in_progress {
+        if let Some(compaction_sequence) = compaction_events.active {
             self.events.write_value(serde_json::json!({
                 "event": "context_compaction_incomplete",
                 "session_id": session_id,
