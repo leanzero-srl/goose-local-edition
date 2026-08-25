@@ -3202,6 +3202,8 @@ fn physical_snapshot_devices(
     devices
 }
 
+type ReconciledFleet = (Vec<SwarmDevice>, Option<String>, HashMap<String, usize>);
+
 /// "Auto-use what's loaded": build the worker pool from the models currently resident on the fleet
 /// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
 /// Returns (pool, planner_model, exact-id loaded context limits). An empty pool means the fleet has
@@ -3210,7 +3212,7 @@ fn physical_snapshot_devices(
 fn reconcile_pool_with_fleet(
     cfg: &SwarmConfig,
     served_model_ids: Option<&HashSet<String>>,
-) -> Result<(Vec<SwarmDevice>, Option<String>, HashMap<String, usize>)> {
+) -> Result<ReconciledFleet> {
     let procs = match probe_lms_processes() {
         Ok(p) => p,
         Err(_) => return Ok((Vec::new(), None, HashMap::new())),
@@ -24693,6 +24695,9 @@ impl GooseAgentDispatcher {
                 let resolved_limit = resolve_local_context_limit(configured_limit, loaded_limit);
                 model_config = model_config.with_context_limit(Some(resolved_limit));
                 let global_cap = local_context_cap();
+                let compaction_threshold = Config::global()
+                    .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
+                    .unwrap_or(DEFAULT_COMPACTION_THRESHOLD);
                 self.events.write_value(serde_json::json!({
                     "event": "context_limit_resolved",
                     "session_id": session_id,
@@ -24705,7 +24710,8 @@ impl GooseAgentDispatcher {
                     "effective_context_limit": global_cap
                         .map(|cap| resolved_limit.min(cap))
                         .unwrap_or(resolved_limit),
-                    "compaction_threshold": DEFAULT_COMPACTION_THRESHOLD,
+                    "compaction_threshold": compaction_threshold,
+                    "auto_compaction_enabled": compaction_threshold > 0.0 && compaction_threshold < 1.0,
                     "payload_logged": false,
                 }));
             }
