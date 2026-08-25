@@ -833,6 +833,27 @@ class TerminalClosureTests(unittest.TestCase):
             with self.assertRaisesRegex(closure.ClosureError, "missing or linked"):
                 closure.bind_v18(template_path)
 
+    def test_production_v18_template_pins_final_closure_inputs_and_stays_unarmed(
+        self,
+    ) -> None:
+        template_path = MODULE_PATH.parent / "terminal-closure-v18.unarmed.json"
+        config = closure.load_config(template_path)
+        closure.validate_config(config, allow_unarmed=True)
+        self.assertEqual(config["controller_sha256"], sha(MODULE_PATH))
+        self.assertEqual(
+            config["expected"]["launch_controller_sha256"],
+            closure.V18_LAUNCHER_SHA256,
+        )
+        self.assertEqual(
+            config["expected"]["instrument_manifest_sha256"],
+            closure.V18_INSTRUMENT_MANIFEST_SHA256,
+        )
+        self.assertEqual(config["publisher"]["git_commit"], closure.V18_PUBLISHER_COMMIT)
+        self.assertEqual(config["publisher"]["sha256"], closure.V18_PUBLISHER_SHA256)
+        self.assertNotIn("local-sb7-engine-v17", template_path.read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(closure.ClosureError, "unarmed"):
+            closure.validate_config(config)
+
     def test_v18_binding_is_create_only_private_and_exactly_once(self) -> None:
         template_path, _config, patches = self.v18_binding_fixture()
         with patches:
