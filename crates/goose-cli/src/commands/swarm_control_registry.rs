@@ -238,7 +238,7 @@ pub(crate) const CONFIG_CONTROLS: &[ConfigControlSpec] = &[
 /// Controls that genuinely have no `SwarmConfig` field. Their disposition remains explicit, but they are
 /// never smuggled into a config-field allowlist. The exact reader-set test prevents stale names living here.
 pub(crate) const ENVIRONMENT_ONLY_CONTROLS: &[EnvironmentOnlyControlSpec] = &[
-    // Retain enabled (13).
+    // Retain enabled (14).
     environment_only(
         "boundary_probe",
         "GOOSE_SWARM_BOUNDARY_PROBE",
@@ -272,6 +272,11 @@ pub(crate) const ENVIRONMENT_ONLY_CONTROLS: &[EnvironmentOnlyControlSpec] = &[
     environment_only(
         "overview",
         "GOOSE_SWARM_OVERVIEW",
+        ControlDisposition::RetainEnabled,
+    ),
+    environment_only(
+        "pillar_flow",
+        "GOOSE_SWARM_PILLAR_FLOW",
         ControlDisposition::RetainEnabled,
     ),
     environment_only("qa", "GOOSE_SWARM_QA", ControlDisposition::RetainEnabled),
@@ -482,6 +487,7 @@ pub(crate) const ENVIRONMENT_ONLY_CONTROLS: &[EnvironmentOnlyControlSpec] = &[
 /// execution resolver is shared with the run-level echo.
 pub(crate) const EFFECTIVE_ENVIRONMENT_ONLY_ECHOES: &[&str] = &[
     "judge",
+    "pillar_flow",
     "prereview",
     "qa",
     "salvage_require_critical",
@@ -605,6 +611,7 @@ pub(crate) const SWARM_ENV_READERS: &[&str] = &[
     "GOOSE_SWARM_PARALLEL_TESTS",
     "GOOSE_SWARM_PERSONA",
     "GOOSE_SWARM_PHYSICAL_BROKER",
+    "GOOSE_SWARM_PILLAR_FLOW",
     "GOOSE_SWARM_PIN_DEVICE",
     "GOOSE_SWARM_PLANNER_ALSO_WORKS",
     "GOOSE_SWARM_PREREVIEW",
@@ -1063,7 +1070,7 @@ mod tests {
                 .filter(|spec| spec.disposition == wanted)
                 .count()
         };
-        assert_eq!(env_count(ControlDisposition::RetainEnabled), 13);
+        assert_eq!(env_count(ControlDisposition::RetainEnabled), 14);
         assert_eq!(env_count(ControlDisposition::RetainDisabled), 3);
         assert_eq!(env_count(ControlDisposition::Modify), 9);
         assert_eq!(env_count(ControlDisposition::RemoveMerge), 8);
@@ -1130,6 +1137,7 @@ mod tests {
         let event_keys = explicit_levers_event_keys(source);
         for canonical in [
             "judge",
+            "pillar_flow",
             "prereview",
             "qa",
             "tail_review",
@@ -1143,8 +1151,8 @@ mod tests {
                 "default-on {canonical} path is invisible in levers_resolved"
             );
         }
-        assert!(source.contains("let judge_on = idle_judge_enabled();"));
-        assert!(source.contains("let prereview_on = prereview_enabled();"));
+        assert!(source.contains("!pillar_flow_on && idle_judge_enabled()"));
+        assert!(source.contains("!pillar_flow_on && prereview_enabled()"));
         assert!(source.contains("let ship_best = ship_best_enabled();"));
     }
 
