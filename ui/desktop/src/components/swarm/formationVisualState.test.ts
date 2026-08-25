@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FORMATION_FALLBACKS,
+  FORMATION_PHASES,
+  contrastRatio,
   formationPhaseState,
   nextRevealedText,
   phaseStepIndex,
@@ -8,18 +11,33 @@ import {
 
 describe('formation phase truth', () => {
   it('maps engine phase names onto the fixed run pipeline', () => {
+    expect(FORMATION_PHASES.map((phase) => phase.label)).toEqual([
+      'Research',
+      'Plan',
+      'Build',
+      'Integrate',
+      'Repair',
+      'Done',
+    ]);
     expect(phaseStepIndex('researching')).toBe(0);
     expect(phaseStepIndex('planning')).toBe(1);
-    expect(phaseStepIndex('contract generation')).toBe(2);
-    expect(phaseStepIndex('dispatching workers')).toBe(3);
-    expect(phaseStepIndex('integrate and verify')).toBe(4);
+    expect(phaseStepIndex('legacy contract generation')).toBe(1);
+    expect(phaseStepIndex('dispatching workers')).toBe(2);
+    expect(phaseStepIndex('integrate and verify')).toBe(3);
+    expect(phaseStepIndex('repair wave')).toBe(4);
     expect(phaseStepIndex('finished')).toBe(5);
   });
 
   it('marks only earlier phases complete and the engine phase active', () => {
     expect(formationPhaseState('build', 1)).toBe('complete');
-    expect(formationPhaseState('build', 3)).toBe('active');
-    expect(formationPhaseState('build', 4)).toBe('upcoming');
+    expect(formationPhaseState('build', 2)).toBe('active');
+    expect(formationPhaseState('build', 3)).toBe('upcoming');
+  });
+
+  it('keeps the 12px node glyph ramp at normal-text contrast', () => {
+    for (const background of FORMATION_FALLBACKS) {
+      expect(contrastRatio('#0b0b0b', background)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
 
