@@ -2157,6 +2157,15 @@ class TerminalClosure:
         result = read_json(result_path)
         configured_seed = self.config["expected"].get("fixture_seed")
         if (
+            result.get("exit_code") == 0
+            and result.get("scorer_exit_code") == 0
+            and configured_seed is not None
+            and result.get("fixture_seed") != configured_seed
+        ):
+            raise ClosureError(
+                "successful score worker receipt used a different fixture_seed"
+            )
+        if (
             result.get("exit_code") != 0
             or result.get("scorer_exit_code") != 0
             or result.get("descendants_clean") is not True
@@ -3814,6 +3823,7 @@ def spawn_supervisor(config_path: pathlib.Path, resume: bool) -> int:
 
 def status(config_path: pathlib.Path) -> int:
     config = load_config(config_path)
+    validate_config(config)
     state_dir = pathlib.Path(config["state_dir"])
     state = read_json(state_dir / "state.json") if (state_dir / "state.json").is_file() else {}
     receipt = read_json(state_dir / "supervisor.pid.json") if (state_dir / "supervisor.pid.json").is_file() else None
@@ -3839,6 +3849,7 @@ def status(config_path: pathlib.Path) -> int:
 
 def watch(config_path: pathlib.Path) -> int:
     config = load_config(config_path)
+    validate_config(config)
     state_dir = pathlib.Path(config["state_dir"])
     events_path = state_dir / "events.jsonl"
     offset = 0
@@ -3857,6 +3868,7 @@ def watch(config_path: pathlib.Path) -> int:
 
 def results(config_path: pathlib.Path) -> int:
     config = load_config(config_path)
+    validate_config(config)
     result_path = pathlib.Path(config["state_dir"]) / "result.json"
     if not result_path.is_file():
         print("closure result is not available")
@@ -3867,6 +3879,7 @@ def results(config_path: pathlib.Path) -> int:
 
 def stop(config_path: pathlib.Path) -> int:
     config = load_config(config_path)
+    validate_config(config)
     stop_path = pathlib.Path(config["state_dir"]) / "STOP"
     atomic_write(stop_path, (utc_now() + "\n").encode())
     print("closure stop requested; the live benchmark run will not be signalled")
