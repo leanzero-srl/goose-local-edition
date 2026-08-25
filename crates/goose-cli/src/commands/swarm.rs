@@ -17421,6 +17421,44 @@ fn message_content_is_productive(c: &MessageContent) -> bool {
     }
 }
 
+fn compaction_trigger_kind(message: &str) -> Option<&'static str> {
+    if message.starts_with("Exceeded auto-compact threshold") {
+        Some("auto_threshold")
+    } else if message == "Context limit reached. Compacting to continue conversation..." {
+        Some("provider_context_limit")
+    } else if message == "Context near the cap — compacting to stay lean..." {
+        Some("proactive_turn")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod compaction_event_tests {
+    use super::compaction_trigger_kind;
+
+    #[test]
+    fn classifies_only_real_agent_compaction_notices() {
+        assert_eq!(
+            compaction_trigger_kind(
+                "Exceeded auto-compact threshold of 80%. Performing auto-compaction..."
+            ),
+            Some("auto_threshold")
+        );
+        assert_eq!(
+            compaction_trigger_kind(
+                "Context limit reached. Compacting to continue conversation..."
+            ),
+            Some("provider_context_limit")
+        );
+        assert_eq!(
+            compaction_trigger_kind("Context near the cap — compacting to stay lean..."),
+            Some("proactive_turn")
+        );
+        assert_eq!(compaction_trigger_kind("Compaction complete"), None);
+    }
+}
+
 /// A short, human-readable summary of a tool call's arguments for the desktop run panel: the shell
 /// line, the edited path, the search query — whatever field carries the intent. Falls back to a
 /// compact JSON dump. Single-lined and capped so the digest stays small.
@@ -24685,6 +24723,7 @@ impl GooseAgentDispatcher {
             .await?;
         let session_id = session.id.clone();
 
+        let mut local_compaction_policy = None;
         let mut model_config = goose::model_config::model_config_from_user_config(
             cloud_registry_name(self.provider_name(model_id)),
             model_id,
@@ -24698,6 +24737,16 @@ impl GooseAgentDispatcher {
                 let compaction_threshold = Config::global()
                     .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
                     .unwrap_or(DEFAULT_COMPACTION_THRESHOLD);
+                let effective_context_limit = global_cap
+                    .map(|cap| resolved_limit.min(cap))
+                    .unwrap_or(resolved_limit);
+                let auto_compaction_enabled =
+                    compaction_threshold > 0.0 && compaction_threshold < 1.0;
+                local_compaction_policy = Some((
+                    effective_context_limit,
+                    compaction_threshold,
+                    auto_compaction_enabled,
+                ));
                 self.events.write_value(serde_json::json!({
                     "event": "context_limit_resolved",
                     "session_id": session_id,
@@ -24707,11 +24756,9 @@ impl GooseAgentDispatcher {
                     "configured_context_limit": configured_limit,
                     "resolved_context_limit": resolved_limit,
                     "global_context_cap": global_cap,
-                    "effective_context_limit": global_cap
-                        .map(|cap| resolved_limit.min(cap))
-                        .unwrap_or(resolved_limit),
+                    "effective_context_limit": effective_context_limit,
                     "compaction_threshold": compaction_threshold,
-                    "auto_compaction_enabled": compaction_threshold > 0.0 && compaction_threshold < 1.0,
+                    "auto_compaction_enabled": auto_compaction_enabled,
                     "payload_logged": false,
                 }));
             }
@@ -24911,6 +24958,9 @@ impl GooseAgentDispatcher {
         let mut recurrence_provider_request: Option<ProviderRequestKey> = None;
         let mut recurrence_recent_reasoning = String::new();
         let mut final_output: Option<String> = None;
+        let mut compaction_in_progress = false;
+        let mut compaction_sequence = 0u32;
+        let mut awaiting_post_compaction_progress = None;
         let mut pending: HashMap<String, PendingToolCall> = HashMap::new();
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
         let mut source_receipts = Vec::new();
@@ -25919,11 +25969,92 @@ impl GooseAgentDispatcher {
                                     });
                                 }
                             }
+                            MessageContent::SystemNotification(notification) => {
+                                if let Some(trigger) = compaction_trigger_kind(&notification.msg) {
+                                    if !compaction_in_progress {
+                                        compaction_sequence = compaction_sequence.saturating_add(1);
+                                        compaction_in_progress = true;
+                                        self.events.write_value(serde_json::json!({
+                                            "event": "context_compaction_started",
+                                            "session_id": session_id,
+                                            "task_id": activity_key,
+                                            "model": model_id,
+                                            "sequence": compaction_sequence,
+                                            "trigger": trigger,
+                                            "effective_context_limit": local_compaction_policy.map(|policy| policy.0),
+                                            "compaction_threshold": local_compaction_policy.map(|policy| policy.1),
+                                            "auto_compaction_enabled": local_compaction_policy.map(|policy| policy.2),
+                                            "payload_logged": false,
+                                        }));
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
                     if productive {
                         last_productive_at = tokio::time::Instant::now();
+                        if let Some(sequence) = awaiting_post_compaction_progress.take() {
+                            self.events.write_value(serde_json::json!({
+                                "event": "context_compaction_continued",
+                                "session_id": session_id,
+                                "task_id": activity_key,
+                                "model": model_id,
+                                "sequence": sequence,
+                                "productive_post_compaction_event": true,
+                                "payload_logged": false,
+                            }));
+                        }
+                    }
+                }
+                Ok(AgentEvent::HistoryReplaced(conversation)) => {
+                    if compaction_in_progress {
+                        let mut tool_request_ids = HashSet::new();
+                        let mut kept_tool_requests = 0usize;
+                        let mut kept_tool_responses = 0usize;
+                        let mut orphan_tool_responses = 0usize;
+                        let agent_visible_messages = conversation
+                            .messages()
+                            .iter()
+                            .filter(|message| message.is_agent_visible())
+                            .inspect(|message| {
+                                for content in &message.content {
+                                    match content {
+                                        MessageContent::ToolRequest(request) => {
+                                            kept_tool_requests =
+                                                kept_tool_requests.saturating_add(1);
+                                            tool_request_ids.insert(request.id.clone());
+                                        }
+                                        MessageContent::ToolResponse(response) => {
+                                            kept_tool_responses =
+                                                kept_tool_responses.saturating_add(1);
+                                            if !tool_request_ids.contains(&response.id) {
+                                                orphan_tool_responses =
+                                                    orphan_tool_responses.saturating_add(1);
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            })
+                            .count();
+                        self.events.write_value(serde_json::json!({
+                            "event": "context_compaction_completed",
+                            "session_id": session_id,
+                            "task_id": activity_key,
+                            "model": model_id,
+                            "sequence": compaction_sequence,
+                            "effective_context_limit": local_compaction_policy.map(|policy| policy.0),
+                            "compaction_threshold": local_compaction_policy.map(|policy| policy.1),
+                            "auto_compaction_enabled": local_compaction_policy.map(|policy| policy.2),
+                            "agent_visible_messages": agent_visible_messages,
+                            "kept_tool_requests": kept_tool_requests,
+                            "kept_tool_responses": kept_tool_responses,
+                            "orphan_tool_responses": orphan_tool_responses,
+                            "payload_logged": false,
+                        }));
+                        compaction_in_progress = false;
+                        awaiting_post_compaction_progress = Some(compaction_sequence);
                     }
                 }
                 // An MCP tool streaming a progress/log NOTIFICATION during a single long-running call is proof
@@ -25933,7 +26064,20 @@ impl GooseAgentDispatcher {
                     last_productive_at = tokio::time::Instant::now();
                 }
                 Ok(_) => {}
-                Err(e) => return Err(anyhow!("agent stream error: {e}")),
+                Err(e) => {
+                    if compaction_in_progress {
+                        self.events.write_value(serde_json::json!({
+                            "event": "context_compaction_incomplete",
+                            "session_id": session_id,
+                            "task_id": activity_key,
+                            "model": model_id,
+                            "sequence": compaction_sequence,
+                            "reason": "agent_stream_error_before_history_replacement",
+                            "payload_logged": false,
+                        }));
+                    }
+                    return Err(anyhow!("agent stream error: {e}"));
+                }
             }
             if activity_file.is_some()
                 && (!physical_activity_required || activity_failure.is_none())
@@ -25997,6 +26141,17 @@ impl GooseAgentDispatcher {
                     source.lifecycle.admission().physical_host_id,
                 ));
             }
+        }
+        if compaction_in_progress {
+            self.events.write_value(serde_json::json!({
+                "event": "context_compaction_incomplete",
+                "session_id": session_id,
+                "task_id": activity_key,
+                "model": model_id,
+                "sequence": compaction_sequence,
+                "reason": "agent_stream_ended_before_history_replacement",
+                "payload_logged": false,
+            }));
         }
         if ACTIVE_PRE_SCHEDULER_CANCELLATION
             .try_with(PreSchedulerCallCancellation::is_requested)
