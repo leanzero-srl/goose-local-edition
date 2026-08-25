@@ -1205,7 +1205,15 @@ def validate_v18_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         raise ClosureError("v18 publisher source hash changed")
     if publisher.get("site_root") != str(V18_PUBLISHER_ROOT):
         raise ClosureError("v18 publisher repository path changed")
-    if publisher.get("path") != str(V18_PUBLISHER_PATH):
+    allowed_publisher_paths = {
+        V18_PUBLISHER_PATH.resolve(),
+        (
+            V18_STATE_DIR
+            / "closure-instrument"
+            / "seed-fleet-brainwaves-sb70.mjs"
+        ).resolve(),
+    }
+    if pathlib.Path(str(publisher.get("path", ""))).resolve() not in allowed_publisher_paths:
         raise ClosureError("v18 publisher path changed")
     armed = config.get("armed")
     if not isinstance(armed, bool):
@@ -1510,6 +1518,8 @@ def v18_binding_evidence(
         launcher, config["expected"]["launch_controller_sha256"]
     )
     publisher = pathlib.Path(config["publisher"]["path"])
+    if publisher.resolve() != V18_PUBLISHER_PATH.resolve():
+        raise ClosureError("v18 binder requires the accepted publisher source path")
     verify_immutable_file(
         publisher, config["publisher"]["sha256"], require_read_only=False
     )
