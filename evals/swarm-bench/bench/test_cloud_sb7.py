@@ -18732,8 +18732,16 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 "data": {
                     "id": "grok-response-fixture",
                     "role": "assistant",
+                    "content": [{"type": "text", "text": "Inspect "}],
+                },
+                "usage": None,
+            }
+            source_delta_2 = {
+                "data": {
+                    "id": "grok-response-fixture",
+                    "role": "assistant",
                     "content": [
-                        {"type": "text", "text": "Inspect the workspace."}
+                        {"type": "text", "text": "the workspace."}
                     ],
                 },
                 "usage": None,
@@ -18767,7 +18775,11 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 lines = [json.dumps({"input": payload, "model_config": {}})]
                 if index == 1:
                     lines.extend(
-                        [json.dumps(source_delta), json.dumps(source_terminal)]
+                        [
+                            json.dumps(source_delta),
+                            json.dumps(source_delta_2),
+                            json.dumps(source_terminal),
+                        ]
                     )
                 (logs / f"llm_request.{index}.jsonl").write_text(
                     "\n".join(lines) + "\n"
@@ -18805,6 +18817,100 @@ class CloudSb7HarnessTest(unittest.TestCase):
                     "function_call_output",
                 ],
             )
+            self.assertEqual(
+                contract["tool_replay"]["assistant_text_sha256"],
+                cloud_sb7.sha256_bytes("Inspect the workspace.".encode()),
+            )
+            self.assertEqual(
+                contract["tool_replay"]["tool_output_text_sha256"],
+                cloud_sb7.sha256_bytes("/workspace".encode()),
+            )
+            stream = {
+                "valid": False,
+                "errors": [
+                    "assistant emitted text before the paired tool response"
+                ],
+                "request_id_sha256": cloud_sb7.sha256_bytes(
+                    "grok-call-fixture".encode()
+                ),
+                "tool_response_text_sha256": cloud_sb7.sha256_bytes(
+                    "/workspace".encode()
+                ),
+                "paired_response": True,
+                "tool_requests": 1,
+                "tool_responses": 1,
+                "pre_tool_assistant_text_present": True,
+                "pre_tool_assistant_text_marker_absent": True,
+                "pre_tool_assistant_text_sha256": cloud_sb7.sha256_bytes(
+                    "Inspect the workspace.".encode()
+                ),
+            }
+            reconciled = cloud_sb7.reconcile_xai_responses_smoke_stream(
+                stream, row, contract
+            )
+            self.assertIs(reconciled["valid"], True)
+            self.assertIs(
+                reconciled["xai_provider_bound_tool_commentary"], True
+            )
+            for field in (
+                "assistant_text_sha256",
+                "tool_output_text_sha256",
+                "call_id_sha256",
+            ):
+                with self.subTest(replay_field=field):
+                    changed = json.loads(json.dumps(contract))
+                    changed["tool_replay"][field] = "wrong"
+                    rejected_stream = (
+                        cloud_sb7.reconcile_xai_responses_smoke_stream(
+                            stream, row, changed
+                        )
+                    )
+                    self.assertIs(rejected_stream["valid"], False)
+                    self.assertIs(
+                        rejected_stream["xai_provider_bound_tool_commentary"],
+                        False,
+                    )
+            wrong_model = dict(row, model="grok-4.6-alias")
+            self.assertIs(
+                cloud_sb7.reconcile_xai_responses_smoke_stream(
+                    stream, wrong_model, contract
+                )["valid"],
+                False,
+            )
+            extra_stream_error = json.loads(json.dumps(stream))
+            extra_stream_error["errors"].append("another stream failure")
+            self.assertEqual(
+                cloud_sb7.reconcile_xai_responses_smoke_stream(
+                    extra_stream_error, row, contract
+                )["errors"],
+                ["another stream failure"],
+            )
+            marker_preface = json.loads(json.dumps(stream))
+            marker_preface["pre_tool_assistant_text_marker_absent"] = False
+            self.assertIs(
+                cloud_sb7.reconcile_xai_responses_smoke_stream(
+                    marker_preface, row, contract
+                )["valid"],
+                False,
+            )
+            replay_log = logs / "llm_request.0.jsonl"
+            replay_log_text = replay_log.read_text()
+            changed_replay = json.loads(replay_log_text)
+            changed_replay["input"]["input"][3]["content"][0]["text"] = (
+                "Inspect a different workspace."
+            )
+            replay_log.write_text(json.dumps(changed_replay) + "\n")
+            mismatched_commentary = cloud_sb7.responses_smoke_contract(
+                profile, row, terminal_usage
+            )
+            self.assertIs(mismatched_commentary["valid"], False)
+            self.assertTrue(
+                any(
+                    "preserve prior assistant text exactly" in error
+                    for error in mismatched_commentary["errors"]
+                )
+            )
+            replay_log.write_text(replay_log_text)
             serialized = json.dumps(contract, sort_keys=True)
             self.assertNotIn("grok-reasoning-fixture", serialized)
             self.assertNotIn("opaque-grok-reasoning", serialized)

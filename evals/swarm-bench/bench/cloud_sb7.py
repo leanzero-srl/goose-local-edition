@@ -3784,6 +3784,67 @@ def reconcile_minimax_m3_smoke_stream(
     return reconciled
 
 
+def reconcile_xai_responses_smoke_stream(
+    stream: Mapping[str, Any],
+    row: Mapping[str, Any],
+    provider_contract: Mapping[str, Any],
+) -> Dict[str, Any]:
+    reconciled = dict(stream)
+    errors = list(stream.get("errors", []))
+    reconciled["xai_provider_bound_tool_commentary"] = False
+
+    replay = provider_contract.get("tool_replay")
+    contract_bound = (
+        row.get("provider") == "xai_api"
+        and row.get("model") == "grok-4.6"
+        and row.get("responses_api") is True
+        and row.get("encrypted_reasoning_replay") is True
+        and row.get("tool_calling") is True
+        and row.get("stream_usage") is True
+        and provider_contract.get("required") is True
+        and provider_contract.get("valid") is True
+        and provider_contract.get("errors") == []
+        and provider_contract.get("provider") == "xai_api"
+        and isinstance(replay, dict)
+        and replay.get("order")
+        == [
+            "reasoning",
+            "assistant_message",
+            "function_call",
+            "function_call_output",
+        ]
+        and all(
+            isinstance(replay.get(field), str) and bool(replay[field])
+            for field in (
+                "call_id_sha256",
+                "assistant_text_sha256",
+                "tool_output_text_sha256",
+            )
+        )
+        and replay.get("call_id_sha256") == stream.get("request_id_sha256")
+        and replay.get("assistant_text_sha256")
+        == stream.get("pre_tool_assistant_text_sha256")
+        and replay.get("tool_output_text_sha256")
+        == stream.get("tool_response_text_sha256")
+        and stream.get("paired_response") is True
+        and stream.get("tool_requests") == 1
+        and stream.get("tool_responses") == 1
+    )
+    pre_tool_error = "assistant emitted text before the paired tool response"
+    if (
+        contract_bound
+        and stream.get("pre_tool_assistant_text_present") is True
+        and stream.get("pre_tool_assistant_text_marker_absent") is True
+        and pre_tool_error in errors
+    ):
+        errors.remove(pre_tool_error)
+        reconciled["xai_provider_bound_tool_commentary"] = True
+
+    reconciled["errors"] = errors
+    reconciled["valid"] = not errors
+    return reconciled
+
+
 SAFE_ENV_NAMES = {
     "USER",
     "LOGNAME",
@@ -14190,7 +14251,7 @@ def responses_smoke_contract(
                     "call_id": call_id,
                     "name": name,
                     "arguments": arguments,
-                    "commentary": commentary,
+                    "commentary": "".join(commentary),
                 }
         return None
 
@@ -14292,12 +14353,16 @@ def responses_smoke_contract(
                 replay_commentary.append(content_item["text"])
             if not commentary_valid:
                 break
-        if not commentary_valid or replay_commentary != source["commentary"]:
+        replay_commentary_text = "".join(replay_commentary)
+        if (
+            not commentary_valid
+            or replay_commentary_text != source["commentary"]
+        ):
             errors.append("Meta replay does not preserve prior assistant text exactly")
             continue
 
         order = ["reasoning"]
-        if replay_commentary:
+        if replay_commentary_text:
             order.append("assistant_message")
         order.extend(["function_call", "function_call_output"])
         replay = {
@@ -14314,7 +14379,14 @@ def responses_smoke_contract(
             "tool_name_sha256": sha256_bytes(source["name"].encode()),
             "arguments_sha256": canonical_json_sha256(source["arguments"]),
             "tool_output_sha256": canonical_json_sha256(output.get("output")),
-            "assistant_text_sha256": canonical_json_sha256(source["commentary"]),
+            "tool_output_text_sha256": (
+                sha256_bytes(output["output"].encode())
+                if isinstance(output.get("output"), str)
+                else None
+            ),
+            "assistant_text_sha256": sha256_bytes(
+                source["commentary"].encode()
+            ),
             "order": order,
         }
         break
@@ -15179,6 +15251,10 @@ def smoke_attempt_evidence(
         provider_contract = responses_smoke_contract(
             paths["profile"], row, lifecycle.get("terminal_usage", {})
         )
+        if row["provider"] == "xai_api":
+            stream = reconcile_xai_responses_smoke_stream(
+                stream, row, provider_contract
+            )
     elif row["provider"] == "alibaba":
         provider_contract = qwen_chat_smoke_contract(
             paths["profile"], row, lifecycle.get("terminal_usage", {})
@@ -15665,6 +15741,10 @@ def smoke_proof_mismatch(
             row,
             lifecycle.get("terminal_usage", {}),
         )
+        if row["provider"] == "xai_api":
+            stream = reconcile_xai_responses_smoke_stream(
+                stream, row, expected_provider_contract
+            )
     elif row["provider"] == "alibaba":
         expected_provider_contract = qwen_chat_smoke_contract(
             Path(str(state.get("profile", ""))),
