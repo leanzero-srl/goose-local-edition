@@ -1,4 +1,4 @@
-import { render, cleanup } from '@testing-library/react';
+import { render, cleanup, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import SwarmRunPanel from './SwarmRunPanel';
 
@@ -28,7 +28,12 @@ const POOL = [
 ];
 
 const EVENTS = [
-  { event: 'run_started', prompt: '# Build `vendorsync`\n\nA small operations tool.', pool: POOL, ts: '2026-08-17T13:54:13.000000+00:00' },
+  {
+    event: 'run_started',
+    prompt: '# Build `vendorsync`\n\nA small operations tool.',
+    pool: POOL,
+    ts: '2026-08-17T13:54:13.000000+00:00',
+  },
   { event: 'pool_resolved', devices: POOL, worker_count: 3 },
   {
     event: 'plan_loaded',
@@ -36,12 +41,35 @@ const EVENTS = [
     plan_confidence: 88,
     ask_floor: 85,
     tasks: [
-      { id: 'store', description: 'Build the store', files: ['store.py'], deps: [], difficulty: 'medium' },
-      { id: 'api', description: 'Build the api', files: ['api.py'], deps: ['store'], difficulty: 'hard' },
-      { id: 'integrate-verify', description: 'Sink', files: [], deps: ['store', 'api'], difficulty: 'hard' },
+      {
+        id: 'store',
+        description: 'Build the store',
+        files: ['store.py'],
+        deps: [],
+        difficulty: 'medium',
+      },
+      {
+        id: 'api',
+        description: 'Build the api',
+        files: ['api.py'],
+        deps: ['store'],
+        difficulty: 'hard',
+      },
+      {
+        id: 'integrate-verify',
+        description: 'Sink',
+        files: [],
+        deps: ['store', 'api'],
+        difficulty: 'hard',
+      },
     ],
   },
-  { event: 'task_dispatched', task_id: 'store', device: 'mac-gabee-qwen3.6-27b-fable-fusi', model: POOL[0].model_id },
+  {
+    event: 'task_dispatched',
+    task_id: 'store',
+    device: 'mac-gabee-qwen3.6-27b-fable-fusi',
+    model: POOL[0].model_id,
+  },
   {
     event: 'task_completed',
     task_id: 'store',
@@ -51,13 +79,20 @@ const EVENTS = [
     elapsed_ms: 155142,
     tool_calls: [],
   },
-  { event: 'task_dispatched', task_id: 'api', device: 'local-mihai-qwen3.6-27b-fable-fusi', model: POOL[1].model_id },
+  {
+    event: 'task_dispatched',
+    task_id: 'api',
+    device: 'local-mihai-qwen3.6-27b-fable-fusi',
+    model: POOL[1].model_id,
+  },
 ];
 
 type ElectronMock = Record<string, unknown>;
 
 describe('SwarmRunPanel — the named-zone view actually renders', () => {
   beforeEach(() => {
+    localStorage.removeItem('goose.swarm.logMode');
+    localStorage.removeItem('goose.swarm.verboseActivity');
     const electron = (window as unknown as { electron: ElectronMock }).electron;
     electron.readSwarmRun = vi.fn(async () => ({
       runId: 'swarm-test',
@@ -79,7 +114,7 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
   afterEach(() => cleanup());
 
   it('mounts every zone in the one header register, with node NAMES and the three WORK groups', async () => {
-    const { findByText, queryByText, getAllByText, container } = render(
+    const { findByText, findByRole, getAllByRole, queryByText, getAllByText, container } = render(
       <SwarmRunPanel workingDir="/tmp/build" />
     );
 
@@ -92,6 +127,18 @@ describe('SwarmRunPanel — the named-zone view actually renders', () => {
     await findByText('Fleet');
     await findByText('Work');
     await findByText('Event log');
+
+    const detailModes = await findByRole('radiogroup', { name: 'Run detail' });
+    expect(detailModes).toBeInTheDocument();
+    const choices = getAllByRole('radio');
+    expect(choices.map((choice) => choice.textContent)).toEqual([
+      'Compact',
+      'Verbose',
+      'Developer',
+    ]);
+    expect(choices[1]).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(choices[0]);
+    expect(choices[0]).toHaveAttribute('aria-checked', 'true');
 
     // FLEET: canonical node names — never the truncated model-id fragments Mihai saw ("fusi, fusi, fable").
     await findByText('gabee');

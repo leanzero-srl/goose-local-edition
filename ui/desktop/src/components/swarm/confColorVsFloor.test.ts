@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { confColorVsFloor } from './SwarmRunPanel';
+import { SWARM_STATUS } from './formationVisualState';
 
 // Companion to confVerdict.test.ts. The WORDS were fixed for the 73-vs-80 case and the COLOUR was not, so
 // the pill stayed GREEN next to text reading "Below your bar of 80" — saying "good" in the one channel a
 // user reads before any words, about a run that had stopped and asked. Colour is a verdict too.
-const GREEN = '#2ecc71';
-const AMBER = '#f5a623';
-const RED = '#ff3b30';
+const GREEN = SWARM_STATUS.done;
+const AMBER = SWARM_STATUS.running;
+const RED = SWARM_STATUS.error;
 
 describe('confColorVsFloor', () => {
   it('is NOT green below the engine bar — the exact 73-vs-80 case', () => {

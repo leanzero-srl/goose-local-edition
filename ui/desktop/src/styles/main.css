@@ -240,13 +240,14 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 .local-edition {
   /* Signature accent: a migratory-dusk azure (goose's own), replacing the block teal focus ring. */
-  --color-block-teal: #2e8bff;
-  --color-accent-local: #2e8bff;
+  --color-block-teal: #0b5bd3;
+  --color-accent-local: #0b5bd3;
+  --color-action-solid: #0b5bd3;
 
   /* Route the accent into real chrome: focus rings turn azure when Local Edition is active. The theme
      applies --color-ring-primary as an INLINE style on <html>, so !important is required to override it. */
-  --color-ring-primary: #2e8bff !important;
-  --color-ring: #2e8bff !important;
+  --color-ring-primary: #0b5bd3 !important;
+  --color-ring: #0b5bd3 !important;
 
   /* Node-identity formation ramp — 6 saturated hues, disjoint from the status triad. */
   --color-node-1: #17c4c4;
@@ -257,9 +258,30 @@
   --color-node-6: #ff5c7a;
 
   /* Semantic status triad (orthogonal to the node ramp). */
-  --color-status-ok: #2ecc71;
-  --color-status-warn: #f5a623;
-  --color-status-err: #ff3b30;
+  --color-status-ok: #087a47;
+  --color-status-warn: #9a4d00;
+  --color-status-err: #c7271a;
+  --color-status-stopped: #4b5563;
+  --color-status-ok-solid: #087a47;
+  --color-status-warn-solid: #9a4d00;
+  --color-status-err-solid: #c7271a;
+  --color-status-stopped-solid: #4b5563;
+}
+
+.dark.local-edition {
+  --color-block-teal: #5a9bff;
+  --color-accent-local: #5a9bff;
+  --color-action-solid: #0b5bd3;
+  --color-ring-primary: #5a9bff !important;
+  --color-ring: #5a9bff !important;
+  --color-status-ok: #33d17a;
+  --color-status-warn: #ffb43d;
+  --color-status-err: #ff6257;
+  --color-status-stopped: #a7b0b9;
+  --color-status-ok-solid: #087a47;
+  --color-status-warn-solid: #9a4d00;
+  --color-status-err-solid: #c7271a;
+  --color-status-stopped-solid: #4b5563;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
