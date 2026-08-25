@@ -8,6 +8,14 @@
 //! and two tasks owning the same file never run concurrently. Completions relax dependents
 //! (unlocking the DAG), merge output into the shared context, and free device capacity.
 
+#[path = "checkpoint.rs"]
+mod checkpoint;
+
+pub use checkpoint::{
+    scheduler_task_spec_digest, SchedulerCheckpointError, SchedulerCheckpointReceipt,
+    SchedulerCheckpointStore, SchedulerRestoreSummary,
+};
+
 use crate::broker::{
     AdmissionReceipt, PhysicalExecutionAuthority, SourceRevisionKind, TaskVersion, WorkOpportunity,
 };
@@ -1158,6 +1166,8 @@ struct State {
     physical_provider_starts: HashMap<TaskId, ProviderStartKey>,
     dispatched_per_device: HashMap<String, u32>,
     ctx: SharedContext,
+    checkpoint: Option<Arc<SchedulerCheckpointStore>>,
+    restored_attempts: HashMap<TaskId, u32>,
     max_attempts: u32,
     degrade_on_stall: bool,
     sink: Arc<dyn EventSink>,
@@ -2158,52 +2168,113 @@ impl State {
                         tool_calls,
                     });
                 } else {
-                    if let Some(dev) = released_dev {
-                        let entry = self.device_speed.entry(dev).or_insert((0, 0));
-                        entry.0 += elapsed_ms;
-                        entry.1 += 1;
-                    }
                     let completion = provisional
                         .map(TaskCompletionDisposition::Salvaged)
                         .unwrap_or(TaskCompletionDisposition::Complete);
                     let is_salvaged = completion.is_salvaged();
-                    self.task_completion
-                        .insert(tid.to_string(), completion.clone());
-                    self.attempt_log
-                        .entry(tid.to_string())
-                        .or_default()
-                        .push(AttemptRecord {
-                            device: dev_id.clone(),
-                            model: model_id.clone(),
-                            outcome: if is_salvaged { "salvaged" } else { "ok" }.to_string(),
-                            error: None,
-                            elapsed_ms,
-                        });
-                    {
-                        let node = self.dag.tasks.get_mut(tid).unwrap();
-                        node.state = if is_salvaged {
-                            TaskState::Salvaged
-                        } else {
-                            TaskState::Done
-                        };
-                        node.result = Some(output.clone());
-                        node.avoid_device = None;
+                    let checkpoint_result = if is_salvaged {
+                        Ok(None)
+                    } else if let Some(checkpoint) = &self.checkpoint {
+                        let spec = &self.dag.tasks[tid].spec;
+                        checkpoint
+                            .persist_done(spec, &output, attempt.saturating_add(1))
+                            .map(Some)
+                    } else {
+                        Ok(None)
+                    };
+
+                    match checkpoint_result {
+                        Err(error) => {
+                            let error = format!(
+                                "scheduler checkpoint persistence failed before task completion: {error}"
+                            );
+                            self.attempt_log.entry(tid.to_string()).or_default().push(
+                                AttemptRecord {
+                                    device: dev_id.clone(),
+                                    model: model_id.clone(),
+                                    outcome: "checkpoint_failed".to_string(),
+                                    error: Some(error.clone()),
+                                    elapsed_ms,
+                                },
+                            );
+                            {
+                                let node = self.dag.tasks.get_mut(tid).unwrap();
+                                node.state = TaskState::Failed;
+                                node.result = None;
+                                node.avoid_device = None;
+                            }
+                            self.fail_descendants_without_release(tid);
+                            self.sink.emit(&SwarmEvent::TaskCheckpointPersistFailed {
+                                task_id: tid.to_string(),
+                                error: error.clone(),
+                            });
+                            self.sink.emit(&SwarmEvent::TaskCompleted {
+                                task_id: tid.to_string(),
+                                salvaged: false,
+                                completion: None,
+                                status: "failed".to_string(),
+                                device: dev_id,
+                                model: model_id,
+                                attempts: self.attempt_log[tid].len() as u32,
+                                elapsed_ms,
+                                session_id,
+                                error: Some(error),
+                                tool_calls,
+                            });
+                        }
+                        Ok(receipt) => {
+                            if let Some(receipt) = receipt {
+                                self.sink.emit(&SwarmEvent::TaskCheckpointPersisted {
+                                    task_id: tid.to_string(),
+                                    sequence: receipt.sequence,
+                                    completion_order: receipt.completion_order,
+                                    artifacts: receipt.artifact_count,
+                                });
+                            }
+                            if let Some(dev) = released_dev {
+                                let entry = self.device_speed.entry(dev).or_insert((0, 0));
+                                entry.0 += elapsed_ms;
+                                entry.1 += 1;
+                            }
+                            self.task_completion
+                                .insert(tid.to_string(), completion.clone());
+                            self.attempt_log.entry(tid.to_string()).or_default().push(
+                                AttemptRecord {
+                                    device: dev_id.clone(),
+                                    model: model_id.clone(),
+                                    outcome: if is_salvaged { "salvaged" } else { "ok" }
+                                        .to_string(),
+                                    error: None,
+                                    elapsed_ms,
+                                },
+                            );
+                            {
+                                let node = self.dag.tasks.get_mut(tid).unwrap();
+                                node.state = if is_salvaged {
+                                    TaskState::Salvaged
+                                } else {
+                                    TaskState::Done
+                                };
+                                node.result = Some(output.clone());
+                                node.avoid_device = None;
+                            }
+                            self.ctx.merge(tid, output);
+                            self.sink.emit(&SwarmEvent::TaskCompleted {
+                                task_id: tid.to_string(),
+                                salvaged: is_salvaged,
+                                completion: Some(completion),
+                                status: if is_salvaged { "salvaged" } else { "done" }.to_string(),
+                                device: dev_id,
+                                model: model_id,
+                                attempts: self.attempt_log[tid].len() as u32,
+                                elapsed_ms,
+                                session_id,
+                                error: self.last_attempt_error(tid),
+                                tool_calls,
+                            });
+                            self.relax_dependents(tid);
+                        }
                     }
-                    self.ctx.merge(tid, output);
-                    self.sink.emit(&SwarmEvent::TaskCompleted {
-                        task_id: tid.to_string(),
-                        salvaged: is_salvaged,
-                        completion: Some(completion),
-                        status: if is_salvaged { "salvaged" } else { "done" }.to_string(),
-                        device: dev_id,
-                        model: model_id,
-                        attempts: self.attempt_log[tid].len() as u32,
-                        elapsed_ms,
-                        session_id,
-                        error: self.last_attempt_error(tid),
-                        tool_calls,
-                    });
-                    self.relax_dependents(tid);
                 }
                 // SPECULATIVE abort-loser: this PRIMARY won -> abort + release any twin still racing this
                 // task. (When the TWIN won, resolve_speculation cleared `speculating` BEFORE calling
@@ -3528,6 +3599,25 @@ impl State {
         }
     }
 
+    fn fail_descendants_without_release(&mut self, tid: &str) {
+        let mut q: VecDeque<TaskId> = self
+            .dag
+            .dependents
+            .get(tid)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        while let Some(id) = q.pop_front() {
+            let node = self.dag.tasks.get_mut(&id).unwrap();
+            if node.state.is_terminal() {
+                continue;
+            }
+            node.state = TaskState::Failed;
+            q.extend(self.dag.dependents.get(&id).cloned().unwrap_or_default());
+        }
+    }
+
     fn build_report(&self) -> RunReport {
         let mut done = Vec::new();
         let mut salvaged = Vec::new();
@@ -3602,7 +3692,11 @@ impl State {
                 completion,
                 device,
                 model,
-                attempts: history.len() as u32,
+                attempts: if history.is_empty() {
+                    self.restored_attempts.get(id).copied().unwrap_or(0)
+                } else {
+                    history.len() as u32
+                },
                 attempt_history: history,
                 elapsed_ms,
                 session_id,
@@ -3646,15 +3740,7 @@ impl State {
 }
 
 fn task_contract_version(spec: &TaskSpec) -> String {
-    let canonical = serde_json::to_vec(spec).expect("task specs are JSON serializable");
-    let digest = Sha256::digest(canonical);
-    let mut version = String::with_capacity(digest.len() * 2 + 7);
-    version.push_str("sha256:");
-    for byte in digest {
-        use std::fmt::Write;
-        let _ = write!(version, "{byte:02x}");
-    }
-    version
+    scheduler_task_spec_digest(spec)
 }
 
 fn task_acceptance_oracle(spec: &TaskSpec) -> Vec<AcceptanceCriterionSnapshot> {
@@ -3719,6 +3805,7 @@ pub struct Scheduler {
     /// Typed, immutable, observation-only semantic review. It is consulted only by the physical
     /// scheduler because the ordinary dispatcher cannot produce provider lifecycle receipts.
     semantic_observation: Option<SemanticObservationConfig>,
+    checkpoint: Option<Arc<SchedulerCheckpointStore>>,
 }
 
 impl Scheduler {
@@ -3738,7 +3825,18 @@ impl Scheduler {
             degrade_on_stall: false,
             fix_round: false,
             semantic_observation: None,
+            checkpoint: None,
         }
+    }
+
+    pub fn with_checkpoint_store(mut self, checkpoint: Arc<SchedulerCheckpointStore>) -> Self {
+        self.checkpoint = Some(checkpoint);
+        self
+    }
+
+    pub fn with_checkpoint_root(mut self, root: impl AsRef<Path>) -> Result<Self> {
+        self.checkpoint = Some(Arc::new(SchedulerCheckpointStore::open(root)?));
+        Ok(self)
     }
 
     /// Attach the GROUNDED research facts (Phase 1, Move 2) that each worker gets VERBATIM. Empty (default)
@@ -4002,6 +4100,25 @@ impl Scheduler {
             SchedulerDispatcher::Physical { execution, .. } => Some(execution.clone()),
         };
         let physical_admission = physical_execution.is_some();
+        let mut dag = dag;
+        let mut context = SharedContext::new();
+        let mut restored_attempts = HashMap::new();
+        if let Some(checkpoint) = &self.checkpoint {
+            let restored = checkpoint.restore_into(&mut dag, &mut context)?;
+            restored_attempts.extend(restored.restored.iter().map(|task_id| {
+                (
+                    task_id.clone(),
+                    dag.tasks
+                        .get(task_id)
+                        .expect("restored task came from this DAG")
+                        .attempts,
+                )
+            }));
+            self.sink.emit(&SwarmEvent::SchedulerCheckpointRestored {
+                restored: restored.restored,
+                invalidated: restored.invalidated,
+            });
+        }
         let mut ready = BinaryHeap::new();
         for (id, n) in &dag.tasks {
             if n.state == TaskState::Ready {
@@ -4026,7 +4143,9 @@ impl Scheduler {
             physical_activity_publishers: HashMap::new(),
             physical_provider_starts: HashMap::new(),
             dispatched_per_device: HashMap::new(),
-            ctx: SharedContext::new(),
+            ctx: context,
+            checkpoint: self.checkpoint.clone(),
+            restored_attempts,
             max_attempts: self.max_attempts,
             degrade_on_stall: self.degrade_on_stall,
             sink: self.sink.clone(),

@@ -74,6 +74,11 @@ impl SharedContext {
         &self.order
     }
 
+    pub(crate) fn clear_for_restore(&mut self) {
+        self.summaries.clear();
+        self.order.clear();
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "completed_order": self.order,
