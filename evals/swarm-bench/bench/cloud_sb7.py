@@ -3381,6 +3381,7 @@ def parse_smoke_stream(
             "expected one tool response paired to the developer__shell request by ID"
         )
     response_position = -1
+    tool_response_text_sha256: str | None = None
     if paired:
         response = paired[0]
         response_position = int(response["position"])
@@ -3398,6 +3399,22 @@ def parse_smoke_stream(
         ):
             errors.append(
                 "developer__shell response was failed, erroneous, or unproven"
+            )
+        content = value.get("content") if isinstance(value, dict) else None
+        if (
+            not isinstance(content, list)
+            or not content
+            or any(
+                not isinstance(item, dict)
+                or item.get("type") != "text"
+                or not isinstance(item.get("text"), str)
+                for item in content
+            )
+        ):
+            errors.append("developer__shell response text cannot be replayed exactly")
+        else:
+            tool_response_text_sha256 = sha256_bytes(
+                "".join(str(item["text"]) for item in content).encode()
             )
 
     final_text = "".join(
@@ -3428,7 +3445,10 @@ def parse_smoke_stream(
         "complete_events": len(complete_positions),
         "tool_requests": len(requests),
         "tool_responses": len(responses),
-        "request_id": request_id,
+        "request_id_sha256": (
+            sha256_bytes(request_id.encode()) if request_id is not None else None
+        ),
+        "tool_response_text_sha256": tool_response_text_sha256,
         "paired_response": len(paired) == 1,
         "final_text_exact": final_text == expected_marker,
         "output_token_limit_reached": any(
@@ -14256,6 +14276,361 @@ def qwen_chat_smoke_contract(
     }
 
 
+def minimax_chat_smoke_contract(
+    profile: Path,
+    row: Mapping[str, Any],
+    terminal_usage: Mapping[str, Any],
+    stream: Mapping[str, Any],
+) -> Dict[str, Any]:
+    errors: list[str] = []
+    logs_root = profile / "state/logs"
+    indexed: list[tuple[int, Path]] = []
+    if logs_root.is_symlink() or not logs_root.is_dir():
+        errors.append("MiniMax request-log directory is missing or linked")
+    else:
+        for path in logs_root.iterdir():
+            match = re.fullmatch(r"llm_request[.]([0-9]+)[.]jsonl", path.name)
+            if match is None:
+                continue
+            if path.is_symlink() or not path.is_file():
+                errors.append(f"MiniMax request log is not regular: {path.name}")
+                continue
+            indexed.append((int(match.group(1)), path))
+    indexed.sort()
+    if [index for index, _ in indexed] != list(range(len(indexed))):
+        errors.append("MiniMax request-log indexes are not contiguous from zero")
+    if len(indexed) < 2:
+        errors.append("MiniMax smoke did not record a multi-turn tool replay")
+
+    request_records: list[Dict[str, Any]] = []
+    file_hashes: Dict[str, str] = {}
+    for _, path in reversed(indexed):
+        file_hashes[path.name] = sha256_file(path)
+        try:
+            lines = path.read_text().splitlines()
+            first_line = lines[0]
+            record = json.loads(first_line, object_pairs_hook=unique_json_object)
+            payload = record.get("input") if isinstance(record, dict) else None
+        except (IndexError, OSError, ValueError, json.JSONDecodeError) as error:
+            errors.append(
+                f"MiniMax request log cannot be decoded: {path.name}: "
+                f"{type(error).__name__}"
+            )
+            continue
+        if not isinstance(payload, dict):
+            errors.append(f"MiniMax request log has no request payload: {path.name}")
+            continue
+        response_messages: list[Dict[str, Any]] = []
+        for line_number, line in enumerate(lines[1:], start=2):
+            try:
+                response_record = json.loads(
+                    line, object_pairs_hook=unique_json_object
+                )
+            except (ValueError, json.JSONDecodeError):
+                errors.append(
+                    f"MiniMax request log response cannot be decoded: "
+                    f"{path.name}:{line_number}"
+                )
+                continue
+            if not isinstance(response_record, dict):
+                errors.append(
+                    f"MiniMax request log response is not an object: "
+                    f"{path.name}:{line_number}"
+                )
+                continue
+            data = response_record.get("data")
+            if data is not None and not isinstance(data, dict):
+                errors.append(
+                    f"MiniMax request log response data is malformed: "
+                    f"{path.name}:{line_number}"
+                )
+            elif isinstance(data, dict):
+                response_messages.append(data)
+        request_records.append(
+            {
+                "name": path.name,
+                "payload": payload,
+                "responses": response_messages,
+            }
+        )
+
+    sampling_fields = {
+        "temperature",
+        "top_p",
+        "presence_penalty",
+        "frequency_penalty",
+        "seed",
+    }
+    unsupported = {
+        "max_tokens",
+        "reasoning_effort",
+        "service_tier",
+        *sampling_fields,
+    }
+    payloads = [record["payload"] for record in request_records]
+    for index, payload in enumerate(payloads):
+        messages = payload.get("messages")
+        tools = payload.get("tools")
+        request_errors: list[str] = []
+        if payload.get("model") != row.get("model"):
+            request_errors.append("model")
+        if payload.get("stream") is not True:
+            request_errors.append("stream")
+        if payload.get("stream_options") != {"include_usage": True}:
+            request_errors.append("stream_options")
+        if payload.get("max_completion_tokens") != int(row["max_output_tokens"]):
+            request_errors.append("max_completion_tokens")
+        if payload.get("thinking") != {"type": "adaptive"}:
+            request_errors.append("thinking")
+        if payload.get("reasoning_split") is not False:
+            request_errors.append("reasoning_split")
+        if not isinstance(messages, list) or len(messages) < 2:
+            request_errors.append("messages")
+        elif (
+            messages[0].get("role") != "system"
+            or not isinstance(messages[0].get("content"), str)
+            or not messages[0]["content"]
+            or not any(
+                isinstance(message, dict) and message.get("role") == "user"
+                for message in messages[1:]
+            )
+        ):
+            request_errors.append("system/user")
+        if not isinstance(tools, list) or not tools:
+            request_errors.append("tools")
+        present_unsupported = sorted(unsupported & payload.keys())
+        if present_unsupported:
+            request_errors.append("unsupported:" + ",".join(present_unsupported))
+        if request_errors:
+            errors.append(
+                f"MiniMax request {index} violates Chat contract: "
+                + ", ".join(request_errors)
+            )
+
+    usage_rows: list[Dict[str, Any]] = []
+    if not isinstance(terminal_usage, dict) or not terminal_usage:
+        errors.append("MiniMax smoke has no provider-terminal usage evidence")
+    else:
+        for request_id, usage in sorted(terminal_usage.items()):
+            usage_error = lifecycle_usage_failure(usage)
+            if usage_error:
+                errors.append(f"MiniMax terminal usage {request_id}: {usage_error}")
+                continue
+            if usage["reported_model"] not in row["accepted_reported_models"]:
+                errors.append(
+                    f"MiniMax terminal usage {request_id} has an unexpected model identity"
+                )
+                continue
+            if usage["input_tokens"] <= 0 or usage["output_tokens"] <= 0:
+                errors.append(
+                    f"MiniMax terminal usage {request_id} has no positive token usage"
+                )
+                continue
+            usage_rows.append(
+                {
+                    "request_id_sha256": sha256_bytes(str(request_id).encode()),
+                    "reported_model": usage["reported_model"],
+                    "input_tokens": usage["input_tokens"],
+                    "output_tokens": usage["output_tokens"],
+                    "total_tokens": usage["total_tokens"],
+                }
+            )
+
+    def source_turn(record: Mapping[str, Any]) -> Dict[str, Any] | None:
+        responses = record.get("responses")
+        if not isinstance(responses, list):
+            return None
+        reasoning_parts: list[str] = []
+        text_parts: list[str] = []
+        tool_requests: list[Dict[str, Any]] = []
+        response_ids: set[str] = set()
+        for message in responses:
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                continue
+            response_id = message.get("id")
+            if isinstance(response_id, str) and response_id:
+                response_ids.add(response_id)
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "thinking":
+                    thinking = item.get("thinking")
+                    if isinstance(thinking, str):
+                        reasoning_parts.append(thinking)
+                    else:
+                        errors.append("MiniMax source response has malformed reasoning")
+                elif item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        text_parts.append(text)
+                    else:
+                        errors.append("MiniMax source response has malformed text")
+                elif item.get("type") == "toolRequest":
+                    tool_call = item.get("toolCall")
+                    value = (
+                        tool_call.get("value")
+                        if isinstance(tool_call, dict)
+                        and tool_call.get("status") == "success"
+                        else None
+                    )
+                    call_id = item.get("id")
+                    name = value.get("name") if isinstance(value, dict) else None
+                    arguments = (
+                        value.get("arguments") if isinstance(value, dict) else None
+                    )
+                    if (
+                        not isinstance(call_id, str)
+                        or not call_id
+                        or not isinstance(name, str)
+                        or not name
+                        or not isinstance(arguments, dict)
+                    ):
+                        errors.append("MiniMax source response tool request is malformed")
+                    else:
+                        tool_requests.append(
+                            {"id": call_id, "name": name, "arguments": arguments}
+                        )
+        if not reasoning_parts and not tool_requests:
+            return None
+        if len(response_ids) != 1:
+            errors.append("MiniMax source response identity changed within one request")
+            return None
+        reasoning = "".join(reasoning_parts)
+        if not reasoning.strip():
+            errors.append("MiniMax source response has no reasoning before its tool call")
+            return None
+        if len(tool_requests) != 1:
+            errors.append("MiniMax source response must have exactly one smoke tool call")
+            return None
+        return {
+            "reasoning": reasoning,
+            "text": "".join(text_parts),
+            "tool": tool_requests[0],
+            "response_id": next(iter(response_ids)),
+        }
+
+    replay: Dict[str, Any] | None = None
+    for source_index, (source_record, replay_record) in enumerate(
+        zip(request_records, request_records[1:])
+    ):
+        source = source_turn(source_record)
+        if source is None:
+            continue
+        if sha256_bytes(source["tool"]["id"].encode()) != stream.get(
+            "request_id_sha256"
+        ):
+            errors.append(
+                "MiniMax source tool call is not the exact validated smoke request"
+            )
+            continue
+        messages = replay_record["payload"].get("messages")
+        if not isinstance(messages, list):
+            errors.append("MiniMax replay request messages are malformed")
+            continue
+        expected_content = (
+            f"<think>{source['reasoning']}</think>{source['text']}"
+        )
+        matching_assistants: list[tuple[int, Dict[str, Any]]] = []
+        for message_index, message in enumerate(messages):
+            if (
+                not isinstance(message, dict)
+                or message.get("role") != "assistant"
+                or message.get("content") != expected_content
+                or "reasoning_content" in message
+            ):
+                continue
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list) or len(tool_calls) != 1:
+                continue
+            tool_call = tool_calls[0]
+            function = (
+                tool_call.get("function") if isinstance(tool_call, dict) else None
+            )
+            try:
+                arguments = json.loads(
+                    function.get("arguments", ""),
+                    object_pairs_hook=unique_json_object,
+                )
+            except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if (
+                tool_call.get("id") == source["tool"]["id"]
+                and tool_call.get("type") == "function"
+                and isinstance(function, dict)
+                and function.get("name") == source["tool"]["name"]
+                and arguments == source["tool"]["arguments"]
+            ):
+                matching_assistants.append((message_index, message))
+        if len(matching_assistants) != 1:
+            errors.append(
+                "MiniMax replay does not contain the exact immediate prior "
+                "<think>/tool assistant turn once"
+            )
+            continue
+        assistant_index, _ = matching_assistants[0]
+        if assistant_index + 1 >= len(messages):
+            errors.append("MiniMax replay has no tool output after the assistant turn")
+            continue
+        tool_output = messages[assistant_index + 1]
+        if (
+            not isinstance(tool_output, dict)
+            or tool_output.get("role") != "tool"
+            or tool_output.get("tool_call_id") != source["tool"]["id"]
+            or not isinstance(tool_output.get("content"), str)
+            or not tool_output["content"]
+            or sha256_bytes(tool_output["content"].encode())
+            != stream.get("tool_response_text_sha256")
+        ):
+            errors.append("MiniMax replay tool output identity/order is invalid")
+            continue
+        replay = {
+            "source_request_index": source_index,
+            "replay_request_index": source_index + 1,
+            "source_request_log_sha256": file_hashes[source_record["name"]],
+            "replay_request_log_sha256": file_hashes[replay_record["name"]],
+            "response_id_sha256": sha256_bytes(source["response_id"].encode()),
+            "reasoning_sha256": sha256_bytes(source["reasoning"].encode()),
+            "assistant_text_sha256": sha256_bytes(source["text"].encode()),
+            "call_id_sha256": sha256_bytes(source["tool"]["id"].encode()),
+            "tool_name_sha256": sha256_bytes(source["tool"]["name"].encode()),
+            "arguments_sha256": canonical_json_sha256(
+                source["tool"]["arguments"]
+            ),
+            "tool_output_sha256": sha256_bytes(tool_output["content"].encode()),
+            "stream_request_id_sha256": stream.get("request_id_sha256"),
+            "stream_tool_response_sha256": stream.get(
+                "tool_response_text_sha256"
+            ),
+            "order": ["think_content", "assistant_tool_call", "tool_output"],
+        }
+        break
+    if replay is None:
+        errors.append(
+            "MiniMax smoke has no ordered immediate <think>/tool/output replay"
+        )
+
+    return {
+        "required": True,
+        "valid": not errors,
+        "errors": errors,
+        "request_count": len(payloads),
+        "request_log_sha256": file_hashes,
+        "tool_replay": replay,
+        "terminal_usage": usage_rows,
+        "adaptive_thinking": bool(payloads)
+        and all(payload.get("thinking") == {"type": "adaptive"} for payload in payloads),
+        "reasoning_split_disabled": bool(payloads)
+        and all(payload.get("reasoning_split") is False for payload in payloads),
+        "sampling_omitted": bool(payloads)
+        and not any(sampling_fields & payload.keys() for payload in payloads),
+        "service_tier_omitted": bool(payloads)
+        and not any("service_tier" in payload for payload in payloads),
+    }
+
+
 def smoke_attempt_evidence(
     root: Path,
     entrant_id: str,
@@ -14380,6 +14755,15 @@ def smoke_attempt_evidence(
     elif row["provider"] == "alibaba":
         provider_contract = qwen_chat_smoke_contract(
             paths["profile"], row, lifecycle.get("terminal_usage", {})
+        )
+        if not provider_contract["valid"]:
+            reasons.extend(
+                f"provider contract: {error}"
+                for error in provider_contract["errors"]
+            )
+    elif row["provider"] == "minimax_api":
+        provider_contract = minimax_chat_smoke_contract(
+            paths["profile"], row, lifecycle.get("terminal_usage", {}), stream
         )
         if not provider_contract["valid"]:
             reasons.extend(
@@ -14860,6 +15244,13 @@ def smoke_proof_mismatch(
             Path(str(state.get("profile", ""))),
             row,
             lifecycle.get("terminal_usage", {}),
+        )
+    elif row["provider"] == "minimax_api":
+        expected_provider_contract = minimax_chat_smoke_contract(
+            Path(str(state.get("profile", ""))),
+            row,
+            lifecycle.get("terminal_usage", {}),
+            stream,
         )
     if (
         expected_provider_contract.get("valid") is not True

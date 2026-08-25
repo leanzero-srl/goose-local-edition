@@ -7949,7 +7949,22 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 )
 
             valid = self.smoke_stream_events(state)
-            self.assertIs(parse(valid)["valid"], True)
+            parsed_valid = parse(valid)
+            self.assertIs(parsed_valid["valid"], True)
+            self.assertNotIn("request_id", parsed_valid)
+            self.assertEqual(
+                parsed_valid["request_id_sha256"],
+                cloud_sb7.sha256_bytes(b"tool-request-1"),
+            )
+            self.assertEqual(
+                parsed_valid["tool_response_text_sha256"],
+                cloud_sb7.sha256_bytes(
+                    (
+                        "xcodebuild sandbox warning\n"
+                        + str(state["expected_tool_output"])
+                    ).encode()
+                ),
+            )
 
             marker = str(state["final_marker"])
             first = len(marker) // 3
@@ -10786,6 +10801,464 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 if name == "wrong_model_usage":
                     self.assertTrue(
                         any("unexpected model identity" in error for error in contract["errors"])
+                    )
+
+    def test_minimax_smoke_contract_proves_exact_think_tool_replay_and_usage(
+        self,
+    ) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-minimax-m3-entrant.json"
+            )
+        )[0]
+        with tempfile.TemporaryDirectory() as raw:
+            profile = Path(raw) / "profile"
+            logs = profile / "state/logs"
+            logs.mkdir(parents=True)
+            common = {
+                "model": "MiniMax-M3",
+                "stream": True,
+                "stream_options": {"include_usage": True},
+                "max_completion_tokens": 131_072,
+                "thinking": {"type": "adaptive"},
+                "reasoning_split": False,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "shell",
+                            "description": "Run a command",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            }
+            source_reasoning = "Inspect the isolated workspace exactly."
+            source_text = "I will inspect it."
+            source_call = {
+                "id": "call-minimax-fixture",
+                "name": "shell",
+                "arguments": {"command": "pwd"},
+            }
+            first = {
+                **common,
+                "messages": [
+                    {"role": "system", "content": "Use one shell call."},
+                    {"role": "user", "content": "Run pwd."},
+                ],
+            }
+            second = {
+                **common,
+                "messages": [
+                    {"role": "system", "content": "Use one shell call."},
+                    {"role": "user", "content": "Run pwd."},
+                    {
+                        "role": "assistant",
+                        "content": (
+                            f"<think>{source_reasoning}</think>{source_text}"
+                        ),
+                        "tool_calls": [
+                            {
+                                "id": source_call["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": source_call["name"],
+                                    "arguments": json.dumps(
+                                        source_call["arguments"], separators=(",", ":")
+                                    ),
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": source_call["id"],
+                        "content": "/workspace",
+                    },
+                    {"role": "user", "content": "Return the marker."},
+                ],
+            }
+            source_responses = [
+                {
+                    "data": {
+                        "id": "response-minimax-fixture",
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "Inspect the "}
+                        ],
+                    }
+                },
+                {
+                    "data": {
+                        "id": "response-minimax-fixture",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "thinking",
+                                "thinking": "isolated workspace exactly.",
+                            },
+                            {"type": "text", "text": source_text},
+                        ],
+                    }
+                },
+                {
+                    "data": {
+                        "id": "response-minimax-fixture",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "toolRequest",
+                                "id": source_call["id"],
+                                "toolCall": {
+                                    "status": "success",
+                                    "value": {
+                                        "name": source_call["name"],
+                                        "arguments": source_call["arguments"],
+                                    },
+                                },
+                            }
+                        ],
+                    },
+                    "usage": {"inputTokens": 20, "outputTokens": 8},
+                },
+            ]
+            (logs / "llm_request.1.jsonl").write_text(
+                "\n".join(
+                    [json.dumps({"input": first, "model_config": {}})]
+                    + [json.dumps(value) for value in source_responses]
+                )
+                + "\n"
+            )
+            (logs / "llm_request.0.jsonl").write_text(
+                json.dumps({"input": second, "model_config": {}}) + "\n"
+            )
+            usage = {
+                "request-a": {
+                    "reported_model": "MiniMax-M3",
+                    "input_tokens": 20,
+                    "output_tokens": 8,
+                    "total_tokens": 28,
+                },
+                "request-b": {
+                    "reported_model": "MiniMax-M3",
+                    "input_tokens": 35,
+                    "output_tokens": 4,
+                    "total_tokens": 39,
+                },
+            }
+
+            stream = {
+                "request_id_sha256": cloud_sb7.sha256_bytes(
+                    source_call["id"].encode()
+                ),
+                "tool_response_text_sha256": cloud_sb7.sha256_bytes(b"/workspace"),
+            }
+            contract = cloud_sb7.minimax_chat_smoke_contract(
+                profile, row, usage, stream
+            )
+
+            self.assertTrue(contract["valid"], contract["errors"])
+            self.assertEqual(contract["request_count"], 2)
+            self.assertTrue(contract["adaptive_thinking"])
+            self.assertTrue(contract["reasoning_split_disabled"])
+            self.assertTrue(contract["sampling_omitted"])
+            self.assertTrue(contract["service_tier_omitted"])
+            self.assertEqual(len(contract["terminal_usage"]), 2)
+            self.assertEqual(
+                contract["tool_replay"]["order"],
+                ["think_content", "assistant_tool_call", "tool_output"],
+            )
+            serialized = json.dumps(contract, sort_keys=True)
+            for sensitive in (
+                source_reasoning,
+                source_text,
+                source_call["id"],
+                "response-minimax-fixture",
+                "/workspace",
+            ):
+                self.assertNotIn(sensitive, serialized)
+
+    def test_minimax_smoke_contract_rejects_request_usage_and_replay_drift(
+        self,
+    ) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-minimax-m3-entrant.json"
+            )
+        )[0]
+        common = {
+            "model": "MiniMax-M3",
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "max_completion_tokens": 131_072,
+            "thinking": {"type": "adaptive"},
+            "reasoning_split": False,
+            "tools": [{"type": "function", "function": {"name": "shell"}}],
+        }
+        source_response = {
+            "data": {
+                "id": "response-current",
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "current reasoning"},
+                    {
+                        "type": "toolRequest",
+                        "id": "call-current",
+                        "toolCall": {
+                            "status": "success",
+                            "value": {
+                                "name": "shell",
+                                "arguments": {"command": "pwd"},
+                            },
+                        },
+                    },
+                ],
+            }
+        }
+        base_first = {
+            **common,
+            "messages": [
+                {"role": "system", "content": "Use shell."},
+                {"role": "user", "content": "Run pwd."},
+            ],
+        }
+        unrelated_replay = {
+            **common,
+            "messages": [
+                {"role": "system", "content": "Use shell."},
+                {"role": "user", "content": "Run pwd."},
+                {
+                    "role": "assistant",
+                    "content": "<think>unrelated old reasoning</think>",
+                    "tool_calls": [
+                        {
+                            "id": "call-old",
+                            "type": "function",
+                            "function": {
+                                "name": "shell",
+                                "arguments": '{"command":"pwd"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call-old", "content": "ok"},
+            ],
+        }
+        usage = {
+            "request-a": {
+                "reported_model": "MiniMax-M3",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+            }
+        }
+        stream = {
+            "request_id_sha256": cloud_sb7.sha256_bytes(b"call-current"),
+            "tool_response_text_sha256": cloud_sb7.sha256_bytes(b"ok"),
+        }
+
+        cases = {
+            "unrelated_prior": (base_first, unrelated_replay, usage),
+            "wrong_thinking": (
+                {**base_first, "thinking": {"type": "enabled"}},
+                unrelated_replay,
+                usage,
+            ),
+            "split_reasoning": (
+                {**base_first, "reasoning_split": True},
+                unrelated_replay,
+                usage,
+            ),
+            "stream_usage": (
+                {
+                    **{
+                        key: value
+                        for key, value in base_first.items()
+                        if key != "stream_options"
+                    }
+                },
+                unrelated_replay,
+                usage,
+            ),
+            "legacy_max_tokens": (
+                {
+                    **{
+                        key: value
+                        for key, value in base_first.items()
+                        if key != "max_completion_tokens"
+                    },
+                    "max_tokens": 131_072,
+                },
+                unrelated_replay,
+                usage,
+            ),
+            "sampling": (
+                {**base_first, "temperature": 0.7},
+                unrelated_replay,
+                usage,
+            ),
+            "priority_tier": (
+                {**base_first, "service_tier": "priority"},
+                unrelated_replay,
+                usage,
+            ),
+            "wrong_model_usage": (
+                base_first,
+                unrelated_replay,
+                {
+                    "request-a": {
+                        **usage["request-a"],
+                        "reported_model": "minimax-m3",
+                    }
+                },
+            ),
+            "zero_usage": (
+                base_first,
+                unrelated_replay,
+                {
+                    "request-a": {
+                        "reported_model": "MiniMax-M3",
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                    }
+                },
+            ),
+        }
+        for name, (first, second, terminal_usage) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as raw:
+                profile = Path(raw) / "profile"
+                logs = profile / "state/logs"
+                logs.mkdir(parents=True)
+                (logs / "llm_request.1.jsonl").write_text(
+                    json.dumps({"input": first, "model_config": {}})
+                    + "\n"
+                    + json.dumps(source_response)
+                    + "\n"
+                )
+                (logs / "llm_request.0.jsonl").write_text(
+                    json.dumps({"input": second, "model_config": {}}) + "\n"
+                )
+
+                contract = cloud_sb7.minimax_chat_smoke_contract(
+                    profile, row, terminal_usage, stream
+                )
+
+                self.assertFalse(contract["valid"])
+                self.assertIsNone(contract["tool_replay"])
+                self.assertTrue(
+                    any("exact immediate prior" in error for error in contract["errors"])
+                )
+                if name == "wrong_thinking":
+                    self.assertFalse(contract["adaptive_thinking"])
+                    self.assertTrue(
+                        any("thinking" in error for error in contract["errors"])
+                    )
+                if name == "split_reasoning":
+                    self.assertFalse(contract["reasoning_split_disabled"])
+                    self.assertTrue(
+                        any("reasoning_split" in error for error in contract["errors"])
+                    )
+                if name == "stream_usage":
+                    self.assertTrue(
+                        any("stream_options" in error for error in contract["errors"])
+                    )
+                if name == "legacy_max_tokens":
+                    self.assertTrue(
+                        any("max_completion_tokens" in error for error in contract["errors"])
+                    )
+                    self.assertTrue(
+                        any("unsupported:max_tokens" in error for error in contract["errors"])
+                    )
+                if name == "sampling":
+                    self.assertFalse(contract["sampling_omitted"])
+                    self.assertTrue(
+                        any("unsupported:temperature" in error for error in contract["errors"])
+                    )
+                if name == "priority_tier":
+                    self.assertFalse(contract["service_tier_omitted"])
+                    self.assertTrue(
+                        any("unsupported:service_tier" in error for error in contract["errors"])
+                    )
+                if name == "wrong_model_usage":
+                    self.assertTrue(
+                        any("unexpected model identity" in error for error in contract["errors"])
+                    )
+                if name == "zero_usage":
+                    self.assertTrue(
+                        any("no positive token usage" in error for error in contract["errors"])
+                    )
+
+        matching_replay = {
+            **common,
+            "messages": [
+                {"role": "system", "content": "Use shell."},
+                {"role": "user", "content": "Run pwd."},
+                {
+                    "role": "assistant",
+                    "content": "<think>current reasoning</think>",
+                    "tool_calls": [
+                        {
+                            "id": "call-current",
+                            "type": "function",
+                            "function": {
+                                "name": "shell",
+                                "arguments": '{"command":"pwd"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call-current", "content": "ok"},
+            ],
+        }
+        wrong_function_type = json.loads(json.dumps(matching_replay))
+        wrong_function_type["messages"][2]["tool_calls"][0]["type"] = "custom"
+        split_replay = json.loads(json.dumps(matching_replay))
+        split_replay["messages"][2]["content"] = ""
+        split_replay["messages"][2]["reasoning_content"] = "current reasoning"
+        changed_tool_output = json.loads(json.dumps(matching_replay))
+        changed_tool_output["messages"][3]["content"] = "changed"
+        empty_reasoning = json.loads(json.dumps(source_response))
+        empty_reasoning["data"]["content"][0]["thinking"] = ""
+
+        replay_cases = {
+            "wrong_function_type": (wrong_function_type, source_response),
+            "split_replay": (split_replay, source_response),
+            "changed_tool_output": (changed_tool_output, source_response),
+            "empty_reasoning": (matching_replay, empty_reasoning),
+        }
+        for name, (replay, response) in replay_cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as raw:
+                profile = Path(raw) / "profile"
+                logs = profile / "state/logs"
+                logs.mkdir(parents=True)
+                (logs / "llm_request.1.jsonl").write_text(
+                    json.dumps({"input": base_first, "model_config": {}})
+                    + "\n"
+                    + json.dumps(response)
+                    + "\n"
+                )
+                (logs / "llm_request.0.jsonl").write_text(
+                    json.dumps({"input": replay, "model_config": {}}) + "\n"
+                )
+
+                contract = cloud_sb7.minimax_chat_smoke_contract(
+                    profile, row, usage, stream
+                )
+
+                self.assertFalse(contract["valid"])
+                self.assertIsNone(contract["tool_replay"])
+                if name == "empty_reasoning":
+                    self.assertTrue(
+                        any("no reasoning" in error for error in contract["errors"])
+                    )
+                elif name == "changed_tool_output":
+                    self.assertTrue(
+                        any("tool output identity/order" in error for error in contract["errors"])
+                    )
+                else:
+                    self.assertTrue(
+                        any("exact immediate prior" in error for error in contract["errors"])
                     )
 
     def test_keychain_provider_secret_is_memory_only_and_unambiguous(self) -> None:
