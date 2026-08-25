@@ -57197,6 +57197,18 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         broker_enforcement_requested,
         default_on_environment_gate("GOOSE_SWARM_PILLAR_FLOW"),
     );
+    let legacy_judge_requested = !pillar_flow_on && idle_judge_enabled();
+    let legacy_prereview_requested = !pillar_flow_on && prereview_enabled();
+    let judge_on = legacy_auxiliary_control_enabled(
+        legacy_judge_requested,
+        broker_enforcement_requested,
+        LegacyAuxiliaryPhase::MainExecute,
+    );
+    let prereview_on = legacy_auxiliary_control_enabled(
+        legacy_prereview_requested,
+        broker_enforcement_requested,
+        LegacyAuxiliaryPhase::MainExecute,
+    );
     let mut pillar_research_outcome: Option<PillarResearchOutcome> = None;
     let mut research_findings = String::new();
     // DOC-PREFETCH (Phase 1, Move 2): the GROUNDED research findings, VERBATIM, to hand to every worker. Stays
@@ -57753,8 +57765,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // BOOL lever plus the tuning numerics a campaign arm would vary. Device rows (weight/enabled/
             // instances) and per-run CLI overrides stay out: they are echoed by run_started, not levers.
             "goals": goals_enabled(),
-            "judge": idle_judge_enabled(),
-            "prereview": prereview_enabled(),
+            "judge": judge_on,
+            "pillar_flow": pillar_flow_on,
+            "prereview": prereview_on,
             "tail_review": goose_swarm::tail_review_enabled(),
             "testgen": goose_swarm::testgen_enabled(),
             "ship_best": ship_best_enabled(),
@@ -59209,10 +59222,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // byte-identical for any run that never pauses. Same base dir as the #109 note inbox.
     scheduler = scheduler.with_pause_file(working_dir.join(".swarm").join("pause"));
     let replan_on = opts.dynamic_replan.unwrap_or(cfg.dynamic_replan);
-    let judge_on = !pillar_flow_on && idle_judge_enabled();
-    let prereview_on = !pillar_flow_on && prereview_enabled();
-    let legacy_judge_requested = judge_on;
-    let legacy_prereview_requested = prereview_on;
     let speculate_on = std::env::var("GOOSE_SWARM_SPECULATE")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
         .unwrap_or(false);
@@ -59221,16 +59230,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "physical admission cannot race speculative twins because first-wins requires cancelling admitted provider work"
         );
     }
-    let judge_on = legacy_auxiliary_control_enabled(
-        legacy_judge_requested,
-        broker_enforcement_requested,
-        LegacyAuxiliaryPhase::MainExecute,
-    );
-    let prereview_on = legacy_auxiliary_control_enabled(
-        legacy_prereview_requested,
-        broker_enforcement_requested,
-        LegacyAuxiliaryPhase::MainExecute,
-    );
     if broker_enforcement_requested {
         let snapshot = physical_snapshot
             .as_ref()
