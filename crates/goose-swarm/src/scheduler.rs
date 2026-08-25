@@ -2176,9 +2176,13 @@ impl State {
                         Ok(None)
                     } else if let Some(checkpoint) = &self.checkpoint {
                         let spec = &self.dag.tasks[tid].spec;
-                        checkpoint
-                            .persist_done(spec, &output, attempt.saturating_add(1))
-                            .map(Some)
+                        match checkpoint.can_persist_done(spec) {
+                            Ok(true) => checkpoint
+                                .persist_done(spec, &output, attempt.saturating_add(1))
+                                .map(Some),
+                            Ok(false) => Ok(None),
+                            Err(error) => Err(error),
+                        }
                     } else {
                         Ok(None)
                     };
