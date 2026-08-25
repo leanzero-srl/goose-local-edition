@@ -31,7 +31,7 @@ use goose::agents::{
 };
 use goose::config::permission::PermissionManager;
 use goose::config::{Config, GooseMode};
-use goose::context_mgmt::local_context_cap;
+use goose::context_mgmt::{local_context_cap, DEFAULT_COMPACTION_THRESHOLD};
 use goose::conversation::message::{Message, MessageContent};
 use goose::providers::base::Provider;
 use goose::recipe::Response;
@@ -2780,7 +2780,11 @@ fn probe_lms_http() -> Vec<LmsProcess> {
     else {
         return Vec::new();
     };
-    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
+    parse_lms_http_processes(&out.stdout)
+}
+
+fn parse_lms_http_processes(raw: &[u8]) -> Vec<LmsProcess> {
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(raw) else {
         return Vec::new();
     };
     let Some(arr) = json.get("data").and_then(|v| v.as_array()) else {
@@ -2805,6 +2809,11 @@ fn probe_lms_http() -> Vec<LmsProcess> {
                 identifier: id,
                 status: "loaded".to_string(),
                 parallel: None,
+                loaded_context_length: m
+                    .get("loaded_context_length")
+                    .and_then(|value| value.as_u64())
+                    .and_then(|value| usize::try_from(value).ok())
+                    .filter(|value| *value > 0),
             })
         })
         .collect()
@@ -2966,6 +2975,39 @@ struct LmsProcess {
     /// LM Studio's PARALLEL column — how many requests this model instance serves at once. The swarm
     /// uses it as the device weight so dispatch concurrency tracks the user's LM Studio concurrency.
     parallel: Option<u32>,
+    /// Context actually allocated to this loaded instance. This is deliberately not the model's
+    /// advertised maximum: LM Studio may load the same model at a smaller safe window on one host.
+    loaded_context_length: Option<usize>,
+}
+
+fn loaded_context_limits_from_processes(procs: &[LmsProcess]) -> HashMap<String, usize> {
+    let mut observations: HashMap<String, Vec<Option<usize>>> = HashMap::new();
+    for process in procs {
+        observations
+            .entry(process.identifier.clone())
+            .or_default()
+            .push(process.loaded_context_length);
+    }
+    observations
+        .into_iter()
+        .filter_map(|(identifier, values)| {
+            values
+                .iter()
+                .all(Option::is_some)
+                .then(|| {
+                    values
+                        .into_iter()
+                        .flatten()
+                        .min()
+                        .map(|limit| (identifier, limit))
+                })
+                .flatten()
+        })
+        .collect()
+}
+
+fn resolve_local_context_limit(configured: Option<usize>, loaded: usize) -> usize {
+    configured.map(|limit| limit.min(loaded)).unwrap_or(loaded)
 }
 
 /// Parse `lms ps` output (a plain whitespace-aligned table). Splits data rows on runs of >=2 spaces
@@ -2983,6 +3025,7 @@ fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
     let device_idx = cols.iter().position(|c| *c == "DEVICE").unwrap_or(6);
     let status_idx = cols.iter().position(|c| *c == "STATUS").unwrap_or(2);
     let parallel_idx = cols.iter().position(|c| *c == "PARALLEL");
+    let context_idx = cols.iter().position(|c| *c == "CONTEXT");
     let mut out = Vec::new();
     for line in &lines[header + 1..] {
         if line.trim().is_empty() {
@@ -3003,6 +3046,10 @@ fn parse_lms_ps(raw: &str) -> Result<Vec<LmsProcess>> {
             parallel: parallel_idx
                 .and_then(|i| f.get(i))
                 .and_then(|s| s.parse::<u32>().ok()),
+            loaded_context_length: context_idx
+                .and_then(|i| f.get(i))
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|value| *value > 0),
         });
     }
     Ok(out)
@@ -3156,15 +3203,16 @@ fn physical_snapshot_devices(
 
 /// "Auto-use what's loaded": build the worker pool from the models currently resident on the fleet
 /// (`lms ps`) so the swarm runs on what's actually loaded, not (possibly stale) configured model_ids.
-/// Returns (pool, planner_model). An empty pool means the fleet has nothing loaded (caller bootstraps
-/// or bails). Weights: explicit device override, else speed_weight, else LM Studio PARALLEL, else 1.
+/// Returns (pool, planner_model, exact-id loaded context limits). An empty pool means the fleet has
+/// nothing loaded (caller bootstraps or bails). Weights: explicit device override, else speed_weight,
+/// else LM Studio PARALLEL, else 1.
 fn reconcile_pool_with_fleet(
     cfg: &SwarmConfig,
     served_model_ids: Option<&HashSet<String>>,
-) -> Result<(Vec<SwarmDevice>, Option<String>)> {
+) -> Result<(Vec<SwarmDevice>, Option<String>, HashMap<String, usize>)> {
     let procs = match probe_lms_processes() {
         Ok(p) => p,
-        Err(_) => return Ok((Vec::new(), None)),
+        Err(_) => return Ok((Vec::new(), None, HashMap::new())),
     };
     // LM Link routes by identifier alone. Keep legacy one-worker-per-identifier behavior, but never
     // certify a physical route when the same identifier appears on multiple hosts: "first host wins"
@@ -3186,6 +3234,9 @@ fn reconcile_pool_with_fleet(
         .into_iter()
         .filter_map(|(identifier, hosts)| (hosts.len() > 1).then_some(identifier))
         .collect();
+    // An identifier may appear more than once in a linked fleet. Never let one optimistic row win:
+    // retain a limit only when every row has positive evidence, and use the smallest allocation.
+    let loaded_context_limits = loaded_context_limits_from_processes(&procs);
     let provider_transport_id =
         match goose::providers::openai_def::loopback_lmstudio_transport_identity(&cfg.endpoint)? {
             Some(identity) => Some(identity),
@@ -3203,7 +3254,7 @@ fn reconcile_pool_with_fleet(
         }
     }
     if resident.is_empty() {
-        return Ok((Vec::new(), None));
+        return Ok((Vec::new(), None, HashMap::new()));
     }
     let pool: Vec<SwarmDevice> = resident
         .iter()
@@ -3288,7 +3339,7 @@ fn reconcile_pool_with_fleet(
             .or_else(|| resident.iter().max_by_key(|p| planner_rank(p)))
             .map(|p| p.identifier.clone())
     };
-    Ok((pool, planner))
+    Ok((pool, planner, loaded_context_limits))
 }
 
 fn gen_entry_id(cfg: &SwarmConfig, device: Option<&str>, identifier: &str) -> String {
@@ -17081,6 +17132,9 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             Some(4),
             "reads the PARALLEL column as the device weight source"
         );
+        assert_eq!(procs[0].loaded_context_length, Some(262_144));
+        assert_eq!(procs[1].loaded_context_length, Some(200_000));
+        assert_eq!(procs[2].loaded_context_length, Some(128_000));
         let local = procs
             .iter()
             .filter(|p| p.device.as_deref() == Some("Local"))
@@ -17097,6 +17151,56 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert_eq!(identity.host_id, "WorksMacStudio.lan");
         assert_eq!(identity.advertised_instance_capacity, 4);
         assert_eq!(identity.capacity_evidence.max_concurrent(), 1);
+    }
+
+    #[test]
+    fn parses_native_lmstudio_loaded_context_without_using_model_maximum() {
+        let body = serde_json::json!({
+            "data": [
+                {"id":"gabee-model","state":"loaded","type":"llm","loaded_context_length":135936,"max_context_length":262144},
+                {"id":"local-model","state":"loaded","type":"llm","loaded_context_length":262144,"max_context_length":1048576},
+                {"id":"max-only","state":"loaded","type":"llm","max_context_length":1048576},
+                {"id":"unloaded","state":"not-loaded","type":"llm","loaded_context_length":262144},
+                {"id":"embed","state":"loaded","type":"embeddings","loaded_context_length":262144},
+                {"id":"zero","state":"loaded","type":"llm","loaded_context_length":0}
+            ]
+        });
+        let parsed = parse_lms_http_processes(body.to_string().as_bytes());
+        assert_eq!(parsed.len(), 4);
+        let by_id: HashMap<_, _> = parsed
+            .into_iter()
+            .map(|process| (process.identifier, process.loaded_context_length))
+            .collect();
+        assert_eq!(by_id["gabee-model"], Some(135_936));
+        assert_eq!(by_id["local-model"], Some(262_144));
+        assert_eq!(by_id["max-only"], None);
+        assert_eq!(by_id["zero"], None);
+    }
+
+    #[test]
+    fn duplicate_context_evidence_uses_minimum_and_rejects_missing_rows() {
+        let process = |id: &str, limit: Option<usize>| LmsProcess {
+            identifier: id.to_string(),
+            status: "loaded".to_string(),
+            device: Some("host".to_string()),
+            parallel: Some(1),
+            loaded_context_length: limit,
+        };
+        let limits = loaded_context_limits_from_processes(&[
+            process("safe", Some(262_144)),
+            process("safe", Some(135_936)),
+            process("incomplete", Some(262_144)),
+            process("incomplete", None),
+        ]);
+        assert_eq!(limits.get("safe"), Some(&135_936));
+        assert!(!limits.contains_key("incomplete"));
+    }
+
+    #[test]
+    fn local_context_limit_clamps_config_to_loaded_allocation() {
+        assert_eq!(resolve_local_context_limit(None, 262_144), 262_144);
+        assert_eq!(resolve_local_context_limit(Some(128_000), 262_144), 128_000);
+        assert_eq!(resolve_local_context_limit(Some(256_000), 135_936), 135_936);
     }
 
     #[test]
@@ -17180,6 +17284,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             status: "IDLE".to_string(),
             device: Some("host-a".to_string()),
             parallel: Some(4),
+            loaded_context_length: Some(128_000),
         };
         let ambiguous = HashSet::from(["shared-model".to_string()]);
         let served = HashSet::from(["shared-model".to_string()]);
@@ -17257,18 +17362,21 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                 status: "IDLE".into(),
                 device: Some("Mac.lan".into()),
                 parallel: None,
+                loaded_context_length: Some(128_000),
             },
             LmsProcess {
                 identifier: "dup-model".into(),
                 status: "IDLE".into(),
                 device: Some("Mac.lan".into()),
                 parallel: None,
+                loaded_context_length: Some(128_000),
             },
             LmsProcess {
                 identifier: "dup-model".into(),
                 status: "IDLE".into(),
                 device: Some("Local".into()),
                 parallel: None,
+                loaded_context_length: Some(128_000),
             },
         ];
         let s = import_processes(&mut cfg, &procs, 1, true);
@@ -23395,6 +23503,9 @@ pub struct GooseAgentDispatcher {
     /// seam so a bedrock node's calls run on the bedrock provider while everything else keeps the
     /// shared lmstudio provider. Empty on an all-local fleet (the default path, byte-identical).
     cloud_models: std::collections::HashMap<String, String>,
+    /// Same-run LM Studio allocation by exact local alias. These are live loaded limits, not model
+    /// maxima, and are applied at the single ModelConfig seam used by planner and worker calls.
+    local_context_limits: std::collections::HashMap<String, usize>,
     /// Lazily-created cloud providers, one per provider name, built on first dispatch.
     cloud_providers: tokio::sync::Mutex<std::collections::HashMap<String, Arc<dyn Provider>>>,
     session_manager: Arc<SessionManager>,
@@ -23626,6 +23737,7 @@ impl GooseAgentDispatcher {
         worker_max_turns: u32,
         worker_extensions: Vec<ExtensionConfig>,
         cloud_models: std::collections::HashMap<String, String>,
+        local_context_limits: std::collections::HashMap<String, usize>,
         planner_model: String,
         worker_timeout_secs: u64,
         planner_timeout_secs: u64,
@@ -23656,6 +23768,7 @@ impl GooseAgentDispatcher {
         Ok(Self {
             provider,
             cloud_models,
+            local_context_limits,
             cloud_providers: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             session_manager,
             permission_manager,
@@ -24361,6 +24474,29 @@ impl GooseAgentDispatcher {
             cloud_registry_name(self.provider_name(model_id)),
             model_id,
         )?;
+        if !self.cloud_models.contains_key(model_id) {
+            if let Some(loaded_limit) = self.local_context_limits.get(model_id).copied() {
+                let configured_limit = model_config.context_limit;
+                let resolved_limit = resolve_local_context_limit(configured_limit, loaded_limit);
+                model_config = model_config.with_context_limit(Some(resolved_limit));
+                let global_cap = local_context_cap();
+                self.events.write_value(serde_json::json!({
+                    "event": "context_limit_resolved",
+                    "session_id": session_id,
+                    "task_id": activity_key,
+                    "model": model_id,
+                    "loaded_context_limit": loaded_limit,
+                    "configured_context_limit": configured_limit,
+                    "resolved_context_limit": resolved_limit,
+                    "global_context_cap": global_cap,
+                    "effective_context_limit": global_cap
+                        .map(|cap| resolved_limit.min(cap))
+                        .unwrap_or(resolved_limit),
+                    "compaction_threshold": DEFAULT_COMPACTION_THRESHOLD,
+                    "payload_logged": false,
+                }));
+            }
+        }
         // Follow LM Studio's own temperature: pass the sampling temperature through verbatim, which is
         // None unless the swarm config explicitly sets one. None clears any inherited GOOSE_TEMPERATURE
         // default so the request omits temperature entirely and the LM Studio per-model setting applies.
@@ -43841,6 +43977,7 @@ struct DispatcherRecipe {
     worker_extensions: Vec<ExtensionConfig>,
     /// model_id → provider name for CLOUD pool devices (e.g. "bedrock"). Empty on an all-local fleet.
     cloud_models: std::collections::HashMap<String, String>,
+    local_context_limits: std::collections::HashMap<String, usize>,
     planner_model: String,
     worker_timeout_secs: u64,
     planner_timeout_secs: u64,
@@ -43866,6 +44003,7 @@ async fn build_swarm_dispatcher(
             r.worker_max_turns,
             r.worker_extensions,
             r.cloud_models,
+            r.local_context_limits,
             r.planner_model,
             r.worker_timeout_secs,
             r.planner_timeout_secs,
@@ -52381,7 +52519,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // legacy dispatch remains permissive on a failed probe, while physical identity is minted only for a
     // positively listed model. Intersect the logical pool before dispatch — see drop_unservable_devices.
     let served = endpoint_model_ids();
-    let (fleet_pool, fleet_planner) = reconcile_pool_with_fleet(&cfg, served.as_ref())?;
+    let (fleet_pool, fleet_planner, fleet_context_limits) =
+        reconcile_pool_with_fleet(&cfg, served.as_ref())?;
     // #128 no-start guard: if the endpoint proves it can serve models (non-empty /v1/models) but NONE of them
     // are our resident pool's — every alias withdrawn — refuse now instead of dispatching the whole run into
     // ~2s-per-attempt 400s and a dead run. `drop_unservable_devices` never empties the pool (it assumes a broken
@@ -52399,6 +52538,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         ));
     }
     let (fleet_pool, unservable) = drop_unservable_devices(fleet_pool, served.as_ref());
+    let fleet_context_limits: HashMap<String, usize> = fleet_context_limits
+        .into_iter()
+        .filter(|(model_id, _)| fleet_pool.iter().any(|device| &device.model_id == model_id))
+        .collect();
     // Preserve the same-run physical evidence before PIN/MAX_NODES can remove a resident row and
     // before planner-also-works can add that model back as a logical device. The map contains only
     // unambiguous LM Link identifiers; configured host strings and HTTP fallback rows stay absent.
@@ -52600,6 +52743,20 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         }
         pool
     };
+    if broker_enforcement_requested {
+        let missing_context: Vec<&str> = enabled
+            .iter()
+            .filter(|device| !device.is_cloud())
+            .filter(|device| !fleet_context_limits.contains_key(&device.model_id))
+            .map(|device| device.model_id.as_str())
+            .collect();
+        if !missing_context.is_empty() {
+            bail!(
+                "physical local fleet has no same-run loaded context evidence for [{}]; refusing the silent 128k fallback",
+                missing_context.join(", ")
+            );
+        }
+    }
     // A cloud-only pool cannot plan on an LM Studio model nobody serves: fall back to the first
     // cloud model. A mixed pool keeps the configured planner (the local fallback logic above ran).
     if !enabled.is_empty()
@@ -53000,6 +53157,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "model_id": d.model_id,
             "weight": d.weight,
             "physical": verified_physical_by_model.get(&d.model_id),
+            "loaded_context_limit": fleet_context_limits.get(&d.model_id),
+            "run_context_cap": local_context_cap(),
         })).collect::<Vec<_>>(),
         "worker_count": devices.len(),
         "planner_pushed": devices.iter().any(|d| d.id == "planner"),
@@ -53042,6 +53201,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .filter(|d| d.is_cloud())
             .map(|d| (d.model_id.clone(), d.provider_name().to_string()))
             .collect(),
+        local_context_limits: fleet_context_limits,
         planner_model: cfg.planner_model.clone(),
         worker_timeout_secs: cfg.worker_timeout_secs,
         planner_timeout_secs: cfg.planner_timeout_secs,
@@ -57966,6 +58126,7 @@ mod pre_scheduler_semantic_runtime_tests {
             4,
             Vec::new(),
             HashMap::new(),
+            HashMap::new(),
             SOURCE_MODEL.to_string(),
             1,
             1,
@@ -58057,6 +58218,7 @@ mod pre_scheduler_semantic_runtime_tests {
             0,
             4,
             Vec::new(),
+            HashMap::new(),
             HashMap::new(),
             planner_model.to_string(),
             1,
