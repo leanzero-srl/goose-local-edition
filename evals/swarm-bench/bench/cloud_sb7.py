@@ -2547,6 +2547,7 @@ def validate_rosters(
                 )
                 or int(row["context_limit"]) != 1_000_000
                 or int(row["max_output_tokens"]) != 131_072
+                or int(row.get("api_max_completion_tokens", 0)) != 524_288
                 or str(row["thinking_effort"]) != "max"
             ):
                 raise SystemExit(
