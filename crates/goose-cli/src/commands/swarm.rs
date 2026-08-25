@@ -39,16 +39,17 @@ use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
-    compile_pillar_report_with_sources, deterministic_verdict, evidence_source_digest,
-    is_split_candidate, pillar_frozen_spec_digest, render_synthesis_input, validate_pillar_opening,
-    validate_pillar_opening_against, AdmissionReceipt, AdmittedWork, AuthoredRequirement,
-    AuthorityScope, ChildSpec, CompiledPillarReport, CompletedProviderRequest, Confidence, Dag,
-    DeviceCfg, DispatchError, DispatchRequest, EventSink, EvidenceClass, EvidenceSourceAuthority,
-    EvidenceSourceSection, HostCapacityEvidence, IntegrationContract, Judge, JudgeConfig,
-    JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
-    PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
-    PillarAttemptCheckpoint, PillarCheckpointStore, PillarReportDraft, PillarResumeDecision,
-    PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
+    authored_requirements_require_integration, compile_pillar_report_with_sources,
+    deterministic_verdict, evidence_source_digest, is_split_candidate, pillar_frozen_spec_digest,
+    render_synthesis_input, validate_pillar_opening, validate_pillar_opening_against,
+    AdmissionReceipt, AdmittedWork, AuthoredRequirement, AuthorityScope, ChildSpec,
+    CompiledPillarReport, CompletedProviderRequest, Confidence, Dag, DeviceCfg, DispatchError,
+    DispatchRequest, EventSink, EvidenceClass, EvidenceSourceAuthority, EvidenceSourceSection,
+    HostCapacityEvidence, IntegrationContract, Judge, JudgeConfig, JudgeInput, JudgeOutcome,
+    JudgeRequest, LocalCompletionKind, NullSink, PhysicalAdmissionControl,
+    PhysicalExecutionAuthority, PhysicalFleetSnapshot, PillarAttemptCheckpoint,
+    PillarCheckpointStore, PillarReportDraft, PillarResumeDecision, PreReviewOutput,
+    PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
     ProviderLifecycleStartError, ProviderNudgeDelivery, ProviderRequestKey, ProviderRequestReceipt,
     ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
     ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, Scheduler,
@@ -12945,6 +12946,20 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             );
         }
         assert!(!description.contains("vague"));
+
+        let mut connected_plan = serde_json::json!({"subtasks": [
+            {"id":"producer", "description":"producer", "model":"qwen", "depends_on":[], "files":["src/producer.rs"]},
+            {"id":"consumer", "description":"consumer", "model":"qwen", "depends_on":["producer"], "files":["src/consumer.rs"]}
+        ]});
+        let mut producer = pillar_task_spec("producer");
+        producer.interfaces.clear();
+        let consumer = pillar_task_spec("consumer");
+        assert!(
+            compile_pillar_task_specs(&mut connected_plan, vec![producer, consumer])
+                .unwrap_err()
+                .to_string()
+                .contains("dependency edge")
+        );
     }
 
     #[test]
@@ -12991,6 +13006,112 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(
             error.contains("concrete alternative or isolation"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn unresolved_route_is_embedded_in_the_worker_task_contract() {
+        let opening = pillar_plan_test_opening(true);
+        let raw = serde_json::json!({
+            "task_coverage": [{
+                "task_id": "build-core", "owns_requirement_ids": ["REQ-core"],
+                "applies_requirement_ids": [], "verifies_requirement_ids": [], "evidence_ids": []
+            }],
+            "task_specs": [{
+                "task_id": "build-core", "objective": "Implement the core behavior",
+                "module_boundary": "Own only src/core.rs",
+                "concrete_steps": ["Add the public core entry point"], "interfaces": [],
+                "edge_cases": ["Reject empty input"],
+                "acceptance_evidence": ["cargo test core_contract passes"],
+                "exclusions": ["Do not edit the application entry point"]
+            }],
+            "uncertainty_routes": [{
+                "requirement_id": "REQ-core", "task_id": "build-core", "kind": "isolation",
+                "rationale": "Keep the unproven parser behind the core interface"
+            }],
+            "canonical_plan": {"subtasks": [{
+                "id": "build-core", "description": "replaced by the deterministic compiler",
+                "difficulty": "hard", "model": "qwen", "depends_on": [], "files": ["src/core.rs"]
+            }]}
+        });
+        let (_, dag, _) =
+            compile_pillar_plan(&raw.to_string(), &opening, &[], &["qwen".to_string()]).unwrap();
+        let description = &dag.tasks["build-core"].spec.description;
+        assert!(description.contains("UNRESOLVED REQUIREMENT ROUTE"));
+        assert!(description.contains("[REQ-core] ISOLATION"));
+        assert!(description.contains("Keep the unproven parser behind the core interface"));
+    }
+
+    #[test]
+    fn no_integration_contract_rejects_cross_pillar_dependencies() {
+        let opening = ResearchPillarOpening {
+            requirements: vec![
+                AuthoredRequirement {
+                    id: "REQ-a".to_string(),
+                    text: "Produce A".to_string(),
+                    critical: false,
+                },
+                AuthoredRequirement {
+                    id: "REQ-b".to_string(),
+                    text: "Produce B".to_string(),
+                    critical: false,
+                },
+            ],
+            pillars: vec![
+                ResearchPillar {
+                    id: "a".to_string(),
+                    title: "A".to_string(),
+                    objective: "Produce A".to_string(),
+                    requirement_ids: vec!["REQ-a".to_string()],
+                    dependencies: Vec::new(),
+                    research_questions: vec!["How is A produced?".to_string()],
+                    acceptance_criteria: vec!["A exists".to_string()],
+                    exclusions: vec!["B".to_string()],
+                },
+                ResearchPillar {
+                    id: "b".to_string(),
+                    title: "B".to_string(),
+                    objective: "Produce B".to_string(),
+                    requirement_ids: vec!["REQ-b".to_string()],
+                    dependencies: Vec::new(),
+                    research_questions: vec!["How is B produced?".to_string()],
+                    acceptance_criteria: vec!["B exists".to_string()],
+                    exclusions: vec!["A".to_string()],
+                },
+            ],
+            integration_contract: IntegrationContract {
+                owner: "qwen".to_string(),
+                integration_required: false,
+                objective: "Keep the deliverables independent".to_string(),
+                interface_invariants: Vec::new(),
+                acceptance_criteria: vec!["A and B exist".to_string()],
+            },
+        };
+        let plan = serde_json::json!({"subtasks": [
+            {"id":"a", "description":"A", "model":"qwen", "depends_on":[], "files":["a.txt"]},
+            {"id":"b", "description":"B", "model":"qwen", "depends_on":["a"], "files":["b.txt"]}
+        ]});
+        let coverages = vec![
+            CanonicalPlanTaskCoverageDraft {
+                task_id: "a".to_string(),
+                owns_requirement_ids: vec!["REQ-a".to_string()],
+                applies_requirement_ids: Vec::new(),
+                verifies_requirement_ids: Vec::new(),
+                evidence_ids: Vec::new(),
+            },
+            CanonicalPlanTaskCoverageDraft {
+                task_id: "b".to_string(),
+                owns_requirement_ids: vec!["REQ-b".to_string()],
+                applies_requirement_ids: Vec::new(),
+                verifies_requirement_ids: Vec::new(),
+                evidence_ids: Vec::new(),
+            },
+        ];
+        assert!(
+            validate_no_cross_pillar_integration(&opening, &plan, &coverages)
+                .unwrap_err()
+                .to_string()
+                .contains("depends across pillar boundary")
         );
     }
 
@@ -28873,6 +28994,7 @@ impl GooseAgentDispatcher {
             }));
             let system = "You are the sole opening architect. Map the frozen authored requirement ledger into a small exact cover of non-overlapping implementation pillars. Every requirement ID must appear in exactly one pillar, dependencies must be empty because research runs independently, and pillar scopes must be mutually exclusive. Give each pillar concrete atomic research questions, an implementation-spec objective, executable acceptance criteria, and explicit exclusions that prevent sibling overlap. Do not plan files or build tasks yet. The integration contract names only genuinely shared interfaces and end-to-end acceptance. Set integration_required true only when the pillar outputs must actually be hooked into one runnable product; set it false for genuinely independent deliverables that need no shared hook-up task. Return the typed opening immediately; there is no peer verification round.";
             let user = serde_json::to_string_pretty(&serde_json::json!({
+                "frozen_authored_prompt": user_prompt,
                 "frozen_authored_requirements": authored_requirements,
                 "maximum_pillars": max_pillars,
                 "required_integration_owner": planner_model,
@@ -49029,9 +49151,11 @@ fn fallback_pillar_opening(
             }
         })
         .collect::<Vec<_>>();
-    let integration_required = pillars.len() > 1;
+    let authored_requirements = pillar_authored_requirements(requirements);
+    let integration_required =
+        pillars.len() > 1 && authored_requirements_require_integration(&authored_requirements);
     let opening = ResearchPillarOpening {
-        requirements: pillar_authored_requirements(requirements),
+        requirements: authored_requirements,
         pillars,
         integration_contract: IntegrationContract {
             owner: integration_owner.to_string(),
@@ -49172,6 +49296,23 @@ fn compile_pillar_task_specs(
         .get_mut("subtasks")
         .and_then(serde_json::Value::as_array_mut)
         .ok_or_else(|| anyhow!("pillar plan has no canonical subtasks"))?;
+    let mut interface_tasks = HashSet::new();
+    for task in tasks.iter() {
+        let task_id = task
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("pillar canonical task has no id"))?;
+        for dependency in task
+            .get("depends_on")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+        {
+            interface_tasks.insert(task_id.to_string());
+            interface_tasks.insert(dependency.to_string());
+        }
+    }
     let mut by_id = BTreeMap::new();
     for task_spec in task_specs {
         if task_spec.task_id.trim().is_empty() {
@@ -49229,6 +49370,11 @@ fn compile_pillar_task_specs(
             .map(|interface| interface.trim().to_string())
             .filter(|interface| !interface.is_empty())
             .collect::<Vec<_>>();
+        if interface_tasks.contains(&task_id) && interfaces.is_empty() {
+            bail!(
+                "pillar task `{task_id}` participates in a dependency edge but has no producer/consumer interface contract"
+            );
+        }
         let owned_files = task
             .get("files")
             .and_then(serde_json::Value::as_array)
@@ -49277,6 +49423,118 @@ fn compile_pillar_task_specs(
     Ok(())
 }
 
+fn validate_no_cross_pillar_integration(
+    opening: &ResearchPillarOpening,
+    canonical_plan: &serde_json::Value,
+    task_coverages: &[CanonicalPlanTaskCoverageDraft],
+) -> Result<()> {
+    let requirement_pillars = opening
+        .pillars
+        .iter()
+        .flat_map(|pillar| {
+            pillar
+                .requirement_ids
+                .iter()
+                .map(move |requirement_id| (requirement_id.as_str(), pillar.id.as_str()))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut task_pillars = HashMap::<&str, BTreeSet<&str>>::new();
+    for coverage in task_coverages {
+        let pillars = task_pillars.entry(coverage.task_id.as_str()).or_default();
+        for requirement_id in coverage
+            .owns_requirement_ids
+            .iter()
+            .chain(coverage.applies_requirement_ids.iter())
+            .chain(coverage.verifies_requirement_ids.iter())
+        {
+            let pillar_id = requirement_pillars.get(requirement_id.as_str()).ok_or_else(|| {
+                anyhow!(
+                    "no-integration task `{}` references requirement `{requirement_id}` outside the pillar opening",
+                    coverage.task_id
+                )
+            })?;
+            pillars.insert(*pillar_id);
+        }
+        if pillars.len() > 1 {
+            bail!(
+                "integration_required=false but task `{}` combines multiple pillars: {}",
+                coverage.task_id,
+                pillars.iter().copied().collect::<Vec<_>>().join(", ")
+            );
+        }
+    }
+
+    let tasks = canonical_plan
+        .get("subtasks")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow!("pillar plan has no canonical subtasks"))?;
+    for task in tasks {
+        let task_id = task
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("pillar canonical task has no id"))?;
+        let own_pillars = task_pillars
+            .get(task_id)
+            .ok_or_else(|| anyhow!("pillar task `{task_id}` has no typed coverage"))?;
+        for dependency in task
+            .get("depends_on")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+        {
+            let dependency_pillars = task_pillars.get(dependency).ok_or_else(|| {
+                anyhow!("pillar task `{task_id}` depends on uncovered task `{dependency}`")
+            })?;
+            if !own_pillars.is_empty()
+                && !dependency_pillars.is_empty()
+                && own_pillars != dependency_pillars
+            {
+                bail!(
+                    "integration_required=false but task `{task_id}` depends across pillar boundary on `{dependency}`"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn append_uncertainty_routes_to_tasks(
+    canonical_plan: &mut serde_json::Value,
+    routes_by_task: BTreeMap<String, Vec<String>>,
+) -> Result<()> {
+    let tasks = canonical_plan
+        .get_mut("subtasks")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| anyhow!("pillar plan has no canonical subtasks"))?;
+    let mut remaining = routes_by_task;
+    for task in tasks {
+        let task_id = task
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("pillar canonical task has no id"))?
+            .to_string();
+        let Some(routes) = remaining.remove(&task_id) else {
+            continue;
+        };
+        let description = task
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("pillar canonical task `{task_id}` has no description"))?;
+        task["description"] = serde_json::Value::String(format!(
+            "{description}\n\nUNRESOLVED REQUIREMENT ROUTE\n{}",
+            routes.join("\n")
+        ));
+    }
+    if !remaining.is_empty() {
+        bail!(
+            "uncertainty routes reference unknown task(s): {}",
+            remaining.keys().cloned().collect::<Vec<_>>().join(", ")
+        );
+    }
+    Ok(())
+}
+
 fn compile_pillar_plan(
     raw: &str,
     opening: &ResearchPillarOpening,
@@ -49287,6 +49545,94 @@ fn compile_pillar_plan(
     let mut draft: PillarPlanDraft = serde_json::from_str(raw.trim())
         .map_err(|error| anyhow!("pillar plan was not valid typed JSON: {error}"))?;
     compile_pillar_task_specs(&mut draft.canonical_plan, draft.task_specs)?;
+    if !opening.integration_contract.integration_required {
+        validate_no_cross_pillar_integration(opening, &draft.canonical_plan, &draft.task_coverage)?;
+    }
+    let unresolved = pillar_unresolved_requirement_ids(opening, reports);
+    let requirement_by_id = opening
+        .requirements
+        .iter()
+        .map(|requirement| (requirement.id.as_str(), requirement))
+        .collect::<HashMap<_, _>>();
+    let coverage_by_task = draft
+        .task_coverage
+        .iter()
+        .map(|coverage| (coverage.task_id.as_str(), coverage))
+        .collect::<HashMap<_, _>>();
+    let mut routed = BTreeSet::new();
+    let mut route_blocks = BTreeMap::<String, Vec<String>>::new();
+    for route in &draft.uncertainty_routes {
+        if route.rationale.trim().is_empty() {
+            bail!(
+                "uncertainty route for requirement `{}` has no rationale",
+                route.requirement_id
+            );
+        }
+        if !unresolved.contains(&route.requirement_id) {
+            bail!(
+                "uncertainty route references resolved or unknown requirement `{}`",
+                route.requirement_id
+            );
+        }
+        if !routed.insert(route.requirement_id.clone()) {
+            bail!(
+                "uncertainty route repeats requirement `{}`",
+                route.requirement_id
+            );
+        }
+        let coverage = coverage_by_task
+            .get(route.task_id.as_str())
+            .ok_or_else(|| {
+                anyhow!(
+                    "uncertainty route for `{}` references unknown task `{}`",
+                    route.requirement_id,
+                    route.task_id
+                )
+            })?;
+        if !coverage
+            .owns_requirement_ids
+            .iter()
+            .chain(coverage.applies_requirement_ids.iter())
+            .any(|requirement_id| requirement_id == &route.requirement_id)
+        {
+            bail!(
+                "uncertainty route task `{}` does not implement requirement `{}`",
+                route.task_id,
+                route.requirement_id
+            );
+        }
+        let critical = requirement_by_id
+            .get(route.requirement_id.as_str())
+            .ok_or_else(|| anyhow!("uncertainty route requirement disappeared"))?
+            .critical;
+        if critical && route.kind == PillarUncertaintyRouteKind::DegradedFallback {
+            bail!(
+                "critical unresolved requirement `{}` needs a concrete alternative or isolation; degraded fallback is not safe",
+                route.requirement_id
+            );
+        }
+        let kind = match route.kind {
+            PillarUncertaintyRouteKind::Alternative => "ALTERNATIVE",
+            PillarUncertaintyRouteKind::Isolation => "ISOLATION",
+            PillarUncertaintyRouteKind::DegradedFallback => "DEGRADED FALLBACK",
+        };
+        route_blocks
+            .entry(route.task_id.clone())
+            .or_default()
+            .push(format!(
+                "- [{}] {kind}: {}",
+                route.requirement_id,
+                route.rationale.trim()
+            ));
+    }
+    let missing_routes = unresolved.difference(&routed).cloned().collect::<Vec<_>>();
+    if !missing_routes.is_empty() {
+        bail!(
+            "pillar plan left unresolved requirement(s) without an alternative, isolation, or degraded fallback task: {}",
+            missing_routes.join(", ")
+        );
+    }
+    append_uncertainty_routes_to_tasks(&mut draft.canonical_plan, route_blocks)?;
     let requirements = opening
         .requirements
         .iter()
@@ -49318,85 +49664,6 @@ fn compile_pillar_plan(
     )?;
     let dag = Dag::from_planner_json(&compiled.plan_json)
         .map_err(|error| anyhow!("compiled pillar plan did not form a DAG: {error}"))?;
-
-    let unresolved = pillar_unresolved_requirement_ids(opening, reports);
-    let requirement_by_id = opening
-        .requirements
-        .iter()
-        .map(|requirement| (requirement.id.as_str(), requirement))
-        .collect::<HashMap<_, _>>();
-    let coverage_by_task = serde_json::from_str::<serde_json::Value>(&compiled.plan_json)?
-        ["subtasks"]
-        .as_array()
-        .ok_or_else(|| anyhow!("compiled pillar plan had no subtasks"))?
-        .iter()
-        .map(|task| {
-            let task_id = task
-                .get("id")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| anyhow!("compiled pillar plan contained a task without an id"))?;
-            let coverage = canonical_task_coverage(task)?
-                .ok_or_else(|| anyhow!("compiled pillar task `{task_id}` lost its coverage"))?;
-            Ok((task_id.to_string(), coverage))
-        })
-        .collect::<Result<HashMap<_, _>>>()?;
-    let mut routed = BTreeSet::new();
-    for route in &draft.uncertainty_routes {
-        if route.rationale.trim().is_empty() {
-            bail!(
-                "uncertainty route for requirement `{}` has no rationale",
-                route.requirement_id
-            );
-        }
-        if !unresolved.contains(&route.requirement_id) {
-            bail!(
-                "uncertainty route references resolved or unknown requirement `{}`",
-                route.requirement_id
-            );
-        }
-        if !routed.insert(route.requirement_id.clone()) {
-            bail!(
-                "uncertainty route repeats requirement `{}`",
-                route.requirement_id
-            );
-        }
-        let coverage = coverage_by_task.get(&route.task_id).ok_or_else(|| {
-            anyhow!(
-                "uncertainty route for `{}` references unknown task `{}`",
-                route.requirement_id,
-                route.task_id
-            )
-        })?;
-        if !coverage
-            .owns_requirement_ids
-            .iter()
-            .chain(coverage.applies_requirement_ids.iter())
-            .any(|requirement_id| requirement_id == &route.requirement_id)
-        {
-            bail!(
-                "uncertainty route task `{}` does not implement requirement `{}`",
-                route.task_id,
-                route.requirement_id
-            );
-        }
-        let critical = requirement_by_id
-            .get(route.requirement_id.as_str())
-            .ok_or_else(|| anyhow!("uncertainty route requirement disappeared"))?
-            .critical;
-        if critical && route.kind == PillarUncertaintyRouteKind::DegradedFallback {
-            bail!(
-                "critical unresolved requirement `{}` needs a concrete alternative or isolation; degraded fallback is not safe",
-                route.requirement_id
-            );
-        }
-    }
-    let missing_routes = unresolved.difference(&routed).cloned().collect::<Vec<_>>();
-    if !missing_routes.is_empty() {
-        bail!(
-            "pillar plan left unresolved requirement(s) without an alternative, isolation, or degraded fallback task: {}",
-            missing_routes.join(", ")
-        );
-    }
     Ok((compiled.plan_json, dag, draft.uncertainty_routes))
 }
 

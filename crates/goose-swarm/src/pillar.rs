@@ -44,6 +44,28 @@ fn integration_required_default() -> bool {
     true
 }
 
+pub fn authored_requirements_require_integration(requirements: &[AuthoredRequirement]) -> bool {
+    let authored = requirements
+        .iter()
+        .map(|requirement| requirement.text.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join("\n");
+    ![
+        "independent deliverables",
+        "independent outputs",
+        "standalone deliverables",
+        "standalone outputs",
+        "separate artifacts",
+        "separate deliverables",
+        "do not integrate",
+        "must not integrate",
+        "no integration required",
+        "without integration",
+    ]
+    .iter()
+    .any(|signal| authored.contains(signal))
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ResearchPillarOpening {
     pub requirements: Vec<AuthoredRequirement>,
@@ -393,7 +415,8 @@ pub fn authored_section_fallback(
             exclusions: vec!["Work owned by every other pillar".to_string()],
         })
         .collect::<Vec<_>>();
-    let integration_required = pillars.len() > 1;
+    let integration_required =
+        pillars.len() > 1 && authored_requirements_require_integration(&requirements);
     let opening = ResearchPillarOpening {
         requirements,
         pillars,
@@ -1185,5 +1208,22 @@ mod tests {
             validate_pillar_opening(&opening).unwrap_err().code,
             "pillar_dependency_cycle"
         );
+    }
+
+    #[test]
+    fn fallback_integration_is_disabled_only_by_explicit_independence() {
+        let ordinary_product = vec![AuthoredRequirement {
+            id: "req-cli".to_string(),
+            text: "Build a CLI with import and export commands".to_string(),
+            critical: false,
+        }];
+        assert!(authored_requirements_require_integration(&ordinary_product));
+
+        let independent = vec![AuthoredRequirement {
+            id: "req-assets".to_string(),
+            text: "Produce separate deliverables with no integration required".to_string(),
+            critical: false,
+        }];
+        assert!(!authored_requirements_require_integration(&independent));
     }
 }
