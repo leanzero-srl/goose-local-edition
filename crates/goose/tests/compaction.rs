@@ -13,7 +13,7 @@ use goose::session::{Session, SessionManager};
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
-use rmcp::model::{CallToolRequestParams, Tool};
+use rmcp::model::{CallToolRequestParams, RawContent, Tool};
 use rmcp::object;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -326,6 +326,7 @@ fn assert_conversation_compacted(conversation: &Conversation) {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_manual_compaction_updates_token_counts_and_conversation() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let agent = Agent::new();
@@ -417,6 +418,7 @@ async fn test_manual_compaction_updates_token_counts_and_conversation() -> Resul
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_auto_compaction_during_reply() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let agent = Agent::new();
@@ -577,6 +579,7 @@ async fn test_auto_compaction_during_reply() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_context_limit_recovery_compaction() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let agent = Agent::new();
@@ -757,6 +760,7 @@ async fn test_context_limit_recovery_compaction() -> Result<()> {
 /// all tool content, so nothing survived summarization verbatim and a 40-turn swarm sink lost the
 /// exact bytes of the file it was editing.
 #[tokio::test]
+#[serial_test::serial]
 async fn keep_tail_survives_compaction_verbatim_and_zero_is_identity() -> Result<()> {
     use goose::context_mgmt::compact_messages_with_tail;
     use rmcp::model::{AnnotateAble, CallToolRequestParams, CallToolResult, RawContent};
@@ -864,6 +868,7 @@ struct ProactiveCompactionProvider {
     main_calls: AtomicUsize,
     observed_context_limits: Mutex<Vec<Option<usize>>>,
     call_sequence: Mutex<Vec<&'static str>>,
+    first_main_system_prompt: Mutex<Option<String>>,
     second_turn_messages: Mutex<Option<Vec<Message>>>,
 }
 
@@ -873,6 +878,7 @@ impl ProactiveCompactionProvider {
             main_calls: AtomicUsize::new(0),
             observed_context_limits: Mutex::new(Vec::new()),
             call_sequence: Mutex::new(Vec::new()),
+            first_main_system_prompt: Mutex::new(None),
             second_turn_messages: Mutex::new(None),
         }
     }
@@ -901,7 +907,7 @@ impl Provider for ProactiveCompactionProvider {
     async fn stream(
         &self,
         model_config: &ModelConfig,
-        _system_prompt: &str,
+        system_prompt: &str,
         messages: &[Message],
         _tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
@@ -921,6 +927,7 @@ impl Provider for ProactiveCompactionProvider {
         match self.main_calls.fetch_add(1, Ordering::SeqCst) {
             0 => {
                 self.call_sequence.lock().unwrap().push("main-1");
+                *self.first_main_system_prompt.lock().unwrap() = Some(system_prompt.to_string());
                 let request = CallToolRequestParams::new("developer__shell")
                     .with_arguments(object!({"command": "printf compaction-tail-marker"}));
                 Ok(Self::response(
@@ -931,6 +938,37 @@ impl Provider for ProactiveCompactionProvider {
             1 => {
                 self.call_sequence.lock().unwrap().push("main-2");
                 *self.second_turn_messages.lock().unwrap() = Some(messages.to_vec());
+                let system_prompt_preserved =
+                    self.first_main_system_prompt.lock().unwrap().as_deref() == Some(system_prompt);
+                let directive_preserved = messages.iter().any(|message| {
+                    message.content.iter().any(|content| {
+                        matches!(content, MessageContent::Text(text) if text.text == "Run the marker command, then finish.")
+                    })
+                });
+                let successful_marker_preserved = messages.iter().any(|message| {
+                    message.content.iter().any(|content| {
+                        let MessageContent::ToolResponse(response) = content else {
+                            return false;
+                        };
+                        if response.id != "continuity-call" {
+                            return false;
+                        }
+                        let Ok(result) = &response.tool_result else {
+                            return false;
+                        };
+                        !result.is_error.unwrap_or(false)
+                            && result.content.iter().any(|content| {
+                                matches!(&content.raw, RawContent::Text(text) if text.text.contains("compaction-tail-marker"))
+                            })
+                    })
+                });
+                if !(system_prompt_preserved && directive_preserved && successful_marker_preserved)
+                {
+                    return Err(ProviderError::ExecutionError(
+                        "post-compaction turn lost required instruction or successful tool state"
+                            .to_string(),
+                    ));
+                }
                 Ok(Self::response(
                     Message::assistant().with_text("completed after proactive compaction"),
                     Usage::new(Some(300), Some(30), Some(330)),
@@ -951,6 +989,7 @@ impl Provider for ProactiveCompactionProvider {
 /// rejects an oversized request. Force the first tool turn over a small ModelConfig limit and prove
 /// that compaction happens before turn two while the exact request/response tail remains usable.
 #[tokio::test]
+#[serial_test::serial]
 async fn forced_low_cap_compacts_between_tool_turns_and_preserves_exact_tail() -> Result<()> {
     let _env = env_lock::lock_env(
         [
