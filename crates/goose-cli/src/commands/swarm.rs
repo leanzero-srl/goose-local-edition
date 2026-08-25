@@ -52,10 +52,10 @@ use goose_swarm::{
     PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
     ProviderLifecycleStartError, ProviderNudgeDelivery, ProviderRequestKey, ProviderRequestReceipt,
     ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
-    ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, Scheduler,
-    SemanticActivityPublisher, SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput,
-    TaskSpec, TaskVersion, ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkOpportunity,
-    WorkRole,
+    ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport,
+    Scheduler, SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
+    SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, TaskVersion,
+    ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -12906,6 +12906,309 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             acceptance_evidence: vec!["cargo test core_contract passes".to_string()],
             exclusions: vec!["Do not edit the application entry point".to_string()],
         }
+    }
+
+    fn capability_task(id: &str, files: &[&str], deps: &[&str]) -> TaskSpec {
+        TaskSpec {
+            id: id.to_string(),
+            description: format!(
+                "OBJECTIVE\nImplement {id}\n\nEXCLUSIVE MODULE BOUNDARY\nOwn {files:?}\n\n\
+                 CONCRETE IMPLEMENTATION STEPS\n- Implement {id}\n\nPRODUCER / CONSUMER \
+                 INTERFACES\n- Preserve {id} contract\n\nEDGE CASES\n- Empty input\n\nEXECUTABLE \
+                 ACCEPTANCE EVIDENCE\n- Test {id}\n\nEXPLICIT EXCLUSIONS\n- Do not edit siblings"
+            ),
+            difficulty: goose_swarm::Difficulty::Hard,
+            preferred_model: Some("qwen".to_string()),
+            owned_files: files.iter().map(|file| (*file).to_string()).collect(),
+            deps: deps.iter().map(|dep| (*dep).to_string()).collect(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        }
+    }
+
+    #[test]
+    fn capability_repair_wave_is_disjoint_stable_and_dependency_aware() {
+        let build = vec![
+            capability_task("cap-a", &["src/a.rs"], &[]),
+            capability_task("test-a", &["tests/a.rs"], &["cap-a"]),
+            capability_task("cap-b", &["src/b.rs"], &[]),
+            capability_task("cap-c", &["src/c.rs"], &[]),
+            capability_task("integrate", &["src/main.rs"], &["cap-a", "cap-b", "cap-c"]),
+            capability_task("test-e2e", &["tests/e2e.rs"], &["integrate"]),
+        ];
+        let models = vec![
+            "local".to_string(),
+            "workhorse".to_string(),
+            "mac".to_string(),
+        ];
+        let repair = capability_repair_specs(&build, true, &models).unwrap();
+        assert_eq!(repair.len(), 3);
+        let roots = &repair[..];
+        assert!(roots.iter().all(|spec| spec.deps.is_empty()));
+        assert_eq!(
+            roots
+                .iter()
+                .map(|spec| spec.preferred_model.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["local", "workhorse", "mac"]
+        );
+        let a_root = roots
+            .iter()
+            .find(|spec| spec.owned_files.contains(&"src/a.rs".to_string()))
+            .unwrap();
+        assert!(a_root.owned_files.contains(&"tests/a.rs".to_string()));
+        assert!(a_root.description.contains("### cap-a"));
+        assert!(a_root.description.contains("### test-a"));
+        assert!(a_root.description.contains("port 0"));
+
+        let mut original_files = build
+            .iter()
+            .filter(|spec| spec.id != "integrate" && spec.id != "test-e2e")
+            .flat_map(|spec| spec.owned_files.iter().cloned())
+            .collect::<Vec<_>>();
+        let mut repaired_files = repair
+            .iter()
+            .flat_map(|spec| spec.owned_files.iter().cloned())
+            .collect::<Vec<_>>();
+        original_files.sort();
+        repaired_files.sort();
+        assert_eq!(repaired_files, original_files);
+        assert_eq!(
+            repaired_files.iter().collect::<HashSet<_>>().len(),
+            repaired_files.len()
+        );
+
+        let mut reversed = build;
+        reversed.reverse();
+        let replay = capability_repair_specs(&reversed, true, &models).unwrap();
+        let shape = |specs: &[TaskSpec]| {
+            specs
+                .iter()
+                .map(|spec| {
+                    (
+                        spec.id.clone(),
+                        spec.description.clone(),
+                        spec.preferred_model.clone(),
+                        spec.owned_files.clone(),
+                        spec.deps.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shape(&repair), shape(&replay));
+    }
+
+    #[test]
+    fn capability_repair_wave_does_not_invent_parallel_work() {
+        let build = vec![
+            capability_task("one", &["one.rs"], &[]),
+            capability_task("two", &["two.rs"], &["one"]),
+        ];
+        let repair = capability_repair_specs(
+            &build,
+            false,
+            &[
+                "local".to_string(),
+                "workhorse".to_string(),
+                "mac".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(repair.len(), 1);
+        assert_eq!(repair[0].owned_files, vec!["one.rs", "two.rs"]);
+    }
+
+    #[test]
+    fn capability_repair_wave_drops_fileless_only_components() {
+        let build = vec![capability_task("verify-only", &[], &[])];
+        let repair = capability_repair_specs(
+            &build,
+            false,
+            &["local".to_string(), "workhorse".to_string()],
+        )
+        .unwrap();
+        assert!(repair.is_empty());
+    }
+
+    #[test]
+    fn completed_checkpoint_evidence_preserves_fileless_outputs_and_attempts() {
+        let specs = vec![
+            capability_task("build", &["src/lib.rs"], &[]),
+            capability_task("verify", &[], &["build"]),
+        ];
+        let outcome = |task_id: &str, output: &str, attempts: u32, owns_nothing: bool| {
+            goose_swarm::TaskOutcome {
+                task_id: task_id.to_string(),
+                status: "done".to_string(),
+                salvaged: false,
+                completion: None,
+                device: Some("local".to_string()),
+                model: Some("qwen".to_string()),
+                attempts,
+                attempt_history: Vec::new(),
+                elapsed_ms: Some(1),
+                session_id: None,
+                tool_calls: Vec::new(),
+                output: Some(output.to_string()),
+                owns_nothing,
+            }
+        };
+        let report = RunReport {
+            done: vec!["build".to_string(), "verify".to_string()],
+            salvaged: Vec::new(),
+            failed: Vec::new(),
+            bonus: Vec::new(),
+            planned_files: vec!["src/lib.rs".to_string()],
+            results: HashMap::new(),
+            context_json: serde_json::Value::Null,
+            dispatched_per_device: HashMap::new(),
+            tasks: vec![
+                outcome("verify", "verified output", 2, true),
+                outcome("build", "build output", 1, false),
+            ],
+            per_device: HashMap::new(),
+        };
+        let evidence = completed_checkpoint_evidence(&specs, &report).unwrap();
+        assert_eq!(
+            evidence
+                .iter()
+                .map(|item| (item.task_id.as_str(), item.output.as_str(), item.attempts))
+                .collect::<Vec<_>>(),
+            vec![
+                ("build", "build output", 1),
+                ("verify", "verified output", 2)
+            ]
+        );
+    }
+
+    #[test]
+    fn repair_task_classification_separates_capability_audits_from_proven_repairs() {
+        for task_id in [
+            "fix::r1::src",
+            "complete-fix::twin0",
+            "boot-repair",
+            "wire-fix::entry",
+        ] {
+            assert!(is_proven_repair_task_id(task_id), "missed {task_id}");
+            assert!(!is_capability_audit_task_id(task_id));
+        }
+        assert!(is_capability_audit_task_id("repair::capability::01"));
+        assert!(!is_proven_repair_task_id("repair::capability::01"));
+        assert!(!is_proven_repair_task_id("build-core"));
+        assert!(!is_capability_audit_task_id("test-core"));
+    }
+
+    #[test]
+    fn rendered_capability_audit_prompt_is_evidence_first_and_file_scoped() {
+        let capability = capability_task("cap-a", &["src/a.rs", "tests/a.rs"], &[]);
+        let layout = format!(
+            "{}{}",
+            capability_audit_owner_body(),
+            capability_repair_description(
+                std::slice::from_ref(&capability),
+                &capability.owned_files,
+            )
+        );
+        let prompt = render_worker_system_prompt(WorkerSystemPromptParts {
+            worker_directive: "Build and test Rust. ",
+            fix_directive: "",
+            lang_rules: "",
+            file_write_rule: worker_file_write_rule(true),
+            reading_rules: capability_audit_reading_rules(),
+            stopping_rules: capability_audit_stopping_rules(),
+            write_first_block: "",
+            decisions_block: "",
+            doc_facts_block: "",
+            pitfalls_block: "",
+            notes_block: "",
+            pillars_block: "",
+            layout_block: &layout,
+            contracts_block: "",
+            context_block: "",
+        });
+        for required in [
+            "No defect is presumed",
+            "no-edit result",
+            "OWNED files only",
+            "port 0",
+            "whole-product ruler",
+        ] {
+            assert!(prompt.contains(required), "missing `{required}`: {prompt}");
+        }
+        let normalized = prompt.to_lowercase();
+        for forbidden in [
+            "proven defect",
+            "third tool call",
+            "you may edit any file",
+            "shadow",
+            "must have made an edit",
+            "zero file modifications fails",
+        ] {
+            assert!(
+                !normalized.contains(forbidden),
+                "capability audit leaked forced-fix rule `{forbidden}`: {prompt}"
+            );
+        }
+    }
+
+    #[test]
+    fn integration_owner_closes_capabilities_without_duplicating_requirement_ownership() {
+        let opening = ResearchPillarOpening {
+            requirements: vec![
+                AuthoredRequirement {
+                    id: "REQ-a".to_string(),
+                    text: "Build A".to_string(),
+                    critical: true,
+                },
+                AuthoredRequirement {
+                    id: "REQ-b".to_string(),
+                    text: "Build B".to_string(),
+                    critical: true,
+                },
+            ],
+            pillars: vec![
+                ResearchPillar {
+                    id: "a".to_string(),
+                    title: "A".to_string(),
+                    objective: "Build A".to_string(),
+                    requirement_ids: vec!["REQ-a".to_string()],
+                    dependencies: Vec::new(),
+                    research_questions: vec!["What is A's interface?".to_string()],
+                    acceptance_criteria: vec!["A passes".to_string()],
+                    exclusions: vec!["B".to_string()],
+                },
+                ResearchPillar {
+                    id: "b".to_string(),
+                    title: "B".to_string(),
+                    objective: "Build B".to_string(),
+                    requirement_ids: vec!["REQ-b".to_string()],
+                    dependencies: Vec::new(),
+                    research_questions: vec!["What is B's interface?".to_string()],
+                    acceptance_criteria: vec!["B passes".to_string()],
+                    exclusions: vec!["A".to_string()],
+                },
+            ],
+            integration_contract: IntegrationContract {
+                owner: "workhorse".to_string(),
+                integration_required: true,
+                objective: "Hook A and B into one application".to_string(),
+                interface_invariants: vec!["Use both public interfaces".to_string()],
+                acceptance_criteria: vec!["The application starts".to_string()],
+            },
+        };
+        let plan = serde_json::json!({"subtasks": [
+            {"id":"a", "description":"A", "model":"local", "depends_on":[], "files":["a.rs"]},
+            {"id":"b", "description":"B", "model":"mac", "depends_on":[], "files":["b.rs"]},
+            {"id":"hook", "description":"Hook A and B", "model":"workhorse", "depends_on":["a","b"], "files":["main.rs"]}
+        ]});
+        validate_pillar_integration_owner(&opening, &plan).unwrap();
+
+        let mut disconnected = plan;
+        disconnected["subtasks"][2]["depends_on"] = serde_json::json!(["a"]);
+        assert!(validate_pillar_integration_owner(&opening, &disconnected)
+            .unwrap_err()
+            .to_string()
+            .contains("exactly one non-test terminal owner"));
     }
 
     #[test]
@@ -45470,6 +45773,397 @@ fn fix_round_specs(
     specs
 }
 
+fn is_proven_repair_task_id(task_id: &str) -> bool {
+    task_id.starts_with("fix::")
+        || task_id.starts_with("complete-fix")
+        || task_id.starts_with("boot-repair")
+        || task_id.starts_with("wire-fix")
+}
+
+fn is_capability_audit_task_id(task_id: &str) -> bool {
+    task_id.starts_with("repair::capability::")
+}
+
+fn capability_audit_owner_body() -> &'static str {
+    "YOU ARE INSPECTING AN EXISTING CAPABILITY AFTER ITS FIRST BUILD. No defect is presumed and a \
+     no-edit result backed by passing evidence is valid. Read every owned file once, run only the \
+     compiled acceptance evidence in this task, and compare the observed result to the original \
+     contract. If the evidence passes, make NO edit and report exactly what passed. If it proves a \
+     defect, make the smallest correction in your OWNED files only and rerun that evidence once. \
+     This is the live working tree: never edit a sibling-owned file, weaken a check, or manufacture \
+     green.\n\n"
+}
+
+fn capability_audit_reading_rules() -> &'static str {
+    "- CAPABILITY AUDIT SCOPE: read the owned files and the named acceptance evidence once. Sibling \
+     files are read-only interfaces, not a second work list. A passing capability needs no edit; a \
+     failing one permits edits only to the owned files.\n"
+}
+
+fn capability_audit_stopping_rules() -> &'static str {
+    "- CAPABILITY AUDIT STOP RULE: after one honest scoped evidence run (and one rerun only if you \
+     repaired a proven failure), stop every server/child process and finish. No edit is required when \
+     the original evidence passes. The engine runs the whole-product ruler.\n"
+}
+
+fn worker_file_write_rule(repairing: bool) -> &'static str {
+    if repairing {
+        "- Preserve existing files. Use a narrow `edit` only when the task's evidence requires a \
+         correction; never rewrite a working file merely to restate it.\n"
+    } else {
+        "- Write each file COMPLETE in ONE `write` and move on. Do NOT write a rough draft then refine \
+         it with a chain of small `edit`s — plan the whole file first, then write it once. Every extra \
+         round-trip costs ~30-60s on a local model and is the main reason tasks run slow.\n"
+    }
+}
+
+struct WorkerSystemPromptParts<'a> {
+    worker_directive: &'a str,
+    fix_directive: &'a str,
+    lang_rules: &'a str,
+    file_write_rule: &'a str,
+    reading_rules: &'a str,
+    stopping_rules: &'a str,
+    write_first_block: &'a str,
+    decisions_block: &'a str,
+    doc_facts_block: &'a str,
+    pitfalls_block: &'a str,
+    notes_block: &'a str,
+    pillars_block: &'a str,
+    layout_block: &'a str,
+    contracts_block: &'a str,
+    context_block: &'a str,
+}
+
+fn render_worker_system_prompt(parts: WorkerSystemPromptParts<'_>) -> String {
+    let WorkerSystemPromptParts {
+        worker_directive,
+        fix_directive,
+        lang_rules,
+        file_write_rule,
+        reading_rules,
+        stopping_rules,
+        write_first_block,
+        decisions_block,
+        doc_facts_block,
+        pitfalls_block,
+        notes_block,
+        pillars_block,
+        layout_block,
+        contracts_block,
+        context_block,
+    } = parts;
+    format!(
+        "You are a WORKER on a local AI swarm. {worker_directive}{fix_directive}Complete EXACTLY the task below using your tools, \
+         in the current working directory. Write correct, minimal code; do nothing beyond the task. \
+         When finished, briefly state what you produced.\n\
+         SMALL MODULAR FILES (hard rule): write SMALL, single-responsibility files — ONE clear concern each. If you own \
+         several files, write each one focused and short; NEVER cram everything into one big monolithic file (a 300+-line \
+         do-everything file is wrong — split it by responsibility into the files you own). REUSE the modules whose API is \
+         injected below: IMPORT and call them, do NOT re-implement their logic — re-coding an algorithm another module already \
+         provides produces two copies that drift and one silently breaks.\n\
+         \n\
+         TOOLS & ENVIRONMENT — follow exactly, this avoids wasted calls:\n\
+         - To READ a text file, use the shell tool: `cat <path>`. There is NO `read` tool.\n\
+         - Keep tool OUTPUT SMALL: NEVER dump full `help()`/pydoc or whole large files into the chat — \
+         use `head`, `grep`, or read only the specific lines/symbols you need. Large context is very \
+         slow on local models and degrades quality.\n\
+         - If a tool result says it was too large and was saved to a `goose_mcp_responses` temp file, \
+         do NOT `cat` that temp file — reading it just re-truncates into ANOTHER temp file and you will \
+         loop forever. Instead re-read the ORIGINAL file with `sed -n '1,120p'`/`grep`/`head` to get \
+         only the part you need.\n\
+         {lang_rules}             - NEVER run `cd`. You are ALREADY in the working directory — run commands directly there \
+         (e.g. `python3 -m pytest`, `cat src/foo.py`). Repeated `cd` into the same dir just burns turns.\n\
+         - In SHELL commands prefer RELATIVE paths (your cwd is the project root); if you must pass an \
+         absolute path, QUOTE it — the project's absolute path contains a SPACE and an unquoted `cat \
+         /Users/...` splits into two bogus paths and fails the call.\n\
+         - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
+         - The `write` tool takes TWO arguments in the SAME call: `path` (the absolute file path) AND \
+         `content` (the whole file). A write with `content` but no `path` FAILS with 'missing field path' \
+         and wastes the turn — ALWAYS include the `path`. Same for `edit`: pass `path` every time.\n\
+         {file_write_rule}\
+         - If a test or command fails, read the ERROR TEXT first — it names the file, line and symbol. \
+         Re-read a file ONLY if the error points at something you do not already have in front of you; \
+         do NOT reflexively `cat` the whole file before every fix. Never speculate about \
+         bytecode/.pyc/caching/compilation — the error text is reality.\n\
+         - Create ONLY the files your task owns; never leave scratch, notes, or plan files behind.\n\
+         - Every dependency's API you may call is ALREADY injected above (under 'API of …' / the frozen \
+         interfaces). USE those exact names, signatures and constants — do NOT re-`cat` a dependency \
+         whose API is shown; independent guesses DIVERGE and the tests then disagree with the code. \
+         Only `cat` a dependency's source when the injected API is MISSING the exact symbol/constant you \
+         must call — and then read just that file, once.\n\
+         - STAY INSIDE the current working directory. NEVER `cd`, `ls`, or `cat` files in PARENT or \
+         SIBLING directories — they are unrelated projects. If the directory is empty, that is \
+         expected for a new project: just create your files, do not go looking elsewhere.\n\
+         - NEVER read the swarm's/harness's OWN artifacts that may sit in this directory or its parent: \
+         `out.json`, any `*out.json`, `*progress*.log`, `plan.json`, `prompt.txt`, or the `.swarm/` \
+         folder. They are run logs / the plan / the task prompt — NOT project files; cat-ing them tells \
+         you nothing and wastes turns (workers have looped 10+ times on `plan.json`). Ignore them \
+         completely and also do NOT create a `plan.json`.\n\
+         {reading_rules}{stopping_rules}\
+         \n{write_first_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
+    )
+}
+
+fn capability_repair_description(capabilities: &[TaskSpec], owned_files: &[String]) -> String {
+    let contracts = capabilities
+        .iter()
+        .map(|spec| format!("### {}\n{}", spec.id, spec.description.trim()))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    format!(
+        "POST-BUILD CAPABILITY REPAIR\n\
+         Inspect and, only when evidence proves a defect, repair the existing capability files below. \
+         This is not a second implementation pass and not a plan review. Preserve working behavior, make \
+         narrow edits, and never edit a sibling-owned file.\n\n\
+         WRITABLE FILES (exclusive to this repair task)\n{}\n\n\
+         ORIGINAL COMPILED CAPABILITY CONTRACTS\n{contracts}\n\n\
+         LIVE TEST HARNESS\n\
+         - Use the test framework's per-process temporary directory or in-memory state; clean it up before \
+           finishing and never read or write `.swarm`.\n\
+         - Every live server must bind 127.0.0.1 on port 0 and read back the OS-assigned port. Never \
+           preselect or probe a fixed port; port 0 is the collision-free allocation contract.\n\
+         - Stop every server and child process before finishing.\n\
+         - Run only the scoped acceptance evidence named above; the engine runs the whole-product ruler once \
+           after every disjoint repair task finishes.\n\n\
+         EXCLUSIONS\n\
+         - Do not redesign, re-plan, or broaden these capabilities.\n\
+         - Do not run or repair another capability's files.\n\
+         - Do not weaken tests or acceptance criteria to manufacture green.",
+        owned_files
+            .iter()
+            .map(|file| format!("- {file}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
+fn capability_components(mut specs: Vec<TaskSpec>) -> Vec<Vec<TaskSpec>> {
+    specs.sort_by(|left, right| left.id.cmp(&right.id));
+    let indexes = specs
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| (spec.id.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let mut adjacency = vec![Vec::<usize>::new(); specs.len()];
+    for (index, spec) in specs.iter().enumerate() {
+        for dependency in &spec.deps {
+            if let Some(&dependency_index) = indexes.get(dependency.as_str()) {
+                adjacency[index].push(dependency_index);
+                adjacency[dependency_index].push(index);
+            }
+        }
+    }
+    let mut seen = vec![false; specs.len()];
+    let mut components = Vec::new();
+    for root in 0..specs.len() {
+        if seen[root] {
+            continue;
+        }
+        let mut pending = vec![root];
+        let mut component = Vec::new();
+        while let Some(index) = pending.pop() {
+            if std::mem::replace(&mut seen[index], true) {
+                continue;
+            }
+            component.push(specs[index].clone());
+            pending.extend(adjacency[index].iter().copied());
+        }
+        component.sort_by(|left, right| left.id.cmp(&right.id));
+        components.push(component);
+    }
+    components.sort_by(|left, right| left[0].id.cmp(&right[0].id));
+    components
+}
+
+fn task_depends_on(task_id: &str, ancestor_id: &str, by_id: &HashMap<&str, &TaskSpec>) -> bool {
+    let mut pending = by_id
+        .get(task_id)
+        .map(|spec| spec.deps.clone())
+        .unwrap_or_default();
+    let mut seen = HashSet::new();
+    while let Some(dependency) = pending.pop() {
+        if dependency == ancestor_id {
+            return true;
+        }
+        if seen.insert(dependency.clone()) {
+            if let Some(spec) = by_id.get(dependency.as_str()) {
+                pending.extend(spec.deps.iter().cloned());
+            }
+        }
+    }
+    false
+}
+
+fn capability_repair_specs(
+    build_specs: &[TaskSpec],
+    integration_required: bool,
+    fleet_models: &[String],
+) -> Result<Vec<TaskSpec>> {
+    if build_specs.is_empty() || fleet_models.is_empty() {
+        return Ok(Vec::new());
+    }
+    validate_skeleton_file_authority(build_specs)?;
+    let mut ordered = build_specs.to_vec();
+    ordered.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let participating = ordered
+        .iter()
+        .filter(|spec| !structural_test_task(spec))
+        .collect::<Vec<_>>();
+    let integration_id = if integration_required {
+        let depended_on = participating
+            .iter()
+            .flat_map(|spec| spec.deps.iter().cloned())
+            .collect::<HashSet<_>>();
+        let terminals = participating
+            .iter()
+            .filter(|spec| !depended_on.contains(&spec.id))
+            .map(|spec| spec.id.clone())
+            .collect::<Vec<_>>();
+        if terminals.len() != 1 {
+            bail!(
+                "capability repair expected one integration terminal, found {}",
+                terminals.len()
+            );
+        }
+        Some(terminals[0].clone())
+    } else {
+        None
+    };
+    let by_id = ordered
+        .iter()
+        .map(|spec| (spec.id.as_str(), spec))
+        .collect::<HashMap<_, _>>();
+    let mut integration_bundle = Vec::new();
+    if let Some(integration_id) = integration_id.as_deref() {
+        for spec in &ordered {
+            if spec.id == integration_id
+                || (structural_test_task(spec) && task_depends_on(&spec.id, integration_id, &by_id))
+            {
+                integration_bundle.push(spec.clone());
+            }
+        }
+        let integration_ids = integration_bundle
+            .iter()
+            .map(|spec| spec.id.as_str())
+            .collect::<HashSet<_>>();
+        ordered.retain(|spec| !integration_ids.contains(spec.id.as_str()));
+    }
+    let components = capability_components(ordered)
+        .into_iter()
+        .filter(|component| {
+            component
+                .iter()
+                .any(|capability| !capability.owned_files.is_empty())
+        })
+        .collect::<Vec<_>>();
+    if components.is_empty() && integration_bundle.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let root_count = components.len().min(fleet_models.len()).min(3);
+    let mut bins = vec![Vec::<TaskSpec>::new(); root_count];
+    let mut bin_weight = vec![0usize; root_count];
+    for component in components {
+        let index = bin_weight
+            .iter()
+            .enumerate()
+            .min_by_key(|(index, weight)| (**weight, *index))
+            .map(|(index, _)| index)
+            .unwrap_or(0);
+        bin_weight[index] = bin_weight[index].saturating_add(
+            component
+                .iter()
+                .map(|capability| {
+                    capability.owned_files.len().max(1) + capability.description.len() / 1000
+                })
+                .sum::<usize>(),
+        );
+        bins[index].extend(component);
+    }
+
+    let mut repairs = Vec::new();
+    for (index, capabilities) in bins.into_iter().enumerate() {
+        if capabilities.is_empty() {
+            continue;
+        }
+        let mut owned_files = capabilities
+            .iter()
+            .flat_map(|spec| spec.owned_files.iter().cloned())
+            .collect::<Vec<_>>();
+        owned_files.sort();
+        owned_files.dedup();
+        let task_id = format!("repair::capability::{:02}", index + 1);
+        repairs.push(TaskSpec {
+            id: task_id,
+            description: capability_repair_description(&capabilities, &owned_files),
+            difficulty: goose_swarm::Difficulty::Hard,
+            preferred_model: Some(fleet_models[index % fleet_models.len()].clone()),
+            owned_files,
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        });
+    }
+
+    validate_skeleton_file_authority(&repairs)?;
+    Ok(repairs)
+}
+
+fn completed_checkpoint_evidence(
+    specs: &[TaskSpec],
+    report: &RunReport,
+) -> Result<Vec<SchedulerCompletedTaskEvidence>> {
+    if !report.failed.is_empty() || !report.salvaged.is_empty() {
+        bail!(
+            "cannot reseal scheduler checkpoints with failed {:?} or salvaged {:?} tasks",
+            report.failed,
+            report.salvaged
+        );
+    }
+    let expected = specs
+        .iter()
+        .map(|spec| spec.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let actual = report
+        .tasks
+        .iter()
+        .map(|outcome| outcome.task_id.as_str())
+        .collect::<BTreeSet<_>>();
+    if actual != expected || report.tasks.len() != expected.len() {
+        bail!("scheduler report task set diverged from the frozen build DAG");
+    }
+    let outcomes = report
+        .tasks
+        .iter()
+        .map(|outcome| (outcome.task_id.as_str(), outcome))
+        .collect::<HashMap<_, _>>();
+    let mut ordered = specs.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.id.cmp(&right.id));
+    ordered
+        .into_iter()
+        .map(|spec| {
+            let outcome = outcomes[spec.id.as_str()];
+            if outcome.status != "done" || outcome.salvaged || outcome.attempts == 0 {
+                bail!(
+                    "task {:?} lacks a verified completed checkpoint outcome",
+                    spec.id
+                );
+            }
+            let output = outcome
+                .output
+                .clone()
+                .ok_or_else(|| anyhow!("task {:?} lost its full checkpoint output", spec.id))?;
+            Ok(SchedulerCompletedTaskEvidence {
+                task_id: spec.id.clone(),
+                output,
+                attempts: outcome.attempts,
+            })
+        })
+        .collect()
+}
+
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
 /// Pure — unit-tested. Asks for the SMALLEST root-cause fix that makes collect-only + the `-m` entry pass.
 fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
@@ -46714,7 +47408,9 @@ impl GooseAgentDispatcher {
         // A REPAIR task — its file already exists and its job is a targeted edit, never a rewrite.
         // Same shape as `is_fix_round` further down (which this file has already been bitten by
         // twice: one defect, two sites, only one fixed).
-        let repairing = req.task_id.starts_with("fix::") || req.task_id.starts_with("complete-fix");
+        let capability_audit = is_capability_audit_task_id(&req.task_id);
+        let proven_repair = is_proven_repair_task_id(&req.task_id);
+        let repairing = capability_audit || proven_repair;
         let layout_block = if req.all_files.is_empty() {
             String::new()
         } else {
@@ -46910,7 +47606,9 @@ impl GooseAgentDispatcher {
                             || f.ends_with(".md")
                             || f.ends_with(".txt")
                     });
-                let owner_body = if repairing {
+                let owner_body = if capability_audit {
+                    capability_audit_owner_body().to_string()
+                } else if proven_repair {
                     // The repair worker used to receive the first-authoring script verbatim: "your
                     // VERY FIRST action must be to `write` your owned file(s) IN FULL", "NEVER `cat`
                     // the module", "tests are a SEPARATE subtask". Every clause is wrong for a task
@@ -46919,7 +47617,8 @@ impl GooseAgentDispatcher {
                     // from scratch is also how a repair round REGRESSES work that was already right.
                     "YOU ARE REPAIRING AN EXISTING FILE. It is already written and mostly works — the \
                      finding below names a PROVEN defect in it. ACT ON A CLOCK: your FIRST tool call \
-                     is `read` on the named file; by your THIRD tool call you MUST have made an `edit`. \
+                     is a scoped shell `cat`/`sed` on the named file; by your THIRD tool call you MUST \
+                     have made an `edit`. \
                      MEASURED across four repair attempts on two runs: every worker given this task \
                      read, planned eloquently, and ended its whole 15-minute budget with ZERO edits — \
                      the attempt was discarded and the defect survived. Planning is not the deliverable; \
@@ -47296,7 +47995,7 @@ impl GooseAgentDispatcher {
         // over_reading+looping and 42% of file-writing workers burn reads before their first write; 58% of
         // workers already write first, so the ordering is achievable on the same models. This SHAPES the
         // prompt only — it never blocks a read. Empty when off => the worker prompt is byte-identical.
-        let write_first_block = if write_first_on() {
+        let write_first_block = if write_first_on() && !repairing {
             "\nWRITE FIRST — before you read ANYTHING. Your VERY FIRST tool call MUST be a `write` that creates \
              one of your OWNED files as a working skeleton (its imports and the functions/classes the manifest \
              names, with minimal bodies), then fill it in. Do NOT `cat`/`ls`/`tree`/`find`/`grep`/'explore' \
@@ -47310,7 +48009,13 @@ impl GooseAgentDispatcher {
         // (is_test_author is resolved ABOVE layout_block — see the hoist next to kind_prompt_on)
         // The reading rule, per kind. A test-author MUST open the file it is writing; telling it not
         // to is the contradiction that produced SyntaxErrors in shipped test files.
-        let reading_rules = if kind_prompt_on && is_test_author {
+        let reading_rules = if capability_audit {
+            capability_audit_reading_rules()
+        } else if proven_repair {
+            "- REPAIR READ SCOPE: read every file this repair task owns and only the named interface or \
+             acceptance evidence needed to diagnose it. Sibling capability files are read-only; do not \
+             explore or rewrite the whole project. Make a narrow edit as soon as the defect is located.\n"
+        } else if kind_prompt_on && is_test_author {
             "- DON'T OVER-READ the project, but DO read what you are testing: the SOURCE module under \
              test (to get its real signatures) and YOUR OWN test file after you write it. Do not read \
              the rest of the suite or re-read the whole project.\n"
@@ -47353,7 +48058,11 @@ impl GooseAgentDispatcher {
         self.events.write_value(serde_json::json!({
             "event": "rules_delivered",
             "task_id": req.task_id,
-            "kind": if is_test_author {
+            "kind": if capability_audit {
+                "capability-audit"
+            } else if proven_repair {
+                "proven-repair"
+            } else if is_test_author {
                 "test-author"
             } else if read_only_shard {
                 "read-only-shard"
@@ -47389,7 +48098,11 @@ impl GooseAgentDispatcher {
             // test-author dispatch read "generic" over a tailored WRITE-FIRST section, manufacturing
             // 12 of 23 "mismatches" in one audited run out of the label alone.
             "rules_sections": {
-                "owned_part": if read_only_shard && kind_prompt_on {
+                "owned_part": if capability_audit {
+                    "capability-audit"
+                } else if proven_repair {
+                    "proven-repair"
+                } else if read_only_shard && kind_prompt_on {
                     "read-only-shard"
                 } else if req.owned_files.is_empty() {
                     "owns-nothing"
@@ -47398,7 +48111,11 @@ impl GooseAgentDispatcher {
                 } else {
                     "generic"
                 },
-                "reading_rules": if kind_prompt_on && is_test_author {
+                "reading_rules": if capability_audit {
+                    "capability-audit"
+                } else if proven_repair {
+                    "proven-repair"
+                } else if kind_prompt_on && is_test_author {
                     "test-author"
                 } else if kind_prompt_on && read_only_shard {
                     "read-only-shard"
@@ -47407,7 +48124,11 @@ impl GooseAgentDispatcher {
                 } else {
                     "off-generic"
                 },
-                "stopping_rules": if kind_prompt_on && is_test_author {
+                "stopping_rules": if capability_audit {
+                    "capability-audit"
+                } else if proven_repair {
+                    "proven-repair"
+                } else if kind_prompt_on && is_test_author {
                     "test-author"
                 } else if kind_prompt_on && read_only_shard {
                     "read-only-shard"
@@ -47419,7 +48140,13 @@ impl GooseAgentDispatcher {
             },
         }));
         // "STOP WHEN GREEN" is meaningless to a task that authors tests rather than satisfying them.
-        let stopping_rules = if kind_prompt_on && is_test_author {
+        let stopping_rules = if capability_audit {
+            capability_audit_stopping_rules()
+        } else if proven_repair {
+            "- REPAIR STOP RULE: run the scoped acceptance evidence once after your edit, stop every \
+             server or child process you started, record the actual ephemeral port used, and finish. The \
+             engine—not this worker—runs the whole-product ruler after all disjoint repairs complete.\n"
+        } else if kind_prompt_on && is_test_author {
             "- STOP WHEN YOUR TESTS RUN. Your job is a test file that IMPORTS and EXERCISES the real \
              module. Run it once to prove it collects and executes — a test file with a SyntaxError or \
              a bad import is worse than none. Then finish; do not chase coverage.\n"
@@ -47554,8 +48281,7 @@ impl GooseAgentDispatcher {
         // So the repair worker was handed the FIRST-AUTHORING rules — "write your owned file(s) IN
         // FULL", never read the module, tests are someone else's subtask — while its actual job was
         // to edit an existing file against a reproduced failure spanning several of them.
-        let is_fix_round = (req.task_id.starts_with("fix::")
-            || req.task_id.starts_with("complete-fix")
+        let is_fix_round = (proven_repair
             || (req.owned_files.is_empty()
                 && !req.task_id.starts_with("verify::")
                 && !req.task_id.starts_with("verify-e2e::")))
@@ -47579,58 +48305,24 @@ impl GooseAgentDispatcher {
         } else {
             ""
         };
-        let system_prompt = format!(
-            "You are a WORKER on a local AI swarm. {worker_directive}{fix_directive}Complete EXACTLY the task below using your tools, \
-             in the current working directory. Write correct, minimal code; do nothing beyond the task. \
-             When finished, briefly state what you produced.\n\
-             SMALL MODULAR FILES (hard rule): write SMALL, single-responsibility files — ONE clear concern each. If you own \
-             several files, write each one focused and short; NEVER cram everything into one big monolithic file (a 300+-line \
-             do-everything file is wrong — split it by responsibility into the files you own). REUSE the modules whose API is \
-             injected below: IMPORT and call them, do NOT re-implement their logic — re-coding an algorithm another module already \
-             provides produces two copies that drift and one silently breaks.\n\
-             \n\
-             TOOLS & ENVIRONMENT — follow exactly, this avoids wasted calls:\n\
-             - To READ a text file, use the shell tool: `cat <path>`. There is NO `read` tool.\n\
-             - Keep tool OUTPUT SMALL: NEVER dump full `help()`/pydoc or whole large files into the chat — \
-             use `head`, `grep`, or read only the specific lines/symbols you need. Large context is very \
-             slow on local models and degrades quality.\n\
-             - If a tool result says it was too large and was saved to a `goose_mcp_responses` temp file, \
-             do NOT `cat` that temp file — reading it just re-truncates into ANOTHER temp file and you will \
-             loop forever. Instead re-read the ORIGINAL file with `sed -n '1,120p'`/`grep`/`head` to get \
-             only the part you need.\n\
-             {lang_rules}             - NEVER run `cd`. You are ALREADY in the working directory — run commands directly there \
-             (e.g. `python3 -m pytest`, `cat src/foo.py`). Repeated `cd` into the same dir just burns turns.\n\
-             - In SHELL commands prefer RELATIVE paths (your cwd is the project root); if you must pass an \
-             absolute path, QUOTE it — the project's absolute path contains a SPACE and an unquoted `cat \
-             /Users/...` splits into two bogus paths and fails the call.\n\
-             - EVERY path you pass to write/edit MUST be ABSOLUTE (start with `/`); never a relative path.\n\
-             - The `write` tool takes TWO arguments in the SAME call: `path` (the absolute file path) AND \
-             `content` (the whole file). A write with `content` but no `path` FAILS with 'missing field path' \
-             and wastes the turn — ALWAYS include the `path`. Same for `edit`: pass `path` every time.\n\
-             - Write each file COMPLETE in ONE `write` and move on. Do NOT write a rough draft then refine \
-             it with a chain of small `edit`s — plan the whole file first, then write it once. Every extra \
-             round-trip costs ~30-60s on a local model and is the main reason tasks run slow.\n\
-             - If a test or command fails, read the ERROR TEXT first — it names the file, line and symbol. \
-             Re-read a file ONLY if the error points at something you do not already have in front of you; \
-             do NOT reflexively `cat` the whole file before every fix. Never speculate about \
-             bytecode/.pyc/caching/compilation — the error text is reality.\n\
-             - Create ONLY the files your task owns; never leave scratch, notes, or plan files behind.\n\
-             - Every dependency's API you may call is ALREADY injected above (under 'API of …' / the frozen \
-             interfaces). USE those exact names, signatures and constants — do NOT re-`cat` a dependency \
-             whose API is shown; independent guesses DIVERGE and the tests then disagree with the code. \
-             Only `cat` a dependency's source when the injected API is MISSING the exact symbol/constant you \
-             must call — and then read just that file, once.\n\
-             - STAY INSIDE the current working directory. NEVER `cd`, `ls`, or `cat` files in PARENT or \
-             SIBLING directories — they are unrelated projects. If the directory is empty, that is \
-             expected for a new project: just create your files, do not go looking elsewhere.\n\
-             - NEVER read the swarm's/harness's OWN artifacts that may sit in this directory or its parent: \
-             `out.json`, any `*out.json`, `*progress*.log`, `plan.json`, `prompt.txt`, or the `.swarm/` \
-             folder. They are run logs / the plan / the task prompt — NOT project files; cat-ing them tells \
-             you nothing and wastes turns (workers have looped 10+ times on `plan.json`). Ignore them \
-             completely and also do NOT create a `plan.json`.\n\
-             {reading_rules}{stopping_rules}\
-             \n{write_first_block}{decisions_block}{doc_facts_block}{pitfalls_block}{notes_block}{pillars_block}{layout_block}{contracts_block}{context_block}"
-        );
+        let file_write_rule = worker_file_write_rule(repairing);
+        let system_prompt = render_worker_system_prompt(WorkerSystemPromptParts {
+            worker_directive: &worker_directive,
+            fix_directive,
+            lang_rules: &lang_rules,
+            file_write_rule,
+            reading_rules,
+            stopping_rules,
+            write_first_block: &write_first_block,
+            decisions_block: &decisions_block,
+            doc_facts_block: &doc_facts_block,
+            pitfalls_block: &pitfalls_block,
+            notes_block: &notes_block,
+            pillars_block: &pillars_block,
+            layout_block: &layout_block,
+            contracts_block: &contracts_block,
+            context_block: &context_block,
+        });
         // Live concurrency view: each task prints when it STARTS and FINISHES. Because dispatches
         // run concurrently, you see several "▸ run" lines before their "✓" — that IS the parallelism.
         let started = std::time::Instant::now();
@@ -49499,6 +50191,75 @@ fn validate_no_cross_pillar_integration(
     Ok(())
 }
 
+fn validate_pillar_integration_owner(
+    opening: &ResearchPillarOpening,
+    canonical_plan: &serde_json::Value,
+) -> Result<()> {
+    if !opening.integration_contract.integration_required {
+        return Ok(());
+    }
+    let specs = goose_swarm::specs_from_plan_json(&serde_json::to_string(canonical_plan)?)?;
+    let participating = specs
+        .iter()
+        .filter(|spec| !structural_test_task(spec))
+        .collect::<Vec<_>>();
+    let depended_on = participating
+        .iter()
+        .flat_map(|spec| spec.deps.iter().map(String::as_str))
+        .collect::<HashSet<_>>();
+    let terminals = participating
+        .iter()
+        .filter(|spec| !depended_on.contains(spec.id.as_str()))
+        .copied()
+        .collect::<Vec<_>>();
+    if terminals.len() != 1 {
+        bail!(
+            "pillar integration requires exactly one non-test terminal owner, found {}",
+            terminals.len()
+        );
+    }
+    let terminal = terminals[0];
+    if terminal.owned_files.is_empty() {
+        bail!(
+            "pillar integration terminal `{}` must own the concrete shared entry or composition artifact",
+            terminal.id
+        );
+    }
+    if terminal.preferred_model.as_deref() != Some(opening.integration_contract.owner.as_str()) {
+        bail!(
+            "pillar integration terminal `{}` must run on strongest integration owner `{}`",
+            terminal.id,
+            opening.integration_contract.owner
+        );
+    }
+    let by_id = participating
+        .iter()
+        .map(|spec| (spec.id.as_str(), *spec))
+        .collect::<HashMap<_, _>>();
+    let mut ancestors = HashSet::new();
+    let mut pending = terminal.deps.clone();
+    while let Some(task_id) = pending.pop() {
+        if !ancestors.insert(task_id.clone()) {
+            continue;
+        }
+        if let Some(spec) = by_id.get(task_id.as_str()) {
+            pending.extend(spec.deps.iter().cloned());
+        }
+    }
+    let missing = participating
+        .iter()
+        .filter(|spec| spec.id != terminal.id && !ancestors.contains(&spec.id))
+        .map(|spec| spec.id.clone())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        bail!(
+            "pillar integration terminal `{}` does not close every produced capability; missing ancestors {missing:?}",
+            terminal.id,
+        );
+    }
+    Ok(())
+}
+
 fn append_uncertainty_routes_to_tasks(
     canonical_plan: &mut serde_json::Value,
     routes_by_task: BTreeMap<String, Vec<String>>,
@@ -49545,6 +50306,7 @@ fn compile_pillar_plan(
     let mut draft: PillarPlanDraft = serde_json::from_str(raw.trim())
         .map_err(|error| anyhow!("pillar plan was not valid typed JSON: {error}"))?;
     compile_pillar_task_specs(&mut draft.canonical_plan, draft.task_specs)?;
+    validate_pillar_integration_owner(opening, &draft.canonical_plan)?;
     if !opening.integration_contract.integration_required {
         validate_no_cross_pillar_integration(opening, &draft.canonical_plan, &draft.task_coverage)?;
     }
@@ -57582,20 +58344,40 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     } else {
         dag
     };
+    let mut build_specs = dag
+        .tasks
+        .values()
+        .map(|node| node.spec.clone())
+        .collect::<Vec<_>>();
+    build_specs.sort_by(|left, right| left.id.cmp(&right.id));
+    let pillar_integration_required = if pillar_flow_on {
+        serde_json::from_str::<serde_json::Value>(&plan_json)?
+            .get("canonical_plan_authority")
+            .and_then(|authority| authority.get("integration_required"))
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| anyhow!("pillar plan lost its typed integration policy"))?
+    } else {
+        false
+    };
     dispatcher.validate_replan_authority_matches_final_dag(&dag)?;
     let mut scheduler = Scheduler::new(devices, cfg.max_attempts)
         .with_sink(sink.clone())
         // DOC-PREFETCH (Phase 1, Move 2): hand the grounded facts to every worker. Empty when off =>
         // byte-identical (matches the `with_doc_facts` default).
         .with_doc_facts(doc_facts.clone());
-    if pillar_flow_on {
-        scheduler = scheduler.with_checkpoint_root(&working_dir)?;
+    let scheduler_checkpoint_store = if pillar_flow_on {
+        Some(Arc::new(SchedulerCheckpointStore::open(&working_dir)?))
+    } else {
+        None
+    };
+    if let Some(checkpoint_store) = &scheduler_checkpoint_store {
+        scheduler = scheduler.with_checkpoint_store(checkpoint_store.clone());
         sink.write_value(serde_json::json!({
             "event": "scheduler_checkpoints_armed",
             "restore_verified_results": true,
             "restore_owned_artifact_bytes": true,
-            "restore_scope": "eligible-hash-verified-task-results-and-owned-artifacts",
-            "unsafe_or_fileless_tasks": "rerun",
+            "restore_scope": "all-completed-task-results-dependency-state-and-content-addressed-owned-artifacts",
+            "fileless_tasks": "restore-output-attempts-and-dependency-state-with-empty-artifact-set",
         }));
     }
     // In-process PAUSE: the desktop Pause button writes <working_dir>/.swarm/pause; the scheduler then holds
@@ -57815,6 +58597,97 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         v
     };
     let t_exec = std::time::Instant::now();
+
+    if pillar_flow_on && report.failed.is_empty() {
+        match capability_repair_specs(&build_specs, pillar_integration_required, &fleet_models) {
+            Ok(repair_specs) if !repair_specs.is_empty() => {
+                let repair_tasks = repair_specs
+                    .iter()
+                    .map(|spec| {
+                        serde_json::json!({
+                            "id": spec.id,
+                            "model": spec.preferred_model,
+                            "files": spec.owned_files,
+                            "deps": spec.deps,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                sink.write_value(serde_json::json!({
+                    "event": "capability_repair_started",
+                    "tasks": repair_tasks,
+                    "build_capabilities": build_specs.len(),
+                    "integration_required": pillar_integration_required,
+                    "topology": "disjoint-capability-roots-after-main-dag-conditional-integration",
+                    "whole_product_ruler": "runs-once-after-wave",
+                }));
+                let repair_dag = Dag::from_specs(repair_specs)
+                    .map_err(|error| anyhow!("capability repair DAG was invalid: {error}"))?;
+                let repair_scheduler = Scheduler::new(fix_devices.clone(), 1)
+                    .with_sink(sink.clone())
+                    .with_doc_facts(doc_facts.clone())
+                    .with_pause_file(working_dir.join(".swarm").join("pause"))
+                    .with_degrade_on_stall();
+                let repair_result = if broker_enforcement_requested {
+                    repair_scheduler
+                        .run_with_physical_admission(
+                            repair_dag,
+                            smoke_fix_dispatcher.clone() as Arc<dyn ProviderLifecycleDispatcher>,
+                            pre_scheduler_control
+                                .clone()
+                                .expect("physical pre-scheduler control was preflighted"),
+                            PhysicalExecutionAuthority::new(
+                                AuthorityScope::new(run_id.clone(), "capability-repair"),
+                                0,
+                                WorkRole::Repair,
+                            ),
+                            final_binding_spec.clone(),
+                            user_decisions.clone(),
+                        )
+                        .await
+                } else {
+                    repair_scheduler
+                        .run_with_decisions(
+                            repair_dag,
+                            smoke_fix_dispatcher.clone() as Arc<dyn TaskDispatcher>,
+                            final_binding_spec.clone(),
+                            user_decisions.clone(),
+                        )
+                        .await
+                };
+                match repair_result {
+                    Ok(report) => sink.write_value(serde_json::json!({
+                        "event": "capability_repair_completed",
+                        "planned_files": report.planned_files,
+                        "status": "drained",
+                        "next": "deterministic-whole-product-ruler",
+                    })),
+                    Err(error) => sink.write_value(serde_json::json!({
+                        "event": "capability_repair_degraded",
+                        "error": error.to_string(),
+                        "status": "nonfatal",
+                        "next": "deterministic-whole-product-ruler",
+                    })),
+                }
+            }
+            Ok(_) => sink.write_value(serde_json::json!({
+                "event": "capability_repair_skipped",
+                "reason": "no meaningful capability groups",
+            })),
+            Err(error) => sink.write_value(serde_json::json!({
+                "event": "capability_repair_degraded",
+                "error": error.to_string(),
+                "status": "nonfatal",
+                "next": "deterministic-whole-product-ruler",
+            })),
+        }
+    } else if pillar_flow_on {
+        sink.write_value(serde_json::json!({
+            "event": "capability_repair_skipped",
+            "reason": "main build has failed tasks; deterministic ruler and proven-finding repair own recovery",
+            "failed_tasks": report.failed.len(),
+            "failed_task_ids": &report.failed,
+        }));
+    }
 
     // GOOSE_SWARM_COMPLETE: push to REAL completion. VERIFY the built app by RUNNING it (reuse the smoke
     // oracle — pytest collect + `pytest -q` + the entry `--help`); if it is red, re-dispatch ONE bounded fix
@@ -58238,7 +59111,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 && last_round_promoted
                 && !strategy_switched
             {
-                let to_race = last_round_was_shard && spec_repair() && fleet_models.len() > 1;
+                let to_race = !pillar_flow_on
+                    && last_round_was_shard
+                    && spec_repair()
+                    && fleet_models.len() > 1;
                 let to_shard = !last_round_was_shard && fix_sched();
                 if to_race || to_shard {
                     strategy_switched = true;
@@ -58361,7 +59237,9 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // racing is that the OTHER nodes are idle during a median-one-finding repair round, so with
             // one model there is nothing to recover and the overhead is pure cost. This matters now that
             // the lever is default-ON — a 1-node fleet must keep running exactly what it ran before.
-            let shard_this_round = if force_race_next {
+            let shard_this_round = if pillar_flow_on {
+                true
+            } else if force_race_next {
                 force_race_next = false;
                 false
             } else if force_shard_next {
@@ -58372,7 +59250,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
                 prefer_shard_over_race(sink_shard(), groups.len(), attributed)
             };
-            if spec_repair() && fleet_models.len() > 1 && !shard_this_round {
+            if !pillar_flow_on && spec_repair() && fleet_models.len() > 1 && !shard_this_round {
                 // RACE. One independent attempt per fleet model at the SAME findings, each rooted in its
                 // own shadow, then a deterministic re-verify of every shadow decides which (if any) lands.
                 let baseline = verdict.findings.len();
@@ -58616,7 +59494,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         fix_converged = true;
                     }
                 }
-            } else if fix_sched() && shard_this_round && !fleet_models.is_empty() {
+            } else if !pillar_flow_on && fix_sched() && shard_this_round && !fleet_models.is_empty()
+            {
                 // F781/#16 c6 (GOOSE_SWARM_FIX_SCHED, default OFF): THE FIX ROUND AS A REAL
                 // SCHEDULER RUN. The gate's findings become fix::r{N}::{file} DAG tasks a FRESH
                 // Scheduler dispatches over the same fleet — so a fix round gets claims, capacity
@@ -59319,7 +60198,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 }
             }
         }
-        let review_on = swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review);
+        let review_on =
+            !pillar_flow_on && swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review);
         let demote_survivors = if review_on {
             run_post_build_ast_review(
                 &cwd,
@@ -59381,6 +60261,33 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "reason": "unwired-module-unfixed",
                 "evidence": demote_survivors,
                 "tree_hash": ruling.tree_hash,
+            }));
+        }
+        if pillar_flow_on && ruling.passed && ruling.verified && report.failed.is_empty() {
+            let checkpoint_store = scheduler_checkpoint_store
+                .as_ref()
+                .expect("pillar flow armed a scheduler checkpoint store");
+            let evidence = completed_checkpoint_evidence(&build_specs, &report)?;
+            let receipt = checkpoint_store.reseal_completed_dag(&build_specs, &evidence)?;
+            sink.write_value(serde_json::json!({
+                "event": "scheduler_checkpoints_resealed",
+                "tasks": receipt.tasks,
+                "first_sequence": receipt.first_sequence,
+                "next_sequence": receipt.next_sequence,
+                "tree_hash": ruling.tree_hash,
+                "restore_without_repeat": true,
+            }));
+        } else if pillar_flow_on {
+            sink.write_value(serde_json::json!({
+                "event": "scheduler_checkpoint_reseal_skipped",
+                "reason": if !ruling.passed || !ruling.verified {
+                    "the post-repair tree lacks a verified green ruler receipt"
+                } else {
+                    "the main build report contains failed tasks and cannot supply exact completed evidence"
+                },
+                "failed_task_ids": &report.failed,
+                "ruler_passed": ruling.passed,
+                "ruler_verified": ruling.verified,
             }));
         }
         let sealed = repair_tree.seal(shipped_desc, force_unverified, sink.as_ref())?;
@@ -59635,7 +60542,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     //
     // swarm_gate_cfg makes it a real user-facing lever (env > config > default). Default stays false, so
     // the shipped default is byte-identical to what --assured-less runs already did.
-    let review_on = swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review);
+    let review_on = !pillar_flow_on && swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review);
     // COMPLETE owns this writer while its tree is open. The standalone path remains for runs
     // that did not request COMPLETE and therefore have no authoritative completion seal.
     if review_on && !complete_on {
