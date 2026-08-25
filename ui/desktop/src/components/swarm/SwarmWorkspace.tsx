@@ -6,20 +6,6 @@ export type SwarmWorkspaceTab = 'conversation' | 'run';
 
 export const SWARM_WORKSPACE_MIN_WIDTH = 1080;
 
-export function shouldSplitSwarmWorkspace({
-  isLocal,
-  present,
-  inProgress,
-  finished,
-}: {
-  isLocal: boolean;
-  present: boolean;
-  inProgress: boolean;
-  finished: boolean;
-}): boolean {
-  return isLocal && present && inProgress && !finished;
-}
-
 export function nextWorkspaceTab(
   current: SwarmWorkspaceTab,
   key: string

@@ -40,7 +40,8 @@ import SessionActionsHeader from './SessionActionsHeader';
 import SwarmRunPanel from './swarm/SwarmRunPanel';
 import RunSamplingStrip from './swarm/RunSamplingStrip';
 import { useSwarmRun } from './swarm/useSwarmRun';
-import SwarmWorkspace, { shouldSplitSwarmWorkspace } from './swarm/SwarmWorkspace';
+import SwarmWorkspace from './swarm/SwarmWorkspace';
+import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
 
 const i18n = defineMessages({
   failedToLoadSession: {
@@ -418,9 +419,7 @@ export default function BaseChat({
 
   const showSwarmWorkspace = shouldSplitSwarmWorkspace({
     isLocal,
-    present: swarmRun.present,
-    inProgress: swarmRun.inProgress,
-    finished: swarmRun.finished,
+    run: swarmRun,
   });
   const conversationPane = (
     <div

@@ -1,10 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import SwarmWorkspace, {
-  SWARM_WORKSPACE_MIN_WIDTH,
-  nextWorkspaceTab,
-  shouldSplitSwarmWorkspace,
-} from './SwarmWorkspace';
+import SwarmWorkspace, { SWARM_WORKSPACE_MIN_WIDTH, nextWorkspaceTab } from './SwarmWorkspace';
+import { shouldSplitSwarmWorkspace } from './swarmRunLiveness';
 
 type ResizeEntry = { contentRect: { width: number } };
 let resizeCallback: (entries: ResizeEntry[]) => void;
@@ -24,6 +21,16 @@ function resizeTo(width: number) {
     resizeCallback([{ contentRect: { width } }]);
   });
 }
+
+const NOW = 2_000_000_000_000;
+const liveRun = {
+  present: true,
+  inProgress: true,
+  finished: false,
+  heartbeat: NOW,
+  mtime: NOW,
+  clarify: null,
+};
 
 describe('SwarmWorkspace', () => {
   beforeEach(() => {
@@ -131,6 +138,34 @@ describe('SwarmWorkspace', () => {
     expect(screen.getByTestId('swarm-workspace-run')).toHaveAttribute('hidden');
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
   });
+
+  it('preserves the conversation when a crashed run becomes stale-terminal without run_finished', () => {
+    const conversation = () => <input aria-label="Crash-safe draft" defaultValue="" />;
+    const { rerender } = render(
+      <SwarmWorkspace
+        active={shouldSplitSwarmWorkspace({ isLocal: true, run: liveRun, now: NOW })}
+        conversation={conversation()}
+        run={<div>Live run</div>}
+      />
+    );
+    const draft = screen.getByLabelText('Crash-safe draft');
+    fireEvent.change(draft, { target: { value: 'survives crash' } });
+    expect(screen.getByRole('tablist', { name: 'Active swarm workspace' })).toBeInTheDocument();
+
+    const staleRun = { ...liveRun, heartbeat: NOW - 45_001 };
+    rerender(
+      <SwarmWorkspace
+        active={shouldSplitSwarmWorkspace({ isLocal: true, run: staleRun, now: NOW })}
+        conversation={conversation()}
+        run={<div>Stopped run</div>}
+      />
+    );
+
+    expect(screen.getByLabelText('Crash-safe draft')).toBe(draft);
+    expect(draft).toHaveValue('survives crash');
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.getByTestId('swarm-workspace-run')).toHaveAttribute('hidden');
+  });
 });
 
 describe('nextWorkspaceTab', () => {
@@ -144,29 +179,54 @@ describe('nextWorkspaceTab', () => {
 });
 
 describe('shouldSplitSwarmWorkspace', () => {
-  it('splits only a live local run, never non-local or historical chat', () => {
+  it('splits only a live local run, never non-local, clean-finished, or stale history', () => {
     expect(
       shouldSplitSwarmWorkspace({
         isLocal: true,
-        present: true,
-        inProgress: true,
-        finished: false,
+        run: liveRun,
+        now: NOW,
       })
     ).toBe(true);
     expect(
       shouldSplitSwarmWorkspace({
         isLocal: true,
-        present: true,
-        inProgress: false,
-        finished: true,
+        run: { ...liveRun, inProgress: false, finished: true },
+        now: NOW,
       })
     ).toBe(false);
     expect(
       shouldSplitSwarmWorkspace({
         isLocal: false,
-        present: true,
-        inProgress: true,
-        finished: false,
+        run: liveRun,
+        now: NOW,
+      })
+    ).toBe(false);
+    expect(
+      shouldSplitSwarmWorkspace({
+        isLocal: true,
+        run: { ...liveRun, heartbeat: NOW - 45_001 },
+        now: NOW,
+      })
+    ).toBe(false);
+  });
+
+  it('keeps a stale clarify hold split and supports legacy mtime liveness', () => {
+    expect(
+      shouldSplitSwarmWorkspace({
+        isLocal: true,
+        run: {
+          ...liveRun,
+          heartbeat: NOW - 45_001,
+          clarify: { pending: true },
+        },
+        now: NOW,
+      })
+    ).toBe(true);
+    expect(
+      shouldSplitSwarmWorkspace({
+        isLocal: true,
+        run: { ...liveRun, heartbeat: null, mtime: NOW - 300_001 },
+        now: NOW,
       })
     ).toBe(false);
   });
