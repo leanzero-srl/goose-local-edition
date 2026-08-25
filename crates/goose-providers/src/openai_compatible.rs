@@ -2,7 +2,7 @@ use crate::conversation::token_usage::ProviderUsage;
 use crate::images::ImageFormat;
 use anyhow::Error;
 use async_stream::try_stream;
-use futures::TryStreamExt;
+use futures::{Stream, TryStreamExt};
 use reqwest::Response;
 #[cfg(test)]
 use reqwest::StatusCode;
@@ -243,6 +243,18 @@ pub(crate) fn stream_openai_compat_timed(
     stream_openai_compat_timed_with_terminal_proof(response, log, t0, model_name, reporter)
 }
 
+fn terminal_proven_response_lines(
+    response: Response,
+    terminal: SingleAttemptTerminalReporter,
+) -> impl Stream<Item = anyhow::Result<String>> + Send + 'static {
+    let stream = response.bytes_stream().map_err(std::io::Error::other);
+    let stream_reader = StreamReader::new(stream);
+    FramedRead::new(stream_reader, LinesCodec::new()).map_err(move |error| {
+        terminal.mark_failed();
+        Error::from(error)
+    })
+}
+
 pub(crate) fn stream_openai_compat_timed_with_terminal_proof(
     response: Response,
     mut log: Option<Box<dyn RequestLogHandle>>,
@@ -250,12 +262,8 @@ pub(crate) fn stream_openai_compat_timed_with_terminal_proof(
     model_name: String,
     terminal: SingleAttemptTerminalReporter,
 ) -> Result<MessageStream, ProviderError> {
-    let stream = response.bytes_stream().map_err(std::io::Error::other);
-
     Ok(Box::pin(try_stream! {
-        let stream_reader = StreamReader::new(stream);
-        let framed = FramedRead::new(stream_reader, LinesCodec::new())
-            .map_err(Error::from);
+        let framed = terminal_proven_response_lines(response, terminal.clone());
 
         let message_stream = response_to_streaming_message_with_terminal_proof(framed, terminal);
         pin!(message_stream);
@@ -326,12 +334,8 @@ pub fn stream_responses_compat_with_terminal_proof(
     mut log: Option<Box<dyn RequestLogHandle>>,
     terminal: SingleAttemptTerminalReporter,
 ) -> Result<MessageStream, ProviderError> {
-    let stream = response.bytes_stream().map_err(std::io::Error::other);
-
     Ok(Box::pin(try_stream! {
-        let stream_reader = StreamReader::new(stream);
-        let framed = FramedRead::new(stream_reader, LinesCodec::new())
-            .map_err(Error::from);
+        let framed = terminal_proven_response_lines(response, terminal.clone());
 
         let message_stream =
             responses_api_to_streaming_message_with_terminal_proof(framed, terminal);
@@ -352,7 +356,83 @@ mod tests {
     use super::*;
     use crate::model::ModelConfig;
     use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use test_case::test_case;
+
+    fn raw_sse_response(
+        body: &'static str,
+        advertised_extra_bytes: usize,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = socket.read(&mut request).unwrap();
+            let content_length = body.len() + advertised_extra_bytes;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n{body}"
+            )
+            .unwrap();
+        });
+        (format!("http://{address}/v1/chat/completions"), server)
+    }
+
+    #[tokio::test]
+    async fn mid_stream_body_drop_proves_failed_single_attempt_terminal() {
+        let body = r#"data: {"model":"m","choices":[{"delta":{"content":"partial"},"index":0,"finish_reason":null}]}
+
+"#;
+        let (url, server) = raw_sse_response(body, 64);
+        let response = reqwest::Client::new().get(url).send().await.unwrap();
+        let (terminal, reporter) = SingleAttemptTerminalProof::channel();
+        let mut stream = stream_openai_compat_timed_with_terminal_proof(
+            response,
+            None,
+            std::time::Instant::now(),
+            "m".to_string(),
+            reporter,
+        )
+        .unwrap();
+
+        assert!(stream.next().await.unwrap().is_ok());
+        assert!(stream.next().await.unwrap().is_err());
+        assert_eq!(
+            terminal.outcome(),
+            super::super::base::SingleAttemptStreamOutcome::Failed
+        );
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn semantic_decode_error_without_transport_failure_remains_unresolved() {
+        let body = r#"data: {"model":"m","choices":[{"delta":{"content":"partial"},"index":0,"finish_reason":null}]}
+
+data: not-json
+
+"#;
+        let (url, server) = raw_sse_response(body, 0);
+        let response = reqwest::Client::new().get(url).send().await.unwrap();
+        let (terminal, reporter) = SingleAttemptTerminalProof::channel();
+        let mut stream = stream_openai_compat_timed_with_terminal_proof(
+            response,
+            None,
+            std::time::Instant::now(),
+            "m".to_string(),
+            reporter,
+        )
+        .unwrap();
+
+        assert!(stream.next().await.unwrap().is_ok());
+        assert!(stream.next().await.unwrap().is_err());
+        assert_eq!(
+            terminal.outcome(),
+            super::super::base::SingleAttemptStreamOutcome::Pending
+        );
+        server.join().unwrap();
+    }
 
     #[test]
     fn telemetry_node_is_the_dash_bounded_model_prefix() {
