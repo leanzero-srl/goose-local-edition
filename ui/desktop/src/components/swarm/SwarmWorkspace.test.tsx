@@ -1,6 +1,10 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import SwarmWorkspace, { SWARM_WORKSPACE_MIN_WIDTH, nextWorkspaceTab } from './SwarmWorkspace';
+import SwarmWorkspace, {
+  SWARM_WORKSPACE_MIN_WIDTH,
+  nextWorkspaceTab,
+  shouldSplitSwarmWorkspace,
+} from './SwarmWorkspace';
 
 type ResizeEntry = { contentRect: { width: number } };
 let resizeCallback: (entries: ResizeEntry[]) => void;
@@ -93,6 +97,40 @@ describe('SwarmWorkspace', () => {
     expect(screen.getByRole('region', { name: 'Conversation' })).not.toHaveAttribute('hidden');
     expect(screen.getByRole('region', { name: 'Run' })).not.toHaveAttribute('hidden');
   });
+
+  it('preserves the conversation DOM, draft, and scroll across inactive, active, and finished runs', () => {
+    const conversation = () => (
+      <div data-testid="conversation-scroll">
+        <input aria-label="Conversation draft" defaultValue="" />
+      </div>
+    );
+    const { rerender } = render(
+      <SwarmWorkspace active={false} conversation={conversation()} run={<div>Run history</div>} />
+    );
+
+    const conversationPanel = screen.getByTestId('swarm-workspace-conversation');
+    const draft = screen.getByLabelText('Conversation draft');
+    fireEvent.change(draft, { target: { value: 'do not lose this' } });
+    conversationPanel.scrollTop = 173;
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.getByTestId('swarm-workspace-run')).toHaveAttribute('hidden');
+
+    rerender(<SwarmWorkspace active conversation={conversation()} run={<div>Active run</div>} />);
+    expect(screen.getByLabelText('Conversation draft')).toBe(draft);
+    expect(draft).toHaveValue('do not lose this');
+    expect(screen.getByTestId('swarm-workspace-conversation')).toBe(conversationPanel);
+    expect(conversationPanel.scrollTop).toBe(173);
+    expect(screen.getByRole('tablist', { name: 'Active swarm workspace' })).toBeInTheDocument();
+
+    rerender(
+      <SwarmWorkspace active={false} conversation={conversation()} run={<div>Finished run</div>} />
+    );
+    expect(screen.getByLabelText('Conversation draft')).toBe(draft);
+    expect(draft).toHaveValue('do not lose this');
+    expect(conversationPanel).not.toHaveAttribute('hidden');
+    expect(screen.getByTestId('swarm-workspace-run')).toHaveAttribute('hidden');
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+  });
 });
 
 describe('nextWorkspaceTab', () => {
@@ -102,5 +140,34 @@ describe('nextWorkspaceTab', () => {
     expect(nextWorkspaceTab('run', 'Home')).toBe('conversation');
     expect(nextWorkspaceTab('conversation', 'End')).toBe('run');
     expect(nextWorkspaceTab('run', 'Enter')).toBeNull();
+  });
+});
+
+describe('shouldSplitSwarmWorkspace', () => {
+  it('splits only a live local run, never non-local or historical chat', () => {
+    expect(
+      shouldSplitSwarmWorkspace({
+        isLocal: true,
+        present: true,
+        inProgress: true,
+        finished: false,
+      })
+    ).toBe(true);
+    expect(
+      shouldSplitSwarmWorkspace({
+        isLocal: true,
+        present: true,
+        inProgress: false,
+        finished: true,
+      })
+    ).toBe(false);
+    expect(
+      shouldSplitSwarmWorkspace({
+        isLocal: false,
+        present: true,
+        inProgress: true,
+        finished: false,
+      })
+    ).toBe(false);
   });
 });
