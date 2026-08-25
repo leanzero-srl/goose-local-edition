@@ -590,6 +590,60 @@ impl OpenAiProvider {
                 };
                 payload.insert("reasoning_effort".to_string(), serde_json::json!(effort));
             }
+            OpenAiRequestProfile::MinimaxM3 if model_name == "minimax-m3" => {
+                if let Some(value) = payload.remove("max_tokens") {
+                    payload.entry("max_completion_tokens").or_insert(value);
+                }
+                let disabled = model_config.reasoning == Some(false)
+                    || model_config.thinking_effort() == Some(ThinkingEffort::Off);
+                payload.insert(
+                    "thinking".to_string(),
+                    serde_json::json!({
+                        "type": if disabled { "disabled" } else { "adaptive" },
+                    }),
+                );
+                payload.insert("reasoning_split".to_string(), serde_json::json!(false));
+                payload.remove("reasoning_effort");
+
+                if let Some(messages) = payload
+                    .get_mut("messages")
+                    .and_then(serde_json::Value::as_array_mut)
+                {
+                    for message in messages {
+                        let Some(message) = message.as_object_mut() else {
+                            continue;
+                        };
+                        if message.get("role").and_then(serde_json::Value::as_str)
+                            != Some("assistant")
+                        {
+                            continue;
+                        }
+                        let reasoning = message
+                            .remove("reasoning_content")
+                            .and_then(|value| value.as_str().map(str::to_owned))
+                            .filter(|value| !value.is_empty());
+                        let Some(reasoning) = reasoning else {
+                            continue;
+                        };
+                        let inline = format!("<think>{reasoning}</think>");
+                        let content = match message.remove("content") {
+                            Some(serde_json::Value::String(content)) => {
+                                if content.starts_with(&inline) {
+                                    content
+                                } else {
+                                    format!("{inline}{content}")
+                                }
+                            }
+                            Some(serde_json::Value::Null) | None => inline,
+                            Some(content) => {
+                                message.insert("content".to_string(), content);
+                                continue;
+                            }
+                        };
+                        message.insert("content".to_string(), serde_json::json!(content));
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1367,6 +1421,121 @@ mod tests {
         assert_eq!(
             provider
                 .sanitize_request_for_compat(unrelated.clone(), &ModelConfig::new("qwen3.7-max"),),
+            unrelated
+        );
+    }
+
+    #[test]
+    fn minimax_m3_streaming_payload_matches_native_chat_contract() {
+        let provider = make_profile_provider(OpenAiRequestProfile::MinimaxM3);
+        let payload = json!({
+            "model": "MiniMax-M3",
+            "messages": [
+                {"role": "system", "content": "Use one tool."},
+                {"role": "user", "content": "Inspect the workspace."},
+                {
+                    "role": "assistant",
+                    "content": null,
+                    "reasoning_content": "I should inspect first.",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "shell", "arguments": "{\"command\":\"pwd\"}"}
+                    }]
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "/workspace"}
+            ],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "shell",
+                    "description": "Run a command",
+                    "parameters": {"type": "object"}
+                }
+            }],
+            "max_tokens": 131_072,
+            "reasoning_effort": "high",
+            "stream": true,
+            "stream_options": {"include_usage": true}
+        });
+
+        let result = provider.sanitize_request_for_compat(
+            payload,
+            &ModelConfig::new("MiniMax-M3").with_thinking_effort(ThinkingEffort::Max),
+        );
+
+        assert_eq!(
+            result,
+            json!({
+                "model": "MiniMax-M3",
+                "messages": [
+                    {"role": "system", "content": "Use one tool."},
+                    {"role": "user", "content": "Inspect the workspace."},
+                    {
+                        "role": "assistant",
+                        "content": "<think>I should inspect first.</think>",
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "shell", "arguments": "{\"command\":\"pwd\"}"}
+                        }]
+                    },
+                    {"role": "tool", "tool_call_id": "call_1", "content": "/workspace"}
+                ],
+                "tools": [{
+                    "type": "function",
+                    "function": {
+                        "name": "shell",
+                        "description": "Run a command",
+                        "parameters": {"type": "object"}
+                    }
+                }],
+                "max_completion_tokens": 131_072,
+                "thinking": {"type": "adaptive"},
+                "reasoning_split": false,
+                "stream": true,
+                "stream_options": {"include_usage": true}
+            })
+        );
+    }
+
+    #[test]
+    fn minimax_m3_can_disable_thinking_and_profile_is_exactly_scoped() {
+        let provider = make_profile_provider(OpenAiRequestProfile::MinimaxM3);
+        let payload = json!({
+            "model": "MiniMax-M3",
+            "messages": [{
+                "role": "assistant",
+                "content": "<think>already restored</think>visible",
+                "reasoning_content": "already restored"
+            }],
+            "max_tokens": 1024,
+            "reasoning_effort": "medium"
+        });
+        let disabled = provider.sanitize_request_for_compat(
+            payload,
+            &ModelConfig::new("MiniMax-M3").with_thinking_effort(ThinkingEffort::Off),
+        );
+        assert_eq!(disabled["thinking"], json!({"type": "disabled"}));
+        assert_eq!(disabled["reasoning_split"], false);
+        assert_eq!(disabled["max_completion_tokens"], 1024);
+        assert_eq!(
+            disabled["messages"][0]["content"],
+            "<think>already restored</think>visible"
+        );
+        assert!(disabled.get("max_tokens").is_none());
+        assert!(disabled.get("reasoning_effort").is_none());
+        assert!(disabled["messages"][0].get("reasoning_content").is_none());
+
+        let unrelated = json!({
+            "model": "MiniMax-M2.7",
+            "messages": [],
+            "max_tokens": 1024,
+            "reasoning_effort": "medium"
+        });
+        assert_eq!(
+            provider
+                .sanitize_request_for_compat(unrelated.clone(), &ModelConfig::new("MiniMax-M2.7"),),
             unrelated
         );
     }

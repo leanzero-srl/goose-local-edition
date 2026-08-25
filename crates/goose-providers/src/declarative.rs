@@ -29,6 +29,7 @@ pub(crate) mod declarative_providers {
         lmstudio,
         meta,
         minimax,
+        minimax_api,
         mistral,
         moonshot,
         nearai,
@@ -102,6 +103,7 @@ pub enum OpenAiRequestProfile {
     AlibabaQwen,
     DeepseekV4,
     MetaMuse,
+    MinimaxM3,
     ZaiGlm,
 }
 
@@ -487,6 +489,27 @@ mod tests {
             .unwrap();
         assert_eq!(qwen.context_limit, 1_000_000);
         assert!(qwen.reasoning);
+
+        let minimax =
+            deserialize_provider_config(include_str!("declarative/definitions/minimax_api.json"))
+                .unwrap();
+        assert_eq!(minimax.name, "minimax_api");
+        assert_eq!(minimax.engine, ProviderEngine::OpenAI);
+        assert_eq!(minimax.base_url, "${MINIMAX_API_BASE_URL}");
+        assert_eq!(
+            minimax.env_vars.as_ref().unwrap()[0].default.as_deref(),
+            Some("https://api.minimax.io/v1")
+        );
+        assert_eq!(minimax.catalog_provider_id.as_deref(), Some("minimax"));
+        assert_eq!(
+            minimax.openai_request_profile,
+            OpenAiRequestProfile::MinimaxM3
+        );
+        assert!(minimax.preserves_thinking);
+        assert_eq!(minimax.models.len(), 1);
+        assert_eq!(minimax.models[0].name, "MiniMax-M3");
+        assert_eq!(minimax.models[0].context_limit, 1_000_000);
+        assert!(minimax.models[0].reasoning);
     }
 
     fn placeholder_var_names(template: &str) -> Vec<String> {
