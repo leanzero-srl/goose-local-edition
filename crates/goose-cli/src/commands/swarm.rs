@@ -44,11 +44,12 @@ use goose_swarm::{
     HostCapacityEvidence, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
     LocalCompletionKind, NullSink, PhysicalAdmissionControl, PhysicalExecutionAuthority,
     PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle,
-    ProviderLifecycleDispatcher, ProviderNudgeDelivery, ProviderRequestKey, ProviderRequestReceipt,
-    ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
-    ReplanContext, Replanner, Scheduler, SemanticActivityPublisher, SourceRevisionKind, SwarmEvent,
-    TaskDispatcher, TaskRunOutput, TaskSpec, TaskVersion, ToolCallRecord, Verdict,
-    VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
+    ProviderLifecycleDispatcher, ProviderLifecycleStartError, ProviderNudgeDelivery,
+    ProviderRequestKey, ProviderRequestReceipt, ProviderTerminalKind, ProviderTerminalReceipt,
+    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler,
+    SemanticActivityPublisher, SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput,
+    TaskSpec, TaskVersion, ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkOpportunity,
+    WorkRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -23045,6 +23046,11 @@ tokio::task_local! {
     static PRE_SCHEDULER_REQUIRED_HOST: String;
 }
 
+#[cfg(test)]
+tokio::task_local! {
+    static PRE_SCHEDULER_TEST_RESULT_ERROR: Arc<std::sync::atomic::AtomicBool>;
+}
+
 struct PreSchedulerSemanticRuntime {
     control: PhysicalAdmissionControl,
     snapshot: PhysicalFleetSnapshot,
@@ -23052,6 +23058,38 @@ struct PreSchedulerSemanticRuntime {
     dispatcher: Weak<GooseAgentDispatcher>,
     sequence: AtomicU64,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RequirementBindingAuthorityLane {
+    model_id: String,
+    physical_host_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RequirementBindingAmbiguousAttempt {
+    model_id: String,
+    physical_host_id: String,
+    provider_request: ProviderRequestKey,
+}
+
+#[derive(Debug)]
+struct RequirementBindingAuthorityExhausted {
+    authority_input_digest: String,
+    attempts: Vec<RequirementBindingAmbiguousAttempt>,
+}
+
+impl std::fmt::Display for RequirementBindingAuthorityExhausted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "requirement binding authority exhausted {} distinct physical host(s) after unproven provider outcomes (input {})",
+            self.attempts.len(),
+            self.authority_input_digest
+        )
+    }
+}
+
+impl std::error::Error for RequirementBindingAuthorityExhausted {}
 
 impl PreSchedulerSemanticRuntime {
     fn new(
@@ -23079,6 +23117,30 @@ impl PreSchedulerSemanticRuntime {
         } else {
             WorkRole::PlanningAuthority
         }
+    }
+
+    fn distinct_authority_lanes(
+        &self,
+        ordered_model_ids: &[String],
+    ) -> Vec<RequirementBindingAuthorityLane> {
+        let mut seen_physical_hosts = HashSet::new();
+        let mut lanes = Vec::new();
+        for model_id in ordered_model_ids {
+            for lane in self
+                .snapshot
+                .lanes
+                .iter()
+                .filter(|lane| &lane.model_id == model_id)
+            {
+                if seen_physical_hosts.insert(lane.host_id.clone()) {
+                    lanes.push(RequirementBindingAuthorityLane {
+                        model_id: model_id.clone(),
+                        physical_host_id: lane.host_id.clone(),
+                    });
+                }
+            }
+        }
+        lanes
     }
 
     async fn admit_source(&self, model_id: &str, label: &str) -> Result<AdmittedWork> {
@@ -24211,6 +24273,141 @@ impl GooseAgentDispatcher {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn run_requirement_binding_authority(
+        self: &Arc<Self>,
+        planner_model: &str,
+        worker_models: &[String],
+        system_prompt: &str,
+        user_text: &str,
+        response_schema: &serde_json::Value,
+        authority_input_digest: &str,
+    ) -> Result<RunAgentOut> {
+        let runtime = self
+            .pre_scheduler_semantic
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| anyhow!("requirement binding has no verified pre-scheduler runtime"))?;
+        let mut ordered_models = std::iter::once(planner_model.to_string())
+            .chain(worker_models.iter().cloned())
+            .collect::<Vec<_>>();
+        let mut seen_models = HashSet::new();
+        ordered_models.retain(|model| seen_models.insert(model.clone()));
+        let lanes = runtime.distinct_authority_lanes(&ordered_models);
+        if lanes.is_empty() {
+            bail!("requirement binding has no verified physical authority lane");
+        }
+
+        let mut ambiguous_attempts = Vec::new();
+        for (index, lane) in lanes.iter().enumerate() {
+            let attempt = index.saturating_add(1);
+            self.events.write_value(serde_json::json!({
+                "event": "requirement_binding_attempt_started",
+                "attempt": attempt,
+                "candidate_count": lanes.len(),
+                "model": lane.model_id,
+                "physical_host_id": lane.physical_host_id,
+                "authority_input_digest": authority_input_digest,
+                "tool_surface": "response-only",
+            }));
+            match self
+                .run_response_only_agent_on_physical_host(
+                    &lane.model_id,
+                    &lane.physical_host_id,
+                    system_prompt.to_string(),
+                    user_text.to_string(),
+                    Some(Response {
+                        json_schema: Some(response_schema.clone()),
+                    }),
+                    0,
+                    Some("reqbind-artifact-evidence-v3"),
+                )
+                .await
+            {
+                Ok(output) => {
+                    if output.physical_host_id.as_deref() != Some(lane.physical_host_id.as_str()) {
+                        bail!(
+                            "requirement binding output was not proven on assigned physical host `{}`",
+                            lane.physical_host_id
+                        );
+                    }
+                    self.events.write_value(serde_json::json!({
+                        "event": "requirement_binding_attempt_completed",
+                        "attempt": attempt,
+                        "model": lane.model_id,
+                        "physical_host_id": lane.physical_host_id,
+                        "authority_input_digest": authority_input_digest,
+                        "ambiguous_attempts": ambiguous_attempts.len(),
+                    }));
+                    return Ok(output);
+                }
+                Err(error) => {
+                    let Some(receipt) = error
+                        .downcast_ref::<ProviderLifecycleStartError>()
+                        .and_then(|error| match error {
+                            ProviderLifecycleStartError::UnprovenProviderRequest(receipt) => {
+                                Some(receipt.clone())
+                            }
+                            _ => None,
+                        })
+                    else {
+                        return Err(error);
+                    };
+                    if receipt.physical_host_id != lane.physical_host_id {
+                        bail!(
+                            "requirement binding unproven request belonged to host `{}` instead of assigned host `{}`",
+                            receipt.physical_host_id,
+                            lane.physical_host_id
+                        );
+                    }
+                    ambiguous_attempts.push(RequirementBindingAmbiguousAttempt {
+                        model_id: lane.model_id.clone(),
+                        physical_host_id: lane.physical_host_id.clone(),
+                        provider_request: receipt.key,
+                    });
+                    let failed_hosts = ambiguous_attempts
+                        .iter()
+                        .map(|attempt| attempt.physical_host_id.as_str())
+                        .collect::<Vec<_>>();
+                    if let Some(next) = lanes.get(index.saturating_add(1)) {
+                        self.events.write_value(serde_json::json!({
+                            "event": "requirement_binding_rescheduled",
+                            "attempt": attempt,
+                            "failed_model": lane.model_id,
+                            "failed_physical_host_id": lane.physical_host_id,
+                            "failed_hosts": failed_hosts,
+                            "next_model": next.model_id,
+                            "next_physical_host_id": next.physical_host_id,
+                            "authority_input_digest": authority_input_digest,
+                            "provider_terminal_proven": false,
+                            "quarantined": true,
+                            "retry_authority": "exclude-ambiguous-physical-host-and-retry-frozen-authority",
+                        }));
+                    }
+                }
+            }
+        }
+
+        self.events.write_value(serde_json::json!({
+            "event": "requirement_binding_authority_exhausted",
+            "authority_input_digest": authority_input_digest,
+            "attempts": ambiguous_attempts.len(),
+            "failed_hosts": ambiguous_attempts.iter().map(|attempt| attempt.physical_host_id.as_str()).collect::<Vec<_>>(),
+            "ambiguous_requests": ambiguous_attempts.iter().map(|attempt| serde_json::json!({
+                "model": attempt.model_id,
+                "physical_host_id": attempt.physical_host_id,
+                "provider_request_id": attempt.provider_request.provider_request_id,
+            })).collect::<Vec<_>>(),
+            "provider_terminal_fabricated": false,
+            "typed_failure": "authority_transport_exhausted",
+        }));
+        Err(anyhow::Error::new(RequirementBindingAuthorityExhausted {
+            authority_input_digest: authority_input_digest.to_string(),
+            attempts: ambiguous_attempts,
+        }))
+    }
+
     /// Like `run_agent` but the agent's file/shell tools are rooted at `work_dir` (the session working_dir).
     /// For a SPECULATIVE twin this is an isolated shadow copy, so the twin never writes the real tree; for
     /// every normal call `work_dir == self.working_dir`, so behavior is unchanged.
@@ -24328,6 +24525,10 @@ impl GooseAgentDispatcher {
             };
             let cancellation = PreSchedulerCallCancellation::new();
             let cleanup_cancellation = cancellation.clone();
+            #[cfg(test)]
+            let inject_result_error = PRE_SCHEDULER_TEST_RESULT_ERROR
+                .try_with(|armed| armed.swap(false, Ordering::SeqCst))
+                .unwrap_or(false);
             let model_id = model_id.to_string();
             let extensions = extensions.to_vec();
             let prefill_assistant = prefill_assistant.map(str::to_string);
@@ -24370,6 +24571,12 @@ impl GooseAgentDispatcher {
                         Ok(result) => result,
                         Err(_) => Err(anyhow!("pre-scheduler source future panicked")),
                     };
+                    #[cfg(test)]
+                    if inject_result_error {
+                        result = Err(anyhow!(
+                            "injected pre-scheduler result error after provider stream failure"
+                        ));
+                    }
                     let caller_cancelled = cleanup_cancellation.is_requested();
                     if caller_cancelled && result.is_ok() {
                         result = Err(anyhow!(
@@ -24378,6 +24585,10 @@ impl GooseAgentDispatcher {
                     }
                     if let Err(reconcile) = lifecycle.reconcile_cancelled_after_drop().await {
                         let detail = reconcile.to_string();
+                        let ambiguous_provider_outcome = matches!(
+                            &reconcile,
+                            ProviderLifecycleStartError::UnprovenProviderRequest(_)
+                        );
                         result = Err(match result {
                             Ok(_) => anyhow!(
                                 "pre-scheduler source terminal reconciliation failed: {detail}"
@@ -24396,6 +24607,8 @@ impl GooseAgentDispatcher {
                                     "{error}; pre-scheduler source quarantine failed: {quarantine_error}"
                                 ),
                             });
+                        } else if ambiguous_provider_outcome {
+                            result = Err(anyhow::Error::new(reconcile));
                         }
                         let _ = result_sender.send(result);
                         return;
@@ -30500,19 +30713,27 @@ impl GooseAgentDispatcher {
             "detail_task_ids": detail_task_ids,
             "canonical_dag_authority": canonical_authoritative,
         });
+        let binding_input = serde_json::to_string_pretty(&binding_input)?;
+        let binding_schema = requirement_binding_schema();
+        let binding_authority_digest = domain_sha256(
+            b"goose.swarm.requirement-binding-authority.v1\0",
+            &serde_json::to_vec(&serde_json::json!({
+                "system": binding_system,
+                "user": &binding_input,
+                "response_schema": &binding_schema,
+            }))?,
+        );
         let binding_output = self
-            .run_response_only_agent(
+            .run_requirement_binding_authority(
                 planner_model,
-                binding_system.to_string(),
-                serde_json::to_string_pretty(&binding_input)?,
-                Some(Response {
-                    json_schema: Some(requirement_binding_schema()),
-                }),
-                0,
-                Some("reqbind-artifact-evidence-v3"),
+                &worker_models,
+                binding_system,
+                &binding_input,
+                &binding_schema,
+                &binding_authority_digest,
             )
             .await
-            .map_err(|error| anyhow!("requirement binding agent error: {error}"))?;
+            .map_err(|error| error.context("requirement binding agent error"))?;
         let binding_raw = binding_output
             .final_output
             .filter(|raw| !raw.trim().is_empty())
@@ -57803,7 +58024,11 @@ mod pre_scheduler_semantic_runtime_tests {
 
     struct ResearchCorrectionRuntimeProvider {
         scripts: Mutex<HashMap<String, VecDeque<serde_json::Value>>>,
+        text_scripts: Mutex<HashMap<String, VecDeque<String>>>,
         calls: Mutex<Vec<String>>,
+        request_digests: Mutex<Vec<(String, String)>>,
+        unproven_stream_drop_models: Mutex<HashSet<String>>,
+        late_unproven_chunks_polled: Arc<AtomicUsize>,
         recurrent_models: Mutex<HashSet<String>>,
         blocked_models: Mutex<HashSet<String>>,
         blocked_call_started: Notify,
@@ -57819,7 +58044,11 @@ mod pre_scheduler_semantic_runtime_tests {
                         .map(|(model, outputs)| (model, outputs.into()))
                         .collect(),
                 ),
+                text_scripts: Mutex::new(HashMap::new()),
                 calls: Mutex::new(Vec::new()),
+                request_digests: Mutex::new(Vec::new()),
+                unproven_stream_drop_models: Mutex::new(HashSet::new()),
+                late_unproven_chunks_polled: Arc::new(AtomicUsize::new(0)),
                 recurrent_models: Mutex::new(HashSet::new()),
                 blocked_models: Mutex::new(HashSet::new()),
                 blocked_call_started: Notify::new(),
@@ -57834,6 +58063,32 @@ mod pre_scheduler_semantic_runtime_tests {
                 .iter()
                 .filter(|called| called.as_str() == model)
                 .count()
+        }
+
+        fn request_digests(&self, model: &str) -> Vec<String> {
+            self.request_digests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(called_model, _)| called_model == model)
+                .map(|(_, digest)| digest.clone())
+                .collect()
+        }
+
+        fn drop_next_stream_unproven(&self, model: &str) {
+            self.unproven_stream_drop_models
+                .lock()
+                .unwrap()
+                .insert(model.to_string());
+        }
+
+        fn queue_finished_text(&self, model: &str, text: &str) {
+            self.text_scripts
+                .lock()
+                .unwrap()
+                .entry(model.to_string())
+                .or_default()
+                .push_back(text.to_string());
         }
 
         fn block_next_call(&self, model: &str) {
@@ -57872,6 +58127,14 @@ mod pre_scheduler_semantic_runtime_tests {
             })))
         }
 
+        fn finished_text(model: &str, text: &str) -> SingleAttemptStream {
+            let message = Message::assistant().with_text(text.to_string());
+            let usage = ProviderUsage::new(model.to_string(), Usage::default());
+            SingleAttemptStream::finished(Box::pin(stream::once(async move {
+                Ok((Some(message), Some(usage)))
+            })))
+        }
+
         fn recurrent_then_pending(model: &str) -> SingleAttemptStream {
             let first = Message::assistant().with_thinking(
                 "the same unresolved authority analysis repeats without new evidence ".repeat(500),
@@ -57887,6 +58150,42 @@ mod pre_scheduler_semantic_runtime_tests {
                     tokio::time::sleep(Duration::from_millis(1_200)).await;
                     yield Ok((Some(second), None));
                     std::future::pending::<()>().await;
+                }),
+                SingleAttemptTerminalProof::default(),
+            )
+        }
+
+        fn structured_then_unproven_drop(
+            model: &str,
+            late_unproven_chunks_polled: Arc<AtomicUsize>,
+        ) -> SingleAttemptStream {
+            let model = model.to_string();
+            SingleAttemptStream::new(
+                Box::pin(async_stream::stream! {
+                    record_current_provider_stream_chunk(
+                        411,
+                        ProviderStreamChunkKind::StructuredOutput,
+                    );
+                    yield Ok((
+                        Some(Message::assistant().with_thinking(
+                            "partial requirement binding authority",
+                            format!("{model}-partial-authority"),
+                        )),
+                        None,
+                    ));
+                    yield Err(ProviderError::NetworkError(
+                        "runtime test response body ended without a provider terminal".to_string(),
+                    ));
+                    late_unproven_chunks_polled.fetch_add(1, AtomicOrdering::SeqCst);
+                    let stale = CallToolRequestParams::new(FINAL_OUTPUT_TOOL)
+                        .with_arguments(object!({"stale": true}));
+                    yield Ok((
+                        Some(Message::assistant().with_tool_request(
+                            "stale-unproven-final-output",
+                            Ok(stale),
+                        )),
+                        None,
+                    ));
                 }),
                 SingleAttemptTerminalProof::default(),
             )
@@ -57934,12 +58233,40 @@ mod pre_scheduler_semantic_runtime_tests {
         async fn stream_once_with_terminal_proof(
             &self,
             model_config: &ModelConfig,
-            _system: &str,
-            _messages: &[Message],
-            _tools: &[Tool],
+            system: &str,
+            messages: &[Message],
+            tools: &[Tool],
         ) -> Result<SingleAttemptStream, ProviderError> {
             let model = model_config.model_name.clone();
             self.calls.lock().unwrap().push(model.clone());
+            let normalized_messages = messages
+                .iter()
+                .map(|message| {
+                    serde_json::json!({
+                        "role": &message.role,
+                        "content": &message.content,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let request_digest = content_sha256(
+                &serde_json::to_string(&(system, normalized_messages, tools))
+                    .expect("runtime provider request must serialize"),
+            );
+            self.request_digests
+                .lock()
+                .unwrap()
+                .push((model.clone(), request_digest));
+            if self
+                .unproven_stream_drop_models
+                .lock()
+                .unwrap()
+                .remove(&model)
+            {
+                return Ok(Self::structured_then_unproven_drop(
+                    &model,
+                    self.late_unproven_chunks_polled.clone(),
+                ));
+            }
             if self.recurrent_models.lock().unwrap().remove(&model) {
                 return Ok(Self::recurrent_then_pending(&model));
             }
@@ -57951,6 +58278,16 @@ mod pre_scheduler_semantic_runtime_tests {
                     .await
                     .expect("research correction blocked call semaphore closed")
                     .forget();
+            }
+            if tools.is_empty() {
+                let text = self
+                    .text_scripts
+                    .lock()
+                    .unwrap()
+                    .get_mut(&model)
+                    .and_then(VecDeque::pop_front)
+                    .unwrap_or_else(|| panic!("unexpected text-only provider call for `{model}`"));
+                return Ok(Self::finished_text(&model, &text));
             }
             let output = self
                 .scripts
@@ -58095,6 +58432,18 @@ mod pre_scheduler_semantic_runtime_tests {
         sink: Arc<RuntimeRecordingSink>,
         provider: Arc<RuntimeScriptedProvider>,
         journal_path: PathBuf,
+    }
+
+    struct RuntimeBuildDispatchProbe {
+        starts: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl TaskDispatcher for RuntimeBuildDispatchProbe {
+        async fn run(&self, request: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+            self.starts.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(format!("built:{}", request.task_id).into())
+        }
     }
 
     fn lane(device: &str, model: &str, host: &str) -> VerifiedPhysicalLane {
@@ -58290,6 +58639,356 @@ mod pre_scheduler_semantic_runtime_tests {
             provider,
             runtime,
         }
+    }
+
+    fn requirement_binding_runtime_fixture(
+        runtime_model: &str,
+    ) -> (String, String, serde_json::Value, serde_json::Value) {
+        let binding_spec =
+            "Build a runnable application that prints READY when invoked.".to_string();
+        let requirement = normalized_requirement_inventory(&binding_spec)
+            .into_iter()
+            .next()
+            .expect("runtime binding fixture has one requirement");
+        let requirement_id = requirement.id;
+        let plan = serde_json::json!({
+            "subtasks": [{
+                "id": "build-app",
+                "description": "Implement the runnable application and its exact READY output",
+                "difficulty": "hard",
+                "model": runtime_model,
+                "depends_on": [],
+                "files": ["main.py"]
+            }],
+            "integration": "Run the application and verify READY"
+        });
+        let binding = serde_json::json!({
+            "bindings": [{
+                "task_id": "build-app",
+                "owns_requirement_ids": [requirement_id.clone()],
+                "applies_requirement_ids": [],
+                "verifies_requirement_ids": [],
+                "depends_on": [],
+                "owned_files": ["main.py"],
+                "slices": [{
+                    "id": "runnable-output",
+                    "objective": "Implement the runnable application and exact READY output",
+                    "requirement_ids": [requirement_id.clone()],
+                    "evidence_ids": [],
+                    "acceptance_evidence": ["Invoking the application prints READY"]
+                }]
+            }],
+            "interfaces": [],
+            "artifact_evidence": []
+        });
+        let detail = serde_json::json!({
+            "requirement_citations": [{
+                "requirement_id": requirement_id,
+                "applies_as": "The application must be runnable and print READY."
+            }],
+            "implementation_steps": ["Create the executable entry point and print READY."],
+            "edge_cases": ["Do not emit extra output."],
+            "acceptance_checks": ["Run the entry point and compare stdout exactly with READY."]
+        });
+        (binding_spec, plan.to_string(), binding, detail)
+    }
+
+    #[tokio::test]
+    async fn production_requirement_binding_agent_error_with_unproven_request_retries_distinct_host_and_starts_build(
+    ) {
+        const MODEL_A: &str = "runtime-binding-model-a";
+        const MODEL_B: &str = "runtime-binding-model-b";
+        const HOST_A: &str = "runtime-binding-host-a";
+        const HOST_B: &str = "runtime-binding-host-b";
+        let (binding_spec, plan, binding, detail) = requirement_binding_runtime_fixture(MODEL_B);
+        let mut scripts = HashMap::new();
+        scripts.insert(MODEL_A.to_string(), Vec::new());
+        scripts.insert(MODEL_B.to_string(), vec![binding, detail]);
+        let harness = research_correction_runtime_harness(
+            &[
+                ("binding-lane-a", MODEL_A, HOST_A),
+                ("binding-lane-b", MODEL_B, HOST_B),
+            ],
+            scripts,
+        )
+        .await;
+        harness.provider.drop_next_stream_unproven(MODEL_A);
+        harness
+            .provider
+            .queue_finished_text(MODEL_B, "# main.py\ndef main(): ...");
+
+        let inject_result_error = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (_compiled_plan, dag) = PRE_SCHEDULER_TEST_RESULT_ERROR
+            .scope(
+                inject_result_error.clone(),
+                harness.dispatcher.detail_plan(
+                    MODEL_A,
+                    vec![MODEL_B.to_string()],
+                    &binding_spec,
+                    "",
+                    &plan,
+                ),
+            )
+            .await
+            .expect("the frozen binding did not continue on the distinct healthy host");
+        assert!(
+            !inject_result_error.load(Ordering::SeqCst),
+            "the first ambiguous provider outcome did not exercise the agent-error path"
+        );
+
+        assert_eq!(harness.provider.call_count(MODEL_A), 1);
+        assert!(harness.provider.call_count(MODEL_B) >= 2);
+        let first_digest = harness.provider.request_digests(MODEL_A);
+        let second_digest = harness.provider.request_digests(MODEL_B);
+        assert_eq!(first_digest.len(), 1);
+        assert_eq!(first_digest[0], second_digest[0]);
+        assert_eq!(
+            harness
+                .provider
+                .late_unproven_chunks_polled
+                .load(AtomicOrdering::SeqCst),
+            0,
+            "a stale final output after the ambiguous drop was polled"
+        );
+        let events = harness.sink.values();
+        let rescheduled = events
+            .iter()
+            .find(|event| event["event"] == "requirement_binding_rescheduled")
+            .expect("the requirement binding retry was not recorded");
+        assert_eq!(rescheduled["failed_physical_host_id"], HOST_A);
+        assert_eq!(rescheduled["next_physical_host_id"], HOST_B);
+        assert_eq!(rescheduled["provider_terminal_proven"], false);
+        let attempts = events
+            .iter()
+            .filter(|event| event["event"] == "requirement_binding_attempt_started")
+            .collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(
+            attempts
+                .iter()
+                .map(|event| event["authority_input_digest"].as_str().unwrap())
+                .collect::<HashSet<_>>()
+                .len(),
+            1
+        );
+        assert!(!events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["physical_host_id"] == HOST_A
+        }));
+        assert!(!events.iter().any(|event| {
+            event["event"] == "broker_admission_released"
+                && event["receipt"]["admission"]["physical_host_id"] == HOST_A
+        }));
+
+        let build_dispatcher = Arc::new(RuntimeBuildDispatchProbe {
+            starts: AtomicUsize::new(0),
+        });
+        let report = Scheduler::new(
+            vec![DeviceCfg {
+                id: "runtime-binding-build-node".to_string(),
+                model_id: MODEL_B.to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            }],
+            1,
+        )
+        .run(
+            dag,
+            build_dispatcher.clone() as Arc<dyn TaskDispatcher>,
+            binding_spec,
+        )
+        .await
+        .expect("the resolved requirement binding did not enter Scheduler build dispatch");
+        assert_eq!(build_dispatcher.starts.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(report.done.len(), 1);
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the quarantined authority attempt blocked phase drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 1));
+    }
+
+    #[tokio::test]
+    async fn production_requirement_binding_all_distinct_hosts_ambiguous_is_typed_exhaustion() {
+        const MODEL_A: &str = "runtime-binding-exhausted-model-a";
+        const MODEL_B: &str = "runtime-binding-exhausted-model-b";
+        const HOST_A: &str = "runtime-binding-exhausted-host-a";
+        const HOST_B: &str = "runtime-binding-exhausted-host-b";
+        let harness = research_correction_runtime_harness(
+            &[
+                ("binding-exhausted-lane-a", MODEL_A, HOST_A),
+                ("binding-exhausted-lane-b", MODEL_B, HOST_B),
+            ],
+            HashMap::from([
+                (MODEL_A.to_string(), Vec::new()),
+                (MODEL_B.to_string(), Vec::new()),
+            ]),
+        )
+        .await;
+        harness.provider.drop_next_stream_unproven(MODEL_A);
+        harness.provider.drop_next_stream_unproven(MODEL_B);
+
+        let error = match harness
+            .dispatcher
+            .run_requirement_binding_authority(
+                MODEL_A,
+                &[MODEL_B.to_string()],
+                "frozen requirement binding system",
+                "frozen requirement binding input",
+                &serde_json::json!({"type": "object"}),
+                "frozen-authority-digest",
+            )
+            .await
+        {
+            Ok(_) => panic!("all ambiguous physical hosts unexpectedly produced authority"),
+            Err(error) => error,
+        };
+        let exhausted = error
+            .downcast_ref::<RequirementBindingAuthorityExhausted>()
+            .expect("authority exhaustion was reduced to an untyped string");
+        assert_eq!(exhausted.attempts.len(), 2);
+        assert_eq!(
+            exhausted
+                .attempts
+                .iter()
+                .map(|attempt| attempt.physical_host_id.as_str())
+                .collect::<Vec<_>>(),
+            [HOST_A, HOST_B]
+        );
+        assert_eq!(
+            harness.provider.request_digests(MODEL_A),
+            harness.provider.request_digests(MODEL_B)
+        );
+        assert_eq!(
+            harness
+                .provider
+                .late_unproven_chunks_polled
+                .load(AtomicOrdering::SeqCst),
+            0
+        );
+        let events = harness.sink.values();
+        let exhausted_event = events
+            .iter()
+            .find(|event| event["event"] == "requirement_binding_authority_exhausted")
+            .expect("typed authority exhaustion event was not emitted");
+        assert_eq!(exhausted_event["provider_terminal_fabricated"], false);
+        assert_eq!(
+            exhausted_event["typed_failure"],
+            "authority_transport_exhausted"
+        );
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "broker_provider_terminal_observed"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("fully quarantined authority attempts blocked phase drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 2));
+    }
+
+    #[tokio::test]
+    async fn production_requirement_binding_does_not_retry_an_alias_on_the_same_physical_host() {
+        const MODEL_A: &str = "runtime-binding-same-host-model-a";
+        const MODEL_B: &str = "runtime-binding-same-host-model-b";
+        const SHARED_HOST: &str = "runtime-binding-shared-host";
+        let harness = research_correction_runtime_harness(
+            &[
+                ("binding-same-host-lane-a", MODEL_A, SHARED_HOST),
+                ("binding-same-host-lane-b", MODEL_B, SHARED_HOST),
+            ],
+            HashMap::from([
+                (MODEL_A.to_string(), Vec::new()),
+                (MODEL_B.to_string(), Vec::new()),
+            ]),
+        )
+        .await;
+        harness.provider.drop_next_stream_unproven(MODEL_A);
+
+        let error = match harness
+            .dispatcher
+            .run_requirement_binding_authority(
+                MODEL_A,
+                &[MODEL_B.to_string()],
+                "frozen requirement binding system",
+                "frozen requirement binding input",
+                &serde_json::json!({"type": "object"}),
+                "frozen-authority-digest",
+            )
+            .await
+        {
+            Ok(_) => panic!("an alias reused the same ambiguous physical host"),
+            Err(error) => error,
+        };
+        let exhausted = error
+            .downcast_ref::<RequirementBindingAuthorityExhausted>()
+            .expect("same-host exhaustion was reduced to an untyped string");
+        assert_eq!(exhausted.attempts.len(), 1);
+        assert_eq!(exhausted.attempts[0].physical_host_id, SHARED_HOST);
+        assert_eq!(harness.provider.call_count(MODEL_A), 1);
+        assert_eq!(harness.provider.call_count(MODEL_B), 0);
+        assert_eq!(
+            harness
+                .provider
+                .late_unproven_chunks_polled
+                .load(AtomicOrdering::SeqCst),
+            0,
+            "a stale final output after the ambiguous drop was polled"
+        );
+        assert!(!harness.sink.has("requirement_binding_rescheduled"));
+        assert!(!harness
+            .sink
+            .values()
+            .iter()
+            .any(|event| event["event"] == "broker_provider_terminal_observed"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("same-host ambiguous authority did not drain into quarantine")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 1));
+    }
+
+    #[tokio::test]
+    async fn production_finished_invalid_requirement_binding_does_not_change_hosts() {
+        const MODEL_A: &str = "runtime-binding-invalid-model-a";
+        const MODEL_B: &str = "runtime-binding-invalid-model-b";
+        const HOST_A: &str = "runtime-binding-invalid-host-a";
+        const HOST_B: &str = "runtime-binding-invalid-host-b";
+        let (binding_spec, plan, mut invalid_binding, _detail) =
+            requirement_binding_runtime_fixture(MODEL_A);
+        invalid_binding["bindings"][0]["owns_requirement_ids"] =
+            serde_json::json!(["REQ-not-authorized"]);
+        invalid_binding["bindings"][0]["slices"][0]["requirement_ids"] =
+            serde_json::json!(["REQ-not-authorized"]);
+        let harness = research_correction_runtime_harness(
+            &[
+                ("binding-invalid-lane-a", MODEL_A, HOST_A),
+                ("binding-invalid-lane-b", MODEL_B, HOST_B),
+            ],
+            HashMap::from([
+                (MODEL_A.to_string(), vec![invalid_binding]),
+                (MODEL_B.to_string(), Vec::new()),
+            ]),
+        )
+        .await;
+
+        let error = harness
+            .dispatcher
+            .detail_plan(MODEL_A, vec![MODEL_B.to_string()], &binding_spec, "", &plan)
+            .await
+            .expect_err("a compiler-invalid binding unexpectedly reached build planning");
+        assert!(error
+            .to_string()
+            .contains("unknown id `REQ-not-authorized`"));
+        assert_eq!(harness.provider.call_count(MODEL_A), 1);
+        assert_eq!(harness.provider.call_count(MODEL_B), 0);
+        assert!(!harness.sink.has("requirement_binding_rescheduled"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("finished compiler rejection did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
     fn correction_runtime_candidate(requirement_id: &str) -> ResearchClosureCandidate {
