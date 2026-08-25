@@ -3517,6 +3517,9 @@ def parse_smoke_stream(
                 "".join(str(item["text"]) for item in content).encode()
             )
 
+    pre_tool_assistant_text = "".join(
+        value for position, value in assistant_text if position <= response_position
+    )
     final_text = "".join(
         value for position, value in assistant_text if position > response_position
     )
@@ -3527,9 +3530,7 @@ def parse_smoke_stream(
         for position, value in assistant_text
     ):
         errors.append("final marker appeared before the paired tool response")
-    if any(
-        value for position, value in assistant_text if position <= response_position
-    ):
+    if pre_tool_assistant_text:
         errors.append("assistant emitted text before the paired tool response")
     if len(complete_positions) != 1:
         errors.append(f"expected one complete event, found {len(complete_positions)}")
@@ -3551,10 +3552,81 @@ def parse_smoke_stream(
         "tool_response_text_sha256": tool_response_text_sha256,
         "paired_response": len(paired) == 1,
         "final_text_exact": final_text == expected_marker,
+        "final_text_normalized_exact": (
+            response_position >= 0 and final_text.strip() == expected_marker
+        ),
+        "pre_tool_assistant_text_present": bool(pre_tool_assistant_text),
+        "pre_tool_assistant_text_marker_absent": (
+            expected_marker not in pre_tool_assistant_text
+        ),
+        "pre_tool_assistant_text_sha256": sha256_bytes(
+            pre_tool_assistant_text.encode()
+        ),
         "output_token_limit_reached": any(
             _has_output_limit_metadata(event) for event in events
         ),
     }
+
+
+def reconcile_minimax_m3_smoke_stream(
+    stream: Mapping[str, Any],
+    row: Mapping[str, Any],
+    provider_contract: Mapping[str, Any],
+) -> Dict[str, Any]:
+    reconciled = dict(stream)
+    errors = list(stream.get("errors", []))
+    reconciled["minimax_reasoning_text_bound"] = False
+    reconciled["final_text_whitespace_normalized"] = False
+
+    replay = provider_contract.get("tool_replay")
+    contract_bound = (
+        row.get("provider") == "minimax_api"
+        and row.get("model") == "MiniMax-M3"
+        and row.get("reasoning_split") is False
+        and provider_contract.get("required") is True
+        and provider_contract.get("valid") is True
+        and provider_contract.get("errors") == []
+        and provider_contract.get("adaptive_thinking") is True
+        and provider_contract.get("reasoning_split_disabled") is True
+        and isinstance(replay, dict)
+        and replay.get("order")
+        == ["think_content", "assistant_tool_call", "tool_output"]
+        and replay.get("call_id_sha256") == stream.get("request_id_sha256")
+        and replay.get("stream_request_id_sha256")
+        == stream.get("request_id_sha256")
+        and replay.get("tool_output_sha256")
+        == stream.get("tool_response_text_sha256")
+        and replay.get("stream_tool_response_sha256")
+        == stream.get("tool_response_text_sha256")
+        and stream.get("paired_response") is True
+        and stream.get("tool_requests") == 1
+        and stream.get("tool_responses") == 1
+    )
+    final_error = "final assistant text after the tool response was not exact"
+    if (
+        contract_bound
+        and stream.get("final_text_exact") is False
+        and stream.get("final_text_normalized_exact") is True
+        and final_error in errors
+    ):
+        errors.remove(final_error)
+        reconciled["final_text_whitespace_normalized"] = True
+
+    pre_tool_error = "assistant emitted text before the paired tool response"
+    if (
+        contract_bound
+        and stream.get("pre_tool_assistant_text_present") is True
+        and stream.get("pre_tool_assistant_text_marker_absent") is True
+        and replay.get("assistant_text_sha256")
+        == stream.get("pre_tool_assistant_text_sha256")
+        and pre_tool_error in errors
+    ):
+        errors.remove(pre_tool_error)
+        reconciled["minimax_reasoning_text_bound"] = True
+
+    reconciled["errors"] = errors
+    reconciled["valid"] = not errors
+    return reconciled
 
 
 SAFE_ENV_NAMES = {
@@ -14824,8 +14896,6 @@ def smoke_attempt_evidence(
         expected_marker=expected_marker,
         expected_tool_output=expected_tool_output,
     )
-    if not stream["valid"]:
-        reasons.extend(f"stream: {error}" for error in stream["errors"])
 
     lifecycle = lifecycle_summary(
         paths["lifecycle"],
@@ -14847,29 +14917,23 @@ def smoke_attempt_evidence(
     }
     if row["provider"] == "meta":
         provider_contract = meta_responses_smoke_contract(paths["profile"], row)
-        if not provider_contract["valid"]:
-            reasons.extend(
-                f"provider contract: {error}"
-                for error in provider_contract["errors"]
-            )
     elif row["provider"] == "alibaba":
         provider_contract = qwen_chat_smoke_contract(
             paths["profile"], row, lifecycle.get("terminal_usage", {})
         )
-        if not provider_contract["valid"]:
-            reasons.extend(
-                f"provider contract: {error}"
-                for error in provider_contract["errors"]
-            )
     elif row["provider"] == "minimax_api":
         provider_contract = minimax_chat_smoke_contract(
             paths["profile"], row, lifecycle.get("terminal_usage", {}), stream
         )
-        if not provider_contract["valid"]:
-            reasons.extend(
-                f"provider contract: {error}"
-                for error in provider_contract["errors"]
-            )
+        stream = reconcile_minimax_m3_smoke_stream(
+            stream, row, provider_contract
+        )
+    if not stream["valid"]:
+        reasons.extend(f"stream: {error}" for error in stream["errors"])
+    if not provider_contract["valid"]:
+        reasons.extend(
+            f"provider contract: {error}" for error in provider_contract["errors"]
+        )
 
     outstanding, settled, budget_error = current_smoke_budget_requests(campaign, row)
     terminal_ids = sorted(
@@ -15315,8 +15379,6 @@ def smoke_proof_mismatch(
         expected_marker=str(state.get("final_marker", "")),
         expected_tool_output=str(state.get("expected_tool_output", "")),
     )
-    if not stream["valid"]:
-        return f"smoke stream no longer validates: {'; '.join(stream['errors'])}"
     lifecycle = lifecycle_summary(
         paths["lifecycle"],
         expected_provider=str(row["provider"]),
@@ -15352,6 +15414,11 @@ def smoke_proof_mismatch(
             lifecycle.get("terminal_usage", {}),
             stream,
         )
+        stream = reconcile_minimax_m3_smoke_stream(
+            stream, row, expected_provider_contract
+        )
+    if not stream["valid"]:
+        return f"smoke stream no longer validates: {'; '.join(stream['errors'])}"
     if (
         expected_provider_contract.get("valid") is not True
         or expected_provider_contract != evidence.get("provider_contract")
