@@ -770,6 +770,7 @@ mod tests {
             pillars: vec![pillar("ui", "req-ui"), pillar("api", "req-api")],
             integration_contract: IntegrationContract {
                 owner: "planner".to_string(),
+                integration_required: true,
                 objective: "Compose the application".to_string(),
                 interface_invariants: vec!["One status contract".to_string()],
                 acceptance_criteria: vec!["Runnable result".to_string()],
