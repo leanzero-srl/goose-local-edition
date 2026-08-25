@@ -47,6 +47,7 @@ import {
   phaseStepIndex,
   usePrefersReducedMotion,
 } from './formationVisualState';
+import { isSwarmRunStale, isSwarmRunTerminal } from './swarmRunLiveness';
 
 /**
  * Tip — a hover explainer for an icon/glyph, reusing the app's Radix tooltip so every swarm-panel affordance
@@ -75,13 +76,6 @@ const STATUS_COLOR: Record<TurnStatus, string> = {
   done: SWARM_STATUS.done,
   error: SWARM_STATUS.error,
 };
-// A worker rewrites its digest each turn, but a single long tool call (cargo build, a big pytest run)
-// produces no write while it runs. Keep this above realistic single-tool durations so a live worker isn't
-// mislabelled "interrupted"; a genuinely dead run still goes stale within this window.
-const STALE_MS = 300_000;
-// With a liveness heartbeat present, a dead engine is detectable in seconds (the ticker touches every ~5s),
-// so a much shorter window is safe and doesn't false-positive on long tool calls.
-const HEARTBEAT_STALE_MS = 45_000;
 const CALL_OK = SWARM_STATUS.done;
 const CALL_ERR = SWARM_STATUS.error;
 const CALL_PENDING = '#8a8a8a';
@@ -2889,10 +2883,8 @@ export const SwarmRunPanel: React.FC<{
 
   // Liveness: prefer the engine heartbeat (fast, precise) when the run has one; otherwise fall back to the
   // last-activity mtime with the old conservative window (runs that predate heartbeats).
-  const stale =
-    run.heartbeat != null
-      ? Date.now() - run.heartbeat > HEARTBEAT_STALE_MS
-      : run.mtime != null && Date.now() - run.mtime > STALE_MS;
+  const now = Date.now();
+  const stale = isSwarmRunStale(run, now);
   const { running, done, failed, tasks } = run.totals;
 
   // A run is OVER when it cleanly finished (run_finished) OR it went quiet with tasks in flight (killed /
@@ -2902,7 +2894,7 @@ export const SwarmRunPanel: React.FC<{
   // A present run that has gone stale is over, regardless of how far it got — a run KILLED DURING PLANNING has
   // zero dispatched tasks, so the old `stale && tasks > 0` gate left it stuck showing "planning" forever. The
   // heartbeat makes `stale` precise (a live planner keeps ticking), so staleness alone is a safe end signal.
-  const ended = !clarifyPending && (run.finished || stale);
+  const ended = isSwarmRunTerminal(run, now);
   // The APP-LEVEL oracle: the engine's own end-to-end verify (complete_result -> phaseTodo v-e2e = 'done').
   // A green verify means the deliverable WORKS — so the run is 'done' and the overview shows — EVEN IF an
   // individual build task failed (e.g. the integrate-verify sink stalled but the orchestrator's verify still
