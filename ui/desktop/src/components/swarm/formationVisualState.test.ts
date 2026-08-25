@@ -35,15 +35,34 @@ describe('formation phase truth', () => {
   });
 
   it('marks conditional stages skipped at Done unless the engine emitted evidence', () => {
-    const noConditionalStages = { integrationObserved: false, repairObserved: false };
+    const noConditionalStages = {
+      researchObserved: true,
+      planObserved: true,
+      integrationObserved: false,
+      repairObserved: false,
+    };
     expect(formationPhaseState('done', 3, noConditionalStages)).toBe('skipped');
     expect(formationPhaseState('done', 4, noConditionalStages)).toBe('skipped');
     expect(
       formationPhaseState('done', 3, {
+        researchObserved: true,
+        planObserved: true,
         integrationObserved: true,
         repairObserved: false,
       })
     ).toBe('complete');
+  });
+
+  it('does not backfill fictional Research or Plan completion for an immediate build', () => {
+    const immediateBuild = {
+      researchObserved: false,
+      planObserved: false,
+      integrationObserved: false,
+      repairObserved: false,
+    };
+    expect(formationPhaseState('build', 0, immediateBuild)).toBe('skipped');
+    expect(formationPhaseState('build', 1, immediateBuild)).toBe('skipped');
+    expect(formationPhaseState('build', 2, immediateBuild)).toBe('active');
   });
 
   it('keeps the 12px node glyph ramp at normal-text contrast', () => {

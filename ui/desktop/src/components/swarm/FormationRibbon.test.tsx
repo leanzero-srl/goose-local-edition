@@ -40,7 +40,12 @@ describe('FormationRibbon', () => {
     render(
       <FormationRibbon
         phase="done"
-        evidence={{ integrationObserved: false, repairObserved: false }}
+        evidence={{
+          researchObserved: true,
+          planObserved: true,
+          integrationObserved: false,
+          repairObserved: false,
+        }}
         nodes={[]}
       />
     );
