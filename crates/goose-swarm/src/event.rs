@@ -58,6 +58,20 @@ pub enum SwarmEvent {
         error: Option<String>,
         tool_calls: Vec<ToolCallRecord>,
     },
+    TaskCheckpointPersisted {
+        task_id: String,
+        sequence: u64,
+        completion_order: u64,
+        artifacts: usize,
+    },
+    TaskCheckpointPersistFailed {
+        task_id: String,
+        error: String,
+    },
+    SchedulerCheckpointRestored {
+        restored: Vec<String>,
+        invalidated: Vec<String>,
+    },
     TaskRetry {
         task_id: String,
         from_device: Option<String>,
