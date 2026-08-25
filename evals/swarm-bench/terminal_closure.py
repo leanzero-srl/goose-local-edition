@@ -43,7 +43,7 @@ V18_LIVE_ROOT = pathlib.Path(
 )
 V18_RUN_DIR = V18_LIVE_ROOT / "swarm-3node-qwen38-brainwaves-r0"
 V18_STATE_DIR = pathlib.Path(
-    "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-terminal-closure"
+    "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-terminal-closure-r2"
 )
 V18_BOUND_CONFIG = V18_STATE_DIR / "config.json"
 V18_SCORE_LOCK = pathlib.Path(
@@ -2509,7 +2509,7 @@ class TerminalClosure:
                 env=safe_environment(),
                 start_new_session=True,
             )
-        receipt = safe_process_receipt(worker.pid)
+        receipt = stable_process_receipt(worker.pid)
         if receipt is None:
             raise ClosureError("score worker did not remain alive long enough to authenticate")
         atomic_json(attempt_dir / "worker.pid.json", receipt)
@@ -2852,7 +2852,7 @@ class TerminalClosure:
                         env=safe_environment(),
                         start_new_session=True,
                     )
-                process_receipt = safe_process_receipt(publisher_process.pid)
+                process_receipt = stable_process_receipt(publisher_process.pid)
                 if process_receipt is None:
                     time.sleep(0.2)
                     if receipt_path.is_file():
@@ -4032,7 +4032,7 @@ def spawn_supervisor(config_path: pathlib.Path, resume: bool) -> int:
                 env=safe_environment(),
                 start_new_session=True,
             )
-        receipt = safe_process_receipt(process.pid)
+        receipt = stable_process_receipt(process.pid)
         if receipt is None:
             raise ClosureError("closure supervisor exited during detached launch")
         atomic_json(pid_path, receipt)
