@@ -115,10 +115,13 @@ impl PillarCheckpointStore {
             ));
         }
         let requirement_digest = pillar_requirement_digest(authored_requirements)?;
-        let state_path = working_root
-            .join(".swarm")
-            .join(CHECKPOINT_DIRECTORY)
-            .join(STATE_FILE);
+        let generation_directory =
+            checkpoint_generation_directory(&working_root, &frozen_spec_digest);
+        reject_symlink_if_present(
+            &generation_directory,
+            "pillar checkpoint generation directory",
+        )?;
+        let state_path = generation_directory.join(STATE_FILE);
         reject_symlink_if_present(&state_path, "pillar checkpoint state")?;
         let bytes = match std::fs::read(&state_path) {
             Ok(bytes) => bytes,
@@ -171,10 +174,17 @@ impl PillarCheckpointStore {
 
         let swarm_directory = working_root.join(".swarm");
         let directory = swarm_directory.join(CHECKPOINT_DIRECTORY);
+        let generation_directory =
+            checkpoint_generation_directory(&working_root, &frozen_spec_digest);
         ensure_control_directory(&working_root, &swarm_directory, "swarm state directory")?;
         ensure_control_directory(&swarm_directory, &directory, "pillar checkpoint directory")?;
+        ensure_control_directory(
+            &directory,
+            &generation_directory,
+            "pillar checkpoint generation directory",
+        )?;
 
-        let lock_path = directory.join(LOCK_FILE);
+        let lock_path = generation_directory.join(LOCK_FILE);
         reject_symlink_if_present(&lock_path, "pillar checkpoint lock")?;
         let lock = OpenOptions::new()
             .create(true)
@@ -190,7 +200,7 @@ impl PillarCheckpointStore {
         })?;
         verify_linked_file(&lock_path, &lock, "pillar checkpoint lock")?;
 
-        let state_path = directory.join(STATE_FILE);
+        let state_path = generation_directory.join(STATE_FILE);
         reject_symlink_if_present(&state_path, "pillar checkpoint state")?;
         let record = match std::fs::read(&state_path) {
             Ok(bytes) => {
@@ -739,6 +749,13 @@ fn canonical_digest(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn checkpoint_generation_directory(working_root: &Path, frozen_spec_digest: &str) -> PathBuf {
+    working_root
+        .join(".swarm")
+        .join(CHECKPOINT_DIRECTORY)
+        .join(&frozen_spec_digest["sha256:".len()..])
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
@@ -861,18 +878,12 @@ mod tests {
         let state_path = store.state_path.clone();
         drop(store);
 
-        assert!(PillarCheckpointStore::open(
-            root.path(),
-            pillar_frozen_spec_digest("different spec"),
-            &opening
-        )
-        .is_err());
-
         let different_root = tempfile::tempdir().unwrap();
         let copied_directory = different_root
             .path()
             .join(".swarm")
-            .join(CHECKPOINT_DIRECTORY);
+            .join(CHECKPOINT_DIRECTORY)
+            .join(&digest["sha256:".len()..]);
         std::fs::create_dir_all(&copied_directory).unwrap();
         std::fs::copy(&state_path, copied_directory.join(STATE_FILE)).unwrap();
         assert!(PillarCheckpointStore::open(different_root.path(), &digest, &opening).is_err());
@@ -891,6 +902,45 @@ mod tests {
         bytes[revision + b"\"revision\":".len()] = b'9';
         std::fs::write(&state_path, bytes).unwrap();
         assert!(PillarCheckpointStore::open(root.path(), &digest, &opening).is_err());
+    }
+
+    #[test]
+    fn frozen_specs_share_a_root_without_overwriting_each_others_attempts() {
+        let root = tempfile::tempdir().unwrap();
+        let opening = opening();
+        let digest_a = pillar_frozen_spec_digest("frozen spec A");
+        let digest_b = pillar_frozen_spec_digest("frozen spec B");
+        let attempt_a = attempt("ui", "req-ui", 1, Confidence::Low);
+        let mut attempt_b = attempt("ui", "req-ui", 1, Confidence::High);
+        attempt_b.report.claims[0].statement = "Spec B finding".to_string();
+
+        let store_a = PillarCheckpointStore::open(root.path(), &digest_a, &opening).unwrap();
+        store_a.persist_attempt(attempt_a.clone()).unwrap();
+        let state_a = store_a.state_path.clone();
+        drop(store_a);
+
+        let store_b = PillarCheckpointStore::open(root.path(), &digest_b, &opening).unwrap();
+        store_b.persist_attempt(attempt_b.clone()).unwrap();
+        let state_b = store_b.state_path.clone();
+        assert_ne!(state_a, state_b);
+        assert_eq!(store_b.completed_attempts("ui").unwrap(), vec![attempt_b]);
+        drop(store_b);
+
+        assert_eq!(
+            PillarCheckpointStore::load_opening(
+                root.path(),
+                digest_a.clone(),
+                &opening.requirements,
+            )
+            .unwrap(),
+            Some(opening.clone())
+        );
+        let resumed_a = PillarCheckpointStore::open(root.path(), &digest_a, &opening).unwrap();
+        assert_eq!(resumed_a.completed_attempts("ui").unwrap(), vec![attempt_a]);
+        assert_eq!(
+            resumed_a.resume_decision("ui").unwrap(),
+            PillarResumeDecision::RunFocusedRetry
+        );
     }
 
     #[test]

@@ -1992,6 +1992,177 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completed_repair_bin_restores_after_main_dag_without_repeating() {
+        let root = tempfile::tempdir().unwrap();
+        let build_a = spec("build-a", &[], &["src/a.txt"]);
+        let build_b = spec("build-b", &[], &["src/b.txt"]);
+        let repair_a = spec("repair::capability::01", &[], &["src/a.txt"]);
+        let repair_b = spec("repair::capability::02", &[], &["src/b.txt"]);
+
+        write_artifact(root.path(), "src/a.txt", "main-a");
+        write_artifact(root.path(), "src/b.txt", "main-b");
+        let store = SchedulerCheckpointStore::open(root.path()).unwrap();
+        store.persist_done(&build_a, "main a output", 1).unwrap();
+        store.persist_done(&build_b, "main b output", 1).unwrap();
+        write_artifact(root.path(), "src/a.txt", "repaired-a");
+        store.persist_done(&repair_a, "repair a output", 2).unwrap();
+        drop(store);
+
+        write_artifact(root.path(), "src/a.txt", "crash-a");
+        write_artifact(root.path(), "src/b.txt", "crash-b");
+        let store = Arc::new(SchedulerCheckpointStore::open(root.path()).unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let dispatcher = Arc::new(WritingDispatcher {
+            root: root.path().to_path_buf(),
+            calls: calls.clone(),
+            contexts: None,
+            sabotage_wal: None,
+        });
+        let device = DeviceCfg {
+            id: "device".to_string(),
+            model_id: "model".to_string(),
+            weight: 1,
+            enabled: true,
+            speed_weight: 1,
+            supervision: false,
+        };
+
+        Scheduler::new(vec![device.clone()], 1)
+            .with_checkpoint_store(store.clone())
+            .run(
+                Dag::from_specs(vec![build_a, build_b]).unwrap(),
+                dispatcher.clone(),
+                "restore main build".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(
+            std::fs::read(root.path().join("src/a.txt")).unwrap(),
+            b"main-a"
+        );
+
+        let report = Scheduler::new(vec![device], 1)
+            .with_checkpoint_store(store)
+            .run(
+                Dag::from_specs(vec![repair_a, repair_b]).unwrap(),
+                dispatcher,
+                "resume capability repairs".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(
+            std::fs::read(root.path().join("src/a.txt")).unwrap(),
+            b"repaired-a"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("src/b.txt")).unwrap(),
+            b"repair::capability::02 output"
+        );
+        assert_eq!(
+            report
+                .tasks
+                .iter()
+                .find(|task| task.task_id == "repair::capability::01")
+                .unwrap()
+                .attempts,
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn final_reseal_keeps_main_and_capability_repair_on_authoritative_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let build = spec("build-a", &[], &["src/a.txt"]);
+        let repair = spec("repair::capability::01", &[], &["src/a.txt"]);
+
+        write_artifact(root.path(), "src/a.txt", "main-bytes");
+        let store = SchedulerCheckpointStore::open(root.path()).unwrap();
+        store.persist_done(&build, "main output", 1).unwrap();
+        write_artifact(root.path(), "src/a.txt", "repair-bytes");
+        store.persist_done(&repair, "repair output", 2).unwrap();
+
+        write_artifact(root.path(), "src/a.txt", "final-fixed-bytes");
+        store
+            .reseal_completed_dag(
+                std::slice::from_ref(&repair),
+                &[SchedulerCompletedTaskEvidence {
+                    task_id: repair.id.clone(),
+                    output: "repair output".to_string(),
+                    attempts: 2,
+                }],
+            )
+            .unwrap();
+        store
+            .reseal_completed_dag(
+                std::slice::from_ref(&build),
+                &[SchedulerCompletedTaskEvidence {
+                    task_id: build.id.clone(),
+                    output: "main output".to_string(),
+                    attempts: 1,
+                }],
+            )
+            .unwrap();
+        drop(store);
+
+        write_artifact(root.path(), "src/a.txt", "crash-bytes");
+        let store = Arc::new(SchedulerCheckpointStore::open(root.path()).unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let dispatcher = Arc::new(WritingDispatcher {
+            root: root.path().to_path_buf(),
+            calls: calls.clone(),
+            contexts: None,
+            sabotage_wal: None,
+        });
+        let device = DeviceCfg {
+            id: "device".to_string(),
+            model_id: "model".to_string(),
+            weight: 1,
+            enabled: true,
+            speed_weight: 1,
+            supervision: false,
+        };
+
+        let main_report = Scheduler::new(vec![device.clone()], 1)
+            .with_checkpoint_store(store.clone())
+            .run(
+                Dag::from_specs(vec![build]).unwrap(),
+                dispatcher.clone(),
+                "restore final main build".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(main_report.results["build-a"], "main output");
+        assert_eq!(main_report.tasks[0].attempts, 1);
+        assert_eq!(
+            std::fs::read(root.path().join("src/a.txt")).unwrap(),
+            b"final-fixed-bytes"
+        );
+
+        let repair_report = Scheduler::new(vec![device], 1)
+            .with_checkpoint_store(store)
+            .run(
+                Dag::from_specs(vec![repair]).unwrap(),
+                dispatcher,
+                "restore final capability repair".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(
+            repair_report.results["repair::capability::01"],
+            "repair output"
+        );
+        assert_eq!(repair_report.tasks[0].attempts, 2);
+        assert_eq!(
+            std::fs::read(root.path().join("src/a.txt")).unwrap(),
+            b"final-fixed-bytes"
+        );
+    }
+
+    #[tokio::test]
     async fn repaired_dag_reseal_restores_exact_artifacts_with_zero_dispatches() {
         let root = tempfile::tempdir().unwrap();
         let a = spec("a", &[], &["src/a.txt"]);
