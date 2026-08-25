@@ -346,6 +346,7 @@ class TerminalClosureTests(unittest.TestCase):
         }
         manifest_path = live_root / "instrument-manifest.json"
         closure.atomic_json(manifest_path, manifest, 0o400)
+        config["expected"]["instrument_manifest_sha256"] = sha(manifest_path)
         run_started = {
             "event": "run_started",
             "seq": 0,
@@ -421,10 +422,20 @@ class TerminalClosureTests(unittest.TestCase):
             )
         )
         patches.enter_context(mock.patch.object(closure, "V18_LAUNCHER", launcher))
+        patches.enter_context(
+            mock.patch.object(closure, "V18_LAUNCHER_SHA256", sha(launcher))
+        )
         patches.enter_context(mock.patch.object(closure, "V18_FLEET_SEAL", fleet_path))
         patches.enter_context(mock.patch.object(closure, "V18_BINARY", binary))
         patches.enter_context(
             mock.patch.object(closure, "V18_BINARY_SHA256", sha(binary))
+        )
+        patches.enter_context(
+            mock.patch.object(
+                closure,
+                "V18_INSTRUMENT_MANIFEST_SHA256",
+                sha(manifest_path),
+            )
         )
         patches.enter_context(
             mock.patch.object(closure, "V18_PUBLISHER_ROOT", publisher_root)

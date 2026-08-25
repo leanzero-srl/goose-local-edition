@@ -50,6 +50,7 @@ V18_SCORE_LOCK = pathlib.Path(
     "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-score.lock"
 )
 V18_LAUNCHER = V18_LIVE_ROOT / "launch_local_v18.py"
+V18_LAUNCHER_SHA256 = "7ebae93df025ee0f77d321e12f51feae23f68174361f2828a8ba8ce5b594c2e4"
 V18_FLEET_SEAL = V18_LIVE_ROOT / "fleet-seal.json"
 V18_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
 V18_PROTECTED_DOCUMENT_IDS = frozenset(
@@ -59,6 +60,9 @@ V18_CANDIDATE_COMMIT = "10f446dfa7e4cf4c9ec8cb0648e0bbdfc0100116"
 V18_CANDIDATE_TREE = "19e5ecc3bf62e334a754ad93a83165781c3f4f82"
 V18_BINARY = V18_LIVE_ROOT / "bin/goose-2aedd0debf84"
 V18_BINARY_SHA256 = "2aedd0debf848f047e1c26839f7ad1cb936b7cdb48426487d7b04845f611fc56"
+V18_INSTRUMENT_MANIFEST_SHA256 = (
+    "96dc2c43a963e8ef62abaeef2d51e3adbad6c4454e4b4e09963afd3de191b730"
+)
 V18_PUBLISHER_COMMIT = "eba9e214a1ca1bd2cf980cfcad04b792733fd163"
 V18_PUBLISHER_SHA256 = "d53a5eb9becd2cbbfbf94d46cdc5c40e5e43377f626af38807aa0dec8cfd5bc7"
 V18_PUBLISHER_MARKER = "Brainwaves v18"
@@ -1189,8 +1193,10 @@ def validate_v18_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
     for field, exact in exact_expected.items():
         if expected.get(field) != exact:
             raise ClosureError(f"v18 expected.{field} changed")
-    if not SHA256_RE.fullmatch(str(expected.get("launch_controller_sha256", ""))):
-        raise ClosureError("v18 launcher source hash is not pinned")
+    if expected.get("launch_controller_sha256") != V18_LAUNCHER_SHA256:
+        raise ClosureError("v18 launcher source hash changed")
+    if expected.get("instrument_manifest_sha256") != V18_INSTRUMENT_MANIFEST_SHA256:
+        raise ClosureError("v18 instrument manifest hash changed")
     if publication.get("target_document_id") != V18_TARGET_DOCUMENT_ID:
         raise ClosureError("v18 publication target changed")
     if set(publication.get("protected_document_ids") or []) != set(
@@ -1220,7 +1226,6 @@ def validate_v18_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         raise ClosureError("v18 closure armed state is not boolean")
     dynamic_hashes = (
         "launch_sha256",
-        "instrument_manifest_sha256",
         "run_started_sha256",
         "trace_header_sha256",
         "fleet_seal_sha256",
@@ -1539,6 +1544,8 @@ def v18_binding_evidence(
     expected = config["expected"]
     if launch.get("schema_version") != SCHEMA_VERSION:
         raise ClosureError("v18 launch receipt schema changed")
+    if manifest_sha256 != expected["instrument_manifest_sha256"]:
+        raise ClosureError("v18 instrument manifest differs from its unarmed pin")
     if launch.get("launch_controller_sha256") != expected[
         "launch_controller_sha256"
     ]:
