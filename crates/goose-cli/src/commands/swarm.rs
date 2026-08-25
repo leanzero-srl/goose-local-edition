@@ -39,21 +39,26 @@ use goose::session::session_manager::SessionType;
 use goose::session::SessionManager;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
-    deterministic_verdict, is_split_candidate, AdmissionReceipt, AdmittedWork, AuthorityScope,
-    ChildSpec, CompletedProviderRequest, Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink,
-    HostCapacityEvidence, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
-    LocalCompletionKind, NullSink, PhysicalAdmissionControl, PhysicalExecutionAuthority,
-    PhysicalFleetSnapshot, PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle,
-    ProviderLifecycleDispatcher, ProviderLifecycleStartError, ProviderNudgeDelivery,
-    ProviderRequestKey, ProviderRequestReceipt, ProviderTerminalKind, ProviderTerminalReceipt,
-    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, Scheduler,
+    compile_pillar_report_with_sources, deterministic_verdict, evidence_source_digest,
+    is_split_candidate, pillar_frozen_spec_digest, render_synthesis_input, validate_pillar_opening,
+    validate_pillar_opening_against, AdmissionReceipt, AdmittedWork, AuthoredRequirement,
+    AuthorityScope, ChildSpec, CompiledPillarReport, CompletedProviderRequest, Confidence, Dag,
+    DeviceCfg, DispatchError, DispatchRequest, EventSink, EvidenceClass, EvidenceSourceAuthority,
+    EvidenceSourceSection, HostCapacityEvidence, IntegrationContract, Judge, JudgeConfig,
+    JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
+    PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
+    PillarAttemptCheckpoint, PillarCheckpointStore, PillarReportDraft, PillarResumeDecision,
+    PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
+    ProviderLifecycleStartError, ProviderNudgeDelivery, ProviderRequestKey, ProviderRequestReceipt,
+    ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
+    ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, Scheduler,
     SemanticActivityPublisher, SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput,
     TaskSpec, TaskVersion, ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkOpportunity,
     WorkRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcCommand;
@@ -12862,6 +12867,189 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         );
     }
 
+    fn pillar_plan_test_opening(critical: bool) -> ResearchPillarOpening {
+        ResearchPillarOpening {
+            requirements: vec![AuthoredRequirement {
+                id: "REQ-core".to_string(),
+                text: "Implement the core behavior".to_string(),
+                critical,
+            }],
+            pillars: vec![ResearchPillar {
+                id: "core".to_string(),
+                title: "Core behavior".to_string(),
+                objective: "Implement the core behavior".to_string(),
+                requirement_ids: vec!["REQ-core".to_string()],
+                dependencies: Vec::new(),
+                research_questions: vec!["Which exact interface owns the behavior?".to_string()],
+                acceptance_criteria: vec!["The core behavior has an executable test".to_string()],
+                exclusions: vec!["Do not own integration work".to_string()],
+            }],
+            integration_contract: IntegrationContract {
+                owner: "qwen".to_string(),
+                integration_required: false,
+                objective: "No shared integration is required".to_string(),
+                interface_invariants: vec!["Keep the core boundary stable".to_string()],
+                acceptance_criteria: vec!["The core module test passes".to_string()],
+            },
+        }
+    }
+
+    fn pillar_task_spec(task_id: &str) -> PillarPlanTaskSpecDraft {
+        PillarPlanTaskSpecDraft {
+            task_id: task_id.to_string(),
+            objective: "Implement the core behavior".to_string(),
+            module_boundary: "Own only src/core.rs".to_string(),
+            concrete_steps: vec!["Add the public core entry point".to_string()],
+            interfaces: vec!["Expose run_core() to its consumer".to_string()],
+            edge_cases: vec!["Reject an empty input deterministically".to_string()],
+            acceptance_evidence: vec!["cargo test core_contract passes".to_string()],
+            exclusions: vec!["Do not edit the application entry point".to_string()],
+        }
+    }
+
+    #[test]
+    fn pillar_task_compiler_requires_specific_structure_and_replaces_freeform_text() {
+        let mut plan = serde_json::json!({
+            "subtasks": [{
+                "id": "build-core",
+                "description": "vague",
+                "difficulty": "hard",
+                "model": "qwen",
+                "depends_on": [],
+                "files": ["src/core.rs"]
+            }]
+        });
+        let mut incomplete = pillar_task_spec("build-core");
+        incomplete.edge_cases.clear();
+        assert!(
+            compile_pillar_task_specs(&mut plan.clone(), vec![incomplete])
+                .unwrap_err()
+                .to_string()
+                .contains("edge_cases")
+        );
+
+        compile_pillar_task_specs(&mut plan, vec![pillar_task_spec("build-core")]).unwrap();
+        let description = plan["subtasks"][0]["description"].as_str().unwrap();
+        for section in [
+            "OBJECTIVE",
+            "EXCLUSIVE MODULE BOUNDARY",
+            "CONCRETE IMPLEMENTATION STEPS",
+            "PRODUCER / CONSUMER INTERFACES",
+            "EDGE CASES",
+            "EXECUTABLE ACCEPTANCE EVIDENCE",
+            "EXPLICIT EXCLUSIONS",
+        ] {
+            assert!(
+                description.contains(section),
+                "missing {section}: {description}"
+            );
+        }
+        assert!(!description.contains("vague"));
+    }
+
+    #[test]
+    fn critical_unresolved_pillar_requires_alternative_or_isolation() {
+        let opening = pillar_plan_test_opening(true);
+        let raw = serde_json::json!({
+            "task_coverage": [{
+                "task_id": "build-core",
+                "owns_requirement_ids": ["REQ-core"],
+                "applies_requirement_ids": [],
+                "verifies_requirement_ids": [],
+                "evidence_ids": []
+            }],
+            "task_specs": [{
+                "task_id": "build-core",
+                "objective": "Implement the core behavior",
+                "module_boundary": "Own only src/core.rs",
+                "concrete_steps": ["Add the public core entry point"],
+                "interfaces": ["Expose run_core()"],
+                "edge_cases": ["Reject empty input"],
+                "acceptance_evidence": ["cargo test core_contract passes"],
+                "exclusions": ["Do not edit the application entry point"]
+            }],
+            "uncertainty_routes": [{
+                "requirement_id": "REQ-core",
+                "task_id": "build-core",
+                "kind": "degraded_fallback",
+                "rationale": "Ship a partial implementation"
+            }],
+            "canonical_plan": {
+                "subtasks": [{
+                    "id": "build-core",
+                    "description": "replaced by the deterministic compiler",
+                    "difficulty": "hard",
+                    "model": "qwen",
+                    "depends_on": [],
+                    "files": ["src/core.rs"]
+                }]
+            }
+        });
+        let error = compile_pillar_plan(&raw.to_string(), &opening, &[], &["qwen".to_string()])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("concrete alternative or isolation"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn typed_no_integration_policy_permits_genuinely_independent_deliverables() {
+        let requirements = vec![
+            RequirementRecord {
+                id: "REQ-a".to_string(),
+                section: "A".to_string(),
+                quote: "Produce A".to_string(),
+            },
+            RequirementRecord {
+                id: "REQ-b".to_string(),
+                section: "B".to_string(),
+                quote: "Produce B".to_string(),
+            },
+        ];
+        let plan = serde_json::json!({"subtasks": [
+            {"id":"a", "description":"Produce A", "difficulty":"hard", "model":"qwen", "depends_on":[], "files":["a.txt"]},
+            {"id":"b", "description":"Produce B", "difficulty":"hard", "model":"qwen", "depends_on":[], "files":["b.txt"]}
+        ]});
+        let decision = serde_json::json!({
+            "selected_candidate": 0,
+            "task_coverage": [
+                {"task_id":"a", "owns_requirement_ids":["REQ-a"], "applies_requirement_ids":[], "verifies_requirement_ids":[], "evidence_ids":[]},
+                {"task_id":"b", "owns_requirement_ids":["REQ-b"], "applies_requirement_ids":[], "verifies_requirement_ids":[], "evidence_ids":[]}
+            ],
+            "material_conflicts": [],
+            "canonical_plan": plan
+        });
+        let candidates = vec![decision["canonical_plan"].to_string()];
+        let models = vec!["qwen".to_string()];
+        let compiled = compile_canonical_plan_adjudication_with_integration_policy(
+            &decision.to_string(),
+            &requirements,
+            &[],
+            &candidates,
+            &models,
+            false,
+        )
+        .unwrap();
+        let compiled_value: serde_json::Value = serde_json::from_str(&compiled.plan_json).unwrap();
+        assert_eq!(
+            compiled_value["canonical_plan_authority"]["integration_required"],
+            false
+        );
+        assert!(compile_canonical_plan_adjudication_with_integration_policy(
+            &decision.to_string(),
+            &requirements,
+            &[],
+            &candidates,
+            &models,
+            true,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("disconnected completion closures"));
+    }
+
     #[test]
     fn canonical_plan_compiler_rejects_coverage_evidence_and_model_inventions() {
         let (candidates, requirements, evidence, original, runtime_models) =
@@ -18257,6 +18445,70 @@ struct ResearchCanonicalSpecContext {
 struct ResearchSaturationOutcome {
     findings: Vec<ResearchFinding>,
     canonical_spec_context: Vec<ResearchCanonicalSpecContext>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PillarOpeningDraft {
+    pillars: Vec<ResearchPillar>,
+    integration_contract: IntegrationContract,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PillarUncertaintyRouteKind {
+    Alternative,
+    Isolation,
+    DegradedFallback,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PillarUncertaintyRoute {
+    requirement_id: String,
+    task_id: String,
+    kind: PillarUncertaintyRouteKind,
+    rationale: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PillarPlanTaskSpecDraft {
+    task_id: String,
+    objective: String,
+    module_boundary: String,
+    concrete_steps: Vec<String>,
+    interfaces: Vec<String>,
+    edge_cases: Vec<String>,
+    acceptance_evidence: Vec<String>,
+    exclusions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PillarPlanDraft {
+    task_coverage: Vec<CanonicalPlanTaskCoverageDraft>,
+    task_specs: Vec<PillarPlanTaskSpecDraft>,
+    uncertainty_routes: Vec<PillarUncertaintyRoute>,
+    canonical_plan: serde_json::Value,
+}
+
+#[derive(Clone, Debug)]
+struct PillarResearchOutcome {
+    opening: ResearchPillarOpening,
+    reports: Vec<CompiledPillarReport>,
+    synthesis: String,
+    verified_facts: String,
+    worker_context: String,
+    provider_calls: usize,
+    retries: usize,
+}
+
+#[derive(Clone, Debug)]
+struct PillarOwnerAttempt {
+    model_id: String,
+    physical_host_id: String,
+    report: CompiledPillarReport,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -28466,6 +28718,541 @@ impl GooseAgentDispatcher {
             degradations,
         })
     }
+
+    async fn run_pillar_owner_attempt(
+        self: &Arc<Self>,
+        opening: Arc<ResearchPillarOpening>,
+        pillar: ResearchPillar,
+        lane: ResearchPhysicalLane,
+        research_extensions: Arc<Vec<ExtensionConfig>>,
+        attempt_ordinal: u8,
+        prior_report: Option<CompiledPillarReport>,
+    ) -> Result<PillarOwnerAttempt> {
+        let owned_requirements = opening
+            .requirements
+            .iter()
+            .filter(|requirement| pillar.requirement_ids.contains(&requirement.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let retry_focus = prior_report.as_ref().map(|report| {
+            serde_json::json!({
+                "prior_compiled_report": report,
+                "instruction": "Resolve only the low-confidence or unresolved portions, but return one complete replacement report for the same pillar. Preserve already-supported facts unless new evidence disproves them."
+            })
+        });
+        let system = "You own exactly one non-overlapping research and implementation-spec pillar. Work only on the supplied requirement IDs and explicitly exclude sibling concerns. Resolve concrete implementation choices, interfaces, edge cases, and executable acceptance evidence; do not draft the cross-pillar plan and do not create or edit files. Use attached research tools only when a claim genuinely needs external proof. The authored requirement text is binding but is not external proof: classify it Supported and set source_section_id/source_quote to null. Classify a claim Proven only when source_section_id names an actual successful engine tool receipt and source_quote is an exact verbatim substring of that receipt. Use Unresolved when proof is unavailable. Confidence is low when any owned requirement, interface, or critical implementation choice remains uncertain. Keep research questions atomic and the resulting module boundary specific enough that another worker can implement it without rediscovering scope. Call final_output once with the complete typed pillar report.";
+        let user = serde_json::to_string_pretty(&serde_json::json!({
+            "pillar": pillar,
+            "owned_requirements": owned_requirements,
+            "shared_integration_contract": opening.integration_contract,
+            "attempt_ordinal": attempt_ordinal,
+            "focused_retry": retry_focus,
+        }))?;
+        let activity_key = format!("pillar-{}-attempt-{attempt_ordinal}", pillar.id);
+        self.events.write_value(serde_json::json!({
+            "event": "pillar_owner_attempt_started",
+            "pillar_id": pillar.id,
+            "attempt_ordinal": attempt_ordinal,
+            "model": lane.model_id,
+            "physical_host_id": lane.physical_host_id,
+            "owned_requirement_ids": pillar.requirement_ids,
+            "scope": "one-exclusive-pillar",
+        }));
+        let output = PRE_SCHEDULER_REQUIRED_HOST
+            .scope(
+                lane.physical_host_id.clone(),
+                self.run_agent_in(
+                    self.working_dir.clone(),
+                    &lane.model_id,
+                    system.to_string(),
+                    user,
+                    Some(Response {
+                        json_schema: Some(pillar_report_schema()),
+                    }),
+                    Some(UNBOUNDED_AGENT_TURNS),
+                    &research_extensions,
+                    AgentToolSurface::ResponseOnly,
+                    self.planner_timeout_secs,
+                    Some(&activity_key),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            .await?;
+        if output.physical_host_id.as_deref() != Some(lane.physical_host_id.as_str()) {
+            bail!(
+                "pillar owner output was not proven on assigned physical host `{}`",
+                lane.physical_host_id
+            );
+        }
+        let raw = output
+            .final_output
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+            .ok_or_else(|| anyhow!("pillar owner returned no typed report"))?;
+        let draft: PillarReportDraft = serde_json::from_str(strip_code_fences(&raw).trim())
+            .map_err(|error| anyhow!("pillar owner report was not valid typed JSON: {error}"))?;
+        let (draft, source_sections) =
+            normalize_pillar_report_sources(draft, &output.source_receipts);
+        let report = compile_pillar_report_with_sources(&opening, &source_sections, draft)?;
+        if report.pillar_id != pillar.id {
+            bail!(
+                "pillar owner returned {:?} while assigned {:?}",
+                report.pillar_id,
+                pillar.id
+            );
+        }
+        self.events.write_value(serde_json::json!({
+            "event": "pillar_owner_attempt_completed",
+            "pillar_id": pillar.id,
+            "attempt_ordinal": attempt_ordinal,
+            "model": lane.model_id,
+            "physical_host_id": lane.physical_host_id,
+            "effective_confidence": report.effective_confidence,
+            "claims": report.claims.len(),
+            "missing_requirements": report.missing_requirement_ids,
+            "source_receipts": source_sections.len(),
+        }));
+        Ok(PillarOwnerAttempt {
+            model_id: lane.model_id,
+            physical_host_id: lane.physical_host_id,
+            report,
+        })
+    }
+
+    async fn research_by_pillars(
+        self: &Arc<Self>,
+        user_prompt: &str,
+        research_extensions: Arc<Vec<ExtensionConfig>>,
+        worker_models: Vec<String>,
+        planner_model: &str,
+    ) -> Result<PillarResearchOutcome> {
+        let requirements = normalized_requirement_inventory(user_prompt);
+        if requirements.is_empty() {
+            bail!("pillar opening cannot inventory any authored requirement");
+        }
+        let authored_requirements = pillar_authored_requirements(&requirements);
+        let lanes = self.research_physical_lanes(&one_lane_per_host(worker_models))?;
+        let planner_lane = lanes
+            .iter()
+            .find(|lane| lane.model_id == planner_model)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "configured strongest planner `{planner_model}` has no verified physical lane"
+                )
+            })?;
+        let max_pillars = lanes.len().min(requirements.len()).max(1);
+        let frozen_spec_digest = pillar_frozen_spec_digest(user_prompt);
+        let restored_opening = PillarCheckpointStore::load_opening(
+            &self.working_dir,
+            &frozen_spec_digest,
+            &authored_requirements,
+        )?;
+        let mut provider_calls = 0usize;
+        let opening = if let Some(opening) = restored_opening {
+            validate_pillar_opening_against(&opening, &authored_requirements)?;
+            self.events.write_value(serde_json::json!({
+                "event": "pillar_opening_restored",
+                "pillars": opening.pillars.len(),
+                "provider_call_started": false,
+            }));
+            opening
+        } else {
+            provider_calls = provider_calls.saturating_add(1);
+            self.events.write_value(serde_json::json!({
+                "event": "pillar_opening_started",
+                "model": planner_lane.model_id,
+                "physical_host_id": planner_lane.physical_host_id,
+                "requirements": requirements.len(),
+                "max_pillars": max_pillars,
+                "topology": "one-opener-exact-disjoint-cover",
+            }));
+            let system = "You are the sole opening architect. Map the frozen authored requirement ledger into a small exact cover of non-overlapping implementation pillars. Every requirement ID must appear in exactly one pillar, dependencies must be empty because research runs independently, and pillar scopes must be mutually exclusive. Give each pillar concrete atomic research questions, an implementation-spec objective, executable acceptance criteria, and explicit exclusions that prevent sibling overlap. Do not plan files or build tasks yet. The integration contract names only genuinely shared interfaces and end-to-end acceptance. Set integration_required true only when the pillar outputs must actually be hooked into one runnable product; set it false for genuinely independent deliverables that need no shared hook-up task. Return the typed opening immediately; there is no peer verification round.";
+            let user = serde_json::to_string_pretty(&serde_json::json!({
+                "frozen_authored_requirements": authored_requirements,
+                "maximum_pillars": max_pillars,
+                "required_integration_owner": planner_model,
+            }))?;
+            let result = self
+                .run_response_only_agent_on_physical_host(
+                    &planner_lane.model_id,
+                    &planner_lane.physical_host_id,
+                    system.to_string(),
+                    user,
+                    Some(Response {
+                        json_schema: Some(pillar_opening_schema()),
+                    }),
+                    self.planner_timeout_secs,
+                    Some("pillar-opening-authority"),
+                )
+                .await
+                .and_then(|output| {
+                    if output.physical_host_id.as_deref()
+                        != Some(planner_lane.physical_host_id.as_str())
+                    {
+                        bail!("pillar opening did not return from its assigned physical host");
+                    }
+                    let raw = output
+                        .final_output
+                        .filter(|value| !value.trim().is_empty())
+                        .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+                        .ok_or_else(|| anyhow!("pillar opener returned no typed opening"))?;
+                    let draft: PillarOpeningDraft =
+                        serde_json::from_str(strip_code_fences(&raw).trim()).map_err(|error| {
+                            anyhow!("pillar opening was not valid typed JSON: {error}")
+                        })?;
+                    compile_pillar_opening_draft(&requirements, draft, planner_model, max_pillars)
+                });
+            match result {
+                Ok(opening) => opening,
+                Err(error) => {
+                    self.events.write_value(serde_json::json!({
+                        "event": "pillar_opening_degraded",
+                        "reason": error.to_string(),
+                        "fallback": "deterministic-authored-section-cover",
+                        "additional_provider_call": false,
+                    }));
+                    fallback_pillar_opening(&requirements, planner_model, max_pillars)?
+                }
+            }
+        };
+        validate_pillar_opening_against(&opening, &authored_requirements)?;
+        let checkpoint = Arc::new(PillarCheckpointStore::open(
+            &self.working_dir,
+            frozen_spec_digest,
+            &opening,
+        )?);
+        self.events.write_value(serde_json::json!({
+            "event": "pillar_research_started",
+            "pillars": opening.pillars.len(),
+            "physical_hosts": lanes.iter().map(|lane| lane.physical_host_id.as_str()).collect::<Vec<_>>(),
+            "primary_calls": opening.pillars.len(),
+            "retry_policy": "exactly-one-only-after-low-confidence",
+        }));
+
+        let scheduler = ResearchHostScheduler::new(lanes.clone());
+        let all_tokens = lanes
+            .iter()
+            .map(|lane| lane.token.clone())
+            .collect::<Vec<_>>();
+        let opening = Arc::new(opening);
+        let primary_calls = futures::stream::FuturesUnordered::new();
+        for (index, pillar) in opening.pillars.iter().cloned().enumerate() {
+            if checkpoint.resume_decision(&pillar.id)? != PillarResumeDecision::RunPrimary {
+                continue;
+            }
+            let dispatcher = self.clone();
+            let scheduler = scheduler.clone();
+            let tokens = all_tokens.clone();
+            let opening = opening.clone();
+            let extensions = research_extensions.clone();
+            primary_calls.push(async move {
+                let lease = scheduler
+                    .acquire(
+                        tokens,
+                        pillar.requirement_ids.len(),
+                        index,
+                        pillar.id.clone(),
+                    )
+                    .await?;
+                let lane = lease.lane.clone();
+                let result = dispatcher
+                    .run_pillar_owner_attempt(
+                        opening,
+                        pillar.clone(),
+                        lane.clone(),
+                        extensions,
+                        1,
+                        None,
+                    )
+                    .await;
+                Ok::<_, anyhow::Error>((pillar, lane, result))
+            });
+        }
+        let mut primary_calls = primary_calls;
+        while let Some(call) = primary_calls.next().await {
+            let (pillar, lane, result) = call?;
+            provider_calls = provider_calls.saturating_add(1);
+            let attempt = match result {
+                Ok(attempt) => attempt,
+                Err(error) => {
+                    self.events.write_value(serde_json::json!({
+                        "event": "pillar_owner_attempt_degraded",
+                        "pillar_id": pillar.id,
+                        "attempt_ordinal": 1,
+                        "model": lane.model_id,
+                        "physical_host_id": lane.physical_host_id,
+                        "reason": error.to_string(),
+                    }));
+                    PillarOwnerAttempt {
+                        model_id: lane.model_id,
+                        physical_host_id: lane.physical_host_id,
+                        report: unresolved_pillar_report(
+                            &opening,
+                            &pillar,
+                            format!("primary pillar attempt failed: {error}"),
+                        )?,
+                    }
+                }
+            };
+            checkpoint.persist_attempt(PillarAttemptCheckpoint {
+                pillar_id: pillar.id,
+                attempt_ordinal: 1,
+                model_id: attempt.model_id,
+                physical_host: attempt.physical_host_id,
+                report: attempt.report,
+            })?;
+        }
+
+        let retry_calls = futures::stream::FuturesUnordered::new();
+        let mut retries = 0usize;
+        for (index, pillar) in opening.pillars.iter().cloned().enumerate() {
+            if checkpoint.resume_decision(&pillar.id)? != PillarResumeDecision::RunFocusedRetry {
+                continue;
+            }
+            let primary = checkpoint
+                .completed_attempts(&pillar.id)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("focused retry lost its primary checkpoint"))?;
+            let eligible = lanes
+                .iter()
+                .filter(|lane| lane.physical_host_id != primary.physical_host)
+                .map(|lane| lane.token.clone())
+                .collect::<Vec<_>>();
+            if eligible.is_empty() {
+                checkpoint.persist_attempt(PillarAttemptCheckpoint {
+                    pillar_id: pillar.id.clone(),
+                    attempt_ordinal: 2,
+                    model_id: "engine-typed-unavailable".to_string(),
+                    physical_host: "no-distinct-retry-host".to_string(),
+                    report: unresolved_pillar_report(
+                        &opening,
+                        &pillar,
+                        "low-confidence pillar had no distinct physical host for its one focused retry",
+                    )?,
+                })?;
+                continue;
+            }
+            let dispatcher = self.clone();
+            let scheduler = scheduler.clone();
+            let opening = opening.clone();
+            let extensions = research_extensions.clone();
+            retry_calls.push(async move {
+                let lease = scheduler
+                    .acquire(
+                        eligible,
+                        pillar.requirement_ids.len(),
+                        index,
+                        format!("{}-focused-retry", pillar.id),
+                    )
+                    .await?;
+                let lane = lease.lane.clone();
+                let result = dispatcher
+                    .run_pillar_owner_attempt(
+                        opening,
+                        pillar.clone(),
+                        lane.clone(),
+                        extensions,
+                        2,
+                        Some(primary.report),
+                    )
+                    .await;
+                Ok::<_, anyhow::Error>((pillar, lane, result))
+            });
+        }
+        let mut retry_calls = retry_calls;
+        while let Some(call) = retry_calls.next().await {
+            let (pillar, lane, result) = call?;
+            provider_calls = provider_calls.saturating_add(1);
+            retries = retries.saturating_add(1);
+            let attempt = match result {
+                Ok(attempt) => attempt,
+                Err(error) => PillarOwnerAttempt {
+                    model_id: lane.model_id,
+                    physical_host_id: lane.physical_host_id,
+                    report: unresolved_pillar_report(
+                        &opening,
+                        &pillar,
+                        format!("focused pillar retry failed: {error}"),
+                    )?,
+                },
+            };
+            checkpoint.persist_attempt(PillarAttemptCheckpoint {
+                pillar_id: pillar.id,
+                attempt_ordinal: 2,
+                model_id: attempt.model_id,
+                physical_host: attempt.physical_host_id,
+                report: attempt.report,
+            })?;
+        }
+
+        let reports = opening
+            .pillars
+            .iter()
+            .map(|pillar| {
+                checkpoint
+                    .completed_attempts(&pillar.id)?
+                    .into_iter()
+                    .last()
+                    .map(|attempt| attempt.report)
+                    .ok_or_else(|| anyhow!("pillar {:?} has no completed attempt", pillar.id))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let synthesis = render_synthesis_input(&reports, 32_000);
+        let verified_facts = reports
+            .iter()
+            .flat_map(|report| {
+                report
+                    .claims
+                    .iter()
+                    .filter(|claim| claim.effective_class == EvidenceClass::Proven)
+                    .map(move |claim| {
+                        format!(
+                            "- {}/{}: {}",
+                            report.pillar_id, claim.requirement_id, claim.statement
+                        )
+                    })
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .chars()
+            .take(12_000)
+            .collect::<String>();
+        let worker_context = format!(
+            "SHARED PILLAR INTEGRATION CONTRACT\n{}\n\n{}",
+            serde_json::to_string_pretty(&opening.integration_contract)?,
+            synthesis
+        )
+        .chars()
+        .take(40_000)
+        .collect::<String>();
+        self.events.write_value(serde_json::json!({
+            "event": "pillar_research_completed",
+            "pillars": reports.len(),
+            "high_confidence": reports.iter().filter(|report| report.effective_confidence == Confidence::High).count(),
+            "low_confidence": reports.iter().filter(|report| report.effective_confidence == Confidence::Low).count(),
+            "provider_calls": provider_calls,
+            "focused_retries": retries,
+            "synthesis_chars": synthesis.chars().count(),
+            "verified_fact_chars": verified_facts.chars().count(),
+            "completion": "one-report-per-pillar-with-explicit-unresolved-fallbacks",
+        }));
+        Ok(PillarResearchOutcome {
+            opening: Arc::unwrap_or_clone(opening),
+            reports,
+            synthesis,
+            verified_facts,
+            worker_context,
+            provider_calls,
+            retries,
+        })
+    }
+
+    async fn plan_from_pillars(
+        self: &Arc<Self>,
+        user_prompt: &str,
+        outcome: &PillarResearchOutcome,
+        planner_model: &str,
+        worker_models: &[String],
+    ) -> Result<(String, Dag)> {
+        let lanes = self.research_physical_lanes(&one_lane_per_host(worker_models.to_vec()))?;
+        let planner_lane = lanes
+            .iter()
+            .find(|lane| lane.model_id == planner_model)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "configured strongest planner `{planner_model}` has no verified physical lane"
+                )
+            })?;
+        let mut allowed_runtime_models = std::iter::once(planner_model.to_string())
+            .chain(worker_models.iter().cloned())
+            .collect::<Vec<_>>();
+        let mut seen = HashSet::new();
+        allowed_runtime_models.retain(|model| seen.insert(model.clone()));
+        let system = "You are the sole and final synthesis planner. Convert the frozen authored requirements and disjoint pillar reports into one immediately executable build DAG. There is no later model plan-verification or detail-writing round, so task_specs is the exact implementation contract for every canonical task: name its exclusive module boundary, concrete implementation steps, producer/consumer interfaces, edge cases, executable acceptance evidence, and explicit exclusions. Assign each file to exactly one task. Independent modules must have no artificial dependency so other nodes can write them in parallel without overlap. Honor integration_contract.integration_required: add one hook-up task only when true; when false, keep independent deliverables independent. Low-confidence facts never block the build: attach exactly one alternative, isolation, or degraded_fallback route to the task implementing each unresolved requirement, with critical paths choosing an implementable safe alternative or isolation. Schedule noncritical low-confidence work after resolved foundations wherever dependency truth permits; never invent a dependency that is not consumed. Evidence IDs must be empty because receipt authority is conveyed through the compiled pillar reports, not invented plan citations. Use only allowed model IDs. Return the complete typed plan once; no peer review follows.";
+        let user = serde_json::to_string_pretty(&serde_json::json!({
+            "authored_prompt": user_prompt,
+            "frozen_requirements": outcome.opening.requirements,
+            "disjoint_pillars": outcome.opening.pillars,
+            "integration_contract": outcome.opening.integration_contract,
+            "bounded_pillar_synthesis": outcome.synthesis,
+            "engine_verified_facts_only": outcome.verified_facts,
+            "allowed_runtime_models": allowed_runtime_models,
+        }))?;
+        self.events.write_value(serde_json::json!({
+            "event": "pillar_synthesis_plan_started",
+            "model": planner_lane.model_id,
+            "physical_host_id": planner_lane.physical_host_id,
+            "planner_invocation": 1,
+            "peer_plan_verification_calls": 0,
+            "input_chars": user.chars().count(),
+        }));
+        let model_plan = self
+            .run_response_only_agent_on_physical_host(
+                &planner_lane.model_id,
+                &planner_lane.physical_host_id,
+                system.to_string(),
+                user,
+                Some(Response {
+                    json_schema: Some(pillar_plan_schema()),
+                }),
+                self.planner_timeout_secs,
+                Some("pillar-synthesis-plan"),
+            )
+            .await
+            .and_then(|output| {
+                if output.physical_host_id.as_deref()
+                    != Some(planner_lane.physical_host_id.as_str())
+                {
+                    bail!("pillar synthesis plan did not return from its assigned physical host");
+                }
+                let raw = output
+                    .final_output
+                    .filter(|value| !value.trim().is_empty())
+                    .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
+                    .ok_or_else(|| anyhow!("pillar synthesis planner returned no typed plan"))?;
+                compile_pillar_plan(
+                    &raw,
+                    &outcome.opening,
+                    &outcome.reports,
+                    &allowed_runtime_models,
+                )
+            });
+        let (plan_json, dag, routes) = match model_plan {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                self.events.write_value(serde_json::json!({
+                    "event": "pillar_synthesis_plan_degraded",
+                    "reason": error.to_string(),
+                    "fallback": "deterministic-disjoint-pillar-build-plan",
+                    "additional_planner_call": false,
+                }));
+                fallback_pillar_plan(
+                    user_prompt,
+                    &outcome.opening,
+                    &outcome.reports,
+                    planner_model,
+                    &allowed_runtime_models,
+                )?
+            }
+        };
+        self.events.write_value(serde_json::json!({
+            "event": "pillar_synthesis_plan_completed",
+            "planner_invocations": 1,
+            "peer_plan_verification_calls": 0,
+            "tasks": dag.tasks.len(),
+            "uncertainty_routes": routes.len(),
+            "next_phase": "immediate-build-dispatch",
+        }));
+        Ok((plan_json, dag))
+    }
+
     async fn research_to_saturation(
         self: &Arc<Self>,
         user_prompt: &str,
@@ -41194,20 +41981,17 @@ impl Judge for GooseAgentDispatcher {
         // GOOSE_SWARM_GOALS (part 5): give the judge the app's PILLARS so its existing SPEC_DRIFT verdict is
         // grounded in the concrete acceptance criteria (a wrong command name/interface is now a nameable
         // drift, not a vague "quality" call). Conservative: still HIGH-confidence + visible-evidence only.
-        let pillars_block = if goals_enabled() {
-            self.pillars
-                .get()
-                .map(|p| {
-                    format!(
-                        "\n{p}(If this worker's code CLEARLY violates one of the pillars above — a wrong \
-                         command name/argument order, or a different shared data shape — that is SPEC_DRIFT; \
-                         still require HIGH confidence + visible evidence, never flag merely-unfinished work.)"
-                    )
-                })
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let pillars_block = self
+            .pillars
+            .get()
+            .map(|p| {
+                format!(
+                    "\n{p}(If this worker's code CLEARLY violates one of the pillars above — a wrong \
+                     command name/argument order, or a different shared data shape — that is SPEC_DRIFT; \
+                     still require HIGH confidence + visible evidence, never flag merely-unfinished work.)"
+                )
+            })
+            .unwrap_or_default();
         // F790-2 INSTRUMENTS: deterministic evidence the verdict/hint can CITE. Failed tool
         // calls come from the digest already in hand; import health runs only when this worker
         // owns Python files and only after the cheap early-returns above, so a healthy young
@@ -41501,20 +42285,17 @@ impl PreReviewer for GooseAgentDispatcher {
         };
         // GOOSE_SWARM_GOALS (part 5): let the correctness pre-review catch a concrete pillar violation
         // (wrong interface/command name, or a deliverable not wired to the pillar's entry) as an ISSUE.
-        let pillars_block = if goals_enabled() {
-            self.pillars
-                .get()
-                .map(|p| {
-                    format!(
-                        "\n{p}(Flag as an ISSUE any concrete violation of a pillar above — a wrong command \
-                         name/argument order, or a shared data shape that disagrees with a pillar — naming the \
-                         file. Stay conservative: only a defect you can point to.)"
-                    )
-                })
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let pillars_block = self
+            .pillars
+            .get()
+            .map(|p| {
+                format!(
+                    "\n{p}(Flag as an ISSUE any concrete violation of a pillar above — a wrong command \
+                     name/argument order, or a shared data shape that disagrees with a pillar — naming the \
+                     file. Stay conservative: only a defect you can point to.)"
+                )
+            })
+            .unwrap_or_default();
         let user = format!(
             "GOAL: {goal}{pillars_block}\n\nSUBTASK: {desc}\n\nFiles produced:\n{files}\n\nYour one-line review:",
             goal = req.goal,
@@ -46315,11 +47096,7 @@ impl GooseAgentDispatcher {
         };
         // GOOSE_SWARM_GOALS: the app-level PILLARS block (pre-rendered), injected into EVERY worker so the
         // whole fleet holds the same acceptance criteria through compaction. Empty until distilled -> no-op.
-        let pillars_block = if goals_enabled() {
-            self.pillars.get().cloned().unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let pillars_block = self.pillars.get().cloned().unwrap_or_default();
         // CONTEXTUAL PITFALLS (GOOSE_SWARM_AUTHOR_PITFALLS). DOMAIN_PITFALLS is a curated library of facts
         // the weak fleet routinely misremembers, and the engine has only ever shown it to the REVIEWER and
         // the SKEPTIC — i.e. used it to DETECT a domain error after it was written, never to PREVENT it.
@@ -47273,14 +48050,11 @@ impl TaskDispatcher for GooseAgentDispatcher {
         if files_block.is_empty() {
             return None; // nothing on disk to review
         }
-        let pillars_block = if goals_enabled() {
-            self.pillars
-                .get()
-                .map(|p| format!("\n{p}"))
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let pillars_block = self
+            .pillars
+            .get()
+            .map(|p| format!("\n{p}"))
+            .unwrap_or_default();
         // For the domain-conventions dimension, inject the EXTERNAL GROUND TRUTH: the reviewer checks the
         // code against a fact the code+tests never generated, which is what breaks self-consistency and lets
         // it catch a shared domain-convention bug a green suite hides.
@@ -47747,6 +48521,139 @@ fn plan_schema() -> serde_json::Value {
     })
 }
 
+fn pillar_opening_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pillars", "integration_contract"],
+        "properties": {
+            "pillars": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "id", "title", "objective", "requirement_ids", "dependencies",
+                        "research_questions", "acceptance_criteria", "exclusions"
+                    ],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "objective": {"type": "string"},
+                        "requirement_ids": {"type": "array", "items": {"type": "string"}},
+                        "dependencies": {"type": "array", "items": {"type": "string"}},
+                        "research_questions": {"type": "array", "items": {"type": "string"}},
+                        "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+                        "exclusions": {"type": "array", "items": {"type": "string"}}
+                    }
+                }
+            },
+            "integration_contract": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["owner", "integration_required", "objective", "interface_invariants", "acceptance_criteria"],
+                "properties": {
+                    "owner": {"type": "string"},
+                    "integration_required": {"type": "boolean"},
+                    "objective": {"type": "string"},
+                    "interface_invariants": {"type": "array", "items": {"type": "string"}},
+                    "acceptance_criteria": {"type": "array", "items": {"type": "string"}}
+                }
+            }
+        }
+    })
+}
+
+fn pillar_report_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+            "pillar_id", "reported_confidence", "claims", "unresolved_uncertainties",
+            "acceptance_tests", "interfaces", "exclusions"
+        ],
+        "properties": {
+            "pillar_id": {"type": "string"},
+            "reported_confidence": {"type": "string", "enum": ["high", "low"]},
+            "claims": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "requirement_id", "statement", "reported_class", "source_section_id",
+                        "source_quote"
+                    ],
+                    "properties": {
+                        "requirement_id": {"type": "string"},
+                        "statement": {"type": "string"},
+                        "reported_class": {
+                            "type": "string",
+                            "enum": ["proven", "supported", "unresolved"]
+                        },
+                        "source_section_id": {"type": ["string", "null"]},
+                        "source_quote": {"type": ["string", "null"]}
+                    }
+                }
+            },
+            "unresolved_uncertainties": {"type": "array", "items": {"type": "string"}},
+            "acceptance_tests": {"type": "array", "items": {"type": "string"}},
+            "interfaces": {"type": "array", "items": {"type": "string"}},
+            "exclusions": {"type": "array", "items": {"type": "string"}}
+        }
+    })
+}
+
+fn pillar_plan_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_coverage", "task_specs", "uncertainty_routes", "canonical_plan"],
+        "properties": {
+            "task_coverage": canonical_plan_adjudication_schema()["properties"]["task_coverage"].clone(),
+            "task_specs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "task_id", "objective", "module_boundary", "concrete_steps", "interfaces",
+                        "edge_cases", "acceptance_evidence", "exclusions"
+                    ],
+                    "properties": {
+                        "task_id": {"type": "string"},
+                        "objective": {"type": "string"},
+                        "module_boundary": {"type": "string"},
+                        "concrete_steps": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                        "interfaces": {"type": "array", "items": {"type": "string"}},
+                        "edge_cases": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                        "acceptance_evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                        "exclusions": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+                    }
+                }
+            },
+            "uncertainty_routes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["requirement_id", "task_id", "kind", "rationale"],
+                    "properties": {
+                        "requirement_id": {"type": "string"},
+                        "task_id": {"type": "string"},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["alternative", "isolation", "degraded_fallback"]
+                        },
+                        "rationale": {"type": "string"}
+                    }
+                }
+            },
+            "canonical_plan": plan_schema()
+        }
+    })
+}
+
 fn planning_audit_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -47994,6 +48901,663 @@ fn normalized_requirement_inventory(spec: &str) -> Vec<RequirementRecord> {
         .into_iter()
         .map(|(id, section, quote)| RequirementRecord { id, section, quote })
         .collect()
+}
+
+fn requirement_is_explicitly_critical(text: &str) -> bool {
+    let normalized = text
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<HashSet<_>>();
+    [
+        "must",
+        "required",
+        "shall",
+        "never",
+        "critical",
+        "security",
+        "safety",
+        "atomic",
+        "authenticated",
+        "runnable",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(*marker))
+        || text.to_ascii_lowercase().contains("data integrity")
+}
+
+fn pillar_authored_requirements(requirements: &[RequirementRecord]) -> Vec<AuthoredRequirement> {
+    requirements
+        .iter()
+        .map(|requirement| AuthoredRequirement {
+            id: requirement.id.clone(),
+            text: requirement.quote.clone(),
+            critical: requirement_is_explicitly_critical(&requirement.quote),
+        })
+        .collect()
+}
+
+fn compile_pillar_opening_draft(
+    requirements: &[RequirementRecord],
+    mut draft: PillarOpeningDraft,
+    integration_owner: &str,
+    max_pillars: usize,
+) -> Result<ResearchPillarOpening> {
+    if draft.pillars.len() > max_pillars {
+        bail!(
+            "pillar opener produced {} pillars, above the bounded maximum {max_pillars}",
+            draft.pillars.len()
+        );
+    }
+    if draft
+        .pillars
+        .iter()
+        .any(|pillar| !pillar.dependencies.is_empty())
+    {
+        bail!("research pillars must be independent; dependencies belong in the build plan");
+    }
+    draft.integration_contract.owner = integration_owner.to_string();
+    let opening = ResearchPillarOpening {
+        requirements: pillar_authored_requirements(requirements),
+        pillars: draft.pillars,
+        integration_contract: draft.integration_contract,
+    };
+    validate_pillar_opening(&opening)?;
+    Ok(opening)
+}
+
+fn fallback_pillar_opening(
+    requirements: &[RequirementRecord],
+    integration_owner: &str,
+    max_pillars: usize,
+) -> Result<ResearchPillarOpening> {
+    if requirements.is_empty() {
+        bail!("the authored specification produced no requirements");
+    }
+    let max_pillars = max_pillars.max(1);
+    let mut sections = Vec::<(String, Vec<String>)>::new();
+    let mut section_index = HashMap::<String, usize>::new();
+    for requirement in requirements {
+        let section = if requirement.section.trim().is_empty() {
+            "Authored specification".to_string()
+        } else {
+            requirement.section.clone()
+        };
+        let index = *section_index.entry(section.clone()).or_insert_with(|| {
+            sections.push((section, Vec::new()));
+            sections.len() - 1
+        });
+        sections[index].1.push(requirement.id.clone());
+    }
+    let bucket_count = sections.len().min(max_pillars).max(1);
+    let mut buckets = vec![Vec::<(String, Vec<String>)>::new(); bucket_count];
+    let section_count = sections.len();
+    for (index, section) in sections.into_iter().enumerate() {
+        let bucket = index.saturating_mul(bucket_count) / section_count;
+        buckets[bucket.min(bucket_count - 1)].push(section);
+    }
+    let pillars = buckets
+        .into_iter()
+        .enumerate()
+        .map(|(index, sections)| {
+            let titles = sections
+                .iter()
+                .map(|(title, _)| title.clone())
+                .collect::<Vec<_>>();
+            let requirement_ids = sections
+                .into_iter()
+                .flat_map(|(_, ids)| ids)
+                .collect::<Vec<_>>();
+            ResearchPillar {
+                id: format!("pillar-{:02}", index + 1),
+                title: titles.join(" + "),
+                objective: format!(
+                    "Resolve the exact authored behavior and implementation boundary for {}",
+                    requirement_ids.join(", ")
+                ),
+                requirement_ids,
+                dependencies: Vec::new(),
+                research_questions: vec![
+                    "Which authored constraints are already binding, which external facts need proof, and what precise interface follows?".to_string(),
+                ],
+                acceptance_criteria: vec![
+                    "Every owned requirement has an explicit evidence class, implementation boundary, and executable acceptance test".to_string(),
+                ],
+                exclusions: vec![
+                    "Requirements owned by every other pillar".to_string(),
+                ],
+            }
+        })
+        .collect::<Vec<_>>();
+    let integration_required = pillars.len() > 1;
+    let opening = ResearchPillarOpening {
+        requirements: pillar_authored_requirements(requirements),
+        pillars,
+        integration_contract: IntegrationContract {
+            owner: integration_owner.to_string(),
+            integration_required,
+            objective: "Compose only the shared interfaces that the pillar outputs prove are necessary"
+                .to_string(),
+            interface_invariants: vec![
+                "Every implementation file has one owner".to_string(),
+                "Cross-pillar dependencies use explicit producer and consumer contracts".to_string(),
+            ],
+            acceptance_criteria: vec![
+                "The integrated result starts successfully and every authored acceptance path is exercised"
+                    .to_string(),
+            ],
+        },
+    };
+    validate_pillar_opening(&opening)?;
+    Ok(opening)
+}
+
+fn unresolved_pillar_report(
+    opening: &ResearchPillarOpening,
+    pillar: &ResearchPillar,
+    reason: impl Into<String>,
+) -> Result<CompiledPillarReport> {
+    let reason = reason.into();
+    let draft = PillarReportDraft {
+        pillar_id: pillar.id.clone(),
+        reported_confidence: Confidence::Low,
+        claims: pillar
+            .requirement_ids
+            .iter()
+            .map(|requirement_id| ResearchClaimDraft {
+                requirement_id: requirement_id.clone(),
+                statement: format!(
+                    "No verified implementation fact was established for {requirement_id}"
+                ),
+                reported_class: EvidenceClass::Unresolved,
+                source_section_id: None,
+                source_quote: None,
+            })
+            .collect(),
+        unresolved_uncertainties: vec![reason],
+        acceptance_tests: pillar.acceptance_criteria.clone(),
+        interfaces: Vec::new(),
+        exclusions: pillar.exclusions.clone(),
+    };
+    Ok(compile_pillar_report_with_sources(opening, &[], draft)?)
+}
+
+fn normalize_pillar_report_sources(
+    mut draft: PillarReportDraft,
+    receipts: &[ResearchSourceReceipt],
+) -> (PillarReportDraft, Vec<EvidenceSourceSection>) {
+    let mut receipt_text = BTreeMap::<String, Vec<&str>>::new();
+    for receipt in receipts {
+        receipt_text
+            .entry(receipt.source_id.clone())
+            .or_default()
+            .push(receipt.result_text.as_str());
+    }
+    let mut sections = BTreeMap::<(String, String), EvidenceSourceSection>::new();
+    for claim in &mut draft.claims {
+        if claim.source_quote.as_deref().is_some_and(str::is_empty) {
+            claim.source_quote = None;
+        }
+        let Some(source_id) = claim
+            .source_section_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+        else {
+            claim.source_section_id = None;
+            continue;
+        };
+        if source_id == claim.requirement_id {
+            claim.source_section_id = Some(source_id);
+            continue;
+        }
+        let Some(parts) = receipt_text.get(&source_id) else {
+            claim.source_section_id = Some(source_id);
+            continue;
+        };
+        let key = (source_id.clone(), claim.requirement_id.clone());
+        let section = sections.entry(key).or_insert_with(|| {
+            let section_id = format!(
+                "SRC-{}",
+                short_digest(&format!("{source_id}\n{}", claim.requirement_id))
+            );
+            EvidenceSourceSection {
+                id: section_id,
+                requirement_id: claim.requirement_id.clone(),
+                text: parts.join("\n\n"),
+                content_sha256: evidence_source_digest(&parts.join("\n\n")),
+                authority: EvidenceSourceAuthority::EngineReceipt,
+            }
+        });
+        claim.source_section_id = Some(section.id.clone());
+    }
+    (draft, sections.into_values().collect())
+}
+
+fn pillar_unresolved_requirement_ids(
+    opening: &ResearchPillarOpening,
+    reports: &[CompiledPillarReport],
+) -> BTreeSet<String> {
+    let by_pillar = reports
+        .iter()
+        .map(|report| (report.pillar_id.as_str(), report))
+        .collect::<HashMap<_, _>>();
+    let mut unresolved = BTreeSet::new();
+    for pillar in &opening.pillars {
+        let Some(report) = by_pillar.get(pillar.id.as_str()) else {
+            unresolved.extend(pillar.requirement_ids.iter().cloned());
+            continue;
+        };
+        unresolved.extend(report.missing_requirement_ids.iter().cloned());
+        if report.effective_confidence == Confidence::Low {
+            unresolved.extend(pillar.requirement_ids.iter().cloned());
+        }
+        unresolved.extend(
+            report
+                .claims
+                .iter()
+                .filter(|claim| claim.effective_class == EvidenceClass::Unresolved)
+                .map(|claim| claim.requirement_id.clone()),
+        );
+    }
+    unresolved
+}
+
+fn compile_pillar_task_specs(
+    canonical_plan: &mut serde_json::Value,
+    task_specs: Vec<PillarPlanTaskSpecDraft>,
+) -> Result<()> {
+    let tasks = canonical_plan
+        .get_mut("subtasks")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| anyhow!("pillar plan has no canonical subtasks"))?;
+    let mut by_id = BTreeMap::new();
+    for task_spec in task_specs {
+        if task_spec.task_id.trim().is_empty() {
+            bail!("pillar task specification has an empty task id");
+        }
+        let task_id = task_spec.task_id.clone();
+        if by_id.insert(task_id.clone(), task_spec).is_some() {
+            bail!("pillar task specification repeats task `{task_id}`");
+        }
+    }
+    if by_id.len() != tasks.len() {
+        bail!(
+            "pillar plan has {} tasks but {} exact task specifications",
+            tasks.len(),
+            by_id.len()
+        );
+    }
+
+    let normalize_required = |field: &str, values: Vec<String>| -> Result<Vec<String>> {
+        if values.is_empty() {
+            bail!("pillar task specification `{field}` is empty");
+        }
+        values
+            .into_iter()
+            .map(|value| {
+                let value = value.trim().to_string();
+                if value.is_empty() {
+                    bail!("pillar task specification `{field}` contains an empty entry");
+                }
+                Ok(value)
+            })
+            .collect()
+    };
+    for task in tasks {
+        let task_id = task
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("pillar canonical task has no id"))?
+            .to_string();
+        let task_spec = by_id.remove(&task_id).ok_or_else(|| {
+            anyhow!("pillar canonical task `{task_id}` has no exact task specification")
+        })?;
+        let objective = task_spec.objective.trim();
+        let module_boundary = task_spec.module_boundary.trim();
+        if objective.is_empty() || module_boundary.is_empty() {
+            bail!("pillar task `{task_id}` has no objective or module boundary");
+        }
+        let steps = normalize_required("concrete_steps", task_spec.concrete_steps)?;
+        let edge_cases = normalize_required("edge_cases", task_spec.edge_cases)?;
+        let acceptance = normalize_required("acceptance_evidence", task_spec.acceptance_evidence)?;
+        let exclusions = normalize_required("exclusions", task_spec.exclusions)?;
+        let interfaces = task_spec
+            .interfaces
+            .into_iter()
+            .map(|interface| interface.trim().to_string())
+            .filter(|interface| !interface.is_empty())
+            .collect::<Vec<_>>();
+        let owned_files = task
+            .get("files")
+            .and_then(serde_json::Value::as_array)
+            .map(|files| {
+                files
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        let numbered = |values: &[String]| {
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| format!("{}. {value}", index + 1))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let bulleted = |values: &[String]| {
+            values
+                .iter()
+                .map(|value| format!("- {value}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let interfaces = if interfaces.is_empty() {
+            "- No cross-task interface; keep this module isolated.".to_string()
+        } else {
+            bulleted(&interfaces)
+        };
+        task["description"] = serde_json::Value::String(format!(
+            "OBJECTIVE\n{objective}\n\nEXCLUSIVE MODULE BOUNDARY\n{module_boundary}\nOwned files: {owned_files}\n\nCONCRETE IMPLEMENTATION STEPS\n{}\n\nPRODUCER / CONSUMER INTERFACES\n{interfaces}\n\nEDGE CASES\n{}\n\nEXECUTABLE ACCEPTANCE EVIDENCE\n{}\n\nEXPLICIT EXCLUSIONS\n{}",
+            numbered(&steps),
+            bulleted(&edge_cases),
+            bulleted(&acceptance),
+            bulleted(&exclusions),
+        ));
+    }
+    if !by_id.is_empty() {
+        bail!(
+            "pillar task specifications reference unknown task(s): {}",
+            by_id.keys().cloned().collect::<Vec<_>>().join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn compile_pillar_plan(
+    raw: &str,
+    opening: &ResearchPillarOpening,
+    reports: &[CompiledPillarReport],
+    allowed_runtime_models: &[String],
+) -> Result<(String, Dag, Vec<PillarUncertaintyRoute>)> {
+    let raw = strip_code_fences(raw);
+    let mut draft: PillarPlanDraft = serde_json::from_str(raw.trim())
+        .map_err(|error| anyhow!("pillar plan was not valid typed JSON: {error}"))?;
+    compile_pillar_task_specs(&mut draft.canonical_plan, draft.task_specs)?;
+    let requirements = opening
+        .requirements
+        .iter()
+        .map(|requirement| RequirementRecord {
+            id: requirement.id.clone(),
+            section: opening
+                .pillars
+                .iter()
+                .find(|pillar| pillar.requirement_ids.contains(&requirement.id))
+                .map(|pillar| pillar.title.clone())
+                .unwrap_or_else(|| "Authored specification".to_string()),
+            quote: requirement.text.clone(),
+        })
+        .collect::<Vec<_>>();
+    let candidate = serde_json::to_string(&draft.canonical_plan)?;
+    let canonical_raw = serde_json::to_string(&serde_json::json!({
+        "selected_candidate": 0,
+        "task_coverage": draft.task_coverage,
+        "material_conflicts": [],
+        "canonical_plan": draft.canonical_plan,
+    }))?;
+    let compiled = compile_canonical_plan_adjudication_with_integration_policy(
+        &canonical_raw,
+        &requirements,
+        &[],
+        &[candidate],
+        allowed_runtime_models,
+        opening.integration_contract.integration_required,
+    )?;
+    let dag = Dag::from_planner_json(&compiled.plan_json)
+        .map_err(|error| anyhow!("compiled pillar plan did not form a DAG: {error}"))?;
+
+    let unresolved = pillar_unresolved_requirement_ids(opening, reports);
+    let requirement_by_id = opening
+        .requirements
+        .iter()
+        .map(|requirement| (requirement.id.as_str(), requirement))
+        .collect::<HashMap<_, _>>();
+    let coverage_by_task = serde_json::from_str::<serde_json::Value>(&compiled.plan_json)?
+        ["subtasks"]
+        .as_array()
+        .ok_or_else(|| anyhow!("compiled pillar plan had no subtasks"))?
+        .iter()
+        .map(|task| {
+            let task_id = task
+                .get("id")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("compiled pillar plan contained a task without an id"))?;
+            let coverage = canonical_task_coverage(task)?
+                .ok_or_else(|| anyhow!("compiled pillar task `{task_id}` lost its coverage"))?;
+            Ok((task_id.to_string(), coverage))
+        })
+        .collect::<Result<HashMap<_, _>>>()?;
+    let mut routed = BTreeSet::new();
+    for route in &draft.uncertainty_routes {
+        if route.rationale.trim().is_empty() {
+            bail!(
+                "uncertainty route for requirement `{}` has no rationale",
+                route.requirement_id
+            );
+        }
+        if !unresolved.contains(&route.requirement_id) {
+            bail!(
+                "uncertainty route references resolved or unknown requirement `{}`",
+                route.requirement_id
+            );
+        }
+        if !routed.insert(route.requirement_id.clone()) {
+            bail!(
+                "uncertainty route repeats requirement `{}`",
+                route.requirement_id
+            );
+        }
+        let coverage = coverage_by_task.get(&route.task_id).ok_or_else(|| {
+            anyhow!(
+                "uncertainty route for `{}` references unknown task `{}`",
+                route.requirement_id,
+                route.task_id
+            )
+        })?;
+        if !coverage
+            .owns_requirement_ids
+            .iter()
+            .chain(coverage.applies_requirement_ids.iter())
+            .any(|requirement_id| requirement_id == &route.requirement_id)
+        {
+            bail!(
+                "uncertainty route task `{}` does not implement requirement `{}`",
+                route.task_id,
+                route.requirement_id
+            );
+        }
+        let critical = requirement_by_id
+            .get(route.requirement_id.as_str())
+            .ok_or_else(|| anyhow!("uncertainty route requirement disappeared"))?
+            .critical;
+        if critical && route.kind == PillarUncertaintyRouteKind::DegradedFallback {
+            bail!(
+                "critical unresolved requirement `{}` needs a concrete alternative or isolation; degraded fallback is not safe",
+                route.requirement_id
+            );
+        }
+    }
+    let missing_routes = unresolved.difference(&routed).cloned().collect::<Vec<_>>();
+    if !missing_routes.is_empty() {
+        bail!(
+            "pillar plan left unresolved requirement(s) without an alternative, isolation, or degraded fallback task: {}",
+            missing_routes.join(", ")
+        );
+    }
+    Ok((compiled.plan_json, dag, draft.uncertainty_routes))
+}
+
+fn fallback_pillar_plan(
+    user_prompt: &str,
+    opening: &ResearchPillarOpening,
+    reports: &[CompiledPillarReport],
+    planner_model: &str,
+    allowed_runtime_models: &[String],
+) -> Result<(String, Dag, Vec<PillarUncertaintyRoute>)> {
+    let language = detect_language(user_prompt, &[]);
+    let entry_file = match language {
+        TargetLang::Python => "app.py",
+        TargetLang::TypeScript => "src/index.ts",
+        TargetLang::Rust => "src/main.rs",
+        TargetLang::Go => "main.go",
+        TargetLang::Other => "src/main.txt",
+    };
+    let module_file = |index: usize| match language {
+        TargetLang::Python => format!("src/pillar_{:02}.py", index + 1),
+        TargetLang::TypeScript => format!("src/pillar_{:02}.ts", index + 1),
+        TargetLang::Rust => format!("src/pillar_{:02}.rs", index + 1),
+        TargetLang::Go => format!("pillar_{:02}.go", index + 1),
+        TargetLang::Other => format!("src/pillar_{:02}.txt", index + 1),
+    };
+    let requirement_by_id = opening
+        .requirements
+        .iter()
+        .map(|requirement| (requirement.id.as_str(), requirement.text.as_str()))
+        .collect::<HashMap<_, _>>();
+    let unresolved = pillar_unresolved_requirement_ids(opening, reports);
+    let mut subtasks = Vec::new();
+    let mut coverage = Vec::new();
+    let mut task_specs = Vec::new();
+    let mut uncertainty_routes = Vec::new();
+    let mut producer_ids = Vec::new();
+    for (index, pillar) in opening.pillars.iter().enumerate() {
+        let task_id = format!("pillar-build-{:02}", index + 1);
+        let model = allowed_runtime_models
+            .get(index % allowed_runtime_models.len().max(1))
+            .map(String::as_str)
+            .unwrap_or(planner_model);
+        let files = if opening.pillars.len() == 1 {
+            vec![entry_file.to_string()]
+        } else {
+            vec![module_file(index)]
+        };
+        let requirement_trace = pillar
+            .requirement_ids
+            .iter()
+            .map(|id| {
+                format!(
+                    "[{id}] {}",
+                    requirement_by_id.get(id.as_str()).copied().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        subtasks.push(serde_json::json!({
+            "id": task_id,
+            "description": format!(
+                "PILLAR {} — {}\nExclusive objective: {}\nBinding requirements:\n{}\nSpecific research/spec decisions: {}\nAcceptance evidence: {}\nExplicit exclusions: {}\nImplement only this boundary in the owned file(s), run the relevant acceptance checks, and leave sibling ownership untouched.",
+                pillar.id,
+                pillar.title,
+                pillar.objective,
+                requirement_trace,
+                pillar.research_questions.join("; "),
+                pillar.acceptance_criteria.join("; "),
+                pillar.exclusions.join("; "),
+            ),
+            "difficulty": "hard",
+            "model": model,
+            "depends_on": [],
+            "files": files,
+        }));
+        task_specs.push(serde_json::json!({
+            "task_id": task_id,
+            "objective": format!("Implement the exclusive {} pillar without taking sibling scope", pillar.title),
+            "module_boundary": format!("Own only {} and the requirements assigned to {}", files.join(", "), pillar.id),
+            "concrete_steps": [
+                format!("Implement the authored requirements assigned to {}", pillar.id),
+                format!("Honor the pillar decisions: {}", pillar.research_questions.join("; ")),
+                "Run the pillar's executable acceptance checks and retain their evidence"
+            ],
+            "interfaces": opening.integration_contract.interface_invariants,
+            "edge_cases": pillar.acceptance_criteria,
+            "acceptance_evidence": pillar.acceptance_criteria,
+            "exclusions": pillar.exclusions,
+        }));
+        coverage.push(CanonicalPlanTaskCoverageDraft {
+            task_id: task_id.clone(),
+            owns_requirement_ids: pillar.requirement_ids.clone(),
+            applies_requirement_ids: Vec::new(),
+            verifies_requirement_ids: Vec::new(),
+            evidence_ids: Vec::new(),
+        });
+        for requirement_id in pillar
+            .requirement_ids
+            .iter()
+            .filter(|requirement_id| unresolved.contains(*requirement_id))
+        {
+            uncertainty_routes.push(PillarUncertaintyRoute {
+                requirement_id: requirement_id.clone(),
+                task_id: task_id.clone(),
+                kind: PillarUncertaintyRouteKind::Isolation,
+                rationale: "Keep the unproven detail behind the pillar boundary and implement the safest authored-spec-compatible behavior without blocking the build".to_string(),
+            });
+        }
+        producer_ids.push(task_id);
+    }
+    if producer_ids.len() > 1 && opening.integration_contract.integration_required {
+        let integration_id = "integrate-application".to_string();
+        let requirement_ids = opening
+            .requirements
+            .iter()
+            .map(|requirement| requirement.id.clone())
+            .collect::<Vec<_>>();
+        subtasks.push(serde_json::json!({
+            "id": integration_id,
+            "description": format!(
+                "Integrate the completed disjoint pillar modules through the single shared entry point `{entry_file}`. Preserve these interface invariants: {}. Prove the integrated application is runnable with: {}. Do not reimplement pillar-owned behavior.",
+                opening.integration_contract.interface_invariants.join("; "),
+                opening.integration_contract.acceptance_criteria.join("; "),
+            ),
+            "difficulty": "hard",
+            "model": planner_model,
+            "depends_on": producer_ids,
+            "files": [entry_file],
+        }));
+        task_specs.push(serde_json::json!({
+            "task_id": integration_id,
+            "objective": opening.integration_contract.objective,
+            "module_boundary": format!("Own only the shared entry point `{entry_file}` and hook completed pillar modules together without reimplementing them"),
+            "concrete_steps": [
+                "Import or connect every completed pillar module through the shared entry point",
+                "Preserve every declared producer/consumer interface invariant",
+                "Launch the integrated application and capture the end-to-end acceptance evidence"
+            ],
+            "interfaces": opening.integration_contract.interface_invariants,
+            "edge_cases": ["A pillar module is present but not reachable from the advertised entry point"],
+            "acceptance_evidence": opening.integration_contract.acceptance_criteria,
+            "exclusions": ["Do not reimplement behavior owned by a pillar task"],
+        }));
+        coverage.push(CanonicalPlanTaskCoverageDraft {
+            task_id: integration_id,
+            owns_requirement_ids: Vec::new(),
+            applies_requirement_ids: requirement_ids,
+            verifies_requirement_ids: Vec::new(),
+            evidence_ids: Vec::new(),
+        });
+    }
+    let raw = serde_json::to_string(&serde_json::json!({
+        "task_coverage": coverage,
+        "task_specs": task_specs,
+        "uncertainty_routes": uncertainty_routes,
+        "canonical_plan": {
+            "subtasks": subtasks,
+            "integration": opening.integration_contract.objective,
+        }
+    }))?;
+    compile_pillar_plan(&raw, opening, reports, allowed_runtime_models)
 }
 
 fn normalized_evidence_inventory(research: &str) -> Vec<EvidenceRecord> {
@@ -49397,9 +50961,19 @@ fn validate_skeleton_file_authority(specs: &[TaskSpec]) -> Result<()> {
 }
 
 fn validate_canonical_skeleton_structure(specs: &[TaskSpec]) -> Result<()> {
+    validate_canonical_skeleton_structure_with_policy(specs, true)
+}
+
+fn validate_canonical_skeleton_structure_with_policy(
+    specs: &[TaskSpec],
+    integration_required: bool,
+) -> Result<()> {
     validate_skeleton_file_authority(specs)?;
-    validate_integration_closure(specs)
-        .map_err(|error| anyhow!("canonical plan had invalid integration topology: {error}"))
+    if integration_required {
+        validate_integration_closure(specs)
+            .map_err(|error| anyhow!("canonical plan had invalid integration topology: {error}"))?;
+    }
+    Ok(())
 }
 
 fn validate_canonical_task_coverages(
@@ -49524,7 +51098,12 @@ fn validate_canonical_authoritative_plan(
     let plan_json = serde_json::to_string(plan)?;
     let specs = goose_swarm::specs_from_plan_json(&plan_json)
         .map_err(|error| anyhow!("canonical authoritative plan did not parse: {error}"))?;
-    validate_canonical_skeleton_structure(&specs)?;
+    let integration_required = plan
+        .get("canonical_plan_authority")
+        .and_then(|authority| authority.get("integration_required"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    validate_canonical_skeleton_structure_with_policy(&specs, integration_required)?;
     if !skeleton_uses_allowed_models(&specs, allowed_runtime_models) {
         bail!("canonical authoritative plan used a model outside the resolved runtime roster");
     }
@@ -49556,6 +51135,24 @@ fn compile_canonical_plan_adjudication(
     candidate_json: &[String],
     allowed_runtime_models: &[String],
 ) -> Result<CompiledCanonicalPlan> {
+    compile_canonical_plan_adjudication_with_integration_policy(
+        raw,
+        requirements,
+        evidence,
+        candidate_json,
+        allowed_runtime_models,
+        true,
+    )
+}
+
+fn compile_canonical_plan_adjudication_with_integration_policy(
+    raw: &str,
+    requirements: &[RequirementRecord],
+    evidence: &[EvidenceRecord],
+    candidate_json: &[String],
+    allowed_runtime_models: &[String],
+    integration_required: bool,
+) -> Result<CompiledCanonicalPlan> {
     let candidate_count = candidate_json.len();
     if candidate_count == 0 {
         bail!("canonical plan adjudication had no valid candidates");
@@ -49580,7 +51177,7 @@ fn compile_canonical_plan_adjudication(
     let plan_json = serde_json::to_string(&draft.canonical_plan)?;
     let specs = goose_swarm::specs_from_plan_json(&plan_json)
         .map_err(|error| anyhow!("canonical plan did not parse as a task skeleton: {error}"))?;
-    validate_canonical_skeleton_structure(&specs)?;
+    validate_canonical_skeleton_structure_with_policy(&specs, integration_required)?;
     let allowed_models = allowed_runtime_models
         .iter()
         .map(String::as_str)
@@ -49647,6 +51244,7 @@ fn compile_canonical_plan_adjudication(
     plan["canonical_plan_authority"] = serde_json::json!({
         "format": CANONICAL_PLAN_AUTHORITY_FORMAT,
         "requirement_ids": requirements.iter().map(|requirement| requirement.id.as_str()).collect::<Vec<_>>(),
+        "integration_required": integration_required,
         "accepted_manifest": accepted_manifest,
         "accepted_digest": accepted_digest,
         "engine_transforms": [],
@@ -53314,6 +54912,15 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // and drift scans) all land on the build dir rather than the user's home.
     let spawn_dir = std::env::current_dir()?;
     let working_dir = resolve_app_root(spawn_dir.clone(), &run_id)?;
+    // Resolve crash-resume authority BEFORE creating this run's log. The old lookup happened after
+    // `JsonlSink::new` had installed a newer, mostly-empty `run-swarm-*.jsonl`, so the "newest log"
+    // reader selected the current run and hid the crashed run it was meant to recover. Capturing the
+    // previous candidate here also lets the caller bypass research before the first model admission.
+    let previous_resume = if swarm_gate("GOOSE_SWARM_RESUME", false) {
+        resume_state_from_dir(&working_dir)
+    } else {
+        None
+    };
     // Tell the desktop WHICH run is current, and where it lives. The panel used to guess by picking the
     // newest run-*.jsonl under the session's working dir, which has no notion of "current": it re-rendered a
     // FINISHED run from hours earlier the instant a new turn started (observed: a 4h-old stopped run shown
@@ -53749,6 +55356,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             ResearchPlanningMode::Auto => is_amendment,
         },
     };
+    // V21 replaces the legacy whole-target jury/adjudication/citation topology with the operator-authored
+    // pillar flow. This is a shipped architecture, not an assured-profile lever: an explicit environment
+    // override remains available for recorded legacy comparisons, while ordinary runs take the new path.
+    let pillar_flow_on =
+        broker_enforcement_requested && default_on_environment_gate("GOOSE_SWARM_PILLAR_FLOW");
+    let mut pillar_research_outcome: Option<PillarResearchOutcome> = None;
     let mut research_findings = String::new();
     // DOC-PREFETCH (Phase 1, Move 2): the GROUNDED research findings, VERBATIM, to hand to every worker. Stays
     // empty unless GOOSE_SWARM_DOC_PREFETCH is on AND a scout actually looked something up — so off (or with
@@ -53798,7 +55411,46 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // retarget's triage and the reported fact can never disagree. Defaults FALSE: if research never ran, the
     // engine has established no ability to research, and routing an open decision to a research round it
     // never configured would be the same guess-laundering by another door.
-    if do_research {
+    if pillar_flow_on {
+        let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(build_research_exts(
+            swarm_gate_cfg("GOOSE_SWARM_RESEARCH_TOOLS", cfg.research_tools),
+        ));
+        let mut worker_models = std::iter::once(cfg.planner_model.clone())
+            .chain(fleet_slot_models(&devices))
+            .collect::<Vec<_>>();
+        let mut seen_models = HashSet::new();
+        worker_models.retain(|model| seen_models.insert(model.clone()));
+        phase_banner(
+            "PILLAR OPENING + RESEARCH",
+            "one opener defines an exact cover; one owner researches each non-overlapping pillar",
+        );
+        let outcome = dispatcher
+            .research_by_pillars(
+                &raw_user_spec,
+                research_exts,
+                worker_models,
+                &cfg.planner_model,
+            )
+            .await?;
+        if !research_findings.trim().is_empty() {
+            research_findings.push_str("\n\n");
+        }
+        research_findings.push_str(&outcome.synthesis);
+        doc_facts = outcome.verified_facts.clone();
+        fix_pillars_block = outcome.worker_context.clone();
+        dispatcher.set_pillars(fix_pillars_block.clone());
+        sink.write_value(serde_json::json!({
+            "event": "pillar_flow_research_ready",
+            "pillars": outcome.opening.pillars.len(),
+            "provider_calls": outcome.provider_calls,
+            "focused_retries": outcome.retries,
+            "legacy_jury_calls": 0,
+            "legacy_adjudication_calls": 0,
+            "legacy_citation_audit_calls": 0,
+        }));
+        pillar_research_outcome = Some(outcome);
+    }
+    if !pillar_flow_on && do_research && previous_resume.is_none() {
         let research_exts: Arc<Vec<ExtensionConfig>> = Arc::new(build_research_exts(
             swarm_gate_cfg("GOOSE_SWARM_RESEARCH_TOOLS", cfg.research_tools),
         ));
@@ -54474,26 +56126,38 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // baseline, research + planning was 119 of 152 minutes — 78% of the run — and it is fully recoverable
     // from plan_loaded.tasks. So a resumed run starts building within seconds.
     //
-    // It deliberately does NOT skip completed TASKS, even though it knows exactly which finished. Skipping
-    // them needs a pre-completed seam in Scheduler::run that does not exist, and a half-built version that
-    // silently skipped a task it had not actually finished would be precisely the false-green this engine
-    // keeps producing. Re-running a finished task is SAFE — the worker overwrites its own files — so the
-    // failure mode here is "we redo some work", never "we skipped something". That asymmetry is the whole
-    // reason this half is shippable tonight and the other half is not.
-    let resume = if swarm_gate("GOOSE_SWARM_RESUME", false) {
-        resume_state_from_dir(&cwd_for_ask)
-    } else {
+    // Legacy runs reuse only the plan. V21 additionally installs the hash-linked scheduler checkpoint store:
+    // it restores a completed task only after its dependency receipts and owned artifact bytes revalidate,
+    // while every absent, stale, or unverifiable task is safely re-run.
+    // Captured before this run created its own log and before research began; see `previous_resume` above.
+    let resume = if pillar_flow_on
+        && previous_resume.is_some()
+        && pillar_research_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.provider_calls > 0)
+    {
+        sink.write_value(serde_json::json!({
+            "event": "pillar_plan_resume_invalidated",
+            "reason": "pillar checkpoint required new provider work; the prior plan no longer has exact research-input identity",
+            "action": "compile-one-fresh-synthesis-plan",
+        }));
         None
+    } else {
+        previous_resume
     };
     if let Some(r) = &resume {
         let n = serde_json::from_str::<serde_json::Value>(&r.plan_json)
             .ok()
             .and_then(|v| v["tasks"].as_array().map(|a| a.len()))
             .unwrap_or(0);
+        let task_resume_detail = if pillar_flow_on {
+            "verified task checkpoints and owned artifact bytes will be restored; stale work will re-run"
+        } else {
+            "completed tasks will re-run because this legacy path has no verified task checkpoint authority"
+        };
         eprintln!(
             "  {} resuming: reusing the last run's plan ({n} tasks) — skipping research + planning. \
-             {} task(s) finished last time and WILL be re-run (a worker overwrites its own files; skipping \
-             them is not yet safe).",
+             {} task(s) finished last time; {task_resume_detail}.",
             style("↺").cyan().bold(),
             r.completed.len()
         );
@@ -54501,7 +56165,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "event": "run_resumed",
             "tasks": n,
             "previously_completed": r.completed.len(),
-            "detail": "reused the previous plan; research and planning skipped. Completed tasks are re-run.",
+            "detail": task_resume_detail,
         }));
     }
     // `plan_needs_detail`: whether the shipped plan is a SKELETON that must still pass through the
@@ -54513,6 +56177,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         let dag = Dag::from_planner_json(&r.plan_json)
             .map_err(|e| anyhow!("the resumed plan will not parse: {e}"))?;
         (r.plan_json, dag, PlanConf::default(), false)
+    } else if pillar_flow_on {
+        let outcome = pillar_research_outcome
+            .as_ref()
+            .ok_or_else(|| anyhow!("pillar research completed without a resumable outcome"))?;
+        phase_banner(
+            "ONE SYNTHESIS PLAN",
+            "the strongest node writes the final exact task DAG; no model verification round follows",
+        );
+        let mut worker_models = std::iter::once(cfg.planner_model.clone())
+            .chain(fleet_slot_models(&devices))
+            .collect::<Vec<_>>();
+        let mut seen_models = HashSet::new();
+        worker_models.retain(|model| seen_models.insert(model.clone()));
+        let (plan_json, dag) = dispatcher
+            .plan_from_pillars(&raw_user_spec, outcome, &cfg.planner_model, &worker_models)
+            .await?;
+        (plan_json, dag, PlanConf::default(), false)
     } else {
         // Labeled so ASK-AWAY's inner ask loop can `continue 'plan_loop` to force a re-plan on a structural
         // answer (language flip / product first defined) while ordinary inline batches loop the inner ask.
@@ -55244,7 +56925,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // plan) are all available here, before CONTRACTS begins, and workers read pillars from a
     // OnceLock exactly like contracts — the only true requirement is set_pillars before
     // Scheduler::run, preserved by the await at the old call site below.
-    let pillars_handle = if goals_enabled() {
+    let pillars_handle = if !pillar_flow_on && goals_enabled() {
         let d = dispatcher.clone();
         let pm = cfg.planner_model.clone();
         let pprompt = final_binding_spec.clone();
@@ -55258,7 +56939,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     };
     // GOOSE_SWARM_CONTRACTS (2b): freeze signature-only module interfaces across the fleet before
     // EXECUTE, so every parallel worker builds against ONE agreed contract (kills cross-module drift).
-    let contracts_on = swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts);
+    let contracts_on =
+        !pillar_flow_on && swarm_gate_cfg("GOOSE_SWARM_CONTRACTS", load_config().contracts);
     // The contract stubs are PYTHON signature stubs — gate the whole phase to a Python target so a
     // non-Python (or mixed) tree never gets Python stubs injected into its worker prompts. The `.py`
     // CONTRACTS is LANGUAGE-AGNOSTIC: it runs for ANY detected language (Python/TS/Rust/Go each get a native
@@ -55596,7 +57278,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // from the same plan JSON loses nothing: detail specs are per-dispatch state and nothing
     // mutates the dag between build and here. A module whose stub does not parse keeps its
     // ordinary serial task; fill_fan_enabled still gates inside the expansion.
-    let fill_fan_requested = goose_swarm::fill_fan_enabled();
+    let fill_fan_requested = !pillar_flow_on && goose_swarm::fill_fan_enabled();
     if fill_fan_requested && plan_conf.adjudication == PlanAdjudication::Accepted {
         sink.write_value(serde_json::json!({
             "event": "fill_fan_skipped",
@@ -55639,14 +57321,24 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // DOC-PREFETCH (Phase 1, Move 2): hand the grounded facts to every worker. Empty when off =>
         // byte-identical (matches the `with_doc_facts` default).
         .with_doc_facts(doc_facts.clone());
+    if pillar_flow_on {
+        scheduler = scheduler.with_checkpoint_root(&working_dir)?;
+        sink.write_value(serde_json::json!({
+            "event": "scheduler_checkpoints_armed",
+            "restore_verified_results": true,
+            "restore_owned_artifact_bytes": true,
+            "restore_scope": "eligible-hash-verified-task-results-and-owned-artifacts",
+            "unsafe_or_fileless_tasks": "rerun",
+        }));
+    }
     // In-process PAUSE: the desktop Pause button writes <working_dir>/.swarm/pause; the scheduler then holds
     // at the next task boundary (in-flight work finishes, nothing is claimed) and resumes — re-running NOTHING
     // — when the file is deleted. Wired unconditionally: with no sentinel the hold never fires, so this is
     // byte-identical for any run that never pauses. Same base dir as the #109 note inbox.
     scheduler = scheduler.with_pause_file(working_dir.join(".swarm").join("pause"));
     let replan_on = opts.dynamic_replan.unwrap_or(cfg.dynamic_replan);
-    let judge_on = idle_judge_enabled();
-    let prereview_on = prereview_enabled();
+    let judge_on = !pillar_flow_on && idle_judge_enabled();
+    let prereview_on = !pillar_flow_on && prereview_enabled();
     let legacy_judge_requested = judge_on;
     let legacy_prereview_requested = prereview_on;
     let speculate_on = std::env::var("GOOSE_SWARM_SPECULATE")
@@ -55700,7 +57392,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "verified_route_count": physical_snapshot_devices.len(),
             "legacy_judge_substituted": legacy_judge_requested,
             "legacy_prereview_substituted": legacy_prereview_requested,
-            "legacy_replanner_substituted": replan_on && cfg.max_replans > 0,
+            "legacy_replanner_substituted": !pillar_flow_on && replan_on && cfg.max_replans > 0,
             "nested_omni_judge": false,
             "semantic_nudge_delivery": true,
             "activity_authority": "engine_memory",
@@ -55715,7 +57407,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // broker snapshot and are consumed only by semantic observations.
         scheduler = scheduler.with_supervision_devices(supervision_pool_devices.clone());
     }
-    if !broker_enforcement_requested && replan_on && cfg.max_replans > 0 {
+    if !pillar_flow_on && !broker_enforcement_requested && replan_on && cfg.max_replans > 0 {
         eprintln!("dynamic replan: on (up to {} round(s))", cfg.max_replans);
         scheduler =
             scheduler.with_replanner(dispatcher.clone() as Arc<dyn Replanner>, cfg.max_replans);
@@ -56137,7 +57829,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             // BEFORE the subcommand, so a CORRECT app went red and the fix loop broke 2 pytest tests +
             // refused exit 0). The reliable smoke oracle (pytest + entry `--help`) stays the gate. Restoring
             // a RELIABLE golden gate (re-distilling the check from the built app's `--help`) is future work.
-            if goals_enabled() {
+            if !pillar_flow_on && goals_enabled() {
                 let advisory = run_pillar_checks(&cwd).await;
                 if !advisory.is_empty() {
                     sink.write_value(serde_json::json!({

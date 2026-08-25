@@ -33,9 +33,15 @@ pub struct ResearchPillar {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IntegrationContract {
     pub owner: String,
+    #[serde(default = "integration_required_default")]
+    pub integration_required: bool,
     pub objective: String,
     pub interface_invariants: Vec<String>,
     pub acceptance_criteria: Vec<String>,
+}
+
+fn integration_required_default() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -387,11 +393,13 @@ pub fn authored_section_fallback(
             exclusions: vec!["Work owned by every other pillar".to_string()],
         })
         .collect::<Vec<_>>();
+    let integration_required = pillars.len() > 1;
     let opening = ResearchPillarOpening {
         requirements,
         pillars,
         integration_contract: IntegrationContract {
             owner: integration_owner.trim().to_string(),
+            integration_required,
             objective: "Integrate pillar outputs without transferring their exclusive ownership"
                 .to_string(),
             interface_invariants: vec![
@@ -918,6 +926,7 @@ mod tests {
             pillars: vec![pillar("ui", &["req-ui"]), pillar("api", &["req-api"])],
             integration_contract: IntegrationContract {
                 owner: "planner".to_string(),
+                integration_required: true,
                 objective: "Compose UI and service".to_string(),
                 interface_invariants: vec!["One status schema".to_string()],
                 acceptance_criteria: vec!["Runnable end to end".to_string()],
