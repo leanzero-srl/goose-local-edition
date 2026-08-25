@@ -15,7 +15,8 @@ use goose_provider_types::permission::PermissionConfirmation;
 use goose_provider_types::retry::RetryConfig;
 use goose_swarm::{
     AdmittedWork, CompletedProviderRequest, ProviderLifecycle, ProviderNudgeDelivery,
-    ProviderNudgeSafetyGate, ProviderTerminalKind, StartedProviderRequest, WorkRole,
+    ProviderNudgeSafetyGate, ProviderRequestKey, ProviderTerminalKind, StartedProviderRequest,
+    WorkRole,
 };
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
@@ -262,6 +263,7 @@ pub(crate) fn bind_current_provider_lifecycle(
                 inner: provider.clone(),
                 lifecycle: lifecycle.clone(),
                 nudge_factory: nudge_factory.clone(),
+                stream_progress: stream_progress.clone(),
                 terminal_preflight_error: tokio::sync::Mutex::new(None),
             }) as Arc<dyn Provider>
         })
@@ -279,6 +281,7 @@ struct LifecycleProvider {
     inner: Arc<dyn Provider>,
     lifecycle: ProviderLifecycle,
     nudge_factory: Option<Arc<dyn ProviderNudgeDeliveryFactory>>,
+    stream_progress: Option<Arc<ProviderStreamProgressMeter>>,
     terminal_preflight_error: tokio::sync::Mutex<Option<ProviderError>>,
 }
 
@@ -309,6 +312,7 @@ pub(crate) struct ProviderStreamProgressSnapshot {
 pub(crate) struct ProviderStreamProgressMeter {
     started: Instant,
     snapshot: Mutex<ProviderStreamProgressSnapshot>,
+    last_terminal_request: Mutex<Option<(ProviderRequestKey, ProviderTerminalKind)>>,
     changed: Notify,
 }
 
@@ -317,6 +321,7 @@ impl ProviderStreamProgressMeter {
         Self {
             started: Instant::now(),
             snapshot: Mutex::new(ProviderStreamProgressSnapshot::default()),
+            last_terminal_request: Mutex::new(None),
             changed: Notify::new(),
         }
     }
@@ -347,6 +352,10 @@ impl ProviderStreamProgressMeter {
     }
 
     fn provider_request_started(&self) {
+        *self
+            .last_terminal_request
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
         let mut snapshot = self.state();
         if !snapshot.structured_output_active {
             return;
@@ -356,6 +365,22 @@ impl ProviderStreamProgressMeter {
         snapshot.last_progress_elapsed_ms = self.elapsed_ms();
         drop(snapshot);
         self.changed.notify_waiters();
+    }
+
+    fn provider_request_terminal(&self, key: ProviderRequestKey, kind: ProviderTerminalKind) {
+        *self
+            .last_terminal_request
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some((key, kind));
+    }
+
+    pub(crate) fn last_terminal_request(
+        &self,
+    ) -> Option<(ProviderRequestKey, ProviderTerminalKind)> {
+        self.last_terminal_request
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
 
     fn reserve_progress_stable_nudge(
@@ -439,12 +464,17 @@ impl ProviderStreamProgressSink for ProviderStreamProgressMeter {
 
 struct ProviderTerminalGuard {
     request: Option<StartedProviderRequest>,
+    stream_progress: Option<Arc<ProviderStreamProgressMeter>>,
 }
 
 impl ProviderTerminalGuard {
-    fn new(request: StartedProviderRequest) -> Self {
+    fn new(
+        request: StartedProviderRequest,
+        stream_progress: Option<Arc<ProviderStreamProgressMeter>>,
+    ) -> Self {
         Self {
             request: Some(request),
+            stream_progress,
         }
     }
 
@@ -510,7 +540,12 @@ impl ProviderTerminalGuard {
             return Ok(None);
         };
         match request.provider_terminal_with_completion(kind).await {
-            Ok(completed) => Ok(Some(completed)),
+            Ok(completed) => {
+                if let Some(progress) = &self.stream_progress {
+                    progress.provider_request_terminal(completed.request().key.clone(), kind);
+                }
+                Ok(Some(completed))
+            }
             Err(error) => {
                 let detail = error.to_string();
                 if let Some(request) = error.into_retryable_request() {
@@ -1116,7 +1151,7 @@ impl Provider for LifecycleProvider {
             .start_provider_request()
             .await
             .map_err(|error| lifecycle_error("start receipt", error))?;
-        let mut terminal = ProviderTerminalGuard::new(started);
+        let mut terminal = ProviderTerminalGuard::new(started, self.stream_progress.clone());
         if let Some(expected_protocol) = terminal.http_protocol() {
             if self.inner.provider_http_protocol(&model_config.model_name)
                 != Some(expected_protocol)

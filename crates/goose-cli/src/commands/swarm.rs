@@ -25,6 +25,7 @@ use async_trait::async_trait;
 use console::style;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, StreamExt};
+use goose::agents::final_output_tool::FinalOutputValidationEvidence;
 use goose::agents::{
     large_text_threshold, Agent, AgentConfig, AgentEvent, ExtensionConfig, GoosePlatform,
     SessionConfig,
@@ -3807,6 +3808,117 @@ fn content_sha256(value: &str) -> String {
     lowercase_hex(Sha256::digest(value.as_bytes()).as_slice())
 }
 
+fn canonical_json_digest(value: &str) -> String {
+    fn append(value: &serde_json::Value, canonical: &mut String) {
+        match value {
+            serde_json::Value::Null => canonical.push_str("null"),
+            serde_json::Value::Bool(value) => {
+                canonical.push_str(if *value { "true" } else { "false" })
+            }
+            serde_json::Value::Number(value) => canonical.push_str(&value.to_string()),
+            serde_json::Value::String(value) => canonical
+                .push_str(&serde_json::to_string(value).expect("a JSON string always serializes")),
+            serde_json::Value::Array(values) => {
+                canonical.push('[');
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 {
+                        canonical.push(',');
+                    }
+                    append(value, canonical);
+                }
+                canonical.push(']');
+            }
+            serde_json::Value::Object(values) => {
+                canonical.push('{');
+                let mut keys = values.keys().collect::<Vec<_>>();
+                keys.sort_unstable();
+                for (index, key) in keys.into_iter().enumerate() {
+                    if index > 0 {
+                        canonical.push(',');
+                    }
+                    canonical.push_str(
+                        &serde_json::to_string(key).expect("a JSON object key always serializes"),
+                    );
+                    canonical.push(':');
+                    append(&values[key], canonical);
+                }
+                canonical.push('}');
+            }
+        }
+    }
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(value) else {
+        return content_sha256(value);
+    };
+    let mut canonical = String::new();
+    append(&value, &mut canonical);
+    content_sha256(&canonical)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FinalOutputValidationFailure {
+    provider_request: ProviderRequestKey,
+    error_fingerprint: String,
+    argument_shape_fingerprint: String,
+    private_argument_fingerprint: String,
+    value_sensitive: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RepeatedFinalOutputValidationFailure {
+    first_provider_request: ProviderRequestKey,
+    provider_request: ProviderRequestKey,
+    error_fingerprint: String,
+    argument_shape_fingerprint: String,
+    value_sensitive: bool,
+}
+
+#[derive(Default)]
+struct FinalOutputValidationRepeatGate {
+    previous: Option<FinalOutputValidationFailure>,
+}
+
+impl FinalOutputValidationRepeatGate {
+    fn observe(
+        &mut self,
+        provider_request: ProviderRequestKey,
+        evidence: &FinalOutputValidationEvidence,
+        arguments: &str,
+    ) -> Option<RepeatedFinalOutputValidationFailure> {
+        let current = FinalOutputValidationFailure {
+            provider_request,
+            error_fingerprint: evidence.error_fingerprint.clone(),
+            argument_shape_fingerprint: evidence.argument_shape_fingerprint.clone(),
+            private_argument_fingerprint: canonical_json_digest(arguments),
+            value_sensitive: evidence.value_sensitive,
+        };
+        let repeated = self.previous.as_ref().is_some_and(|previous| {
+            previous.provider_request != current.provider_request
+                && previous.error_fingerprint == current.error_fingerprint
+                && previous.argument_shape_fingerprint == current.argument_shape_fingerprint
+                && previous.value_sensitive == current.value_sensitive
+                && (!current.value_sensitive
+                    || previous.private_argument_fingerprint
+                        == current.private_argument_fingerprint)
+        });
+        if repeated {
+            let previous = self
+                .previous
+                .take()
+                .expect("a corroborated validation repeat retains its first observation");
+            return Some(RepeatedFinalOutputValidationFailure {
+                first_provider_request: previous.provider_request,
+                provider_request: current.provider_request,
+                error_fingerprint: current.error_fingerprint,
+                argument_shape_fingerprint: current.argument_shape_fingerprint,
+                value_sensitive: current.value_sensitive,
+            });
+        }
+        self.previous = Some(current);
+        None
+    }
+}
+
 /// #122 detail-memo key: hash of the FULL detailer input so a cache hit means byte-identical LLM input (an
 /// identical prompt deserves an identical spec). MUST include goal + findings — both are in the detailer prompt
 /// and mutate across rounds (re-research / answered-ask append to them), so a narrower key would reuse a stale
@@ -5422,6 +5534,91 @@ mod tests {
             repeat_call_hash("shell", "ab", true, "c"),
             repeat_call_hash("shell", "a", true, "bc")
         );
+    }
+
+    fn final_output_validation_evidence(
+        error_fingerprint: &str,
+        argument_shape_fingerprint: &str,
+        value_sensitive: bool,
+    ) -> FinalOutputValidationEvidence {
+        FinalOutputValidationEvidence {
+            evidence_type: "goose.final_output.schema_validation".to_string(),
+            version: 1,
+            error_fingerprint: error_fingerprint.to_string(),
+            argument_shape_fingerprint: argument_shape_fingerprint.to_string(),
+            value_sensitive,
+            root_kind: "object".to_string(),
+            node_count: 2,
+            error_count: 1,
+        }
+    }
+
+    fn provider_request(ordinal: u32) -> ProviderRequestKey {
+        ProviderRequestKey {
+            ordinal,
+            provider_request_id: format!("provider-request-{ordinal}"),
+        }
+    }
+
+    #[test]
+    fn final_output_validation_repeat_requires_distinct_completed_provider_turns() {
+        let evidence = final_output_validation_evidence("error-a", "shape-a", false);
+        let mut gate = FinalOutputValidationRepeatGate::default();
+        assert!(gate
+            .observe(provider_request(1), &evidence, r#"{"status":1}"#)
+            .is_none());
+        assert!(gate
+            .observe(provider_request(1), &evidence, r#"{"status":1}"#)
+            .is_none());
+        let repeated = gate
+            .observe(provider_request(2), &evidence, r#"{"status":2}"#)
+            .expect("a second completed provider turn corroborates a structural schema failure");
+        assert_eq!(repeated.first_provider_request.ordinal, 1);
+        assert_eq!(repeated.provider_request.ordinal, 2);
+    }
+
+    #[test]
+    fn final_output_validation_repeat_is_consecutive_and_resets_on_changed_evidence() {
+        let first = final_output_validation_evidence("error-a", "shape-a", false);
+        let changed = final_output_validation_evidence("error-b", "shape-a", false);
+        let mut gate = FinalOutputValidationRepeatGate::default();
+        assert!(gate
+            .observe(provider_request(1), &first, r#"{"status":1}"#)
+            .is_none());
+        assert!(gate
+            .observe(provider_request(2), &changed, r#"{"status":2}"#)
+            .is_none());
+        assert!(gate
+            .observe(provider_request(3), &first, r#"{"status":3}"#)
+            .is_none());
+    }
+
+    #[test]
+    fn value_sensitive_validation_repeat_requires_canonical_argument_equality() {
+        let evidence = final_output_validation_evidence("enum-error", "shape-a", true);
+        let mut changed = FinalOutputValidationRepeatGate::default();
+        assert!(changed
+            .observe(provider_request(1), &evidence, r#"{"choice":"alpha"}"#)
+            .is_none());
+        assert!(changed
+            .observe(provider_request(2), &evidence, r#"{"choice":"beta"}"#)
+            .is_none());
+
+        let mut identical = FinalOutputValidationRepeatGate::default();
+        assert!(identical
+            .observe(
+                provider_request(1),
+                &evidence,
+                r#"{"choice":"alpha","nested":{"count":1}}"#,
+            )
+            .is_none());
+        assert!(identical
+            .observe(
+                provider_request(2),
+                &evidence,
+                r#"{"nested":{"count":1},"choice":"alpha"}"#,
+            )
+            .is_some());
     }
 
     #[test]
@@ -24338,6 +24535,10 @@ impl GooseAgentDispatcher {
         let pre_scheduler_semantic_source = ACTIVE_PRE_SCHEDULER_SOURCE.try_with(|_| ()).is_ok();
         let pre_scheduler_semantic_call = pre_scheduler_semantic_source
             || activity_key.is_some_and(|key| key.starts_with("pre-scheduler-judge:"));
+        let response_schema_failover_source = (tool_surface == AgentToolSurface::ResponseOnly)
+            .then(|| ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone).ok())
+            .flatten()
+            .filter(pre_scheduler_recurrence_failover_eligible);
         // PROGRESS WATCHDOG (GOOSE_SWARM_PROGRESS_WATCHDOG_SECS): the `idle` watchdog above only fires when the
         // stream goes SILENT. A task that streams THINKING tokens continuously resets it forever — measured
         // live, tasks ran 899s/348s/26min while emitting reasoning tokens and were never cut (the pathology
@@ -24412,6 +24613,7 @@ impl GooseAgentDispatcher {
         let mut last_provider_progress_event_at: Option<tokio::time::Instant> = None;
         let mut pre_scheduler_review: Option<PreSchedulerRecurrenceReview> = None;
         let mut pre_scheduler_recurrence_failover = PreSchedulerRecurrenceFailoverGate::default();
+        let mut final_output_validation_repeat_gate = FinalOutputValidationRepeatGate::default();
         let mut next_pre_scheduler_review_check = tokio::time::Instant::now();
         let handle_pre_scheduler_wake =
             |wake: PreSchedulerRecurrenceWake,
@@ -25043,6 +25245,7 @@ impl GooseAgentDispatcher {
                 break;
             };
             first_event_seen = true;
+            let mut final_output_validation_repeat = None;
             match ev {
                 Ok(AgentEvent::Message(msg)) => {
                     // PROGRESS WATCHDOG: a message counts as PRODUCTIVE if it carries a real tool call/result
@@ -25151,6 +25354,35 @@ impl GooseAgentDispatcher {
                                         .as_ref()
                                         .map(|r| !r.is_error.unwrap_or(false))
                                         .unwrap_or(false);
+                                    if response_schema_failover_source.is_some()
+                                        && name == FINAL_OUTPUT_TOOL
+                                        && !ok
+                                    {
+                                        let evidence = resp
+                                            .tool_result
+                                            .as_ref()
+                                            .err()
+                                            .and_then(|error| error.data.as_ref())
+                                            .and_then(
+                                                FinalOutputValidationEvidence::from_error_data,
+                                            );
+                                        let terminal_request = provider_stream_progress
+                                            .last_terminal_request()
+                                            .filter(|(_, kind)| {
+                                                *kind == ProviderTerminalKind::Finished
+                                            })
+                                            .map(|(request, _)| request);
+                                        if let (Some(evidence), Some(provider_request)) =
+                                            (evidence, terminal_request)
+                                        {
+                                            final_output_validation_repeat =
+                                                final_output_validation_repeat_gate.observe(
+                                                    provider_request,
+                                                    &evidence,
+                                                    &request_text,
+                                                );
+                                        }
+                                    }
                                     let full_result = tool_result_full_text(&resp.tool_result);
                                     let result = clip_tail(&full_result, 4000);
                                     // #136: track consecutive identical (call, result) outcomes. Computed
@@ -25241,6 +25473,36 @@ impl GooseAgentDispatcher {
                     }
                     last_digest_at = Some(tokio::time::Instant::now());
                 }
+            }
+            if let Some(repeat) = final_output_validation_repeat {
+                let source = response_schema_failover_source
+                    .as_ref()
+                    .expect("a validation repeat is armed only for a retryable research source");
+                self.events.write_value(serde_json::json!({
+                    "event": "research_response_schema_repeat_detected",
+                    "task_id": activity_key,
+                    "model": model_id,
+                    "physical_host_id": source.lifecycle.admission().physical_host_id,
+                    "first_provider_request_ordinal": repeat.first_provider_request.ordinal,
+                    "first_provider_request_id_digest": content_sha256(
+                        &repeat.first_provider_request.provider_request_id,
+                    ),
+                    "provider_request_ordinal": repeat.provider_request.ordinal,
+                    "provider_request_id_digest": content_sha256(
+                        &repeat.provider_request.provider_request_id,
+                    ),
+                    "confirmations": 2,
+                    "error_fingerprint": repeat.error_fingerprint,
+                    "argument_shape_fingerprint": repeat.argument_shape_fingerprint,
+                    "value_sensitive": repeat.value_sensitive,
+                    "provider_terminals_proven": true,
+                    "payload_logged": false,
+                    "retry_authority": "exclude-failed-physical-host-and-reschedule-distinct-host",
+                }));
+                return Err(anyhow!(
+                    "response-only final_output schema validation repeated on two completed provider turns on physical host `{}`",
+                    source.lifecycle.admission().physical_host_id,
+                ));
             }
         }
         if ACTIVE_PRE_SCHEDULER_CANCELLATION
@@ -58183,6 +58445,130 @@ mod pre_scheduler_semantic_runtime_tests {
             .or_default()
             .observe_request(0, "immutable-request")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn production_repeated_final_output_schema_failure_excludes_host_before_third_call() {
+        const PARTITION: &str = "target-section-runtime-schema-repeat";
+        const REQUIREMENT: &str = "REQ-runtime-schema-repeat";
+        const MODEL_A: &str = "runtime-schema-repeat-model-a";
+        const MODEL_B: &str = "runtime-schema-repeat-model-b";
+        const HOST_A: &str = "runtime-schema-repeat-host-a";
+        const HOST_B: &str = "runtime-schema-repeat-host-b";
+        const SECRET_A: &str = "private-schema-value-alpha";
+        const SECRET_B: &str = "private-schema-value-beta";
+
+        let mut scripts = HashMap::new();
+        scripts.insert(
+            MODEL_A.to_string(),
+            vec![
+                serde_json::json!({
+                    "partition_id": PARTITION,
+                    "complete": false,
+                    "assessments": SECRET_A,
+                }),
+                serde_json::json!({
+                    "partition_id": PARTITION,
+                    "complete": false,
+                    "assessments": SECRET_B,
+                }),
+            ],
+        );
+        scripts.insert(
+            MODEL_B.to_string(),
+            vec![valid_jury_runtime_output(PARTITION, REQUIREMENT)],
+        );
+        let mut harness = research_correction_runtime_harness(
+            &[
+                ("schema-repeat-lane-a", MODEL_A, HOST_A),
+                ("schema-repeat-lane-b", MODEL_B, HOST_B),
+            ],
+            scripts,
+        )
+        .await;
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements =
+            Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        let partition = ResearchClosurePartition {
+            partition_id: PARTITION.to_string(),
+            candidates: vec![correction_runtime_candidate(REQUIREMENT)],
+        };
+        let held_b = harness
+            .runtime
+            .host_scheduler
+            .acquire(
+                vec!["schema-repeat-lane-b".to_string()],
+                1,
+                0,
+                "hold-schema-repeat-b".to_string(),
+            )
+            .await
+            .unwrap();
+        let admission_stop = tokio_util::sync::CancellationToken::new();
+        let unit = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            let runtime = harness.runtime.clone();
+            let admission_stop = admission_stop.clone();
+            async move {
+                dispatcher
+                    .run_research_closure_partition_pair_unit(
+                        runtime.as_ref(),
+                        PairedRetryingFanStage::First,
+                        partition,
+                        Arc::new(tokio::sync::Mutex::new(
+                            ResearchPartitionHostState::default(),
+                        )),
+                        &admission_stop,
+                    )
+                    .await
+            }
+        });
+
+        let repeat = harness
+            .sink
+            .wait_for("research_response_schema_repeat_detected")
+            .await;
+        assert_eq!(repeat["physical_host_id"], HOST_A);
+        assert_eq!(repeat["confirmations"], 2);
+        assert_eq!(repeat["provider_terminals_proven"], true);
+        assert_eq!(repeat["payload_logged"], false);
+        assert_eq!(harness.provider.call_count(MODEL_A), 2);
+        let encoded_repeat = repeat.to_string();
+        assert!(!encoded_repeat.contains(SECRET_A));
+        assert!(!encoded_repeat.contains(SECRET_B));
+
+        drop(held_b);
+        let compiled = tokio::time::timeout(Duration::from_secs(5), unit)
+            .await
+            .expect("the distinct-host retry did not finish")
+            .expect("the schema-repeat unit task panicked")
+            .expect("the schema-repeat unit failed after distinct-host retry")
+            .expect("the schema-repeat unit was not externally retired");
+        assert_eq!(compiled.physical_host_id, HOST_B);
+        assert_eq!(harness.provider.call_count(MODEL_A), 2);
+        assert_eq!(harness.provider.call_count(MODEL_B), 1);
+
+        let events = harness.sink.values();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event["event"] == "broker_provider_terminal_observed"
+                        && event["admission"]["model_id"] == MODEL_A
+                        && event["receipt"]["kind"] == "finished"
+                })
+                .count(),
+            2,
+        );
+        assert!(events.iter().any(|event| {
+            event["event"] == "research_target_semantic_unit_rescheduled"
+                && event["failed_physical_host_id"] == HOST_A
+        }));
+        assert_eq!(released_completion_for(&events, MODEL_A), ["error"]);
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("schema-repeat lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
     #[tokio::test]
