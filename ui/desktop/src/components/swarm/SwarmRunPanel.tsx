@@ -2759,39 +2759,69 @@ const DETAIL_MODE_LABEL: Record<SwarmLogMode, string> = {
   developer: 'Developer',
 };
 
-const DetailModeChooser: React.FC<{
+export function nextDetailMode(mode: SwarmLogMode, key: string): SwarmLogMode | null {
+  const index = SWARM_LOG_MODES.indexOf(mode);
+  if (key === 'Home') return SWARM_LOG_MODES[0];
+  if (key === 'End') return SWARM_LOG_MODES[SWARM_LOG_MODES.length - 1];
+  if (key === 'ArrowRight' || key === 'ArrowDown')
+    return SWARM_LOG_MODES[(index + 1) % SWARM_LOG_MODES.length];
+  if (key === 'ArrowLeft' || key === 'ArrowUp')
+    return SWARM_LOG_MODES[(index - 1 + SWARM_LOG_MODES.length) % SWARM_LOG_MODES.length];
+  return null;
+}
+
+export const DetailModeChooser: React.FC<{
   mode: SwarmLogMode;
   onChange: (mode: SwarmLogMode) => void;
-}> = ({ mode, onChange }) => (
-  <div
-    role="radiogroup"
-    aria-label="Run detail"
-    className="flex items-center border border-border-primary bg-background-primary"
-    style={{ borderRadius: 3 }}
-  >
-    <span className="flex h-7 w-7 items-center justify-center border-r border-border-primary text-text-secondary">
-      <AlignLeft className="h-3.5 w-3.5" aria-hidden />
-    </span>
-    {SWARM_LOG_MODES.map((option, index) => {
-      const selected = option === mode;
-      return (
-        <button
-          key={option}
-          type="button"
-          role="radio"
-          aria-checked={selected}
-          onClick={() => onChange(option)}
-          className={`h-7 px-2 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-[#0b5bd3] focus-visible:ring-inset ${
-            index < SWARM_LOG_MODES.length - 1 ? 'border-r border-border-primary' : ''
-          } ${selected ? 'text-white' : 'text-text-secondary hover:bg-background-secondary hover:text-text-primary'}`}
-          style={{ backgroundColor: selected ? SWARM_STATUS.action : 'transparent' }}
-        >
-          {DETAIL_MODE_LABEL[option]}
-        </button>
-      );
-    })}
-  </div>
-);
+}> = ({ mode, onChange }) => {
+  const optionRefs = useRef<Partial<Record<SwarmLogMode, HTMLButtonElement | null>>>({});
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const next = nextDetailMode(mode, event.key);
+    if (!next) return;
+    event.preventDefault();
+    onChange(next);
+    optionRefs.current[next]?.focus();
+  };
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Run detail"
+      className="flex items-center border border-border-primary bg-background-primary"
+      style={{ borderRadius: 3 }}
+    >
+      <span className="flex h-7 w-7 items-center justify-center border-r border-border-primary text-text-secondary">
+        <AlignLeft className="h-3.5 w-3.5" aria-hidden />
+      </span>
+      {SWARM_LOG_MODES.map((option, index) => {
+        const selected = option === mode;
+        return (
+          <button
+            ref={(element) => {
+              optionRefs.current[option] = element;
+            }}
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(option)}
+            onKeyDown={onKeyDown}
+            className={`h-7 px-2 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-inset ${
+              selected ? 'focus-visible:ring-white' : 'focus-visible:ring-[#0b5bd3]'
+            } ${
+              index < SWARM_LOG_MODES.length - 1 ? 'border-r border-border-primary' : ''
+            } ${selected ? 'text-white' : 'text-text-secondary hover:bg-background-secondary hover:text-text-primary'}`}
+            style={{ backgroundColor: selected ? SWARM_STATUS.action : 'transparent' }}
+          >
+            {DETAIL_MODE_LABEL[option]}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
 export const SwarmRunPanel: React.FC<{
   workingDir: string | undefined;

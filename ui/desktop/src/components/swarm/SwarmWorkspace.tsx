@@ -97,10 +97,9 @@ export function SwarmWorkspace({
             onKeyDown={onTabKeyDown}
             className={cn(
               'flex items-center justify-center gap-2 border-r border-border-primary px-3 text-xs font-semibold outline-none',
-              'focus-visible:ring-2 focus-visible:ring-[#0b5bd3] focus-visible:ring-inset',
               activeTab === 'conversation'
-                ? 'bg-[#0b5bd3] text-white'
-                : 'bg-background-primary text-text-primary hover:bg-background-secondary'
+                ? 'bg-[#0b5bd3] text-white focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white'
+                : 'bg-background-primary text-text-primary hover:bg-background-secondary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0b5bd3]'
             )}
           >
             <MessageSquare className="h-4 w-4" />
@@ -118,10 +117,9 @@ export function SwarmWorkspace({
             onKeyDown={onTabKeyDown}
             className={cn(
               'flex items-center justify-center gap-2 px-3 text-xs font-semibold outline-none',
-              'focus-visible:ring-2 focus-visible:ring-[#0b5bd3] focus-visible:ring-inset',
               activeTab === 'run'
-                ? 'bg-[#0b5bd3] text-white'
-                : 'bg-background-primary text-text-primary hover:bg-background-secondary'
+                ? 'bg-[#0b5bd3] text-white focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white'
+                : 'bg-background-primary text-text-primary hover:bg-background-secondary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0b5bd3]'
             )}
           >
             <RadioTower className="h-4 w-4" />
