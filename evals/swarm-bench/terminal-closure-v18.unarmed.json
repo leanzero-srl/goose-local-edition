@@ -4,7 +4,7 @@
   "armed": false,
   "binding": null,
   "bound_config_path": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-terminal-closure/config.json",
-  "controller_sha256": "5cdea5b310555ea26abc79cf973ac1796b9633bb850efed423d765f76e1a2dec",
+  "controller_sha256": "268df17f24b6eea2b985b1548002ccfb57bc25ba72fa2e3ad454d4d3b9bc184d",
   "live_root": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18",
   "run_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18/swarm-3node-qwen38-brainwaves-r0",
   "state_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-terminal-closure",
