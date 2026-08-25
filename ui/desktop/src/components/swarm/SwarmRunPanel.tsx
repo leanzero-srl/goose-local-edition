@@ -2848,10 +2848,13 @@ export const SwarmRunPanel: React.FC<{
     fixLanes: run.fixLanes,
   });
   // Planning history (research / plan / contracts) lives in the PLANNING zone; build + verify ARE the board.
-  const planningPhases = run.phaseTodo.filter(
-    (p) => p.key === 'research' || p.key === 'plan' || p.key === 'contracts'
-  );
-  const buildStarted = run.totals.tasks > 0 || phaseStepIndex(run.phase) >= 3;
+  const contractEvidence = run.phaseTodo.find((phase) => phase.key === 'contracts')?.items ?? [];
+  const planningPhases = run.phaseTodo
+    .filter((phase) => phase.key === 'research' || phase.key === 'plan')
+    .map((phase) =>
+      phase.key === 'plan' ? { ...phase, items: [...phase.items, ...contractEvidence] } : phase
+    );
+  const buildStarted = run.totals.tasks > 0 || phaseStepIndex(run.phase) >= 2;
   const appName = runAppName(run.meta?.prompt, runDir);
 
   // Liveness: prefer the engine heartbeat (fast, precise) when the run has one; otherwise fall back to the

@@ -22,10 +22,11 @@ describe('FormationRibbon', () => {
       'data-state',
       'complete'
     );
-    expect(within(phases).getByText('Verify').closest('li')).toHaveAttribute(
+    expect(within(phases).getByText('Integrate').closest('li')).toHaveAttribute(
       'data-state',
       'upcoming'
     );
+    expect(within(phases).queryByText('Contracts')).not.toBeInTheDocument();
 
     const nodes = screen.getAllByTestId('formation-node');
     expect(nodes).toHaveLength(2);

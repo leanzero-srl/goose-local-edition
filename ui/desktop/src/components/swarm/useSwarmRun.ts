@@ -797,6 +797,70 @@ function buildActivity(events: Array<Record<string, unknown>>): {
         phase = 'Starting';
         break;
       }
+      case 'pillar_opening_started':
+      case 'pillar_opening_restored':
+      case 'pillar_opening_degraded': {
+        const restored = type === 'pillar_opening_restored';
+        compact({
+          kind: 'phase',
+          text: restored ? 'Research pillars restored' : 'Opening research pillars',
+          tone: type === 'pillar_opening_degraded' ? 'warn' : 'info',
+        });
+        verbose({
+          kind: 'phase',
+          text: restored ? 'Research pillars restored' : 'Opening research pillars',
+          sub: str(e['reason']) || undefined,
+          tone: type === 'pillar_opening_degraded' ? 'warn' : 'info',
+        });
+        phase = 'Researching';
+        break;
+      }
+      case 'pillar_research_started': {
+        const count = num(e['pillars']);
+        compact({
+          kind: 'phase',
+          text: `Researching${count != null ? ` ${count} pillar${count === 1 ? '' : 's'}` : ' pillars'}`,
+        });
+        verbose({ kind: 'phase', text: 'Researching the requirement pillars' });
+        phase = 'Researching';
+        break;
+      }
+      case 'pillar_research_completed': {
+        const count = num(e['pillars']);
+        compact({
+          kind: 'phase',
+          text: `Pillar research complete${count != null ? ` — ${count} report${count === 1 ? '' : 's'}` : ''}`,
+        });
+        verbose({ kind: 'phase', text: 'Pillar research complete' });
+        phase = 'Planning';
+        break;
+      }
+      case 'pillar_synthesis_plan_started':
+      case 'pillar_synthesis_plan_degraded': {
+        compact({
+          kind: 'plan',
+          text: 'Synthesizing the build plan',
+          tone: type === 'pillar_synthesis_plan_degraded' ? 'warn' : 'info',
+        });
+        verbose({
+          kind: 'plan',
+          text: 'Synthesizing the pillar research into a build plan',
+          sub: str(e['reason']) || undefined,
+          tone: type === 'pillar_synthesis_plan_degraded' ? 'warn' : 'info',
+        });
+        phase = 'Planning';
+        break;
+      }
+      case 'pillar_synthesis_plan_completed': {
+        const count = num(e['tasks']);
+        compact({
+          kind: 'plan',
+          text: `Build plan ready${count != null ? ` — ${count} task${count === 1 ? '' : 's'}` : ''}`,
+        });
+        verbose({ kind: 'plan', text: 'Pillar synthesis plan complete' });
+        phase = 'Planning';
+        break;
+      }
       case 'scouts_planned': {
         const lenses = arr(e['lenses']).map(String).join(', ');
         compact({ kind: 'phase', text: 'Planning research', sub: lenses || undefined });
@@ -984,7 +1048,7 @@ function buildActivity(events: Array<Record<string, unknown>>): {
           text: `${verb}${attempt > 0 ? ` (attempt ${attempt + 1})` : ''}`,
           sub: [node && `on ${node}`, owned].filter(Boolean).join(' — ') || undefined,
         });
-        phase = isSink ? 'Verifying' : 'Building';
+        phase = isSink ? 'Integrating' : 'Building';
         break;
       }
       case 'task_retry': {
@@ -1095,7 +1159,19 @@ function buildActivity(events: Array<Record<string, unknown>>): {
             .join(' · '),
           tone: smoke.testsPass === false || smoke.entryOk === false ? 'bad' : 'good',
         });
-        phase = 'Verifying';
+        phase = 'Integrating';
+        break;
+      }
+      case 'complete_verify': {
+        const findings = num(e['findings']) ?? 0;
+        phase = findings > 0 ? 'Repairing' : 'Integrating';
+        break;
+      }
+      case 'complete_fix_dispatched':
+      case 'complete_fix_completed':
+      case 'complete_fix_wave':
+      case 'spec_repair_wave': {
+        phase = 'Repairing';
         break;
       }
       case 'run_finished': {
@@ -1167,6 +1243,10 @@ function buildActivity(events: Array<Record<string, unknown>>): {
     startedAt,
     overview,
   };
+}
+
+export function foldRunPhase(events: Array<Record<string, unknown>>): string {
+  return buildActivity(events).phase;
 }
 
 type Digest = {
