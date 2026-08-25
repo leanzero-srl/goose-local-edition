@@ -339,7 +339,7 @@ pub async fn spawn_acp_server_in_process(
         fs::write(
             &config_path,
             format!(
-                "GOOSE_MODEL: {current_model}\nGOOSE_PROVIDER: openai\nGOOSE_MODE: {}\n",
+                "GOOSE_MODEL: {current_model}\nGOOSE_PROVIDER: openai\nGOOSE_MODE: {}\nGOOSE_DISABLE_KEYRING: true\n",
                 goose_mode
             ),
         )
@@ -771,6 +771,7 @@ where
     if std::env::var_os("GOOSE_PATH_ROOT").is_none() {
         std::env::set_var("GOOSE_PATH_ROOT", ACP_CONFIG_ROOT.path());
     }
+    std::env::set_var("GOOSE_DISABLE_KEYRING", "1");
     register_builtin_extensions(goose_mcp::BUILTIN_EXTENSIONS.clone());
 
     let handle = std::thread::Builder::new()

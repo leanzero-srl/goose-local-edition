@@ -212,8 +212,10 @@ impl ProviderTestConfig {
 
 impl ProviderFixture {
     async fn setup(config: &ProviderTestConfig, mode: GooseMode) -> Result<Self> {
-        let mut env_vars: Vec<(&'static str, Option<&str>)> =
-            vec![("GOOSE_MODE", Some(<&str>::from(mode)))];
+        let mut env_vars: Vec<(&'static str, Option<&str>)> = vec![
+            ("GOOSE_MODE", Some(<&str>::from(mode))),
+            ("GOOSE_DISABLE_KEYRING", Some("1")),
+        ];
         for &var in config.clear_env {
             env_vars.push((var, None));
         }
