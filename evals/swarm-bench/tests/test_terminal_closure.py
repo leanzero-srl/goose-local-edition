@@ -810,6 +810,12 @@ class TerminalClosureTests(unittest.TestCase):
             closure.validate_config(config, allow_unarmed=True)
             with self.assertRaisesRegex(closure.ClosureError, "unarmed"):
                 closure.validate_config(config)
+            for operation in (closure.status, closure.results, closure.stop):
+                with self.subTest(operation=operation.__name__), self.assertRaisesRegex(
+                    closure.ClosureError, "unarmed"
+                ):
+                    operation(template_path)
+            self.assertFalse(closure.V18_STATE_DIR.exists())
             with self.assertRaisesRegex(closure.ClosureError, "original exact fixture_seed"):
                 closure.bind_v18(template_path)
             (closure.V18_LIVE_ROOT / "launch.json").unlink()
@@ -897,6 +903,29 @@ class TerminalClosureTests(unittest.TestCase):
             trace_path.chmod(0o600)
             with self.assertRaisesRegex(closure.ClosureError, "first trace evidence"):
                 supervisor.bound_trace_header()
+
+            attempt = supervisor.state_dir / "scoring/attempt-1"
+            (attempt / "tree").mkdir(parents=True)
+            for name in (
+                "raw-score.json",
+                "score-tree-seal.json",
+                "descendants.json",
+                "spawn-journal.txt",
+            ):
+                (attempt / name).write_text("{}\n", encoding="utf-8")
+            runtime = attempt / "runtime"
+            runtime.mkdir()
+            (runtime / "playwright-node").write_text("fixture\n", encoding="utf-8")
+            closure.atomic_json(
+                attempt / "worker-result.json",
+                {
+                    "exit_code": 0,
+                    "scorer_exit_code": 0,
+                    "fixture_seed": wrong_seed,
+                },
+            )
+            with self.assertRaisesRegex(closure.ClosureError, "score worker.*fixture_seed"):
+                supervisor.successful_score_attempt(attempt)
 
             score = fixture_score(wrong_seed)
             with self.assertRaisesRegex(closure.ClosureError, "fixture_seed"):
