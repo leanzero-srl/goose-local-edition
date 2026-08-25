@@ -7716,6 +7716,116 @@ class CloudSb7HarnessTest(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "distinguish Credits"):
             cloud_sb7.spend_policy(changed, cloud_sb7.entrants(changed))
 
+    def test_minimax_m3_manifest_and_child_environment_are_exactly_isolated(
+        self,
+    ) -> None:
+        manifest = cloud_sb7.load_json(
+            cloud_sb7.HERE / "cloud-sb7-minimax-m3-entrant.json"
+        )
+        row = cloud_sb7.entrants(manifest)[0]
+        policy = cloud_sb7.spend_policy(manifest, [row])
+        self.assertEqual(row["provider"], "minimax_api")
+        self.assertEqual(row["model"], "MiniMax-M3")
+        self.assertEqual(row["endpoint_family"], "https://api.minimax.io/v1")
+        self.assertEqual(row["base_url_env"], "MINIMAX_API_BASE_URL")
+        self.assertEqual(
+            row["secret_keychain"],
+            {
+                "service": "goose-benchmark-minimax-api",
+                "account": "goose-sb7-minimax-m3",
+            },
+        )
+        self.assertEqual(row["reasoning_mode"], "adaptive")
+        self.assertIs(row["reasoning_split"], False)
+        self.assertIs(row["tool_calling"], True)
+        self.assertIs(row["stream_usage"], True)
+        self.assertEqual(row["context_limit"], 1_000_000)
+        self.assertEqual(row["max_output_tokens"], 131_072)
+        self.assertEqual(row["pricing"]["cached_input_per_million"], 0.06)
+        self.assertEqual(
+            row["pricing"]["cached_input_over_threshold_per_million"], 0.12
+        )
+        self.assertIs(row["billing"]["budget_guard_is_actual_charge"], False)
+        self.assertEqual(policy["currency"], "USD")
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            profile = root / "profile"
+            tree = root / "tree"
+            profile.mkdir()
+            tree.mkdir()
+            state = {
+                "profile": str(profile),
+                "tree": str(tree),
+                "campaign_root": str(root),
+                "provider_lifecycle": str(root / "provider-lifecycle.jsonl"),
+                "budget_config_sha256": "fixture-budget-config",
+                "sandbox_denied_local_ports": [],
+            }
+            hostile = {
+                "MOONSHOT_API_KEY": "unrelated-moonshot",
+                "META_API_KEY": "unrelated-meta",
+                "DASHSCOPE_API_KEY": "unrelated-dashscope",
+                "ZHIPU_API_KEY": "unrelated-zai",
+                "GOOGLE_API_KEY": "unrelated-google",
+                "DEEPSEEK_API_KEY": "unrelated-deepseek",
+                "MINIMAX_BASE_URL": "https://example.invalid/anthropic",
+                "GOOSE_TEMPERATURE": "0.7",
+                "GOOSE_SWARM_TOP_P": "0.8",
+            }
+            with mock.patch.dict(os.environ, hostile, clear=True):
+                env = cloud_sb7.child_env(row, state, "in-memory-minimax")
+
+        self.assertEqual(env["GOOSE_PROVIDER"], "minimax_api")
+        self.assertEqual(env["GOOSE_MODEL"], "MiniMax-M3")
+        self.assertEqual(env["GOOSE_FAST_MODEL"], "MiniMax-M3")
+        self.assertEqual(env["MINIMAX_API_BASE_URL"], "https://api.minimax.io/v1")
+        self.assertEqual(env["GOOSE_THINKING_EFFORT"], "max")
+        self.assertEqual(env["GOOSE_CONTEXT_LIMIT"], "1000000")
+        self.assertEqual(env["GOOSE_MAX_TOKENS"], "131072")
+        self.assertEqual(env["MINIMAX_API_KEY"], "in-memory-minimax")
+        for forbidden in hostile:
+            self.assertNotIn(forbidden, env)
+
+        for field, value, error in (
+            (
+                "billing",
+                {**row["billing"], "budget_guard_is_actual_charge": True},
+                "PAYG billing",
+            ),
+            (
+                "pricing",
+                {**row["pricing"], "cached_input_per_million": 0.07},
+                "pricing",
+            ),
+        ):
+            with self.subTest(field=field):
+                changed = json.loads(json.dumps(manifest))
+                changed["entrants"][0][field] = value
+                with self.assertRaisesRegex(SystemExit, error):
+                    cloud_sb7.spend_policy(changed, cloud_sb7.entrants(changed))
+
+    def test_minimax_m3_budget_uses_tiered_full_input_upper_bound(self) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-minimax-m3-entrant.json"
+            )
+        )[0]
+        profile = {"pricing": row["pricing"]}
+        self.assertAlmostEqual(
+            cloud_sb7.budget_price(profile, 512_000, 100_000),
+            (512_000 * 0.3 + 100_000 * 1.2) / 1_000_000,
+        )
+        self.assertAlmostEqual(
+            cloud_sb7.budget_price(profile, 512_001, 100_000),
+            (512_001 * 0.6 + 100_000 * 2.4) / 1_000_000,
+        )
+        self.assertEqual(
+            row["pricing"]["purpose"],
+            "conservative_full_input_upper_bound_excludes_cache_discount",
+        )
+        self.assertIs(row["billing"]["budget_guard_is_actual_charge"], False)
+
     def test_smoke_environment_uses_shared_budget_and_isolated_paths(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw).resolve()
@@ -9835,6 +9945,66 @@ class CloudSb7HarnessTest(unittest.TestCase):
         roster["evidence"]["alibaba"]["qwen3.8-max"]["id"] = "qwen3.8-max-alias"
         with self.assertRaisesRegex(SystemExit, "exact qwen3.8-max"):
             cloud_sb7.validate_rosters([row], roster)
+
+    def test_minimax_roster_binds_exact_openai_endpoint_and_model(self) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-minimax-m3-entrant.json"
+            )
+        )[0]
+        metadata = {
+            "id": "MiniMax-M3",
+            "object": "model",
+            "created": 1_780_272_000,
+            "owned_by": "minimax",
+        }
+        with mock.patch.object(
+            cloud_sb7,
+            "fetch_json",
+            return_value={"object": "list", "data": [metadata]},
+        ) as fetch:
+            roster = cloud_sb7.authenticated_rosters(
+                {"MINIMAX_API_KEY": "fixture-secret"}, [row]
+            )
+        fetch.assert_called_once_with(
+            "https://api.minimax.io/v1/models",
+            {"Authorization": "Bearer fixture-secret"},
+        )
+        cloud_sb7.validate_rosters([row], roster)
+        self.assertEqual(
+            cloud_sb7.selected_roster_evidence([row], roster),
+            {"minimax_api": {"MiniMax-M3": metadata}},
+        )
+
+        for field, value in (
+            ("id", "minimax-m3"),
+            ("object", "chat.model"),
+            ("owned_by", "other"),
+        ):
+            with self.subTest(field=field):
+                changed = dict(metadata)
+                changed[field] = value
+                roster["evidence"]["minimax_api"]["MiniMax-M3"] = changed
+                with self.assertRaisesRegex(SystemExit, "exact MiniMax-M3"):
+                    cloud_sb7.validate_rosters([row], roster)
+        roster["evidence"]["minimax_api"]["MiniMax-M3"] = metadata
+
+        for field, value in (
+            ("endpoint_family", "https://example.invalid/v1"),
+            ("base_url_env", "MINIMAX_BASE_URL"),
+            ("secret_env", "OTHER_API_KEY"),
+        ):
+            with self.subTest(field=field):
+                changed = dict(row)
+                changed[field] = value
+                secret_values = {
+                    "MINIMAX_API_KEY": "fixture-secret",
+                    "OTHER_API_KEY": "fixture-secret",
+                }
+                with mock.patch.object(cloud_sb7, "fetch_json") as blocked:
+                    with self.assertRaisesRegex(SystemExit, "exact"):
+                        cloud_sb7.authenticated_rosters(secret_values, [changed])
+                blocked.assert_not_called()
 
     def test_qwen_budget_surfaces_cannot_present_shadow_guard_as_actual_spend(
         self,
