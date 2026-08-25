@@ -5,6 +5,7 @@
 //! state is involved here.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -75,6 +76,14 @@ pub struct EvidenceSourceSection {
     pub id: String,
     pub requirement_id: String,
     pub text: String,
+    pub content_sha256: String,
+    pub authority: EvidenceSourceAuthority,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceSourceAuthority {
+    EngineReceipt,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -97,6 +106,8 @@ pub enum ProvenanceMatch {
     Unique {
         section_id: String,
         requirement_id: String,
+        content_sha256: String,
+        authority: EvidenceSourceAuthority,
     },
     MissingQuote,
     NotFound,
@@ -308,6 +319,30 @@ pub fn validate_pillar_opening(opening: &ResearchPillarOpening) -> Result<(), Pi
     Ok(())
 }
 
+pub fn validate_pillar_opening_against(
+    opening: &ResearchPillarOpening,
+    authored_requirements: &[AuthoredRequirement],
+) -> Result<(), PillarDomainError> {
+    validate_pillar_opening(opening)?;
+    if opening.requirements != authored_requirements {
+        return Err(PillarDomainError::new(
+            "authored_requirement_binding_mismatch",
+            "the opening requirement ledger is not the frozen authored requirement ledger",
+        ));
+    }
+    Ok(())
+}
+
+pub fn evidence_source_digest(text: &str) -> String {
+    let mut encoded = String::with_capacity(71);
+    encoded.push_str("sha256:");
+    for byte in Sha256::digest(text.as_bytes()) {
+        use std::fmt::Write as _;
+        let _ = write!(&mut encoded, "{byte:02x}");
+    }
+    encoded
+}
+
 pub fn authored_section_fallback(
     authored_spec: &str,
     integration_owner: &str,
@@ -509,9 +544,9 @@ pub fn render_synthesis_input(reports: &[CompiledPillarReport], max_chars: usize
 
     let mut lines = vec!["PILLAR RESEARCH SYNTHESIS".to_string()];
     for class in [
+        EvidenceClass::Unresolved,
         EvidenceClass::Proven,
         EvidenceClass::Supported,
-        EvidenceClass::Unresolved,
     ] {
         lines.push(format!("[{}]", evidence_label(class)));
         for (pillar_id, claim) in grouped.get(&class).into_iter().flatten() {
@@ -528,7 +563,8 @@ pub fn render_synthesis_input(reports: &[CompiledPillarReport], max_chars: usize
         .collect::<Vec<_>>();
     low_confidence.sort_by_key(|report| report.pillar_id.as_str());
     if !low_confidence.is_empty() {
-        lines.push("[LOW CONFIDENCE]".to_string());
+        let insertion_index = 1;
+        let mut warning_lines = vec!["[LOW CONFIDENCE]".to_string()];
         for report in low_confidence {
             let mut reasons = Vec::new();
             if report.reported_confidence == Confidence::Low {
@@ -549,8 +585,9 @@ pub fn render_synthesis_input(reports: &[CompiledPillarReport], max_chars: usize
             if reasons.is_empty() {
                 reasons.push("evidence provenance not verified".to_string());
             }
-            lines.push(format!("- {}: {}", report.pillar_id, reasons.join("; ")));
+            warning_lines.push(format!("- {}: {}", report.pillar_id, reasons.join("; ")));
         }
+        lines.splice(insertion_index..insertion_index, warning_lines);
     }
 
     bound_lines(lines, max_chars)
@@ -574,6 +611,13 @@ fn match_provenance(
 
     let mut matches = Vec::new();
     for section in evidence_corpus {
+        if claim
+            .source_section_id
+            .as_deref()
+            .is_some_and(|section_id| section_id != section.id)
+        {
+            continue;
+        }
         let source = canonical_whitespace(section.text);
         for _ in source.match_indices(&quote) {
             matches.push((section.id.to_string(), section.requirement_id.to_string()));
@@ -602,9 +646,15 @@ fn match_provenance(
             matched_requirement_id,
         };
     }
+    let matched = evidence_corpus
+        .iter()
+        .find(|section| section.id == matched_section_id)
+        .expect("matched evidence section remains in the corpus");
     ProvenanceMatch::Unique {
         section_id: matched_section_id,
         requirement_id: matched_requirement_id,
+        content_sha256: matched.content_sha256.to_string(),
+        authority: matched.authority,
     }
 }
 
@@ -612,6 +662,8 @@ struct EvidenceCorpusSection<'a> {
     id: &'a str,
     requirement_id: &'a str,
     text: &'a str,
+    content_sha256: &'a str,
+    authority: EvidenceSourceAuthority,
 }
 
 fn evidence_corpus<'a>(
@@ -624,19 +676,15 @@ fn evidence_corpus<'a>(
         .map(|requirement| requirement.id.as_str())
         .collect::<BTreeSet<_>>();
     let mut section_ids = BTreeSet::new();
-    let mut corpus = Vec::with_capacity(opening.requirements.len() + source_sections.len());
+    let mut corpus = Vec::with_capacity(source_sections.len());
     for requirement in &opening.requirements {
         section_ids.insert(requirement.id.as_str());
-        corpus.push(EvidenceCorpusSection {
-            id: &requirement.id,
-            requirement_id: &requirement.id,
-            text: &requirement.text,
-        });
     }
     for section in source_sections {
         require_text("evidence source section id", &section.id)?;
         require_text("evidence source requirement id", &section.requirement_id)?;
         require_text("evidence source text", &section.text)?;
+        require_text("evidence source digest", &section.content_sha256)?;
         if !section_ids.insert(&section.id) {
             return Err(PillarDomainError::new(
                 "evidence_section_id_duplicate",
@@ -652,10 +700,21 @@ fn evidence_corpus<'a>(
                 ),
             ));
         }
+        if evidence_source_digest(&section.text) != section.content_sha256 {
+            return Err(PillarDomainError::new(
+                "evidence_source_digest_mismatch",
+                format!(
+                    "evidence section {:?} content does not match its engine receipt digest",
+                    section.id
+                ),
+            ));
+        }
         corpus.push(EvidenceCorpusSection {
             id: &section.id,
             requirement_id: &section.requirement_id,
             text: &section.text,
+            content_sha256: &section.content_sha256,
+            authority: section.authority,
         });
     }
     Ok(corpus)
@@ -938,7 +997,7 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_canonical_unique_quote_is_proven() {
+    fn authored_text_cannot_be_promoted_to_proven() {
         let compiled = compile_pillar_report(
             &opening(),
             report(vec![ResearchClaimDraft {
@@ -951,12 +1010,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(compiled.effective_confidence, Confidence::High);
-        assert_eq!(compiled.claims[0].effective_class, EvidenceClass::Proven);
-        assert!(matches!(
-            compiled.claims[0].provenance,
-            ProvenanceMatch::Unique { .. }
-        ));
+        assert_eq!(compiled.effective_confidence, Confidence::Low);
+        assert_eq!(compiled.claims[0].effective_class, EvidenceClass::Supported);
+        assert_eq!(compiled.claims[0].provenance, ProvenanceMatch::NotFound);
     }
 
     #[test]
@@ -968,6 +1024,8 @@ mod tests {
                 id: "source-api-contract".to_string(),
                 requirement_id: "req-ui".to_string(),
                 text: source_body.to_string(),
+                content_sha256: evidence_source_digest(source_body),
+                authority: EvidenceSourceAuthority::EngineReceipt,
             }],
             report(vec![ResearchClaimDraft {
                 requirement_id: "req-ui".to_string(),
@@ -989,16 +1047,22 @@ mod tests {
     }
 
     #[test]
-    fn quote_repeated_in_one_or_more_sections_is_ambiguous() {
-        let mut source = opening();
-        source.requirements[0].text = "render status, then render status again.".to_string();
-        let compiled = compile_pillar_report(
-            &source,
+    fn quote_repeated_in_one_engine_receipt_is_ambiguous() {
+        let source_body = "render status, then render status again.";
+        let compiled = compile_pillar_report_with_sources(
+            &opening(),
+            &[EvidenceSourceSection {
+                id: "source-repeated".to_string(),
+                requirement_id: "req-ui".to_string(),
+                text: source_body.to_string(),
+                content_sha256: evidence_source_digest(source_body),
+                authority: EvidenceSourceAuthority::EngineReceipt,
+            }],
             report(vec![ResearchClaimDraft {
                 requirement_id: "req-ui".to_string(),
                 statement: "Status is rendered".to_string(),
                 reported_class: EvidenceClass::Proven,
-                source_section_id: Some("req-ui".to_string()),
+                source_section_id: Some("source-repeated".to_string()),
                 source_quote: Some("render status".to_string()),
             }]),
         )
@@ -1060,6 +1124,47 @@ mod tests {
         assert!(rendered.len() <= 120);
         assert!(rendered.contains("[SUPPORTED]"));
         assert!(!rendered.contains(secret_receipt_body));
+    }
+
+    #[test]
+    fn bounded_synthesis_keeps_uncertainty_before_positive_claims() {
+        let mut draft = report(vec![ResearchClaimDraft {
+            requirement_id: "req-ui".to_string(),
+            statement: "Unresolved rendering contract".to_string(),
+            reported_class: EvidenceClass::Unresolved,
+            source_section_id: None,
+            source_quote: None,
+        }]);
+        draft.reported_confidence = Confidence::Low;
+        draft.unresolved_uncertainties = vec!["Renderer availability is unknown".to_string()];
+        let compiled = compile_pillar_report(&opening(), draft).unwrap();
+        let rendered = render_synthesis_input(&[compiled], 105);
+        assert!(rendered.contains("[LOW CONFIDENCE]"));
+        assert!(rendered.contains("[UNRESOLVED]"));
+        assert!(!rendered.contains("[SUPPORTED]"));
+    }
+
+    #[test]
+    fn engine_receipt_digest_must_match_the_verified_body() {
+        let error = compile_pillar_report_with_sources(
+            &opening(),
+            &[EvidenceSourceSection {
+                id: "source-tampered".to_string(),
+                requirement_id: "req-ui".to_string(),
+                text: "different bytes".to_string(),
+                content_sha256: evidence_source_digest("trusted bytes"),
+                authority: EvidenceSourceAuthority::EngineReceipt,
+            }],
+            report(vec![ResearchClaimDraft {
+                requirement_id: "req-ui".to_string(),
+                statement: "Claim".to_string(),
+                reported_class: EvidenceClass::Proven,
+                source_section_id: Some("source-tampered".to_string()),
+                source_quote: Some("different bytes".to_string()),
+            }]),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "evidence_source_digest_mismatch");
     }
 
     #[test]

@@ -100,6 +100,50 @@ pub struct PillarCheckpointStore {
 }
 
 impl PillarCheckpointStore {
+    pub fn load_opening(
+        working_root: impl AsRef<Path>,
+        frozen_spec_digest: impl Into<String>,
+        authored_requirements: &[crate::pillar::AuthoredRequirement],
+    ) -> Result<Option<ResearchPillarOpening>, PillarCheckpointError> {
+        let working_root = std::fs::canonicalize(working_root.as_ref()).map_err(|error| {
+            PillarCheckpointError::io("cannot canonicalize pillar checkpoint root", error)
+        })?;
+        let frozen_spec_digest = frozen_spec_digest.into();
+        if !canonical_digest(&frozen_spec_digest) {
+            return Err(PillarCheckpointError::new(
+                "frozen specification digest is not a canonical sha256 digest",
+            ));
+        }
+        let requirement_digest = pillar_requirement_digest(authored_requirements)?;
+        let state_path = working_root
+            .join(".swarm")
+            .join(CHECKPOINT_DIRECTORY)
+            .join(STATE_FILE);
+        reject_symlink_if_present(&state_path, "pillar checkpoint state")?;
+        let bytes = match std::fs::read(&state_path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(PillarCheckpointError::io(
+                    "cannot read pillar checkpoint state",
+                    error,
+                ));
+            }
+        };
+        let record = decode_record(&bytes)?;
+        validate_record(&record)?;
+        if record.material.working_root != working_root
+            || record.material.frozen_spec_digest != frozen_spec_digest
+            || record.material.requirement_digest != requirement_digest
+            || record.material.opening.requirements != authored_requirements
+        {
+            return Err(PillarCheckpointError::new(
+                "pillar checkpoint is incompatible with this root or frozen specification",
+            ));
+        }
+        Ok(Some(record.material.opening))
+    }
+
     pub fn open(
         working_root: impl AsRef<Path>,
         frozen_spec_digest: impl Into<String>,
@@ -915,5 +959,25 @@ mod tests {
         api.join().unwrap();
         assert_eq!(store.completed_attempts("ui").unwrap().len(), 1);
         assert_eq!(store.completed_attempts("api").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn opening_can_be_restored_without_repeating_the_model_call() {
+        let root = tempfile::tempdir().unwrap();
+        let opening = opening();
+        let digest = pillar_frozen_spec_digest("frozen spec");
+        assert!(PillarCheckpointStore::load_opening(
+            root.path(),
+            digest.clone(),
+            &opening.requirements,
+        )
+        .unwrap()
+        .is_none());
+        drop(PillarCheckpointStore::open(root.path(), digest.clone(), &opening).unwrap());
+        assert_eq!(
+            PillarCheckpointStore::load_opening(root.path(), digest, &opening.requirements,)
+                .unwrap(),
+            Some(opening)
+        );
     }
 }
