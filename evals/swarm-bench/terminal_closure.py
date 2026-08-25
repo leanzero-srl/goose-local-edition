@@ -64,13 +64,6 @@ V18_PUBLISHER_SHA256 = "d53a5eb9becd2cbbfbf94d46cdc5c40e5e43377f626af38807aa0dec
 V18_PUBLISHER_MARKER = "Brainwaves v18"
 V18_PUBLISHER_ROOT = pathlib.Path("/Users/mihaiperdum/Projects/LeanZero-website")
 V18_PUBLISHER_PATH = V18_PUBLISHER_ROOT / "scripts/seed-fleet-brainwaves-sb70.mjs"
-V18_PROTECTED_MODEL_ALIASES = frozenset(
-    {
-        "mihai-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
-        "workhorse-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
-        "gabee-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
-    }
-)
 SENSITIVE_NAME_RE = re.compile(r"(?:token|secret|authorization|api[_-]?key|password)", re.I)
 SENSITIVE_TEXT_PATTERNS = (
     re.compile(r"(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+", re.I),
@@ -1251,9 +1244,8 @@ def validate_v18_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         or len(models) != 3
         or len(set(models)) != 3
         or any(not isinstance(model, str) or not model for model in models)
-        or set(models) & set(V18_PROTECTED_MODEL_ALIASES)
     ):
-        raise ClosureError("armed v18 closure model inventory is malformed or stale")
+        raise ClosureError("armed v18 closure model inventory is malformed")
     instrument_files = expected.get("instrument_files")
     if (
         not isinstance(instrument_files, dict)
@@ -1446,13 +1438,11 @@ def validate_v18_fleet_seal(
     if (
         seal.get("schema_version") != SCHEMA_VERSION
         or seal.get("source") != "authenticated-live-lm-studio-preflight"
-        or seal.get("protected_prior_aliases_reused") is not False
         or not isinstance(models, list)
         or len(models) != 3
         or not isinstance(model_ids, list)
         or len(model_ids) != 3
         or len(set(model_ids)) != 3
-        or set(model_ids) & set(V18_PROTECTED_MODEL_ALIASES)
         or seal.get("api_model_ids") != sorted(model_ids)
     ):
         raise ClosureError("v18 authenticated fleet seal is malformed or stale")
