@@ -14,6 +14,7 @@ pub mod dispatch;
 pub mod event;
 pub mod judge;
 pub mod memory_classify;
+pub mod pillar;
 pub mod provider_lease;
 pub mod repair;
 pub mod replan;
@@ -55,6 +56,13 @@ pub use event::{EventSink, NullSink, SwarmEvent};
 pub use judge::{
     deterministic_verdict, is_split_candidate, ChildSpec, Judge, JudgeConfig, JudgeInput,
     JudgeOutcome, JudgeRequest, PreReviewOutput, PreReviewRequest, PreReviewer, Verdict,
+};
+pub use pillar::{
+    authored_section_fallback, compile_pillar_report, compile_pillar_report_with_sources,
+    render_synthesis_input, validate_pillar_opening, AuthoredRequirement, CompiledPillarReport,
+    CompiledResearchClaim, Confidence, EvidenceClass, EvidenceSourceSection, IntegrationContract,
+    PillarDomainError, PillarReportDraft, ProvenanceMatch, ResearchClaimDraft, ResearchPillar,
+    ResearchPillarOpening,
 };
 pub use provider_lease::{
     ActiveProviderLeaseSnapshot, ExposedProviderLease, GlobalProviderLeaseAuthority,
