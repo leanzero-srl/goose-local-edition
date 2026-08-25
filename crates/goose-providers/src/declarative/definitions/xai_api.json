@@ -1,0 +1,26 @@
+{
+  "name": "xai_api",
+  "engine": "openai",
+  "display_name": "xAI API",
+  "description": "Grok 4.6 through xAI's native Responses API.",
+  "api_key_env": "XAI_API_KEY",
+  "base_url": "${XAI_API_BASE_URL}",
+  "base_path": "v1/responses",
+  "env_vars": [
+    {
+      "name": "XAI_API_BASE_URL",
+      "required": false,
+      "secret": false,
+      "default": "https://api.x.ai/v1",
+      "description": "xAI API base URL."
+    }
+  ],
+  "catalog_provider_id": "xai",
+  "model_doc_link": "https://docs.x.ai/developers/models/grok-4.6",
+  "preserves_thinking": true,
+  "openai_request_profile": "xai_grok",
+  "models": [
+    {"name": "grok-4.6", "context_limit": 500000, "reasoning": true}
+  ],
+  "supports_streaming": true
+}

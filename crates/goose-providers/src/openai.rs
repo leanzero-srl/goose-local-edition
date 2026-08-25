@@ -420,9 +420,12 @@ impl OpenAiProvider {
             .unwrap_or(&model_config.model_name)
             .to_ascii_lowercase();
 
-        if self.request_profile != OpenAiRequestProfile::MetaMuse
-            || !model_name.starts_with("muse-spark-")
-        {
+        let is_meta_muse = self.request_profile == OpenAiRequestProfile::MetaMuse
+            && model_name.starts_with("muse-spark-");
+        let is_xai_grok =
+            self.request_profile == OpenAiRequestProfile::XaiGrok && model_name == "grok-4.6";
+
+        if !is_meta_muse && !is_xai_grok {
             return payload;
         }
 
@@ -435,37 +438,51 @@ impl OpenAiProvider {
         ] {
             obj.remove(unsupported);
         }
+        if is_xai_grok {
+            obj.remove("stop");
+        }
 
-        let instructions = obj
-            .get_mut("input")
-            .and_then(serde_json::Value::as_array_mut)
-            .and_then(|input| {
-                let first = input.first()?;
-                if first.get("role").and_then(serde_json::Value::as_str) != Some("system") {
-                    return None;
-                }
-                let text = first
-                    .get("content")?
-                    .as_array()?
-                    .iter()
-                    .filter(|part| {
-                        part.get("type").and_then(serde_json::Value::as_str) == Some("input_text")
-                    })
-                    .filter_map(|part| part.get("text").and_then(serde_json::Value::as_str))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                input.remove(0);
-                (!text.is_empty()).then_some(text)
-            });
-        if let Some(instructions) = instructions {
-            obj.insert("instructions".to_string(), serde_json::json!(instructions));
+        if is_meta_muse {
+            let instructions = obj
+                .get_mut("input")
+                .and_then(serde_json::Value::as_array_mut)
+                .and_then(|input| {
+                    let first = input.first()?;
+                    if first.get("role").and_then(serde_json::Value::as_str) != Some("system") {
+                        return None;
+                    }
+                    let text = first
+                        .get("content")?
+                        .as_array()?
+                        .iter()
+                        .filter(|part| {
+                            part.get("type").and_then(serde_json::Value::as_str)
+                                == Some("input_text")
+                        })
+                        .filter_map(|part| part.get("text").and_then(serde_json::Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    input.remove(0);
+                    (!text.is_empty()).then_some(text)
+                });
+            if let Some(instructions) = instructions {
+                obj.insert("instructions".to_string(), serde_json::json!(instructions));
+            }
         }
 
         obj.insert("store".to_string(), serde_json::json!(false));
-        obj.insert(
-            "reasoning".to_string(),
-            serde_json::json!({"effort": "high", "summary": "auto"}),
-        );
+        let reasoning_effort =
+            if is_xai_grok && model_config.thinking_effort() == Some(ThinkingEffort::Max) {
+                "xhigh"
+            } else {
+                "high"
+            };
+        let reasoning = if is_xai_grok {
+            serde_json::json!({"effort": reasoning_effort})
+        } else {
+            serde_json::json!({"effort": reasoning_effort, "summary": "auto"})
+        };
+        obj.insert("reasoning".to_string(), reasoning);
         obj.insert(
             "include".to_string(),
             serde_json::json!(["reasoning.encrypted_content"]),
@@ -1765,6 +1782,114 @@ mod tests {
     }
 
     #[test]
+    fn xai_grok_streaming_payload_matches_native_responses_contract() {
+        let provider = make_profile_provider(OpenAiRequestProfile::XaiGrok);
+        let payload = json!({
+            "model": "grok-4.6",
+            "input": [
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": "system instructions"}]
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "build it"}]
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "shell",
+                "description": "Run a command",
+                "parameters": {"type": "object"},
+                "strict": false
+            }],
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "presence_penalty": 0.1,
+            "frequency_penalty": 0.2,
+            "seed": 7,
+            "stop": ["done"],
+            "store": true,
+            "stream": true,
+            "max_output_tokens": 131_072
+        });
+
+        let result = provider.sanitize_responses_request_for_compat(
+            payload,
+            &ModelConfig::new("grok-4.6").with_thinking_effort(ThinkingEffort::Max),
+        );
+
+        assert_eq!(
+            result,
+            json!({
+                "model": "grok-4.6",
+                "input": [
+                    {
+                        "role": "system",
+                        "content": [{"type": "input_text", "text": "system instructions"}]
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "build it"}]
+                    }
+                ],
+                "tools": [{
+                    "type": "function",
+                    "name": "shell",
+                    "description": "Run a command",
+                    "parameters": {"type": "object"},
+                    "strict": false
+                }],
+                "store": false,
+                "stream": true,
+                "max_output_tokens": 131_072,
+                "reasoning": {"effort": "xhigh"},
+                "include": ["reasoning.encrypted_content"],
+                "tool_choice": "auto",
+                "parallel_tool_calls": false
+            })
+        );
+    }
+
+    #[test]
+    fn xai_grok_profile_configures_reasoning_and_stays_exactly_scoped() {
+        let provider = make_profile_provider(OpenAiRequestProfile::XaiGrok);
+
+        for (effort, expected) in [
+            (ThinkingEffort::High, "high"),
+            (ThinkingEffort::Max, "xhigh"),
+            (ThinkingEffort::Off, "high"),
+        ] {
+            let payload = json!({
+                "model": "grok-4.6",
+                "input": [],
+                "tool_choice": "required",
+                "parallel_tool_calls": true
+            });
+            let result = provider.sanitize_responses_request_for_compat(
+                payload,
+                &ModelConfig::new("grok-4.6").with_thinking_effort(effort),
+            );
+            assert_eq!(result["reasoning"], json!({"effort": expected}));
+            assert!(result.get("tool_choice").is_none());
+            assert!(result.get("parallel_tool_calls").is_none());
+        }
+
+        let unrelated = json!({
+            "model": "grok-4.5",
+            "input": [],
+            "temperature": 0.9
+        });
+        assert_eq!(
+            provider.sanitize_responses_request_for_compat(
+                unrelated.clone(),
+                &ModelConfig::new("grok-4.5"),
+            ),
+            unrelated
+        );
+    }
+
+    #[test]
     fn request_profiles_are_scoped_to_exact_model_families() {
         let provider = make_profile_provider(OpenAiRequestProfile::DeepseekV4);
         let payload = json!({
@@ -1803,10 +1928,12 @@ mod tests {
 
     #[test]
     fn explicit_responses_path_routes_meta_muse_without_openai_model_heuristics() {
-        assert!(OpenAiProvider::should_use_responses_api(
-            "muse-spark-1.2",
-            "v1/responses"
-        ));
+        for model_name in ["muse-spark-1.2", "grok-4.6"] {
+            assert!(OpenAiProvider::should_use_responses_api(
+                model_name,
+                "v1/responses"
+            ));
+        }
         assert_eq!(
             OpenAiProvider::map_base_path("v1/responses", "models", "v1/models"),
             "v1/models"
