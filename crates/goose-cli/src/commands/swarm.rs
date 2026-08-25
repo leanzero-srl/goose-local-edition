@@ -13715,7 +13715,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 }]
             }
         });
-        let error = compile_pillar_plan(&raw.to_string(), &opening, &[], &["qwen".to_string()])
+        let error = compile_pillar_plan(&raw.to_string(), &opening, &[], &["qwen".to_string()], "")
             .unwrap_err()
             .to_string();
         assert!(
@@ -13750,7 +13750,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             }]}
         });
         let (_, dag, _) =
-            compile_pillar_plan(&raw.to_string(), &opening, &[], &["qwen".to_string()]).unwrap();
+            compile_pillar_plan(&raw.to_string(), &opening, &[], &["qwen".to_string()], "")
+                .unwrap();
         let description = &dag.tasks["build-core"].spec.description;
         assert!(description.contains("UNRESOLVED REQUIREMENT ROUTE"));
         assert!(description.contains("[REQ-core] ISOLATION"));
@@ -13807,6 +13808,158 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             );
         }
         assert!(!description.contains("Which exact interface owns the behavior?"));
+    }
+
+    #[tokio::test]
+    async fn pillar_fallback_freezes_sb7_package_entries_and_dispatches_build() {
+        let spec = "Build one Python application. `python -m app` boots both services; \
+                    `python -m app.ledgerd` and `python -m app.notifierd` boot them alone.";
+        let requirements = vec![
+            AuthoredRequirement {
+                id: "REQ-backend".to_string(),
+                text: spec.to_string(),
+                critical: true,
+            },
+            AuthoredRequirement {
+                id: "REQ-viz".to_string(),
+                text: "Render the visualization engine".to_string(),
+                critical: false,
+            },
+            AuthoredRequirement {
+                id: "REQ-frontend".to_string(),
+                text: "Build the operator console".to_string(),
+                critical: false,
+            },
+        ];
+        let pillar = |id: &str, title: &str, requirement_id: &str| ResearchPillar {
+            id: id.to_string(),
+            title: title.to_string(),
+            objective: format!("Implement only the {title} capability"),
+            requirement_ids: vec![requirement_id.to_string()],
+            dependencies: Vec::new(),
+            research_questions: vec![format!("What exact boundary owns {title}?")],
+            acceptance_criteria: vec![format!("The {title} capability has an executable check")],
+            exclusions: vec!["Do not own sibling capability implementation".to_string()],
+        };
+        let opening = ResearchPillarOpening {
+            requirements,
+            pillars: vec![
+                pillar("backend-services", "backend services", "REQ-backend"),
+                pillar("viz-engine", "visualization engine", "REQ-viz"),
+                pillar("frontend-console", "frontend console", "REQ-frontend"),
+            ],
+            integration_contract: IntegrationContract {
+                owner: "workhorse".to_string(),
+                integration_required: true,
+                objective: "Hook the three disjoint capabilities into one runnable application"
+                    .to_string(),
+                interface_invariants: vec![
+                    "Boot adapters call capability interfaces without reimplementing them"
+                        .to_string(),
+                ],
+                acceptance_criteria: vec!["Every advertised python -m command starts".to_string()],
+            },
+        };
+        let models = vec![
+            "workhorse".to_string(),
+            "local".to_string(),
+            "mac".to_string(),
+        ];
+        let (plan_json, dag, _) =
+            fallback_pillar_plan(spec, &opening, &[], "workhorse", &models).unwrap();
+        assert_eq!(
+            dag.tasks.len(),
+            4,
+            "fallback invented an extra planning task"
+        );
+        let integration = &dag.tasks["integrate-application"].spec;
+        assert_eq!(integration.deps.len(), 3);
+        assert!(!integration.owned_files.contains(&"app.py".to_string()));
+
+        let required_entries = [
+            "app/__init__.py",
+            "app/__main__.py",
+            "app/ledgerd/__init__.py",
+            "app/ledgerd/__main__.py",
+            "app/notifierd/__init__.py",
+            "app/notifierd/__main__.py",
+        ];
+        for required_entry in required_entries {
+            assert!(integration
+                .owned_files
+                .contains(&required_entry.to_string()));
+            assert!(integration.description.contains(required_entry));
+            assert_eq!(
+                dag.tasks
+                    .values()
+                    .filter(|task| task.spec.owned_files.contains(&required_entry.to_string()))
+                    .count(),
+                1,
+                "{required_entry} did not have exactly one owner"
+            );
+        }
+        assert!(
+            missing_advertised_entry_files(&serde_json::from_str(&plan_json).unwrap(), spec)
+                .is_empty()
+        );
+        let authority_requirements = opening
+            .requirements
+            .iter()
+            .map(|requirement| RequirementRecord {
+                id: requirement.id.clone(),
+                section: "Authored specification".to_string(),
+                quote: requirement.text.clone(),
+            })
+            .collect::<Vec<_>>();
+        validate_canonical_authoritative_plan(
+            &serde_json::from_str(&plan_json).unwrap(),
+            &authority_requirements,
+            &[],
+            &models,
+        )
+        .unwrap();
+
+        let original = plan_json.clone();
+        let (final_json, final_dag, added) =
+            finalize_advertised_entry_plan(plan_json, dag, spec).unwrap();
+        assert!(added.is_empty());
+        assert_eq!(
+            final_json, original,
+            "canonical plan mutated after authority froze"
+        );
+
+        let dispatcher = Arc::new(BuildDispatchProbe {
+            starts: std::sync::atomic::AtomicUsize::new(0),
+            descriptions: Mutex::new(Vec::new()),
+        });
+        let report = Scheduler::new(
+            models
+                .iter()
+                .enumerate()
+                .map(|(index, model)| DeviceCfg {
+                    id: format!("fallback-build-{index}"),
+                    model_id: model.clone(),
+                    weight: 1,
+                    enabled: true,
+                    speed_weight: 1,
+                    supervision: false,
+                })
+                .collect(),
+            1,
+        )
+        .run(
+            final_dag,
+            dispatcher.clone() as Arc<dyn TaskDispatcher>,
+            spec.to_string(),
+        )
+        .await
+        .expect("the deterministic fallback never reached real Scheduler dispatch");
+        assert_eq!(
+            dispatcher.starts.load(std::sync::atomic::Ordering::SeqCst),
+            4
+        );
+        assert_eq!(report.done.len(), 4);
+        assert!(report.failed.is_empty());
     }
 
     #[test]
@@ -18056,7 +18209,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
 
         // Already satisfied (entry owned) and module form (X.py owned): both no-ops.
         let mut sat = serde_json::json!({"subtasks":[
-            {"id":"a","files":["app/__main__.py"],"description":"d"},
+            {"id":"a","files":["app/__init__.py","app/__main__.py"],"description":"d"},
             {"id":"b","files":["app/ledgerd.py"],"description":"d"}
         ]});
         assert!(require_advertised_entry_files(
@@ -18065,6 +18218,20 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         )
         .is_empty());
         assert_eq!(sat["subtasks"][0]["description"].as_str().unwrap(), "d");
+
+        let mut shadowed = serde_json::json!({"subtasks":[
+            {"id":"integration","files":["app.py","app/ledgerd/__init__.py","app/ledgerd/__main__.py"],"description":"d"}
+        ]});
+        let shadowed_spec = "boot `python -m app` and `python -m app.ledgerd`";
+        assert_eq!(
+            missing_advertised_entry_files(&shadowed, shadowed_spec),
+            vec!["app/__init__.py".to_string(), "app/__main__.py".to_string()],
+            "a flat parent module must not certify a nested package invocation"
+        );
+        let shadow_fix = require_advertised_entry_files(&mut shadowed, shadowed_spec);
+        assert!(shadow_fix.contains(&"app/__init__.py".to_string()));
+        assert!(shadow_fix.contains(&"app/__main__.py".to_string()));
+        assert!(missing_advertised_entry_files(&shadowed, shadowed_spec).is_empty());
 
         // A description that exists gains the note exactly once, with the invocation named.
         let mut d = serde_json::json!({"subtasks":[
@@ -30208,6 +30375,7 @@ impl GooseAgentDispatcher {
                     &outcome.opening,
                     &outcome.reports,
                     &allowed_runtime_models,
+                    user_prompt,
                 )
             });
         let (plan_json, dag, routes) = match model_plan {
@@ -36021,6 +36189,36 @@ fn spec_python_invocations(spec: &str) -> Vec<String> {
         .collect()
 }
 
+fn nested_python_package_boot_files(spec: &str) -> Vec<String> {
+    let invocations = spec_python_invocations(spec);
+    let package_invocations = invocations
+        .iter()
+        .filter(|invocation| {
+            invocation.contains('.')
+                || invocations
+                    .iter()
+                    .any(|other| other.starts_with(&format!("{invocation}.")))
+        })
+        .collect::<Vec<_>>();
+    let mut seen = HashSet::new();
+    let mut files = Vec::new();
+    for invocation in package_invocations {
+        let parts = invocation.split('.').collect::<Vec<_>>();
+        for depth in 1..=parts.len() {
+            let package = parts[..depth].join("/");
+            let init = format!("{package}/__init__.py");
+            if seen.insert(init.clone()) {
+                files.push(init);
+            }
+        }
+        let entry = format!("{}/__main__.py", invocation.replace('.', "/"));
+        if seen.insert(entry.clone()) {
+            files.push(entry);
+        }
+    }
+    files
+}
+
 /// PACKAGE-ENTRY TRUTH (sb-7 r1+r3 forensics): a `python -m X` the spec advertises boots ONLY through
 /// `X/__main__.py` when X is a package — and in both fleet runs the shipped service packages had none,
 /// so two of three advertised invocations could never boot regardless of code quality, zeroing every
@@ -36030,7 +36228,8 @@ fn spec_python_invocations(spec: &str) -> Vec<String> {
 /// under the package dir, else most under the parent package, else the first task owning anything —
 /// plus `__init__.py` when the package has no other owned file, and append one sentence to that task's
 /// description saying exactly what the entry must do. Returns the injected paths (empty = no-op,
-/// byte-identical plan).
+/// byte-identical plan). A flat `X.py` cannot satisfy `python -m X` when the spec also advertises
+/// `python -m X.child`: the parent must be a real package or the flat module shadows every child.
 fn missing_advertised_entry_files(v: &serde_json::Value, spec: &str) -> Vec<String> {
     let owned = v
         .get("subtasks")
@@ -36041,11 +36240,25 @@ fn missing_advertised_entry_files(v: &serde_json::Value, spec: &str) -> Vec<Stri
         .flatten()
         .filter_map(|file| file.as_str())
         .collect::<HashSet<_>>();
+    let invocations = spec_python_invocations(spec);
     let mut missing = Vec::new();
-    for invocation in spec_python_invocations(spec) {
+    for invocation in &invocations {
         let dir = invocation.replace('.', "/");
         let entry = format!("{dir}/__main__.py");
+        let init = format!("{dir}/__init__.py");
         let module = format!("{dir}.py");
+        let must_be_package = invocations
+            .iter()
+            .any(|other| other.starts_with(&format!("{invocation}.")));
+        if must_be_package {
+            if !owned.contains(init.as_str()) {
+                missing.push(init);
+            }
+            if !owned.contains(entry.as_str()) {
+                missing.push(entry);
+            }
+            continue;
+        }
         if owned.contains(entry.as_str()) || owned.contains(module.as_str()) {
             continue;
         }
@@ -36053,7 +36266,7 @@ fn missing_advertised_entry_files(v: &serde_json::Value, spec: &str) -> Vec<Stri
             .iter()
             .any(|file| file.starts_with(&format!("{dir}/")))
         {
-            missing.push(format!("{dir}/__init__.py"));
+            missing.push(init);
         }
         missing.push(entry);
     }
@@ -36070,7 +36283,7 @@ fn require_advertised_entry_files(v: &mut serde_json::Value, spec: &str) -> Vec<
     let Some(subtasks) = v.get_mut("subtasks").and_then(|s| s.as_array_mut()) else {
         return Vec::new();
     };
-    let owned: Vec<String> = subtasks
+    let mut owned: HashSet<String> = subtasks
         .iter()
         .filter_map(|s| s.get("files").and_then(|f| f.as_array()))
         .flatten()
@@ -36087,11 +36300,19 @@ fn require_advertised_entry_files(v: &mut serde_json::Value, spec: &str) -> Vec<
             .unwrap_or(0)
     };
     let mut added = Vec::new();
-    for inv in invocations {
+    for inv in &invocations {
         let dir = inv.replace('.', "/");
         let entry = format!("{dir}/__main__.py");
+        let init = format!("{dir}/__init__.py");
         let module = format!("{dir}.py");
-        if owned.iter().any(|f| f == &entry || f == &module) {
+        let must_be_package = invocations
+            .iter()
+            .any(|other| other.starts_with(&format!("{inv}.")));
+        let entry_owned = owned.contains(&entry);
+        let init_owned = owned.contains(&init);
+        if (must_be_package && entry_owned && init_owned)
+            || (!must_be_package && (entry_owned || owned.contains(&module)))
+        {
             continue;
         }
         let prefix = format!("{dir}/");
@@ -36119,24 +36340,29 @@ fn require_advertised_entry_files(v: &mut serde_json::Value, spec: &str) -> Vec<
         let Some(files) = st.get_mut("files").and_then(|f| f.as_array_mut()) else {
             continue;
         };
-        files.push(serde_json::Value::String(entry.clone()));
-        added.push(entry.clone());
-        if fresh_package {
-            let init = format!("{dir}/__init__.py");
-            files.push(serde_json::Value::String(init.clone()));
-            added.push(init);
+        if !entry_owned {
+            files.push(serde_json::Value::String(entry.clone()));
+            added.push(entry.clone());
+            owned.insert(entry.clone());
         }
-        let note = format!(
-            "\nPACKAGE ENTRY (engine-required): the spec advertises `python -m {inv}`, and that \
-             invocation boots ONLY if `{entry}` exists — without it Python fails instantly with \
-             'No module named {inv}.__main__' no matter how good the rest of the code is. Write \
-             `{entry}`: parse the flags the spec documents for this invocation and start the \
-             service (bind its documented port). Prove it: run `python3 -m {inv}` with the \
-             documented flags and watch it bind before calling this task done."
-        );
-        if let Some(desc) = st.get_mut("description") {
-            if let Some(s) = desc.as_str() {
-                *desc = serde_json::Value::String(format!("{s}{note}"));
+        if !init_owned && (must_be_package || fresh_package) {
+            files.push(serde_json::Value::String(init.clone()));
+            added.push(init.clone());
+            owned.insert(init);
+        }
+        if !entry_owned {
+            let note = format!(
+                "\nPACKAGE ENTRY (engine-required): the spec advertises `python -m {inv}`, and that \
+                 invocation boots ONLY if `{entry}` exists — without it Python fails instantly with \
+                 'No module named {inv}.__main__' no matter how good the rest of the code is. Write \
+                 `{entry}`: parse the flags the spec documents for this invocation and start the \
+                 service (bind its documented port). Prove it: run `python3 -m {inv}` with the \
+                 documented flags and watch it bind before calling this task done."
+            );
+            if let Some(desc) = st.get_mut("description") {
+                if let Some(s) = desc.as_str() {
+                    *desc = serde_json::Value::String(format!("{s}{note}"));
+                }
             }
         }
     }
@@ -51040,10 +51266,19 @@ fn compile_pillar_plan(
     opening: &ResearchPillarOpening,
     reports: &[CompiledPillarReport],
     allowed_runtime_models: &[String],
+    binding_spec: &str,
 ) -> Result<(String, Dag, Vec<PillarUncertaintyRoute>)> {
     let raw = strip_code_fences(raw);
     let mut draft: PillarPlanDraft = serde_json::from_str(raw.trim())
         .map_err(|error| anyhow!("pillar plan was not valid typed JSON: {error}"))?;
+    require_advertised_entry_files(&mut draft.canonical_plan, binding_spec);
+    let missing_entries = missing_advertised_entry_files(&draft.canonical_plan, binding_spec);
+    if !missing_entries.is_empty() {
+        bail!(
+            "pillar plan could not assign spec-advertised package entry artifact(s): {}",
+            missing_entries.join(", ")
+        );
+    }
     compile_pillar_task_specs(&mut draft.canonical_plan, draft.task_specs)?;
     validate_pillar_integration_owner(opening, &draft.canonical_plan, &draft.task_coverage)?;
     if !opening.integration_contract.integration_required {
@@ -51189,6 +51424,11 @@ fn fallback_pillar_plan(
         TargetLang::Rust => format!("src/pillar_{:02}.rs", index + 1),
         TargetLang::Go => format!("pillar_{:02}.go", index + 1),
         TargetLang::Other => format!("src/pillar_{:02}.txt", index + 1),
+    };
+    let nested_package_boot_files = if language == TargetLang::Python {
+        nested_python_package_boot_files(user_prompt)
+    } else {
+        Vec::new()
     };
     let requirement_by_id = opening
         .requirements
@@ -51343,6 +51583,12 @@ fn fallback_pillar_plan(
     }
     if producer_ids.len() > 1 && opening.integration_contract.integration_required {
         let integration_id = "integrate-application".to_string();
+        let integration_files = if nested_package_boot_files.is_empty() {
+            vec![entry_file.to_string()]
+        } else {
+            nested_package_boot_files
+        };
+        let integration_file_contract = integration_files.join(", ");
         let requirement_ids = opening
             .requirements
             .iter()
@@ -51351,21 +51597,22 @@ fn fallback_pillar_plan(
         subtasks.push(serde_json::json!({
             "id": integration_id,
             "description": format!(
-                "Integrate the completed disjoint pillar modules through the single shared entry point `{entry_file}`. Preserve these interface invariants: {}. Prove the integrated application is runnable with: {}. Do not reimplement pillar-owned behavior.",
+                "Integrate the completed disjoint pillar modules through the exact shared boot adapters `{integration_file_contract}`. Preserve these interface invariants: {}. Prove the integrated application is runnable with: {}. Do not reimplement pillar-owned behavior.",
                 opening.integration_contract.interface_invariants.join("; "),
                 opening.integration_contract.acceptance_criteria.join("; "),
             ),
             "difficulty": "hard",
             "model": planner_model,
             "depends_on": producer_ids,
-            "files": [entry_file],
+            "files": integration_files,
         }));
         task_specs.push(serde_json::json!({
             "task_id": integration_id,
             "objective": opening.integration_contract.objective,
-            "module_boundary": format!("Own only the shared entry point `{entry_file}` and hook completed pillar modules together without reimplementing them"),
+            "module_boundary": format!("Own only the shared boot adapters `{integration_file_contract}` and hook completed pillar modules together without reimplementing them"),
             "concrete_steps": [
-                "Import or connect every completed pillar module through the shared entry point",
+                format!("Create and wire the exact shared boot adapter files: {integration_file_contract}"),
+                "Import or connect every completed pillar module through those shared boot adapters",
                 "Preserve every declared producer/consumer interface invariant",
                 "Launch the integrated application and capture the end-to-end acceptance evidence"
             ],
@@ -51391,7 +51638,7 @@ fn fallback_pillar_plan(
             "integration": opening.integration_contract.objective,
         }
     }))?;
-    compile_pillar_plan(&raw, opening, reports, allowed_runtime_models)
+    compile_pillar_plan(&raw, opening, reports, allowed_runtime_models, user_prompt)
 }
 
 fn normalized_evidence_inventory(research: &str) -> Vec<EvidenceRecord> {
