@@ -586,6 +586,24 @@ class TerminalClosureTests(unittest.TestCase):
             process.terminate()
             process.wait(timeout=5)
 
+    def test_stable_process_receipt_waits_through_delayed_comm_transition(
+        self,
+    ) -> None:
+        early = {"pid": 456, "identity_sha256": "early-comm"}
+        stable = {"pid": 456, "identity_sha256": "stable-comm"}
+        with mock.patch.object(
+            closure,
+            "safe_process_receipt",
+            side_effect=[early, stable, stable],
+        ) as observe:
+            self.assertEqual(
+                closure.stable_process_receipt(
+                    456, timeout_seconds=0.5, stable_seconds=0.01
+                ),
+                stable,
+            )
+        self.assertEqual(observe.call_count, 3)
+
     def test_scorer_spawn_tracking_does_not_add_an_observation_window(self) -> None:
         fake_bin = self.root / "fake-bin"
         fake_bin.mkdir()
@@ -1215,6 +1233,84 @@ class TerminalClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(closure.ClosureError, "armed closure identity"):
             supervisor.terminal_evidence(fixture["launch"])
 
+    def test_score_worker_launch_persists_only_the_stable_process_identity(
+        self,
+    ) -> None:
+        live = self.root / "score-live"
+        state = self.root / "score-state"
+        config = self.config(live, state)
+        config["expected"]["instrument_files"] = {
+            "evals/swarm-bench/bench/score_sb7.py": "a" * 64,
+            "evals/swarm-bench/bench/product_probe_v3.mjs": "b" * 64,
+        }
+        config_path = self.root / "score-config.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        supervisor = closure.TerminalClosure(config_path)
+        self.addCleanup(supervisor.events.handle.close)
+        attempt_dir = state / "scoring" / "attempt-1"
+        clone = attempt_dir / "tree"
+        clone.mkdir(parents=True)
+        worker = mock.Mock(pid=456)
+        stable = {"pid": 456, "identity_sha256": "stable-worker"}
+        with (
+            mock.patch.object(supervisor, "clone_for_attempt", return_value=clone),
+            mock.patch.object(closure.subprocess, "Popen", return_value=worker),
+            mock.patch.object(
+                closure, "stable_process_receipt", return_value=stable
+            ) as authenticate,
+        ):
+            observed_dir, receipt = supervisor.start_score_attempt(
+                1,
+                {"fixture_seed": "0123456789abcdef"},
+                {"tree_sha256": "c" * 64},
+            )
+        self.assertEqual(observed_dir, attempt_dir.resolve())
+        self.assertEqual(receipt, stable)
+        self.assertEqual(closure.read_json(attempt_dir / "worker.pid.json"), stable)
+        authenticate.assert_called_once_with(456)
+
+    def test_publisher_launch_persists_only_the_stable_process_identity(
+        self,
+    ) -> None:
+        live = self.root / "publish-live"
+        state = self.root / "publish-state"
+        config = self.config(live, state)
+        config["max_publish_attempts"] = 1
+        config_path = self.root / "publish-config.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        supervisor = closure.TerminalClosure(config_path)
+        self.addCleanup(supervisor.events.handle.close)
+        attempt_dir = state / "scoring" / "attempt-1"
+        clone = attempt_dir / "tree"
+        clone.mkdir(parents=True)
+        (clone / "fixture.txt").write_text("sealed\n", encoding="utf-8")
+        score_path = attempt_dir / "raw-score.json"
+        score_path.write_text("{}\n", encoding="utf-8")
+        closure.atomic_json(
+            attempt_dir / "score-tree-seal.json", closure.tree_manifest(clone)
+        )
+        authoritative_path = state / "authoritative-verdict.json"
+        authoritative_path.write_text("{}\n", encoding="utf-8")
+        publisher = mock.Mock(pid=789)
+        stable = {"pid": 789, "identity_sha256": "stable-publisher"}
+        with (
+            mock.patch.object(
+                supervisor, "successful_score", return_value=(score_path, {})
+            ),
+            mock.patch.object(supervisor, "validate_frozen_inputs"),
+            mock.patch.object(closure.subprocess, "Popen", return_value=publisher),
+            mock.patch.object(
+                closure, "stable_process_receipt", return_value=stable
+            ) as authenticate,
+            mock.patch.object(closure, "safe_process_receipt", return_value=None),
+        ):
+            with self.assertRaisesRegex(closure.ClosureError, "exhausted"):
+                supervisor.publish_and_verify(authoritative_path, {})
+        persisted = closure.read_json(state / "publisher.pid.json")
+        self.assertEqual(persisted["identity_sha256"], "stable-publisher")
+        self.assertEqual(persisted["pid"], 789)
+        authenticate.assert_called_once_with(789)
+
     def score_worker_fixture(
         self, scorer_extra_source: str = ""
     ) -> tuple[dict, pathlib.Path]:
@@ -1635,14 +1731,19 @@ class TerminalClosureTests(unittest.TestCase):
             mock.patch.object(closure.subprocess, "Popen", return_value=process) as popen,
             mock.patch.object(
                 closure,
-                "safe_process_receipt",
-                return_value={"pid": 456, "identity_sha256": "fixture-process"},
-            ),
+                "stable_process_receipt",
+                return_value={"pid": 456, "identity_sha256": "stable-supervisor"},
+            ) as authenticate,
         ):
             self.assertEqual(closure.spawn_supervisor(config_path, resume=False), 0)
         self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE((state / "supervisor.lock").stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE((state / "supervisor.pid.json").stat().st_mode), 0o600)
+        self.assertEqual(
+            closure.read_json(state / "supervisor.pid.json")["identity_sha256"],
+            "stable-supervisor",
+        )
+        authenticate.assert_called_once_with(456)
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
 
 
