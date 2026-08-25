@@ -18475,6 +18475,381 @@ class CloudSb7HarnessTest(unittest.TestCase):
                 cloud_sb7.run_publisher(root, "fixture-model", runs, live=True)
             self.assertFalse(child_marker.exists())
 
+    def test_grok_46_manifest_environment_and_tiered_budget_are_exact(self) -> None:
+        manifest = cloud_sb7.load_json(
+            cloud_sb7.HERE / "cloud-sb7-grok-46-entrant.json"
+        )
+        row = cloud_sb7.entrants(manifest)[0]
+        policy = cloud_sb7.spend_policy(manifest, [row])
+        self.assertEqual(row["provider"], "xai_api")
+        self.assertEqual(row["model"], "grok-4.6")
+        self.assertEqual(row["endpoint_family"], "https://api.x.ai/v1")
+        self.assertEqual(row["base_url_env"], "XAI_API_BASE_URL")
+        self.assertEqual(row["secret_env"], "XAI_API_KEY")
+        self.assertEqual(
+            row["secret_keychain"],
+            {
+                "service": "goose-sb7-xai-api",
+                "account": "goose-sb7-xai",
+            },
+        )
+        self.assertEqual(row["thinking_effort"], "xhigh")
+        self.assertEqual(row["context_limit"], 500_000)
+        self.assertEqual(row["max_output_tokens"], 131_072)
+        self.assertIs(row["responses_api"], True)
+        self.assertIs(row["encrypted_reasoning_replay"], True)
+        self.assertEqual(policy["provider_caps"], {"xai_api": 100.0})
+
+        profile = {"pricing": row["pricing"]}
+        self.assertAlmostEqual(
+            cloud_sb7.budget_price(profile, 199_999, 1_000),
+            (199_999 * 2.0 + 1_000 * 6.0) / 1_000_000,
+        )
+        self.assertAlmostEqual(
+            cloud_sb7.budget_price(profile, 200_000, 1_000),
+            (200_000 * 4.0 + 1_000 * 12.0) / 1_000_000,
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            profile_root = root / "profile"
+            tree = root / "tree"
+            profile_root.mkdir()
+            tree.mkdir()
+            state = {
+                "profile": str(profile_root),
+                "tree": str(tree),
+                "campaign_root": str(root),
+                "provider_lifecycle": str(root / "provider-lifecycle.jsonl"),
+                "budget_config_sha256": "fixture-budget-config",
+                "sandbox_denied_local_ports": [],
+            }
+            hostile = {
+                "META_API_KEY": "unrelated-meta",
+                "MINIMAX_API_KEY": "unrelated-minimax",
+                "DASHSCOPE_API_KEY": "unrelated-dashscope",
+                "XAI_HOST": "https://example.invalid/v1",
+                "GOOSE_TEMPERATURE": "0.7",
+                "GOOSE_SWARM_TOP_P": "0.8",
+            }
+            with mock.patch.dict(os.environ, hostile, clear=True):
+                env = cloud_sb7.child_env(row, state, "in-memory-xai")
+
+        self.assertEqual(env["GOOSE_PROVIDER"], "xai_api")
+        self.assertEqual(env["GOOSE_MODEL"], "grok-4.6")
+        self.assertEqual(env["GOOSE_FAST_MODEL"], "grok-4.6")
+        self.assertEqual(env["XAI_API_BASE_URL"], "https://api.x.ai/v1")
+        self.assertEqual(env["GOOSE_THINKING_EFFORT"], "xhigh")
+        self.assertEqual(env["GOOSE_CONTEXT_LIMIT"], "500000")
+        self.assertEqual(env["GOOSE_MAX_TOKENS"], "131072")
+        self.assertEqual(env["XAI_API_KEY"], "in-memory-xai")
+        for forbidden in hostile:
+            self.assertNotIn(forbidden, env)
+
+        changed = json.loads(json.dumps(manifest))
+        changed["entrants"][0]["pricing"]["input_per_million"] = 2.1
+        with self.assertRaisesRegex(SystemExit, "official standard"):
+            cloud_sb7.spend_policy(changed, cloud_sb7.entrants(changed))
+
+    def test_grok_46_roster_binds_exact_identity_endpoint_and_keychain(self) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-grok-46-entrant.json"
+            )
+        )[0]
+        metadata = {
+            "id": "grok-4.6",
+            "aliases": [],
+            "context_length": 500_000,
+            "object": "model",
+            "created": 1_785_974_400,
+            "owned_by": "xai",
+            "prompt_text_token_price": 20_000,
+            "cached_prompt_text_token_price": 5_000,
+            "prompt_image_token_price": 20_000,
+            "completion_text_token_price": 60_000,
+            "prompt_text_token_price_long_context": 40_000,
+            "cached_prompt_text_token_price_long_context": 10_000,
+            "completion_text_token_price_long_context": 120_000,
+            "long_context_threshold": 200_000,
+        }
+        with mock.patch.object(
+            cloud_sb7,
+            "fetch_json",
+            return_value={"object": "list", "data": [metadata]},
+        ) as fetch:
+            roster = cloud_sb7.authenticated_rosters(
+                {"XAI_API_KEY": "fixture-secret"}, [row]
+            )
+        fetch.assert_called_once_with(
+            "https://api.x.ai/v1/models",
+            {"Authorization": "Bearer fixture-secret"},
+        )
+        cloud_sb7.validate_rosters([row], roster)
+        self.assertEqual(
+            cloud_sb7.selected_roster_evidence([row], roster),
+            {"xai_api": {"grok-4.6": metadata}},
+        )
+
+        for field, value in (
+            ("id", "grok-4.6-latest"),
+            ("aliases", ["grok-4.6-latest"]),
+            ("context_length", 499_999),
+            ("created", 1_785_974_399),
+            ("object", "chat.model"),
+            ("owned_by", "other"),
+            ("prompt_text_token_price", 20_001),
+            ("cached_prompt_text_token_price", 5_001),
+            ("completion_text_token_price", 60_001),
+            ("prompt_text_token_price_long_context", 40_001),
+            ("cached_prompt_text_token_price_long_context", 10_001),
+            ("completion_text_token_price_long_context", 120_001),
+            ("long_context_threshold", 199_999),
+        ):
+            with self.subTest(field=field):
+                changed_metadata = dict(metadata)
+                changed_metadata[field] = value
+                roster["evidence"]["xai_api"]["grok-4.6"] = changed_metadata
+                with self.assertRaisesRegex(SystemExit, "exact grok-4.6"):
+                    cloud_sb7.validate_rosters([row], roster)
+        roster["evidence"]["xai_api"]["grok-4.6"] = metadata
+
+        for field, value in (
+            ("endpoint_family", "https://example.invalid/v1"),
+            ("base_url_env", "XAI_HOST"),
+            ("secret_env", "OTHER_API_KEY"),
+            (
+                "secret_keychain",
+                {
+                    "service": "goose-sb7-xai-api",
+                    "account": "wrong-account",
+                },
+            ),
+        ):
+            with self.subTest(field=field):
+                changed = dict(row)
+                changed[field] = value
+                secrets = {
+                    "XAI_API_KEY": "fixture-secret",
+                    "OTHER_API_KEY": "fixture-secret",
+                }
+                with mock.patch.object(cloud_sb7, "fetch_json") as blocked:
+                    with self.assertRaisesRegex(SystemExit, "exact API endpoint"):
+                        cloud_sb7.authenticated_rosters(secrets, [changed])
+                blocked.assert_not_called()
+
+        for field, value in (
+            ("context_limit", 499_999),
+            ("max_output_tokens", 128_000),
+            ("thinking_effort", "high"),
+            ("responses_api", False),
+            ("encrypted_reasoning_replay", False),
+        ):
+            with self.subTest(field=field):
+                changed = dict(row)
+                changed[field] = value
+                with self.assertRaisesRegex(SystemExit, "exact grok-4.6"):
+                    cloud_sb7.validate_rosters([changed], roster)
+
+    def test_grok_46_responses_smoke_proves_request_replay_and_usage(self) -> None:
+        row = cloud_sb7.entrants(
+            cloud_sb7.load_json(
+                cloud_sb7.HERE / "cloud-sb7-grok-46-entrant.json"
+            )
+        )[0]
+        with tempfile.TemporaryDirectory() as raw:
+            profile = Path(raw) / "profile"
+            logs = profile / "state/logs"
+            logs.mkdir(parents=True)
+            common = {
+                "model": "grok-4.6",
+                "stream": True,
+                "store": False,
+                "max_output_tokens": 131_072,
+                "reasoning": {"effort": "xhigh"},
+                "include": ["reasoning.encrypted_content"],
+                "tools": [{"type": "function", "name": "shell"}],
+                "tool_choice": "auto",
+                "parallel_tool_calls": False,
+            }
+            source_reasoning = {
+                "type": "reasoning",
+                "id": "grok-reasoning-fixture",
+                "summary": [
+                    {"type": "summary_text", "text": "Inspect the workspace."}
+                ],
+                "encrypted_content": "opaque-grok-reasoning",
+            }
+            first = {
+                **common,
+                "input": [
+                    {
+                        "role": "system",
+                        "content": [
+                            {"type": "input_text", "text": "Use the shell tool."}
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Run pwd."}],
+                    }
+                ],
+            }
+            second = {
+                **common,
+                "input": [
+                    {
+                        "role": "system",
+                        "content": [
+                            {"type": "input_text", "text": "Use the shell tool."}
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Run pwd."}],
+                    },
+                    source_reasoning,
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "output_text", "text": "Inspect the workspace."}
+                        ],
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "grok-call-fixture",
+                        "name": "shell",
+                        "arguments": '{"command":"pwd"}',
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "grok-call-fixture",
+                        "output": "/workspace",
+                    },
+                ],
+            }
+            source_delta = {
+                "data": {
+                    "id": "grok-response-fixture",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Inspect the workspace."}
+                    ],
+                },
+                "usage": None,
+            }
+            source_terminal = {
+                "data": {
+                    "id": "grok-response-fixture",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "redactedThinking",
+                            "data": "openai-responses-reasoning:"
+                            + json.dumps(source_reasoning, separators=(",", ":")),
+                        },
+                        {
+                            "type": "toolRequest",
+                            "id": "grok-call-fixture",
+                            "toolCall": {
+                                "status": "success",
+                                "value": {
+                                    "name": "shell",
+                                    "arguments": {"command": "pwd"},
+                                },
+                            },
+                        },
+                    ],
+                },
+                "usage": {"inputTokens": 20, "outputTokens": 8},
+            }
+            for index, payload in ((1, first), (0, second)):
+                lines = [json.dumps({"input": payload, "model_config": {}})]
+                if index == 1:
+                    lines.extend(
+                        [json.dumps(source_delta), json.dumps(source_terminal)]
+                    )
+                (logs / f"llm_request.{index}.jsonl").write_text(
+                    "\n".join(lines) + "\n"
+                )
+            terminal_usage = {
+                "request-1": {
+                    "reported_model": "grok-4.6",
+                    "input_tokens": 20,
+                    "output_tokens": 8,
+                    "total_tokens": 28,
+                },
+                "request-2": {
+                    "reported_model": "grok-4.6",
+                    "input_tokens": 40,
+                    "output_tokens": 6,
+                    "total_tokens": 46,
+                },
+            }
+
+            contract = cloud_sb7.responses_smoke_contract(
+                profile, row, terminal_usage
+            )
+
+            self.assertTrue(contract["valid"], contract["errors"])
+            self.assertEqual(contract["provider"], "xai_api")
+            self.assertEqual(contract["request_count"], 2)
+            self.assertEqual(len(contract["terminal_usage"]), 2)
+            self.assertTrue(contract["sampling_omitted"])
+            self.assertEqual(
+                contract["tool_replay"]["order"],
+                [
+                    "reasoning",
+                    "assistant_message",
+                    "function_call",
+                    "function_call_output",
+                ],
+            )
+            serialized = json.dumps(contract, sort_keys=True)
+            self.assertNotIn("grok-reasoning-fixture", serialized)
+            self.assertNotIn("opaque-grok-reasoning", serialized)
+            self.assertNotIn("grok-call-fixture", serialized)
+
+            changed_log = json.loads((logs / "llm_request.0.jsonl").read_text())
+            changed_log["input"]["top_p"] = 0.9
+            changed_log["input"]["stop"] = ["done"]
+            changed_log["input"]["instructions"] = "unsupported top-level system"
+            changed_log["input"]["input"][0]["role"] = "assistant"
+            changed_log["input"]["reasoning"]["effort"] = "high"
+            (logs / "llm_request.0.jsonl").write_text(json.dumps(changed_log) + "\n")
+            wrong_usage = dict(terminal_usage)
+            wrong_usage["request-2"] = {
+                **wrong_usage["request-2"],
+                "reported_model": "grok-4.6-latest",
+            }
+
+            rejected = cloud_sb7.responses_smoke_contract(
+                profile, row, wrong_usage
+            )
+            self.assertFalse(rejected["valid"])
+            self.assertFalse(rejected["sampling_omitted"])
+            self.assertTrue(
+                any("reasoning" in error for error in rejected["errors"])
+            )
+            sampling_errors = [
+                error for error in rejected["errors"] if "sampling:" in error
+            ]
+            self.assertTrue(
+                any("stop" in error and "top_p" in error for error in sampling_errors)
+            )
+            self.assertTrue(
+                any("instructions" in error for error in rejected["errors"])
+            )
+            self.assertTrue(
+                any("system/user input" in error for error in rejected["errors"])
+            )
+            self.assertTrue(
+                any("unexpected model identity" in error for error in rejected["errors"])
+            )
+            self.assertTrue(
+                all("Meta" not in error for error in rejected["errors"])
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -875,6 +875,25 @@ def spend_policy(
                     "MiniMax-M3 pricing must match the verified PAYG tier and "
                     "cache-read contract"
                 )
+        if provider == "xai_api" and row.get("model") == "grok-4.6":
+            expected_pricing = {
+                "input_per_million": 2.0,
+                "cached_input_per_million": 0.5,
+                "output_per_million": 6.0,
+                "tier_threshold_tokens": 200_000,
+                "tier_threshold_inclusive": True,
+                "input_over_threshold_per_million": 4.0,
+                "cached_input_over_threshold_per_million": 1.0,
+                "output_over_threshold_per_million": 12.0,
+                "source": "https://docs.x.ai/developers/models/grok-4.6",
+                "verified_at": "2026-08-25",
+                "purpose": "official_grok_4_6_standard_and_long_context_rates",
+            }
+            if pricing != expected_pricing:
+                raise SystemExit(
+                    "grok-4.6 pricing must match the official standard and "
+                    "long-context tiers"
+                )
         reported_models = row["accepted_reported_models"]
         if (
             not isinstance(reported_models, list)
@@ -2218,6 +2237,7 @@ def authenticated_rosters(
     meta_catalog: Dict[str, Any] = {"data": []}
     alibaba: Dict[str, Any] = {"data": []}
     minimax: Dict[str, Any] = {"data": []}
+    xai: Dict[str, Any] = {"data": []}
     minimax_credential_evidence: Dict[str, Any] | None = None
     if "zai_api" in providers:
         zai_endpoints = {
@@ -2345,6 +2365,32 @@ def authenticated_rosters(
             "https://api.minimax.io/v1/models",
             {"Authorization": f"Bearer {minimax_secret}"},
         )
+    if "xai_api" in providers:
+        xai_rows = [row for row in rows if row["provider"] == "xai_api"]
+        xai_endpoints = {
+            str(row["endpoint_family"]).rstrip("/") for row in xai_rows
+        }
+        expected_keychain = {
+            "service": "goose-sb7-xai-api",
+            "account": "goose-sb7-xai",
+        }
+        if (
+            xai_endpoints != {"https://api.x.ai/v1"}
+            or any(
+                row.get("secret_env") != "XAI_API_KEY"
+                or row.get("base_url_env") != "XAI_API_BASE_URL"
+                or row.get("secret_keychain") != expected_keychain
+                for row in xai_rows
+            )
+        ):
+            raise SystemExit(
+                "xAI entrants require the exact API endpoint, credential, "
+                "Keychain, and base URL bindings"
+            )
+        xai = fetch_json(
+            "https://api.x.ai/v1/models",
+            {"Authorization": f"Bearer {secret_values['XAI_API_KEY']}"},
+        )
     zai_rows = {
         str(row.get("id", "")): dict(row)
         for row in zai.get("data", [])
@@ -2385,6 +2431,11 @@ def authenticated_rosters(
         for row in minimax.get("data", [])
         if isinstance(row, dict) and row.get("id")
     }
+    xai_roster_rows = {
+        str(row.get("id", "")): dict(row)
+        for row in xai.get("data", [])
+        if isinstance(row, dict) and row.get("id")
+    }
     if minimax_credential_evidence is not None:
         for metadata in minimax_roster_rows.values():
             metadata["credential_evidence"] = dict(minimax_credential_evidence)
@@ -2396,6 +2447,7 @@ def authenticated_rosters(
         "meta": {model: [model] for model in meta_rows},
         "alibaba": {model: [model] for model in alibaba_rows},
         "minimax_api": {model: [model] for model in minimax_roster_rows},
+        "xai_api": {model: [model] for model in xai_roster_rows},
     }
     for model, metadata in google_rows.items():
         aliases = {model}
@@ -2412,6 +2464,7 @@ def authenticated_rosters(
             "meta": set(meta_rows),
             "alibaba": set(alibaba_rows),
             "minimax_api": set(minimax_roster_rows),
+            "xai_api": set(xai_roster_rows),
         },
         "accepted_reported_models": reported_models,
         "evidence": {
@@ -2422,6 +2475,7 @@ def authenticated_rosters(
             "meta": {"roster": meta_rows, "catalog": meta_catalog_rows},
             "alibaba": alibaba_rows,
             "minimax_api": minimax_roster_rows,
+            "xai_api": xai_roster_rows,
         },
     }
 
@@ -2681,6 +2735,107 @@ def validate_rosters(
                 raise SystemExit(
                     "authenticated MiniMax roster and frozen manifest do not prove "
                     f"the exact MiniMax-M3 OpenAI contract: {model}"
+                )
+        if provider == "xai_api":
+            provider_evidence = evidence.get(provider)
+            metadata = (
+                provider_evidence.get(model)
+                if isinstance(provider_evidence, dict)
+                else None
+            )
+            pricing = row.get("pricing")
+            authenticated_standard_rates = (
+                (
+                    metadata.get("prompt_text_token_price") / 10_000,
+                    metadata.get("cached_prompt_text_token_price") / 10_000,
+                    metadata.get("completion_text_token_price") / 10_000,
+                )
+                if isinstance(metadata, dict)
+                and all(
+                    isinstance(metadata.get(key), int)
+                    and not isinstance(metadata.get(key), bool)
+                    for key in (
+                        "prompt_text_token_price",
+                        "cached_prompt_text_token_price",
+                        "completion_text_token_price",
+                    )
+                )
+                else None
+            )
+            authenticated_long_rates = (
+                (
+                    metadata.get("prompt_text_token_price_long_context") / 10_000,
+                    metadata.get("cached_prompt_text_token_price_long_context")
+                    / 10_000,
+                    metadata.get("completion_text_token_price_long_context") / 10_000,
+                )
+                if isinstance(metadata, dict)
+                and all(
+                    isinstance(metadata.get(key), int)
+                    and not isinstance(metadata.get(key), bool)
+                    for key in (
+                        "prompt_text_token_price_long_context",
+                        "cached_prompt_text_token_price_long_context",
+                        "completion_text_token_price_long_context",
+                    )
+                )
+                else None
+            )
+            try:
+                manifest_standard_rates = (
+                    float(pricing["input_per_million"]),
+                    float(pricing["cached_input_per_million"]),
+                    float(pricing["output_per_million"]),
+                )
+                manifest_long_rates = (
+                    float(pricing["input_over_threshold_per_million"]),
+                    float(pricing["cached_input_over_threshold_per_million"]),
+                    float(pricing["output_over_threshold_per_million"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                manifest_standard_rates = None
+                manifest_long_rates = None
+            if (
+                model != "grok-4.6"
+                or not isinstance(metadata, dict)
+                or metadata.get("id") != model
+                or metadata.get("object") != "model"
+                or metadata.get("owned_by") != "xai"
+                or metadata.get("aliases") != []
+                or metadata.get("context_length") != 500_000
+                or metadata.get("created") != 1_785_974_400
+                or metadata.get("prompt_text_token_price") != 20_000
+                or metadata.get("cached_prompt_text_token_price") != 5_000
+                or metadata.get("completion_text_token_price") != 60_000
+                or metadata.get("prompt_text_token_price_long_context") != 40_000
+                or metadata.get("cached_prompt_text_token_price_long_context")
+                != 10_000
+                or metadata.get("completion_text_token_price_long_context") != 120_000
+                or metadata.get("long_context_threshold") != 200_000
+                or authenticated_standard_rates != manifest_standard_rates
+                or authenticated_long_rates != manifest_long_rates
+                or not isinstance(pricing, dict)
+                or pricing.get("tier_threshold_tokens")
+                != metadata.get("long_context_threshold")
+                or row.get("endpoint_family") != "https://api.x.ai/v1"
+                or row.get("base_url_env") != "XAI_API_BASE_URL"
+                or row.get("secret_env") != "XAI_API_KEY"
+                or row.get("secret_keychain")
+                != {
+                    "service": "goose-sb7-xai-api",
+                    "account": "goose-sb7-xai",
+                }
+                or int(row["context_limit"]) != 500_000
+                or int(row["max_output_tokens"]) != 131_072
+                or str(row["thinking_effort"]) != "xhigh"
+                or row.get("responses_api") is not True
+                or row.get("encrypted_reasoning_replay") is not True
+                or row.get("tool_calling") is not True
+                or row.get("stream_usage") is not True
+            ):
+                raise SystemExit(
+                    "authenticated xAI roster and frozen manifest do not prove "
+                    f"the exact grok-4.6 Responses contract: {model}"
                 )
 
 
@@ -7537,11 +7692,17 @@ def budget_price(
     input_rate = pricing.get("input_per_million")
     output_rate = pricing.get("output_per_million")
     threshold = pricing.get("tier_threshold_tokens")
+    threshold_inclusive = pricing.get("tier_threshold_inclusive", False)
     if threshold is not None and (
         isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 0
     ):
         return None
-    if threshold is not None and input_tokens > threshold:
+    if not isinstance(threshold_inclusive, bool):
+        return None
+    if threshold is not None and (
+        input_tokens > threshold
+        or (threshold_inclusive and input_tokens == threshold)
+    ):
         input_rate = pricing.get("input_over_threshold_per_million", input_rate)
         output_rate = pricing.get("output_over_threshold_per_million", output_rate)
     if any(
@@ -13758,10 +13919,18 @@ def _regular_file_bytes(path: Path) -> bytes | None:
         return None
 
 
-def meta_responses_smoke_contract(
-    profile: Path, row: Mapping[str, Any]
+def responses_smoke_contract(
+    profile: Path,
+    row: Mapping[str, Any],
+    terminal_usage: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     errors: list[str] = []
+    provider = str(row.get("provider", ""))
+    provider_label = {"meta": "Meta", "xai_api": "xAI"}.get(
+        provider, provider
+    )
+    if provider not in {"meta", "xai_api"}:
+        errors.append(f"unsupported Responses smoke provider: {provider}")
     logs_root = profile / "state/logs"
     indexed: list[tuple[int, Path]] = []
     if logs_root.is_symlink() or not logs_root.is_dir():
@@ -13842,8 +14011,11 @@ def meta_responses_smoke_contract(
         "frequency_penalty",
         "seed",
     }
+    if provider == "xai_api":
+        unsupported.add("stop")
     for index, payload in enumerate(payloads):
         tools = payload.get("tools")
+        input_items = payload.get("input")
         request_errors: list[str] = []
         if payload.get("model") != row.get("model"):
             request_errors.append("model")
@@ -13853,14 +14025,49 @@ def meta_responses_smoke_contract(
             request_errors.append("store")
         if payload.get("max_output_tokens") != int(row["max_output_tokens"]):
             request_errors.append("max_output_tokens")
-        if payload.get("reasoning") != {"effort": "high", "summary": "auto"}:
+        expected_reasoning = {"effort": str(row["thinking_effort"])}
+        if provider == "meta":
+            expected_reasoning["summary"] = "auto"
+        if payload.get("reasoning") != expected_reasoning:
             request_errors.append("reasoning")
         if payload.get("include") != ["reasoning.encrypted_content"]:
             request_errors.append("include")
-        if not isinstance(payload.get("instructions"), str) or not payload["instructions"]:
+        if provider == "meta" and (
+            not isinstance(payload.get("instructions"), str)
+            or not payload["instructions"]
+        ):
             request_errors.append("instructions")
-        if not isinstance(payload.get("input"), list):
+        if provider == "xai_api" and "instructions" in payload:
+            request_errors.append("instructions")
+        if not isinstance(input_items, list):
             request_errors.append("input")
+        elif provider == "xai_api":
+            system_content = (
+                input_items[0].get("content")
+                if input_items
+                and isinstance(input_items[0], dict)
+                and input_items[0].get("role") == "system"
+                else None
+            )
+            system_text = (
+                [
+                    item.get("text")
+                    for item in system_content
+                    if isinstance(item, dict)
+                    and item.get("type") == "input_text"
+                    and isinstance(item.get("text"), str)
+                    and item["text"]
+                ]
+                if isinstance(system_content, list)
+                else []
+            )
+            if (
+                not system_text
+                or len(input_items) < 2
+                or not isinstance(input_items[1], dict)
+                or input_items[1].get("role") != "user"
+            ):
+                request_errors.append("system/user input")
         if not isinstance(tools, list) or not tools:
             request_errors.append("tools")
         if payload.get("tool_choice") != "auto":
@@ -14109,17 +14316,63 @@ def meta_responses_smoke_contract(
             "Meta smoke has no ordered encrypted-reasoning/function/tool-output replay"
         )
 
+    usage_rows: list[Dict[str, Any]] = []
+    if terminal_usage is not None:
+        if not isinstance(terminal_usage, Mapping) or not terminal_usage:
+            errors.append("Meta smoke has no provider-terminal usage evidence")
+        else:
+            for request_id, usage in sorted(terminal_usage.items()):
+                usage_error = lifecycle_usage_failure(usage)
+                if usage_error:
+                    errors.append(
+                        f"Meta terminal usage {request_id}: {usage_error}"
+                    )
+                    continue
+                if usage["reported_model"] not in row["accepted_reported_models"]:
+                    errors.append(
+                        f"Meta terminal usage {request_id} has an unexpected "
+                        "model identity"
+                    )
+                    continue
+                if usage["input_tokens"] <= 0 or usage["output_tokens"] <= 0:
+                    errors.append(
+                        f"Meta terminal usage {request_id} has no positive token usage"
+                    )
+                    continue
+                usage_rows.append(
+                    {
+                        "request_id_sha256": sha256_bytes(str(request_id).encode()),
+                        "reported_model": usage["reported_model"],
+                        "input_tokens": usage["input_tokens"],
+                        "output_tokens": usage["output_tokens"],
+                        "total_tokens": usage["total_tokens"],
+                    }
+                )
+        if len(usage_rows) != len(payloads):
+            errors.append(
+                "Meta provider-terminal usage count differs from request logs"
+            )
+    if provider_label != "Meta":
+        errors = [error.replace("Meta", provider_label) for error in errors]
     return {
         "required": True,
         "valid": not errors,
         "errors": errors,
+        "provider": provider,
         "request_count": len(payloads),
         "request_log_sha256": file_hashes,
         "tool_replay": replay,
+        "terminal_usage": usage_rows,
         "sampling_omitted": bool(payloads) and not any(
             unsupported & payload.keys() for payload in payloads
         ),
     }
+
+
+def meta_responses_smoke_contract(
+    profile: Path, row: Mapping[str, Any]
+) -> Dict[str, Any]:
+    return responses_smoke_contract(profile, row)
 
 
 def qwen_chat_smoke_contract(
@@ -14915,8 +15168,10 @@ def smoke_attempt_evidence(
         "valid": True,
         "provider": row["provider"],
     }
-    if row["provider"] == "meta":
-        provider_contract = meta_responses_smoke_contract(paths["profile"], row)
+    if row["provider"] in {"meta", "xai_api"}:
+        provider_contract = responses_smoke_contract(
+            paths["profile"], row, lifecycle.get("terminal_usage", {})
+        )
     elif row["provider"] == "alibaba":
         provider_contract = qwen_chat_smoke_contract(
             paths["profile"], row, lifecycle.get("terminal_usage", {})
@@ -15397,9 +15652,11 @@ def smoke_proof_mismatch(
         "valid": True,
         "provider": row["provider"],
     }
-    if row["provider"] == "meta":
-        expected_provider_contract = meta_responses_smoke_contract(
-            Path(str(state.get("profile", ""))), row
+    if row["provider"] in {"meta", "xai_api"}:
+        expected_provider_contract = responses_smoke_contract(
+            Path(str(state.get("profile", ""))),
+            row,
+            lifecycle.get("terminal_usage", {}),
         )
     elif row["provider"] == "alibaba":
         expected_provider_contract = qwen_chat_smoke_contract(
