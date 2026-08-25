@@ -24327,7 +24327,7 @@ impl GooseAgentDispatcher {
             .filter(pre_scheduler_recurrence_failover_eligible);
         let response_schema_fingerprint = response_schema_failover_source
             .as_ref()
-            .and_then(|_| response.as_ref())
+            .and(response.as_ref())
             .and_then(|response| response.json_schema.as_ref())
             .map(|schema| {
                 domain_sha256(
