@@ -13,7 +13,8 @@ mod checkpoint;
 
 pub use checkpoint::{
     scheduler_task_spec_digest, SchedulerCheckpointError, SchedulerCheckpointReceipt,
-    SchedulerCheckpointStore, SchedulerRestoreSummary,
+    SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SchedulerDagResealReceipt,
+    SchedulerRestoreSummary,
 };
 
 use crate::broker::{

@@ -16,6 +16,8 @@ const CHECKPOINT_DIRECTORY: &str = "scheduler-checkpoint-v1";
 const WAL_FILE: &str = "tasks.wal.jsonl";
 const HEAD_FILE: &str = "tasks.head.json";
 const LOCK_FILE: &str = "control.lock";
+const ARTIFACT_DIRECTORY: &str = "artifacts";
+const ARTIFACT_OBJECT_DIRECTORY: &str = "sha256";
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -51,6 +53,12 @@ struct OwnedArtifactCheckpoint {
     sha256: String,
     bytes: u64,
     mode: u32,
+}
+
+#[derive(Debug)]
+struct CapturedArtifact {
+    checkpoint: OwnedArtifactCheckpoint,
+    contents: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -131,6 +139,7 @@ struct StoreState {
 
 pub struct SchedulerCheckpointStore {
     root: PathBuf,
+    artifact_object_directory: PathBuf,
     wal_path: PathBuf,
     head_path: PathBuf,
     _lock: File,
@@ -142,6 +151,20 @@ pub struct SchedulerCheckpointReceipt {
     pub sequence: u64,
     pub completion_order: u64,
     pub artifact_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchedulerCompletedTaskEvidence {
+    pub task_id: TaskId,
+    pub output: String,
+    pub attempts: u32,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SchedulerDagResealReceipt {
+    pub tasks: Vec<TaskId>,
+    pub first_sequence: u64,
+    pub next_sequence: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -169,6 +192,18 @@ impl SchedulerCheckpointStore {
             &swarm_directory,
             &directory,
             "scheduler checkpoint directory",
+        )?;
+        let artifact_directory = directory.join(ARTIFACT_DIRECTORY);
+        ensure_control_directory(
+            &directory,
+            &artifact_directory,
+            "scheduler checkpoint artifact directory",
+        )?;
+        let artifact_object_directory = artifact_directory.join(ARTIFACT_OBJECT_DIRECTORY);
+        ensure_control_directory(
+            &artifact_directory,
+            &artifact_object_directory,
+            "scheduler checkpoint artifact object directory",
         )?;
 
         let lock_path = directory.join(LOCK_FILE);
@@ -251,6 +286,7 @@ impl SchedulerCheckpointStore {
 
         Ok(Self {
             root,
+            artifact_object_directory,
             wal_path,
             head_path,
             _lock: lock,
@@ -282,13 +318,7 @@ impl SchedulerCheckpointStore {
             ));
         }
         validate_task_spec_for_checkpoint(spec)?;
-        if spec.owned_files.is_empty() {
-            return Err(SchedulerCheckpointError::new(format!(
-                "task {:?} has no owned artifact bytes to checkpoint",
-                spec.id
-            )));
-        }
-        let artifacts = capture_owned_artifacts(&self.root, &spec.owned_files)?;
+        let captured = capture_owned_artifacts(&self.root, &spec.owned_files)?;
         let mut state = lock(&self.state);
         if let Some(error) = &state.poisoned {
             return Err(SchedulerCheckpointError::new(format!(
@@ -296,6 +326,7 @@ impl SchedulerCheckpointStore {
             )));
         }
         verify_live_file(&self.wal_path, &state.wal, state.expected_len)?;
+        self.persist_artifact_objects(&captured)?;
         let dependency_checkpoints = spec
             .deps
             .iter()
@@ -320,7 +351,10 @@ impl SchedulerCheckpointStore {
             output: output.to_string(),
             completion_order: state.next_sequence,
             attempts,
-            artifacts,
+            artifacts: captured
+                .iter()
+                .map(|artifact| artifact.checkpoint.clone())
+                .collect(),
             dependency_checkpoints,
         };
         self.append_material(&mut state, material.clone())?;
@@ -335,11 +369,96 @@ impl SchedulerCheckpointStore {
         })
     }
 
+    pub fn reseal_completed_dag(
+        &self,
+        specs: &[TaskSpec],
+        evidence: &[SchedulerCompletedTaskEvidence],
+    ) -> Result<SchedulerDagResealReceipt, SchedulerCheckpointError> {
+        let ordered = deterministic_topological_specs(specs)?;
+        let evidence = exact_completion_evidence(&ordered, evidence)?;
+        let captured = ordered
+            .iter()
+            .map(|spec| {
+                validate_task_spec_for_checkpoint(spec)?;
+                Ok((
+                    spec.id.clone(),
+                    capture_owned_artifacts(&self.root, &spec.owned_files)?,
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+
+        let mut state = lock(&self.state);
+        if let Some(error) = &state.poisoned {
+            return Err(SchedulerCheckpointError::new(format!(
+                "scheduler checkpoint is latched after a prior durability failure: {error}"
+            )));
+        }
+        verify_live_file(&self.wal_path, &state.wal, state.expected_len)?;
+        for artifacts in captured.values() {
+            self.persist_artifact_objects(artifacts)?;
+        }
+
+        let first_sequence = state.next_sequence;
+        let mut tasks = Vec::with_capacity(ordered.len());
+        for spec in ordered {
+            let completion = evidence
+                .get(&spec.id)
+                .expect("completion evidence was preflighted for every task");
+            let dependency_checkpoints = spec
+                .deps
+                .iter()
+                .map(|task_id| {
+                    state.active.get(task_id).cloned().ok_or_else(|| {
+                        SchedulerCheckpointError::new(format!(
+                            "task {:?} dependency {task_id:?} has no fresh reseal generation",
+                            spec.id
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let material = WalMaterial {
+                schema_version: SCHEMA_VERSION,
+                sequence: state.next_sequence,
+                previous_hash: state.previous_hash.clone(),
+                working_root: self.root.clone(),
+                transition: CheckpointTransition::TaskDone,
+                task_id: spec.id.clone(),
+                task_spec_digest: scheduler_task_spec_digest(spec),
+                output: completion.output.clone(),
+                completion_order: state.next_sequence,
+                attempts: completion.attempts,
+                artifacts: captured[&spec.id]
+                    .iter()
+                    .map(|artifact| artifact.checkpoint.clone())
+                    .collect(),
+                dependency_checkpoints,
+            };
+            self.append_material(&mut state, material.clone())?;
+            state
+                .active
+                .insert(spec.id.clone(), dependency_checkpoint(&material));
+            tasks.push(spec.id.clone());
+        }
+
+        Ok(SchedulerDagResealReceipt {
+            tasks,
+            first_sequence,
+            next_sequence: state.next_sequence,
+        })
+    }
+
+    fn persist_artifact_objects(
+        &self,
+        artifacts: &[CapturedArtifact],
+    ) -> Result<(), SchedulerCheckpointError> {
+        for artifact in artifacts {
+            persist_artifact_object(&self.artifact_object_directory, artifact)?;
+        }
+        Ok(())
+    }
+
     pub fn can_persist_done(&self, spec: &TaskSpec) -> Result<bool, SchedulerCheckpointError> {
         validate_task_spec_for_checkpoint(spec)?;
-        if spec.owned_files.is_empty() {
-            return Ok(false);
-        }
         let state = lock(&self.state);
         if let Some(error) = &state.poisoned {
             return Err(SchedulerCheckpointError::new(format!(
@@ -436,7 +555,6 @@ impl SchedulerCheckpointStore {
                 continue;
             };
             let directly_valid = record.transition == CheckpointTransition::TaskDone
-                && !node.spec.owned_files.is_empty()
                 && record.task_spec_digest == scheduler_task_spec_digest(&node.spec)
                 && record.dependency_checkpoints.len() == node.spec.deps.len()
                 && record
@@ -444,7 +562,8 @@ impl SchedulerCheckpointStore {
                     .iter()
                     .zip(&node.spec.deps)
                     .all(|(checkpoint, dependency)| checkpoint.task_id == *dependency)
-                && artifact_set_matches(&self.root, &node.spec, &record.artifacts)?;
+                && recorded_artifact_paths_match(&node.spec, &record.artifacts)
+                && artifact_objects_available(&self.artifact_object_directory, &record.artifacts);
             if directly_valid {
                 valid.insert(task_id.clone(), record.clone());
             } else {
@@ -504,6 +623,16 @@ impl SchedulerCheckpointStore {
             };
             self.append_material(&mut state, material)?;
             state.active.remove(task_id);
+        }
+
+        let mut artifact_restore_records = valid.values().collect::<Vec<_>>();
+        artifact_restore_records.sort_by_key(|record| record.completion_order);
+        for record in artifact_restore_records {
+            restore_artifact_set(
+                &self.root,
+                &self.artifact_object_directory,
+                &record.artifacts,
+            )?;
         }
 
         context.clear_for_restore();
@@ -576,7 +705,7 @@ pub fn scheduler_task_spec_digest(spec: &TaskSpec) -> String {
 fn capture_owned_artifacts(
     root: &Path,
     owned_files: &[String],
-) -> Result<Vec<OwnedArtifactCheckpoint>, SchedulerCheckpointError> {
+) -> Result<Vec<CapturedArtifact>, SchedulerCheckpointError> {
     let mut seen = HashSet::new();
     let mut artifacts = Vec::with_capacity(owned_files.len());
     for relative in owned_files {
@@ -587,8 +716,81 @@ fn capture_owned_artifacts(
         }
         artifacts.push(capture_artifact(root, relative)?);
     }
-    artifacts.sort_by(|left, right| left.path.cmp(&right.path));
+    artifacts.sort_by(|left, right| left.checkpoint.path.cmp(&right.checkpoint.path));
     Ok(artifacts)
+}
+
+fn deterministic_topological_specs(
+    specs: &[TaskSpec],
+) -> Result<Vec<&TaskSpec>, SchedulerCheckpointError> {
+    let dag = Dag::from_specs(specs.to_vec()).map_err(|error| {
+        SchedulerCheckpointError::new(format!("cannot reseal invalid task DAG: {error}"))
+    })?;
+    let mut indegrees = dag
+        .tasks
+        .iter()
+        .map(|(task_id, node)| (task_id.clone(), node.spec.deps.len()))
+        .collect::<BTreeMap<_, _>>();
+    let mut ready = indegrees
+        .iter()
+        .filter_map(|(task_id, indegree)| (*indegree == 0).then_some(task_id.clone()))
+        .collect::<BTreeSet<_>>();
+    let by_id = specs
+        .iter()
+        .map(|spec| (spec.id.clone(), spec))
+        .collect::<BTreeMap<_, _>>();
+    let mut ordered = Vec::with_capacity(specs.len());
+    while let Some(task_id) = ready.pop_first() {
+        ordered.push(by_id[&task_id]);
+        if let Some(dependents) = dag.dependents.get(&task_id) {
+            let mut dependents = dependents.clone();
+            dependents.sort();
+            for dependent in dependents {
+                let indegree = indegrees
+                    .get_mut(&dependent)
+                    .expect("validated DAG dependent has an indegree");
+                *indegree -= 1;
+                if *indegree == 0 {
+                    ready.insert(dependent);
+                }
+            }
+        }
+    }
+    if ordered.len() != specs.len() {
+        return Err(SchedulerCheckpointError::new(
+            "cannot reseal task DAG without a complete topological order",
+        ));
+    }
+    Ok(ordered)
+}
+
+fn exact_completion_evidence<'a>(
+    specs: &[&TaskSpec],
+    evidence: &'a [SchedulerCompletedTaskEvidence],
+) -> Result<BTreeMap<TaskId, &'a SchedulerCompletedTaskEvidence>, SchedulerCheckpointError> {
+    let expected = specs
+        .iter()
+        .map(|spec| spec.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut actual = BTreeMap::new();
+    for completion in evidence {
+        if completion.task_id.trim().is_empty()
+            || completion.attempts == 0
+            || actual
+                .insert(completion.task_id.clone(), completion)
+                .is_some()
+        {
+            return Err(SchedulerCheckpointError::new(
+                "completed DAG reseal evidence has an empty id, duplicate id, or zero attempts",
+            ));
+        }
+    }
+    if actual.keys().cloned().collect::<BTreeSet<_>>() != expected {
+        return Err(SchedulerCheckpointError::new(
+            "completed DAG reseal evidence must cover every task exactly once and no others",
+        ));
+    }
+    Ok(actual)
 }
 
 fn dependency_checkpoint(record: &WalMaterial) -> DependencyCheckpoint {
@@ -622,7 +824,7 @@ fn validate_task_spec_for_checkpoint(spec: &TaskSpec) -> Result<(), SchedulerChe
 fn capture_artifact(
     root: &Path,
     relative: &str,
-) -> Result<OwnedArtifactCheckpoint, SchedulerCheckpointError> {
+) -> Result<CapturedArtifact, SchedulerCheckpointError> {
     validate_owned_file_path(relative)?;
     let path = root.join(relative);
     let mut file = open_artifact_no_follow(&path).map_err(|error| {
@@ -661,40 +863,282 @@ fn capture_artifact(
             error,
         )
     })?;
-    Ok(OwnedArtifactCheckpoint {
-        path: relative.to_string(),
-        sha256: sha256_digest(&bytes),
-        bytes: bytes.len() as u64,
-        mode: artifact_mode(&metadata),
+    Ok(CapturedArtifact {
+        checkpoint: OwnedArtifactCheckpoint {
+            path: relative.to_string(),
+            sha256: sha256_digest(&bytes),
+            bytes: bytes.len() as u64,
+            mode: artifact_mode(&metadata),
+        },
+        contents: bytes,
     })
 }
 
-fn artifact_set_matches(
+fn artifact_object_path(
+    directory: &Path,
+    sha256: &str,
+) -> Result<PathBuf, SchedulerCheckpointError> {
+    if !canonical_digest(sha256) {
+        return Err(SchedulerCheckpointError::new(
+            "artifact object digest is not canonical",
+        ));
+    }
+    Ok(directory.join(&sha256[7..]))
+}
+
+fn persist_artifact_object(
+    directory: &Path,
+    artifact: &CapturedArtifact,
+) -> Result<(), SchedulerCheckpointError> {
+    if sha256_digest(&artifact.contents) != artifact.checkpoint.sha256
+        || artifact.contents.len() as u64 != artifact.checkpoint.bytes
+    {
+        return Err(SchedulerCheckpointError::new(
+            "captured artifact bytes do not match their content address",
+        ));
+    }
+    let destination = artifact_object_path(directory, &artifact.checkpoint.sha256)?;
+    match read_artifact_object(directory, &artifact.checkpoint) {
+        Ok(_) => return Ok(()),
+        Err(error) if !destination.exists() => {
+            let _ = error;
+        }
+        Err(error) => {
+            return Err(SchedulerCheckpointError::new(format!(
+                "scheduler checkpoint artifact object is corrupt: {error}"
+            )));
+        }
+    }
+
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = directory.join(format!(".artifact.{}.{}.tmp", std::process::id(), sequence));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)
+        .map_err(|error| {
+            SchedulerCheckpointError::io("cannot create checkpoint artifact object temp", error)
+        })?;
+    let result = (|| {
+        file.write_all(&artifact.contents).map_err(|error| {
+            SchedulerCheckpointError::io("cannot write checkpoint artifact object temp", error)
+        })?;
+        file.sync_all().map_err(|error| {
+            SchedulerCheckpointError::io("cannot sync checkpoint artifact object temp", error)
+        })?;
+        drop(file);
+        match std::fs::hard_link(&temporary, &destination) {
+            Ok(()) => sync_directory(directory)?,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                read_artifact_object(directory, &artifact.checkpoint)?;
+            }
+            Err(error) => {
+                return Err(SchedulerCheckpointError::io(
+                    "cannot install checkpoint artifact object",
+                    error,
+                ));
+            }
+        }
+        std::fs::remove_file(&temporary).map_err(|error| {
+            SchedulerCheckpointError::io("cannot remove checkpoint artifact object temp", error)
+        })?;
+        sync_directory(directory)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn read_artifact_object(
+    directory: &Path,
+    artifact: &OwnedArtifactCheckpoint,
+) -> Result<Vec<u8>, SchedulerCheckpointError> {
+    let path = artifact_object_path(directory, &artifact.sha256)?;
+    let mut file = open_artifact_no_follow(&path).map_err(|error| {
+        SchedulerCheckpointError::io("cannot open checkpoint artifact object", error)
+    })?;
+    let metadata = file.metadata().map_err(|error| {
+        SchedulerCheckpointError::io("cannot inspect checkpoint artifact object", error)
+    })?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(SchedulerCheckpointError::new(
+            "checkpoint artifact object is not a regular file",
+        ));
+    }
+    let opened = opened_artifact_path(&file).map_err(|error| {
+        SchedulerCheckpointError::io("cannot resolve checkpoint artifact object", error)
+    })?;
+    if opened != path || !opened.starts_with(directory) {
+        return Err(SchedulerCheckpointError::new(
+            "checkpoint artifact object escaped its content-addressed directory",
+        ));
+    }
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents).map_err(|error| {
+        SchedulerCheckpointError::io("cannot read checkpoint artifact object", error)
+    })?;
+    if contents.len() as u64 != artifact.bytes || sha256_digest(&contents) != artifact.sha256 {
+        return Err(SchedulerCheckpointError::new(
+            "checkpoint artifact object bytes do not match their content address",
+        ));
+    }
+    Ok(contents)
+}
+
+fn artifact_objects_available(directory: &Path, artifacts: &[OwnedArtifactCheckpoint]) -> bool {
+    artifacts
+        .iter()
+        .all(|artifact| read_artifact_object(directory, artifact).is_ok())
+}
+
+fn restore_artifact_set(
     root: &Path,
-    spec: &TaskSpec,
-    recorded: &[OwnedArtifactCheckpoint],
-) -> Result<bool, SchedulerCheckpointError> {
+    directory: &Path,
+    artifacts: &[OwnedArtifactCheckpoint],
+) -> Result<(), SchedulerCheckpointError> {
+    let prepared = artifacts
+        .iter()
+        .map(|artifact| {
+            validate_owned_file_path(&artifact.path)?;
+            Ok((artifact, read_artifact_object(directory, artifact)?))
+        })
+        .collect::<Result<Vec<_>, SchedulerCheckpointError>>()?;
+    for (artifact, contents) in prepared {
+        if capture_artifact(root, &artifact.path)
+            .is_ok_and(|current| current.checkpoint == *artifact)
+        {
+            continue;
+        }
+        restore_artifact_atomic(root, artifact, &contents)?;
+    }
+    Ok(())
+}
+
+fn restore_artifact_atomic(
+    root: &Path,
+    artifact: &OwnedArtifactCheckpoint,
+    contents: &[u8],
+) -> Result<(), SchedulerCheckpointError> {
+    let path = root.join(&artifact.path);
+    let parent = path.parent().ok_or_else(|| {
+        SchedulerCheckpointError::new("checkpoint artifact destination has no parent")
+    })?;
+    ensure_artifact_parent(root, parent)?;
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(SchedulerCheckpointError::new(format!(
+                "checkpoint artifact destination is not a replaceable regular file: {:?}",
+                artifact.path
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(SchedulerCheckpointError::io(
+                "cannot inspect checkpoint artifact destination",
+                error,
+            ));
+        }
+    }
+
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".checkpoint-restore.{}.{}.tmp",
+        std::process::id(),
+        sequence
+    ));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)
+        .map_err(|error| {
+            SchedulerCheckpointError::io("cannot create checkpoint restore temp", error)
+        })?;
+    let result = (|| {
+        file.write_all(contents).map_err(|error| {
+            SchedulerCheckpointError::io("cannot write checkpoint restore temp", error)
+        })?;
+        set_artifact_mode(&file, artifact.mode)?;
+        file.sync_all().map_err(|error| {
+            SchedulerCheckpointError::io("cannot sync checkpoint restore temp", error)
+        })?;
+        drop(file);
+        std::fs::rename(&temporary, &path).map_err(|error| {
+            SchedulerCheckpointError::io("cannot install restored checkpoint artifact", error)
+        })?;
+        sync_directory(parent)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result?;
+    let restored = capture_artifact(root, &artifact.path)?;
+    if restored.checkpoint != *artifact {
+        return Err(SchedulerCheckpointError::new(
+            "restored checkpoint artifact failed its exact hash, length, or mode check",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_artifact_parent(root: &Path, parent: &Path) -> Result<(), SchedulerCheckpointError> {
+    let relative = parent.strip_prefix(root).map_err(|_| {
+        SchedulerCheckpointError::new("checkpoint artifact parent escapes the working root")
+    })?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        if !matches!(component, Component::Normal(_)) {
+            return Err(SchedulerCheckpointError::new(
+                "checkpoint artifact parent is not a normal relative path",
+            ));
+        }
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(SchedulerCheckpointError::new(
+                    "checkpoint artifact parent contains a non-directory or symlink",
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current).map_err(|error| {
+                    SchedulerCheckpointError::io(
+                        "cannot recreate checkpoint artifact parent",
+                        error,
+                    )
+                })?;
+                let containing = current.parent().ok_or_else(|| {
+                    SchedulerCheckpointError::new(
+                        "checkpoint artifact parent has no containing directory",
+                    )
+                })?;
+                sync_directory(containing)?;
+            }
+            Err(error) => {
+                return Err(SchedulerCheckpointError::io(
+                    "cannot inspect checkpoint artifact parent",
+                    error,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn recorded_artifact_paths_match(spec: &TaskSpec, recorded: &[OwnedArtifactCheckpoint]) -> bool {
     let expected_paths = spec.owned_files.iter().cloned().collect::<BTreeSet<_>>();
     if expected_paths.len() != spec.owned_files.len() || recorded.len() != expected_paths.len() {
-        return Ok(false);
+        return false;
     }
     let recorded_paths = recorded
         .iter()
         .map(|artifact| artifact.path.clone())
         .collect::<BTreeSet<_>>();
     if recorded_paths != expected_paths || recorded_paths.len() != recorded.len() {
-        return Ok(false);
+        return false;
     }
-    for artifact in recorded {
-        let current = match capture_artifact(root, &artifact.path) {
-            Ok(current) => current,
-            Err(_) => return Ok(false),
-        };
-        if &current != artifact {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    true
 }
 
 fn validate_owned_file_path(relative: &str) -> Result<(), SchedulerCheckpointError> {
@@ -769,6 +1213,24 @@ fn artifact_mode(metadata: &std::fs::Metadata) -> u32 {
 #[cfg(not(unix))]
 fn artifact_mode(metadata: &std::fs::Metadata) -> u32 {
     u32::from(metadata.permissions().readonly())
+}
+
+#[cfg(unix)]
+fn set_artifact_mode(file: &File, mode: u32) -> Result<(), SchedulerCheckpointError> {
+    use std::os::unix::fs::PermissionsExt;
+    file.set_permissions(std::fs::Permissions::from_mode(mode))
+        .map_err(|error| SchedulerCheckpointError::io("cannot restore artifact mode", error))
+}
+
+#[cfg(not(unix))]
+fn set_artifact_mode(file: &File, mode: u32) -> Result<(), SchedulerCheckpointError> {
+    let mut permissions = file
+        .metadata()
+        .map_err(|error| SchedulerCheckpointError::io("cannot inspect artifact mode", error))?
+        .permissions();
+    permissions.set_readonly(mode != 0);
+    file.set_permissions(permissions)
+        .map_err(|error| SchedulerCheckpointError::io("cannot restore artifact mode", error))
 }
 
 fn replay_wal(wal: &mut File, root: &Path) -> Result<ReplayState, SchedulerCheckpointError> {
@@ -1225,45 +1687,54 @@ mod tests {
     }
 
     #[test]
-    fn artifact_mismatch_invalidates_the_task_and_completed_downstream_candidates() {
+    fn missing_and_corrupt_owned_artifacts_restore_from_content_addressed_bytes() {
         let root = tempfile::tempdir().unwrap();
         write_artifact(root.path(), "a.txt", "a-v1");
-        write_artifact(root.path(), "b.txt", "b-v1");
+        write_artifact(root.path(), "nested/b.txt", "b-v1");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                root.path().join("a.txt"),
+                std::fs::Permissions::from_mode(0o750),
+            )
+            .unwrap();
+        }
         let a = spec("a", &[], &["a.txt"]);
-        let b = spec("b", &["a"], &["b.txt"]);
+        let b = spec("b", &["a"], &["nested/b.txt"]);
         let store = SchedulerCheckpointStore::open(root.path()).unwrap();
         store.persist_done(&a, "a output", 1).unwrap();
         store.persist_done(&b, "b output", 1).unwrap();
         drop(store);
-        write_artifact(root.path(), "a.txt", "a-v2");
+        write_artifact(root.path(), "a.txt", "corrupt");
+        std::fs::remove_dir_all(root.path().join("nested")).unwrap();
 
         let store = SchedulerCheckpointStore::open(root.path()).unwrap();
         let mut dag = Dag::from_specs(vec![a, b]).unwrap();
         let mut context = SharedContext::new();
         let summary = store.restore_into(&mut dag, &mut context).unwrap();
 
-        assert!(summary.restored.is_empty());
-        assert_eq!(summary.invalidated, vec!["a", "b"]);
-        assert_eq!(dag.tasks["a"].state, TaskState::Ready);
-        assert_eq!(dag.tasks["b"].state, TaskState::Pending);
-        assert!(context.completed().is_empty());
-
-        store
-            .persist_done(&dag.tasks["a"].spec, "a output v2", 2)
-            .unwrap();
-        drop(store);
-        let store = SchedulerCheckpointStore::open(root.path()).unwrap();
-        let mut dag = Dag::from_specs(vec![
-            spec("a", &[], &["a.txt"]),
-            spec("b", &["a"], &["b.txt"]),
-        ])
-        .unwrap();
-        let mut context = SharedContext::new();
-        let summary = store.restore_into(&mut dag, &mut context).unwrap();
-
-        assert_eq!(summary.restored, vec!["a"]);
-        assert_eq!(summary.invalidated, vec!["b"]);
-        assert_eq!(dag.tasks["b"].state, TaskState::Ready);
+        assert_eq!(summary.restored, vec!["a", "b"]);
+        assert!(summary.invalidated.is_empty());
+        assert_eq!(std::fs::read(root.path().join("a.txt")).unwrap(), b"a-v1");
+        assert_eq!(
+            std::fs::read(root.path().join("nested/b.txt")).unwrap(),
+            b"b-v1"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(root.path().join("a.txt"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o750
+            );
+        }
+        assert_eq!(dag.tasks["a"].state, TaskState::Done);
+        assert_eq!(dag.tasks["b"].state, TaskState::Done);
     }
 
     #[test]
@@ -1273,13 +1744,15 @@ mod tests {
         let a = spec("a", &[], &["a.txt"]);
         let store = SchedulerCheckpointStore::open(root.path()).unwrap();
         store.persist_done(&a, "old output", 1).unwrap();
-        write_artifact(root.path(), "a.txt", "mismatch-that-forces-rerun");
+        let artifact = capture_artifact(store.root(), "a.txt").unwrap().checkpoint;
+        let object =
+            artifact_object_path(&store.artifact_object_directory, &artifact.sha256).unwrap();
+        std::fs::remove_file(object).unwrap();
 
         let mut dag = Dag::from_specs(vec![a.clone()]).unwrap();
         let mut context = SharedContext::new();
         let summary = store.restore_into(&mut dag, &mut context).unwrap();
         assert_eq!(summary.invalidated, vec!["a"]);
-        write_artifact(root.path(), "a.txt", "completed-v1");
         drop(store);
 
         let store = SchedulerCheckpointStore::open(root.path()).unwrap();
@@ -1313,21 +1786,72 @@ mod tests {
         assert_eq!(dag.tasks["a"].state, TaskState::Ready);
     }
 
-    #[test]
-    fn fileless_completed_tasks_are_not_misrepresented_as_durable() {
+    #[tokio::test]
+    async fn fileless_completion_chain_restores_output_attempts_and_dependencies_without_dispatch()
+    {
         let root = tempfile::tempdir().unwrap();
-        let verify = spec("integrate-verify", &[], &[]);
+        let inspect = spec("inspect", &[], &[]);
+        let verify = spec("integrate-verify", &["inspect"], &[]);
         let store = SchedulerCheckpointStore::open(root.path()).unwrap();
-        assert!(!store.can_persist_done(&verify).unwrap());
-        assert!(store.persist_done(&verify, "looks good", 1).is_err());
-        let mut dag = Dag::from_specs(vec![verify]).unwrap();
-        let mut context = SharedContext::new();
+        assert!(store.can_persist_done(&inspect).unwrap());
+        store
+            .persist_done(&inspect, "inspection evidence", 2)
+            .unwrap();
+        assert!(store.can_persist_done(&verify).unwrap());
+        store.persist_done(&verify, "verified", 3).unwrap();
+        drop(store);
 
-        let summary = store.restore_into(&mut dag, &mut context).unwrap();
+        let store = Arc::new(SchedulerCheckpointStore::open(root.path()).unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let dispatcher = Arc::new(WritingDispatcher {
+            root: root.path().to_path_buf(),
+            calls: calls.clone(),
+            contexts: None,
+            sabotage_wal: None,
+        });
+        let scheduler = Scheduler::new(
+            vec![DeviceCfg {
+                id: "device".to_string(),
+                model_id: "model".to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            }],
+            1,
+        )
+        .with_checkpoint_store(store);
+        let report = scheduler
+            .run(
+                Dag::from_specs(vec![inspect, verify]).unwrap(),
+                dispatcher,
+                "fileless checkpoint replay".to_string(),
+            )
+            .await
+            .unwrap();
 
-        assert!(summary.restored.is_empty());
-        assert!(summary.invalidated.is_empty());
-        assert_eq!(dag.tasks["integrate-verify"].state, TaskState::Ready);
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(report.done, vec!["inspect", "integrate-verify"]);
+        assert_eq!(report.results["inspect"], "inspection evidence");
+        assert_eq!(report.results["integrate-verify"], "verified");
+        assert_eq!(
+            report
+                .tasks
+                .iter()
+                .find(|task| task.task_id == "inspect")
+                .unwrap()
+                .attempts,
+            2
+        );
+        assert_eq!(
+            report
+                .tasks
+                .iter()
+                .find(|task| task.task_id == "integrate-verify")
+                .unwrap()
+                .attempts,
+            3
+        );
     }
 
     #[test]
@@ -1465,6 +1989,205 @@ mod tests {
         assert_eq!(contexts.len(), 1);
         assert_eq!(contexts[0].0, "b");
         assert!(contexts[0].1.contains("restored dependency output"));
+    }
+
+    #[tokio::test]
+    async fn repaired_dag_reseal_restores_exact_artifacts_with_zero_dispatches() {
+        let root = tempfile::tempdir().unwrap();
+        let a = spec("a", &[], &["src/a.txt"]);
+        let b = spec("b", &["a"], &["src/b.txt"]);
+        let verify = spec("verify", &["b"], &[]);
+        write_artifact(root.path(), "src/a.txt", "initial-a");
+        write_artifact(root.path(), "src/b.txt", "initial-b");
+        let store = SchedulerCheckpointStore::open(root.path()).unwrap();
+        store.persist_done(&a, "original a output", 1).unwrap();
+        store.persist_done(&b, "original b output", 2).unwrap();
+        store
+            .persist_done(&verify, "verification output", 4)
+            .unwrap();
+
+        write_artifact(root.path(), "src/a.txt", "repaired-a");
+        write_artifact(root.path(), "src/b.txt", "repaired-b");
+        let receipt = store
+            .reseal_completed_dag(
+                &[b.clone(), verify.clone(), a.clone()],
+                &[
+                    SchedulerCompletedTaskEvidence {
+                        task_id: "b".to_string(),
+                        output: "original b output".to_string(),
+                        attempts: 2,
+                    },
+                    SchedulerCompletedTaskEvidence {
+                        task_id: "a".to_string(),
+                        output: "original a output".to_string(),
+                        attempts: 1,
+                    },
+                    SchedulerCompletedTaskEvidence {
+                        task_id: "verify".to_string(),
+                        output: "verification output".to_string(),
+                        attempts: 4,
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(receipt.tasks, vec!["a", "b", "verify"]);
+        assert_eq!(receipt.next_sequence - receipt.first_sequence, 3);
+        {
+            let state = lock(&store.state);
+            let a_record = state
+                .records
+                .iter()
+                .rev()
+                .find(|record| record.task_id == "a")
+                .unwrap();
+            let b_record = state
+                .records
+                .iter()
+                .rev()
+                .find(|record| record.task_id == "b")
+                .unwrap();
+            let verify_record = state
+                .records
+                .iter()
+                .rev()
+                .find(|record| record.task_id == "verify")
+                .unwrap();
+            assert!(a_record.completion_order >= receipt.first_sequence);
+            assert_eq!(
+                b_record.dependency_checkpoints,
+                vec![dependency_checkpoint(a_record)]
+            );
+            assert_eq!(
+                verify_record.dependency_checkpoints,
+                vec![dependency_checkpoint(b_record)]
+            );
+        }
+        drop(store);
+
+        write_artifact(root.path(), "src/a.txt", "corrupt-after-reseal");
+        std::fs::remove_file(root.path().join("src/b.txt")).unwrap();
+        let store = Arc::new(SchedulerCheckpointStore::open(root.path()).unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let dispatcher = Arc::new(WritingDispatcher {
+            root: root.path().to_path_buf(),
+            calls: calls.clone(),
+            contexts: None,
+            sabotage_wal: None,
+        });
+        let scheduler = Scheduler::new(
+            vec![DeviceCfg {
+                id: "device".to_string(),
+                model_id: "model".to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            }],
+            1,
+        )
+        .with_checkpoint_store(store);
+
+        let report = scheduler
+            .run(
+                Dag::from_specs(vec![a, b, verify]).unwrap(),
+                dispatcher,
+                "repaired checkpoint replay".to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(
+            std::fs::read(root.path().join("src/a.txt")).unwrap(),
+            b"repaired-a"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("src/b.txt")).unwrap(),
+            b"repaired-b"
+        );
+        assert_eq!(report.done, vec!["a", "b", "verify"]);
+        assert_eq!(
+            report
+                .tasks
+                .iter()
+                .find(|task| task.task_id == "a")
+                .unwrap()
+                .attempts,
+            1
+        );
+        assert_eq!(
+            report
+                .tasks
+                .iter()
+                .find(|task| task.task_id == "b")
+                .unwrap()
+                .attempts,
+            2
+        );
+        assert_eq!(report.results["a"], "original a output");
+        assert_eq!(report.results["b"], "original b output");
+        assert_eq!(report.results["verify"], "verification output");
+        assert_eq!(
+            report
+                .tasks
+                .iter()
+                .find(|task| task.task_id == "verify")
+                .unwrap()
+                .attempts,
+            4
+        );
+    }
+
+    #[test]
+    fn dag_reseal_rejects_missing_completion_or_artifact_evidence_before_wal_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let a = spec("a", &[], &["a.txt"]);
+        let b = spec("b", &["a"], &["b.txt"]);
+        write_artifact(root.path(), "a.txt", "a");
+        write_artifact(root.path(), "b.txt", "b");
+        let store = SchedulerCheckpointStore::open(root.path()).unwrap();
+
+        let error = store
+            .reseal_completed_dag(
+                &[a.clone(), b.clone()],
+                &[SchedulerCompletedTaskEvidence {
+                    task_id: "a".to_string(),
+                    output: "a output".to_string(),
+                    attempts: 1,
+                }],
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("cover every task exactly once"));
+        assert_eq!(lock(&store.state).next_sequence, 0);
+
+        std::fs::remove_file(root.path().join("b.txt")).unwrap();
+        let error = store
+            .reseal_completed_dag(
+                &[a, b],
+                &[
+                    SchedulerCompletedTaskEvidence {
+                        task_id: "a".to_string(),
+                        output: "a output".to_string(),
+                        attempts: 1,
+                    },
+                    SchedulerCompletedTaskEvidence {
+                        task_id: "b".to_string(),
+                        output: "b output".to_string(),
+                        attempts: 1,
+                    },
+                ],
+            )
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("cannot open completed task artifact"));
+        assert_eq!(lock(&store.state).next_sequence, 0);
+        assert_eq!(
+            std::fs::read_dir(&store.artifact_object_directory)
+                .unwrap()
+                .count(),
+            0
+        );
     }
 
     #[tokio::test]
