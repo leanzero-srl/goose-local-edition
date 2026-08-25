@@ -7666,6 +7666,7 @@ class CloudSb7HarnessTest(unittest.TestCase):
         )
         self.assertEqual(row["context_limit"], 1_000_000)
         self.assertEqual(row["max_output_tokens"], 131_072)
+        self.assertEqual(row["api_max_completion_tokens"], 524_288)
         self.assertEqual(row["billing"]["actual_charge_unit"], "Credits")
         self.assertIs(row["billing"]["budget_guard_is_actual_charge"], False)
         self.assertEqual(policy["currency"], "USD")

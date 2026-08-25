@@ -37,6 +37,7 @@
       "stream_usage": true,
       "context_limit": 1000000,
       "max_output_tokens": 131072,
+      "api_max_completion_tokens": 524288,
       "vendor_port": 9133,
       "billing": {
         "mode": "pay_as_you_go",
