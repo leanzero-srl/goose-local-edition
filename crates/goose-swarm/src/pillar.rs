@@ -50,7 +50,48 @@ pub fn authored_requirements_require_integration(requirements: &[AuthoredRequire
         .map(|requirement| requirement.text.to_ascii_lowercase())
         .collect::<Vec<_>>()
         .join("\n");
-    ![
+    let explicitly_integrated = authored.split(['\n', '.', ';']).any(|clause| {
+        let action = clause
+            .split(|character: char| !character.is_ascii_alphabetic())
+            .any(|word| {
+                word.starts_with("compos")
+                    || word.starts_with("integrat")
+                    || word.starts_with("hook")
+            });
+        let one_product = [
+            "into one app",
+            "into one application",
+            "into one product",
+            "into a single app",
+            "into a single application",
+            "into a single product",
+            "as one app",
+            "as one application",
+            "as one product",
+            "as a single app",
+            "as a single application",
+            "as a single product",
+        ]
+        .iter()
+        .any(|signal| clause.contains(signal));
+        let negated = [
+            "do not compose",
+            "must not compose",
+            "do not integrate",
+            "must not integrate",
+            "do not hook",
+            "must not hook",
+            "no integration required",
+            "without integration",
+            "without composing",
+            "without integrating",
+            "without hooking",
+        ]
+        .iter()
+        .any(|signal| clause.contains(signal));
+        action && one_product && !negated
+    });
+    let explicitly_independent = [
         "independent deliverables",
         "independent outputs",
         "standalone deliverables",
@@ -60,7 +101,8 @@ pub fn authored_requirements_require_integration(requirements: &[AuthoredRequire
         "without integration",
     ]
     .iter()
-    .any(|signal| authored.contains(signal))
+    .any(|signal| authored.contains(signal));
+    explicitly_integrated || !explicitly_independent
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -599,6 +641,16 @@ pub fn compile_pillar_report_with_sources(
             effective_class,
             provenance,
         });
+    }
+
+    if !draft.unresolved_uncertainties.is_empty() && !has_unresolved_claim {
+        return Err(PillarDomainError::new(
+            "unresolved_uncertainty_without_unresolved_claim",
+            format!(
+                "pillar {:?} reports unresolved uncertainty without binding it to an effectively Unresolved owned claim",
+                pillar.id
+            ),
+        ));
     }
 
     let missing_requirement_ids = pillar
@@ -1373,7 +1425,7 @@ mod tests {
                     source_section_id: Some("source-api".to_string()),
                     source_quote: Some("API status transition is atomic".to_string()),
                 }],
-                unresolved_uncertainties: vec!["API timeout remains unproven".to_string()],
+                unresolved_uncertainties: Vec::new(),
                 acceptance_tests: vec!["run api smoke".to_string()],
                 interfaces: vec!["StatusApi".to_string()],
                 exclusions: vec!["UI rendering".to_string()],
@@ -1435,6 +1487,25 @@ mod tests {
         assert!(rendered.contains("[LOW CONFIDENCE]"));
         assert!(rendered.contains("[UNRESOLVED]"));
         assert!(!rendered.contains("[SUPPORTED]"));
+    }
+
+    #[test]
+    fn unresolved_uncertainty_requires_an_owned_unresolved_claim() {
+        let mut draft = report(vec![ResearchClaimDraft {
+            requirement_id: "req-ui".to_string(),
+            statement: "The renderer interface is supported".to_string(),
+            reported_class: EvidenceClass::Supported,
+            source_section_id: None,
+            source_quote: None,
+        }]);
+        draft.reported_confidence = Confidence::Low;
+        draft.unresolved_uncertainties = vec!["Renderer availability is unknown".to_string()];
+
+        let error = compile_pillar_report(&opening(), draft).unwrap_err();
+        assert_eq!(
+            error.code,
+            "unresolved_uncertainty_without_unresolved_claim"
+        );
     }
 
     #[test]
@@ -1551,6 +1622,30 @@ mod tests {
             critical: false,
         }];
         assert!(!authored_requirements_require_integration(&independent));
+
+        for text in [
+            "Produce independent deliverables, then hook them into one application",
+            "Keep standalone deliverables while composing them into one product",
+            "Create independent outputs and integrate them into a single app",
+        ] {
+            assert!(
+                authored_requirements_require_integration(&[AuthoredRequirement {
+                    id: "req-contradictory".to_string(),
+                    text: text.to_string(),
+                    critical: false,
+                }]),
+                "explicit one-product integration must override independence wording: {text}"
+            );
+        }
+
+        assert!(!authored_requirements_require_integration(&[
+            AuthoredRequirement {
+                id: "req-negative".to_string(),
+                text: "Do not integrate these independent deliverables into one application"
+                    .to_string(),
+                critical: false,
+            },
+        ]));
 
         for text in [
             "Generate standalone outputs for every supported format",
