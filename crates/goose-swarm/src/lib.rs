@@ -15,6 +15,7 @@ pub mod event;
 pub mod judge;
 pub mod memory_classify;
 pub mod pillar;
+pub mod pillar_checkpoint;
 pub mod provider_lease;
 pub mod repair;
 pub mod replan;
@@ -63,6 +64,10 @@ pub use pillar::{
     CompiledResearchClaim, Confidence, EvidenceClass, EvidenceSourceSection, IntegrationContract,
     PillarDomainError, PillarReportDraft, ProvenanceMatch, ResearchClaimDraft, ResearchPillar,
     ResearchPillarOpening,
+};
+pub use pillar_checkpoint::{
+    pillar_frozen_spec_digest, pillar_requirement_digest, PillarAttemptCheckpoint,
+    PillarCheckpointError, PillarCheckpointReceipt, PillarCheckpointStore, PillarResumeDecision,
 };
 pub use provider_lease::{
     ActiveProviderLeaseSnapshot, ExposedProviderLease, GlobalProviderLeaseAuthority,
