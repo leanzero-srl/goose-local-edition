@@ -60,10 +60,11 @@ pub use judge::{
 };
 pub use pillar::{
     authored_section_fallback, compile_pillar_report, compile_pillar_report_with_sources,
-    render_synthesis_input, validate_pillar_opening, AuthoredRequirement, CompiledPillarReport,
-    CompiledResearchClaim, Confidence, EvidenceClass, EvidenceSourceSection, IntegrationContract,
-    PillarDomainError, PillarReportDraft, ProvenanceMatch, ResearchClaimDraft, ResearchPillar,
-    ResearchPillarOpening,
+    evidence_source_digest, render_synthesis_input, validate_pillar_opening,
+    validate_pillar_opening_against, AuthoredRequirement, CompiledPillarReport,
+    CompiledResearchClaim, Confidence, EvidenceClass, EvidenceSourceAuthority,
+    EvidenceSourceSection, IntegrationContract, PillarDomainError, PillarReportDraft,
+    ProvenanceMatch, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening,
 };
 pub use pillar_checkpoint::{
     pillar_frozen_spec_digest, pillar_requirement_digest, PillarAttemptCheckpoint,
