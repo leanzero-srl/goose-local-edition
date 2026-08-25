@@ -40,7 +40,7 @@ import SessionActionsHeader from './SessionActionsHeader';
 import SwarmRunPanel from './swarm/SwarmRunPanel';
 import RunSamplingStrip from './swarm/RunSamplingStrip';
 import { useSwarmRun } from './swarm/useSwarmRun';
-import SwarmWorkspace from './swarm/SwarmWorkspace';
+import SwarmWorkspace, { shouldSplitSwarmWorkspace } from './swarm/SwarmWorkspace';
 
 const i18n = defineMessages({
   failedToLoadSession: {
@@ -416,7 +416,12 @@ export default function BaseChat({
     );
   }
 
-  const showSwarmWorkspace = isLocal && swarmRun.present;
+  const showSwarmWorkspace = shouldSplitSwarmWorkspace({
+    isLocal,
+    present: swarmRun.present,
+    inProgress: swarmRun.inProgress,
+    finished: swarmRun.finished,
+  });
   const conversationPane = (
     <div
       className="relative flex flex-1 min-h-0 min-w-0 flex-col bg-background-primary"
@@ -426,7 +431,7 @@ export default function BaseChat({
         ref={scrollRef}
         className={cn(
           'flex-1 min-h-0 relative pr-1 pb-10',
-          !showSwarmWorkspace && headerSpacingClassName
+          !isLocal && headerSpacingClassName
         )}
         autoScroll
         onDrop={handleDrop}
@@ -640,9 +645,13 @@ export default function BaseChat({
 
           <SessionActionsHeader session={session} onSessionChange={updateSession} />
 
-          {showSwarmWorkspace ? (
+          {isLocal ? (
             <div className={cn('flex flex-1 min-h-0 flex-col', headerSpacingClassName)}>
-              <SwarmWorkspace conversation={conversationPane} run={runPane} />
+              <SwarmWorkspace
+                active={showSwarmWorkspace}
+                conversation={conversationPane}
+                run={runPane}
+              />
             </div>
           ) : (
             conversationPane

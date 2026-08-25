@@ -6,6 +6,20 @@ export type SwarmWorkspaceTab = 'conversation' | 'run';
 
 export const SWARM_WORKSPACE_MIN_WIDTH = 1080;
 
+export function shouldSplitSwarmWorkspace({
+  isLocal,
+  present,
+  inProgress,
+  finished,
+}: {
+  isLocal: boolean;
+  present: boolean;
+  inProgress: boolean;
+  finished: boolean;
+}): boolean {
+  return isLocal && present && inProgress && !finished;
+}
+
 export function nextWorkspaceTab(
   current: SwarmWorkspaceTab,
   key: string
@@ -25,10 +39,12 @@ export function SwarmWorkspace({
   conversation,
   run,
   initialTab = 'conversation',
+  active = true,
 }: {
   conversation: React.ReactNode;
   run: React.ReactNode;
   initialTab?: SwarmWorkspaceTab;
+  active?: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<SwarmWorkspaceTab>(initialTab);
   const [isWide, setIsWide] = useState(false);
@@ -50,6 +66,10 @@ export function SwarmWorkspace({
     observer.observe(root);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!active) setActiveTab('conversation');
+  }, [active]);
 
   const selectTab = (tab: SwarmWorkspaceTab, focus = false) => {
     setActiveTab(tab);
@@ -76,9 +96,9 @@ export function SwarmWorkspace({
       ref={rootRef}
       className="flex flex-1 min-h-0 flex-col"
       data-testid="swarm-workspace"
-      data-layout={isWide ? 'wide' : 'narrow'}
+      data-layout={active ? (isWide ? 'wide' : 'narrow') : 'conversation'}
     >
-      {!isWide && (
+      {active && !isWide && (
         <div
           role="tablist"
           aria-label="Active swarm workspace"
@@ -131,26 +151,30 @@ export function SwarmWorkspace({
       <div
         className={cn(
           'flex flex-1 min-h-0',
-          isWide && 'grid grid-cols-[minmax(360px,0.9fr)_minmax(520px,1.1fr)]'
+          active && isWide && 'grid grid-cols-[minmax(360px,0.9fr)_minmax(520px,1.1fr)]'
         )}
       >
         <section
           id={conversationPanelId}
-          role={isWide ? 'region' : 'tabpanel'}
-          aria-label={isWide ? 'Conversation' : undefined}
-          aria-labelledby={isWide ? undefined : conversationTabId}
-          hidden={!isWide && activeTab !== 'conversation'}
-          className="flex min-h-0 min-w-0 flex-col border-r border-border-primary"
+          role={!active || isWide ? 'region' : 'tabpanel'}
+          aria-label={!active || isWide ? 'Conversation' : undefined}
+          aria-labelledby={!active || isWide ? undefined : conversationTabId}
+          hidden={active && !isWide && activeTab !== 'conversation'}
+          className={cn(
+            'flex min-h-0 min-w-0 flex-1 flex-col',
+            active && isWide && 'border-r border-border-primary'
+          )}
           data-testid="swarm-workspace-conversation"
         >
           {conversation}
         </section>
         <section
           id={runPanelId}
-          role={isWide ? 'region' : 'tabpanel'}
-          aria-label={isWide ? 'Run' : undefined}
-          aria-labelledby={isWide ? undefined : runTabId}
-          hidden={!isWide && activeTab !== 'run'}
+          role={!active || isWide ? 'region' : 'tabpanel'}
+          aria-label={!active || isWide ? 'Run' : undefined}
+          aria-labelledby={!active || isWide ? undefined : runTabId}
+          aria-hidden={!active ? true : undefined}
+          hidden={!active || (!isWide && activeTab !== 'run')}
           className="flex min-h-0 min-w-0 flex-col bg-background-secondary"
           data-testid="swarm-workspace-run"
         >
