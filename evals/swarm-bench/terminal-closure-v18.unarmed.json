@@ -4,7 +4,7 @@
   "armed": false,
   "binding": null,
   "bound_config_path": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-terminal-closure/config.json",
-  "controller_sha256": "268df17f24b6eea2b985b1548002ccfb57bc25ba72fa2e3ad454d4d3b9bc184d",
+  "controller_sha256": "b0a791808b42cff9831f8959a9468f9d94da1046bd1f26384632dc87d2815cba",
   "live_root": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18",
   "run_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18/swarm-3node-qwen38-brainwaves-r0",
   "state_dir": "/Users/mihaiperdum/goose-builds/local-sb7-engine-v18-terminal-closure",
@@ -39,7 +39,8 @@
     "instrument_files": {},
     "run_started_sha256": null,
     "trace_header_sha256": null,
-    "fleet_seal_sha256": null
+    "fleet_seal_sha256": null,
+    "fleet_binding_sha256": null
   },
   "publication": {
     "target_document_id": "brun-fleet-qwen38-brainwaves-sb70",

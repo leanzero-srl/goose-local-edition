@@ -27,6 +27,11 @@ MODELS = [
     "mihai-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
     "workhorse-qwen3.8-27b-brainwaves-1m-qx86-hi-mlx",
 ]
+NEW_MODELS = [
+    "gabee-qwen3.8-27b-brainwaves-v18-synthetic",
+    "mihai-qwen3.8-27b-brainwaves-v18-synthetic",
+    "workhorse-qwen3.8-27b-brainwaves-v18-synthetic",
+]
 
 
 def sha(path: pathlib.Path) -> str:
@@ -234,7 +239,10 @@ class TerminalClosureTests(unittest.TestCase):
         }
 
     def v18_binding_fixture(
-        self, *, fixture_seed: str | None = "0123456789abcdef"
+        self,
+        *,
+        fixture_seed: str | None = "0123456789abcdef",
+        model_ids: list[str] | None = None,
     ) -> tuple[pathlib.Path, dict, contextlib.ExitStack]:
         live_root = self.root / "local-sb7-engine-v18"
         run_dir = live_root / "swarm-3node-qwen38-brainwaves-r0"
@@ -290,10 +298,11 @@ class TerminalClosureTests(unittest.TestCase):
                 "run_started_sha256": None,
                 "trace_header_sha256": None,
                 "fleet_seal_sha256": None,
+                "fleet_binding_sha256": None,
                 "instrument_files": {},
             }
         )
-        models = list(MODELS)
+        models = list(model_ids or MODELS)
         model_rows = [
             {
                 "identifier": identifier,
@@ -321,7 +330,9 @@ class TerminalClosureTests(unittest.TestCase):
             "model_ids": sorted(models),
             "planner_model": planner,
             "api_model_ids": sorted(models),
-            "prior_model_aliases_reused": sorted(models),
+            "prior_model_aliases_reused": sorted(
+                set(models) & closure.V18_PRIOR_MODEL_ALIASES
+            ),
         }
         fleet_path = live_root / "fleet-seal.json"
         closure.atomic_json(fleet_path, fleet_seal)
@@ -867,6 +878,21 @@ class TerminalClosureTests(unittest.TestCase):
             self.assertEqual(
                 armed["expected"]["run_id"], "swarm-20260825-123456789"
             )
+            fleet_binding = armed["binding"]["fleet_binding"]
+            self.assertEqual(
+                armed["expected"]["fleet_binding_sha256"],
+                closure.sha256_bytes(closure.canonical_json(fleet_binding)),
+            )
+            self.assertEqual(
+                fleet_binding["model_ids"], sorted(armed["expected"]["models"])
+            )
+            self.assertEqual(
+                {row["role"] for row in fleet_binding["models"]},
+                {"mac", "local", "workhorse"},
+            )
+            self.assertNotIn(
+                "/fixture/model.gguf", closure.canonical_json(fleet_binding).decode()
+            )
             self.assertNotIn("local-sb7-engine-v17", target.read_text(encoding="utf-8"))
             same_target, second_created = closure.bind_v18(template_path)
             self.assertEqual(same_target, target)
@@ -908,6 +934,162 @@ class TerminalClosureTests(unittest.TestCase):
             template_path.write_text(json.dumps(config), encoding="utf-8")
             with self.assertRaisesRegex(closure.ClosureError, "stale v17"):
                 closure.bind_v18(template_path)
+
+    def test_v18_fleet_seal_records_all_reused_prior_aliases(self) -> None:
+        _template_path, _config, patches = self.v18_binding_fixture()
+        with patches:
+            fleet = closure.read_json(closure.V18_FLEET_SEAL)
+            launch = closure.read_json(closure.V18_LIVE_ROOT / "launch.json")
+            self.assertEqual(
+                closure.validate_v18_fleet_seal(fleet, launch), sorted(MODELS)
+            )
+            self.assertEqual(fleet["prior_model_aliases_reused"], sorted(MODELS))
+
+    def test_v18_fleet_seal_accepts_new_aliases_with_no_prior_reuse(self) -> None:
+        _template_path, _config, patches = self.v18_binding_fixture()
+        with patches:
+            fleet = closure.read_json(closure.V18_FLEET_SEAL)
+            launch = closure.read_json(closure.V18_LIVE_ROOT / "launch.json")
+            replacements = dict(zip(MODELS, NEW_MODELS, strict=True))
+            for row in fleet["models"]:
+                row["identifier"] = replacements[row["identifier"]]
+            fleet["model_ids"] = sorted(NEW_MODELS)
+            fleet["api_model_ids"] = sorted(NEW_MODELS)
+            fleet["planner_model"] = replacements[fleet["planner_model"]]
+            fleet["prior_model_aliases_reused"] = []
+            launch["fleet_seal"]["model_ids"] = sorted(NEW_MODELS)
+            launch["fleet_seal"]["planner_model"] = fleet["planner_model"]
+            self.assertEqual(
+                closure.validate_v18_fleet_seal(fleet, launch), sorted(NEW_MODELS)
+            )
+
+    def test_v18_binding_accepts_new_family_aliases_and_pins_exact_pool(self) -> None:
+        template_path, _config, patches = self.v18_binding_fixture(
+            model_ids=NEW_MODELS
+        )
+        with patches:
+            target, created = closure.bind_v18(template_path)
+            self.assertTrue(created)
+            armed = closure.read_json(target)
+            self.assertEqual(armed["expected"]["models"], sorted(NEW_MODELS))
+            self.assertEqual(
+                armed["binding"]["fleet_binding"]["model_ids"], sorted(NEW_MODELS)
+            )
+            self.assertEqual(
+                armed["binding"]["fleet_binding_sha256"],
+                armed["expected"]["fleet_binding_sha256"],
+            )
+
+    def test_v18_fleet_binding_rejects_model_and_artifact_tampering(self) -> None:
+        _template_path, _config, patches = self.v18_binding_fixture()
+        with patches:
+            fleet = closure.read_json(closure.V18_FLEET_SEAL)
+            fleet_sha256 = sha(closure.V18_FLEET_SEAL)
+            pristine = closure.v18_fleet_binding(fleet, fleet_sha256)
+            mutations = {
+                "arbitrary_model": lambda binding: binding["models"][0].__setitem__(
+                    "model_id", "gabee-not-the-bound-brainwaves-model"
+                ),
+                "identity_hash": lambda binding: binding["models"][0].__setitem__(
+                    "artifact_identity_sha256", "0" * 64
+                ),
+                "context_drift": lambda binding: binding["models"][0].update(
+                    {
+                        "context_length": binding["models"][0]["context_length"] * 2,
+                        "artifact_identity_sha256": closure.sha256_bytes(
+                            closure.canonical_json(
+                                {
+                                    "artifact_path_sha256": binding["models"][0][
+                                        "artifact_path_sha256"
+                                    ],
+                                    "context_length": binding["models"][0][
+                                        "context_length"
+                                    ]
+                                    * 2,
+                                    "parallel": binding["models"][0]["parallel"],
+                                    "quantization_sha256": binding["models"][0][
+                                        "quantization_sha256"
+                                    ],
+                                }
+                            )
+                        ),
+                    }
+                ),
+            }
+            for name, mutate in mutations.items():
+                with self.subTest(name=name):
+                    binding = json.loads(json.dumps(pristine))
+                    mutate(binding)
+                    with self.assertRaisesRegex(
+                        closure.ClosureError, "fleet binding"
+                    ):
+                        closure.validate_v18_fleet_binding(
+                            binding,
+                            fleet_seal_sha256=fleet_sha256,
+                            model_ids=MODELS,
+                        )
+
+    def test_v18_fleet_seal_accepts_truthful_mixed_alias_reuse(self) -> None:
+        _template_path, _config, patches = self.v18_binding_fixture()
+        with patches:
+            fleet = closure.read_json(closure.V18_FLEET_SEAL)
+            launch = closure.read_json(closure.V18_LIVE_ROOT / "launch.json")
+            replacement = {
+                MODELS[0]: NEW_MODELS[0],
+                MODELS[2]: NEW_MODELS[2],
+            }
+            for row in fleet["models"]:
+                row["identifier"] = replacement.get(
+                    row["identifier"], row["identifier"]
+                )
+            mixed_models = [replacement.get(model, model) for model in MODELS]
+            fleet["model_ids"] = sorted(mixed_models)
+            fleet["api_model_ids"] = sorted(mixed_models)
+            fleet["planner_model"] = replacement[fleet["planner_model"]]
+            fleet["prior_model_aliases_reused"] = [MODELS[1]]
+            launch["fleet_seal"]["model_ids"] = sorted(mixed_models)
+            launch["fleet_seal"]["planner_model"] = fleet["planner_model"]
+            self.assertEqual(
+                closure.validate_v18_fleet_seal(fleet, launch), sorted(mixed_models)
+            )
+
+    def test_v18_fleet_seal_rejects_alias_provenance_tampering(self) -> None:
+        _template_path, _config, patches = self.v18_binding_fixture()
+        with patches:
+            pristine = closure.read_json(closure.V18_FLEET_SEAL)
+            launch = closure.read_json(closure.V18_LIVE_ROOT / "launch.json")
+            mutations = {
+                "missing": lambda fleet: fleet.pop("prior_model_aliases_reused"),
+                "extra": lambda fleet: fleet.__setitem__(
+                    "prior_model_aliases_reused",
+                    sorted(MODELS + ["mihai-qwen3.8-27b-brainwaves-foreign"]),
+                ),
+                "legacy_boolean": lambda fleet: fleet.__setitem__(
+                    "protected_prior_aliases_reused", False
+                ),
+            }
+            for name, mutate in mutations.items():
+                with self.subTest(name=name):
+                    fleet = json.loads(json.dumps(pristine))
+                    mutate(fleet)
+                    with self.assertRaisesRegex(closure.ClosureError, "fleet seal"):
+                        closure.validate_v18_fleet_seal(fleet, launch)
+
+    def test_v18_fleet_seal_enforces_context_floor_and_boundary(self) -> None:
+        _template_path, _config, patches = self.v18_binding_fixture()
+        with patches:
+            pristine = closure.read_json(closure.V18_FLEET_SEAL)
+            launch = closure.read_json(closure.V18_LIVE_ROOT / "launch.json")
+            boundary = json.loads(json.dumps(pristine))
+            for row in boundary["models"]:
+                row["contextLength"] = closure.V18_MIN_CONTEXT_LENGTH
+            self.assertEqual(
+                closure.validate_v18_fleet_seal(boundary, launch), sorted(MODELS)
+            )
+            below_floor = json.loads(json.dumps(boundary))
+            below_floor["models"][0]["contextLength"] -= 1
+            with self.assertRaisesRegex(closure.ClosureError, "model row"):
+                closure.validate_v18_fleet_seal(below_floor, launch)
 
     def test_v18_binding_rejects_legacy_alias_boolean_provenance(self) -> None:
         template_path, _config, patches = self.v18_binding_fixture()
