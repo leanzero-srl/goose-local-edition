@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the append-only terminal-closure source/config pair for one live V22 run."""
+"""Create the append-only terminal-closure source/config pair for one live V23 run."""
 
 from __future__ import annotations
 
@@ -26,22 +26,24 @@ END_MARKER = "# END TERMINAL_CLOSURE_RUN_BINDING"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 RUN_ID_RE = re.compile(r"^swarm-\d{8}-\d{9}$")
-GENERATION = "v22"
-LIVE_ROOT_LEAF = "local-sb7-engine-v22-r1"
-STATE_DIR_LEAF = "local-sb7-engine-v22-r1-terminal-closure"
-TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-v22-sb70"
-PREDECESSOR_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
-PUBLICATION_PROVENANCE_MARKER = "Brainwaves v22"
-PREDECESSOR_PUBLICATION_PROVENANCE_MARKER = "Brainwaves v21"
-PUBLISHER_SOURCE_PROVENANCE_MARKER = "Brainwaves v21"
-PUBLISHER_FILENAME = "seed-fleet-brainwaves-v22-sb70.mjs"
+GENERATION = "v23"
+LIVE_ROOT_LEAF = "local-sb7-engine-v23"
+STATE_DIR_LEAF = "local-sb7-engine-v23-terminal-closure"
+TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-v23-sb70"
+PREDECESSOR_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-v22-sb70"
+PUBLICATION_PROVENANCE_MARKER = "Brainwaves v23"
+PREDECESSOR_PUBLICATION_PROVENANCE_MARKER = "Brainwaves v22"
+PUBLISHER_SOURCE_PROVENANCE_MARKER = "Brainwaves v22"
+PUBLISHER_FILENAME = "seed-fleet-brainwaves-v23-sb70.mjs"
 PROTECTED_DOCUMENT_ID_ORDER = (
     PREDECESSOR_TARGET_DOCUMENT_ID,
+    "brun-fleet-qwen38-brainwaves-sb70",
     "brun-fleet-qwen38-sb70",
     "brun-fleet-qwen-sb70",
 )
 PROTECTED_DOCUMENT_IDS = frozenset(PROTECTED_DOCUMENT_ID_ORDER)
 PREDECESSOR_PROTECTED_DOCUMENT_ID_ORDER = (
+    "brun-fleet-qwen38-brainwaves-sb70",
     "brun-fleet-qwen38-sb70",
     "brun-fleet-qwen-sb70",
 )
@@ -63,7 +65,7 @@ EXPECTED_QUANTIZATION_SHA256 = (
 EXPECTED_PLANNER_MODEL = "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx"
 EXPECTED_ENTRANT = "swarm-3node-qwen38-brainwaves"
 APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION = {
-    "v22": "5941e31cf886ed3ddaab649fe18961c7e68fbb2af38a495a300fa58355735891",
+    "v23": "43c32a2dd175e903af4dae3aa957fe4d491d4bddba9f70c7b2286f289fe49281",
 }
 APPROVED_CONTROLLER_SOURCE_SHA256 = (
     "f404b88cb191386dc350c2579880509fa19fc55f1ec7275a6cf5fc95c2e54f3e"
@@ -148,6 +150,7 @@ def render_publisher(source: bytes) -> bytes:
         (
             f"export const TARGET_DOCUMENT_ID = '{PREDECESSOR_TARGET_DOCUMENT_ID}';",
             "export const PROTECTED_DOCUMENT_IDS = Object.freeze([",
+            "  'brun-fleet-qwen38-brainwaves-sb70',",
             "  'brun-fleet-qwen38-sb70',",
             "  'brun-fleet-qwen-sb70',",
             "]);",
@@ -170,71 +173,34 @@ def render_publisher(source: bytes) -> bytes:
     )
     text = replace_exact_once(
         text,
-        "`Full sb-7 tier means (the public schema exposes A–D separately): ${tierLine}. Raw scorer and calibration provenance remain in the sealed local closure receipt; the public board intentionally stays on its single sb-7.0 era.`,",
-        "`Full sb-7 tier means (the public schema exposes A–D separately): ${tierLine}. The scorer hash differs from Brainwaves v21 only for the authorized notifier reachability classifier repair; all 91 check definitions and weights are unchanged. Exact scorer and calibration provenance remain in the sealed local closure receipt; the public board intentionally stays on its single sb-7.0 era.`,",
+        "The scorer hash differs from Brainwaves v21 only for the authorized notifier reachability classifier repair; all 91 check definitions and weights are unchanged.",
+        "The scorer hash differs from the pre-repair scorer only for the authorized notifier reachability classifier repair; all 91 check definitions and weights are unchanged.",
         "authorized scorer-change disclosure",
     )
     text = replace_exact_once(
         text,
-        "'protected-document positive control did not resolve both frozen IDs'",
-        "'protected-document positive control did not resolve all frozen IDs'",
-        "protected positive-control message",
-    )
-    text = replace_exact_once(
-        text,
-        "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact v21 provenance');\n"
-        "  if (\n"
-        "    runHtml.includes('Brainwaves v20') ||\n"
-        "    runHtml.includes('Brainwaves v19') ||\n"
-        "    runHtml.includes('Brainwaves v18') ||\n"
-        "    runHtml.includes('Brainwaves v17')\n"
-        "  ) {\n"
-        "    failures.push('run page contains stale pre-v21 provenance');\n"
-        "  }",
         "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact publication provenance');\n"
         "  for (const staleMarker of ['Brainwaves v17', 'Brainwaves v18', 'Brainwaves v19', 'Brainwaves v20', 'Brainwaves v21']) {\n"
         "    if (runHtml.includes(staleMarker)) failures.push(`run page contains stale provenance ${staleMarker}`);\n"
         "  }",
+        "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact publication provenance');\n"
+        "  for (const staleMarker of ['Brainwaves v17', 'Brainwaves v18', 'Brainwaves v19', 'Brainwaves v20', 'Brainwaves v21', 'Brainwaves v22']) {\n"
+        "    if (runHtml.includes(staleMarker)) failures.push(`run page contains stale provenance ${staleMarker}`);\n"
+        "  }",
         "rendered provenance verification",
     )
-    text = replace_exact_once(
-        text,
-        "  if (state?.initialized) {\n"
-        "    invariant(state.target_document_id === TARGET_DOCUMENT_ID, 'publisher state target changed');",
-        "  if (state?.initialized) {\n"
-        "    invariant(state.target_absent_before === true, 'publisher state lacks target-absence proof');\n"
-        "    invariant(state.target_document_id === TARGET_DOCUMENT_ID, 'publisher state target changed');",
-        "resume target-absence proof",
+    required_v22_guards = (
+        "invariant(state.target_absent_before === true, 'publisher state lacks target-absence proof');",
+        "'target-absence positive control did not resolve the exact protected set'",
+        "target_absent_before: state.target_absent_before === true,",
+        "protected_positive_control_ids: state.protected_before.map((row) => row._id),",
+        "The scorer hash differs from the pre-repair scorer only for the authorized notifier reachability classifier repair",
     )
-    text = replace_exact_once(
-        text,
-        "  } else {\n"
-        "    invariant(!existingTarget, 'new target document already exists without this closure state; refusing to replace it');\n"
-        "    state = persistOperationState(state, {\n"
-        "      schema_version: 1,\n"
-        "      initialized: true,",
-        "  } else {\n"
-        "    invariant(!existingTarget, 'new target document already exists without this closure state; refusing to replace it');\n"
-        "    invariant(\n"
-        "      JSON.stringify(beforeRows.map((row) => row._id).sort()) === JSON.stringify([...PROTECTED_DOCUMENT_IDS].sort()),\n"
-        "      'target-absence positive control did not resolve the exact protected set',\n"
-        "    );\n"
-        "    state = persistOperationState(state, {\n"
-        "      schema_version: 1,\n"
-        "      initialized: true,\n"
-        "      target_absent_before: true,",
-        "initial target-absence proof",
-    )
-    text = replace_exact_once(
-        text,
-        "    create_only: true,\n"
-        "    screenshots:",
-        "    create_only: true,\n"
-        "    target_absent_before: state.target_absent_before === true,\n"
-        "    protected_positive_control_ids: state.protected_before.map((row) => row._id),\n"
-        "    screenshots:",
-        "target-absence receipt",
-    )
+    for guard in required_v22_guards:
+        if text.count(guard) != 1:
+            raise SuccessorBindingError(
+                "guarded publisher V22 create-only/scorer anchor is not unique"
+            )
     return text.encode("utf-8")
 
 
@@ -687,7 +653,7 @@ def successor_evidence(
     state_dir: pathlib.Path,
 ) -> dict[str, Any]:
     if generation != GENERATION:
-        raise SuccessorBindingError("successor generation must be exact v22")
+        raise SuccessorBindingError("successor generation must be exact v23")
     if live_root.is_symlink() or not live_root.is_dir():
         raise SuccessorBindingError("successor live root is missing or linked")
     live_root = live_root.resolve()

@@ -25,7 +25,7 @@ class ApprovedAnchorTests(unittest.TestCase):
         self.assertEqual(
             successor.APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION,
             {
-                "v22": "5941e31cf886ed3ddaab649fe18961c7e68fbb2af38a495a300fa58355735891"
+                "v23": "43c32a2dd175e903af4dae3aa957fe4d491d4bddba9f70c7b2286f289fe49281"
             },
         )
 
@@ -40,7 +40,7 @@ class SuccessorBindingTests(unittest.TestCase):
         self.live_root.mkdir()
         self.run_dir.mkdir()
 
-        self.launcher = self.live_root / "launch_local_v22.py"
+        self.launcher = self.live_root / "launch_local_v23.py"
         self.launcher.write_text("raise SystemExit('fixture only')\n", encoding="utf-8")
         self.launcher.chmod(0o400)
         self.binary = self.live_root / "bin" / "goose-successor"
@@ -173,32 +173,36 @@ class SuccessorBindingTests(unittest.TestCase):
                 (
                     f"export const TARGET_DOCUMENT_ID = '{successor.PREDECESSOR_TARGET_DOCUMENT_ID}';",
                     "export const PROTECTED_DOCUMENT_IDS = Object.freeze([",
+                    "  'brun-fleet-qwen38-brainwaves-sb70',",
                     "  'brun-fleet-qwen38-sb70',",
                     "  'brun-fleet-qwen-sb70',",
                     "]);",
                     f"export const PUBLIC_PROVENANCE_MARKER = '{successor.PUBLISHER_SOURCE_PROVENANCE_MARKER}';",
-                    "`Full sb-7 tier means (the public schema exposes A–D separately): ${tierLine}. Raw scorer and calibration provenance remain in the sealed local closure receipt; the public board intentionally stays on its single sb-7.0 era.`,",
-                    "'protected-document positive control did not resolve both frozen IDs'",
-                    "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact v21 provenance');",
-                    "  if (",
-                    "    runHtml.includes('Brainwaves v20') ||",
-                    "    runHtml.includes('Brainwaves v19') ||",
-                    "    runHtml.includes('Brainwaves v18') ||",
-                    "    runHtml.includes('Brainwaves v17')",
-                    "  ) {",
-                    "    failures.push('run page contains stale pre-v21 provenance');",
+                    "`Full sb-7 tier means (the public schema exposes A–D separately): ${tierLine}. The scorer hash differs from Brainwaves v21 only for the authorized notifier reachability classifier repair; all 91 check definitions and weights are unchanged. Exact scorer and calibration provenance remain in the sealed local closure receipt; the public board intentionally stays on its single sb-7.0 era.`,",
+                    "'protected-document positive control did not resolve all frozen IDs'",
+                    "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact publication provenance');",
+                    "  for (const staleMarker of ['Brainwaves v17', 'Brainwaves v18', 'Brainwaves v19', 'Brainwaves v20', 'Brainwaves v21']) {",
+                    "    if (runHtml.includes(staleMarker)) failures.push(`run page contains stale provenance ${staleMarker}`);",
                     "  }",
                     "  if (state?.initialized) {",
+                    "    invariant(state.target_absent_before === true, 'publisher state lacks target-absence proof');",
                     "    invariant(state.target_document_id === TARGET_DOCUMENT_ID, 'publisher state target changed');",
                     "  } else {",
                     "    invariant(!existingTarget, 'new target document already exists without this closure state; refusing to replace it');",
+                    "    invariant(",
+                    "      JSON.stringify(beforeRows.map((row) => row._id).sort()) === JSON.stringify([...PROTECTED_DOCUMENT_IDS].sort()),",
+                    "      'target-absence positive control did not resolve the exact protected set',",
+                    "    );",
                     "    state = persistOperationState(state, {",
                     "      schema_version: 1,",
                     "      initialized: true,",
+                    "      target_absent_before: true,",
                     "    });",
                     "  }",
                     "  const receipt = {",
                     "    create_only: true,",
+                    "    target_absent_before: state.target_absent_before === true,",
+                    "    protected_positive_control_ids: state.protected_before.map((row) => row._id),",
                     "    screenshots: [],",
                     "  };",
                 )
@@ -210,7 +214,7 @@ class SuccessorBindingTests(unittest.TestCase):
         self.usage_policy = self.root / "usage_impairment.py"
         self.usage_policy.write_bytes((ROOT / "usage_impairment.py").read_bytes())
         self.usage_policy.chmod(0o400)
-        self.base_config_path = self.root / "stopped-r4-config.json"
+        self.base_config_path = self.root / "stopped-v22-r1-config.json"
         self.base_config = self._base_config()
         self.base_config_path.write_text(
             json.dumps(self.base_config, indent=2, sort_keys=True) + "\n",
@@ -221,7 +225,7 @@ class SuccessorBindingTests(unittest.TestCase):
         predecessor_anchor = mock.patch.object(
             successor,
             "APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION",
-            {"v22": successor.sha256_file(self.base_config_path)},
+            {"v23": successor.sha256_file(self.base_config_path)},
         )
         controller_anchor = mock.patch.object(
             successor,
@@ -237,13 +241,13 @@ class SuccessorBindingTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def _base_config(self) -> dict[str, object]:
-        old_root = self.root / "local-sb7-engine-v21-r4"
-        old_state = self.root / "local-sb7-engine-v21-r4-terminal-closure"
+        old_root = self.root / "local-sb7-engine-v22-r1"
+        old_state = self.root / "local-sb7-engine-v22-r1-terminal-closure"
         return {
             "schema_version": 1,
             "armed": True,
-            "binding": {"generation": "v21-r4"},
-            "closure_generation": "v21-r4",
+            "binding": {"generation": "v22"},
+            "closure_generation": "v22",
             "live_root": str(old_root),
             "run_dir": str(old_root / "swarm-3node-qwen38-brainwaves-r0"),
             "state_dir": str(old_state),
@@ -259,7 +263,7 @@ class SuccessorBindingTests(unittest.TestCase):
                 "candidate_tree": "9" * 40,
                 "binary_path": str(old_root / "bin/goose-old"),
                 "binary_sha256": "a" * 64,
-                "launch_controller_path": str(old_root / "launch_local_v21_r4.py"),
+                "launch_controller_path": str(old_root / "launch_local_v22.py"),
                 "launch_controller_sha256": "b" * 64,
                 "instrument_manifest_sha256": "c" * 64,
                 "run_id": "swarm-20260826-000000001",
@@ -335,12 +339,12 @@ class SuccessorBindingTests(unittest.TestCase):
             json.dumps(launch, sort_keys=True) + "\n", encoding="utf-8"
         )
 
-    def test_stale_r4_rejected_exact_successor_accepted_without_mutating_protected_config(
+    def test_stopped_v22_rejected_exact_successor_accepted_without_mutating_protected_config(
         self,
     ) -> None:
         base_before = self.base_config_path.read_bytes()
         receipt = successor.generate_successor(
-            generation="v22",
+            generation="v23",
             live_root=self.live_root,
             state_dir=self.state_dir,
             base_config_path=self.base_config_path,
@@ -571,7 +575,7 @@ class SuccessorBindingTests(unittest.TestCase):
                 self._rewrite_manifest(changed)
                 with self.assertRaises(successor.SuccessorBindingError):
                     successor.successor_evidence(
-                        "v22", self.live_root, self.state_dir
+                        "v23", self.live_root, self.state_dir
                     )
                 self.assertFalse(self.state_dir.exists())
         self._rewrite_manifest(original)
@@ -593,6 +597,8 @@ class SuccessorBindingTests(unittest.TestCase):
         self.assertIn("target-absence positive control", text)
         self.assertIn("target_absent_before", text)
         self.assertIn("authorized notifier reachability classifier repair", text)
+        self.assertIn("differs from the pre-repair scorer only", text)
+        self.assertNotIn("differs from Brainwaves v21 only", text)
         with self.assertRaisesRegex(
             successor.SuccessorBindingError, "document contract anchor"
         ):
@@ -609,22 +615,22 @@ class SuccessorBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(
             successor.SuccessorBindingError, "entrant identity"
         ):
-            successor.successor_evidence("v22", self.live_root, self.state_dir)
+            successor.successor_evidence("v23", self.live_root, self.state_dir)
         self.assertFalse(self.state_dir.exists())
 
-    def test_successor_accepts_only_the_exact_r1_root_and_state_leaves(self) -> None:
-        stale_root = self.root / "local-sb7-engine-v22"
+    def test_successor_accepts_only_the_exact_v23_root_and_state_leaves(self) -> None:
+        stale_root = self.root / "local-sb7-engine-v22-r1"
         stale_root.mkdir()
         with self.assertRaisesRegex(
             successor.SuccessorBindingError, "live root does not match"
         ):
-            successor.successor_evidence("v22", stale_root, self.state_dir)
+            successor.successor_evidence("v23", stale_root, self.state_dir)
 
-        wrong_state = self.root / "local-sb7-engine-v22-terminal-closure"
+        wrong_state = self.root / "local-sb7-engine-v22-r1-terminal-closure"
         with self.assertRaisesRegex(
             successor.SuccessorBindingError, "closure state does not match"
         ):
-            successor.successor_evidence("v22", self.live_root, wrong_state)
+            successor.successor_evidence("v23", self.live_root, wrong_state)
         self.assertFalse(self.state_dir.exists())
         self.assertFalse(wrong_state.exists())
 
@@ -659,7 +665,7 @@ class SuccessorBindingTests(unittest.TestCase):
         self._rewrite_manifest(manifest)
 
         evidence = successor.successor_evidence(
-            "v22", self.live_root, self.state_dir
+            "v23", self.live_root, self.state_dir
         )
         self.assertEqual(evidence["binary_sha256"], digest)
         self.assertFalse(self.state_dir.exists())
@@ -672,12 +678,12 @@ class SuccessorBindingTests(unittest.TestCase):
             successor.SuccessorBindingError, "binary path/hash/mode"
         ):
             successor.successor_evidence(
-                "v22", self.live_root, self.state_dir
+                "v23", self.live_root, self.state_dir
             )
 
     def test_generation_is_append_only_and_rejects_different_successor_bytes(self) -> None:
         kwargs = {
-            "generation": "v22",
+            "generation": "v23",
             "live_root": self.live_root,
             "state_dir": self.state_dir,
             "base_config_path": self.base_config_path,
@@ -715,7 +721,7 @@ class SuccessorBindingTests(unittest.TestCase):
 
     def test_unapproved_predecessor_and_controller_are_rejected(self) -> None:
         kwargs = {
-            "generation": "v22",
+            "generation": "v23",
             "live_root": self.live_root,
             "state_dir": self.state_dir,
             "base_config_path": self.base_config_path,
@@ -724,7 +730,7 @@ class SuccessorBindingTests(unittest.TestCase):
         with mock.patch.object(
             successor,
             "APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION",
-            {"v22": "0" * 64},
+            {"v23": "0" * 64},
         ):
             with self.assertRaisesRegex(
                 successor.SuccessorBindingError, "predecessor closure config"
@@ -755,7 +761,7 @@ class SuccessorBindingTests(unittest.TestCase):
 
     def test_changed_evidence_is_rejected_before_destination_commit(self) -> None:
         first = successor.successor_evidence(
-            "v22", self.live_root, self.state_dir
+            "v23", self.live_root, self.state_dir
         )
         changed = json.loads(json.dumps(first))
         changed["run_id"] = "swarm-20260826-987654321"
@@ -766,7 +772,7 @@ class SuccessorBindingTests(unittest.TestCase):
                 successor.SuccessorBindingError, "evidence changed before"
             ):
                 successor.generate_successor(
-                    generation="v22",
+                    generation="v23",
                     live_root=self.live_root,
                     state_dir=self.state_dir,
                     base_config_path=self.base_config_path,
