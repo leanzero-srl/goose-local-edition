@@ -49,7 +49,7 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 RUN_ID_RE = re.compile(r"^swarm-\d{8}-\d{9}$")
 # BEGIN TERMINAL_CLOSURE_RUN_BINDING
-V19_GENERATION = "v21-r4"
+V19_GENERATION = "v22"
 V19_LIVE_ROOT = pathlib.Path(
     "/Users/mihaiperdum/goose-builds/local-sb7-engine-v21-r4"
 )
@@ -64,8 +64,9 @@ V19_SCORE_LOCK = pathlib.Path(
 V19_LAUNCHER = V19_LIVE_ROOT / "launch_local_v21_r4.py"
 V19_LAUNCHER_SHA256 = "548587275a4a49ca32cc66549abbb4d51b77cfdbce84ae8a53cd4dcdbec8ec44"
 V19_FLEET_SEAL = V19_LIVE_ROOT / "fleet-seal.json"
-V19_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
+V19_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-v22-sb70"
 V19_PROTECTED_DOCUMENT_ID_ORDER = (
+    "brun-fleet-qwen38-brainwaves-sb70",
     "brun-fleet-qwen38-sb70",
     "brun-fleet-qwen-sb70",
 )
@@ -86,6 +87,25 @@ V19_ROLE_PREFIXES = {
     "workhorse": "workhorse-",
     "mac": "gabee-",
 }
+V19_SPEC_SHA256 = "56f66c21c3557e9cbf6bccc4d4d01059ad88e4ee610e71f4cf67a8a34c330129"
+V19_PREDECESSOR_SCORER_SHA256 = (
+    "3fcfce9d6ea302861d0ed2d956d0ec401adb924021ef9fa0e3d74548f2ed5fea"
+)
+V19_SCORER_SHA256 = (
+    "3fdaa698730f63c3082db133f1524ee3992c66bfab879821b7f1a301872cd46a"
+)
+V19_THRESHOLDS_SHA256 = (
+    "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3"
+)
+V19_SCORER_CHANGE_AUTHORIZATION = {
+    "reason": "notifier-reachability-classifier-repair",
+    "scope": "reachable-schema-failure-vs-transport-unavailable-classification",
+    "predecessor_scorer_sha256": V19_PREDECESSOR_SCORER_SHA256,
+    "scorer_sha256": V19_SCORER_SHA256,
+    "check_count": 91,
+    "check_registry_unchanged": True,
+    "check_weights_unchanged": True,
+}
 V19_CANDIDATE_COMMIT = "8aac1f30063ffa09c0fb1b133e04bdfb6788729b"
 V19_CANDIDATE_TREE = "82e52238125d48b6356b9d0f804354f4af02cb69"
 V19_BINARY = V19_LIVE_ROOT / "bin/goose-833d3e37c54"
@@ -99,12 +119,15 @@ V19_INSTRUMENT_RECORDED_BINARY = {
     "sha256": "fb9c8dec683ec5a6ab5b8ce9a51623b0267c3cb70e2162d56ebb423032b0472a",
 }
 V19_PUBLISHER_COMMIT = "3fe730a58f81e63b3279d7b2cb5a11dd27f27b57"
+V19_PUBLISHER_SOURCE_SHA256 = (
+    "43eecfa4f91a1c3b72e0c29e12ace88d1797f4b65c1d32bcb456e5f78287799f"
+)
 V19_PUBLISHER_SHA256 = "43eecfa4f91a1c3b72e0c29e12ace88d1797f4b65c1d32bcb456e5f78287799f"
 V19_USAGE_POLICY_SHA256 = "4cb200a193191a799a44673fd8bd2755ced118b994c5132340ee62e7d4bd052b"
-V19_PUBLISHER_MARKER = "Brainwaves v21"
+V19_PUBLISHER_MARKER = "Brainwaves v22"
 V19_PUBLISHER_ROOT = pathlib.Path("/Users/mihaiperdum/Projects/LeanZero-website")
 V19_PUBLISHER_PATH = (
-    V19_STATE_DIR / "closure-instrument" / "seed-fleet-brainwaves-sb70.mjs"
+    V19_STATE_DIR / "closure-instrument" / "seed-fleet-brainwaves-v22-sb70.mjs"
 )
 V19_USAGE_POLICY_PATH = V19_STATE_DIR / "closure-instrument" / "usage_impairment.py"
 V19_BOUND_LAUNCH_SHA256 = "ebc79bd7ccf2ee119242226ab2e1421ae8dff4252af8f097b8e2b278c3e097ff"
@@ -1495,6 +1518,22 @@ def load_config(path: pathlib.Path) -> dict[str, Any]:
     return config
 
 
+def expected_v19_sb7_policy(entrant: str) -> dict[str, Any]:
+    return {
+        "contract_hashes": {
+            "spec_sha256": V19_SPEC_SHA256,
+            "scorer_sha256": V19_SCORER_SHA256,
+            "thresholds_sha256": V19_THRESHOLDS_SHA256,
+        },
+        "scorer_change_authorization": dict(V19_SCORER_CHANGE_AUTHORIZATION),
+        "website_surface": "stable-sb7",
+        "publish_from_run_build_auto_score": False,
+        "entrant": entrant,
+        "publication_document_id": V19_TARGET_DOCUMENT_ID,
+        "protected_document_ids": list(V19_PROTECTED_DOCUMENT_ID_ORDER),
+    }
+
+
 def validate_v19_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
     expected = config["expected"]
     publication = config["publication"]
@@ -1520,6 +1559,7 @@ def validate_v19_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
             "Brainwaves v18",
             "Brainwaves v19",
             "Brainwaves v20",
+            "Brainwaves v21",
         )
     ):
         raise ClosureError("v21 closure config contains stale publication provenance")
@@ -1559,15 +1599,45 @@ def validate_v19_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         raise ClosureError("v19 publisher Git commit changed")
     if publisher.get("sha256") != V19_PUBLISHER_SHA256:
         raise ClosureError("v19 publisher source hash changed")
+    if publisher.get("source_sha256") != V19_PUBLISHER_SOURCE_SHA256:
+        raise ClosureError("v19 publisher template source hash changed")
+    expected_rendering = {
+        "schema_version": SCHEMA_VERSION,
+        "source_sha256": V19_PUBLISHER_SOURCE_SHA256,
+        "rendered_sha256": V19_PUBLISHER_SHA256,
+        "publication_contract_sha256": sha256_bytes(
+            canonical_json(
+                {
+                    "target_document_id": V19_TARGET_DOCUMENT_ID,
+                    "protected_document_ids": list(V19_PROTECTED_DOCUMENT_ID_ORDER),
+                    "provenance_marker": V19_PUBLISHER_MARKER,
+                }
+            )
+        ),
+    }
+    if publisher.get("rendering") != expected_rendering:
+        raise ClosureError("v19 publisher rendering provenance changed")
+    expected_successor_binding = {
+        "schema_version": SCHEMA_VERSION,
+        "generation": V19_GENERATION,
+        "launch_sha256": V19_BOUND_LAUNCH_SHA256,
+        "run_id": V19_BOUND_RUN_ID,
+        "processes": V19_BOUND_PROCESSES,
+        "target_document_id": V19_TARGET_DOCUMENT_ID,
+        "protected_document_ids": list(V19_PROTECTED_DOCUMENT_ID_ORDER),
+        "publication_contract_sha256": expected_rendering[
+            "publication_contract_sha256"
+        ],
+        "publisher_source_sha256": V19_PUBLISHER_SOURCE_SHA256,
+        "publisher_sha256": V19_PUBLISHER_SHA256,
+    }
+    if config.get("binding_successor") != expected_successor_binding:
+        raise ClosureError("v19 successor binding provenance changed")
     if publisher.get("site_root") != str(V19_PUBLISHER_ROOT):
         raise ClosureError("v19 publisher repository path changed")
     allowed_publisher_paths = {
         V19_PUBLISHER_PATH.resolve(),
-        (
-            V19_STATE_DIR
-            / "closure-instrument"
-            / "seed-fleet-brainwaves-sb70.mjs"
-        ).resolve(),
+        (V19_STATE_DIR / "closure-instrument" / V19_PUBLISHER_PATH.name).resolve(),
     }
     if pathlib.Path(str(publisher.get("path", ""))).resolve() not in allowed_publisher_paths:
         raise ClosureError("v19 publisher path changed")
@@ -1581,6 +1651,15 @@ def validate_v19_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         "fleet_seal_sha256",
         "fleet_binding_sha256",
     )
+    expected_contract = {
+        "spec_sha256": V19_SPEC_SHA256,
+        "predecessor_scorer_sha256": V19_PREDECESSOR_SCORER_SHA256,
+        "scorer_sha256": V19_SCORER_SHA256,
+        "thresholds_sha256": V19_THRESHOLDS_SHA256,
+        "scorer_change_authorization": V19_SCORER_CHANGE_AUTHORIZATION,
+    }
+    if any(expected.get(field) != value for field, value in expected_contract.items()):
+        raise ClosureError("v19 SB7 hash authorization changed")
     if not armed:
         if not allow_unarmed:
             raise ClosureError("v19 closure config is unarmed")
@@ -1626,6 +1705,16 @@ def validate_v19_config(config: dict[str, Any], *, allow_unarmed: bool) -> None:
         )
     ):
         raise ClosureError("armed v19 closure instrument inventory is malformed")
+    exact_contract_files = {
+        "evals/swarm-bench/spec-build-sb7.md": V19_SPEC_SHA256,
+        "evals/swarm-bench/bench/score_sb7.py": V19_SCORER_SHA256,
+        "evals/swarm-bench/bench/sb7-thresholds.json": V19_THRESHOLDS_SHA256,
+    }
+    if any(
+        instrument_files.get(relative) != digest
+        for relative, digest in exact_contract_files.items()
+    ):
+        raise ClosureError("armed v19 SB7 contract hashes changed")
     binding = config.get("binding")
     if not isinstance(binding, dict):
         raise ClosureError("armed v19 closure lacks binding evidence")
@@ -1703,7 +1792,7 @@ def validate_config(config: dict[str, Any], *, allow_unarmed: bool = False) -> N
     publication = config["publication"]
     target = publication["target_document_id"]
     protected = publication["protected_document_ids"]
-    if target != "brun-fleet-qwen38-brainwaves-sb70":
+    if target != V19_TARGET_DOCUMENT_ID:
         raise ClosureError("publication target is not the dedicated Brainwaves document")
     if target in protected or protected != list(V19_PROTECTED_DOCUMENT_ID_ORDER):
         raise ClosureError("protected benchmark document set changed")
@@ -2061,14 +2150,9 @@ def v19_binding_evidence(
     ):
         raise ClosureError("v19 instrument manifest identity differs")
     policy = manifest.get("sb7_policy")
-    if not isinstance(policy, dict) or policy != {
-        "spec_and_scorer_unchanged_from_v6": True,
-        "website_surface": "stable-sb7",
-        "publish_from_run_build_auto_score": False,
-        "entrant": expected["entrant"],
-        "publication_document_id": V19_TARGET_DOCUMENT_ID,
-        "protected_document_ids": list(V19_PROTECTED_DOCUMENT_ID_ORDER),
-    }:
+    if not isinstance(policy, dict) or policy != expected_v19_sb7_policy(
+        expected["entrant"]
+    ):
         raise ClosureError("v19 instrument publication policy changed")
     instrument_files = manifest.get("files")
     if not isinstance(instrument_files, dict) or not instrument_files:
@@ -2387,12 +2471,7 @@ class TerminalClosure:
             "protected_document_ids"
         ]:
             raise ClosureError("instrument protected-document set changed")
-        if (
-            policy.get("publish_from_run_build_auto_score") is not False
-            or policy.get("website_surface") != "stable-sb7"
-            or policy.get("entrant") != expected["entrant"]
-            or policy.get("spec_and_scorer_unchanged_from_v6") is not True
-        ):
+        if policy != expected_v19_sb7_policy(expected["entrant"]):
             raise ClosureError("instrument SB7 closure policy changed")
         if launch.get("candidate", {}).get("commit") != expected["candidate_commit"]:
             raise ClosureError("candidate commit changed")
@@ -3029,6 +3108,7 @@ class TerminalClosure:
         terminal: dict[str, Any],
         raw_seal: dict[str, Any],
     ) -> tuple[pathlib.Path, dict[str, Any]]:
+        expected = self.config["expected"]
         usage_contract = self.sealed_usage_contract(raw_seal)
         successful = self.successful_score()
         if successful is None:
@@ -3140,7 +3220,13 @@ class TerminalClosure:
             "schema_version": SCHEMA_VERSION,
             "fixture_seed": expected_seed,
             "raw_tree_sha256": raw_seal["tree_sha256"],
+            "spec_sha256": expected["spec_sha256"],
+            "predecessor_scorer_sha256": expected["predecessor_scorer_sha256"],
             "scorer_sha256": worker_result["scorer_sha256"],
+            "thresholds_sha256": expected["thresholds_sha256"],
+            "scorer_change_authorization": expected[
+                "scorer_change_authorization"
+            ],
             "score_tree_sha256": worker_result["score_tree_sha256"],
             "playwright_module_tree_sha256": worker_result[
                 "playwright_module_tree_sha256"
@@ -3184,6 +3270,17 @@ class TerminalClosure:
         if self.config.get("closure_generation") != V19_GENERATION:
             return
         expected = self.config["expected"]
+        if any(
+            provenance.get(field) != expected[field]
+            for field in (
+                "spec_sha256",
+                "predecessor_scorer_sha256",
+                "scorer_sha256",
+                "thresholds_sha256",
+                "scorer_change_authorization",
+            )
+        ):
+            raise ClosureError("v19 authoritative SB7 hash provenance differs")
         fleet_binding = provenance.get("fleet_binding")
         validate_v19_fleet_binding(
             fleet_binding,
@@ -3386,6 +3483,13 @@ class TerminalClosure:
             raise ClosureError("publisher protected-document receipt differs")
         if receipt.get("protected_before_sha256") != receipt.get("protected_after_sha256"):
             raise ClosureError("protected document receipts changed")
+        positive_control_ids = receipt.get("protected_positive_control_ids")
+        if (
+            not isinstance(positive_control_ids, list)
+            or sorted(positive_control_ids)
+            != sorted(self.config["publication"]["protected_document_ids"])
+        ):
+            raise ClosureError("publisher receipt lacks protected-document positive controls")
         authoritative_path = self.state_dir / "authoritative-verdict.json"
         authoritative = read_json(authoritative_path)
         expected_seed = self.expected_fixture_seed(authoritative.get("fixture_seed"))
@@ -3397,6 +3501,8 @@ class TerminalClosure:
             raise ClosureError("publisher receipt does not identify the authoritative verdict")
         if receipt.get("create_only") is not True:
             raise ClosureError("publisher receipt lacks its create-only guarantee")
+        if receipt.get("target_absent_before") is not True:
+            raise ClosureError("publisher receipt lacks positive target-absence proof")
         verification = receipt.get("verification") or {}
         if not (
             verification.get("zero_rc") is True
@@ -3468,7 +3574,15 @@ class TerminalClosure:
             "protected_documents_unchanged": True,
             "rendered_verified": True,
             "fixture_seed": self.expected_fixture_seed(terminal.get("fixture_seed")),
+            "spec_sha256": provenance["spec_sha256"],
+            "predecessor_scorer_sha256": provenance[
+                "predecessor_scorer_sha256"
+            ],
             "scorer_sha256": provenance["scorer_sha256"],
+            "thresholds_sha256": provenance["thresholds_sha256"],
+            "scorer_change_authorization": provenance[
+                "scorer_change_authorization"
+            ],
             "score_tree_sha256": provenance["score_tree_sha256"],
             "playwright_module_tree_sha256": provenance[
                 "playwright_module_tree_sha256"
@@ -4534,7 +4648,7 @@ def snapshot_instrument(source_config_path: pathlib.Path) -> tuple[pathlib.Path,
     usage_policy_source = pathlib.Path(source_config["usage_policy"]["path"]).resolve()
     instrument = state_dir / "closure-instrument"
     script_target = instrument / "terminal_closure.py"
-    publisher_target = instrument / "seed-fleet-brainwaves-sb70.mjs"
+    publisher_target = instrument / V19_PUBLISHER_PATH.name
     usage_policy_target = instrument / "usage_impairment.py"
     config_target = instrument / "config.json"
     frozen_config = json.loads(json.dumps(source_config))
@@ -4738,7 +4852,7 @@ def parser() -> argparse.ArgumentParser:
     for name in ("preflight", "start", "resume", "status", "watch", "results", "stop", "run"):
         sub = commands.add_parser(name)
         sub.add_argument("--config", type=pathlib.Path, required=True)
-    binder = commands.add_parser("bind-v21")
+    binder = commands.add_parser("bind-successor")
     binder.add_argument("--template", type=pathlib.Path, required=True)
     worker = commands.add_parser("score-worker")
     worker.add_argument("--job", type=pathlib.Path, required=True)
@@ -4748,7 +4862,7 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     os.umask(0o077)
     args = parser().parse_args(argv)
-    if args.command == "bind-v21":
+    if args.command == "bind-successor":
         path, created = bind_v19(args.template)
         config = load_config(path)
         print(
