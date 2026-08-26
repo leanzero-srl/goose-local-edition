@@ -34969,6 +34969,7 @@ fn run_overview_schema() -> serde_json::Value {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Overview {
     features: Vec<String>,
     engage: String,
@@ -66246,6 +66247,43 @@ mod pre_scheduler_semantic_runtime_tests {
                 "invalid overview escaped the bare fallback: {raw}"
             );
         }
+    }
+
+    #[test]
+    fn overview_requires_exact_fields_and_rejects_unexpected_fields_to_bare() {
+        let exact = parse_run_overview_output(Some(
+            r#"{"features":["Grounded capability"],"engage":"Ask goose to run it.","next":["Add a follow-up"]}"#,
+        ));
+        assert_eq!(
+            run_overview_event(None, "other", false, exact, 1),
+            serde_json::json!({
+                "event": "run_overview",
+                "generated": true,
+                "run_command": serde_json::Value::Null,
+                "run_command_lang": "other",
+                "run_command_verified": false,
+                "features": ["Grounded capability"],
+                "engage": "Ask goose to run it.",
+                "next": ["Add a follow-up"],
+            })
+        );
+
+        let unexpected = parse_run_overview_output(Some(
+            r#"{"features":["Grounded capability"],"engage":"Ask goose to run it.","next":["Add a follow-up"],"verification":"passed"}"#,
+        ));
+        assert_eq!(
+            run_overview_event(None, "other", false, unexpected, 1),
+            serde_json::json!({
+                "event": "run_overview",
+                "generated": false,
+                "run_command": serde_json::Value::Null,
+                "run_command_lang": "other",
+                "run_command_verified": false,
+                "features": [],
+                "engage": serde_json::Value::Null,
+                "next": [],
+            })
+        );
     }
 
     #[tokio::test]
