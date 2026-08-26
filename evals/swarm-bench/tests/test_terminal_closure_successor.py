@@ -137,6 +137,133 @@ class ScoreAdoptionBindingTests(unittest.TestCase):
                 successor.stable_tree_content_sha256(linked)
 
 
+class PublisherAdoptionBindingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.temporary.name)
+        self.state = self.root / "source"
+        (self.state / "closure-instrument").mkdir(parents=True)
+        self.evidence = {
+            "generation": "v21-r5",
+            "live_root": str(self.root / "live"),
+            "run_dir": str(self.root / "live/run"),
+            "state_dir": str(self.root / "successor"),
+            "run_id": "swarm-20260826-123456789",
+        }
+        self.publication = {
+            "target_document_id": successor.TARGET_DOCUMENT_ID,
+            "protected_document_ids": list(successor.PROTECTED_DOCUMENT_ID_ORDER),
+            "provenance_marker": "Brainwaves v21",
+        }
+        self.authoritative = {
+            "entrant": "swarm-3node-qwen38-brainwaves",
+            "fixture_seed": "0123456789abcdef",
+        }
+        self.write("authoritative-verdict.json", self.authoritative)
+        authoritative_sha256 = successor.sha256_file(
+            self.state / "authoritative-verdict.json"
+        )
+        self.write(
+            "config.json",
+            {
+                "armed": True,
+                "closure_generation": "v21-r5",
+                "live_root": self.evidence["live_root"],
+                "run_dir": self.evidence["run_dir"],
+                "publication": self.publication,
+                "expected": {
+                    "run_id": self.evidence["run_id"],
+                    "fixture_seed": "0123456789abcdef",
+                },
+                "publisher": {"sha256": "0" * 64},
+            },
+        )
+        self.write("state.json", {"phase": "stopped"})
+        self.write("publisher.pid.json", {"pid": 20})
+        self.write("supervisor.pid.json", {"pid": 21})
+        self.write(
+            "scoring-provenance.json",
+            {"authoritative_verdict_sha256": authoritative_sha256},
+        )
+        publisher = self.state / "closure-instrument/seed-fleet-brainwaves-sb70.mjs"
+        publisher.write_text("export const guarded = true;\n", encoding="utf-8")
+        config = json.loads((self.state / "config.json").read_text(encoding="utf-8"))
+        config["publisher"]["sha256"] = successor.sha256_file(publisher)
+        self.write("config.json", config)
+        self.write(
+            "publisher-state.json",
+            {
+                "schema_version": 1,
+                "initialized": True,
+                "target_document_id": successor.TARGET_DOCUMENT_ID,
+                "authoritative_verdict_sha256": authoritative_sha256,
+                "protected_before_sha256": "1" * 64,
+                "planned_document_sha256": "2" * 64,
+                "document_written": True,
+                "document_sha256": "2" * 64,
+                "assets": [
+                    {
+                        "shot_key": "3" * 64,
+                        "sha256": "4" * 64,
+                        "pixels_sha256": "5" * 64,
+                        "asset_id": "image-fixture-1280x800-png",
+                        "width": 1280,
+                        "height": 800,
+                        "filename": "final.png",
+                        "caption": "Final render",
+                    }
+                ],
+            },
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def write(self, relative: str, value: object) -> None:
+        path = self.state / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+
+    def contract(self) -> dict[str, object]:
+        with mock.patch.object(successor, "process_exists", return_value=False):
+            return successor.publisher_adoption_contract(
+                self.state / "publisher-state.json",
+                self.evidence,
+                self.publication,
+            )
+
+    def test_exact_stopped_create_only_publication_can_resume(self) -> None:
+        contract = self.contract()
+        self.assertTrue(contract["create_only_resume"])
+        self.assertTrue(contract["document_written"])
+        self.assertEqual(contract["target_document_id"], successor.TARGET_DOCUMENT_ID)
+
+    def test_live_writer_fails_closed(self) -> None:
+        with (
+            mock.patch.object(successor, "process_exists", side_effect=lambda pid: pid == 20),
+            self.assertRaisesRegex(successor.SuccessorBindingError, "publisher is still live"),
+        ):
+            successor.publisher_adoption_contract(
+                self.state / "publisher-state.json",
+                self.evidence,
+                self.publication,
+            )
+
+    def test_incomplete_or_already_complete_source_fails_closed(self) -> None:
+        publisher_state = json.loads(
+            (self.state / "publisher-state.json").read_text(encoding="utf-8")
+        )
+        publisher_state["document_written"] = False
+        self.write("publisher-state.json", publisher_state)
+        with self.assertRaisesRegex(successor.SuccessorBindingError, "incomplete"):
+            self.contract()
+        publisher_state["document_written"] = True
+        self.write("publisher-state.json", publisher_state)
+        self.write("publication-receipt.json", {"unexpected": True})
+        with self.assertRaisesRegex(successor.SuccessorBindingError, "already complete"):
+            self.contract()
+
+
 class SuccessorBindingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()

@@ -62,9 +62,9 @@ APPROVED_USAGE_POLICY_SOURCE_SHA256 = (
     "8363461152fa30c6b48c97e142e06d8eca1fc61b1a9c639b5b7abd27a2cb9d2c"
 )
 APPROVED_PUBLISHER_SOURCE_SHA256 = (
-    "9f2eb2f92880b4280adec0960e14aa5b59002fd6d0756d04c34cbf4e6690d466"
+    "aacd87a9e727ef20f23aa629ca3b08eb4e4888c7c179e7689f4bc1e20d7efb00"
 )
-APPROVED_PUBLISHER_COMMIT = "0c5df6d4beaa9903c549460fec0b653cc37fcc0a"
+APPROVED_PUBLISHER_COMMIT = "1561e4602bc9be5a256d5cf9acf345c0d5b940cd"
 SCORE_ADOPTION_SOURCE_FILES = (
     "config.json",
     "failure.json",
@@ -84,6 +84,16 @@ SCORE_ADOPTION_SOURCE_FILES = (
     "scoring/attempt-1/scorer.pid.json",
     "scoring/attempt-1/worker.pid.json",
     "scoring/attempt-1/runtime/playwright-node",
+)
+PUBLISHER_ADOPTION_SOURCE_FILES = (
+    "config.json",
+    "state.json",
+    "publisher-state.json",
+    "publisher.pid.json",
+    "supervisor.pid.json",
+    "authoritative-verdict.json",
+    "scoring-provenance.json",
+    "closure-instrument/seed-fleet-brainwaves-sb70.mjs",
 )
 
 
@@ -1040,6 +1050,123 @@ def score_adoption_contract(
     }
 
 
+def publisher_adoption_contract(
+    publisher_state_path: pathlib.Path,
+    evidence: Mapping[str, Any],
+    publication: Mapping[str, Any],
+) -> dict[str, Any]:
+    publisher_state_path = require_regular(publisher_state_path)
+    source_state = publisher_state_path.parent.resolve()
+    if publisher_state_path != source_state / "publisher-state.json":
+        raise SuccessorBindingError("publisher adoption source escaped its state")
+    if source_state == pathlib.Path(str(evidence["state_dir"])).resolve():
+        raise SuccessorBindingError("publisher adoption source cannot be its successor")
+    if (source_state / "publication-receipt.json").exists():
+        raise SuccessorBindingError("publisher adoption source is already complete")
+
+    source_state_row = read_json(source_state / "state.json")
+    source_publisher_pid = read_json(source_state / "publisher.pid.json")
+    source_supervisor_pid = read_json(source_state / "supervisor.pid.json")
+    for label, receipt in (
+        ("publisher", source_publisher_pid),
+        ("supervisor", source_supervisor_pid),
+    ):
+        pid = receipt.get("pid")
+        if (
+            not isinstance(pid, int)
+            or isinstance(pid, bool)
+            or process_exists(pid)
+        ):
+            raise SuccessorBindingError(
+                f"publisher adoption source {label} is still live"
+            )
+    if source_state_row.get("phase") not in {"stopped", "failed"}:
+        raise SuccessorBindingError("publisher adoption source is not terminal")
+
+    files: dict[str, str] = {}
+    for relative in PUBLISHER_ADOPTION_SOURCE_FILES:
+        path = require_regular(source_state / relative)
+        files[relative] = stable_file_sha256(path)[0]
+    source_config = read_json(source_state / "config.json")
+    publisher_state = read_json(publisher_state_path)
+    authoritative = read_json(source_state / "authoritative-verdict.json")
+    provenance = read_json(source_state / "scoring-provenance.json")
+    if (
+        source_config.get("armed") is not True
+        or source_config.get("closure_generation") != evidence["generation"]
+        or source_config.get("live_root") != evidence["live_root"]
+        or source_config.get("run_dir") != evidence["run_dir"]
+        or source_config.get("publication") != publication
+        or source_config.get("expected", {}).get("run_id") != evidence["run_id"]
+        or source_config.get("publisher", {}).get("sha256")
+        != files["closure-instrument/seed-fleet-brainwaves-sb70.mjs"]
+    ):
+        raise SuccessorBindingError("publisher adoption source identity differs")
+    authoritative_sha256 = files["authoritative-verdict.json"]
+    if (
+        provenance.get("authoritative_verdict_sha256") != authoritative_sha256
+        or authoritative.get("entrant") != "swarm-3node-qwen38-brainwaves"
+        or authoritative.get("fixture_seed")
+        != source_config.get("expected", {}).get("fixture_seed")
+    ):
+        raise SuccessorBindingError(
+            "publisher adoption authoritative evidence differs"
+        )
+    assets = publisher_state.get("assets")
+    if (
+        publisher_state.get("schema_version") != SCHEMA_VERSION
+        or publisher_state.get("initialized") is not True
+        or publisher_state.get("target_document_id") != TARGET_DOCUMENT_ID
+        or publisher_state.get("authoritative_verdict_sha256")
+        != authoritative_sha256
+        or publisher_state.get("document_written") is not True
+        or publisher_state.get("planned_document_sha256")
+        != publisher_state.get("document_sha256")
+        or not SHA256_RE.fullmatch(
+            str(publisher_state.get("protected_before_sha256", ""))
+        )
+        or not SHA256_RE.fullmatch(
+            str(publisher_state.get("document_sha256", ""))
+        )
+        or not isinstance(assets, list)
+        or not assets
+    ):
+        raise SuccessorBindingError("publisher adoption state is incomplete")
+    seen_shots: set[str] = set()
+    for asset in assets:
+        shot_key = asset.get("shot_key") if isinstance(asset, dict) else None
+        if (
+            not isinstance(asset, dict)
+            or not SHA256_RE.fullmatch(str(shot_key or ""))
+            or shot_key in seen_shots
+            or not SHA256_RE.fullmatch(str(asset.get("sha256", "")))
+            or not SHA256_RE.fullmatch(str(asset.get("pixels_sha256", "")))
+            or not isinstance(asset.get("asset_id"), str)
+            or not asset["asset_id"].startswith("image-")
+            or not isinstance(asset.get("width"), int)
+            or asset["width"] < 2
+            or not isinstance(asset.get("height"), int)
+            or asset["height"] < 2
+            or not isinstance(asset.get("filename"), str)
+            or not isinstance(asset.get("caption"), str)
+        ):
+            raise SuccessorBindingError("publisher adoption asset is malformed")
+        seen_shots.add(shot_key)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "source_state": str(source_state),
+        "source_files": files,
+        "publisher_state_sha256": files["publisher-state.json"],
+        "authoritative_verdict_sha256": authoritative_sha256,
+        "target_document_id": TARGET_DOCUMENT_ID,
+        "protected_before_sha256": publisher_state["protected_before_sha256"],
+        "document_sha256": publisher_state["document_sha256"],
+        "asset_ids": [asset["asset_id"] for asset in assets],
+        "document_written": True,
+        "create_only_resume": True,
+    }
+
+
 def publisher_successor_identity(source: pathlib.Path) -> tuple[pathlib.Path, str]:
     source = require_regular(source)
     completed = subprocess.run(
@@ -1087,6 +1214,7 @@ def generate_successor(
     terminal_predecessor_config_path: pathlib.Path | None = None,
     score_adoption_attempt_path: pathlib.Path | None = None,
     publisher_successor_source_path: pathlib.Path | None = None,
+    publisher_adoption_state_path: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     base_config_path = require_regular(base_config_path)
     controller_source = require_regular(controller_source)
@@ -1168,6 +1296,17 @@ def generate_successor(
         successor_base_config["score_adoption"] = adoption_contract
     else:
         successor_base_config.pop("score_adoption", None)
+    publisher_adoption = None
+    publisher_adoption_payload = None
+    if publisher_adoption_state_path is not None:
+        publisher_adoption = publisher_adoption_contract(
+            publisher_adoption_state_path,
+            evidence,
+            successor_base_config["publication"],
+        )
+        publisher_adoption_payload = read_stable_bytes(
+            require_regular(publisher_adoption_state_path)
+        )
 
     rendered = render_controller(
         controller_source_payload, evidence, successor_base_config
@@ -1209,6 +1348,15 @@ def generate_successor(
     }
     if armed_payload is not None:
         outputs[pathlib.Path("config.json")] = (armed_payload, 0o400)
+    if publisher_adoption is not None and publisher_adoption_payload is not None:
+        outputs[pathlib.Path("publisher-state.json")] = (
+            publisher_adoption_payload,
+            0o600,
+        )
+        outputs[pathlib.Path("publisher-adoption-receipt.json")] = (
+            canonical_json(publisher_adoption) + b"\n",
+            0o400,
+        )
 
     if not state_dir.exists():
         state_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1247,6 +1395,20 @@ def generate_successor(
                 ):
                     raise SuccessorBindingError(
                         "score adoption evidence changed before append-only commit"
+                    )
+            if publisher_adoption_state_path is not None:
+                refreshed_publisher_adoption = publisher_adoption_contract(
+                    publisher_adoption_state_path,
+                    evidence,
+                    successor_base_config["publication"],
+                )
+                if canonical_json(refreshed_publisher_adoption) != canonical_json(
+                    publisher_adoption
+                ) or read_stable_bytes(
+                    require_regular(publisher_adoption_state_path)
+                ) != publisher_adoption_payload:
+                    raise SuccessorBindingError(
+                        "publisher adoption evidence changed before append-only commit"
                     )
             immutable_sources = (
                 (publisher_source, publisher_payload, True),
@@ -1325,6 +1487,10 @@ def generate_successor(
         receipt["score_adoption_sha256"] = sha256_bytes(
             canonical_json(adoption_contract)
         )
+    if publisher_adoption is not None:
+        receipt["publisher_adoption_sha256"] = sha256_bytes(
+            canonical_json(publisher_adoption)
+        )
     if publisher_successor_source is not None:
         receipt["source_publisher_sha256"] = sha256_bytes(
             frozen_publisher_payload
@@ -1347,6 +1513,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--terminal-predecessor-config", type=pathlib.Path)
     root.add_argument("--score-adoption-attempt", type=pathlib.Path)
     root.add_argument("--publisher-successor-source", type=pathlib.Path)
+    root.add_argument("--publisher-adoption-state", type=pathlib.Path)
     root.add_argument("--bind", action="store_true")
     return root
 
@@ -1363,6 +1530,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         terminal_predecessor_config_path=args.terminal_predecessor_config,
         score_adoption_attempt_path=args.score_adoption_attempt,
         publisher_successor_source_path=args.publisher_successor_source,
+        publisher_adoption_state_path=args.publisher_adoption_state,
     )
     if args.bind:
         if receipt.get("config"):
