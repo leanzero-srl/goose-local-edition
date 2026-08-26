@@ -4713,6 +4713,259 @@ fn spec_doc_urls(spec: &str) -> Vec<String> {
 /// Pure, and deliberately narrow: it returns METHOD PATH -> EXPECTED triples only, never spec prose,
 /// so a build order cannot survive extraction into a read-only shard's prompt. An empty result means
 /// the caller emits today's string byte-for-byte.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SpecEndpointContract {
+    method: String,
+    path: String,
+    authority: Option<String>,
+    documented_keys: Vec<String>,
+    documents_utc: bool,
+}
+
+impl SpecEndpointContract {
+    fn route(&self) -> &str {
+        self.path.split('?').next().unwrap_or(&self.path)
+    }
+
+    fn causal_key(&self) -> String {
+        format!(
+            "{}\u{0}{}\u{0}{}",
+            self.method,
+            self.authority.as_deref().unwrap_or(""),
+            self.route()
+        )
+    }
+}
+
+fn port_flag_authority(flag: &str) -> Option<String> {
+    let normalized = flag
+        .trim_start_matches('-')
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    let stem = normalized.strip_suffix("-port").unwrap_or(&normalized);
+    if stem == "port" || stem.is_empty() {
+        None
+    } else {
+        Some(stem.to_string())
+    }
+}
+
+/// Map section names in a multi-service spec onto the named port flags of its combined boot.
+/// `app.ledgerd --port N` is an alias for `app --ledger-port N`; retaining that relationship is
+/// what prevents notifier routes from being curled on the ledger socket.
+fn spec_service_authority_aliases(spec: &str) -> Vec<(String, String)> {
+    let Some(pkg) = spec_python_entry(spec) else {
+        return Vec::new();
+    };
+    let root_span = spec
+        .split('`')
+        .find(|span| {
+            let tokens = span.split_whitespace().collect::<Vec<_>>();
+            tokens
+                .windows(2)
+                .any(|pair| pair[0] == "-m" && pair[1] == pkg)
+        })
+        .unwrap_or_default();
+    let mut authorities = Vec::new();
+    let root_tokens = root_span.split_whitespace().collect::<Vec<_>>();
+    for pair in root_tokens.windows(2) {
+        if !pair[0].starts_with('-') || !pair[0].to_ascii_lowercase().contains("port") {
+            continue;
+        }
+        if let Some(authority) = port_flag_authority(pair[0]) {
+            if !authorities.contains(&authority) {
+                authorities.push(authority);
+            }
+        }
+    }
+    let mut aliases = authorities
+        .iter()
+        .map(|authority| (authority.clone(), authority.clone()))
+        .collect::<Vec<_>>();
+    for invocation in spec_python_invocations(spec) {
+        if invocation == pkg {
+            continue;
+        }
+        let alias = invocation
+            .rsplit('.')
+            .next()
+            .unwrap_or(&invocation)
+            .to_ascii_lowercase();
+        let matched = authorities.iter().find(|authority| {
+            alias == authority.as_str()
+                || alias.strip_suffix('d') == Some(authority.as_str())
+                || authority.strip_suffix('d') == Some(alias.as_str())
+        });
+        if let Some(authority) = matched {
+            aliases.push((alias, authority.clone()));
+        }
+    }
+    aliases.sort();
+    aliases.dedup();
+    aliases
+}
+
+fn heading_service_authority(
+    headings: &[(usize, String)],
+    aliases: &[(String, String)],
+) -> Option<String> {
+    for (_, heading) in headings.iter().rev() {
+        let words = heading
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
+            .filter(|word| !word.is_empty())
+            .map(|word| word.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        for (alias, authority) in aliases {
+            if words.iter().any(|word| word == alias) {
+                return Some(authority.clone());
+            }
+        }
+    }
+    None
+}
+
+/// Endpoint-table rows with their owning service retained from the surrounding markdown section.
+/// Prose such as "the client fetches GET /v3/reversals from the vendor" is deliberately absent:
+/// it is an outbound dependency call, not an advertised application route.
+fn spec_endpoint_table_contracts(spec: &str) -> Vec<SpecEndpointContract> {
+    let aliases = spec_service_authority_aliases(spec);
+    let key_re = regex::Regex::new(r#"\"(\w+)\"\s*:"#).ok();
+    let mut headings: Vec<(usize, String)> = Vec::new();
+    let mut out = Vec::new();
+    for raw_line in spec.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.starts_with('#') {
+            let level = trimmed.chars().take_while(|c| *c == '#').count();
+            if level > 0 && trimmed.chars().nth(level).is_some_and(char::is_whitespace) {
+                headings.retain(|(existing, _)| *existing < level);
+                if let Some(heading) = trimmed.get(level..) {
+                    headings.push((level, heading.trim().to_string()));
+                }
+            }
+            continue;
+        }
+        if !trimmed.starts_with('|') {
+            continue;
+        }
+        let cells = trimmed.trim_matches('|').split('|').collect::<Vec<_>>();
+        if cells.len() < 3 {
+            continue;
+        }
+        let unwrap = |cell: &str| cell.trim().trim_matches('`').trim().to_string();
+        let methods = unwrap(cells[0])
+            .split('/')
+            .map(|method| method.trim().to_uppercase())
+            .filter(|method| {
+                matches!(
+                    method.as_str(),
+                    "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
+                )
+            })
+            .collect::<Vec<_>>();
+        if methods.is_empty() {
+            continue;
+        }
+        let path_cell = cells[1].trim();
+        let path = path_cell
+            .strip_prefix('`')
+            .and_then(|rest| rest.split_once('`').map(|(path, _)| path.to_string()))
+            .unwrap_or_else(|| unwrap(path_cell));
+        if !path.starts_with('/') {
+            continue;
+        }
+        let expected = cells[2..].join("|");
+        let mut documented_keys = key_re
+            .as_ref()
+            .map(|re| {
+                re.captures_iter(&expected)
+                    .map(|capture| capture[1].to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        documented_keys.sort();
+        documented_keys.dedup();
+        let authority = heading_service_authority(&headings, &aliases);
+        let documents_utc =
+            expected.contains("RFC3339") && expected.to_ascii_uppercase().contains("UTC");
+        for method in methods {
+            out.push(SpecEndpointContract {
+                method,
+                path: path.clone(),
+                authority: authority.clone(),
+                documented_keys: documented_keys.clone(),
+                documents_utc,
+            });
+        }
+    }
+    let mut namespace_authorities = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut route_authorities = BTreeMap::<String, BTreeSet<String>>::new();
+    for contract in &out {
+        let Some(authority) = contract.authority.as_ref() else {
+            continue;
+        };
+        let route = contract.route().to_string();
+        route_authorities
+            .entry(route.clone())
+            .or_default()
+            .insert(authority.clone());
+        if let Some(namespace) = route
+            .strip_prefix('/')
+            .and_then(|rest| rest.split('/').next())
+            .filter(|namespace| !namespace.is_empty())
+        {
+            namespace_authorities
+                .entry(namespace.to_string())
+                .or_default()
+                .insert(authority.clone());
+        }
+    }
+    for contract in &mut out {
+        if contract.authority.is_some() {
+            continue;
+        }
+        let route = contract.route();
+        let exact = route_authorities
+            .get(route)
+            .filter(|authorities| authorities.len() == 1)
+            .and_then(|authorities| authorities.first().cloned());
+        let namespace = route
+            .strip_prefix('/')
+            .and_then(|rest| rest.split('/').next())
+            .filter(|namespace| !namespace.is_empty())
+            .and_then(|namespace| namespace_authorities.get(namespace))
+            .filter(|authorities| authorities.len() == 1)
+            .and_then(|authorities| authorities.first().cloned());
+        contract.authority = exact.or(namespace);
+    }
+    out
+}
+
+fn merge_causal_endpoint_contracts(
+    contracts: impl IntoIterator<Item = SpecEndpointContract>,
+) -> Vec<SpecEndpointContract> {
+    let mut positions = std::collections::HashMap::<String, usize>::new();
+    let mut out: Vec<SpecEndpointContract> = Vec::new();
+    for mut contract in contracts {
+        let key = contract.causal_key();
+        if let Some(index) = positions.get(&key).copied() {
+            let existing = &mut out[index];
+            if !existing.path.contains('?') && contract.path.contains('?') {
+                existing.path = contract.path;
+            }
+            existing
+                .documented_keys
+                .append(&mut contract.documented_keys);
+            existing.documented_keys.sort();
+            existing.documented_keys.dedup();
+            existing.documents_utc |= contract.documents_utc;
+            continue;
+        }
+        positions.insert(key, out.len());
+        out.push(contract);
+    }
+    out
+}
+
 fn spec_advertised_surface(spec: &str) -> Vec<String> {
     let unwrap_cell = |c: &str| c.trim().trim_matches('`').trim().to_string();
     let mut out = Vec::new();
@@ -4746,20 +4999,28 @@ fn spec_advertised_surface(spec: &str) -> Vec<String> {
     out
 }
 
-/// Advertised endpoints that MUTATE, as bare paths. `spec_advertised_surface` returns display
-/// strings ("POST /api/sync -> EXPECT {...}"); this returns the paths a prober can actually call.
+fn spec_post_endpoint_contracts(spec: &str) -> Vec<SpecEndpointContract> {
+    merge_causal_endpoint_contracts(spec_endpoint_table_contracts(spec).into_iter().filter_map(
+        |mut contract| {
+            if contract.method != "POST" {
+                return None;
+            }
+            contract.path =
+                probeable_get_path(contract.path.trim_end_matches([';', ',', ')', '.']))?;
+            Some(contract)
+        },
+    ))
+}
+
+/// Advertised endpoints that MUTATE, as bare paths. Kept as the parser-facing compatibility
+/// surface; the live contract runner uses `spec_post_endpoint_contracts` so service ownership is
+/// not discarded.
+#[cfg(test)]
 fn spec_post_endpoints(spec: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for adv in spec_advertised_surface(spec) {
-        let mut it = adv.split_whitespace();
-        let (Some(method), Some(path)) = (it.next(), it.next()) else {
-            continue;
-        };
-        if method == "POST" && path.starts_with('/') && !out.contains(&path.to_string()) {
-            out.push(path.to_string());
-        }
-    }
-    out
+    spec_post_endpoint_contracts(spec)
+        .into_iter()
+        .map(|contract| contract.path)
+        .collect()
 }
 
 /// What calling an advertised mutating endpoint TWICE proves about idempotency.
@@ -9317,6 +9578,177 @@ mod tests {
             spec_run_argv_v2("`python -m other --port N`", "app", tmp.path(), 9)
                 .0
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn spec_contract_retains_service_authority_and_merges_causal_routes() {
+        let spec = r#"
+`python -m app --ledger-port N --notifier-port M`
+`python -m app.ledgerd --port N`
+`python -m app.notifierd --port M`
+
+### `ledgerd`
+The ledger client also fetches GET /v3/reversals from the external vendor.
+
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/api/payments` | `{"data": [...], "total": <int>}` |
+| `GET` | `/api/payments?limit=<int>&offset=<int>` | `{"data": [...], "total": <int>, "limit": <int>, "offset": <int>}` |
+| `GET` | `/` + `web/*` | the frontend |
+
+### Approval workflow
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/api/drafts?state=` | `{"data": [...], "total": <int>}` |
+| `POST/GET` | `/api/drafts...` | section below |
+
+### `notifierd`
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/health` | `{"status": "ok"}` |
+| `GET` | `/notify/notifications?limit=&offset=` | `{"data": [...], "total": <int>}` |
+"#;
+        let gets = spec_get_endpoint_contracts(spec);
+        assert_eq!(
+            gets.len(),
+            5,
+            "bare/query twins are one causal route: {gets:?}"
+        );
+        let payments = gets
+            .iter()
+            .find(|endpoint| endpoint.route() == "/api/payments")
+            .expect("ledger payments route");
+        assert_eq!(payments.authority.as_deref(), Some("ledger"));
+        assert_eq!(
+            payments.path, "/api/payments?limit=1&offset=1",
+            "the query-bearing form is the stronger single probe"
+        );
+        assert!(
+            gets.iter().any(|endpoint| endpoint.path == "/"),
+            "a `/` + `web/*` table cell must retain only the concrete route: {gets:?}"
+        );
+        assert_eq!(
+            gets.iter()
+                .find(|endpoint| endpoint.route() == "/api/drafts")
+                .and_then(|endpoint| endpoint.authority.as_deref()),
+            Some("ledger"),
+            "later feature tables inherit the uniquely established `/api` service namespace"
+        );
+        assert!(
+            gets.iter().all(|endpoint| !endpoint.path.contains("...")),
+            "summary rows are not concrete probe routes: {gets:?}"
+        );
+        assert_eq!(
+            payments.documented_keys,
+            vec!["data", "limit", "offset", "total"],
+            "dedupe must retain every distinct documented shape assertion"
+        );
+        assert_eq!(
+            gets.iter()
+                .find(|endpoint| endpoint.path == "/health")
+                .and_then(|endpoint| endpoint.authority.as_deref()),
+            Some("notifier")
+        );
+        assert!(
+            gets.iter().all(|endpoint| endpoint.path != "/v3/reversals"),
+            "an outbound vendor request is not an advertised app route: {gets:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn spec_contract_probes_each_service_port_and_never_vendor_prose() {
+        let tree = tempfile::TempDir::new().unwrap();
+        let package = tree.path().join("app");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("__init__.py"), "").unwrap();
+        std::fs::write(
+            package.join("__main__.py"),
+            r#"import argparse
+import json
+import time
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlsplit
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--ledger-port", type=int, required=True)
+parser.add_argument("--notifier-port", type=int, required=True)
+args = parser.parse_args()
+hits = Path(__file__).resolve().parent.parent / "hits.log"
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        route = urlsplit(self.path).path
+        port = self.server.server_address[1]
+        with hits.open("a", encoding="utf-8") as stream:
+            stream.write(f"{port} {route}\n")
+        if port == args.ledger_port and route == "/ledger/rows":
+            body = {"data": [], "total": 0, "limit": 1, "offset": 1}
+            code = 200
+        elif port == args.notifier_port and route == "/notify/notifications":
+            body = {"data": [], "total": 0}
+            code = 200
+        else:
+            body = {"error": "wrong service"}
+            code = 404
+        payload = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *_):
+        pass
+
+for port in (args.ledger_port, args.notifier_port):
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+while True:
+    time.sleep(1)
+"#,
+        )
+        .unwrap();
+        let spec = r#"
+Run `python -m app --ledger-port N --notifier-port M`.
+
+### ledger
+The vendor client fetches GET /v3/reversals from an external dependency.
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/ledger/rows` | `{"data": [...], "total": <int>}` |
+| `GET` | `/ledger/rows?limit=<int>&offset=<int>` | `{"data": [...], "total": <int>, "limit": <int>, "offset": <int>}` |
+
+### notifier
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/notify/notifications?limit=<int>&offset=<int>` | `{"data": [...], "total": <int>}` |
+"#;
+        let result = run_spec_contract(tree.path(), spec, TargetLang::Python).await;
+        assert!(result.findings.is_empty(), "{:?}", result.findings);
+        assert_eq!(result.verified, 2, "one affirmative GET per service");
+        let hits = std::fs::read_to_string(tree.path().join("hits.log")).unwrap();
+        let rows = hits.lines().collect::<Vec<_>>();
+        assert_eq!(rows.len(), 2, "one causal probe per service: {rows:?}");
+        assert!(rows.iter().any(|row| row.ends_with(" /ledger/rows")));
+        assert!(rows
+            .iter()
+            .any(|row| row.ends_with(" /notify/notifications")));
+        assert!(
+            rows.iter().all(|row| !row.ends_with(" /v3/reversals")),
+            "vendor prose must never be probed: {rows:?}"
+        );
+        let ports = rows
+            .iter()
+            .filter_map(|row| row.split_whitespace().next())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            ports.len(),
+            2,
+            "ledger and notifier must use different ports"
         );
     }
 
@@ -36997,7 +37429,7 @@ fn probeable_get_path(path: &str) -> Option<String> {
         Some((b, q)) => (b, Some(q)),
         None => (path, None),
     };
-    if base.is_empty() || base.contains(['{', '<', ':']) {
+    if base.is_empty() || base.contains(['{', '<', ':']) || base.contains("...") {
         return None;
     }
     let Some(query) = query else {
@@ -37025,6 +37457,7 @@ fn probeable_get_path(path: &str) -> Option<String> {
 /// ...}`). Empty when the spec documents no JSON shape for the path — the caller then asserts
 /// nothing (fail-open; a row whose response cell is prose or an HTML page must not invent a check).
 /// Matching is on the PATH PART (query stripped both sides) so a filled probe path finds its row.
+#[cfg(test)]
 fn spec_documented_keys(spec: &str, path: &str) -> Vec<String> {
     let base = path.split('?').next().unwrap_or(path);
     let key_re = match regex::Regex::new(r#""(\w+)"\s*:"#) {
@@ -37062,6 +37495,7 @@ fn spec_documented_keys(spec: &str, path: &str) -> Vec<String> {
 /// residual Tier-B class once the sync works: summary bounds served as local time or naive
 /// strings score 0.75 while every probe passes on status and presence. Spec-derived and generic:
 /// fires only when the row's own text names the convention.
+#[cfg(test)]
 fn spec_documents_utc(spec: &str, path: &str) -> bool {
     let base = path.split('?').next().unwrap_or(path);
     for line in spec.lines() {
@@ -37111,7 +37545,7 @@ fn post_reports_acquired(body: &str) -> Option<i64> {
         .max()
 }
 
-fn spec_get_endpoints(spec: &str) -> Vec<String> {
+fn spec_prose_get_endpoints(spec: &str) -> Vec<String> {
     // Capture the WHOLE path token (up to whitespace) so a param'd route's delimiter is INCLUDED and can be
     // excluded below — a narrower char-class would stop before `<`/`{`/`:` and wrongly keep the base path.
     let re = match regex::Regex::new(r"(?i)\bGET\s+(/\S*)") {
@@ -37192,6 +37626,39 @@ fn spec_get_endpoints(spec: &str) -> Vec<String> {
         }
     }
     out
+}
+
+fn spec_get_endpoint_contracts(spec: &str) -> Vec<SpecEndpointContract> {
+    let table_contracts = spec_endpoint_table_contracts(spec);
+    if !table_contracts.is_empty() {
+        return merge_causal_endpoint_contracts(table_contracts.into_iter().filter_map(
+            |mut contract| {
+                if contract.method != "GET" {
+                    return None;
+                }
+                contract.path =
+                    probeable_get_path(contract.path.trim_end_matches([';', ',', ')', '.']))?;
+                Some(contract)
+            },
+        ));
+    }
+    spec_prose_get_endpoints(spec)
+        .into_iter()
+        .map(|path| SpecEndpointContract {
+            method: "GET".to_string(),
+            path,
+            authority: None,
+            documented_keys: Vec::new(),
+            documents_utc: false,
+        })
+        .collect()
+}
+
+fn spec_get_endpoints(spec: &str) -> Vec<String> {
+    spec_get_endpoint_contracts(spec)
+        .into_iter()
+        .map(|contract| contract.path)
+        .collect()
 }
 
 /// Advertised endpoints this check CANNOT probe, as `METHOD /path`, deduped and order-preserving.
@@ -37323,6 +37790,65 @@ fn spec_run_argv_v2(
     }
     drop(holders);
     (out, ports)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SpecServicePort {
+    authority: Option<String>,
+    port: u16,
+}
+
+fn spec_service_ports(
+    argv: &[String],
+    allocated_ports: &[u16],
+    fallback_port: u16,
+) -> Vec<SpecServicePort> {
+    let allocated = allocated_ports.iter().copied().collect::<HashSet<_>>();
+    let mut out = Vec::new();
+    for pair in argv.windows(2) {
+        if !pair[0].starts_with('-') || !pair[0].to_ascii_lowercase().contains("port") {
+            continue;
+        }
+        let Ok(port) = pair[1].parse::<u16>() else {
+            continue;
+        };
+        if !allocated.is_empty() && !allocated.contains(&port) {
+            continue;
+        }
+        let binding = SpecServicePort {
+            authority: port_flag_authority(&pair[0]),
+            port,
+        };
+        if !out.contains(&binding) {
+            out.push(binding);
+        }
+    }
+    for port in allocated_ports {
+        if !out.iter().any(|binding| binding.port == *port) {
+            out.push(SpecServicePort {
+                authority: None,
+                port: *port,
+            });
+        }
+    }
+    if out.is_empty() {
+        out.push(SpecServicePort {
+            authority: None,
+            port: fallback_port,
+        });
+    }
+    out
+}
+
+fn spec_endpoint_port(endpoint: &SpecEndpointContract, ports: &[SpecServicePort]) -> Option<u16> {
+    if let Some(authority) = endpoint.authority.as_deref() {
+        if let Some(port) = ports.iter().find_map(|binding| {
+            (binding.authority.as_deref() == Some(authority)).then_some(binding.port)
+        }) {
+            return Some(port);
+        }
+    }
+    (ports.len() == 1).then_some(ports[0].port)
 }
 
 /// The boot-repair brief's extra diagnosis when the probe's tail shows NO crash: the process ran
@@ -37728,10 +38254,10 @@ const HANG_CONFIRM_SECS: u64 = 200;
 
 async fn probe_advertised_get(
     port: u16,
-    spec: &str,
-    path: &str,
+    endpoint: &SpecEndpointContract,
     populated: bool,
 ) -> Option<(u16, Vec<(String, String)>)> {
+    let path = &endpoint.path;
     let url = format!("http://127.0.0.1:{port}{path}");
     let mut cmd = tokio::process::Command::new("curl");
     cmd.args(["-s", "-w", "\n%{http_code}", "-m", "5", &url]);
@@ -37775,7 +38301,7 @@ async fn probe_advertised_get(
             ),
         ));
     } else if (200..300).contains(&code) {
-        let documented = spec_documented_keys(spec, path);
+        let documented = &endpoint.documented_keys;
         if !documented.is_empty() {
             match serde_json::from_str::<serde_json::Value>(body.trim()) {
                 Ok(v) => {
@@ -37807,8 +38333,8 @@ async fn probe_advertised_get(
                             ),
                         ));
                     }
-                    if spec_documents_utc(spec, path) {
-                        for k in &documented {
+                    if endpoint.documents_utc {
+                        for k in documented {
                             if let Some(bad) = v.get(k.as_str()).and_then(utc_bounds_violation) {
                                 found.push((
                                     format!("utc:{k}"),
@@ -37876,7 +38402,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             render_gate: "not-reached (gate exits before the entry spawn)".to_string(),
         };
     };
-    let gets = spec_get_endpoints(spec);
+    let gets = spec_get_endpoint_contracts(spec);
     if gets.is_empty() {
         return SpecContractResult {
             findings,
@@ -37916,8 +38442,9 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     ));
     let _ = std::fs::remove_file(&scratch_db);
     // v2 (F910): kind-aware placeholder filling — each port-flag gets its own fresh port, so
-    // multi-service specs (sb-7's --ledger-port/--notifier-port) boot correctly; the API
-    // probes below target the FIRST substituted port (the primary service in every spec form).
+    // multi-service specs (sb-7's --ledger-port/--notifier-port) boot correctly. Service names
+    // remain bound to those ports below; flattening every endpoint onto the first port is not a
+    // valid multi-service probe.
     let contract_scratch = std::env::temp_dir().join(format!(
         "goose-spec-contract-scratch-{}-{}",
         std::process::id(),
@@ -37928,15 +38455,24 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     } else {
         (Vec::new(), Vec::new())
     };
-    let port = advertised_ports
-        .first()
-        .copied()
-        .unwrap_or_else(|| spec_port(spec));
+    let service_ports = spec_service_ports(&advertised, &advertised_ports, spec_port(spec));
+    let port = service_ports[0].port;
+    let probe_ports = service_ports
+        .iter()
+        .map(|binding| binding.port)
+        .collect::<Vec<_>>();
     // Read the port's state BEFORE spawning — after the spawn it is unknowable whether we or a
     // squatter opened it, and that ambiguity is exactly what produced two false 404 findings.
-    let port_was_free_before_spawn = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .is_err();
+    let ports_were_free_before_spawn =
+        futures::future::join_all(probe_ports.iter().map(|port| async move {
+            (
+                *port,
+                tokio::net::TcpStream::connect(("127.0.0.1", *port))
+                    .await
+                    .is_err(),
+            )
+        }))
+        .await;
     let mut server = tokio::process::Command::new("python3");
     server
         .args(["-m", &pkg])
@@ -37959,10 +38495,13 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     };
     let mut up = false;
     for _ in 0..80 {
-        if tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .is_ok()
-        {
+        let states = futures::future::join_all(probe_ports.iter().map(|port| async move {
+            tokio::net::TcpStream::connect(("127.0.0.1", *port))
+                .await
+                .is_ok()
+        }))
+        .await;
+        if states.iter().all(|bound| *bound) {
             up = true;
             break;
         }
@@ -37985,10 +38524,19 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     // This is the standing law about proving a negative, applied to a positive: before an open port
     // licenses a conclusion about OUR app, prove OUR app is what opened it. The cheap proof is that
     // the port was CLOSED before the spawn — checked here rather than inferred.
-    if up && !port_was_free_before_spawn {
+    let occupied_before_spawn = ports_were_free_before_spawn
+        .iter()
+        .filter_map(|(port, free)| (!free).then_some(*port))
+        .collect::<Vec<_>>();
+    if up && !occupied_before_spawn.is_empty() {
         let _ = child.kill().await;
         inconclusive.push(format!(
-            "spec-contract: port {port} was ALREADY BOUND before `python3 -m {pkg}` started, so the              server answering there is NOT this app — probing it would blame the app for another              process's responses. Most likely the spec's first port literal belongs to an external              dependency (a documented vendor/API base URL) rather than to the app."
+            "spec-contract: port(s) {} were ALREADY BOUND before `python3 -m {pkg}` started, so the              server answering there is NOT this app — probing it would blame the app for another              process's responses. Most likely a literal belongs to an external dependency              (a documented vendor/API base URL) rather than to the app.",
+            occupied_before_spawn
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         return SpecContractResult {
             findings,
@@ -38021,14 +38569,16 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         // same run where `http_timeout_scan`'s finding blocked green and WAS repaired by round 1.
         if advertised.is_empty() {
             inconclusive.push(format!(
-                "spec-contract: `python3 -m {pkg}` never bound port {port} within 4s — the advertised entrypoint did not start a server (the port was inferred from the spec, so this may be a bad guess rather than an app defect)"
+                "spec-contract: `python3 -m {pkg}` never bound every advertised port ({}) within 4s — the advertised entrypoint did not start every service (the ports were inferred from the spec, so this may be a bad guess rather than an app defect)",
+                probe_ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", ")
             ));
         } else {
             findings.push(format!(
-                "the app never bound port {port} when started EXACTLY as its spec documents \
+                "the app never bound every advertised service port ({}) when started EXACTLY as its spec documents \
                  (`python3 -m {pkg} {}`), so it does not run at all. Check that the entrypoint BLOCKS \
                  while serving — a server started on a daemon thread dies the moment main() returns. \
                  Do not change the advertised command or the port to make this pass.",
+                probe_ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", "),
                 advertised.join(" ")
             ));
         }
@@ -38045,10 +38595,20 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     let mut empty_pass: std::collections::HashMap<String, std::collections::HashSet<String>> =
         std::collections::HashMap::new();
     let mut empty_codes: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
-    for path in &gets {
-        match probe_advertised_get(port, spec, path, false).await {
+    for endpoint in &gets {
+        let Some(endpoint_port) = spec_endpoint_port(endpoint, &service_ports) else {
+            inconclusive.push(format!(
+                "spec-contract: GET {} belongs to an ambiguous service section, so no advertised port can be selected safely",
+                endpoint.path
+            ));
+            continue;
+        };
+        let key = endpoint.causal_key();
+        match probe_advertised_get(endpoint_port, endpoint, false).await {
             None => inconclusive.push(format!(
-                "spec-contract: curl of GET {path} did not complete"
+                "spec-contract: curl of GET {} on its {} service port did not complete",
+                endpoint.path,
+                endpoint.authority.as_deref().unwrap_or("only")
             )),
             Some((code, found)) => {
                 // AFFIRMATIVE: the advertised endpoint answered with a real 2xx. This is the signal a
@@ -38057,8 +38617,8 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 if (200..300).contains(&code) {
                     verified += 1;
                 }
-                empty_codes.insert(path.clone(), code);
-                let seen = empty_pass.entry(path.clone()).or_default();
+                empty_codes.insert(key.clone(), code);
+                let seen = empty_pass.entry(key).or_default();
                 for (token, text) in found {
                     seen.insert(token);
                     findings.push(text);
@@ -38161,8 +38721,15 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 })
                 .unwrap_or_default()
         };
-        for path in spec_post_endpoints(spec) {
-            let url = format!("http://127.0.0.1:{port}{path}");
+        for endpoint in spec_post_endpoint_contracts(spec) {
+            let path = &endpoint.path;
+            let Some(post_port) = spec_endpoint_port(&endpoint, &service_ports) else {
+                inconclusive.push(format!(
+                    "spec-contract: POST {path} belongs to an ambiguous service section, so no advertised port can be selected safely"
+                ));
+                continue;
+            };
+            let url = format!("http://127.0.0.1:{post_port}{path}");
             // THE STATUS, NOT ONLY THE BODY. The GET arm above has treated `code >= 500` as a
             // finding since it was written; this arm captured neither the code nor anything derived
             // from it, so an advertised sync endpoint that 500s handed its error body to
@@ -38356,7 +38923,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                 // GET assertion uses; a row that documents no keys degrades to a shape-neutral
                 // message instead of borrowing a sibling's.
                 RepeatedPost::Unreadable => {
-                    let documented = spec_documented_keys(spec, path.as_str());
+                    let documented = &endpoint.documented_keys;
                     if documented.is_empty() {
                         findings.push(format!(
                             "POST {path}'s response could not be read as JSON on either probe — \
@@ -38390,12 +38957,19 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             // no rows stays Vacuous/inconclusive above, and an app that reports no counts is the
             // Unreadable arm — so a legitimate empty sync can never be blamed.
             if let Some(acquired) = post_reports_acquired(a_body).filter(|&n| n > 0) {
-                for gpath in &gets {
-                    let dk = spec_documented_keys(spec, gpath);
+                for get_endpoint in &gets {
+                    if get_endpoint.authority != endpoint.authority {
+                        continue;
+                    }
+                    let dk = &get_endpoint.documented_keys;
                     if !dk.iter().any(|k| k == "total" || k == "count") {
                         continue;
                     }
-                    let gurl = format!("http://127.0.0.1:{port}{gpath}");
+                    let Some(get_port) = spec_endpoint_port(get_endpoint, &service_ports) else {
+                        continue;
+                    };
+                    let gpath = &get_endpoint.path;
+                    let gurl = format!("http://127.0.0.1:{get_port}{gpath}");
                     let mut cmd = tokio::process::Command::new("curl");
                     cmd.args(["-s", "-m", "5", &gurl]);
                     let Some(gout) = smoke_output(cmd, 8).await else {
@@ -38440,18 +39014,23 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
         let child_alive = !matches!(child.try_wait(), Ok(Some(_)));
         let mut dark: Vec<String> = Vec::new();
         let mut fresh: Vec<String> = Vec::new();
-        for path in &gets {
-            match probe_advertised_get(port, spec, path, true).await {
+        for endpoint in &gets {
+            let Some(endpoint_port) = spec_endpoint_port(endpoint, &service_ports) else {
+                continue;
+            };
+            let key = endpoint.causal_key();
+            match probe_advertised_get(endpoint_port, endpoint, true).await {
                 None => inconclusive.push(format!(
-                    "spec-contract: curl of GET {path} did not complete on the populated re-probe"
+                    "spec-contract: curl of GET {} did not complete on the populated re-probe",
+                    endpoint.path
                 )),
                 Some((code, found)) => {
-                    let was = empty_codes.get(path).copied().unwrap_or(0);
+                    let was = empty_codes.get(&key).copied().unwrap_or(0);
                     if wedged_after_populating(was, code) {
-                        dark.push(path.clone());
+                        dark.push(endpoint.path.clone());
                         continue;
                     }
-                    let seen = empty_pass.get(path);
+                    let seen = empty_pass.get(&key);
                     for (token, text) in found {
                         // Deduped on the token (kind + violated key), which is stable across the
                         // two passes — the display text is not, because the populated pass appends
@@ -38513,8 +39092,10 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
             .arg(AGGREGATE_TRUTH_SCRIPT)
             .arg(format!("http://127.0.0.1:{port}"))
             .arg(&spec_tz);
-        for p in &gets {
-            cmd.arg(p);
+        for endpoint in &gets {
+            if spec_endpoint_port(endpoint, &service_ports) == Some(port) {
+                cmd.arg(&endpoint.path);
+            }
         }
         match smoke_output(cmd, 60).await {
             Some(out) => match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
@@ -38815,8 +39396,10 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
                             .arg(AGGREGATE_TRUTH_SCRIPT)
                             .arg(format!("http://127.0.0.1:{port}"))
                             .arg(&spec_tz);
-                        for p in &gets {
-                            cmd.arg(p);
+                        for endpoint in &gets {
+                            if spec_endpoint_port(endpoint, &service_ports) == Some(port) {
+                                cmd.arg(&endpoint.path);
+                            }
                         }
                         match smoke_output(cmd, 60).await {
                             Some(out2) => {
