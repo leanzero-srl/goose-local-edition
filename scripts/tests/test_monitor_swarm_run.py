@@ -450,6 +450,223 @@ class EndToEndMonitorTests(unittest.TestCase):
                     sleeper.terminate()
                     sleeper.wait(timeout=5)
 
+    def test_observation_only_recurrence_is_deduped_and_monitor_reaches_completion(
+        self,
+    ):
+        sleep = pathlib.Path(shutil.which("sleep")).resolve()
+        binary_sha = hashlib.sha256(sleep.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = pathlib.Path(temporary) / "run"
+            activity_dir = run_dir / ".swarm" / "activity"
+            activity_dir.mkdir(parents=True)
+            activity_path = activity_dir / "detail.json"
+            MONITOR.atomic_write(activity_path, activity_bytes(9000, 8000, 3200))
+            event_log = run_dir / "run.jsonl"
+            pid_file = run_dir / "goose.pid"
+            sleeper = subprocess.Popen([str(sleep), "30"])
+            pid_file.write_text(str(sleeper.pid) + "\n", encoding="utf-8")
+            watcher = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "watch",
+                    "--run-dir",
+                    str(run_dir),
+                    "--pid-file",
+                    str(pid_file),
+                    "--binary",
+                    str(sleep),
+                    "--sha256",
+                    binary_sha,
+                    "--poll-secs",
+                    "0.05",
+                    "--lms-poll-secs",
+                    "1000",
+                    "--confirmations",
+                    "2",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                heartbeat = run_dir / ".swarm-monitor" / "heartbeat"
+                deadline = time.monotonic() + 5
+                while not heartbeat.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(
+                    heartbeat.exists(), "monitor did not establish its baseline"
+                )
+
+                for thinking, observed, repeated in (
+                    (10000, 9000, 3700),
+                    (11000, 10000, 4100),
+                    (12000, 11000, 4600),
+                ):
+                    MONITOR.atomic_write(
+                        activity_path,
+                        activity_bytes(thinking, observed, repeated),
+                    )
+                    time.sleep(0.2)
+
+                findings_root = run_dir / ".swarm-monitor" / "findings"
+                deadline = time.monotonic() + 20
+                findings = []
+                while time.monotonic() < deadline:
+                    findings = (
+                        list(findings_root.iterdir())
+                        if findings_root.exists()
+                        else []
+                    )
+                    if findings and (findings[0] / "CAPTURE_COMPLETE").is_file():
+                        break
+                    time.sleep(0.05)
+                self.assertEqual(len(findings), 1)
+                self.assertTrue((findings[0] / "finding.json").is_file())
+                self.assertIsNone(
+                    sleeper.poll(), "observation-only finding stopped Goose"
+                )
+                self.assertIsNone(
+                    watcher.poll(), "observation-only finding stopped monitor"
+                )
+
+                MONITOR.atomic_write(
+                    activity_path, activity_bytes(13000, 12000, 5100)
+                )
+                time.sleep(0.3)
+                self.assertEqual(len(list(findings_root.iterdir())), 1)
+
+                MONITOR.atomic_write(
+                    event_log,
+                    (
+                        json.dumps({"event": "run_finished", "seq": 999}) + "\n"
+                    ).encode(),
+                )
+                watch_log = run_dir / ".swarm-monitor" / "watch.jsonl"
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    rows = [
+                        json.loads(line)
+                        for line in watch_log.read_text(encoding="utf-8").splitlines()
+                    ]
+                    if any(
+                        row.get("event") == "engine_transition"
+                        and row.get("engine_event") == "run_finished"
+                        for row in rows
+                    ):
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail("monitor did not observe run_finished")
+
+                sleeper.terminate()
+                sleeper.wait(timeout=5)
+                stdout, stderr = watcher.communicate(timeout=10)
+                self.assertEqual(
+                    watcher.returncode,
+                    0,
+                    (
+                        stdout.decode("utf-8", "replace"),
+                        stderr.decode("utf-8", "replace"),
+                    ),
+                )
+                rows = [
+                    json.loads(line)
+                    for line in watch_log.read_text(encoding="utf-8").splitlines()
+                ]
+                self.assertEqual(
+                    [row["event"] for row in rows].count("finding_detected"), 1
+                )
+                self.assertEqual(
+                    [row["event"] for row in rows].count("finding_captured"), 1
+                )
+                self.assertNotIn(
+                    "incident_detected", [row["event"] for row in rows]
+                )
+                self.assertEqual(rows[-1]["event"], "monitor_completed")
+                self.assertEqual(rows[-1]["outcome"], "run_finished")
+            finally:
+                if watcher.poll() is None:
+                    watcher.terminate()
+                    watcher.wait(timeout=5)
+                if sleeper.poll() is None:
+                    sleeper.terminate()
+                    sleeper.wait(timeout=5)
+
+    def test_observation_only_malformed_log_remains_a_fatal_incident(self):
+        sleep = pathlib.Path(shutil.which("sleep")).resolve()
+        binary_sha = hashlib.sha256(sleep.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = pathlib.Path(temporary) / "run"
+            run_dir.mkdir(parents=True)
+            event_log = run_dir / "run.jsonl"
+            pid_file = run_dir / "goose.pid"
+            sleeper = subprocess.Popen([str(sleep), "30"])
+            pid_file.write_text(str(sleeper.pid) + "\n", encoding="utf-8")
+            watcher = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "watch",
+                    "--run-dir",
+                    str(run_dir),
+                    "--pid-file",
+                    str(pid_file),
+                    "--binary",
+                    str(sleep),
+                    "--sha256",
+                    binary_sha,
+                    "--poll-secs",
+                    "0.05",
+                    "--lms-poll-secs",
+                    "1000",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                heartbeat = run_dir / ".swarm-monitor" / "heartbeat"
+                deadline = time.monotonic() + 5
+                while not heartbeat.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(
+                    heartbeat.exists(), "monitor did not establish its baseline"
+                )
+                MONITOR.atomic_write(event_log, b'{"event": not-json}\n')
+                stdout, stderr = watcher.communicate(timeout=20)
+                self.assertEqual(
+                    watcher.returncode,
+                    20,
+                    (
+                        stdout.decode("utf-8", "replace"),
+                        stderr.decode("utf-8", "replace"),
+                    ),
+                )
+                self.assertIsNone(
+                    sleeper.poll(), "observation-only structural incident signalled Goose"
+                )
+                incidents = list(
+                    (run_dir / ".swarm-monitor" / "incidents").iterdir()
+                )
+                self.assertEqual(len(incidents), 1)
+                payload = json.loads((incidents[0] / "incident.json").read_text())
+                self.assertEqual(payload["classification"], "incident")
+                self.assertIn("malformed JSON", payload["reason"])
+                rows = [
+                    json.loads(line)
+                    for line in (run_dir / ".swarm-monitor" / "watch.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                ]
+                self.assertIn("incident_detected", [row["event"] for row in rows])
+                self.assertNotIn("finding_detected", [row["event"] for row in rows])
+            finally:
+                if watcher.poll() is None:
+                    watcher.terminate()
+                    watcher.wait(timeout=5)
+                if sleeper.poll() is None:
+                    sleeper.terminate()
+                    sleeper.wait(timeout=5)
+
     def test_external_expected_stop_does_not_create_a_second_exit_incident(self):
         sleep = pathlib.Path(shutil.which("sleep")).resolve()
         binary_sha = hashlib.sha256(sleep.read_bytes()).hexdigest()
