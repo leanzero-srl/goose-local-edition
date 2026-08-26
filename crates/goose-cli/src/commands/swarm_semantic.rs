@@ -1944,6 +1944,7 @@ mod tests {
 
     struct RetainedBuildDispatcher {
         reviewer_provider: Arc<UnresolvedSemanticProvider>,
+        completion_delay: Duration,
     }
 
     #[async_trait]
@@ -1971,6 +1972,7 @@ mod tests {
                 .await
                 .map_err(DispatchError::Terminal)?;
             self.reviewer_provider.wait_until_called().await;
+            tokio::time::sleep(self.completion_delay).await;
             started
                 .provider_terminal(ProviderTerminalKind::Finished)
                 .await
@@ -2714,7 +2716,12 @@ mod tests {
         assert_eq!(sink.count("broker_provider_not_started"), 0);
     }
 
-    async fn assert_unresolved_semantic_stream_is_quarantined(mode: UnresolvedSemanticStream) {
+    async fn assert_unresolved_semantic_stream_is_quarantined(
+        mode: UnresolvedSemanticStream,
+        liveness: SemanticReviewerLiveness,
+        completion_delay: Duration,
+        return_bound: Duration,
+    ) {
         let sink = Arc::new(RecordingSink::default());
         let mut lane_a = lane("semantic-lane-a");
         lane_a.model_id = "semantic-model-a".to_string();
@@ -2737,10 +2744,7 @@ mod tests {
                 routes,
                 None,
                 HashMap::new(),
-                SemanticReviewerLiveness::from_durations(
-                    Some(Duration::from_millis(25)),
-                    Some(Duration::from_millis(75)),
-                ),
+                liveness,
             )
             .unwrap(),
         );
@@ -2752,6 +2756,7 @@ mod tests {
         .unwrap();
         let dispatcher = Arc::new(RetainedBuildDispatcher {
             reviewer_provider: provider,
+            completion_delay,
         });
         let dag = Dag::from_specs(vec![TaskSpec {
             id: "retained-build".to_string(),
@@ -2783,7 +2788,7 @@ mod tests {
             },
         ];
         let report = tokio::time::timeout(
-            Duration::from_secs(2),
+            return_bound,
             Scheduler::new(devices, 1)
                 .with_sink(sink.clone())
                 .with_semantic_observation(Arc::new(SchedulerSnapshotProducer), reviewer)
@@ -2826,14 +2831,36 @@ mod tests {
         let semantic_admission_id = semantic_provider_start["admission"]["admission_id"]
             .as_str()
             .unwrap();
-        let quarantine = events
+        let quarantine_index = events
             .iter()
-            .find(|event| event["event"] == "broker_admission_quarantined")
+            .position(|event| event["event"] == "broker_admission_quarantined")
             .expect("unresolved semantic admission was not quarantined");
+        let quarantine = &events[quarantine_index];
         assert_eq!(
             quarantine["receipt"]["admission"]["admission_id"],
             semantic_admission_id
         );
+        if matches!(mode, UnresolvedSemanticStream::ActiveOpen) {
+            assert!(
+                quarantine["receipt"]["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("total duration")),
+                "active chunks must reach the independent total budget: {quarantine}"
+            );
+        }
+        if !completion_delay.is_zero() {
+            let build_terminal_index = events
+                .iter()
+                .position(|event| {
+                    event["event"] == "broker_provider_terminal_observed"
+                        && event["admission"]["role"] == "build"
+                })
+                .expect("retained build provider terminal was not recorded");
+            assert!(
+                quarantine_index < build_terminal_index,
+                "auxiliary observer budget must not cap the still-running build"
+            );
+        }
         assert_eq!(
             events
                 .iter()
@@ -2865,8 +2892,35 @@ mod tests {
             UnresolvedSemanticStream::SilentOpen,
             UnresolvedSemanticStream::ActiveOpen,
         ] {
-            assert_unresolved_semantic_stream_is_quarantined(mode).await;
+            assert_unresolved_semantic_stream_is_quarantined(
+                mode,
+                SemanticReviewerLiveness::from_durations(
+                    Some(Duration::from_millis(25)),
+                    Some(Duration::from_millis(75)),
+                ),
+                Duration::ZERO,
+                Duration::from_secs(2),
+            )
+            .await;
         }
+    }
+
+    #[tokio::test]
+    async fn production_uncapped_semantic_observer_keeps_an_independent_total_budget() {
+        let _env = env_lock::lock_env([("GOOSE_SWARM_UNCAPPED", Some("1"))]);
+        assert_eq!(
+            super::super::swarm::planner_wall(1),
+            7 * 24 * 60 * 60,
+            "fixture must exercise the uncapped planner sentinel"
+        );
+
+        assert_unresolved_semantic_stream_is_quarantined(
+            UnresolvedSemanticStream::ActiveOpen,
+            super::super::swarm::semantic_observer_liveness(1),
+            Duration::from_millis(1_500),
+            Duration::from_secs(4),
+        )
+        .await;
     }
 
     #[tokio::test]
