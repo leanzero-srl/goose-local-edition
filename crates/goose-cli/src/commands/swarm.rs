@@ -14892,23 +14892,44 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn evidence_compiled_plan_preserves_owner_resolved_interfaces_and_acceptance_evidence() {
+    fn evidence_compiled_plan_binds_only_proven_claims_and_keeps_supported_advisory() {
         let opening = pillar_plan_test_opening(false);
+        let source_body =
+            "The verified core contract exposes CorePort from src/core.rs as the owned boundary.";
         let report =
             compile_pillar_report_with_sources(
                 &opening,
-                &[],
+                &[EvidenceSourceSection {
+                    id: "core-contract-receipt".to_string(),
+                    requirement_id: "REQ-core".to_string(),
+                    text: source_body.to_string(),
+                    content_sha256: evidence_source_digest(source_body),
+                    authority: EvidenceSourceAuthority::EngineReceipt,
+                }],
                 PillarReportDraft {
                     pillar_id: "core".to_string(),
                     reported_confidence: Confidence::High,
-                    claims: vec![ResearchClaimDraft {
-                        requirement_id: "REQ-core".to_string(),
-                        statement: "Expose the resolved CorePort boundary from src/core.rs"
-                            .to_string(),
-                        reported_class: EvidenceClass::Supported,
-                        source_section_id: None,
-                        source_quote: None,
-                    }],
+                    claims: vec![
+                        ResearchClaimDraft {
+                            requirement_id: "REQ-core".to_string(),
+                            statement: "Expose the proven CorePort boundary from src/core.rs"
+                                .to_string(),
+                            reported_class: EvidenceClass::Proven,
+                            source_section_id: Some("core-contract-receipt".to_string()),
+                            source_quote: Some(
+                                "verified core contract exposes CorePort from src/core.rs"
+                                    .to_string(),
+                            ),
+                        },
+                        ResearchClaimDraft {
+                            requirement_id: "REQ-core".to_string(),
+                            statement: "A helper module might simplify CorePort serialization"
+                                .to_string(),
+                            reported_class: EvidenceClass::Supported,
+                            source_section_id: None,
+                            source_quote: None,
+                        },
+                    ],
                     unresolved_uncertainties: Vec::new(),
                     acceptance_tests: vec![
                         "cargo test --test owner_resolved_core_contract".to_string()
@@ -14931,7 +14952,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         assert!(routes.is_empty());
         let description = &dag.tasks["pillar-build-01"].spec.description;
         for exact_owner_contract in [
-            "Expose the resolved CorePort boundary from src/core.rs",
+            "Expose the proven CorePort boundary from src/core.rs",
             "CorePort::run(input) returns the exact authored core result",
             "cargo test --test owner_resolved_core_contract",
         ] {
@@ -14940,6 +14961,21 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 "evidence-compiled worker contract lost `{exact_owner_contract}`: {description}"
             );
         }
+        let proven_section = description
+            .split("Implement only the Proven owner contract")
+            .nth(1)
+            .and_then(|suffix| {
+                suffix
+                    .split("Keep Supported findings advisory and do not promote them to authority")
+                    .next()
+            })
+            .expect("the compiled task omitted its Proven binding section");
+        assert!(!proven_section.contains("helper module might simplify"));
+        let advisory_section = description
+            .split("Keep Supported findings advisory and do not promote them to authority")
+            .nth(1)
+            .expect("the compiled task omitted its Supported advisory section");
+        assert!(advisory_section.contains("A helper module might simplify CorePort serialization"));
         assert!(!description.contains("Which exact interface owns the behavior?"));
     }
 
@@ -56605,18 +56641,28 @@ fn compile_pillar_evidence_plan(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let resolved_decisions = report
+        let proven_decisions = report
             .map(|report| {
                 report
                     .claims
                     .iter()
-                    .filter(|claim| claim.effective_class != EvidenceClass::Unresolved)
+                    .filter(|claim| claim.effective_class == EvidenceClass::Proven)
                     .map(|claim| {
                         format!(
                             "[{}={:?}] {}",
                             claim.requirement_id, claim.effective_class, claim.statement
                         )
                     })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let supported_advisories = report
+            .map(|report| {
+                report
+                    .claims
+                    .iter()
+                    .filter(|claim| claim.effective_class == EvidenceClass::Supported)
+                    .map(|claim| format!("[{}] {}", claim.requirement_id, claim.statement))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -56656,20 +56702,26 @@ fn compile_pillar_evidence_plan(
         exclusions.extend(pillar.exclusions.iter().cloned());
         let mut seen_exclusions = HashSet::new();
         exclusions.retain(|value| seen_exclusions.insert(value.clone()));
-        let decision_contract = if resolved_decisions.is_empty() {
-            "No owner-resolved implementation decision survived; use the authored requirement text and isolate unproven choices rather than rediscovering sibling scope".to_string()
+        let decision_contract = if proven_decisions.is_empty() {
+            "No Proven owner implementation decision survived; bind only the authored requirement text and isolate unproven choices rather than promoting advisory research".to_string()
         } else {
-            resolved_decisions.join("\n")
+            proven_decisions.join("\n")
+        };
+        let advisory_context = if supported_advisories.is_empty() {
+            "No Supported advisory findings were retained".to_string()
+        } else {
+            supported_advisories.join("\n")
         };
         subtasks.push(serde_json::json!({
             "id": task_id,
             "description": format!(
-                "PILLAR {} — {}\nExclusive objective: {}\nBinding requirements:\n{}\nOwner-resolved research/spec decisions:\n{}\nProducer/consumer interfaces: {}\nAcceptance evidence: {}\nExplicit exclusions: {}\nRemaining uncertainty: {}\nImplement only this boundary in the owned file(s), run the exact acceptance checks, and leave sibling ownership untouched.",
+                "PILLAR {} — {}\nExclusive objective: {}\nBinding requirements:\n{}\nProven owner research/spec decisions (binding):\n{}\nSupported owner research/spec findings (advisory only):\n{}\nProducer/consumer interfaces: {}\nAcceptance evidence: {}\nExplicit exclusions: {}\nRemaining uncertainty: {}\nImplement only this boundary in the owned file(s), run the exact acceptance checks, and leave sibling ownership untouched. Never treat Supported advisory findings as implementation authority.",
                 pillar.id,
                 pillar.title,
                 pillar.objective,
                 requirement_trace,
                 decision_contract,
+                advisory_context,
                 interfaces.join("; "),
                 acceptance.join("; "),
                 exclusions.join("; "),
@@ -56685,7 +56737,8 @@ fn compile_pillar_evidence_plan(
             "objective": format!("Implement the exclusive {} pillar without taking sibling scope", pillar.title),
             "module_boundary": format!("Own only {} and the requirements assigned to {}", files.join(", "), pillar.id),
             "concrete_steps": [
-                format!("Implement the owner-resolved contract for {}: {}", pillar.id, decision_contract),
+                format!("Implement only the Proven owner contract for {}: {}", pillar.id, decision_contract),
+                format!("Keep Supported findings advisory and do not promote them to authority: {}", advisory_context),
                 format!("Honor these exact interfaces without taking sibling scope: {}", interfaces.join("; ")),
                 format!("Run these executable acceptance checks and retain their evidence: {}", acceptance.join("; "))
             ],
