@@ -40354,11 +40354,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     } else {
         (Vec::new(), Vec::new())
     };
-    let advertised_port_numbers = advertised_ports
-        .iter()
-        .map(|probe| probe.port)
-        .collect::<Vec<_>>();
-    let service_ports = spec_service_ports(&advertised, &advertised_port_numbers, spec_port(spec));
+    let service_ports = spec_service_ports(&advertised, &advertised_ports, spec_port(spec));
     let port = service_ports[0].port;
     let probe_ports = service_ports
         .iter()
