@@ -1133,10 +1133,8 @@ impl PhysicalAdmissionControl {
             });
         for receipt in outcome.withdrawn_work {
             if let Some(waiter) = state.admission_waiters.remove(&receipt.work_id) {
-                let _ = waiter.send(Err(BrokerError::InvalidOpportunity {
+                let _ = waiter.send(Err(BrokerError::EligiblePhysicalHostsQuarantined {
                     work_id: receipt.work_id.clone(),
-                    reason: "every eligible physical host is quarantined by an unresolved provider request"
-                        .to_string(),
                 }));
             }
             self.inner
@@ -3008,18 +3006,14 @@ enum PreparedDispatch {
     DeterministicProviderFree,
 }
 
-const EXHAUSTED_PROVIDER_ROUTES: &str =
-    "every eligible physical host is quarantined by an unresolved provider request";
 const QUARANTINED_PROVIDER_ROUTE: &str =
     "physical host is quarantined by an unresolved provider request";
 
 fn broker_dispatch_error(error: BrokerError) -> DispatchError {
     match &error {
-        BrokerError::InvalidOpportunity { reason, .. } if reason == EXHAUSTED_PROVIDER_ROUTES => {
-            DispatchError::Unavailable(format!(
-                "physical admission has no usable provider route: {error}"
-            ))
-        }
+        BrokerError::EligiblePhysicalHostsQuarantined { .. } => DispatchError::Unavailable(
+            format!("physical admission has no usable provider route: {error}"),
+        ),
         BrokerError::InvalidProviderRequest { reason, .. }
             if reason == QUARANTINED_PROVIDER_ROUTE =>
         {
@@ -3218,9 +3212,8 @@ mod provider_start_registry_tests {
     #[test]
     fn only_typed_route_exhaustion_and_quarantine_races_are_unavailable() {
         assert!(matches!(
-            broker_dispatch_error(BrokerError::InvalidOpportunity {
+            broker_dispatch_error(BrokerError::EligiblePhysicalHostsQuarantined {
                 work_id: "task".to_string(),
-                reason: EXHAUSTED_PROVIDER_ROUTES.to_string(),
             }),
             DispatchError::Unavailable(_)
         ));

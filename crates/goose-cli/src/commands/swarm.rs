@@ -44,21 +44,22 @@ use goose_swarm::{
     render_synthesis_input, scheduler_task_spec_digest, task_acceptance_digest,
     validate_pillar_integration_task_ownership, validate_pillar_opening,
     validate_pillar_opening_against, validate_project_artifact_path, AdmissionReceipt,
-    AdmittedWork, AuthoredRequirement, AuthorityScope, ChildSpec, CompiledPillarReport,
-    CompletedProviderRequest, Confidence, Dag, DeviceCfg, DispatchError, DispatchRequest,
-    EventSink, EvidenceClass, EvidenceSourceAuthority, EvidenceSourceSection, HostCapacityEvidence,
-    IntegrationContract, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
-    LocalCompletionKind, NullSink, PhysicalAdmissionControl, PhysicalExecutionAuthority,
-    PhysicalFleetSnapshot, PillarAttemptCheckpoint, PillarAttemptStatus, PillarCheckpointStore,
-    PillarImplementationTaskCoverage, PillarOpeningCheckpointReceipt, PillarOpeningCheckpointStage,
-    PillarOpeningContractBinding, PillarOpeningPartialCheckpoint,
-    PillarOpeningPartialSemanticState, PillarOpeningRawOutputCheckpoint, PillarOpeningStageStore,
-    PillarReportDraft, PillarResumeDecision, PreReviewOutput, PreReviewRequest, PreReviewer,
-    ProviderLifecycle, ProviderLifecycleDispatcher, ProviderLifecycleStartError,
-    ProviderNudgeDelivery, ProviderNudgeSafetySnapshot, ProviderRequestKey, ProviderRequestReceipt,
-    ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
-    ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport,
-    Scheduler, SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
+    AdmittedWork, AuthoredRequirement, AuthorityScope, BrokerError, ChildSpec,
+    CompiledPillarReport, CompletedProviderRequest, Confidence, Dag, DeviceCfg, DispatchError,
+    DispatchRequest, EventSink, EvidenceClass, EvidenceSourceAuthority, EvidenceSourceSection,
+    HostCapacityEvidence, IntegrationContract, Judge, JudgeConfig, JudgeInput, JudgeOutcome,
+    JudgeRequest, LocalCompletionKind, NullSink, PhysicalAdmissionControl,
+    PhysicalExecutionAuthority, PhysicalFleetSnapshot, PillarAttemptCheckpoint,
+    PillarAttemptStatus, PillarCheckpointStore, PillarImplementationTaskCoverage,
+    PillarOpeningCheckpointReceipt, PillarOpeningCheckpointStage, PillarOpeningContractBinding,
+    PillarOpeningPartialCheckpoint, PillarOpeningPartialSemanticState,
+    PillarOpeningRawOutputCheckpoint, PillarOpeningStageStore, PillarReportDraft,
+    PillarResumeDecision, PreReviewOutput, PreReviewRequest, PreReviewer, ProviderLifecycle,
+    ProviderLifecycleDispatcher, ProviderLifecycleStartError, ProviderNudgeDelivery,
+    ProviderNudgeSafetySnapshot, ProviderRequestKey, ProviderRequestReceipt, ProviderTerminalKind,
+    ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner,
+    ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport, Scheduler,
+    SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
     SourceRevisionKind, SwarmEvent, TaskCompletionDisposition, TaskDispatcher, TaskRunOutput,
     TaskSpec, TaskUnavailableEvidence, TaskVersion, ToolCallRecord, Verdict,
     VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
@@ -21507,6 +21508,13 @@ struct PillarResearchOutcome {
     retries: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PillarOpeningUnavailableCause {
+    Recoverable,
+    AllEligiblePhysicalHostsQuarantined,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct PillarOpeningUnavailableContinuation {
     attempts: usize,
@@ -21515,6 +21523,44 @@ struct PillarOpeningUnavailableContinuation {
     correction_fingerprint: Option<String>,
     reason: String,
     resume_stage: String,
+    cause: PillarOpeningUnavailableCause,
+    quarantined_physical_hosts: Vec<String>,
+}
+
+#[derive(Debug)]
+struct PillarOpeningRoutesQuarantined {
+    attempts: usize,
+    provider_calls: usize,
+    resume_stage: String,
+    quarantined_physical_hosts: Vec<String>,
+    reason: String,
+}
+
+impl std::fmt::Display for PillarOpeningRoutesQuarantined {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "pillar opening cannot continue because every eligible physical host is quarantined by an unresolved provider request ({} host(s), {} attempts, {} provider calls, stage {}): {}",
+            self.quarantined_physical_hosts.len(),
+            self.attempts,
+            self.provider_calls,
+            self.resume_stage,
+            self.reason,
+        )
+    }
+}
+
+impl std::error::Error for PillarOpeningRoutesQuarantined {}
+
+fn pillar_opening_unavailable_cause(
+    all_physical_hosts: &HashSet<String>,
+    quarantined_physical_hosts: &HashSet<String>,
+) -> PillarOpeningUnavailableCause {
+    if !all_physical_hosts.is_empty() && all_physical_hosts.is_subset(quarantined_physical_hosts) {
+        PillarOpeningUnavailableCause::AllEligiblePhysicalHostsQuarantined
+    } else {
+        PillarOpeningUnavailableCause::Recoverable
+    }
 }
 
 enum PillarResearchAttemptOutcome {
@@ -32503,6 +32549,11 @@ impl GooseAgentDispatcher {
                 .filter(|lane| lane.token != planner_lane.token)
                 .cloned(),
         );
+        let all_opener_physical_hosts = opener_lanes
+            .iter()
+            .map(|lane| lane.physical_host_id.clone())
+            .collect::<HashSet<_>>();
+        let mut quarantined_opener_physical_hosts = HashSet::new();
         self.events.write_value(serde_json::json!({
             "event": "pillar_opening_started",
             "model": planner_lane.model_id,
@@ -32639,6 +32690,12 @@ impl GooseAgentDispatcher {
                     .await;
                 let raw = match result {
                     Err(error) => {
+                        if matches!(
+                            error.downcast_ref::<BrokerError>(),
+                            Some(BrokerError::EligiblePhysicalHostsQuarantined { .. })
+                        ) {
+                            quarantined_opener_physical_hosts.insert(lane.physical_host_id.clone());
+                        }
                         last_reason = error.to_string();
                         None
                     }
@@ -32797,6 +32854,15 @@ impl GooseAgentDispatcher {
                 )?;
             }
             if candidate.is_none() {
+                let cause = pillar_opening_unavailable_cause(
+                    &all_opener_physical_hosts,
+                    &quarantined_opener_physical_hosts,
+                );
+                let mut quarantined_physical_hosts = quarantined_opener_physical_hosts
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                quarantined_physical_hosts.sort();
                 return Ok(PillarOpeningAuthorityOutcome::Unavailable(
                     PillarOpeningUnavailableContinuation {
                         attempts: usize::try_from(total_attempts)?,
@@ -32805,6 +32871,8 @@ impl GooseAgentDispatcher {
                         correction_fingerprint: None,
                         reason: last_reason,
                         resume_stage: "full_candidate".to_string(),
+                        cause,
+                        quarantined_physical_hosts,
                     },
                 ));
             }
@@ -32890,6 +32958,12 @@ impl GooseAgentDispatcher {
                 .await;
             let raw = match result {
                 Err(error) => {
+                    if matches!(
+                        error.downcast_ref::<BrokerError>(),
+                        Some(BrokerError::EligiblePhysicalHostsQuarantined { .. })
+                    ) {
+                        quarantined_opener_physical_hosts.insert(lane.physical_host_id.clone());
+                    }
                     last_reason = error.to_string();
                     None
                 }
@@ -33038,6 +33112,14 @@ impl GooseAgentDispatcher {
                 reason: last_reason.clone(),
             },
         )?;
+        let cause = pillar_opening_unavailable_cause(
+            &all_opener_physical_hosts,
+            &quarantined_opener_physical_hosts,
+        );
+        let mut quarantined_physical_hosts = quarantined_opener_physical_hosts
+            .into_iter()
+            .collect::<Vec<_>>();
+        quarantined_physical_hosts.sort();
         Ok(PillarOpeningAuthorityOutcome::Unavailable(
             PillarOpeningUnavailableContinuation {
                 attempts: usize::try_from(total_attempts)?,
@@ -33046,6 +33128,8 @@ impl GooseAgentDispatcher {
                 correction_fingerprint: Some(candidate.correction_fingerprint),
                 reason: last_reason,
                 resume_stage: "focused_repair".to_string(),
+                cause,
+                quarantined_physical_hosts,
             },
         ))
     }
@@ -33089,17 +33173,21 @@ impl GooseAgentDispatcher {
                 provider_calls,
             } => (opening, *receipt, provider_calls),
             PillarOpeningAuthorityOutcome::Unavailable(continuation) => {
-                self.events.write_value(serde_json::json!({
-                    "event": "pillar_opening_unavailable_continuation",
-                    "attempts": continuation.attempts,
-                    "provider_calls": continuation.provider_calls,
-                    "preserved_candidate": continuation.preserved_candidate,
-                    "correction_fingerprint": continuation.correction_fingerprint,
-                    "reason": continuation.reason,
-                    "resume_stage": continuation.resume_stage,
-                    "terminal": false,
-                    "deterministic_semantic_fallback": false,
-                }));
+                if continuation.cause == PillarOpeningUnavailableCause::Recoverable {
+                    self.events.write_value(serde_json::json!({
+                        "event": "pillar_opening_unavailable_continuation",
+                        "attempts": continuation.attempts,
+                        "provider_calls": continuation.provider_calls,
+                        "preserved_candidate": continuation.preserved_candidate,
+                        "correction_fingerprint": continuation.correction_fingerprint,
+                        "reason": continuation.reason,
+                        "resume_stage": continuation.resume_stage,
+                        "typed_cause": continuation.cause,
+                        "quarantined_physical_hosts": continuation.quarantined_physical_hosts,
+                        "terminal": false,
+                        "deterministic_semantic_fallback": false,
+                    }));
+                }
                 return Ok(PillarResearchAttemptOutcome::Unavailable(continuation));
             }
         };
@@ -33371,6 +33459,36 @@ impl GooseAgentDispatcher {
                     return Ok(outcome);
                 }
                 PillarResearchAttemptOutcome::Unavailable(continuation) => {
+                    if continuation.cause
+                        == PillarOpeningUnavailableCause::AllEligiblePhysicalHostsQuarantined
+                    {
+                        let total_provider_calls =
+                            carried_provider_calls.saturating_add(continuation.provider_calls);
+                        self.events.write_value(serde_json::json!({
+                            "event": "pillar_flow_terminal_failure",
+                            "typed_cause": continuation.cause,
+                            "continuation_rounds": continuation_rounds,
+                            "attempts": continuation.attempts,
+                            "provider_calls": continuation.provider_calls,
+                            "carried_provider_calls": carried_provider_calls,
+                            "total_provider_calls": total_provider_calls,
+                            "preserved_candidate": continuation.preserved_candidate,
+                            "correction_fingerprint": continuation.correction_fingerprint,
+                            "reason": continuation.reason,
+                            "resume_stage": continuation.resume_stage,
+                            "quarantined_physical_hosts": continuation.quarantined_physical_hosts,
+                            "terminal": true,
+                            "continuation": "none-all-eligible-physical-hosts-quarantined",
+                            "deterministic_semantic_fallback": false,
+                        }));
+                        return Err(anyhow::Error::new(PillarOpeningRoutesQuarantined {
+                            attempts: continuation.attempts,
+                            provider_calls: total_provider_calls,
+                            resume_stage: continuation.resume_stage,
+                            quarantined_physical_hosts: continuation.quarantined_physical_hosts,
+                            reason: continuation.reason,
+                        }));
+                    }
                     continuation_rounds = continuation_rounds.saturating_add(1);
                     carried_provider_calls =
                         carried_provider_calls.saturating_add(continuation.provider_calls);
@@ -33385,6 +33503,8 @@ impl GooseAgentDispatcher {
                         "correction_fingerprint": continuation.correction_fingerprint,
                         "reason": continuation.reason,
                         "resume_stage": continuation.resume_stage,
+                        "typed_cause": continuation.cause,
+                        "quarantined_physical_hosts": continuation.quarantined_physical_hosts,
                         "terminal": false,
                         "continuation": "retry-in-this-process-from-durable-opener-stage",
                         "retry_delay_ms": retry_delay.as_millis(),
@@ -70707,6 +70827,98 @@ mod pre_scheduler_semantic_runtime_tests {
             .expect("same-process replay did not drain provider lifecycle")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn all_physical_opener_routes_quarantined_terminate_once_without_retry_spin() {
+        const PLANNER_MODEL: &str = "quarantine-terminal-planner";
+        const WORKER_B: &str = "quarantine-terminal-worker-b";
+        const WORKER_C: &str = "quarantine-terminal-worker-c";
+        const HOST_A: &str = "quarantine-terminal-host-a";
+        const HOST_B: &str = "quarantine-terminal-host-b";
+        const HOST_C: &str = "quarantine-terminal-host-c";
+        let lanes = [
+            ("quarantine-terminal-lane-a", PLANNER_MODEL, HOST_A),
+            ("quarantine-terminal-lane-b", WORKER_B, HOST_B),
+            ("quarantine-terminal-lane-c", WORKER_C, HOST_C),
+        ];
+        let harness = research_correction_runtime_harness(&lanes, HashMap::new()).await;
+        for (_, model, _) in lanes {
+            harness.provider.drop_next_stream_unproven(model);
+        }
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            harness.dispatcher.research_by_pillars_until_ready(
+                &captured_live_sb7_prompt(),
+                Arc::new(Vec::new()),
+                vec![
+                    ("device-a".to_string(), PLANNER_MODEL.to_string()),
+                    ("device-b".to_string(), WORKER_B.to_string()),
+                    ("device-c".to_string(), WORKER_C.to_string()),
+                ],
+                PLANNER_MODEL,
+            ),
+        )
+        .await
+        .expect("all-host quarantine remained in the unavailable retry loop");
+        let error = match result {
+            Ok(_) => panic!("all quarantined physical opener routes unexpectedly reached research"),
+            Err(error) => error,
+        };
+        let terminal = error
+            .downcast_ref::<PillarOpeningRoutesQuarantined>()
+            .expect("all-host quarantine was flattened into an untyped terminal error");
+        assert_eq!(terminal.attempts, 6);
+        assert_eq!(terminal.provider_calls, 6);
+        assert_eq!(terminal.resume_stage, "full_candidate");
+        assert_eq!(
+            terminal.quarantined_physical_hosts,
+            [HOST_A.to_string(), HOST_B.to_string(), HOST_C.to_string()]
+        );
+        assert!(terminal
+            .reason
+            .contains("every eligible physical host is quarantined"));
+        assert_eq!(harness.provider.call_count(PLANNER_MODEL), 1);
+        assert_eq!(harness.provider.call_count(WORKER_B), 1);
+        assert_eq!(harness.provider.call_count(WORKER_C), 1);
+
+        let events = harness.sink.values();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "pillar_flow_unavailable_continuation")
+                .count(),
+            1,
+            "the initial provider outcome remains a recoverable checkpoint continuation"
+        );
+        let terminal_events = events
+            .iter()
+            .filter(|event| event["event"] == "pillar_flow_terminal_failure")
+            .collect::<Vec<_>>();
+        assert_eq!(terminal_events.len(), 1);
+        assert_eq!(
+            terminal_events[0]["typed_cause"],
+            "all_eligible_physical_hosts_quarantined"
+        );
+        assert_eq!(terminal_events[0]["terminal"], true);
+        assert_eq!(terminal_events[0]["deterministic_semantic_fallback"], false);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "pillar_opening_attempt_started")
+                .count(),
+            6,
+            "the terminal route audit repeated after proving every host quarantined"
+        );
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "pillar_opening_completed"));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("quarantined opener routes blocked phase drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 3));
     }
 
     #[test]
