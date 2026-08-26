@@ -71,7 +71,9 @@ pub use pillar::{
 pub use pillar_checkpoint::{
     pillar_frozen_spec_digest, pillar_requirement_digest, PillarAttemptCheckpoint,
     PillarCheckpointError, PillarCheckpointReceipt, PillarCheckpointStore,
-    PillarOpeningCheckpointReceipt, PillarResumeDecision,
+    PillarOpeningCheckpointReceipt, PillarOpeningCheckpointStage, PillarOpeningContractBinding,
+    PillarOpeningPartialCheckpoint, PillarOpeningPartialSemanticState,
+    PillarOpeningRawOutputCheckpoint, PillarOpeningStageStore, PillarResumeDecision,
 };
 pub use provider_lease::{
     ActiveProviderLeaseSnapshot, ExposedProviderLease, GlobalProviderLeaseAuthority,

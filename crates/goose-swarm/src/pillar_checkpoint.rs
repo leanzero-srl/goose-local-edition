@@ -1,6 +1,6 @@
 use crate::pillar::{
-    validate_pillar_opening, CompiledPillarReport, Confidence, EvidenceClass, ProvenanceMatch,
-    ResearchPillar, ResearchPillarOpening,
+    validate_pillar_opening, CompiledPillarReport, Confidence, EvidenceClass, IntegrationContract,
+    ProvenanceMatch, ResearchPillar, ResearchPillarOpening,
 };
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -12,10 +12,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: u32 = 2;
-const CHECKPOINT_DIRECTORY: &str = "pillar-checkpoint-v2";
+const SCHEMA_VERSION: u32 = 3;
+const CHECKPOINT_DIRECTORY: &str = "pillar-checkpoint-v3";
 const STATE_FILE: &str = "state.json";
 const LOCK_FILE: &str = "control.lock";
+const OPENING_STAGE_FILE: &str = "opening-stage.json";
+const OPENING_STAGE_LOCK_FILE: &str = "opening-stage.lock";
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -48,38 +50,239 @@ pub struct PillarCheckpointReceipt {
 #[serde(deny_unknown_fields)]
 pub struct PillarOpeningCheckpointReceipt {
     pub response_schema_digest: String,
-    pub minimum_semantic_pillars: usize,
+    pub opener_contract_digest: String,
+    pub integration_owner: String,
+    pub minimum_research_slices: usize,
     pub accepted_model_id: String,
     pub accepted_physical_host: String,
     pub accepted_attempt: u32,
     pub raw_output_digests: Vec<String>,
+    pub semantic_topology_digest: String,
     pub compiler_receipt_digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PillarOpeningContractBinding {
+    pub response_schema_digest: String,
+    pub opener_contract_digest: String,
+    pub integration_owner: String,
+    pub minimum_research_slices: usize,
+}
+
+impl PillarOpeningContractBinding {
+    pub fn validate(&self) -> Result<(), PillarCheckpointError> {
+        if !canonical_digest(&self.response_schema_digest)
+            || !canonical_digest(&self.opener_contract_digest)
+            || self.integration_owner.trim().is_empty()
+            || self.minimum_research_slices == 0
+        {
+            return Err(PillarCheckpointError::new(
+                "pillar opening contract binding is invalid",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PillarOpeningRawOutputCheckpoint {
+    pub model_id: String,
+    pub physical_host: String,
+    pub attempt: u32,
+    pub raw_output: String,
+    pub raw_output_digest: String,
+}
+
+impl PillarOpeningRawOutputCheckpoint {
+    pub fn new(
+        model_id: impl Into<String>,
+        physical_host: impl Into<String>,
+        attempt: u32,
+        raw_output: impl Into<String>,
+    ) -> Result<Self, PillarCheckpointError> {
+        let raw_output = raw_output.into();
+        let checkpoint = Self {
+            model_id: model_id.into(),
+            physical_host: physical_host.into(),
+            attempt,
+            raw_output_digest: sha256_digest(raw_output.as_bytes()),
+            raw_output,
+        };
+        checkpoint.validate()?;
+        Ok(checkpoint)
+    }
+
+    fn validate(&self) -> Result<(), PillarCheckpointError> {
+        if self.model_id.trim().is_empty()
+            || self.physical_host.trim().is_empty()
+            || self.attempt == 0
+            || self.raw_output.trim().is_empty()
+            || !canonical_digest(&self.raw_output_digest)
+            || sha256_digest(self.raw_output.as_bytes()) != self.raw_output_digest
+        {
+            return Err(PillarCheckpointError::new(
+                "pillar opening raw-output checkpoint is invalid",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PillarOpeningPartialCheckpoint {
+    pub binding: PillarOpeningContractBinding,
+    pub full_candidate: PillarOpeningRawOutputCheckpoint,
+    pub semantic_domains: serde_json::Value,
+    pub research_slices: serde_json::Value,
+    pub integration_contract: IntegrationContract,
+    pub valid_domain_assignment_by_requirement: BTreeMap<String, String>,
+    pub valid_slice_assignment_by_requirement: BTreeMap<String, String>,
+    pub unresolved_domain_requirement_ids: Vec<String>,
+    pub unresolved_slice_requirement_ids: Vec<String>,
+    pub correction_fingerprint: String,
+}
+
+pub struct PillarOpeningPartialSemanticState {
+    pub semantic_domains: serde_json::Value,
+    pub research_slices: serde_json::Value,
+    pub integration_contract: IntegrationContract,
+    pub valid_domain_assignment_by_requirement: BTreeMap<String, String>,
+    pub valid_slice_assignment_by_requirement: BTreeMap<String, String>,
+    pub unresolved_domain_requirement_ids: Vec<String>,
+    pub unresolved_slice_requirement_ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct PillarOpeningCorrectionFingerprintMaterial<'a> {
+    semantic_domains: &'a serde_json::Value,
+    research_slices: &'a serde_json::Value,
+    integration_contract: &'a IntegrationContract,
+    valid_domain_assignment_by_requirement: &'a BTreeMap<String, String>,
+    valid_slice_assignment_by_requirement: &'a BTreeMap<String, String>,
+    unresolved_domain_requirement_ids: &'a [String],
+    unresolved_slice_requirement_ids: &'a [String],
+}
+
+impl PillarOpeningPartialCheckpoint {
+    pub fn new(
+        binding: PillarOpeningContractBinding,
+        full_candidate: PillarOpeningRawOutputCheckpoint,
+        semantic_state: PillarOpeningPartialSemanticState,
+    ) -> Result<Self, PillarCheckpointError> {
+        let PillarOpeningPartialSemanticState {
+            semantic_domains,
+            research_slices,
+            integration_contract,
+            valid_domain_assignment_by_requirement,
+            valid_slice_assignment_by_requirement,
+            unresolved_domain_requirement_ids,
+            unresolved_slice_requirement_ids,
+        } = semantic_state;
+        let mut checkpoint = Self {
+            binding,
+            full_candidate,
+            semantic_domains,
+            research_slices,
+            integration_contract,
+            valid_domain_assignment_by_requirement,
+            valid_slice_assignment_by_requirement,
+            unresolved_domain_requirement_ids,
+            unresolved_slice_requirement_ids,
+            correction_fingerprint: String::new(),
+        };
+        checkpoint.correction_fingerprint = checkpoint.expected_correction_fingerprint()?;
+        checkpoint.validate()?;
+        Ok(checkpoint)
+    }
+
+    fn expected_correction_fingerprint(&self) -> Result<String, PillarCheckpointError> {
+        hash_serializable(&PillarOpeningCorrectionFingerprintMaterial {
+            semantic_domains: &self.semantic_domains,
+            research_slices: &self.research_slices,
+            integration_contract: &self.integration_contract,
+            valid_domain_assignment_by_requirement: &self.valid_domain_assignment_by_requirement,
+            valid_slice_assignment_by_requirement: &self.valid_slice_assignment_by_requirement,
+            unresolved_domain_requirement_ids: &self.unresolved_domain_requirement_ids,
+            unresolved_slice_requirement_ids: &self.unresolved_slice_requirement_ids,
+        })
+    }
+
+    fn validate(&self) -> Result<(), PillarCheckpointError> {
+        self.binding.validate()?;
+        self.full_candidate.validate()?;
+        if !self.semantic_domains.is_array()
+            || !self.research_slices.is_array()
+            || self.integration_contract.owner != self.binding.integration_owner
+            || !canonical_digest(&self.correction_fingerprint)
+            || self.expected_correction_fingerprint()? != self.correction_fingerprint
+        {
+            return Err(PillarCheckpointError::new(
+                "pillar opening partial checkpoint is invalid",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+pub enum PillarOpeningCheckpointStage {
+    FullCandidate {
+        candidate: PillarOpeningPartialCheckpoint,
+    },
+    FocusedRepair {
+        candidate: PillarOpeningPartialCheckpoint,
+        repair_attempts: Vec<PillarOpeningRawOutputCheckpoint>,
+        attempts: u32,
+    },
+    Accepted {
+        candidate: Box<PillarOpeningPartialCheckpoint>,
+        repair_attempts: Vec<PillarOpeningRawOutputCheckpoint>,
+        opening: ResearchPillarOpening,
+        receipt: PillarOpeningCheckpointReceipt,
+    },
+    Unavailable {
+        binding: PillarOpeningContractBinding,
+        candidate: Option<PillarOpeningPartialCheckpoint>,
+        full_attempts: Vec<PillarOpeningRawOutputCheckpoint>,
+        repair_attempts: Vec<PillarOpeningRawOutputCheckpoint>,
+        attempts: u32,
+        reason: String,
+    },
 }
 
 #[derive(Serialize)]
 struct PillarOpeningCompilerReceiptMaterial<'a> {
     response_schema_digest: &'a str,
-    minimum_semantic_pillars: usize,
+    opener_contract_digest: &'a str,
+    integration_owner: &'a str,
+    minimum_research_slices: usize,
     accepted_model_id: &'a str,
     accepted_physical_host: &'a str,
     accepted_attempt: u32,
     raw_output_digests: &'a [String],
+    semantic_topology_digest: &'a str,
     opening: &'a ResearchPillarOpening,
 }
 
 impl PillarOpeningCheckpointReceipt {
     pub fn new(
-        response_schema_digest: impl Into<String>,
-        minimum_semantic_pillars: usize,
+        binding: &PillarOpeningContractBinding,
         accepted_model_id: impl Into<String>,
         accepted_physical_host: impl Into<String>,
         accepted_attempt: u32,
         raw_outputs: &[String],
+        semantic_topology_digest: impl Into<String>,
         opening: &ResearchPillarOpening,
     ) -> Result<Self, PillarCheckpointError> {
         let mut receipt = Self {
-            response_schema_digest: response_schema_digest.into(),
-            minimum_semantic_pillars,
+            response_schema_digest: binding.response_schema_digest.clone(),
+            opener_contract_digest: binding.opener_contract_digest.clone(),
+            integration_owner: binding.integration_owner.clone(),
+            minimum_research_slices: binding.minimum_research_slices,
             accepted_model_id: accepted_model_id.into(),
             accepted_physical_host: accepted_physical_host.into(),
             accepted_attempt,
@@ -87,6 +290,7 @@ impl PillarOpeningCheckpointReceipt {
                 .iter()
                 .map(|output| sha256_digest(output.as_bytes()))
                 .collect(),
+            semantic_topology_digest: semantic_topology_digest.into(),
             compiler_receipt_digest: String::new(),
         };
         receipt.compiler_receipt_digest = receipt.expected_compiler_receipt_digest(opening)?;
@@ -100,19 +304,24 @@ impl PillarOpeningCheckpointReceipt {
     ) -> Result<String, PillarCheckpointError> {
         hash_serializable(&PillarOpeningCompilerReceiptMaterial {
             response_schema_digest: &self.response_schema_digest,
-            minimum_semantic_pillars: self.minimum_semantic_pillars,
+            opener_contract_digest: &self.opener_contract_digest,
+            integration_owner: &self.integration_owner,
+            minimum_research_slices: self.minimum_research_slices,
             accepted_model_id: &self.accepted_model_id,
             accepted_physical_host: &self.accepted_physical_host,
             accepted_attempt: self.accepted_attempt,
             raw_output_digests: &self.raw_output_digests,
+            semantic_topology_digest: &self.semantic_topology_digest,
             opening,
         })
     }
 
     fn validate(&self, opening: &ResearchPillarOpening) -> Result<(), PillarCheckpointError> {
         if !canonical_digest(&self.response_schema_digest)
-            || self.minimum_semantic_pillars == 0
-            || opening.pillars.len() < self.minimum_semantic_pillars
+            || !canonical_digest(&self.opener_contract_digest)
+            || self.integration_owner.trim().is_empty()
+            || self.minimum_research_slices == 0
+            || opening.pillars.len() < self.minimum_research_slices
             || self.accepted_model_id.trim().is_empty()
             || self.accepted_physical_host.trim().is_empty()
             || self.accepted_attempt == 0
@@ -121,6 +330,7 @@ impl PillarOpeningCheckpointReceipt {
                 .raw_output_digests
                 .iter()
                 .any(|digest| !canonical_digest(digest))
+            || !canonical_digest(&self.semantic_topology_digest)
             || !canonical_digest(&self.compiler_receipt_digest)
             || self.expected_compiler_receipt_digest(opening)? != self.compiler_receipt_digest
         {
@@ -129,6 +339,135 @@ impl PillarOpeningCheckpointReceipt {
             ));
         }
         Ok(())
+    }
+}
+
+impl PillarOpeningCheckpointStage {
+    pub fn binding(&self) -> &PillarOpeningContractBinding {
+        match self {
+            Self::FullCandidate { candidate } | Self::FocusedRepair { candidate, .. } => {
+                &candidate.binding
+            }
+            Self::Accepted { candidate, .. } => &candidate.binding,
+            Self::Unavailable { binding, .. } => binding,
+        }
+    }
+
+    pub fn candidate(&self) -> Option<&PillarOpeningPartialCheckpoint> {
+        match self {
+            Self::FullCandidate { candidate } | Self::FocusedRepair { candidate, .. } => {
+                Some(candidate)
+            }
+            Self::Accepted { candidate, .. } => Some(candidate),
+            Self::Unavailable { candidate, .. } => candidate.as_ref(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), PillarCheckpointError> {
+        self.binding().validate()?;
+        match self {
+            Self::FullCandidate { candidate } => candidate.validate(),
+            Self::FocusedRepair {
+                candidate,
+                repair_attempts,
+                attempts,
+            } => {
+                candidate.validate()?;
+                for attempt in repair_attempts {
+                    attempt.validate()?;
+                }
+                if *attempts < candidate.full_candidate.attempt
+                    || repair_attempts
+                        .iter()
+                        .any(|attempt| attempt.attempt > *attempts)
+                {
+                    return Err(PillarCheckpointError::new(
+                        "focused pillar opening attempt ledger is invalid",
+                    ));
+                }
+                Ok(())
+            }
+            Self::Accepted {
+                candidate,
+                repair_attempts,
+                opening,
+                receipt,
+            } => {
+                candidate.validate()?;
+                for attempt in repair_attempts {
+                    attempt.validate()?;
+                }
+                validate_pillar_opening(opening).map_err(|error| {
+                    PillarCheckpointError::new(format!(
+                        "accepted opening stage is invalid: {error}"
+                    ))
+                })?;
+                receipt.validate(opening)?;
+                let mut expected_raw_digests =
+                    vec![candidate.full_candidate.raw_output_digest.clone()];
+                expected_raw_digests.extend(
+                    repair_attempts
+                        .iter()
+                        .map(|attempt| attempt.raw_output_digest.clone()),
+                );
+                let accepted_attempt = repair_attempts.last().unwrap_or(&candidate.full_candidate);
+                if receipt.response_schema_digest != candidate.binding.response_schema_digest
+                    || receipt.opener_contract_digest != candidate.binding.opener_contract_digest
+                    || receipt.integration_owner != candidate.binding.integration_owner
+                    || receipt.minimum_research_slices != candidate.binding.minimum_research_slices
+                    || receipt.semantic_topology_digest != candidate.correction_fingerprint
+                    || receipt.raw_output_digests != expected_raw_digests
+                    || receipt.accepted_model_id != accepted_attempt.model_id
+                    || receipt.accepted_physical_host != accepted_attempt.physical_host
+                    || receipt.accepted_attempt != accepted_attempt.attempt
+                    || opening.integration_contract.owner != candidate.binding.integration_owner
+                {
+                    return Err(PillarCheckpointError::new(
+                        "accepted pillar opening stage is not bound to its candidate, repair, and strongest owner",
+                    ));
+                }
+                Ok(())
+            }
+            Self::Unavailable {
+                binding,
+                candidate,
+                full_attempts,
+                repair_attempts,
+                attempts,
+                reason,
+            } => {
+                binding.validate()?;
+                for attempt in full_attempts {
+                    attempt.validate()?;
+                }
+                for attempt in repair_attempts {
+                    attempt.validate()?;
+                }
+                if *attempts == 0 || reason.trim().is_empty() {
+                    return Err(PillarCheckpointError::new(
+                        "unavailable pillar opening stage is incomplete",
+                    ));
+                }
+                if let Some(candidate) = candidate {
+                    candidate.validate()?;
+                    if &candidate.binding != binding {
+                        return Err(PillarCheckpointError::new(
+                            "unavailable pillar opening changed its preserved contract binding",
+                        ));
+                    }
+                    if !full_attempts.is_empty() {
+                        return Err(PillarCheckpointError::new(
+                            "unavailable focused-opening stage duplicated pre-candidate raw outputs",
+                        ));
+                    }
+                } else if !repair_attempts.is_empty() {
+                    return Err(PillarCheckpointError::new(
+                        "unavailable full-opening stage cannot carry focused repair outputs",
+                    ));
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -177,6 +516,27 @@ struct CheckpointRecord {
     checkpoint_hash: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct OpeningStageMaterial {
+    schema_version: u32,
+    revision: u64,
+    working_root: PathBuf,
+    frozen_spec_digest: String,
+    requirement_digest: String,
+    authored_requirements: Vec<crate::pillar::AuthoredRequirement>,
+    stage: PillarOpeningCheckpointStage,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct OpeningStageRecord {
+    material: OpeningStageMaterial,
+    checkpoint_hash: String,
+}
+
+pub struct PillarOpeningStageStore;
+
 struct StoreState {
     record: CheckpointRecord,
     poisoned: Option<String>,
@@ -188,18 +548,181 @@ pub struct PillarCheckpointStore {
     state: Mutex<StoreState>,
 }
 
+impl PillarOpeningStageStore {
+    pub fn load(
+        working_root: impl AsRef<Path>,
+        frozen_spec_digest: impl Into<String>,
+        authored_requirements: &[crate::pillar::AuthoredRequirement],
+        binding: &PillarOpeningContractBinding,
+        accepted_lanes: &[(String, String)],
+    ) -> Result<Option<PillarOpeningCheckpointStage>, PillarCheckpointError> {
+        binding.validate()?;
+        let working_root = std::fs::canonicalize(working_root.as_ref()).map_err(|error| {
+            PillarCheckpointError::io("cannot canonicalize pillar opening stage root", error)
+        })?;
+        let frozen_spec_digest = frozen_spec_digest.into();
+        if !canonical_digest(&frozen_spec_digest) {
+            return Err(PillarCheckpointError::new(
+                "frozen specification digest is not a canonical sha256 digest",
+            ));
+        }
+        let requirement_digest = pillar_requirement_digest(authored_requirements)?;
+        let generation_directory =
+            checkpoint_generation_directory(&working_root, &frozen_spec_digest);
+        reject_symlink_if_present(
+            &generation_directory,
+            "pillar opening stage generation directory",
+        )?;
+        let stage_path = generation_directory.join(OPENING_STAGE_FILE);
+        reject_symlink_if_present(&stage_path, "pillar opening stage")?;
+        let bytes = match std::fs::read(&stage_path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(PillarCheckpointError::io(
+                    "cannot read pillar opening stage",
+                    error,
+                ));
+            }
+        };
+        let record = decode_opening_stage_record(&bytes)?;
+        validate_opening_stage_record(&record)?;
+        if record.material.working_root != working_root
+            || record.material.frozen_spec_digest != frozen_spec_digest
+            || record.material.requirement_digest != requirement_digest
+            || record.material.authored_requirements != authored_requirements
+            || record.material.stage.binding() != binding
+            || record.material.stage.candidate().is_some_and(|candidate| {
+                !accepted_lanes.iter().any(|(model_id, physical_host)| {
+                    model_id == &candidate.full_candidate.model_id
+                        && physical_host == &candidate.full_candidate.physical_host
+                })
+            })
+            || matches!(
+                &record.material.stage,
+                PillarOpeningCheckpointStage::Accepted { receipt, .. }
+                    if !accepted_lanes.iter().any(|(model_id, physical_host)| {
+                        model_id == &receipt.accepted_model_id
+                            && physical_host == &receipt.accepted_physical_host
+                    })
+            )
+        {
+            return Err(PillarCheckpointError::new(
+                "pillar opening stage is incompatible with this root, specification, contract, requirements, or authenticated lanes",
+            ));
+        }
+        Ok(Some(record.material.stage))
+    }
+
+    pub fn persist(
+        working_root: impl AsRef<Path>,
+        frozen_spec_digest: impl Into<String>,
+        authored_requirements: &[crate::pillar::AuthoredRequirement],
+        stage: PillarOpeningCheckpointStage,
+    ) -> Result<(), PillarCheckpointError> {
+        stage.validate()?;
+        let working_root = std::fs::canonicalize(working_root.as_ref()).map_err(|error| {
+            PillarCheckpointError::io("cannot canonicalize pillar opening stage root", error)
+        })?;
+        if !working_root.is_dir() {
+            return Err(PillarCheckpointError::new(format!(
+                "pillar opening stage root is not a directory: {}",
+                working_root.display()
+            )));
+        }
+        let frozen_spec_digest = frozen_spec_digest.into();
+        if !canonical_digest(&frozen_spec_digest) {
+            return Err(PillarCheckpointError::new(
+                "frozen specification digest is not a canonical sha256 digest",
+            ));
+        }
+        let requirement_digest = pillar_requirement_digest(authored_requirements)?;
+        let swarm_directory = working_root.join(".swarm");
+        let directory = swarm_directory.join(CHECKPOINT_DIRECTORY);
+        let generation_directory =
+            checkpoint_generation_directory(&working_root, &frozen_spec_digest);
+        ensure_control_directory(&working_root, &swarm_directory, "swarm state directory")?;
+        ensure_control_directory(&swarm_directory, &directory, "pillar checkpoint directory")?;
+        ensure_control_directory(
+            &directory,
+            &generation_directory,
+            "pillar checkpoint generation directory",
+        )?;
+        let lock_path = generation_directory.join(OPENING_STAGE_LOCK_FILE);
+        reject_symlink_if_present(&lock_path, "pillar opening stage lock")?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|error| {
+                PillarCheckpointError::io("cannot open pillar opening stage lock", error)
+            })?;
+        FileExt::lock_exclusive(&lock).map_err(|error| {
+            PillarCheckpointError::io("cannot lock pillar opening stage", error)
+        })?;
+        verify_linked_file(&lock_path, &lock, "pillar opening stage lock")?;
+        let stage_path = generation_directory.join(OPENING_STAGE_FILE);
+        reject_symlink_if_present(&stage_path, "pillar opening stage")?;
+        let previous = match std::fs::read(&stage_path) {
+            Ok(bytes) => {
+                let record = decode_opening_stage_record(&bytes)?;
+                validate_opening_stage_record(&record)?;
+                if record.material.working_root != working_root
+                    || record.material.frozen_spec_digest != frozen_spec_digest
+                    || record.material.requirement_digest != requirement_digest
+                    || record.material.authored_requirements != authored_requirements
+                    || record.material.stage.binding() != stage.binding()
+                {
+                    return Err(PillarCheckpointError::new(
+                        "pillar opening stage conflicts with its durable generation binding",
+                    ));
+                }
+                Some(record)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(PillarCheckpointError::io(
+                    "cannot read pillar opening stage before update",
+                    error,
+                ));
+            }
+        };
+        if let Some(previous) = &previous {
+            validate_opening_stage_transition(&previous.material.stage, &stage)?;
+            if previous.material.stage == stage {
+                return Ok(());
+            }
+        }
+        let material = OpeningStageMaterial {
+            schema_version: SCHEMA_VERSION,
+            revision: previous
+                .as_ref()
+                .map_or(0, |record| record.material.revision.saturating_add(1)),
+            working_root,
+            frozen_spec_digest,
+            requirement_digest,
+            authored_requirements: authored_requirements.to_vec(),
+            stage,
+        };
+        let record = seal_opening_stage_record(material)?;
+        write_opening_stage_record_atomic(&stage_path, &record)
+    }
+}
+
 impl PillarCheckpointStore {
     pub fn load_opening(
         working_root: impl AsRef<Path>,
         frozen_spec_digest: impl Into<String>,
         authored_requirements: &[crate::pillar::AuthoredRequirement],
-        response_schema_digest: &str,
-        minimum_semantic_pillars: usize,
+        binding: &PillarOpeningContractBinding,
         accepted_lanes: &[(String, String)],
     ) -> Result<
         Option<(ResearchPillarOpening, PillarOpeningCheckpointReceipt)>,
         PillarCheckpointError,
     > {
+        binding.validate()?;
         let working_root = std::fs::canonicalize(working_root.as_ref()).map_err(|error| {
             PillarCheckpointError::io("cannot canonicalize pillar checkpoint root", error)
         })?;
@@ -234,15 +757,20 @@ impl PillarCheckpointStore {
             || record.material.frozen_spec_digest != frozen_spec_digest
             || record.material.requirement_digest != requirement_digest
             || record.material.opening.requirements != authored_requirements
-            || record.material.opening_receipt.response_schema_digest != response_schema_digest
-            || record.material.opening_receipt.minimum_semantic_pillars != minimum_semantic_pillars
+            || record.material.opening_receipt.response_schema_digest
+                != binding.response_schema_digest
+            || record.material.opening_receipt.opener_contract_digest
+                != binding.opener_contract_digest
+            || record.material.opening_receipt.integration_owner != binding.integration_owner
+            || record.material.opening_receipt.minimum_research_slices
+                != binding.minimum_research_slices
             || !accepted_lanes.iter().any(|(model_id, physical_host)| {
                 model_id == &record.material.opening_receipt.accepted_model_id
                     && physical_host == &record.material.opening_receipt.accepted_physical_host
             })
         {
             return Err(PillarCheckpointError::new(
-                "pillar checkpoint is incompatible with this root, frozen specification, schema, slice floor, or accepted lane",
+                "pillar checkpoint is incompatible with this root, frozen specification, opener contract, strongest owner, slice floor, or accepted lane",
             ));
         }
         Ok(Some((
@@ -558,6 +1086,197 @@ fn validate_record(record: &CheckpointRecord) -> Result<(), PillarCheckpointErro
     Ok(())
 }
 
+fn validate_opening_stage_record(record: &OpeningStageRecord) -> Result<(), PillarCheckpointError> {
+    if record.material.schema_version != SCHEMA_VERSION
+        || !canonical_digest(&record.material.frozen_spec_digest)
+        || !canonical_digest(&record.material.requirement_digest)
+        || hash_serializable(&record.material)? != record.checkpoint_hash
+        || pillar_requirement_digest(&record.material.authored_requirements)?
+            != record.material.requirement_digest
+    {
+        return Err(PillarCheckpointError::new(
+            "pillar opening stage hash, schema, or requirement binding is invalid",
+        ));
+    }
+    record.material.stage.validate()?;
+    if let Some(candidate) = record.material.stage.candidate() {
+        let expected = record
+            .material
+            .authored_requirements
+            .iter()
+            .map(|requirement| requirement.id.as_str())
+            .collect::<BTreeSet<_>>();
+        validate_partial_key_cover(
+            &expected,
+            &candidate.valid_domain_assignment_by_requirement,
+            &candidate.unresolved_domain_requirement_ids,
+            "domain",
+        )?;
+        validate_partial_key_cover(
+            &expected,
+            &candidate.valid_slice_assignment_by_requirement,
+            &candidate.unresolved_slice_requirement_ids,
+            "slice",
+        )?;
+    }
+    if let PillarOpeningCheckpointStage::Accepted { opening, .. } = &record.material.stage {
+        if opening.requirements != record.material.authored_requirements {
+            return Err(PillarCheckpointError::new(
+                "accepted opening stage changed the frozen authored requirements",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_partial_key_cover(
+    expected: &BTreeSet<&str>,
+    valid_assignments: &BTreeMap<String, String>,
+    unresolved_requirement_ids: &[String],
+    label: &str,
+) -> Result<(), PillarCheckpointError> {
+    let valid = valid_assignments
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let unresolved = unresolved_requirement_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if valid.len() != valid_assignments.len()
+        || unresolved.len() != unresolved_requirement_ids.len()
+        || !valid.is_disjoint(&unresolved)
+        || valid.union(&unresolved).copied().collect::<BTreeSet<_>>() != *expected
+        || valid_assignments
+            .values()
+            .any(|owner| owner.trim().is_empty())
+    {
+        return Err(PillarCheckpointError::new(format!(
+            "pillar opening partial {label} assignment cover is invalid"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_opening_stage_transition(
+    previous: &PillarOpeningCheckpointStage,
+    next: &PillarOpeningCheckpointStage,
+) -> Result<(), PillarCheckpointError> {
+    let same_candidate = match (previous.candidate(), next.candidate()) {
+        (Some(previous), Some(next)) => previous == next,
+        (None, None) => true,
+        _ => false,
+    };
+    let valid = match (previous, next) {
+        (
+            PillarOpeningCheckpointStage::FullCandidate { .. },
+            PillarOpeningCheckpointStage::FocusedRepair { .. }
+            | PillarOpeningCheckpointStage::Accepted { .. }
+            | PillarOpeningCheckpointStage::Unavailable { .. },
+        ) => same_candidate,
+        (
+            PillarOpeningCheckpointStage::FocusedRepair {
+                repair_attempts: previous_attempts,
+                attempts: previous_attempt_count,
+                ..
+            },
+            PillarOpeningCheckpointStage::FocusedRepair {
+                repair_attempts: next_attempts,
+                attempts: next_attempt_count,
+                ..
+            },
+        ) => {
+            same_candidate
+                && next_attempts.starts_with(previous_attempts)
+                && next_attempt_count >= previous_attempt_count
+        }
+        (
+            PillarOpeningCheckpointStage::FocusedRepair {
+                repair_attempts: previous_attempts,
+                attempts: previous_attempt_count,
+                ..
+            },
+            PillarOpeningCheckpointStage::Accepted {
+                repair_attempts: next_attempts,
+                receipt,
+                ..
+            },
+        ) => {
+            same_candidate
+                && next_attempts.starts_with(previous_attempts)
+                && receipt.accepted_attempt >= *previous_attempt_count
+        }
+        (
+            PillarOpeningCheckpointStage::FocusedRepair {
+                repair_attempts: previous_attempts,
+                attempts: previous_attempt_count,
+                ..
+            },
+            PillarOpeningCheckpointStage::Unavailable {
+                repair_attempts: next_attempts,
+                attempts: next_attempt_count,
+                ..
+            },
+        ) => {
+            same_candidate
+                && next_attempts == previous_attempts
+                && next_attempt_count >= previous_attempt_count
+        }
+        (
+            PillarOpeningCheckpointStage::Unavailable {
+                candidate: Some(_),
+                full_attempts,
+                repair_attempts: previous_attempts,
+                attempts: previous_attempt_count,
+                ..
+            },
+            PillarOpeningCheckpointStage::FocusedRepair {
+                repair_attempts: next_attempts,
+                attempts: next_attempt_count,
+                ..
+            },
+        ) => {
+            same_candidate
+                && full_attempts.is_empty()
+                && next_attempts == previous_attempts
+                && next_attempt_count == previous_attempt_count
+        }
+        (
+            PillarOpeningCheckpointStage::Unavailable {
+                candidate: None, ..
+            },
+            PillarOpeningCheckpointStage::FullCandidate { .. },
+        ) => true,
+        (
+            PillarOpeningCheckpointStage::Unavailable {
+                full_attempts: previous_full_attempts,
+                repair_attempts: previous_attempts,
+                attempts: previous_attempt_count,
+                ..
+            },
+            PillarOpeningCheckpointStage::Unavailable {
+                full_attempts: next_full_attempts,
+                repair_attempts: next_attempts,
+                attempts: next_attempt_count,
+                ..
+            },
+        ) => {
+            same_candidate
+                && next_full_attempts.starts_with(previous_full_attempts)
+                && next_attempts.starts_with(previous_attempts)
+                && next_attempt_count >= previous_attempt_count
+        }
+        (PillarOpeningCheckpointStage::Accepted { .. }, _) => false,
+        _ => false,
+    };
+    if !valid {
+        return Err(PillarCheckpointError::new(
+            "pillar opening stage transition changed first-authenticated semantic authority or regressed its stage",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_attempt(
     pillar: &ResearchPillar,
     attempt: &PillarAttemptCheckpoint,
@@ -693,6 +1412,18 @@ fn seal_record(material: CheckpointMaterial) -> Result<CheckpointRecord, PillarC
     Ok(record)
 }
 
+fn seal_opening_stage_record(
+    material: OpeningStageMaterial,
+) -> Result<OpeningStageRecord, PillarCheckpointError> {
+    let checkpoint_hash = hash_serializable(&material)?;
+    let record = OpeningStageRecord {
+        material,
+        checkpoint_hash,
+    };
+    validate_opening_stage_record(&record)?;
+    Ok(record)
+}
+
 fn decode_record(bytes: &[u8]) -> Result<CheckpointRecord, PillarCheckpointError> {
     if !bytes.ends_with(b"\n") || bytes[..bytes.len().saturating_sub(1)].contains(&b'\n') {
         return Err(PillarCheckpointError::new(
@@ -701,6 +1432,17 @@ fn decode_record(bytes: &[u8]) -> Result<CheckpointRecord, PillarCheckpointError
     }
     serde_json::from_slice(&bytes[..bytes.len() - 1]).map_err(|error| {
         PillarCheckpointError::new(format!("pillar checkpoint JSON is invalid: {error}"))
+    })
+}
+
+fn decode_opening_stage_record(bytes: &[u8]) -> Result<OpeningStageRecord, PillarCheckpointError> {
+    if !bytes.ends_with(b"\n") || bytes[..bytes.len().saturating_sub(1)].contains(&b'\n') {
+        return Err(PillarCheckpointError::new(
+            "pillar opening stage is torn or contains multiple records",
+        ));
+    }
+    serde_json::from_slice(&bytes[..bytes.len() - 1]).map_err(|error| {
+        PillarCheckpointError::new(format!("pillar opening stage JSON is invalid: {error}"))
     })
 }
 
@@ -747,6 +1489,58 @@ fn write_record_atomic(
         drop(file);
         std::fs::rename(&temporary, path).map_err(|error| {
             PillarCheckpointError::io("cannot atomically replace pillar checkpoint", error)
+        })?;
+        sync_directory(parent)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn write_opening_stage_record_atomic(
+    path: &Path,
+    record: &OpeningStageRecord,
+) -> Result<(), PillarCheckpointError> {
+    let mut bytes = serde_json::to_vec(record).map_err(|error| {
+        PillarCheckpointError::new(format!("cannot encode pillar opening stage: {error}"))
+    })?;
+    bytes.push(b'\n');
+    let parent = path.parent().ok_or_else(|| {
+        PillarCheckpointError::new("pillar opening stage has no parent directory")
+    })?;
+    let (temporary, mut file) = loop {
+        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temporary = parent.join(format!(
+            ".{OPENING_STAGE_FILE}.{}.{}.tmp",
+            std::process::id(),
+            sequence
+        ));
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+        {
+            Ok(file) => break (temporary, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(PillarCheckpointError::io(
+                    "cannot create pillar opening stage temp",
+                    error,
+                ));
+            }
+        }
+    };
+    let result = (|| {
+        file.write_all(&bytes).map_err(|error| {
+            PillarCheckpointError::io("cannot write pillar opening stage temp", error)
+        })?;
+        file.sync_all().map_err(|error| {
+            PillarCheckpointError::io("cannot sync pillar opening stage temp", error)
+        })?;
+        drop(file);
+        std::fs::rename(&temporary, path).map_err(|error| {
+            PillarCheckpointError::io("cannot atomically replace pillar opening stage", error)
         })?;
         sync_directory(parent)
     })();
@@ -909,13 +1703,54 @@ mod tests {
 
     fn opening_receipt(opening: &ResearchPillarOpening) -> PillarOpeningCheckpointReceipt {
         PillarOpeningCheckpointReceipt::new(
-            pillar_frozen_spec_digest("opening schema"),
-            2,
+            &opening_binding(),
             "opening-model",
             "opening-host",
             1,
             &["model-authored opening".to_string()],
+            pillar_frozen_spec_digest("semantic topology"),
             opening,
+        )
+        .unwrap()
+    }
+
+    fn opening_binding() -> PillarOpeningContractBinding {
+        PillarOpeningContractBinding {
+            response_schema_digest: pillar_frozen_spec_digest("opening schema"),
+            opener_contract_digest: pillar_frozen_spec_digest("opening contract"),
+            integration_owner: "planner".to_string(),
+            minimum_research_slices: 2,
+        }
+    }
+
+    fn partial_opening_checkpoint(
+        binding: &PillarOpeningContractBinding,
+    ) -> PillarOpeningPartialCheckpoint {
+        PillarOpeningPartialCheckpoint::new(
+            binding.clone(),
+            PillarOpeningRawOutputCheckpoint::new(
+                "opening-model",
+                "opening-host",
+                1,
+                r#"{"semantic_domains":[{"id":"domain-ui"}]}"#,
+            )
+            .unwrap(),
+            PillarOpeningPartialSemanticState {
+                semantic_domains: serde_json::json!([{
+                    "id": "domain-ui",
+                    "title": "Interface status",
+                    "objective": "Research the user-visible status contract"
+                }]),
+                research_slices: serde_json::json!([]),
+                integration_contract: opening().integration_contract,
+                valid_domain_assignment_by_requirement: BTreeMap::from([(
+                    "req-ui".to_string(),
+                    "domain-ui".to_string(),
+                )]),
+                valid_slice_assignment_by_requirement: BTreeMap::new(),
+                unresolved_domain_requirement_ids: vec!["req-api".to_string()],
+                unresolved_slice_requirement_ids: vec!["req-api".to_string(), "req-ui".to_string()],
+            },
         )
         .unwrap()
     }
@@ -940,8 +1775,7 @@ mod tests {
             root,
             digest,
             &opening.requirements,
-            &pillar_frozen_spec_digest("opening schema"),
-            2,
+            &opening_binding(),
             &[("opening-model".to_string(), "opening-host".to_string())],
         )
     }
@@ -1182,28 +2016,30 @@ mod tests {
         let (_, receipt) = load_test_opening(root.path(), &digest, &opening)
             .unwrap()
             .unwrap();
-        assert_eq!(receipt.minimum_semantic_pillars, 2);
+        assert_eq!(receipt.minimum_research_slices, 2);
         assert_eq!(receipt.accepted_model_id, "opening-model");
         assert_eq!(receipt.accepted_physical_host, "opening-host");
         assert_eq!(receipt.accepted_attempt, 1);
         assert_eq!(receipt.raw_output_digests.len(), 1);
         assert!(canonical_digest(&receipt.compiler_receipt_digest));
 
+        let mut schema_binding = opening_binding();
+        schema_binding.response_schema_digest = pillar_frozen_spec_digest("different schema");
         let schema_mismatch = PillarCheckpointStore::load_opening(
             root.path(),
             &digest,
             &opening.requirements,
-            &pillar_frozen_spec_digest("different schema"),
-            2,
+            &schema_binding,
             &[("opening-model".to_string(), "opening-host".to_string())],
         );
         assert!(schema_mismatch.is_err());
+        let mut floor_binding = opening_binding();
+        floor_binding.minimum_research_slices = 1;
         let floor_mismatch = PillarCheckpointStore::load_opening(
             root.path(),
             &digest,
             &opening.requirements,
-            &pillar_frozen_spec_digest("opening schema"),
-            1,
+            &floor_binding,
             &[("opening-model".to_string(), "opening-host".to_string())],
         );
         assert!(floor_mismatch.is_err());
@@ -1211,8 +2047,7 @@ mod tests {
             root.path(),
             &digest,
             &opening.requirements,
-            &pillar_frozen_spec_digest("opening schema"),
-            2,
+            &opening_binding(),
             &[("other-model".to_string(), "other-host".to_string())],
         );
         assert!(lane_mismatch.is_err());
@@ -1220,6 +2055,133 @@ mod tests {
         let mut tampered = receipt;
         tampered.accepted_attempt = 2;
         assert!(tampered.validate(&opening).is_err());
+    }
+
+    #[test]
+    fn staged_opening_restores_exact_repair_state_and_rejects_raw_output_tampering() {
+        let root = tempfile::tempdir().unwrap();
+        let authored_requirements = opening().requirements;
+        let digest = pillar_frozen_spec_digest("staged frozen spec");
+        let binding = opening_binding();
+        let candidate = partial_opening_checkpoint(&binding);
+        let lanes = [("opening-model".to_string(), "opening-host".to_string())];
+
+        PillarOpeningStageStore::persist(
+            root.path(),
+            &digest,
+            &authored_requirements,
+            PillarOpeningCheckpointStage::FullCandidate {
+                candidate: candidate.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            PillarOpeningStageStore::load(
+                root.path(),
+                &digest,
+                &authored_requirements,
+                &binding,
+                &lanes,
+            )
+            .unwrap(),
+            Some(PillarOpeningCheckpointStage::FullCandidate {
+                candidate: candidate.clone(),
+            })
+        );
+
+        let mut different_binding = binding.clone();
+        different_binding.minimum_research_slices += 1;
+        assert!(PillarOpeningStageStore::load(
+            root.path(),
+            &digest,
+            &authored_requirements,
+            &different_binding,
+            &lanes,
+        )
+        .is_err());
+
+        PillarOpeningStageStore::persist(
+            root.path(),
+            &digest,
+            &authored_requirements,
+            PillarOpeningCheckpointStage::FocusedRepair {
+                candidate: candidate.clone(),
+                repair_attempts: Vec::new(),
+                attempts: 1,
+            },
+        )
+        .unwrap();
+        let repair = PillarOpeningRawOutputCheckpoint::new(
+            "opening-model",
+            "opening-host",
+            2,
+            r#"{"domain_assignment_by_requirement":{"req-api":"domain-ui"}}"#,
+        )
+        .unwrap();
+        let focused = PillarOpeningCheckpointStage::FocusedRepair {
+            candidate: candidate.clone(),
+            repair_attempts: vec![repair.clone()],
+            attempts: 2,
+        };
+        PillarOpeningStageStore::persist(
+            root.path(),
+            &digest,
+            &authored_requirements,
+            focused.clone(),
+        )
+        .unwrap();
+        let unavailable = PillarOpeningCheckpointStage::Unavailable {
+            binding: binding.clone(),
+            candidate: Some(candidate.clone()),
+            full_attempts: Vec::new(),
+            repair_attempts: vec![repair.clone()],
+            attempts: 2,
+            reason: "authenticated lanes exhausted during focused repair".to_string(),
+        };
+        PillarOpeningStageStore::persist(
+            root.path(),
+            &digest,
+            &authored_requirements,
+            unavailable.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            PillarOpeningStageStore::load(
+                root.path(),
+                &digest,
+                &authored_requirements,
+                &binding,
+                &lanes,
+            )
+            .unwrap(),
+            Some(unavailable)
+        );
+        PillarOpeningStageStore::persist(root.path(), &digest, &authored_requirements, focused)
+            .unwrap();
+
+        let canonical_root = std::fs::canonicalize(root.path()).unwrap();
+        let stage_path =
+            checkpoint_generation_directory(&canonical_root, &digest).join(OPENING_STAGE_FILE);
+        let mut record = decode_opening_stage_record(&std::fs::read(&stage_path).unwrap()).unwrap();
+        let PillarOpeningCheckpointStage::FocusedRepair { candidate, .. } =
+            &mut record.material.stage
+        else {
+            panic!("focused repair stage must remain durable");
+        };
+        candidate.full_candidate.raw_output.push_str(" tampered");
+        record.checkpoint_hash = hash_serializable(&record.material).unwrap();
+        let mut tampered_bytes = serde_json::to_vec(&record).unwrap();
+        tampered_bytes.push(b'\n');
+        std::fs::write(stage_path, tampered_bytes).unwrap();
+
+        assert!(PillarOpeningStageStore::load(
+            root.path(),
+            &digest,
+            &authored_requirements,
+            &binding,
+            &lanes,
+        )
+        .is_err());
     }
 
     #[test]
