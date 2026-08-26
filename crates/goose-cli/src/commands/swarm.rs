@@ -62121,6 +62121,7 @@ mod pre_scheduler_semantic_runtime_tests {
     #[derive(Clone, Copy)]
     enum RuntimeProviderMode {
         Silent,
+        BuildWatchdogThenFinished,
         NetworkFailure,
         RecurrentSourceSilentJudge,
         CloseCapturedTurn,
@@ -62133,6 +62134,7 @@ mod pre_scheduler_semantic_runtime_tests {
     struct RuntimeScriptedProvider {
         mode: RuntimeProviderMode,
         source_calls: AtomicUsize,
+        build_calls: AtomicUsize,
         judge_calls: AtomicUsize,
         judge_started: Arc<Notify>,
         source_turn_two_started: Arc<Notify>,
@@ -62144,6 +62146,7 @@ mod pre_scheduler_semantic_runtime_tests {
             Self {
                 mode,
                 source_calls: AtomicUsize::new(0),
+                build_calls: AtomicUsize::new(0),
                 judge_calls: AtomicUsize::new(0),
                 judge_started: Arc::new(Notify::new()),
                 source_turn_two_started: Arc::new(Notify::new()),
@@ -62166,6 +62169,26 @@ mod pre_scheduler_semantic_runtime_tests {
                 Box::pin(
                     stream::once(async move { Ok((Some(message), None)) }).chain(stream::pending()),
                 ),
+                SingleAttemptTerminalProof::default(),
+            )
+        }
+
+        fn thinking_until_dropped() -> SingleAttemptStream {
+            SingleAttemptStream::new(
+                Box::pin(async_stream::stream! {
+                    let mut sequence = 0u64;
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                        sequence += 1;
+                        yield Ok((
+                            Some(Message::assistant().with_thinking(
+                                format!("advancing watchdog fixture step {sequence}"),
+                                format!("build-watchdog-{sequence}"),
+                            )),
+                            None,
+                        ));
+                    }
+                }),
                 SingleAttemptTerminalProof::default(),
             )
         }
@@ -62915,6 +62938,17 @@ mod pre_scheduler_semantic_runtime_tests {
             _messages: &[Message],
             _tools: &[Tool],
         ) -> Result<SingleAttemptStream, ProviderError> {
+            if matches!(self.mode, RuntimeProviderMode::BuildWatchdogThenFinished) {
+                let build_call = self.build_calls.fetch_add(1, AtomicOrdering::SeqCst);
+                return if build_call == 0 {
+                    Ok(Self::thinking_until_dropped())
+                } else {
+                    Ok(Self::finished_text(
+                        &model_config.model_name,
+                        "build completed after the watchdog retry",
+                    ))
+                };
+            }
             if model_config.model_name == JUDGE_MODEL {
                 let judge_call = self.judge_calls.fetch_add(1, AtomicOrdering::SeqCst);
                 self.judge_started.notify_one();
@@ -62949,6 +62983,9 @@ mod pre_scheduler_semantic_runtime_tests {
 
             let source_call = self.source_calls.fetch_add(1, AtomicOrdering::SeqCst);
             match self.mode {
+                RuntimeProviderMode::BuildWatchdogThenFinished => {
+                    unreachable!("build watchdog mode returns before source routing")
+                }
                 RuntimeProviderMode::Silent => Ok(Self::pending()),
                 RuntimeProviderMode::NetworkFailure => Err(ProviderError::NetworkError(
                     "runtime test unresolved transport loss".to_string(),
@@ -65709,6 +65746,113 @@ mod pre_scheduler_semantic_runtime_tests {
         next.complete_local(LocalCompletionKind::Error)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_build_progress_watchdog_reconciles_releases_and_retries() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("1")),
+            ("GOOSE_SWARM_UNCAPPED", Some("0")),
+        ]);
+        let harness = runtime_harness(RuntimeProviderMode::BuildWatchdogThenFinished).await;
+        let dag = Dag::from_specs(vec![TaskSpec {
+            id: "progress-watchdog-build".to_string(),
+            description: "Complete one provider-backed build task after a stalled first attempt"
+                .to_string(),
+            difficulty: goose_swarm::Difficulty::Easy,
+            preferred_model: None,
+            owned_files: Vec::new(),
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        }])
+        .unwrap();
+        let devices = vec![
+            DeviceCfg {
+                id: SOURCE_DEVICE.to_string(),
+                model_id: SOURCE_MODEL.to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            },
+            DeviceCfg {
+                id: JUDGE_DEVICE.to_string(),
+                model_id: JUDGE_MODEL.to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            },
+        ];
+
+        let report = tokio::time::timeout(
+            Duration::from_secs(8),
+            Scheduler::new(devices, 2)
+                .with_sink(harness.sink.clone())
+                .run_with_physical_admission(
+                    dag,
+                    harness.dispatcher.clone() as Arc<dyn ProviderLifecycleDispatcher>,
+                    harness.control.clone(),
+                    PhysicalExecutionAuthority::new(
+                        AuthorityScope::new("pre-scheduler-runtime-run", "execute"),
+                        0,
+                        WorkRole::Build,
+                    ),
+                    "exercise the brokered build watchdog".to_string(),
+                    String::new(),
+                ),
+        )
+        .await
+        .expect("brokered build watchdog did not reconcile and retry")
+        .expect("brokered build watchdog retry failed");
+
+        assert_eq!(report.done, ["progress-watchdog-build"]);
+        assert!(report.failed.is_empty());
+        assert_eq!(harness.provider.build_calls.load(AtomicOrdering::SeqCst), 2);
+        let events = harness.sink.values();
+        let terminal_kinds = events
+            .iter()
+            .filter(|event| event["event"] == "broker_provider_terminal_observed")
+            .filter_map(|event| event["receipt"]["kind"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            terminal_kinds
+                .iter()
+                .filter(|kind| **kind == "cancelled")
+                .count(),
+            1
+        );
+        assert_eq!(
+            terminal_kinds
+                .iter()
+                .filter(|kind| **kind == "finished")
+                .count(),
+            1
+        );
+        let attempts = events
+            .iter()
+            .filter(|event| {
+                event["event"] == "task_dispatched" && event["task_id"] == "progress-watchdog-build"
+            })
+            .filter_map(|event| event["attempt"].as_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(attempts, [0, 1]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "broker_admission_released")
+                .count(),
+            2
+        );
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            harness.control.wait_until_drained(),
+        )
+        .await
+        .expect("brokered build watchdog lifecycle did not drain")
+        .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
     #[tokio::test]
