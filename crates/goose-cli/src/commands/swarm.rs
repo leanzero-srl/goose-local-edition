@@ -12220,7 +12220,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // THE MEASURED SEQUENCE. Round 0 = 84 (the first measure), then the redrafts.
         assert_eq!(
             decide(&[84, 70, 70, 52], 1),
-            Some(2),
+            Some(1),
             "the guard must stop at the FIRST round that fails to beat 84 — rounds 2 and 3 cost ~40 min of \
              fleet and produced nothing better"
         );
@@ -16009,7 +16009,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
 
     #[test]
     fn owned_path_authority_rejects_case_and_parent_child_aliases() {
-        for second in ["SRC/API.PY", "src/api.py/generated", "src"] {
+        for second in ["SRC/API.PY", "src/api.py/generated"] {
             let mut owners = Vec::new();
             register_owned_path(&mut owners, "api", "src/api.py").unwrap();
             let error = register_owned_path(&mut owners, "other", second).unwrap_err();
@@ -16018,6 +16018,13 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 "path alias `{second}` escaped the ownership fence: {error}"
             );
         }
+        let mut owners = Vec::new();
+        register_owned_path(&mut owners, "api", "src/api.py").unwrap();
+        let parent_error = register_owned_path(&mut owners, "other", "src").unwrap_err();
+        assert!(
+            parent_error.to_string().contains("not a regular file"),
+            "a parent directory must be rejected before it can alias an owned file: {parent_error}"
+        );
     }
 
     #[test]
