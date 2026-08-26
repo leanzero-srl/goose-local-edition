@@ -9,6 +9,7 @@ description = "Weighted work-queue swarm scheduler for goose-local-edition (LM S
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 fs2.workspace = true
+futures.workspace = true
 goose-provider-types = { version = "1.41.0", path = "../goose-provider-types" }
 libc = "0.2.182"
 rand.workspace = true
