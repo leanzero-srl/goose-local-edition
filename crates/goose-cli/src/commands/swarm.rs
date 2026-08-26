@@ -62001,9 +62001,30 @@ mod repair_tree_seal_tests {
         tree.record_ruling(&synthetic_ruler(&[]), "authoritative", &sink)
             .unwrap();
 
-        let wal = dir
-            .path()
-            .join(".swarm/scheduler-checkpoint-v1/tasks.wal.jsonl");
+        let checkpoint_directories = std::fs::read_dir(dir.path().join(".swarm"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.is_dir()
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("scheduler-checkpoint-v"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            checkpoint_directories.len(),
+            1,
+            "opening one checkpoint store must materialize exactly one live schema directory"
+        );
+        let wal = checkpoint_directories[0].join("tasks.wal.jsonl");
+        let wal_metadata = std::fs::symlink_metadata(&wal).unwrap();
+        assert!(wal_metadata.file_type().is_file());
+        assert_eq!(
+            wal_metadata.len(),
+            0,
+            "a newly opened store must durably materialize its empty WAL before reseal"
+        );
         std::fs::remove_file(&wal).unwrap();
         std::fs::write(&wal, "injected replacement\n").unwrap();
         reseal_authoritative_scheduler_checkpoints(
