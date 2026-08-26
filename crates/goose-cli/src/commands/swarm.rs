@@ -9278,7 +9278,7 @@ mod tests {
         assert!(argv[1].starts_with(&*tmp.path().to_string_lossy()));
         assert_eq!(argv[2], "--port");
         assert_eq!(ports.len(), 1);
-        assert_eq!(argv[3], ports[0].to_string());
+        assert_eq!(argv[3], ports[0].port.to_string());
 
         // F910 defect 1, pinned: the sb-7 combined boot — TWO DISTINCT ports, a created
         // scratch dir, the spec's vendor base for URL, a scratch tokens file.
@@ -9286,7 +9286,7 @@ mod tests {
         let (a, p2) = spec_run_argv_v2(sb7, "app", tmp.path(), 8901);
         assert_eq!(p2.len(), 2, "each port-flag gets its OWN port: {a:?}");
         assert_ne!(
-            p2[0], p2[1],
+            p2[0].port, p2[1].port,
             "the two services must never share a probe port"
         );
         let vendor = a[a.iter().position(|t| t == "--vendor").unwrap() + 1].clone();
@@ -9318,6 +9318,173 @@ mod tests {
                 .0
                 .is_empty()
         );
+    }
+
+    const MULTI_SERVICE_BOOT_SPEC: &str = r#"
+### 1. The application
+`python -m app --db-dir P --ledger-port N --notifier-port M`
+
+### 2. `ledgerd` service
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/api/health` | ok |
+
+### 3. `notifierd` service
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/health` | ok |
+"#;
+
+    fn write_multi_service_boot_app(root: &Path, ledger: bool, notifier: bool, swap_health: bool) {
+        let package = root.join("app");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("__init__.py"), "").unwrap();
+        let source = format!(
+            r#"import argparse
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+p = argparse.ArgumentParser()
+p.add_argument("--db-dir")
+p.add_argument("--ledger-port", type=int)
+p.add_argument("--notifier-port", type=int)
+a = p.parse_args()
+
+def serve(port, health_path):
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200 if self.path == health_path else 404)
+            self.end_headers()
+            self.wfile.write(b'{{"status":"ok"}}')
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+if {ledger}:
+    serve(a.ledger_port, {ledger_health:?})
+if {notifier}:
+    serve(a.notifier_port, {notifier_health:?})
+else:
+    sys.stderr.write("notifier crashed before bind\\n")
+    sys.stderr.flush()
+time.sleep(30)
+"#,
+            ledger = if ledger { "True" } else { "False" },
+            notifier = if notifier { "True" } else { "False" },
+            ledger_health = if swap_health {
+                "/health"
+            } else {
+                "/api/health"
+            },
+            notifier_health = if swap_health {
+                "/api/health"
+            } else {
+                "/health"
+            },
+        );
+        std::fs::write(package.join("__main__.py"), source).unwrap();
+    }
+
+    #[tokio::test]
+    async fn combined_boot_is_red_when_ledger_binds_but_notifier_crashes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        write_multi_service_boot_app(tmp.path(), true, false, false);
+        let result = boot_probe(tmp.path(), MULTI_SERVICE_BOOT_SPEC)
+            .await
+            .expect("the combined invocation is bootable")
+            .expect("one of two application services never bound");
+        assert!(result.contains("notifier"), "{result}");
+        assert!(result.contains("notifier crashed before bind"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn combined_boot_is_green_only_when_both_services_answer_their_health_endpoints() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        write_multi_service_boot_app(tmp.path(), true, true, false);
+        assert_eq!(
+            boot_probe(tmp.path(), MULTI_SERVICE_BOOT_SPEC).await,
+            Some(None),
+            "both authored application services bound and answered their own health route"
+        );
+    }
+
+    #[tokio::test]
+    async fn single_service_boot_keeps_its_existing_bind_floor() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let package = tmp.path().join("solo");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("__init__.py"), "").unwrap();
+        std::fs::write(
+            package.join("__main__.py"),
+            r#"import argparse
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+p = argparse.ArgumentParser()
+p.add_argument("--port", type=int)
+a = p.parse_args()
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200 if self.path == "/health" else 404)
+        self.end_headers()
+    def log_message(self, *args):
+        pass
+ThreadingHTTPServer(("127.0.0.1", a.port), Handler).serve_forever()
+"#,
+        )
+        .unwrap();
+        let spec = "`python -m solo --port N`\n### `solo` service\n| `GET` | `/health` | ok |";
+        assert_eq!(boot_probe(tmp.path(), spec).await, Some(None));
+    }
+
+    #[tokio::test]
+    async fn combined_boot_rejects_health_endpoints_answered_by_the_wrong_services() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        write_multi_service_boot_app(tmp.path(), true, true, true);
+        let result = boot_probe(tmp.path(), MULTI_SERVICE_BOOT_SPEC)
+            .await
+            .expect("the combined invocation is bootable")
+            .expect("cross-wired health routes are not service readiness");
+        assert!(result.contains("ledger"), "{result}");
+        assert!(result.contains("notifier"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn an_external_vendor_port_never_satisfies_application_boot() {
+        let vendor = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let vendor_port = vendor.local_addr().unwrap().port();
+        let spec = format!(
+            "Vendor base URL `http://127.0.0.1:{vendor_port}`. \
+             `python -m app --ledger-port N --vendor-port V`\n\
+             ### `ledgerd` service\n\
+             | `GET` | `/api/health` | ok |"
+        );
+        let tmp = tempfile::TempDir::new().unwrap();
+        let package = tmp.path().join("app");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("__init__.py"), "").unwrap();
+        std::fs::write(
+            package.join("__main__.py"),
+            "import argparse,time\np=argparse.ArgumentParser()\np.add_argument('--ledger-port')\np.add_argument('--vendor-port')\np.parse_args()\ntime.sleep(30)\n",
+        )
+        .unwrap();
+
+        let scratch = tmp.path().join("scratch");
+        let (argv, probes) = spec_run_argv_v2(&spec, "app", &scratch, vendor_port);
+        assert_eq!(probes.len(), 1, "vendor ports are not readiness evidence");
+        assert_eq!(probes[0].service, "ledger");
+        assert_eq!(
+            argv[argv.iter().position(|arg| arg == "--vendor-port").unwrap() + 1],
+            vendor_port.to_string()
+        );
+        let result = boot_probe(tmp.path(), &spec)
+            .await
+            .expect("the application port is advertised")
+            .expect("the app never opened its application service");
+        assert!(result.contains("ledger"), "{result}");
+        drop(vendor);
     }
 
     #[test]
@@ -36803,28 +36970,56 @@ struct SpecContractResult {
 async fn boot_probe(root: &Path, spec: &str) -> Option<Option<String>> {
     let pkg = spec_python_entry(spec)?;
     let scratch = std::env::temp_dir().join(format!("goose-boot-probe-{}", std::process::id()));
-    let (argv, ports) = spec_run_argv_v2(spec, &pkg, &scratch, spec_port(spec));
+    let (argv, mut probes) = spec_run_argv_v2(spec, &pkg, &scratch, spec_port(spec));
     // No port placeholder substituted: the app boots on its OWN advertised literal port —
     // and when that port is already bound pre-spawn (vendor mock, squatter) the bind cannot
     // be attributed, so the probe refuses to conclude rather than concluding wrong. A spec
     // with no server port at all has no boot floor.
-    let probe_ports: Vec<u16> = if ports.is_empty() {
+    if probes.is_empty() {
         let p = spec_port_opt(spec)?;
+        let external_ports = regex::Regex::new(r"https?://[^\s`:/]+:(\d{2,5})")
+            .ok()
+            .map(|re| {
+                re.captures_iter(spec)
+                    .filter_map(|captures| captures[1].parse::<u16>().ok())
+                    .collect::<std::collections::HashSet<_>>()
+            })
+            .unwrap_or_default();
+        if external_ports.contains(&p) {
+            return None;
+        }
         if tokio::net::TcpStream::connect(("127.0.0.1", p))
             .await
             .is_ok()
         {
             return None;
         }
-        vec![p]
-    } else {
-        ports
-    };
-    Some(boot_invocation(root, &pkg, &argv, &probe_ports, &scratch).await)
+        let service = normalized_service_name(pkg.rsplit('.').next().unwrap_or(&pkg));
+        let health_paths = spec_service_health_paths(spec);
+        probes.push(BootServiceProbe {
+            flag: "advertised-port".to_string(),
+            health_path: health_path_for_service(&health_paths, &service, 1),
+            service,
+            port: p,
+        });
+    }
+    Some(boot_invocation(root, &pkg, &argv, &probes, &scratch).await)
 }
 
-/// Spawn ONE `python3 -m pkg argv` and decide bind-or-die: `None` = some probe port bound
-/// (alive), `Some(tail)` = it never bound, with the normalized output tail as evidence. The
+/// One application-owned service port advertised by a spec invocation. `health_path` is
+/// present only when the spec assigns a health endpoint to this specific service.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BootServiceProbe {
+    flag: String,
+    service: String,
+    port: u16,
+    health_path: Option<String>,
+}
+
+/// Spawn ONE `python3 -m pkg argv` and decide ready-or-die: `None` = every advertised
+/// application service is ready, `Some(tail)` = at least one never became ready, with the
+/// normalized output tail as evidence. Readiness means bind for a service with no authored
+/// health endpoint, and a 2xx from that service's own health endpoint when one is authored. The
 /// shared core of the boot floor AND the gate's every-advertised-invocation check (F910
 /// defect 2). Pipes are drained during the poll (an undrained pipe wedges a chatty child at
 /// ~64KB and misreads as dead); per-probe randomness (ports, scratch paths) is normalized
@@ -36833,7 +37028,7 @@ async fn boot_invocation(
     root: &Path,
     pkg: &str,
     argv: &[String],
-    probe_ports: &[u16],
+    probes: &[BootServiceProbe],
     scratch: &Path,
 ) -> Option<String> {
     let mut cmd = tokio::process::Command::new("python3");
@@ -36872,19 +37067,57 @@ async fn boot_invocation(
     }
     let stdout_task = tokio::spawn(pipe_tail(child.stdout.take()));
     let stderr_task = tokio::spawn(pipe_tail(child.stderr.take()));
-    let mut up = false;
-    'poll: for _ in 0..80 {
-        for p in probe_ports {
-            if tokio::net::TcpStream::connect(("127.0.0.1", *p))
+    async fn service_ready(probe: &BootServiceProbe) -> bool {
+        let Some(path) = probe.health_path.as_deref() else {
+            return tokio::net::TcpStream::connect(("127.0.0.1", probe.port))
                 .await
-                .is_ok()
-            {
-                up = true;
-                break 'poll;
-            }
+                .is_ok();
+        };
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let Ok(mut stream) = tokio::net::TcpStream::connect(("127.0.0.1", probe.port)).await else {
+            return false;
+        };
+        let request =
+            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+        if stream.write_all(request.as_bytes()).await.is_err() {
+            return false;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mut response = [0u8; 256];
+        let Ok(read) = stream.read(&mut response).await else {
+            return false;
+        };
+        let status = String::from_utf8_lossy(&response[..read]);
+        status
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|code| code.parse::<u16>().ok())
+            .is_some_and(|code| (200..300).contains(&code))
     }
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(4), async {
+        loop {
+            if futures::future::join_all(probes.iter().map(service_ready))
+                .await
+                .into_iter()
+                .all(|ready| ready)
+            {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or(false);
+    let readiness = if ready {
+        vec![true; probes.len()]
+    } else {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            futures::future::join_all(probes.iter().map(service_ready)),
+        )
+        .await
+        .unwrap_or_else(|_| vec![false; probes.len()])
+    };
     let _ = child.kill().await;
     let _ = child.wait().await;
     let combined = format!(
@@ -36892,7 +37125,7 @@ async fn boot_invocation(
         stdout_task.await.unwrap_or_default(),
         stderr_task.await.unwrap_or_default()
     );
-    if up {
+    if ready {
         return None;
     }
     let tail: String = combined
@@ -36904,13 +37137,27 @@ async fn boot_invocation(
         .rev()
         .collect();
     let mut tail = tail.replace(&*scratch.to_string_lossy(), "SCRATCH");
-    for p in probe_ports {
-        tail = tail.replace(&p.to_string(), "PORT");
+    for probe in probes {
+        tail = tail.replace(&probe.port.to_string(), "PORT");
     }
+    let unmet = probes
+        .iter()
+        .zip(readiness)
+        .filter(|(_, ready)| !ready)
+        .map(|(probe, _)| match &probe.health_path {
+            Some(path) => format!("{} via {} ({path} on PORT)", probe.service, probe.flag),
+            None => format!("{} via {} (PORT)", probe.service, probe.flag),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     if tail.trim().is_empty() {
-        Some("no output captured".to_string())
+        Some(format!(
+            "required application services not ready: {unmet}; no output captured"
+        ))
     } else {
-        Some(tail)
+        Some(format!(
+            "required application services not ready: {unmet}; output tail: {tail}"
+        ))
     }
 }
 
@@ -37254,17 +37501,128 @@ fn spec_unprobed_advertised(spec: &str) -> Vec<String> {
 /// handed ONE port to every port-flag — sb-7's combined boot takes --ledger-port AND
 /// --notifier-port, so the second service could never bind and the boot-repair loop chased a
 /// phantom for 33 minutes — and stuffed the scratch DB PATH into --vendor and --tokens-file.
-/// Rules, all generic: each port-flag gets its OWN fresh free port; a dir-flag gets a created
-/// scratch DIRECTORY; a vendor/url-flag gets the spec's own advertised vendor base; a
-/// token/file-flag gets a scratch file; anything else keeps the scratch db path. Returns the
-/// substituted ports so the caller accepts ANY of them binding as boot proof. Pure aside from
-/// scratch-dir/file creation and ephemeral port allocation.
+/// Rules, all generic: each application port-flag gets its OWN fresh free port; a dir-flag gets
+/// a created scratch DIRECTORY; a vendor/url-flag gets the spec's own advertised vendor base; a
+/// token/file-flag gets a scratch file; anything else keeps the scratch db path. External
+/// dependency ports remain arguments but never become application readiness evidence. Pure aside
+/// from scratch-dir/file creation and ephemeral port allocation.
+fn normalized_service_name(raw: &str) -> String {
+    let mut normalized = raw
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    if let Some(without_service) = normalized.strip_suffix("service") {
+        normalized = without_service.to_string();
+    }
+    if normalized.len() > 1 && normalized.ends_with('d') {
+        normalized.pop();
+    }
+    normalized
+}
+
+fn application_port_service(flag: &str, pkg: &str) -> Option<String> {
+    let flag = flag.trim_start_matches('-').to_ascii_lowercase();
+    if !flag.contains("port")
+        || ["vendor", "external", "upstream", "remote", "dependency"]
+            .iter()
+            .any(|kind| flag.contains(kind))
+    {
+        return None;
+    }
+    let named = flag
+        .trim_end_matches("-port")
+        .trim_end_matches("_port")
+        .trim_end_matches("port")
+        .trim_matches(['-', '_']);
+    let service = if named.is_empty() {
+        pkg.rsplit('.').next().unwrap_or(pkg)
+    } else {
+        named
+    };
+    Some(normalized_service_name(service))
+}
+
+/// Health endpoints associated with the service section that owns them. A lower-level heading
+/// such as `#### Endpoints` does not erase the current service. This keeps the mapping authored by
+/// the spec: a combined process cannot satisfy notifier readiness by answering ledger health.
+fn spec_service_health_paths(spec: &str) -> Vec<(String, String)> {
+    let heading_name = regex::Regex::new(r"`([A-Za-z_][A-Za-z0-9_.-]*)`").ok();
+    let health_path =
+        regex::Regex::new(r"(?i)^\|\s*`?GET`?\s*\|\s*`?(/[^`|\s]*health[^`|\s]*)`?\s*\|").ok();
+    let mut service = String::new();
+    let mut out = Vec::new();
+    for line in spec.lines() {
+        let trimmed = line.trim_start();
+        let level = trimmed
+            .chars()
+            .take_while(|character| *character == '#')
+            .count();
+        if (1..=3).contains(&level) {
+            let heading = trimmed.get(level..).unwrap_or_default().trim();
+            let named = heading_name
+                .as_ref()
+                .and_then(|re| re.captures(heading))
+                .map(|captures| captures[1].to_string())
+                .unwrap_or_else(|| {
+                    heading
+                        .trim_start_matches(|character: char| {
+                            character.is_ascii_digit()
+                                || character == '.'
+                                || character.is_whitespace()
+                        })
+                        .split(['—', '-', ':'])
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string()
+                });
+            service = normalized_service_name(&named);
+            continue;
+        }
+        let Some(path) = health_path
+            .as_ref()
+            .and_then(|re| re.captures(trimmed))
+            .map(|captures| captures[1].to_string())
+        else {
+            continue;
+        };
+        if !service.is_empty()
+            && !out
+                .iter()
+                .any(|entry| entry == &(service.clone(), path.clone()))
+        {
+            out.push((service.clone(), path));
+        }
+    }
+    out
+}
+
+fn health_path_for_service(
+    health_paths: &[(String, String)],
+    service: &str,
+    application_port_count: usize,
+) -> Option<String> {
+    health_paths
+        .iter()
+        .find(|(owner, _)| owner == service)
+        .map(|(_, path)| path.clone())
+        .or_else(|| {
+            let unique = health_paths
+                .iter()
+                .map(|(_, path)| path)
+                .collect::<std::collections::HashSet<_>>();
+            (application_port_count == 1 && unique.len() == 1)
+                .then(|| (*unique.into_iter().next().unwrap()).clone())
+        })
+}
+
 fn spec_run_argv_v2(
     spec: &str,
     pkg: &str,
     scratch_base: &Path,
     spec_vendor_port: u16,
-) -> (Vec<String>, Vec<u16>) {
+) -> (Vec<String>, Vec<BootServiceProbe>) {
     let needle = format!("-m {pkg}");
     let span = spec
         .split('`')
@@ -37284,7 +37642,7 @@ fn spec_run_argv_v2(
         p
     };
     let mut out: Vec<String> = Vec::new();
-    let mut ports: Vec<u16> = Vec::new();
+    let mut application_ports: Vec<(String, String, u16)> = Vec::new();
     let mut prev_flag = String::new();
     let mut dir_n = 0usize;
     for tok in it {
@@ -37297,11 +37655,18 @@ fn spec_run_argv_v2(
             && tok
                 .chars()
                 .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit());
+        let application_service = application_port_service(&prev_flag, pkg);
+        let external_port = prev_flag.contains("port") && application_service.is_none();
         let filled = if !is_placeholder {
+            if let (Some(service), Ok(port)) = (application_service.clone(), tok.parse::<u16>()) {
+                application_ports.push((prev_flag.clone(), service, port));
+            }
             tok.to_string()
-        } else if prev_flag.contains("port") {
+        } else if external_port {
+            spec_vendor_port.to_string()
+        } else if let Some(service) = application_service {
             let p = fresh_port();
-            ports.push(p);
+            application_ports.push((prev_flag.clone(), service, p));
             p.to_string()
         } else if prev_flag.contains("vendor") || prev_flag.contains("url") || tok == "URL" {
             format!("http://127.0.0.1:{spec_vendor_port}")
@@ -37322,7 +37687,18 @@ fn spec_run_argv_v2(
         out.push(filled);
     }
     drop(holders);
-    (out, ports)
+    let health_paths = spec_service_health_paths(spec);
+    let application_port_count = application_ports.len();
+    let probes = application_ports
+        .into_iter()
+        .map(|(flag, service, port)| BootServiceProbe {
+            health_path: health_path_for_service(&health_paths, &service, application_port_count),
+            flag,
+            service,
+            port,
+        })
+        .collect();
+    (out, probes)
 }
 
 /// The boot-repair brief's extra diagnosis when the probe's tail shows NO crash: the process ran
@@ -37930,7 +38306,7 @@ async fn run_spec_contract(root: &Path, spec: &str, lang: TargetLang) -> SpecCon
     };
     let port = advertised_ports
         .first()
-        .copied()
+        .map(|probe| probe.port)
         .unwrap_or_else(|| spec_port(spec));
     // Read the port's state BEFORE spawning — after the spawn it is unknowable whether we or a
     // squatter opened it, and that ambiguity is exactly what produced two false 404 findings.
