@@ -1342,13 +1342,11 @@ impl PhysicalBroker {
                 if self.quarantined_hosts.contains_key(&lane.host_id) {
                     return false;
                 }
-                if matches!(
-                    &lane.capacity_evidence,
-                    HostCapacityEvidence::ProbeSingleStream { .. }
-                ) && self
-                    .active
-                    .values()
-                    .any(|active| active.receipt.physical_host_id == lane.host_id)
+                if lane.capacity_evidence.max_concurrent() == 1
+                    && self
+                        .active
+                        .values()
+                        .any(|active| active.receipt.physical_host_id == lane.host_id)
                 {
                     return false;
                 }
@@ -2212,7 +2210,10 @@ fn queue_class_for_work(role: WorkRole) -> BrokerQueueClass {
 
 fn queue_class_for_provider_continuation(role: WorkRole) -> BrokerQueueClass {
     match role {
-        WorkRole::Build | WorkRole::Repair => BrokerQueueClass::CoreContinuation,
+        WorkRole::Build
+        | WorkRole::Repair
+        | WorkRole::ResearchEvidence
+        | WorkRole::PlanningAuthority => BrokerQueueClass::CoreContinuation,
         _ => queue_class_for_work(role),
     }
 }
