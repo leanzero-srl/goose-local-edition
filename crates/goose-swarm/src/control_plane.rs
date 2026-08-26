@@ -3052,10 +3052,9 @@ impl TaskDispatcher for BrokeredTaskDispatcher {
                     "physical lifecycle could not close provider starts: {error}"
                 ))
             })?;
-        let completion = if result.is_ok() {
-            LocalCompletionKind::Success
-        } else {
-            LocalCompletionKind::Error
+        let completion = match &result {
+            Ok(output) if !output.salvaged => LocalCompletionKind::Success,
+            Ok(_) | Err(_) => LocalCompletionKind::Error,
         };
         admitted
             .complete_local_after_close(completion)
