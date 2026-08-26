@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import hashlib
 import importlib.util
 import json
@@ -44,6 +46,12 @@ EXPECTED_QUANTIZATION_SHA256 = (
     "267f67a60ca5f10733c610ff4be23d9bf6107a66de92ba1f37757c1d8aaec767"
 )
 EXPECTED_PLANNER_MODEL = "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx"
+APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION = {
+    "v21-r5": "0bfa5e8d13708919d69c1cdd26f52baa77b2f47da0ef7a41818477bec3fe3e04",
+}
+APPROVED_CONTROLLER_SOURCE_SHA256 = (
+    "a3c8bde115bed931b67c6aacf22f23dba26a4c5d5056cc043628edf019de0b20"
+)
 
 
 class SuccessorBindingError(RuntimeError):
@@ -178,6 +186,26 @@ def create_once(path: pathlib.Path, payload: bytes, mode: int) -> bool:
         os.fsync(handle.fileno())
     path.chmod(mode)
     return True
+
+
+def rename_directory_create_only(source: pathlib.Path, target: pathlib.Path) -> None:
+    if sys.platform != "darwin":
+        raise SuccessorBindingError(
+            "append-only successor commit requires macOS RENAME_EXCL"
+        )
+    library = ctypes.CDLL(None, use_errno=True)
+    rename_exclusive = library.renamex_np
+    rename_exclusive.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    rename_exclusive.restype = ctypes.c_int
+    if rename_exclusive(os.fsencode(source), os.fsencode(target), 0x00000004) != 0:
+        error = ctypes.get_errno()
+        if error in (errno.EEXIST, errno.ENOTEMPTY):
+            raise SuccessorBindingError(
+                "append-only successor destination already exists"
+            )
+        raise SuccessorBindingError(
+            f"append-only successor exclusive commit failed with errno {error}"
+        )
 
 
 def normalized_process_receipts(launch: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -378,8 +406,8 @@ def binding_block(evidence: Mapping[str, Any], base_config: Mapping[str, Any]) -
         f"V19_USAGE_POLICY_SHA256 = {usage_policy.get('sha256')!r}",
         f"V19_PUBLISHER_MARKER = {publication.get('provenance_marker')!r}",
         f"V19_PUBLISHER_ROOT = pathlib.Path({publisher.get('site_root')!r})",
-        "V19_PUBLISHER_PATH = V19_STATE_DIR / 'closure-instrument' / 'seed-fleet-brainwaves-sb70.mjs'",
-        "V19_USAGE_POLICY_PATH = V19_STATE_DIR / 'closure-instrument' / 'usage_impairment.py'",
+        "V19_PUBLISHER_PATH = V19_STATE_DIR / 'bootstrap' / 'seed-fleet-brainwaves-sb70.mjs'",
+        "V19_USAGE_POLICY_PATH = V19_STATE_DIR / 'bootstrap' / 'usage_impairment.py'",
         f"V19_BOUND_LAUNCH_SHA256 = {evidence['launch_sha256']!r}",
         f"V19_BOUND_RUN_ID = {evidence['run_id']!r}",
         f"V19_BOUND_PROCESSES = {dict(evidence['processes'])!r}",
@@ -482,21 +510,37 @@ def generate_successor(
     base_config_path = require_regular(base_config_path)
     controller_source = require_regular(controller_source)
     base_payload = read_stable_bytes(base_config_path)
+    approved_predecessor = APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION.get(
+        generation
+    )
+    if (
+        approved_predecessor is None
+        or sha256_bytes(base_payload) != approved_predecessor
+    ):
+        raise SuccessorBindingError(
+            "predecessor closure config is not approved for this successor generation"
+        )
     base_config = decode_json(base_payload, base_config_path)
     protected_before = sha256_bytes(base_payload)
     evidence = successor_evidence(generation, live_root, state_dir)
     evidence["predecessor_config_sha256"] = protected_before
     controller_source_payload = read_stable_bytes(controller_source)
+    if sha256_bytes(controller_source_payload) != APPROVED_CONTROLLER_SOURCE_SHA256:
+        raise SuccessorBindingError("terminal closer source is not the approved controller")
     evidence["source_controller_sha256"] = sha256_bytes(controller_source_payload)
     state_dir = pathlib.Path(str(evidence["state_dir"]))
-    instrument = state_dir / "closure-instrument"
-    controller_path = instrument / "terminal_closure.py"
-    publisher_path = instrument / "seed-fleet-brainwaves-sb70.mjs"
-    usage_policy_path = instrument / "usage_impairment.py"
-    publisher_source = require_regular(pathlib.Path(base_config["publisher"]["path"]))
-    usage_policy_source = require_regular(pathlib.Path(base_config["usage_policy"]["path"]))
-    publisher_payload = read_stable_bytes(publisher_source)
-    usage_policy_payload = read_stable_bytes(usage_policy_source)
+    bootstrap = state_dir / "bootstrap"
+    controller_path = bootstrap / "terminal_closure.py"
+    publisher_path = bootstrap / "seed-fleet-brainwaves-sb70.mjs"
+    usage_policy_path = bootstrap / "usage_impairment.py"
+    publisher_source = require_regular(
+        pathlib.Path(base_config["publisher"]["path"]), read_only=True
+    )
+    usage_policy_source = require_regular(
+        pathlib.Path(base_config["usage_policy"]["path"]), read_only=True
+    )
+    publisher_payload = read_stable_bytes(publisher_source, read_only=True)
+    usage_policy_payload = read_stable_bytes(usage_policy_source, read_only=True)
     if sha256_bytes(publisher_payload) != base_config["publisher"]["sha256"]:
         raise SuccessorBindingError("base guarded publisher hash changed")
     if sha256_bytes(usage_policy_payload) != base_config["usage_policy"]["sha256"]:
@@ -516,16 +560,13 @@ def generate_successor(
 
     template_path = state_dir / "template.json"
     outputs = {
-        pathlib.Path("closure-instrument/successor-binding.json"): (
-            receipt_payload,
-            0o400,
-        ),
-        pathlib.Path("closure-instrument/terminal_closure.py"): (rendered, 0o500),
-        pathlib.Path("closure-instrument/seed-fleet-brainwaves-sb70.mjs"): (
+        pathlib.Path("successor-binding.json"): (receipt_payload, 0o400),
+        pathlib.Path("bootstrap/terminal_closure.py"): (rendered, 0o500),
+        pathlib.Path("bootstrap/seed-fleet-brainwaves-sb70.mjs"): (
             publisher_payload,
             0o500,
         ),
-        pathlib.Path("closure-instrument/usage_impairment.py"): (
+        pathlib.Path("bootstrap/usage_impairment.py"): (
             usage_policy_payload,
             0o400,
         ),
@@ -541,16 +582,36 @@ def generate_successor(
         try:
             for relative, (payload, mode) in outputs.items():
                 create_once(temporary / relative, payload, mode)
-            staged_controller = temporary / "closure-instrument/terminal_closure.py"
+            staged_controller = temporary / "bootstrap/terminal_closure.py"
             staged_template = temporary / "template.json"
             module = load_generated_module(staged_controller)
             module.validate_config(module.load_config(staged_template), allow_unarmed=True)
-            try:
-                os.rename(temporary, state_dir)
-            except FileExistsError as error:
+            refreshed_evidence = successor_evidence(generation, live_root, state_dir)
+            comparable_evidence = {
+                key: value
+                for key, value in evidence.items()
+                if key not in {"predecessor_config_sha256", "source_controller_sha256"}
+            }
+            if canonical_json(refreshed_evidence) != canonical_json(comparable_evidence):
                 raise SuccessorBindingError(
-                    "append-only successor state won a conflicting creation race"
-                ) from error
+                    "successor launch evidence changed before append-only commit"
+                )
+            immutable_sources = (
+                (publisher_source, publisher_payload, True),
+                (usage_policy_source, usage_policy_payload, True),
+            )
+            if any(
+                read_stable_bytes(path, read_only=read_only) != payload
+                for path, payload, read_only in (
+                    (base_config_path, base_payload, False),
+                    (controller_source, controller_source_payload, False),
+                    *immutable_sources,
+                )
+            ):
+                raise SuccessorBindingError(
+                    "successor binding source changed before append-only commit"
+                )
+            rename_directory_create_only(temporary, state_dir)
             parent_descriptor = os.open(state_dir.parent, os.O_RDONLY)
             try:
                 os.fsync(parent_descriptor)
@@ -573,8 +634,6 @@ def generate_successor(
             raise SuccessorBindingError(
                 f"append-only successor output changed: {relative.as_posix()}"
             )
-    if read_stable_bytes(base_config_path) != base_payload:
-        raise SuccessorBindingError("base closure config changed during successor generation")
     module = load_generated_module(controller_path)
     module.validate_config(module.load_config(template_path), allow_unarmed=True)
     return {
@@ -584,8 +643,8 @@ def generate_successor(
         "controller_sha256": controller_sha256,
         "template": str(template_path),
         "template_sha256": sha256_file(template_path),
-        "binding_receipt": str(instrument / "successor-binding.json"),
-        "binding_receipt_sha256": sha256_file(instrument / "successor-binding.json"),
+        "binding_receipt": str(state_dir / "successor-binding.json"),
+        "binding_receipt_sha256": sha256_file(state_dir / "successor-binding.json"),
         "run_id": evidence["run_id"],
         "target_document_id": TARGET_DOCUMENT_ID,
         "protected_document_ids": sorted(PROTECTED_DOCUMENT_IDS),
