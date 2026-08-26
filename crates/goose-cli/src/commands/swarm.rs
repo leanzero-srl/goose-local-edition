@@ -21467,6 +21467,7 @@ struct PillarResearchOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct PillarOpeningUnavailableContinuation {
     attempts: usize,
+    provider_calls: usize,
     preserved_candidate: bool,
     correction_fingerprint: Option<String>,
     reason: String,
@@ -21476,6 +21477,11 @@ struct PillarOpeningUnavailableContinuation {
 enum PillarResearchAttemptOutcome {
     Ready(PillarResearchOutcome),
     Unavailable(PillarOpeningUnavailableContinuation),
+}
+
+fn pillar_route_recovery_backoff(continuation_round: usize) -> std::time::Duration {
+    let shift = continuation_round.saturating_sub(1).min(4) as u32;
+    std::time::Duration::from_millis(250_u64.saturating_mul(1_u64 << shift))
 }
 
 #[cfg(test)]
@@ -32751,6 +32757,7 @@ impl GooseAgentDispatcher {
                 return Ok(PillarOpeningAuthorityOutcome::Unavailable(
                     PillarOpeningUnavailableContinuation {
                         attempts: usize::try_from(total_attempts)?,
+                        provider_calls,
                         preserved_candidate: false,
                         correction_fingerprint: None,
                         reason: last_reason,
@@ -32991,6 +32998,7 @@ impl GooseAgentDispatcher {
         Ok(PillarOpeningAuthorityOutcome::Unavailable(
             PillarOpeningUnavailableContinuation {
                 attempts: usize::try_from(total_attempts)?,
+                provider_calls,
                 preserved_candidate: true,
                 correction_fingerprint: Some(candidate.correction_fingerprint),
                 reason: last_reason,
@@ -33041,6 +33049,7 @@ impl GooseAgentDispatcher {
                 self.events.write_value(serde_json::json!({
                     "event": "pillar_opening_unavailable_continuation",
                     "attempts": continuation.attempts,
+                    "provider_calls": continuation.provider_calls,
                     "preserved_candidate": continuation.preserved_candidate,
                     "correction_fingerprint": continuation.correction_fingerprint,
                     "reason": continuation.reason,
@@ -33282,6 +33291,66 @@ impl GooseAgentDispatcher {
             provider_calls,
             retries,
         }))
+    }
+
+    async fn research_by_pillars_until_ready(
+        self: &Arc<Self>,
+        user_prompt: &str,
+        research_extensions: Arc<Vec<ExtensionConfig>>,
+        worker_devices: Vec<(String, String)>,
+        planner_model: &str,
+    ) -> Result<PillarResearchOutcome> {
+        let mut continuation_rounds = 0usize;
+        let mut carried_provider_calls = 0usize;
+        loop {
+            match self
+                .research_by_pillars(
+                    user_prompt,
+                    research_extensions.clone(),
+                    worker_devices.clone(),
+                    planner_model,
+                )
+                .await?
+            {
+                PillarResearchAttemptOutcome::Ready(mut outcome) => {
+                    outcome.provider_calls = outcome
+                        .provider_calls
+                        .saturating_add(carried_provider_calls);
+                    if continuation_rounds > 0 {
+                        self.events.write_value(serde_json::json!({
+                            "event": "pillar_flow_continuation_resumed",
+                            "continuation_rounds": continuation_rounds,
+                            "carried_provider_calls": carried_provider_calls,
+                            "total_provider_calls": outcome.provider_calls,
+                            "completion": "same-process-checkpoint-resume-reached-research-ready",
+                        }));
+                    }
+                    return Ok(outcome);
+                }
+                PillarResearchAttemptOutcome::Unavailable(continuation) => {
+                    continuation_rounds = continuation_rounds.saturating_add(1);
+                    carried_provider_calls =
+                        carried_provider_calls.saturating_add(continuation.provider_calls);
+                    let retry_delay = pillar_route_recovery_backoff(continuation_rounds);
+                    self.events.write_value(serde_json::json!({
+                        "event": "pillar_flow_unavailable_continuation",
+                        "continuation_round": continuation_rounds,
+                        "attempts": continuation.attempts,
+                        "provider_calls": continuation.provider_calls,
+                        "carried_provider_calls": carried_provider_calls,
+                        "preserved_candidate": continuation.preserved_candidate,
+                        "correction_fingerprint": continuation.correction_fingerprint,
+                        "reason": continuation.reason,
+                        "resume_stage": continuation.resume_stage,
+                        "terminal": false,
+                        "continuation": "retry-in-this-process-from-durable-opener-stage",
+                        "retry_delay_ms": retry_delay.as_millis(),
+                        "deterministic_semantic_fallback": false,
+                    }));
+                    tokio::time::sleep(retry_delay).await;
+                }
+            }
+        }
     }
 
     async fn plan_from_pillars(
@@ -63428,29 +63497,13 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             "one opener defines an exact cover; one owner researches each non-overlapping pillar",
         );
         let outcome = dispatcher
-            .research_by_pillars(
+            .research_by_pillars_until_ready(
                 &raw_user_spec,
                 research_exts,
                 worker_devices,
                 &cfg.planner_model,
             )
             .await?;
-        let outcome = match outcome {
-            PillarResearchAttemptOutcome::Ready(outcome) => outcome,
-            PillarResearchAttemptOutcome::Unavailable(continuation) => {
-                sink.write_value(serde_json::json!({
-                    "event": "pillar_flow_unavailable_continuation",
-                    "attempts": continuation.attempts,
-                    "preserved_candidate": continuation.preserved_candidate,
-                    "correction_fingerprint": continuation.correction_fingerprint,
-                    "reason": continuation.reason,
-                    "resume_stage": continuation.resume_stage,
-                    "terminal": false,
-                    "continuation": "rerun-resumes-the-exact-durable-opener-stage",
-                }));
-                return Ok(());
-            }
-        };
         if !research_findings.trim().is_empty() {
             research_findings.push_str("\n\n");
         }
@@ -70534,6 +70587,155 @@ mod pre_scheduler_semantic_runtime_tests {
             .expect("frozen V20 replay did not drain provider lifecycle")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn unavailable_opener_resumes_in_process_then_plans_once_and_dispatches_build() {
+        const PLANNER_MODEL: &str = "same-process-planner";
+        const WORKER_B: &str = "same-process-worker-b";
+        const WORKER_C: &str = "same-process-worker-c";
+        let frozen_spec = captured_live_sb7_prompt();
+        let lanes = [
+            ("same-process-lane-a", PLANNER_MODEL, "same-process-host-a"),
+            ("same-process-lane-b", WORKER_B, "same-process-host-b"),
+            ("same-process-lane-c", WORKER_C, "same-process-host-c"),
+        ];
+        let harness = pillar_replay_runtime_harness(&lanes).await;
+        harness.provider.fail_opening_provider_calls(lanes.len());
+
+        let outcome = harness
+            .dispatcher
+            .research_by_pillars_until_ready(
+                &frozen_spec,
+                Arc::new(Vec::new()),
+                vec![
+                    ("device-a".to_string(), PLANNER_MODEL.to_string()),
+                    ("device-b".to_string(), WORKER_B.to_string()),
+                    ("device-c".to_string(), WORKER_C.to_string()),
+                ],
+                PLANNER_MODEL,
+            )
+            .await
+            .expect("same-process opener continuation did not reach research");
+
+        assert_eq!(outcome.opening.requirements.len(), 197);
+        assert_eq!(outcome.opening.pillars.len(), 6);
+        assert_eq!(outcome.provider_calls, 11);
+        let calls_before_plan = harness.provider.calls();
+        assert_eq!(
+            calls_before_plan
+                .iter()
+                .filter(|call| call.phase == "opening_provider_failure")
+                .count(),
+            lanes.len(),
+            "the unavailable pass must rotate every authenticated opener route exactly once"
+        );
+        assert_eq!(
+            calls_before_plan
+                .iter()
+                .filter(|call| call.phase == "opening")
+                .count(),
+            1,
+            "checkpoint resume repeated the successful semantic opener"
+        );
+        let events = harness.sink.values();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "pillar_flow_unavailable_continuation")
+                .count(),
+            1
+        );
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_flow_unavailable_continuation"
+                && event["terminal"] == false
+                && event["preserved_candidate"] == false
+                && event["continuation"] == "retry-in-this-process-from-durable-opener-stage"
+                && event["retry_delay_ms"] == 250
+                && event["deterministic_semantic_fallback"] == false
+        }));
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_flow_continuation_resumed"
+                && event["continuation_rounds"] == 1
+                && event["carried_provider_calls"] == lanes.len()
+                && event["total_provider_calls"] == 11
+        }));
+        assert!(!calls_before_plan.iter().any(|call| call.phase == "planner"));
+
+        let (_plan_json, dag) = harness
+            .dispatcher
+            .plan_from_pillars(&frozen_spec, &outcome, PLANNER_MODEL)
+            .await
+            .expect("resumed research did not reach the synthesis planner");
+        assert_eq!(
+            harness
+                .provider
+                .calls()
+                .iter()
+                .filter(|call| call.phase == "planner")
+                .count(),
+            1
+        );
+
+        let build_dispatcher = Arc::new(RuntimeBuildDispatchProbe {
+            starts: AtomicUsize::new(0),
+        });
+        let report = Scheduler::new(
+            vec![
+                DeviceCfg {
+                    id: "same-process-build-a".to_string(),
+                    model_id: PLANNER_MODEL.to_string(),
+                    weight: 1,
+                    enabled: true,
+                    speed_weight: 1,
+                    supervision: false,
+                },
+                DeviceCfg {
+                    id: "same-process-build-b".to_string(),
+                    model_id: WORKER_B.to_string(),
+                    weight: 1,
+                    enabled: true,
+                    speed_weight: 1,
+                    supervision: false,
+                },
+                DeviceCfg {
+                    id: "same-process-build-c".to_string(),
+                    model_id: WORKER_C.to_string(),
+                    weight: 1,
+                    enabled: true,
+                    speed_weight: 1,
+                    supervision: false,
+                },
+            ],
+            1,
+        )
+        .run(
+            dag,
+            build_dispatcher.clone() as Arc<dyn TaskDispatcher>,
+            frozen_spec,
+        )
+        .await
+        .expect("same-process continuation never reached real Scheduler dispatch");
+        assert_eq!(build_dispatcher.starts.load(AtomicOrdering::SeqCst), 7);
+        assert_eq!(report.done.len(), 7);
+        assert!(report.failed.is_empty());
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("same-process replay did not drain provider lifecycle")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[test]
+    fn unavailable_opener_route_recovery_backoff_grows_then_caps() {
+        assert_eq!(pillar_route_recovery_backoff(1), Duration::from_millis(250));
+        assert_eq!(pillar_route_recovery_backoff(2), Duration::from_millis(500));
+        assert_eq!(pillar_route_recovery_backoff(5), Duration::from_secs(4));
+        assert_eq!(pillar_route_recovery_backoff(6), Duration::from_secs(4));
+        assert_eq!(
+            pillar_route_recovery_backoff(usize::MAX),
+            Duration::from_secs(4)
+        );
     }
 
     fn synthesis_authority_runtime_fixture(
