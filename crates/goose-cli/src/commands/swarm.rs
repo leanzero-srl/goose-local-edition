@@ -41,23 +41,24 @@ use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
     authored_requirements_require_integration, compile_pillar_report_with_sources,
     deterministic_verdict, evidence_source_digest, excluded_from_repair_tree, is_split_candidate,
-    pillar_frozen_spec_digest, render_synthesis_input, validate_pillar_integration_task_ownership,
-    validate_pillar_opening, validate_pillar_opening_against, AdmissionReceipt, AdmittedWork,
-    AuthoredRequirement, AuthorityScope, ChildSpec, CompiledPillarReport, CompletedProviderRequest,
-    Confidence, Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, EvidenceClass,
-    EvidenceSourceAuthority, EvidenceSourceSection, HostCapacityEvidence, IntegrationContract,
-    Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
-    PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
-    PillarAttemptCheckpoint, PillarCheckpointStore, PillarImplementationTaskCoverage,
-    PillarReportDraft, PillarResumeDecision, PreReviewOutput, PreReviewRequest, PreReviewer,
-    ProviderLifecycle, ProviderLifecycleDispatcher, ProviderLifecycleStartError,
-    ProviderNudgeDelivery, ProviderNudgeSafetySnapshot, ProviderRequestKey, ProviderRequestReceipt,
-    ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
-    ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport,
-    Scheduler, SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
-    SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec,
-    TaskUnavailableEvidence, TaskVersion, ToolCallRecord, Verdict, VerifiedPhysicalIdentity,
-    WorkOpportunity, WorkRole,
+    pillar_frozen_spec_digest, render_synthesis_input, scheduler_task_spec_digest,
+    task_acceptance_digest, validate_pillar_integration_task_ownership, validate_pillar_opening,
+    validate_pillar_opening_against, validate_project_artifact_path, AdmissionReceipt,
+    AdmittedWork, AuthoredRequirement, AuthorityScope, ChildSpec, CompiledPillarReport,
+    CompletedProviderRequest, Confidence, Dag, DeviceCfg, DispatchError, DispatchRequest,
+    EventSink, EvidenceClass, EvidenceSourceAuthority, EvidenceSourceSection, HostCapacityEvidence,
+    IntegrationContract, Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest,
+    LocalCompletionKind, NullSink, PhysicalAdmissionControl, PhysicalExecutionAuthority,
+    PhysicalFleetSnapshot, PillarAttemptCheckpoint, PillarCheckpointStore,
+    PillarImplementationTaskCoverage, PillarReportDraft, PillarResumeDecision, PreReviewOutput,
+    PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
+    ProviderLifecycleStartError, ProviderNudgeDelivery, ProviderNudgeSafetySnapshot,
+    ProviderRequestKey, ProviderRequestReceipt, ProviderTerminalKind, ProviderTerminalReceipt,
+    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, ResearchClaimDraft,
+    ResearchPillar, ResearchPillarOpening, RunReport, Scheduler, SchedulerCheckpointStore,
+    SchedulerCompletedTaskEvidence, SemanticActivityPublisher, SourceRevisionKind, SwarmEvent,
+    TaskCompletionDisposition, TaskDispatcher, TaskRunOutput, TaskSpec, TaskUnavailableEvidence,
+    TaskVersion, ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -137,6 +138,10 @@ fn default_planner_timeout_secs() -> u64 {
 }
 fn default_best_of_n_skeletons() -> usize {
     1
+}
+
+fn bounded_ordinary_dispatch_error(detail: String) -> DispatchError {
+    DispatchError::Transient(detail)
 }
 
 /// Imposed sampling parameters for the local models — the lever for steadying weak models (lower
@@ -13397,6 +13402,60 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn degraded_fileless_obligation_gets_one_explicit_acceptance_owner() {
+        let build = vec![capability_task("verify-only", &[], &[])];
+        let plan = capability_repair_plan(
+            &build,
+            false,
+            &["local".to_string(), "workhorse".to_string()],
+            &HashSet::from(["verify-only".to_string()]),
+        )
+        .unwrap();
+        assert_eq!(plan.specs.len(), 1);
+        assert!(plan.specs[0].owned_files.is_empty());
+        assert_eq!(
+            plan.coverage[&plan.specs[0].id],
+            vec!["verify-only".to_string()]
+        );
+        assert!(plan.specs[0]
+            .description
+            .contains("explicit fileless acceptance obligation"));
+
+        let root = tempfile::tempdir().unwrap();
+        let sealed = SealedCompleteTree {
+            root: root.path().to_path_buf(),
+            epoch: 1,
+            tree_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_string(),
+            entries: BTreeMap::new(),
+            passed: true,
+            verified: true,
+            remaining_findings: 0,
+            shipped: "current".to_string(),
+        };
+        let mut capability = CapabilityRecoveryReceipt {
+            obligation_task_id: "verify-only".to_string(),
+            obligation_task_spec_digest: scheduler_task_spec_digest(&build[0]),
+            obligation_acceptance_digest: task_acceptance_digest(&build[0]),
+            source_evidence_id: "source".to_string(),
+            pre_attempt_artifacts: BTreeMap::new(),
+            repair_task_id: plan.specs[0].id.clone(),
+            repair_task_spec_digest: scheduler_task_spec_digest(&plan.specs[0]),
+            repair_output_digest: recovery_digest(b"accepted"),
+            repaired_artifacts: BTreeMap::new(),
+            fileless_acceptance_digest: None,
+        };
+        assert!(bind_final_recovery_receipts(&sealed, 1, &[capability.clone()]).is_err());
+        capability.fileless_acceptance_digest = Some(recovery_digest(b"accepted"));
+        assert_eq!(
+            bind_final_recovery_receipts(&sealed, 1, &[capability])
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
     fn completed_checkpoint_evidence_preserves_fileless_outputs_and_attempts() {
         let specs = vec![
             capability_task("build", &["src/lib.rs"], &[]),
@@ -13423,6 +13482,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         let report = RunReport {
             done: vec!["build".to_string(), "verify".to_string()],
             salvaged: Vec::new(),
+            provisional: Vec::new(),
             failed: Vec::new(),
             unavailable: Vec::new(),
             bonus: Vec::new(),
@@ -17166,6 +17226,10 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
 
     #[test]
     fn typed_unavailable_is_recoverable_only_after_a_verified_final_ruler() {
+        let build = vec![
+            capability_task("missing-module", &["src/missing.py"], &[]),
+            capability_task("integration", &["src/main.py"], &["missing-module"]),
+        ];
         let failed = vec![
             "missing-module".to_string(),
             "authority-corrupt".to_string(),
@@ -17175,41 +17239,47 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
             kind: goose_swarm::TaskUnavailableKind::AttemptsExhausted,
             attempt: 1,
             detail: "model omitted the module".to_string(),
+            task_spec_digest: scheduler_task_spec_digest(&build[0]),
+            acceptance_digest: task_acceptance_digest(&build[0]),
+            unavailable_ancestors: vec!["missing-module".to_string()],
+            pre_attempt_artifacts: BTreeMap::from([("src/missing.py".to_string(), None)]),
             required_files: vec!["src/missing.py".to_string()],
             missing_files: vec!["src/missing.py".to_string()],
             continued_dependents: vec!["integration".to_string()],
+            evidence_hash:
+                "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                    .to_string(),
         }];
 
         assert_eq!(
-            hard_failed_tasks(&failed, &[], &unavailable),
+            hard_failed_tasks(&failed, &unavailable, &[]),
             vec!["authority-corrupt".to_string()],
             "typed unavailable work must reach capability repair, while integrity failures remain hard"
         );
         assert_eq!(
-            unresolved_core_failures(&failed, &[], &unavailable, false),
+            unresolved_core_failures(&failed, &[], &unavailable, &[], false),
             failed,
             "without verified final evidence the unavailable task still fails the run"
         );
         assert_eq!(
-            unresolved_core_failures(&failed, &[], &unavailable, true),
+            unresolved_core_failures(&failed, &[], &unavailable, &[], true),
             vec!["authority-corrupt".to_string()],
             "a verified final ruler can recover unavailable work but never authority corruption"
         );
 
-        let build = vec![
-            capability_task("missing-module", &["src/missing.py"], &[]),
-            capability_task("integration", &["src/main.py"], &["missing-module"]),
-        ];
-        let repair = capability_repair_specs(&build, true, &["local".to_string()]).unwrap();
+        let repair = capability_repair_plan(
+            &build,
+            true,
+            &["local".to_string()],
+            &HashSet::from(["missing-module".to_string()]),
+        )
+        .unwrap();
         assert!(repair
+            .specs
             .iter()
             .any(|task| task.owned_files.contains(&"src/missing.py".to_string())));
 
         let root = tempfile::tempdir().unwrap();
-        assert!(!unavailable_obligations_recovered(
-            root.path(),
-            &unavailable
-        ));
         assert_eq!(
             missing_source_deliverables_for(
                 root.path(),
@@ -17223,7 +17293,126 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         );
         std::fs::create_dir_all(root.path().join("src")).unwrap();
         std::fs::write(root.path().join("src/missing.py"), "VALUE = 1\n").unwrap();
-        assert!(unavailable_obligations_recovered(root.path(), &unavailable));
+        let sealed = SealedCompleteTree {
+            root: root.path().to_path_buf(),
+            epoch: 1,
+            tree_hash: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                .to_string(),
+            entries: BTreeMap::from([("src/missing.py".to_string(), "entry".to_string())]),
+            passed: true,
+            verified: true,
+            remaining_findings: 0,
+            shipped: "current".to_string(),
+        };
+        assert!(
+            bind_final_recovery_receipts(&sealed, 1, &[]).is_err(),
+            "a nonempty file plus a green ruler is not a recovery receipt"
+        );
+        let main_report = RunReport {
+            done: Vec::new(),
+            salvaged: Vec::new(),
+            provisional: Vec::new(),
+            failed: vec!["missing-module".to_string()],
+            unavailable: unavailable.clone(),
+            bonus: Vec::new(),
+            planned_files: build
+                .iter()
+                .flat_map(|spec| spec.owned_files.iter().cloned())
+                .collect(),
+            results: HashMap::new(),
+            context_json: serde_json::Value::Null,
+            dispatched_per_device: HashMap::new(),
+            tasks: Vec::new(),
+            per_device: HashMap::new(),
+        };
+        let repair_report = RunReport {
+            done: repair.specs.iter().map(|spec| spec.id.clone()).collect(),
+            salvaged: Vec::new(),
+            provisional: Vec::new(),
+            failed: Vec::new(),
+            unavailable: Vec::new(),
+            bonus: Vec::new(),
+            planned_files: repair
+                .specs
+                .iter()
+                .flat_map(|spec| spec.owned_files.iter().cloned())
+                .collect(),
+            results: HashMap::new(),
+            context_json: serde_json::Value::Null,
+            dispatched_per_device: HashMap::new(),
+            tasks: repair
+                .specs
+                .iter()
+                .map(|spec| goose_swarm::TaskOutcome {
+                    task_id: spec.id.clone(),
+                    status: "done".to_string(),
+                    salvaged: false,
+                    completion: Some(TaskCompletionDisposition::Complete),
+                    unavailable: None,
+                    device: Some("local".to_string()),
+                    model: Some("qwen".to_string()),
+                    attempts: 1,
+                    attempt_history: Vec::new(),
+                    elapsed_ms: Some(1),
+                    session_id: None,
+                    tool_calls: Vec::new(),
+                    output: Some(format!("accepted {}", spec.id)),
+                    owns_nothing: spec.owned_files.is_empty(),
+                })
+                .collect(),
+            per_device: HashMap::new(),
+        };
+        let capability = capability_recovery_receipts(
+            root.path(),
+            &build,
+            &main_report,
+            &repair,
+            &repair_report,
+        )
+        .unwrap();
+        assert_eq!(capability.len(), 1);
+        assert_eq!(
+            bind_final_recovery_receipts(&sealed, 1, &capability)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let bonus_failed = vec![
+            "bonus-unavailable".to_string(),
+            "bonus-terminal-integrity".to_string(),
+        ];
+        let mut bonus_unavailable = unavailable.clone();
+        bonus_unavailable[0].task_id = "bonus-unavailable".to_string();
+        assert_eq!(
+            hard_failed_tasks(&bonus_failed, &bonus_unavailable, &[]),
+            vec!["bonus-terminal-integrity".to_string()],
+            "bonus identity cannot exempt a terminal authority/integrity failure"
+        );
+        assert_eq!(
+            unresolved_core_failures(&bonus_failed, &bonus_failed, &bonus_unavailable, &[], false,),
+            vec!["bonus-terminal-integrity".to_string()]
+        );
+        assert_eq!(
+            completion_blocking_failed(
+                &bonus_failed,
+                &bonus_failed,
+                &bonus_failed,
+                &bonus_unavailable,
+                &[],
+                true,
+            ),
+            vec!["bonus-terminal-integrity".to_string()],
+            "pillar-flow bonus/fileless identity cannot hide terminal integrity evidence"
+        );
+    }
+
+    #[test]
+    fn unknown_agent_runtime_error_is_bounded_ordinary_work_not_terminal_authority() {
+        assert!(matches!(
+            bounded_ordinary_dispatch_error("opaque tool adapter failure".to_string()),
+            DispatchError::Transient(detail) if detail == "opaque tool adapter failure"
+        ));
     }
 
     /// `swarm_gate_cfg_bundle` inserts config.yaml BETWEEN env and the assured/default fallback, so a lever
@@ -47187,11 +47376,15 @@ fn capability_repair_description(capabilities: &[TaskSpec], owned_files: &[Strin
          - Do not redesign, re-plan, or broaden these capabilities.\n\
          - Do not run or repair another capability's files.\n\
          - Do not weaken tests or acceptance criteria to manufacture green.",
-        owned_files
-            .iter()
-            .map(|file| format!("- {file}"))
-            .collect::<Vec<_>>()
-            .join("\n")
+        if owned_files.is_empty() {
+            "- none: this is an explicit fileless acceptance obligation; run its scoped acceptance evidence and report the result without creating or editing files".to_string()
+        } else {
+            owned_files
+                .iter()
+                .map(|file| format!("- {file}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
     )
 }
 
@@ -47372,6 +47565,83 @@ fn capability_repair_specs(
 
     validate_skeleton_file_authority(&repairs)?;
     Ok(repairs)
+}
+
+#[derive(Clone, Debug, Default)]
+struct CapabilityRepairPlan {
+    specs: Vec<TaskSpec>,
+    coverage: BTreeMap<String, Vec<String>>,
+}
+
+fn capability_repair_plan(
+    build_specs: &[TaskSpec],
+    integration_required: bool,
+    fleet_models: &[String],
+    degraded_task_ids: &HashSet<String>,
+) -> Result<CapabilityRepairPlan> {
+    let mut specs = capability_repair_specs(build_specs, integration_required, fleet_models)?;
+    let by_id = build_specs
+        .iter()
+        .map(|spec| (spec.id.clone(), spec))
+        .collect::<BTreeMap<_, _>>();
+    let mut coverage = specs
+        .iter()
+        .map(|repair| {
+            let ids = build_specs
+                .iter()
+                .filter(|capability| {
+                    !capability.owned_files.is_empty()
+                        && capability
+                            .owned_files
+                            .iter()
+                            .all(|file| repair.owned_files.contains(file))
+                })
+                .map(|capability| capability.id.clone())
+                .collect::<Vec<_>>();
+            (repair.id.clone(), ids)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut fileless = build_specs
+        .iter()
+        .filter(|spec| spec.owned_files.is_empty() && degraded_task_ids.contains(&spec.id))
+        .map(|spec| spec.id.clone())
+        .collect::<Vec<_>>();
+    fileless.sort();
+    if !fileless.is_empty() && fleet_models.is_empty() {
+        bail!("fileless degraded obligations require an authenticated repair model");
+    }
+    if specs.is_empty() && !fileless.is_empty() {
+        let task_count = fileless.len().min(fleet_models.len()).min(3);
+        for index in 0..task_count {
+            let id = format!("repair::capability::{:02}", index + 1);
+            specs.push(TaskSpec {
+                id: id.clone(),
+                description: String::new(),
+                difficulty: goose_swarm::Difficulty::Hard,
+                preferred_model: Some(fleet_models[index % fleet_models.len()].clone()),
+                owned_files: Vec::new(),
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+                replan_authority: None,
+            });
+            coverage.insert(id, Vec::new());
+        }
+    }
+    for (index, task_id) in fileless.into_iter().enumerate() {
+        let repair = &specs[index % specs.len()];
+        coverage.entry(repair.id.clone()).or_default().push(task_id);
+    }
+    for repair in &mut specs {
+        let capabilities = coverage
+            .get(&repair.id)
+            .into_iter()
+            .flatten()
+            .filter_map(|task_id| by_id.get(task_id).copied())
+            .cloned()
+            .collect::<Vec<_>>();
+        repair.description = capability_repair_description(&capabilities, &repair.owned_files);
+    }
+    Ok(CapabilityRepairPlan { specs, coverage })
 }
 
 fn completed_checkpoint_evidence(
@@ -47788,6 +48058,24 @@ fn green_blocking_failed(
         .collect()
 }
 
+fn completion_blocking_failed(
+    failed: &[String],
+    bonus: &[String],
+    owns_nothing: &[String],
+    unavailable: &[TaskUnavailableEvidence],
+    provisional: &[String],
+    pillar_flow: bool,
+) -> Vec<String> {
+    if pillar_flow {
+        // A pillar-flow bonus or fileless task is still fatal when it carries no typed degraded
+        // evidence. Only Unavailable/provisional work may continue to capability repair; authority,
+        // integrity, journal, and ownership failures must remain visible to the final ruler.
+        hard_failed_tasks(failed, unavailable, provisional)
+    } else {
+        green_blocking_failed(failed, bonus, owns_nothing)
+    }
+}
+
 fn typed_unavailable_ids(unavailable: &[TaskUnavailableEvidence]) -> HashSet<&str> {
     unavailable
         .iter()
@@ -47797,14 +48085,14 @@ fn typed_unavailable_ids(unavailable: &[TaskUnavailableEvidence]) -> HashSet<&st
 
 fn hard_failed_tasks(
     failed: &[String],
-    bonus: &[String],
     unavailable: &[TaskUnavailableEvidence],
+    provisional: &[String],
 ) -> Vec<String> {
     let unavailable = typed_unavailable_ids(unavailable);
     failed
         .iter()
-        .filter(|task_id| !bonus.contains(*task_id))
         .filter(|task_id| !unavailable.contains(task_id.as_str()))
+        .filter(|task_id| !provisional.contains(*task_id))
         .cloned()
         .collect()
 }
@@ -47813,32 +48101,256 @@ fn unresolved_core_failures(
     failed: &[String],
     bonus: &[String],
     unavailable: &[TaskUnavailableEvidence],
+    provisional: &[String],
     final_ruler_recovered_unavailable: bool,
 ) -> Vec<String> {
     let unavailable = typed_unavailable_ids(unavailable);
     failed
         .iter()
-        .filter(|task_id| !bonus.contains(*task_id))
         .filter(|task_id| {
-            !final_ruler_recovered_unavailable || !unavailable.contains(task_id.as_str())
+            let ordinary_degraded =
+                unavailable.contains(task_id.as_str()) || provisional.contains(*task_id);
+            !ordinary_degraded || (!bonus.contains(*task_id) && !final_ruler_recovered_unavailable)
         })
         .cloned()
         .collect()
 }
 
-fn unavailable_obligations_recovered(root: &Path, unavailable: &[TaskUnavailableEvidence]) -> bool {
-    unavailable
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct RecoveryArtifactEvidence {
+    sha256: String,
+    bytes: u64,
+    mode: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct CapabilityRecoveryReceipt {
+    obligation_task_id: String,
+    obligation_task_spec_digest: String,
+    obligation_acceptance_digest: String,
+    source_evidence_id: String,
+    pre_attempt_artifacts: BTreeMap<String, Option<RecoveryArtifactEvidence>>,
+    repair_task_id: String,
+    repair_task_spec_digest: String,
+    repair_output_digest: String,
+    repaired_artifacts: BTreeMap<String, RecoveryArtifactEvidence>,
+    fileless_acceptance_digest: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct FinalRecoveryReceipt {
+    capability: CapabilityRecoveryReceipt,
+    final_tree_hash: String,
+    final_artifacts: BTreeMap<String, RecoveryArtifactEvidence>,
+}
+
+fn recovery_digest(bytes: &[u8]) -> String {
+    format!("sha256:{}", lowercase_hex(Sha256::digest(bytes).as_slice()))
+}
+
+fn recovery_artifact(root: &Path, relative: &str) -> Result<RecoveryArtifactEvidence> {
+    let path = validate_project_artifact_path(root, relative)
+        .map_err(|error| anyhow!("unsafe recovery artifact {relative:?}: {error}"))?;
+    let metadata = std::fs::symlink_metadata(&path)
+        .map_err(|error| anyhow!("missing recovery artifact {relative:?}: {error}"))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        bail!("recovery artifact {relative:?} is not a regular file");
+    }
+    let bytes = std::fs::read(&path)?;
+    Ok(RecoveryArtifactEvidence {
+        sha256: recovery_digest(&bytes),
+        bytes: bytes.len() as u64,
+        mode: repair_entry_mode(&metadata),
+    })
+}
+
+fn capability_recovery_receipts(
+    root: &Path,
+    build_specs: &[TaskSpec],
+    main_report: &RunReport,
+    plan: &CapabilityRepairPlan,
+    repair_report: &RunReport,
+) -> Result<Vec<CapabilityRecoveryReceipt>> {
+    let unavailable = main_report
+        .unavailable
         .iter()
-        .flat_map(|evidence| evidence.required_files.iter())
-        .all(|file| {
-            std::fs::symlink_metadata(root.join(file)).is_ok_and(|metadata| {
-                metadata.is_file()
-                    && !metadata.file_type().is_symlink()
-                    && (metadata.len() > 0
-                        || file.ends_with("__init__.py")
-                        || file.ends_with("py.typed"))
+        .map(|evidence| (evidence.task_id.as_str(), evidence))
+        .collect::<HashMap<_, _>>();
+    let provisional = main_report
+        .tasks
+        .iter()
+        .filter_map(|outcome| {
+            outcome
+                .completion
+                .as_ref()
+                .and_then(TaskCompletionDisposition::provisional_receipt)
+                .filter(|receipt| !receipt.unavailable_ancestors().is_empty())
+                .map(|receipt| (outcome.task_id.as_str(), receipt))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut degraded = unavailable
+        .keys()
+        .chain(provisional.keys())
+        .map(|task_id| (*task_id).to_string())
+        .collect::<Vec<_>>();
+    degraded.sort();
+    degraded.dedup();
+    let build_by_id = build_specs
+        .iter()
+        .map(|spec| (spec.id.as_str(), spec))
+        .collect::<HashMap<_, _>>();
+    let repair_specs = plan
+        .specs
+        .iter()
+        .map(|spec| (spec.id.as_str(), spec))
+        .collect::<HashMap<_, _>>();
+    let repair_outcomes = repair_report
+        .tasks
+        .iter()
+        .map(|outcome| (outcome.task_id.as_str(), outcome))
+        .collect::<HashMap<_, _>>();
+    let mut receipts = Vec::with_capacity(degraded.len());
+    for task_id in degraded {
+        let spec = build_by_id
+            .get(task_id.as_str())
+            .copied()
+            .ok_or_else(|| anyhow!("degraded task {task_id:?} left the frozen build DAG"))?;
+        let repair_ids = plan
+            .coverage
+            .iter()
+            .filter_map(|(repair_id, covered)| covered.contains(&task_id).then_some(repair_id))
+            .collect::<Vec<_>>();
+        if repair_ids.len() != 1 {
+            bail!(
+                "degraded task {task_id:?} must have exactly one capability repair owner, found {}",
+                repair_ids.len()
+            );
+        }
+        let repair_id = repair_ids[0];
+        let repair_spec = repair_specs[repair_id.as_str()];
+        let repair_outcome = repair_outcomes
+            .get(repair_id.as_str())
+            .copied()
+            .ok_or_else(|| anyhow!("repair owner {repair_id:?} has no terminal outcome"))?;
+        if repair_outcome.status != "done"
+            || repair_outcome.salvaged
+            || repair_outcome.completion != Some(TaskCompletionDisposition::Complete)
+            || repair_outcome.attempts == 0
+        {
+            bail!("repair owner {repair_id:?} lacks an exact Complete receipt");
+        }
+        let repair_output = repair_outcome
+            .output
+            .as_deref()
+            .filter(|output| !output.trim().is_empty())
+            .ok_or_else(|| anyhow!("repair owner {repair_id:?} lacks acceptance output"))?;
+        let (task_spec_digest, acceptance_digest, source_evidence_id, pre_attempt_artifacts) =
+            if let Some(evidence) = unavailable.get(task_id.as_str()) {
+                (
+                    evidence.task_spec_digest.clone(),
+                    evidence.acceptance_digest.clone(),
+                    evidence.evidence_hash.clone(),
+                    evidence
+                        .pre_attempt_artifacts
+                        .iter()
+                        .map(|(path, artifact)| {
+                            (
+                                path.clone(),
+                                artifact.as_ref().map(|artifact| RecoveryArtifactEvidence {
+                                    sha256: artifact.sha256.clone(),
+                                    bytes: artifact.bytes,
+                                    mode: artifact.mode,
+                                }),
+                            )
+                        })
+                        .collect(),
+                )
+            } else {
+                let receipt = provisional[task_id.as_str()];
+                (
+                    receipt.task_contract().to_string(),
+                    receipt.acceptance_contract().to_string(),
+                    receipt.receipt_id().to_string(),
+                    receipt
+                        .artifacts()
+                        .iter()
+                        .map(|(path, artifact)| {
+                            (
+                                path.clone(),
+                                Some(RecoveryArtifactEvidence {
+                                    sha256: artifact.sha256().to_string(),
+                                    bytes: artifact.bytes(),
+                                    mode: artifact.mode(),
+                                }),
+                            )
+                        })
+                        .collect(),
+                )
+            };
+        if task_spec_digest != scheduler_task_spec_digest(spec)
+            || acceptance_digest != task_acceptance_digest(spec)
+        {
+            bail!("degraded task {task_id:?} contract changed before repair");
+        }
+        let repaired_artifacts = spec
+            .owned_files
+            .iter()
+            .map(|path| Ok((path.clone(), recovery_artifact(root, path)?)))
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        receipts.push(CapabilityRecoveryReceipt {
+            obligation_task_id: task_id,
+            obligation_task_spec_digest: task_spec_digest,
+            obligation_acceptance_digest: acceptance_digest,
+            source_evidence_id,
+            pre_attempt_artifacts,
+            repair_task_id: repair_id.clone(),
+            repair_task_spec_digest: scheduler_task_spec_digest(repair_spec),
+            repair_output_digest: recovery_digest(repair_output.as_bytes()),
+            repaired_artifacts,
+            fileless_acceptance_digest: spec
+                .owned_files
+                .is_empty()
+                .then(|| recovery_digest(repair_output.as_bytes())),
+        });
+    }
+    Ok(receipts)
+}
+
+fn bind_final_recovery_receipts(
+    sealed: &SealedCompleteTree,
+    expected_degraded: usize,
+    capability: &[CapabilityRecoveryReceipt],
+) -> Result<Vec<FinalRecoveryReceipt>> {
+    if !sealed.passed || !sealed.verified || capability.len() != expected_degraded {
+        bail!("final ruler did not cover every degraded obligation");
+    }
+    capability
+        .iter()
+        .map(|receipt| {
+            if receipt.repaired_artifacts.is_empty() && receipt.fileless_acceptance_digest.is_none()
+            {
+                bail!(
+                    "fileless obligation {:?} has no explicit acceptance receipt",
+                    receipt.obligation_task_id
+                );
+            }
+            let final_artifacts = receipt
+                .repaired_artifacts
+                .keys()
+                .map(|path| {
+                    if !sealed.entries.contains_key(path) {
+                        bail!("final ruler omitted recovered artifact {path:?}");
+                    }
+                    Ok((path.clone(), recovery_artifact(&sealed.root, path)?))
+                })
+                .collect::<Result<BTreeMap<_, _>>>()?;
+            Ok(FinalRecoveryReceipt {
+                capability: receipt.clone(),
+                final_tree_hash: sealed.tree_hash.clone(),
+                final_artifacts,
             })
         })
+        .collect()
 }
 
 /// Pure precedence logic for `swarm_gate` (no env I/O so it is unit-testable without env races).
@@ -50134,20 +50646,12 @@ impl GooseAgentDispatcher {
             Err(e) => {
                 let stall_kind = e.downcast_ref::<AgentStallError>().map(|stall| stall.kind);
                 let s = e.to_string();
-                let transient = stall_kind.is_some()
-                    || s.contains("Model is unloaded")
-                    || s.contains("Server error")
-                    || s.contains("model_not_found")
-                    || s.contains("Invalid model identifier")
-                    || s.contains("is not loaded")
-                    || s.contains("connection");
                 eprintln!(
-                    "  {} {} on {} ({:.1}s){}",
-                    style(if transient { "↻" } else { "✗" }).red().bold(),
+                    "  {} {} on {} ({:.1}s) — will retry",
+                    style("↻").red().bold(),
                     style(&req.task_id).bold(),
                     req.device_id,
-                    secs,
-                    if transient { " — will retry" } else { "" }
+                    secs
                 );
                 // A typed watchdog stall after every owned artifact was written preserves the deliverable and
                 // releases its dependents provisionally. The scheduler revalidates changed, complete artifacts
@@ -50188,18 +50692,17 @@ impl GooseAgentDispatcher {
                         });
                     }
                 }
-                if transient {
-                    // Best-effort re-warm before re-dispatch — only if model loading is allowed.
-                    if self.allow_model_load
-                        && !self.cloud_models.contains_key(&req.model_id)
-                        && (s.contains("Model is unloaded") || s.contains("connection"))
-                    {
-                        ensure_loaded(&req.model_id, 1);
-                    }
-                    Err(DispatchError::Transient(s))
-                } else {
-                    Err(DispatchError::Terminal(s))
+                // Agent, tool, and provider runtime errors are ordinary bounded-attempt failures.
+                // Authority/integrity failures are emitted as typed Terminal errors at the exact
+                // boundary that proves them; prose from an agent error can never acquire terminal
+                // authority merely because it does not match a retry substring.
+                if self.allow_model_load
+                    && !self.cloud_models.contains_key(&req.model_id)
+                    && (s.contains("Model is unloaded") || s.contains("connection"))
+                {
+                    ensure_loaded(&req.model_id, 1);
                 }
+                Err(bounded_ordinary_dispatch_error(s))
             }
         }
     }
@@ -52316,6 +52819,9 @@ fn validate_project_relative_owned_path(task_id: &str, file: &str) -> Result<()>
     if normal_components == 0 {
         bail!("task `{task_id}` owned path `{file}` has no project-relative component");
     }
+    let root = std::env::current_dir()?;
+    validate_project_artifact_path(&root, file)
+        .map_err(|error| anyhow!("task `{task_id}` owned path `{file}` is unsafe: {error}"))?;
     Ok(())
 }
 
@@ -60432,13 +60938,26 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         Vec<TaskSpec>,
         Vec<SchedulerCompletedTaskEvidence>,
     )> = None;
+    let degraded_task_ids = report
+        .unavailable
+        .iter()
+        .map(|evidence| evidence.task_id.clone())
+        .chain(report.provisional.iter().cloned())
+        .collect::<HashSet<_>>();
+    let mut capability_recovery = Vec::<CapabilityRecoveryReceipt>::new();
 
-    let hard_failed = hard_failed_tasks(&report.failed, &report.bonus, &report.unavailable);
+    let hard_failed = hard_failed_tasks(&report.failed, &report.unavailable, &report.provisional);
     if pillar_flow_on && hard_failed.is_empty() {
-        match capability_repair_specs(&build_specs, pillar_integration_required, &fleet_models) {
-            Ok(repair_specs) if !repair_specs.is_empty() => {
-                let checkpoint_specs = repair_specs.clone();
-                let repair_tasks = repair_specs
+        match capability_repair_plan(
+            &build_specs,
+            pillar_integration_required,
+            &fleet_models,
+            &degraded_task_ids,
+        ) {
+            Ok(repair_plan) if !repair_plan.specs.is_empty() => {
+                let checkpoint_specs = repair_plan.specs.clone();
+                let repair_tasks = repair_plan
+                    .specs
                     .iter()
                     .map(|spec| {
                         serde_json::json!({
@@ -60457,7 +60976,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     "topology": "disjoint-capability-roots-after-main-dag-conditional-integration",
                     "whole_product_ruler": "runs-once-after-wave",
                 }));
-                let repair_dag = Dag::from_specs(repair_specs)
+                let repair_dag = Dag::from_specs(repair_plan.specs.clone())
                     .map_err(|error| anyhow!("capability repair DAG was invalid: {error}"))?;
                 let repair_scheduler = Scheduler::new(fix_devices.clone(), 1)
                     .with_sink(sink.clone())
@@ -60498,8 +61017,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         .await
                 };
                 match repair_result {
-                    Ok(report) => {
-                        match completed_checkpoint_evidence(&checkpoint_specs, &report) {
+                    Ok(repair_report) => {
+                        match completed_checkpoint_evidence(&checkpoint_specs, &repair_report) {
                             Ok(evidence) => {
                                 capability_repair_checkpoint_reseal =
                                     Some((checkpoint_specs, evidence));
@@ -60510,9 +61029,23 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 "status": "nonfatal",
                             })),
                         }
+                        match capability_recovery_receipts(
+                            &std::env::current_dir().unwrap_or_default(),
+                            &build_specs,
+                            &report,
+                            &repair_plan,
+                            &repair_report,
+                        ) {
+                            Ok(receipts) => capability_recovery = receipts,
+                            Err(error) => sink.write_value(serde_json::json!({
+                                "event": "capability_recovery_receipt_rejected",
+                                "reason": error.to_string(),
+                                "status": "fail_closed",
+                            })),
+                        }
                         sink.write_value(serde_json::json!({
                             "event": "capability_repair_completed",
-                            "planned_files": report.planned_files,
+                            "planned_files": repair_report.planned_files,
                             "status": "drained",
                             "next": "deterministic-whole-product-ruler",
                         }));
@@ -60732,8 +61265,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // the loop no longer breaks green at round 0 (so it CHURNS and actually attempts a fix — the whole
         // point of this phase), and if the task is still failing at the end the green claim cannot stand.
         //
-        // BONUS tasks are excluded: RunReport documents that an opportunistic/replanner-added task's failure
-        // "must NOT fail the run", so counting one here would false-fail a correct app.
+        // Legacy BONUS tasks are excluded. Pillar flow instead exempts only typed Unavailable/provisional
+        // work: a bonus/fileless identity must never hide authority or integrity failure evidence.
         // DELIVERY hard-completion gate (GOOSE_SWARM_DELIVERY, default OFF): the deterministic conjuncts turned
         // on as ONE bundle. When on it forces the failed-owning-task block and the #120 spec-contract check so
         // a failed DETERMINISTIC check can never coexist with a green claim. OFF = byte-identical (delivery_on
@@ -60750,10 +61283,17 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             .map(|o| o.task_id.clone())
             .collect();
         let unavailable_ids = typed_unavailable_ids(&report.unavailable);
-        let failed_planned = green_blocking_failed(&report.failed, &report.bonus, &owns_nothing)
-            .into_iter()
-            .filter(|task_id| !unavailable_ids.contains(task_id.as_str()))
-            .collect::<Vec<_>>();
+        let failed_planned = completion_blocking_failed(
+            &report.failed,
+            &report.bonus,
+            &owns_nothing,
+            &report.unavailable,
+            &report.provisional,
+            pillar_flow_on,
+        )
+        .into_iter()
+        .filter(|task_id| !unavailable_ids.contains(task_id.as_str()))
+        .collect::<Vec<_>>();
         let failed_task_findings: Vec<String> = if !failed_planned.is_empty()
             && (pillar_flow_on
                 || delivery_on
@@ -62590,6 +63130,33 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             occ_execute, occ_run, fleet_size, busy_node_min
         );
     }
+    let final_recovery = sealed_complete
+        .as_ref()
+        .map(|sealed| {
+            bind_final_recovery_receipts(sealed, degraded_task_ids.len(), &capability_recovery)
+        })
+        .transpose();
+    let final_recovery = match final_recovery {
+        Ok(Some(receipts)) => receipts,
+        Ok(None) => Vec::new(),
+        Err(error) => {
+            sink.write_value(serde_json::json!({
+                "event": "final_degraded_recovery_rejected",
+                "reason": error.to_string(),
+                "status": "fail_closed",
+            }));
+            Vec::new()
+        }
+    };
+    let final_ruler_recovered_unavailable =
+        !degraded_task_ids.is_empty() && final_recovery.len() == degraded_task_ids.len();
+    if final_ruler_recovered_unavailable {
+        sink.write_value(serde_json::json!({
+            "event": "final_degraded_recovery_bound",
+            "receipts": final_recovery,
+            "task_count": degraded_task_ids.len(),
+        }));
+    }
     let run_finished = serde_json::json!({
         "event": "run_finished",
         "report": report_value,
@@ -62601,11 +63168,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         sealed_complete.as_ref(),
         run_finished,
     )?;
-    let final_ruler_recovered_unavailable = sealed_complete.as_ref().is_some_and(|sealed| {
-        sealed.passed
-            && sealed.verified
-            && unavailable_obligations_recovered(&sealed.root, &report.unavailable)
-    });
 
     if json {
         println!(
@@ -62629,6 +63191,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             &report.failed,
             &report.bonus,
             &report.unavailable,
+            &report.provisional,
             final_ruler_recovered_unavailable,
         );
         let bonus_failed: Vec<&String> = report
@@ -62731,6 +63294,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         &report.failed,
         &report.bonus,
         &report.unavailable,
+        &report.provisional,
         final_ruler_recovered_unavailable,
     )
     .len();

@@ -13,7 +13,7 @@ use crate::semantic_observation::{
 use anyhow::{anyhow, bail, Result};
 use fs2::FileExt;
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -25,24 +25,25 @@ use std::sync::{Mutex as StdMutex, OnceLock};
 
 const REPAIR_COMPOSITION_PROTOCOL: &str = "goose-repair-composition-v3";
 const SEMANTIC_REVIEW_PROTOCOL: &str = "goose-repair-semantic-review-v2";
-const PROVISIONAL_RECEIPT_PROTOCOL: &str = "goose-provisional-task-v1";
+const PROVISIONAL_RECEIPT_PROTOCOL: &str = "goose-provisional-task-v2";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SalvageReason {
     ProgressWatchdog,
     StallExhausted,
     FinalizeSpin,
     DeterministicAccept,
+    UnavailableAncestor,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequiredVerification {
     FullRepairRuler,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ArtifactEvidence {
     sha256: String,
     bytes: u64,
@@ -63,16 +64,20 @@ impl ArtifactEvidence {
     }
 }
 
-/// Engine-minted evidence that a task released its dependents provisionally. Fields are private and
-/// the type is not deserializable, so a dispatcher can request salvage but cannot forge this receipt.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+/// Engine-minted evidence that a task released its dependents provisionally. Fields stay private so
+/// a dispatcher cannot construct a receipt; deserialization exists only for hash-linked checkpoint
+/// replay, which validates the derived receipt identity before accepting it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProvisionalTaskReceipt {
     receipt_id: String,
     task_id: String,
     attempt: u32,
     task_contract: String,
+    acceptance_contract: String,
     reason: SalvageReason,
     artifacts: BTreeMap<String, ArtifactEvidence>,
+    unavailable_ancestors: Vec<String>,
+    output_sha256: String,
     required_verification: RequiredVerification,
 }
 
@@ -93,6 +98,10 @@ impl ProvisionalTaskReceipt {
         &self.task_contract
     }
 
+    pub fn acceptance_contract(&self) -> &str {
+        &self.acceptance_contract
+    }
+
     pub fn reason(&self) -> SalvageReason {
         self.reason
     }
@@ -101,12 +110,20 @@ impl ProvisionalTaskReceipt {
         &self.artifacts
     }
 
+    pub fn unavailable_ancestors(&self) -> &[String] {
+        &self.unavailable_ancestors
+    }
+
+    pub fn output_sha256(&self) -> &str {
+        &self.output_sha256
+    }
+
     pub fn required_verification(&self) -> RequiredVerification {
         self.required_verification
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "receipt", rename_all = "snake_case")]
 pub enum TaskCompletionDisposition {
     Complete,
@@ -123,6 +140,11 @@ impl TaskCompletionDisposition {
             Self::Complete => None,
             Self::Salvaged(receipt) => Some(receipt),
         }
+    }
+
+    pub fn has_unavailable_ancestors(&self) -> bool {
+        self.provisional_receipt()
+            .is_some_and(|receipt| !receipt.unavailable_ancestors.is_empty())
     }
 }
 
@@ -215,25 +237,88 @@ pub(crate) fn mint_provisional_task_receipt(
     }
     let artifacts = artifact_evidence_at(root, owned_files)?;
     let required_verification = RequiredVerification::FullRepairRuler;
-    let identity = serde_json::to_vec(&(
-        PROVISIONAL_RECEIPT_PROTOCOL,
-        task_id,
-        attempt,
-        task_contract,
-        reason,
-        &artifacts,
-        required_verification,
-    ))
-    .ok()?;
-    Some(ProvisionalTaskReceipt {
-        receipt_id: format!("provisional:{}", sha256_hex(&identity)),
+    let mut receipt = ProvisionalTaskReceipt {
+        receipt_id: String::new(),
         task_id: task_id.to_string(),
         attempt,
         task_contract: task_contract.to_string(),
+        acceptance_contract: task_contract.to_string(),
         reason,
         artifacts,
+        unavailable_ancestors: Vec::new(),
+        output_sha256: format!("sha256:{}", sha256_hex(&[])),
         required_verification,
-    })
+    };
+    receipt.receipt_id = provisional_receipt_id(&receipt)?;
+    Some(receipt)
+}
+
+pub(crate) struct UnavailableDescendantReceiptInput<'a> {
+    pub task_id: &'a str,
+    pub attempt: u32,
+    pub task_contract: &'a str,
+    pub acceptance_contract: &'a str,
+    pub unavailable_ancestors: &'a [String],
+    pub output: &'a str,
+    pub owned_files: &'a [String],
+}
+
+pub(crate) fn mint_unavailable_descendant_receipt(
+    root: &Path,
+    input: UnavailableDescendantReceiptInput<'_>,
+) -> Option<ProvisionalTaskReceipt> {
+    let mut ancestors = input.unavailable_ancestors.to_vec();
+    ancestors.sort();
+    ancestors.dedup();
+    if input.task_id.trim().is_empty()
+        || input.task_contract.trim().is_empty()
+        || input.acceptance_contract.trim().is_empty()
+        || ancestors.is_empty()
+        || ancestors.iter().any(|ancestor| ancestor.trim().is_empty())
+    {
+        return None;
+    }
+    let mut receipt = ProvisionalTaskReceipt {
+        receipt_id: String::new(),
+        task_id: input.task_id.to_string(),
+        attempt: input.attempt,
+        task_contract: input.task_contract.to_string(),
+        acceptance_contract: input.acceptance_contract.to_string(),
+        reason: SalvageReason::UnavailableAncestor,
+        artifacts: if input.owned_files.is_empty() {
+            BTreeMap::new()
+        } else {
+            artifact_evidence_at(root, input.owned_files)?
+        },
+        unavailable_ancestors: ancestors,
+        output_sha256: format!("sha256:{}", sha256_hex(input.output.as_bytes())),
+        required_verification: RequiredVerification::FullRepairRuler,
+    };
+    receipt.receipt_id = provisional_receipt_id(&receipt)?;
+    Some(receipt)
+}
+
+pub(crate) fn validate_provisional_task_receipt(receipt: &ProvisionalTaskReceipt) -> bool {
+    provisional_receipt_id(receipt).is_some_and(|identity| identity == receipt.receipt_id)
+        && (!matches!(receipt.reason, SalvageReason::UnavailableAncestor)
+            || !receipt.unavailable_ancestors.is_empty())
+}
+
+fn provisional_receipt_id(receipt: &ProvisionalTaskReceipt) -> Option<String> {
+    let identity = serde_json::to_vec(&(
+        PROVISIONAL_RECEIPT_PROTOCOL,
+        &receipt.task_id,
+        receipt.attempt,
+        &receipt.task_contract,
+        &receipt.acceptance_contract,
+        receipt.reason,
+        &receipt.artifacts,
+        &receipt.unavailable_ancestors,
+        &receipt.output_sha256,
+        receipt.required_verification,
+    ))
+    .ok()?;
+    Some(format!("provisional:{}", sha256_hex(&identity)))
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]

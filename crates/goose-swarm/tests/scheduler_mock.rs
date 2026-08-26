@@ -2055,17 +2055,19 @@ async fn exhausted_task_becomes_typed_unavailable_and_independent_work_continues
                     "model omitted the required capability artifact".to_string(),
                 ))
             } else {
+                for file in &req.owned_files {
+                    if let Some(parent) = std::path::Path::new(file).parent() {
+                        std::fs::create_dir_all(parent).unwrap();
+                    }
+                    std::fs::write(file, format!("completed {}", req.task_id)).unwrap();
+                }
                 Ok(format!("completed {}", req.task_id).into())
             }
         }
     }
 
-    let missing_root = tempfile::tempdir().unwrap();
-    let missing_file = missing_root
-        .path()
-        .join("missing-capability.rs")
-        .display()
-        .to_string();
+    let missing_file = "target/test-unavailable/missing-capability.rs".to_string();
+    let _ = std::fs::remove_file(&missing_file);
     let dag = Dag::from_specs(vec![
         spec("missing-capability", &[], &[&missing_file]),
         spec(
@@ -2094,10 +2096,39 @@ async fn exhausted_task_becomes_typed_unavailable_and_independent_work_continues
         .await
         .unwrap();
 
-    assert_eq!(report.failed, vec!["missing-capability".to_string()]);
+    assert_eq!(
+        report.failed,
+        vec![
+            "dependent-capability".to_string(),
+            "final-ruler-input".to_string(),
+            "missing-capability".to_string(),
+        ]
+    );
     assert!(report.done.contains(&"independent-capability".to_string()));
-    assert!(report.done.contains(&"dependent-capability".to_string()));
-    assert!(report.done.contains(&"final-ruler-input".to_string()));
+    assert_eq!(
+        report.provisional,
+        vec![
+            "dependent-capability".to_string(),
+            "final-ruler-input".to_string(),
+        ]
+    );
+    for task_id in &report.provisional {
+        let outcome = report
+            .tasks
+            .iter()
+            .find(|outcome| &outcome.task_id == task_id)
+            .unwrap();
+        assert_eq!(outcome.status, "provisional");
+        let receipt = outcome
+            .completion
+            .as_ref()
+            .and_then(goose_swarm::TaskCompletionDisposition::provisional_receipt)
+            .unwrap();
+        assert_eq!(
+            receipt.unavailable_ancestors(),
+            &["missing-capability".to_string()]
+        );
+    }
     assert_eq!(report.unavailable.len(), 1);
     let unavailable = &report.unavailable[0];
     assert_eq!(unavailable.task_id, "missing-capability");
@@ -2194,8 +2225,10 @@ async fn non_regular_owned_artifact_still_fails_closed_during_unavailable_contin
         }
     }
 
-    let root = tempfile::tempdir().unwrap();
-    let non_regular = root.path().join("artifact.py");
+    let non_regular = std::path::PathBuf::from("target/test-unavailable/nonregular/artifact.py");
+    let _ = std::fs::remove_file(&non_regular);
+    let _ = std::fs::remove_dir_all(&non_regular);
+    std::fs::create_dir_all(non_regular.parent().unwrap()).unwrap();
     std::fs::create_dir(&non_regular).unwrap();
     let non_regular = non_regular.display().to_string();
     let dag = Dag::from_specs(vec![
@@ -2208,36 +2241,15 @@ async fn non_regular_owned_artifact_still_fails_closed_during_unavailable_contin
     ])
     .unwrap();
     let dispatcher = Arc::new(ExhaustedProbe::default());
-    let report = Scheduler::new(vec![dev("a", "m-a", 1)], 1)
+    let error = Scheduler::new(vec![dev("a", "m-a", 1)], 1)
         .with_unavailable_continuation()
         .run(dag, dispatcher.clone(), String::new())
         .await
-        .unwrap();
+        .unwrap_err();
 
-    assert!(report.unavailable.is_empty());
-    assert_eq!(
-        report.failed,
-        vec![
-            "corrupt-artifact".to_string(),
-            "would-write-descendant".to_string()
-        ]
-    );
-    assert_eq!(
-        dispatcher.seen.lock().unwrap().as_slice(),
-        &["corrupt-artifact".to_string()]
-    );
-    let outcome = report
-        .tasks
-        .iter()
-        .find(|outcome| outcome.task_id == "corrupt-artifact")
-        .unwrap();
-    assert_eq!(outcome.status, "failed");
-    assert_eq!(outcome.attempt_history[0].outcome, "integrity_failed");
-    assert!(outcome.attempt_history[0]
-        .error
-        .as_deref()
-        .unwrap()
-        .contains("not a regular file"));
+    assert!(error.to_string().contains("integrity validation"));
+    assert!(error.to_string().contains("not a regular file"));
+    assert!(dispatcher.seen.lock().unwrap().is_empty());
 }
 
 /// Records what EVERY worker was actually handed. This is the test that the user-decisions bug needed and

@@ -1151,8 +1151,7 @@ impl PhysicalAdmissionControl {
             {
                 let _ = waiter.send(Err(BrokerError::InvalidProviderRequest {
                     admission_id: receipt.admission_id.clone(),
-                    reason: "physical host is quarantined by an unresolved provider request"
-                        .to_string(),
+                    reason: QUARANTINED_PROVIDER_ROUTE.to_string(),
                 }));
             }
             if let Some(admission) = admission {
@@ -3011,12 +3010,21 @@ enum PreparedDispatch {
 
 const EXHAUSTED_PROVIDER_ROUTES: &str =
     "every eligible physical host is quarantined by an unresolved provider request";
+const QUARANTINED_PROVIDER_ROUTE: &str =
+    "physical host is quarantined by an unresolved provider request";
 
 fn broker_dispatch_error(error: BrokerError) -> DispatchError {
     match &error {
         BrokerError::InvalidOpportunity { reason, .. } if reason == EXHAUSTED_PROVIDER_ROUTES => {
             DispatchError::Unavailable(format!(
                 "physical admission has no usable provider route: {error}"
+            ))
+        }
+        BrokerError::InvalidProviderRequest { reason, .. }
+            if reason == QUARANTINED_PROVIDER_ROUTE =>
+        {
+            DispatchError::Unavailable(format!(
+                "physical admission provider route was quarantined before start: {error}"
             ))
         }
         _ => DispatchError::Terminal(format!("physical admission rejected task: {error}")),
@@ -3208,13 +3216,27 @@ mod provider_start_registry_tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize};
 
     #[test]
-    fn only_exhausted_provider_routes_are_typed_unavailable() {
+    fn only_typed_route_exhaustion_and_quarantine_races_are_unavailable() {
         assert!(matches!(
             broker_dispatch_error(BrokerError::InvalidOpportunity {
                 work_id: "task".to_string(),
                 reason: EXHAUSTED_PROVIDER_ROUTES.to_string(),
             }),
             DispatchError::Unavailable(_)
+        ));
+        assert!(matches!(
+            broker_dispatch_error(BrokerError::InvalidProviderRequest {
+                admission_id: "admission".to_string(),
+                reason: QUARANTINED_PROVIDER_ROUTE.to_string(),
+            }),
+            DispatchError::Unavailable(_)
+        ));
+        assert!(matches!(
+            broker_dispatch_error(BrokerError::InvalidProviderRequest {
+                admission_id: "admission".to_string(),
+                reason: "foreign authority".to_string(),
+            }),
+            DispatchError::Terminal(_)
         ));
         assert!(matches!(
             broker_dispatch_error(BrokerError::ProviderLifecycleJournal(

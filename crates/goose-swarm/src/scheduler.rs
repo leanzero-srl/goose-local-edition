@@ -12,9 +12,9 @@
 mod checkpoint;
 
 pub use checkpoint::{
-    scheduler_task_spec_digest, SchedulerCheckpointError, SchedulerCheckpointReceipt,
-    SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SchedulerDagResealReceipt,
-    SchedulerRestoreSummary,
+    scheduler_task_spec_digest, validate_project_artifact_path, SchedulerCheckpointError,
+    SchedulerCheckpointReceipt, SchedulerCheckpointStore, SchedulerCompletedTaskEvidence,
+    SchedulerDagResealReceipt, SchedulerRestoreSummary,
 };
 
 use crate::broker::{
@@ -35,7 +35,8 @@ use crate::judge::{
     Judge, JudgeConfig, JudgeOutcome, JudgeRequest, PreReviewRequest, PreReviewer, Verdict,
 };
 use crate::repair::{
-    mint_provisional_task_receipt, ProvisionalTaskReceipt, SalvageReason, TaskCompletionDisposition,
+    mint_provisional_task_receipt, mint_unavailable_descendant_receipt, ProvisionalTaskReceipt,
+    SalvageReason, TaskCompletionDisposition, UnavailableDescendantReceiptInput,
 };
 use crate::replan::{ReplanContext, Replanner};
 use crate::semantic_control::{
@@ -50,7 +51,7 @@ use crate::semantic_runtime::{
 };
 use anyhow::{bail, Result};
 use futures::FutureExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
@@ -523,20 +524,52 @@ fn salvage_artifact_mode(metadata: &std::fs::Metadata) -> u32 {
 /// only that complete bytes exist now; this snapshot separately proves that the task produced a
 /// change during this run instead of inheriting a non-empty file that was already on disk.
 fn salvage_artifact_snapshot(owned_files: &[String]) -> SalvageArtifactSnapshot {
+    salvage_artifact_snapshot_at(Path::new("."), owned_files)
+}
+
+fn salvage_artifact_snapshot_at(root: &Path, owned_files: &[String]) -> SalvageArtifactSnapshot {
     owned_files
         .iter()
         .map(|path| {
-            let evidence = std::fs::symlink_metadata(path).ok().and_then(|metadata| {
-                if !metadata.is_file() || metadata.file_type().is_symlink() {
-                    return None;
-                }
-                let bytes = std::fs::read(path).ok()?;
-                Some((
-                    Sha256::digest(&bytes).to_vec(),
-                    metadata.len(),
-                    salvage_artifact_mode(&metadata),
-                ))
-            });
+            let absolute = root.join(path);
+            let evidence = std::fs::symlink_metadata(&absolute)
+                .ok()
+                .and_then(|metadata| {
+                    if !metadata.is_file() || metadata.file_type().is_symlink() {
+                        return None;
+                    }
+                    let bytes = std::fs::read(absolute).ok()?;
+                    Some((
+                        Sha256::digest(&bytes).to_vec(),
+                        metadata.len(),
+                        salvage_artifact_mode(&metadata),
+                    ))
+                });
+            (path.clone(), evidence)
+        })
+        .collect()
+}
+
+fn task_artifact_hash_evidence(
+    snapshot: &SalvageArtifactSnapshot,
+) -> BTreeMap<String, Option<TaskArtifactHashEvidence>> {
+    snapshot
+        .iter()
+        .map(|(path, evidence)| {
+            let evidence =
+                evidence
+                    .as_ref()
+                    .map(|(digest, bytes, mode)| TaskArtifactHashEvidence {
+                        sha256: format!(
+                            "sha256:{}",
+                            digest
+                                .iter()
+                                .map(|byte| format!("{byte:02x}"))
+                                .collect::<String>()
+                        ),
+                        bytes: *bytes,
+                        mode: *mode,
+                    });
             (path.clone(), evidence)
         })
         .collect()
@@ -612,6 +645,10 @@ pub struct RunReport {
     pub done: Vec<TaskId>,
     /// Tasks whose complete artifact bytes survived but still require the full repair ruler.
     pub salvaged: Vec<TaskId>,
+    /// Successful descendants of typed unavailable work. They released their own dependents, but
+    /// remain fail-closed provisional until capability repair and the final ruler bind their exact
+    /// task/acceptance contracts and artifacts.
+    pub provisional: Vec<TaskId>,
     /// Green-blocking tasks: terminal failures plus every salvage whose FullRepairRuler authority
     /// remains unresolved. A salvaged id therefore appears in both `salvaged` and `failed` until a
     /// typed full-ruler consumer exists; existing CLI consumers fail closed by reading this field.
@@ -685,7 +722,7 @@ pub struct TaskOutcome {
     pub owns_nothing: bool,
 }
 
-#[derive(Debug, Serialize, Clone, Eq, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskUnavailableKind {
     AttemptsExhausted,
@@ -693,15 +730,101 @@ pub enum TaskUnavailableKind {
     DeterministicSupervisorExhausted,
 }
 
-#[derive(Debug, Serialize, Clone, Eq, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
+pub struct TaskArtifactHashEvidence {
+    pub sha256: String,
+    pub bytes: u64,
+    pub mode: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub struct TaskUnavailableEvidence {
     pub task_id: TaskId,
     pub kind: TaskUnavailableKind,
     pub attempt: u32,
     pub detail: String,
+    pub task_spec_digest: String,
+    pub acceptance_digest: String,
+    pub unavailable_ancestors: Vec<TaskId>,
+    pub pre_attempt_artifacts: BTreeMap<String, Option<TaskArtifactHashEvidence>>,
     pub required_files: Vec<String>,
     pub missing_files: Vec<String>,
     pub continued_dependents: Vec<TaskId>,
+    pub evidence_hash: String,
+}
+
+pub fn task_acceptance_digest(spec: &TaskSpec) -> String {
+    let mut files = spec.owned_files.clone();
+    files.sort();
+    files.dedup();
+    let encoded = serde_json::to_vec(&(
+        "task-acceptance-v1",
+        &spec.id,
+        &spec.description,
+        &files,
+        &spec.replan_authority,
+    ))
+    .expect("task acceptance contracts are JSON serializable");
+    scheduler_sha256_digest(&encoded)
+}
+
+fn task_unavailable_evidence_hash(evidence: &TaskUnavailableEvidence) -> String {
+    let encoded = serde_json::to_vec(&(
+        "task-unavailable-evidence-v2",
+        &evidence.task_id,
+        &evidence.kind,
+        evidence.attempt,
+        &evidence.detail,
+        &evidence.task_spec_digest,
+        &evidence.acceptance_digest,
+        &evidence.unavailable_ancestors,
+        &evidence.pre_attempt_artifacts,
+        &evidence.required_files,
+        &evidence.missing_files,
+        &evidence.continued_dependents,
+    ))
+    .expect("task unavailable evidence is JSON serializable");
+    scheduler_sha256_digest(&encoded)
+}
+
+fn scheduler_sha256_digest(bytes: &[u8]) -> String {
+    format!(
+        "sha256:{}",
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    )
+}
+
+pub(crate) fn validate_task_unavailable_evidence(
+    spec: &TaskSpec,
+    evidence: &TaskUnavailableEvidence,
+) -> bool {
+    let mut ancestors = evidence.unavailable_ancestors.clone();
+    ancestors.sort();
+    ancestors.dedup();
+    let mut required = evidence.required_files.clone();
+    required.sort();
+    required.dedup();
+    let mut expected_required = spec.owned_files.clone();
+    expected_required.sort();
+    expected_required.dedup();
+    evidence.task_id == spec.id
+        && evidence.task_spec_digest == scheduler_task_spec_digest(spec)
+        && evidence.acceptance_digest == task_acceptance_digest(spec)
+        && ancestors == evidence.unavailable_ancestors
+        && ancestors.contains(&spec.id)
+        && required == expected_required
+        && evidence
+            .missing_files
+            .iter()
+            .all(|path| expected_required.contains(path))
+        && evidence
+            .pre_attempt_artifacts
+            .keys()
+            .eq(expected_required.iter())
+        && task_unavailable_evidence_hash(evidence) == evidence.evidence_hash
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -763,7 +886,7 @@ async fn run_dispatch_catching_panic(
         .await
     {
         Ok(result) => result,
-        Err(_) => Err(DispatchError::Terminal(
+        Err(_) => Err(DispatchError::Transient(
             "dispatcher task panicked".to_string(),
         )),
     }
@@ -1357,6 +1480,7 @@ struct State {
     judge_node: Option<String>,
     task_completion: HashMap<String, TaskCompletionDisposition>,
     task_unavailable: HashMap<TaskId, TaskUnavailableEvidence>,
+    task_unavailable_ancestry: HashMap<TaskId, BTreeSet<TaskId>>,
     /// Artifact state at the task's first claim. Salvage must prove the current artifact set differs;
     /// a non-empty file that predates the worker is evidence of existence, not evidence of work.
     salvage_artifact_baselines: HashMap<TaskId, SalvageArtifactSnapshot>,
@@ -2056,9 +2180,14 @@ impl State {
                 n.spec.replan_authority.clone(),
             )
         };
+        let artifact_root = self
+            .checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.root().to_path_buf())
+            .unwrap_or_else(|| Path::new(".").to_path_buf());
         self.salvage_artifact_baselines
             .entry(tid.clone())
-            .or_insert_with(|| salvage_artifact_snapshot(&files));
+            .or_insert_with(|| salvage_artifact_snapshot_at(&artifact_root, &files));
         for f in &files {
             self.held_files.insert(f.clone());
         }
@@ -2166,7 +2295,18 @@ impl State {
     /// spun-but-written CLI shipped with the entry/verify tasks never run.
     fn relax_dependents(&mut self, tid: &str) {
         let dependents = self.dag.dependents.get(tid).cloned().unwrap_or_default();
+        let ancestry = self
+            .task_unavailable_ancestry
+            .get(tid)
+            .cloned()
+            .unwrap_or_default();
         for d in dependents {
+            if !ancestry.is_empty() {
+                self.task_unavailable_ancestry
+                    .entry(d.clone())
+                    .or_default()
+                    .extend(ancestry.iter().cloned());
+            }
             let nd = self.dag.tasks.get_mut(&d).unwrap();
             if nd.indegree_remaining > 0 {
                 nd.indegree_remaining -= 1;
@@ -2198,12 +2338,18 @@ impl State {
         continued_dependents.sort();
         continued_dependents.dedup();
         let mut missing_files = Vec::new();
+        let working_root = self
+            .checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.root().to_path_buf())
+            .or_else(|| std::fs::canonicalize(".").ok())
+            .unwrap_or_else(|| Path::new(".").to_path_buf());
         for path in &required_files {
-            match std::fs::symlink_metadata(path) {
-                Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-                    let integrity = format!(
-                        "owned artifact integrity violation: `{path}` exists but is not a regular file"
-                    );
+            let validated = match checkpoint::validate_project_artifact_path(&working_root, path) {
+                Ok(path) => path,
+                Err(error) => {
+                    let integrity =
+                        format!("owned artifact integrity violation for `{path}`: {error}");
                     if let Some(record) = self
                         .attempt_log
                         .get_mut(tid)
@@ -2216,6 +2362,8 @@ impl State {
                     self.fail_descendants(tid);
                     return false;
                 }
+            };
+            match std::fs::symlink_metadata(&validated) {
                 Ok(metadata)
                     if metadata.len() == 0
                         && !path.ends_with("__init__.py")
@@ -2245,22 +2393,53 @@ impl State {
             }
         }
 
-        {
-            let node = self.dag.tasks.get_mut(tid).unwrap();
-            node.state = TaskState::Failed;
-            node.result = None;
-            node.avoid_device = None;
-        }
-
-        let evidence = TaskUnavailableEvidence {
+        let mut unavailable_ancestors = self
+            .task_unavailable_ancestry
+            .get(tid)
+            .cloned()
+            .unwrap_or_default();
+        unavailable_ancestors.insert(tid.to_string());
+        let spec = &self.dag.tasks[tid].spec;
+        let baseline = self
+            .salvage_artifact_baselines
+            .get(tid)
+            .cloned()
+            .unwrap_or_else(|| salvage_artifact_snapshot_at(&working_root, &spec.owned_files));
+        let mut evidence = TaskUnavailableEvidence {
             task_id: tid.to_string(),
             kind,
             attempt,
             detail,
+            task_spec_digest: scheduler_task_spec_digest(spec),
+            acceptance_digest: task_acceptance_digest(spec),
+            unavailable_ancestors: unavailable_ancestors.iter().cloned().collect(),
+            pre_attempt_artifacts: task_artifact_hash_evidence(&baseline),
             required_files,
             missing_files,
             continued_dependents: continued_dependents.clone(),
+            evidence_hash: String::new(),
         };
+        evidence.evidence_hash = task_unavailable_evidence_hash(&evidence);
+        if !validate_task_unavailable_evidence(spec, &evidence) {
+            self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
+            self.fail_descendants(tid);
+            return false;
+        }
+        if let Some(checkpoint) = &self.checkpoint {
+            if checkpoint.persist_unavailable(spec, &evidence).is_err() {
+                self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
+                self.fail_descendants_without_release(tid);
+                return false;
+            }
+        }
+        {
+            let node = self.dag.tasks.get_mut(tid).unwrap();
+            node.state = TaskState::Unavailable;
+            node.result = None;
+            node.avoid_device = None;
+        }
+        self.task_unavailable_ancestry
+            .insert(tid.to_string(), unavailable_ancestors.clone());
         self.task_unavailable
             .insert(tid.to_string(), evidence.clone());
         self.sink.emit(&SwarmEvent::TaskUnavailable {
@@ -2268,6 +2447,10 @@ impl State {
         });
 
         for dependent_id in continued_dependents {
+            self.task_unavailable_ancestry
+                .entry(dependent_id.clone())
+                .or_default()
+                .extend(unavailable_ancestors.iter().cloned());
             let should_ready = {
                 let dependent = self.dag.tasks.get_mut(&dependent_id).unwrap();
                 if dependent.state.is_terminal() {
@@ -2358,22 +2541,54 @@ impl State {
                     .insert(tid.to_string(), session_id.clone());
                 self.task_tool_calls
                     .insert(tid.to_string(), tool_calls.clone());
-                let provisional = salvaged
-                    .then(|| {
-                        let node = self.dag.tasks.get(tid)?;
-                        let baseline = self.salvage_artifact_baselines.get(tid)?;
-                        provisional_task_receipt(
-                            &node.spec,
+                let unavailable_ancestors = self
+                    .task_unavailable_ancestry
+                    .get(tid)
+                    .map(|ancestors| ancestors.iter().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                let provisional = if unavailable_ancestors.is_empty() {
+                    salvaged
+                        .then(|| {
+                            let node = self.dag.tasks.get(tid)?;
+                            let baseline = self.salvage_artifact_baselines.get(tid)?;
+                            provisional_task_receipt(
+                                &node.spec,
+                                attempt,
+                                SalvageReason::ProgressWatchdog,
+                                baseline,
+                            )
+                        })
+                        .flatten()
+                } else {
+                    let node = &self.dag.tasks[tid];
+                    let working_root = self
+                        .checkpoint
+                        .as_ref()
+                        .map(|checkpoint| checkpoint.root())
+                        .unwrap_or_else(|| Path::new("."));
+                    let task_contract = scheduler_task_spec_digest(&node.spec);
+                    let acceptance_contract = task_acceptance_digest(&node.spec);
+                    mint_unavailable_descendant_receipt(
+                        working_root,
+                        UnavailableDescendantReceiptInput {
+                            task_id: &node.spec.id,
                             attempt,
-                            SalvageReason::ProgressWatchdog,
-                            baseline,
-                        )
-                    })
-                    .flatten();
-                if salvaged && provisional.is_none() {
-                    let error =
+                            task_contract: &task_contract,
+                            acceptance_contract: &acceptance_contract,
+                            unavailable_ancestors: &unavailable_ancestors,
+                            output: &output,
+                            owned_files: &node.spec.owned_files,
+                        },
+                    )
+                };
+                if (salvaged || !unavailable_ancestors.is_empty()) && provisional.is_none() {
+                    let error = if unavailable_ancestors.is_empty() {
                         "dispatcher requested salvage without complete eligible artifact evidence"
-                            .to_string();
+                            .to_string()
+                    } else {
+                        "unavailable-dependent completion lacks exact provisional artifact evidence"
+                            .to_string()
+                    };
                     self.attempt_log
                         .entry(tid.to_string())
                         .or_default()
@@ -2404,16 +2619,25 @@ impl State {
                         .map(TaskCompletionDisposition::Salvaged)
                         .unwrap_or(TaskCompletionDisposition::Complete);
                     let is_salvaged = completion.is_salvaged();
-                    let checkpoint_result = if is_salvaged {
-                        Ok(None)
-                    } else if let Some(checkpoint) = &self.checkpoint {
+                    let checkpoint_result = if let Some(checkpoint) = &self.checkpoint {
                         let spec = &self.dag.tasks[tid].spec;
-                        match checkpoint.can_persist_done(spec) {
-                            Ok(true) => checkpoint
-                                .persist_done(spec, &output, attempt.saturating_add(1))
-                                .map(Some),
-                            Ok(false) => Ok(None),
-                            Err(error) => Err(error),
+                        if let Some(receipt) = completion.provisional_receipt() {
+                            checkpoint
+                                .persist_provisional(
+                                    spec,
+                                    &output,
+                                    attempt.saturating_add(1),
+                                    receipt,
+                                )
+                                .map(Some)
+                        } else {
+                            match checkpoint.can_persist_done(spec) {
+                                Ok(true) => checkpoint
+                                    .persist_done(spec, &output, attempt.saturating_add(1))
+                                    .map(Some),
+                                Ok(false) => Ok(None),
+                                Err(error) => Err(error),
+                            }
                         }
                     } else {
                         Ok(None)
@@ -2478,8 +2702,16 @@ impl State {
                                 AttemptRecord {
                                     device: dev_id.clone(),
                                     model: model_id.clone(),
-                                    outcome: if is_salvaged { "salvaged" } else { "ok" }
-                                        .to_string(),
+                                    outcome: if unavailable_ancestors.is_empty() {
+                                        if is_salvaged {
+                                            "salvaged"
+                                        } else {
+                                            "ok"
+                                        }
+                                    } else {
+                                        "provisional"
+                                    }
+                                    .to_string(),
                                     error: None,
                                     elapsed_ms,
                                 },
@@ -2499,7 +2731,16 @@ impl State {
                                 task_id: tid.to_string(),
                                 salvaged: is_salvaged,
                                 completion: Some(completion),
-                                status: if is_salvaged { "salvaged" } else { "done" }.to_string(),
+                                status: if unavailable_ancestors.is_empty() {
+                                    if is_salvaged {
+                                        "salvaged"
+                                    } else {
+                                        "done"
+                                    }
+                                } else {
+                                    "provisional"
+                                }
+                                .to_string(),
                                 device: dev_id,
                                 model: model_id,
                                 attempts: self.attempt_log[tid].len() as u32,
@@ -3926,6 +4167,7 @@ impl State {
     fn build_report(&self) -> RunReport {
         let mut done = Vec::new();
         let mut salvaged = Vec::new();
+        let mut provisional = Vec::new();
         let mut failed = Vec::new();
         let mut unavailable = Vec::new();
         let mut results = HashMap::new();
@@ -3942,7 +4184,25 @@ impl State {
                 }
                 TaskState::Salvaged => {
                     salvaged.push(id.clone());
-                    "salvaged"
+                    if self
+                        .task_completion
+                        .get(id)
+                        .is_some_and(TaskCompletionDisposition::has_unavailable_ancestors)
+                    {
+                        provisional.push(id.clone());
+                        "provisional"
+                    } else {
+                        "salvaged"
+                    }
+                }
+                TaskState::Unavailable => {
+                    failed.push(id.clone());
+                    if let Some(evidence) = self.task_unavailable.get(id) {
+                        unavailable.push(evidence.clone());
+                        "unavailable"
+                    } else {
+                        "failed"
+                    }
                 }
                 TaskState::Failed => {
                     failed.push(id.clone());
@@ -4022,6 +4282,7 @@ impl State {
         }
         done.sort();
         salvaged.sort();
+        provisional.sort();
         unavailable.sort_by(|left, right| left.task_id.cmp(&right.task_id));
         let (failed, bonus) = fail_closed_report_classification(failed, &salvaged, &self.bonus_ids);
         tasks.sort_by(|a, b| a.task_id.cmp(&b.task_id));
@@ -4040,6 +4301,7 @@ impl State {
         RunReport {
             done,
             salvaged,
+            provisional,
             failed,
             unavailable,
             bonus,
@@ -4453,8 +4715,29 @@ impl Scheduler {
         };
         let physical_admission = physical_execution.is_some();
         let mut dag = dag;
+        if self.continue_on_unavailable {
+            let artifact_root = self
+                .checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.root().to_path_buf())
+                .or_else(|| std::fs::canonicalize(".").ok())
+                .unwrap_or_else(|| Path::new(".").to_path_buf());
+            for node in dag.tasks.values() {
+                for file in &node.spec.owned_files {
+                    validate_project_artifact_path(&artifact_root, file).map_err(|error| {
+                        anyhow::anyhow!(
+                            "task {:?} owned artifact path failed integrity validation: {error}",
+                            node.spec.id
+                        )
+                    })?;
+                }
+            }
+        }
         let mut context = SharedContext::new();
         let mut restored_attempts = HashMap::new();
+        let mut restored_unavailable = HashMap::new();
+        let mut restored_completion = HashMap::new();
+        let mut restored_unavailable_ancestry = HashMap::new();
         if let Some(checkpoint) = &self.checkpoint {
             let restored = checkpoint.restore_into(&mut dag, &mut context)?;
             restored_attempts.extend(restored.restored.iter().map(|task_id| {
@@ -4466,6 +4749,23 @@ impl Scheduler {
                         .attempts,
                 )
             }));
+            for evidence in &restored.unavailable {
+                restored_unavailable_ancestry.insert(
+                    evidence.task_id.clone(),
+                    evidence.unavailable_ancestors.iter().cloned().collect(),
+                );
+                restored_unavailable.insert(evidence.task_id.clone(), evidence.clone());
+            }
+            for (task_id, receipt) in &restored.provisional {
+                restored_unavailable_ancestry.insert(
+                    task_id.clone(),
+                    receipt.unavailable_ancestors().iter().cloned().collect(),
+                );
+                restored_completion.insert(
+                    task_id.clone(),
+                    TaskCompletionDisposition::Salvaged(receipt.clone()),
+                );
+            }
             self.sink.emit(&SwarmEvent::SchedulerCheckpointRestored {
                 restored: restored.restored,
                 invalidated: restored.invalidated,
@@ -4524,8 +4824,9 @@ impl Scheduler {
             split_generation: HashMap::new(),
             judge_running: false,
             judge_node: None,
-            task_completion: HashMap::new(),
-            task_unavailable: HashMap::new(),
+            task_completion: restored_completion,
+            task_unavailable: restored_unavailable,
+            task_unavailable_ancestry: restored_unavailable_ancestry,
             salvage_artifact_baselines: HashMap::new(),
             idle_jobs: 0,
             sink_review_dim: 0,
