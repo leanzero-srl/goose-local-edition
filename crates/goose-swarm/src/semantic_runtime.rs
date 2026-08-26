@@ -3,7 +3,7 @@
 //! A summons is evidence that a trace changed, not a verdict about that change. This module has no
 //! action-delivery API and cannot mutate scheduler state.
 
-use crate::control_plane::LiveProviderRequestSession;
+use crate::control_plane::{LiveProviderRequestSession, ProviderNudgeSafetySnapshot};
 use crate::semantic_observation::{
     AcceptanceCriterionSnapshot, NeutralJudgeSignal, SealedSemanticObservationSnapshot,
 };
@@ -859,6 +859,20 @@ impl SemanticObservationCapture {
 
     pub fn summons(&self) -> &SemanticObservationSummonsSignal {
         &self.summons
+    }
+
+    pub(crate) fn provider_nudge_safety_snapshot(&self) -> ProviderNudgeSafetySnapshot {
+        let SemanticObservationSummonsSignal::TraceStateAdvanced { measurement, .. } =
+            &self.summons;
+        ProviderNudgeSafetySnapshot {
+            provider_stream_revision: measurement.provider_stream_revision,
+            provider_stream_chunks: measurement.provider_stream_chunks,
+            provider_stream_bytes: measurement.provider_stream_bytes,
+            provider_structured_output_chunks: measurement.provider_structured_output_chunks,
+            provider_structured_output_bytes: measurement.provider_structured_output_bytes,
+            provider_last_progress_elapsed_ms: measurement.provider_last_progress_elapsed_ms,
+            provider_structured_output_active: measurement.provider_structured_output_active,
+        }
     }
 
     pub fn revision(&self) -> SemanticTraceRevision {

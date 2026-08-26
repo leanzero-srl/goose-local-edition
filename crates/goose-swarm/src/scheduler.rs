@@ -18,12 +18,13 @@ pub use checkpoint::{
 };
 
 use crate::broker::{
-    AdmissionReceipt, PhysicalExecutionAuthority, SourceRevisionKind, TaskVersion, WorkOpportunity,
+    AdmissionReceipt, PhysicalExecutionAuthority, ProviderRequestKey, SourceRevisionKind,
+    TaskVersion, WorkOpportunity,
 };
 use crate::context::SharedContext;
 use crate::control_plane::{
     BrokeredTaskDispatcher, PhysicalAdmissionControl, PhysicalDispatchAuthority,
-    ProviderLifecycleDispatcher, ProviderStartKey,
+    ProviderLifecycleDispatcher, ProviderStartKey, ProviderStartLookupError,
 };
 use crate::dag::{Dag, Difficulty, TaskId, TaskSpec, TaskState};
 use crate::dispatch::{
@@ -876,6 +877,10 @@ enum SemanticObservationAttemptDisposition {
     NoCapture,
     Deferred,
     Consumed,
+    Retired {
+        provider_request: Option<ProviderRequestKey>,
+    },
+    IntegrityFailure(String),
 }
 
 struct SemanticObservationAttemptResult {
@@ -910,22 +915,33 @@ impl SchedulerSemanticObservationRuntime {
         } = scheduled;
         let task_id = request.task_id.clone();
         let attempt = request.attempt;
-        let provider_session = match self
-            .control
-            .provider_start_registry()
-            .query(&provider_start)
-        {
+        let registry = self.control.provider_start_registry();
+        let provider_request = registry.current_request_key(&provider_start).ok().flatten();
+        let provider_session = match registry.query(&provider_start) {
             Ok(session) => session,
             Err(error) => {
+                let reason = error.to_string();
                 self.capture_failed(
                     &task_id,
                     attempt,
-                    format!("source provider start is unavailable: {error}"),
+                    format!("source provider start is unavailable: {reason}"),
                 );
+                let disposition = match error {
+                    ProviderStartLookupError::Missing { .. }
+                    | ProviderStartLookupError::NotLive { .. } => {
+                        SemanticObservationAttemptDisposition::Retired { provider_request }
+                    }
+                    ProviderStartLookupError::TaskMismatch { .. }
+                    | ProviderStartLookupError::StaleAttempt { .. }
+                    | ProviderStartLookupError::Concurrent { .. }
+                    | ProviderStartLookupError::RuntimeBinding { .. } => {
+                        SemanticObservationAttemptDisposition::IntegrityFailure(reason)
+                    }
+                };
                 return SemanticObservationAttemptResult {
                     task_id,
                     revision: None,
-                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                    disposition,
                 };
             }
         };
@@ -1143,13 +1159,17 @@ impl SchedulerSemanticObservationRuntime {
             Ok(Some(SemanticObservationAdmissionSubmission::Started(handle))) => {
                 match handle.wait().await {
                     Ok(receipt) => {
-                        if let Err(error) = self.plane.redeem_scheduler_nudge(
-                            capture,
-                            &request,
-                            &task_evidence,
-                            provider_session,
-                            receipt,
-                        ) {
+                        if let Err(error) = self
+                            .plane
+                            .redeem_scheduler_nudge(
+                                capture,
+                                &request,
+                                &task_evidence,
+                                provider_session,
+                                receipt,
+                            )
+                            .await
+                        {
                             self.capture_failed(
                                 &request.task_id,
                                 request.attempt,
@@ -4329,6 +4349,9 @@ impl Scheduler {
         let mut semantic_captures_in_flight = HashSet::new();
         let mut semantic_last_consumed: HashMap<TaskId, SemanticTraceRevision> = HashMap::new();
         let mut semantic_last_summoned: HashMap<TaskId, SemanticTraceRevision> = HashMap::new();
+        let mut semantic_retired_provider_requests: HashMap<TaskId, Option<ProviderRequestKey>> =
+            HashMap::new();
+        let mut semantic_integrity_failure = None;
         let mut scheduler_tasks = tokio::task::JoinSet::<()>::new();
         let (idle_release_tx, mut idle_release_rx) = mpsc::unbounded_channel();
         // Edge-detect pause transitions so run_paused/run_unpaused is emitted once per transition, not per tick.
@@ -4345,6 +4368,16 @@ impl Scheduler {
             }
             while let Ok(result) = semantic_completion_rx.try_recv() {
                 semantic_captures_in_flight.remove(&result.task_id);
+                match &result.disposition {
+                    SemanticObservationAttemptDisposition::Retired { provider_request } => {
+                        semantic_retired_provider_requests
+                            .insert(result.task_id.clone(), provider_request.clone());
+                    }
+                    SemanticObservationAttemptDisposition::IntegrityFailure(reason) => {
+                        semantic_integrity_failure = Some(reason.clone());
+                    }
+                    _ => {}
+                }
                 if let Some(revision) = result.revision {
                     semantic_last_summoned.insert(result.task_id.clone(), revision.clone());
                     if matches!(
@@ -4354,6 +4387,12 @@ impl Scheduler {
                         semantic_last_consumed.insert(result.task_id, revision);
                     }
                 }
+            }
+            if let Some(reason) = semantic_integrity_failure.take() {
+                scheduler_tasks.abort_all();
+                while scheduler_tasks.join_next().await.is_some() {}
+                apply_idle_slot_releases(&state, &mut idle_release_rx).await;
+                bail!("semantic observation authority integrity failure: {reason}");
             }
             // In-process PAUSE hold: while the sentinel exists, claim NO new ready task. Already-spawned
             // in-flight futures (below) run to completion — the hold is BETWEEN tasks, so it can never
@@ -4462,7 +4501,7 @@ impl Scheduler {
             }
             if let Some(runtime) = semantic_runtime.as_ref().filter(|_| !paused) {
                 let available_provider_slots = runtime.available_provider_slots().await;
-                let requests = {
+                let mut requests = {
                     let s = state.lock().await;
                     if s.all_terminal() {
                         Vec::new()
@@ -4473,6 +4512,29 @@ impl Scheduler {
                         )
                     }
                 };
+                let registry = runtime.control.provider_start_registry();
+                requests.retain(|scheduled| {
+                    let Some(retired_request) = semantic_retired_provider_requests
+                        .get(&scheduled.request.task_id)
+                        .cloned()
+                    else {
+                        return true;
+                    };
+                    match registry.current_request_key(&scheduled.provider_start) {
+                        Ok(current_request) if current_request == retired_request => false,
+                        Ok(_) => {
+                            semantic_retired_provider_requests.remove(&scheduled.request.task_id);
+                            true
+                        }
+                        Err(error) => {
+                            semantic_integrity_failure = Some(error.to_string());
+                            false
+                        }
+                    }
+                });
+                if semantic_integrity_failure.is_some() {
+                    continue;
+                }
                 for scheduled in requests {
                     let task_id = scheduled.request.task_id.clone();
                     if !semantic_captures_in_flight.insert(task_id.clone()) {
@@ -4508,12 +4570,14 @@ impl Scheduler {
                                 }
                             }
                         };
-                        let consumed = matches!(
+                        let wake_scheduler = matches!(
                             &result.disposition,
                             SemanticObservationAttemptDisposition::Consumed
+                                | SemanticObservationAttemptDisposition::Retired { .. }
+                                | SemanticObservationAttemptDisposition::IntegrityFailure(_)
                         );
                         let _ = completion.send(result);
-                        if consumed {
+                        if wake_scheduler {
                             semantic_notify.notify_one();
                         }
                     });
@@ -4989,7 +5053,16 @@ impl Scheduler {
                     tick.min(deadline.saturating_duration_since(std::time::Instant::now()))
                 })
                 .unwrap_or(tick);
-            let _ = tokio::time::timeout(tick, notify.notified()).await;
+            if let Some(runtime) = &semantic_runtime {
+                let provider_starts = runtime.control.provider_start_registry();
+                tokio::select! {
+                    _ = tokio::time::sleep(tick) => {}
+                    _ = notify.notified() => {}
+                    _ = provider_starts.changed() => {}
+                }
+            } else {
+                let _ = tokio::time::timeout(tick, notify.notified()).await;
+            }
         }
     }
 }
