@@ -70071,11 +70071,9 @@ mod pre_scheduler_semantic_runtime_tests {
             .expect("frozen V20 fixture did not finish its one production synthesis call");
         let calls = harness.provider.calls();
         assert_eq!(
-            calls
-                .iter()
-                .filter(|call| call.phase == "opening_captured")
-                .count(),
-            1
+            calls.iter().filter(|call| call.phase == "opening").count(),
+            1,
+            "the frozen replay must execute exactly one production opener call"
         );
         assert_eq!(calls.iter().filter(|call| call.phase == "owner").count(), 7);
         assert_eq!(
