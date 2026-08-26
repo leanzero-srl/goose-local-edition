@@ -193,6 +193,26 @@ async fn wait_for_occupancy(control: &PhysicalAdmissionControl, expected: (usize
     .unwrap_or_else(|_| panic!("control plane never reached occupancy {expected:?}"));
 }
 
+async fn set_measured_host_capacity(
+    control: &PhysicalAdmissionControl,
+    host_id: &str,
+    max_concurrent: u32,
+) {
+    let snapshot_id = control.snapshot().await.snapshot_id;
+    control
+        .update_host_capacity(
+            host_id,
+            &snapshot_id,
+            HostCapacityEvidence::MeasuredProfile {
+                profile_hash: format!("fixture:{host_id}:capacity:{max_concurrent}"),
+                profile_key: "test-runtime:model:context:role".to_string(),
+                max_concurrent,
+            },
+        )
+        .await
+        .unwrap();
+}
+
 struct LifecycleRecorder {
     calls: Mutex<Vec<String>>,
     current: AtomicUsize,
@@ -278,6 +298,7 @@ impl ProviderLifecycleDispatcher for ProviderClassMock {
 
 struct ToolGapSignals {
     first_turn_finished: Notify,
+    allow_other_task_turn: Notify,
     allow_second_turn: Notify,
     other_task_finished: Notify,
     live_provider_turns: AtomicUsize,
@@ -327,6 +348,7 @@ impl ProviderLifecycleDispatcher for ToolGapDispatcher {
             self.signals.allow_second_turn.notified().await;
             self.provider_turn(&lifecycle, "provider:a:1").await;
         } else {
+            self.signals.allow_other_task_turn.notified().await;
             self.provider_turn(&lifecycle, "provider:b:0").await;
             self.signals.other_task_finished.notify_one();
         }
@@ -439,6 +461,7 @@ struct LateStartDispatcher {
 
 struct QueuedCloseSignals {
     second_task_started: Notify,
+    allow_late_start: Notify,
     allow_first_task_return: Notify,
     allow_second_task_terminal: Notify,
     late_result: Mutex<Option<oneshot::Sender<Result<(), String>>>>,
@@ -489,6 +512,7 @@ impl ProviderLifecycleDispatcher for QueuedCloseDispatcher {
                 .await
                 .unwrap();
             self.signals.second_task_started.notified().await;
+            self.signals.allow_late_start.notified().await;
 
             let sender = self.signals.late_result.lock().unwrap().take().unwrap();
             tokio::spawn(async move {
@@ -1175,11 +1199,12 @@ async fn tool_gap_releases_the_host_and_a_later_turn_reacquires_through_the_queu
     let sink = Arc::new(RecordingSink::default());
     let control = control(
         "tool-gap",
-        vec![lane("lane-a", "model-a", "host-a", "instance-a", 1)],
+        vec![lane("lane-a", "model-a", "host-a", "instance-a", 2)],
         sink.clone(),
     );
     let signals = Arc::new(ToolGapSignals {
         first_turn_finished: Notify::new(),
+        allow_other_task_turn: Notify::new(),
         allow_second_turn: Notify::new(),
         other_task_finished: Notify::new(),
         live_provider_turns: AtomicUsize::new(0),
@@ -1211,6 +1236,9 @@ async fn tool_gap_releases_the_host_and_a_later_turn_reacquires_through_the_queu
     )
     .await
     .unwrap();
+    // Keep the two-envelope fixture deterministic: task b may be admitted immediately, but its
+    // provider turn starts only after task a has yielded its turn permit.
+    signals.allow_other_task_turn.notify_one();
     tokio::time::timeout(
         Duration::from_secs(2),
         signals.other_task_finished.notified(),
@@ -1230,6 +1258,15 @@ async fn tool_gap_releases_the_host_and_a_later_turn_reacquires_through_the_queu
         .unwrap();
     assert_eq!(report.done.len(), 2);
     assert_eq!(control.occupancy().await, (0, 0));
+    let events = sink.events.lock().unwrap();
+    assert!(events.iter().any(|event| {
+        event["event"] == "broker_provider_request_queued"
+            && event["receipt"]["request"]["key"]["provider_request_id"] == "provider:a:1"
+    }));
+    assert!(events.iter().any(|event| {
+        event["event"] == "broker_provider_request_permitted"
+            && event["receipt"]["key"]["provider_request_id"] == "provider:a:1"
+    }));
 }
 
 #[tokio::test]
@@ -1378,7 +1415,7 @@ async fn cancelled_provider_reacquisition_does_not_leave_a_phantom_turn_permit()
     let sink = Arc::new(RecordingSink::default());
     let control = control(
         "cancelled-provider",
-        vec![lane("lane-a", "model-a", "host-a", "instance-a", 1)],
+        vec![lane("lane-a", "model-a", "host-a", "instance-a", 2)],
         sink.clone(),
     );
     let review_source = artifact("review", 1);
@@ -1419,6 +1456,10 @@ async fn cancelled_provider_reacquisition_does_not_leave_a_phantom_turn_permit()
         ))
         .await
         .unwrap();
+    // A measured capacity downgrade can leave two valid envelopes but only one provider permit.
+    // This creates a real queued reacquisition without violating capacity-one parked-session
+    // continuity during ordinary admission.
+    set_measured_host_capacity(&control, "host-a", 1).await;
     let reacquire = tokio::spawn({
         let lifecycle = lifecycle.clone();
         async move {
@@ -1701,12 +1742,13 @@ async fn closing_provider_starts_rejects_a_clone_already_queued_for_physical_cap
     let sink = Arc::new(RecordingSink::default());
     let control = control(
         "queued-close",
-        vec![lane("lane-a", "model-a", "host-a", "instance-a", 1)],
+        vec![lane("lane-a", "model-a", "host-a", "instance-a", 2)],
         sink.clone(),
     );
     let (sender, receiver) = oneshot::channel();
     let signals = Arc::new(QueuedCloseSignals {
         second_task_started: Notify::new(),
+        allow_late_start: Notify::new(),
         allow_first_task_return: Notify::new(),
         allow_second_task_terminal: Notify::new(),
         late_result: Mutex::new(Some(sender)),
@@ -1730,6 +1772,11 @@ async fn closing_provider_starts_rejects_a_clone_already_queued_for_physical_cap
             .await
     });
 
+    wait_for_occupancy(&control, (0, 2)).await;
+    // Queue the cloned provider start by applying a genuine measured capacity downgrade after both
+    // envelopes are admitted; capacity-one admission itself deliberately keeps one parked session.
+    set_measured_host_capacity(&control, "host-a", 1).await;
+    signals.allow_late_start.notify_one();
     wait_for_occupancy(&control, (1, 2)).await;
     signals.allow_first_task_return.notify_one();
     let late_result = tokio::time::timeout(Duration::from_secs(2), receiver)
