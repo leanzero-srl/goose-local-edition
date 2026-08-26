@@ -11911,6 +11911,19 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
+    fn recurrence_failover_requires_matching_retryable_research_authority() {
+        let retryable = PreSchedulerSourceAuthority::retryable_research();
+        assert!(retryable.allows_recurrence_failover(WorkRole::ResearchEvidence));
+        assert!(!retryable.allows_recurrence_failover(WorkRole::PlanningAuthority));
+        assert!(!PreSchedulerSourceAuthority::planning()
+            .allows_recurrence_failover(WorkRole::PlanningAuthority));
+        assert!(
+            !PreSchedulerSourceAuthority::non_retryable(WorkRole::ResearchEvidence)
+                .allows_recurrence_failover(WorkRole::ResearchEvidence)
+        );
+    }
+
+    #[test]
     fn recurrence_from_a_finished_turn_cannot_summon_for_the_next_turn() {
         let first = ProviderRequestKey {
             ordinal: 0,
@@ -24461,6 +24474,45 @@ struct PreSchedulerSourceContext {
     runtime: Arc<PreSchedulerSemanticRuntime>,
     lifecycle: ProviderLifecycle,
     label: String,
+    authority: PreSchedulerSourceAuthority,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreSchedulerRetryAuthority {
+    None,
+    DistinctPhysicalHost,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PreSchedulerSourceAuthority {
+    role: WorkRole,
+    retry: PreSchedulerRetryAuthority,
+}
+
+impl PreSchedulerSourceAuthority {
+    const fn non_retryable(role: WorkRole) -> Self {
+        Self {
+            role,
+            retry: PreSchedulerRetryAuthority::None,
+        }
+    }
+
+    const fn planning() -> Self {
+        Self::non_retryable(WorkRole::PlanningAuthority)
+    }
+
+    const fn retryable_research() -> Self {
+        Self {
+            role: WorkRole::ResearchEvidence,
+            retry: PreSchedulerRetryAuthority::DistinctPhysicalHost,
+        }
+    }
+
+    fn allows_recurrence_failover(self, admitted_role: WorkRole) -> bool {
+        self.role == WorkRole::ResearchEvidence
+            && admitted_role == self.role
+            && self.retry == PreSchedulerRetryAuthority::DistinctPhysicalHost
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24482,6 +24534,10 @@ tokio::task_local! {
 
 tokio::task_local! {
     static PRE_SCHEDULER_REQUIRED_HOST: String;
+}
+
+tokio::task_local! {
+    static PRE_SCHEDULER_SOURCE_AUTHORITY: PreSchedulerSourceAuthority;
 }
 
 #[cfg(test)]
@@ -24581,7 +24637,12 @@ impl PreSchedulerSemanticRuntime {
         lanes
     }
 
-    async fn admit_source(&self, model_id: &str, label: &str) -> Result<AdmittedWork> {
+    async fn admit_source(
+        &self,
+        model_id: &str,
+        label: &str,
+        authority: PreSchedulerSourceAuthority,
+    ) -> Result<AdmittedWork> {
         let sequence = self.next_sequence();
         let task_id = format!("{label}:pre-scheduler:{sequence}");
         let source = TaskVersion {
@@ -24610,7 +24671,7 @@ impl PreSchedulerSemanticRuntime {
                 "pre-scheduler physical broker has no verified route for model `{model_id}` on the required physical host"
             ));
         }
-        let role = Self::source_role(label);
+        let role = authority.role;
         self.control
             .admit(WorkOpportunity {
                 work_id: task_id,
@@ -25690,24 +25751,26 @@ impl GooseAgentDispatcher {
         &self,
         model_id: &str,
         physical_host_id: &str,
+        source_authority: PreSchedulerSourceAuthority,
         system_prompt: String,
         user_text: String,
         response: Option<Response>,
         idle_secs: u64,
         activity_key: Option<&str>,
     ) -> Result<RunAgentOut> {
+        let run = PRE_SCHEDULER_SOURCE_AUTHORITY.scope(
+            source_authority,
+            self.run_response_only_agent(
+                model_id,
+                system_prompt,
+                user_text,
+                response,
+                idle_secs,
+                activity_key,
+            ),
+        );
         PRE_SCHEDULER_REQUIRED_HOST
-            .scope(
-                physical_host_id.to_string(),
-                self.run_response_only_agent(
-                    model_id,
-                    system_prompt,
-                    user_text,
-                    response,
-                    idle_secs,
-                    activity_key,
-                ),
-            )
+            .scope(physical_host_id.to_string(), run)
             .await
     }
 
@@ -25715,6 +25778,7 @@ impl GooseAgentDispatcher {
     async fn run_pillar_agent_on_lane(
         &self,
         lane: &ResearchPhysicalLane,
+        source_authority: PreSchedulerSourceAuthority,
         system_prompt: String,
         user_text: String,
         response: Option<Response>,
@@ -25722,22 +25786,25 @@ impl GooseAgentDispatcher {
         idle_secs: u64,
         activity_key: Option<&str>,
     ) -> Result<RunAgentOut> {
-        let run = self.run_agent_in(
-            self.working_dir.clone(),
-            &lane.model_id,
-            system_prompt,
-            user_text,
-            response,
-            Some(UNBOUNDED_AGENT_TURNS),
-            extensions,
-            AgentToolSurface::ResponseOnly,
-            idle_secs,
-            activity_key,
-            None,
-            None,
-            None,
-            None,
-            None,
+        let run = PRE_SCHEDULER_SOURCE_AUTHORITY.scope(
+            source_authority,
+            self.run_agent_in(
+                self.working_dir.clone(),
+                &lane.model_id,
+                system_prompt,
+                user_text,
+                response,
+                Some(UNBOUNDED_AGENT_TURNS),
+                extensions,
+                AgentToolSurface::ResponseOnly,
+                idle_secs,
+                activity_key,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
         );
         if lane.verified_physical {
             PRE_SCHEDULER_REQUIRED_HOST
@@ -25805,6 +25872,7 @@ impl GooseAgentDispatcher {
                 .run_response_only_agent_on_physical_host(
                     &lane.model_id,
                     &lane.physical_host_id,
+                    PreSchedulerSourceAuthority::planning(),
                     system_prompt.to_string(),
                     user_text.to_string(),
                     Some(Response {
@@ -26000,7 +26068,16 @@ impl GooseAgentDispatcher {
         };
         if let Some(runtime) = pre_scheduler_runtime {
             let label = activity_key.unwrap_or("planner-call").to_string();
-            let admitted = runtime.admit_source(model_id, &label).await?;
+            let source_authority = PRE_SCHEDULER_SOURCE_AUTHORITY
+                .try_with(|authority| *authority)
+                .unwrap_or_else(|_| {
+                    PreSchedulerSourceAuthority::non_retryable(
+                        PreSchedulerSemanticRuntime::source_role(&label),
+                    )
+                });
+            let admitted = runtime
+                .admit_source(model_id, &label, source_authority)
+                .await?;
             let admitted_key = admitted.receipt().source.task_id.clone();
             let admitted_physical_host_id = admitted.receipt().physical_host_id.clone();
             let publisher = SemanticActivityPublisher::from_admission(admitted.receipt());
@@ -26012,6 +26089,7 @@ impl GooseAgentDispatcher {
                 runtime,
                 lifecycle: lifecycle.clone(),
                 label,
+                authority: source_authority,
             };
             let cancellation = PreSchedulerCallCancellation::new();
             let cleanup_cancellation = cancellation.clone();
@@ -28334,6 +28412,7 @@ impl GooseAgentDispatcher {
                 .run_response_only_agent_on_physical_host(
                     &lane.model_id,
                     &lane.physical_host_id,
+                    PreSchedulerSourceAuthority::retryable_research(),
                     system.to_string(),
                     user,
                     Some(Response {
@@ -28972,6 +29051,7 @@ impl GooseAgentDispatcher {
                                     .run_response_only_agent_on_physical_host(
                                         &lane.model_id,
                                         &lane.physical_host_id,
+                                        PreSchedulerSourceAuthority::retryable_research(),
                                         system.to_string(),
                                         user,
                                         Some(Response {
@@ -29920,6 +30000,7 @@ impl GooseAgentDispatcher {
         let output = self
             .run_pillar_agent_on_lane(
                 &lane,
+                PreSchedulerSourceAuthority::retryable_research(),
                 system.to_string(),
                 user,
                 Some(Response {
@@ -30024,6 +30105,7 @@ impl GooseAgentDispatcher {
             let result = self
                 .run_pillar_agent_on_lane(
                     &planner_lane,
+                    PreSchedulerSourceAuthority::planning(),
                     system.to_string(),
                     user,
                     Some(Response {
@@ -30353,6 +30435,7 @@ impl GooseAgentDispatcher {
         let model_plan = self
             .run_pillar_agent_on_lane(
                 &planner_lane,
+                PreSchedulerSourceAuthority::planning(),
                 system.to_string(),
                 user,
                 Some(Response {
@@ -42207,7 +42290,9 @@ impl PreSchedulerRecurrenceFailoverGate {
 }
 
 fn pre_scheduler_recurrence_failover_eligible(source: &PreSchedulerSourceContext) -> bool {
-    source.label.starts_with("research-target-")
+    source
+        .authority
+        .allows_recurrence_failover(source.lifecycle.admission().role)
 }
 
 fn bind_recurrence_to_provider_request(
@@ -62564,14 +62649,29 @@ mod pre_scheduler_semantic_runtime_tests {
         user: String,
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum PillarReplayStreamMode {
+        RecurrentPending,
+        RecurrentThenFinal,
+        RecurrentStructuredThenFinal,
+    }
+
     #[derive(Default)]
     struct PillarReplayProvider {
         calls: Mutex<Vec<PillarReplayProviderCall>>,
+        next_phase_modes: Mutex<HashMap<String, PillarReplayStreamMode>>,
     }
 
     impl PillarReplayProvider {
         fn calls(&self) -> Vec<PillarReplayProviderCall> {
             self.calls.lock().unwrap().clone()
+        }
+
+        fn set_next_phase_mode(&self, phase: &str, mode: PillarReplayStreamMode) {
+            self.next_phase_modes
+                .lock()
+                .unwrap()
+                .insert(phase.to_string(), mode);
         }
 
         fn last_user_text(messages: &[Message]) -> String {
@@ -62616,7 +62716,7 @@ mod pre_scheduler_semantic_runtime_tests {
             let requirements = request["frozen_authored_requirements"]
                 .as_array()
                 .expect("pillar replay opening lost authored requirements");
-            assert_eq!(requirements.len(), 197);
+            assert!(!requirements.is_empty());
             let requirement_ids = requirements
                 .iter()
                 .map(|requirement| {
@@ -62629,11 +62729,12 @@ mod pre_scheduler_semantic_runtime_tests {
             let planner = request["required_integration_owner"]
                 .as_str()
                 .expect("pillar replay opening lost integration owner");
+            let pillar_count = requirement_ids.len().min(3).max(1);
             let mut cursor = 0usize;
-            let pillars = (0..3)
+            let pillars = (0..pillar_count)
                 .map(|index| {
-                    let size = requirement_ids.len() / 3
-                        + usize::from(index < requirement_ids.len() % 3);
+                    let size = requirement_ids.len() / pillar_count
+                        + usize::from(index < requirement_ids.len() % pillar_count);
                     let owned = requirement_ids[cursor..cursor + size].to_vec();
                     cursor += size;
                     serde_json::json!({
@@ -62654,7 +62755,7 @@ mod pre_scheduler_semantic_runtime_tests {
                 "integration_contract": {
                     "owner": planner,
                     "integration_required": true,
-                    "objective": "Hook the three independently produced capabilities into one runnable application",
+                    "objective": format!("Hook the {pillar_count} independently produced capabilities into one runnable application"),
                     "interface_invariants": ["Each capability owns one disjoint module and exposes one explicit interface"],
                     "acceptance_criteria": ["The integrated application starts and reaches every capability"]
                 }
@@ -62731,9 +62832,18 @@ mod pre_scheduler_semantic_runtime_tests {
                 .iter()
                 .map(|requirement| requirement.as_str().unwrap().to_string())
                 .collect::<Vec<_>>();
+            let expected_unresolved = pillars
+                .iter()
+                .filter(|pillar| {
+                    pillar["id"] == "pillar-03"
+                        || pillar["requirement_ids"]
+                            .as_array()
+                            .is_some_and(|ids| ids.len() == 197)
+                })
+                .count();
             assert_eq!(
                 unresolved_ids.len(),
-                1,
+                expected_unresolved,
                 "one uncertain owner item must not poison its entire pillar"
             );
 
@@ -62773,7 +62883,7 @@ mod pre_scheduler_semantic_runtime_tests {
             }
             subtasks.push(serde_json::json!({
                 "id": "integrate-app",
-                "description": "Hook the three completed capabilities into one runnable entry point",
+                "description": format!("Hook the {} completed capabilities into one runnable entry point", pillars.len()),
                 "difficulty": "hard",
                 "model": models[0],
                 "depends_on": build_ids,
@@ -62799,9 +62909,17 @@ mod pre_scheduler_semantic_runtime_tests {
             let uncertainty_routes = unresolved_ids
                 .into_iter()
                 .map(|requirement_id| {
+                    let pillar_index = pillars
+                        .iter()
+                        .position(|pillar| {
+                            pillar["requirement_ids"]
+                                .as_array()
+                                .is_some_and(|ids| ids.iter().any(|id| id == &requirement_id))
+                        })
+                        .expect("unresolved requirement lost its pillar owner");
                     serde_json::json!({
                         "requirement_id": requirement_id,
-                        "task_id": "build-pillar-03",
+                        "task_id": format!("build-pillar-{:02}", pillar_index + 1),
                         "kind": "isolation",
                         "rationale": "Keep the unproven optional behavior behind the capability boundary and continue with an explicit safe alternative"
                     })
@@ -62816,6 +62934,47 @@ mod pre_scheduler_semantic_runtime_tests {
                     "integration": "Run the integrated entry point and exercise each capability contract"
                 }
             })
+        }
+
+        fn recurrent_then_final_output(
+            model: &str,
+            value: serde_json::Value,
+            structured_output: bool,
+        ) -> SingleAttemptStream {
+            let first = Message::assistant().with_thinking(
+                "the same unresolved pillar analysis repeats without new evidence ".repeat(500),
+                format!("{model}-pillar-recurrent-first"),
+            );
+            let second = Message::assistant().with_thinking(
+                "the same unresolved pillar analysis repeats without new evidence ".repeat(80),
+                format!("{model}-pillar-recurrent-second"),
+            );
+            let arguments = value
+                .as_object()
+                .cloned()
+                .expect("pillar replay script must contain a JSON object");
+            let tool_call = CallToolRequestParams::new(FINAL_OUTPUT_TOOL).with_arguments(arguments);
+            let final_output = Message::assistant()
+                .with_tool_request(format!("pillar-recurrent-final-{model}"), Ok(tool_call));
+            let usage = ProviderUsage::new(model.to_string(), Usage::default());
+            let (terminal, reporter) = SingleAttemptTerminalProof::channel();
+            SingleAttemptStream::new(
+                Box::pin(async_stream::stream! {
+                    yield Ok((Some(first), None));
+                    tokio::time::sleep(Duration::from_millis(1_200)).await;
+                    if structured_output {
+                        record_current_provider_stream_chunk(
+                            411,
+                            ProviderStreamChunkKind::StructuredOutput,
+                        );
+                    }
+                    yield Ok((Some(second), None));
+                    tokio::time::sleep(Duration::from_millis(1_200)).await;
+                    reporter.mark_finished();
+                    yield Ok((Some(final_output), Some(usage)));
+                }),
+                terminal,
+            )
         }
     }
 
@@ -62887,10 +63046,24 @@ mod pre_scheduler_semantic_runtime_tests {
             let user = Self::last_user_text(messages);
             let (phase, output) = Self::scripted_output(system, &user);
             self.record_call(&model_config.model_name, phase, user);
-            Ok(ResearchCorrectionRuntimeProvider::finished_final_output(
-                &model_config.model_name,
-                output,
-            ))
+            let mode = self.next_phase_modes.lock().unwrap().remove(phase);
+            Ok(match mode {
+                Some(PillarReplayStreamMode::RecurrentPending) => {
+                    ResearchCorrectionRuntimeProvider::recurrent_then_pending(
+                        &model_config.model_name,
+                    )
+                }
+                Some(PillarReplayStreamMode::RecurrentThenFinal) => {
+                    Self::recurrent_then_final_output(&model_config.model_name, output, false)
+                }
+                Some(PillarReplayStreamMode::RecurrentStructuredThenFinal) => {
+                    Self::recurrent_then_final_output(&model_config.model_name, output, true)
+                }
+                None => ResearchCorrectionRuntimeProvider::finished_final_output(
+                    &model_config.model_name,
+                    output,
+                ),
+            })
         }
     }
 
@@ -63261,9 +63434,19 @@ mod pre_scheduler_semantic_runtime_tests {
     async fn pillar_replay_runtime_harness(
         lanes: &[(&str, &str, &str)],
     ) -> PillarReplayRuntimeHarness {
+        pillar_replay_runtime_harness_with_provider(
+            lanes,
+            Arc::new(PillarReplayProvider::default()),
+        )
+        .await
+    }
+
+    async fn pillar_replay_runtime_harness_with_provider(
+        lanes: &[(&str, &str, &str)],
+        provider: Arc<PillarReplayProvider>,
+    ) -> PillarReplayRuntimeHarness {
         let working_dir = tempfile::tempdir().unwrap();
         let sink = Arc::new(RuntimeRecordingSink::default());
-        let provider = Arc::new(PillarReplayProvider::default());
         let planner_model = lanes.first().expect("pillar replay needs a lane").1;
         let mut dispatcher = GooseAgentDispatcher::new(
             working_dir.path().to_path_buf(),
@@ -63640,6 +63823,346 @@ mod pre_scheduler_semantic_runtime_tests {
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
             .expect("frozen V20 replay did not drain provider lifecycle")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_v21_pillar_recurrence_retires_and_retries_on_a_distinct_host() {
+        const SPEC: &str = "Build a runnable command that prints READY when invoked.";
+        const MODEL_A: &str = "v21-recurrence-pillar-model-a";
+        const MODEL_B: &str = "v21-recurrence-pillar-model-b";
+        const MODEL_C: &str = "v21-recurrence-pillar-model-c";
+        const HOST_A: &str = "v21-recurrence-pillar-host-a";
+        const HOST_B: &str = "v21-recurrence-pillar-host-b";
+        const HOST_C: &str = "v21-recurrence-pillar-host-c";
+        const TOKEN_A: &str = "v21-recurrence-pillar-lane-a";
+        const TOKEN_B: &str = "v21-recurrence-pillar-lane-b";
+        const TOKEN_C: &str = "v21-recurrence-pillar-lane-c";
+
+        let provider = Arc::new(PillarReplayProvider::default());
+        provider.set_next_phase_mode("owner", PillarReplayStreamMode::RecurrentPending);
+        let harness = pillar_replay_runtime_harness_with_provider(
+            &[
+                (TOKEN_A, MODEL_A, HOST_A),
+                (TOKEN_B, MODEL_B, HOST_B),
+                (TOKEN_C, MODEL_C, HOST_C),
+            ],
+            provider,
+        )
+        .await;
+        let hold_b = admit_direct(
+            &harness.control,
+            "hold-v21-recurrence-pillar-b",
+            &format!("device-{TOKEN_B}"),
+        )
+        .await
+        .unwrap();
+        let hold_c = admit_direct(
+            &harness.control,
+            "hold-v21-recurrence-pillar-c",
+            &format!("device-{TOKEN_C}"),
+        )
+        .await
+        .unwrap();
+        let run = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            async move {
+                dispatcher
+                    .research_by_pillars(
+                        SPEC,
+                        Arc::new(Vec::new()),
+                        vec![
+                            (TOKEN_A.to_string(), MODEL_A.to_string()),
+                            (TOKEN_B.to_string(), MODEL_B.to_string()),
+                            (TOKEN_C.to_string(), MODEL_C.to_string()),
+                        ],
+                        MODEL_A,
+                    )
+                    .await
+            }
+        });
+
+        let retirement = harness
+            .sink
+            .wait_for("pre_scheduler_recurrent_source_retired")
+            .await;
+        assert_eq!(retirement["physical_host_id"], HOST_A);
+        assert_eq!(retirement["confirmations"], 2);
+        assert_eq!(retirement["structured_output_chunks"], 0);
+        assert_eq!(retirement["structured_output_bytes"], 0);
+        assert!(retirement["task_id"]
+            .as_str()
+            .is_some_and(|task| task.starts_with("pillar-pillar-01-attempt-1:pre-scheduler:")));
+
+        let owner_starts = harness
+            .sink
+            .wait_for_count("pillar_owner_attempt_started", 2)
+            .await;
+        let primary = owner_starts
+            .iter()
+            .find(|event| event["attempt_ordinal"] == 1)
+            .expect("the recurrent pillar primary attempt was not recorded");
+        let retry = owner_starts
+            .iter()
+            .find(|event| event["attempt_ordinal"] == 2)
+            .expect("the recurrent pillar was not retried");
+        assert_eq!(primary["physical_host_id"], HOST_A);
+        let retry_host = retry["physical_host_id"]
+            .as_str()
+            .expect("the pillar retry lost its physical host");
+        assert_ne!(retry_host, HOST_A);
+        match retry_host {
+            HOST_B => hold_b
+                .complete_local(LocalCompletionKind::Error)
+                .await
+                .unwrap(),
+            HOST_C => hold_c
+                .complete_local(LocalCompletionKind::Error)
+                .await
+                .unwrap(),
+            other => panic!("pillar retry used unexpected host {other}"),
+        }
+
+        let outcome = tokio::time::timeout(Duration::from_secs(8), run)
+            .await
+            .expect("the recurrent pillar did not finish its distinct-host retry")
+            .unwrap()
+            .expect("the recurrent pillar retry failed");
+        assert_eq!(outcome.retries, 1);
+        assert_eq!(outcome.provider_calls, 3);
+        assert_eq!(outcome.reports[0].effective_confidence, Confidence::High);
+        let owner_calls = harness
+            .provider
+            .calls()
+            .into_iter()
+            .filter(|call| call.phase == "owner")
+            .collect::<Vec<_>>();
+        assert_eq!(owner_calls.len(), 2);
+        assert_eq!(
+            owner_calls
+                .iter()
+                .filter(|call| call.model == MODEL_A)
+                .count(),
+            1,
+            "the retired physical host was reused for the focused retry"
+        );
+
+        if retry_host == HOST_B {
+            hold_c
+                .complete_local(LocalCompletionKind::Error)
+                .await
+                .unwrap();
+        } else {
+            hold_b
+                .complete_local(LocalCompletionKind::Error)
+                .await
+                .unwrap();
+        }
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["physical_host_id"] == HOST_A
+                && event["admission"]["role"] == "research_evidence"
+                && event["receipt"]["kind"] == "cancelled"
+        }));
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["work_id"]
+                    .as_str()
+                    .is_some_and(|work_id| {
+                        work_id.starts_with("pillar-pillar-01-attempt-2:pre-scheduler:")
+                    })
+                && event["admission"]["physical_host_id"] == retry_host
+                && event["admission"]["role"] == "research_evidence"
+                && event["receipt"]["kind"] == "finished"
+        }));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the recurrent pillar cancellation and retry did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_v21_pillar_structured_output_blocks_recurrence_retirement() {
+        const SPEC: &str = "Build a runnable command that prints READY when invoked.";
+        const MODEL_A: &str = "v21-structured-pillar-model-a";
+        const MODEL_B: &str = "v21-structured-pillar-model-b";
+        const MODEL_C: &str = "v21-structured-pillar-model-c";
+        const HOST_A: &str = "v21-structured-pillar-host-a";
+        const HOST_B: &str = "v21-structured-pillar-host-b";
+        const HOST_C: &str = "v21-structured-pillar-host-c";
+        const TOKEN_A: &str = "v21-structured-pillar-lane-a";
+        const TOKEN_B: &str = "v21-structured-pillar-lane-b";
+        const TOKEN_C: &str = "v21-structured-pillar-lane-c";
+
+        let provider = Arc::new(PillarReplayProvider::default());
+        provider.set_next_phase_mode(
+            "owner",
+            PillarReplayStreamMode::RecurrentStructuredThenFinal,
+        );
+        let harness = pillar_replay_runtime_harness_with_provider(
+            &[
+                (TOKEN_A, MODEL_A, HOST_A),
+                (TOKEN_B, MODEL_B, HOST_B),
+                (TOKEN_C, MODEL_C, HOST_C),
+            ],
+            provider,
+        )
+        .await;
+        let hold_b = admit_direct(
+            &harness.control,
+            "hold-v21-structured-pillar-b",
+            &format!("device-{TOKEN_B}"),
+        )
+        .await
+        .unwrap();
+        let hold_c = admit_direct(
+            &harness.control,
+            "hold-v21-structured-pillar-c",
+            &format!("device-{TOKEN_C}"),
+        )
+        .await
+        .unwrap();
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(8),
+            harness.dispatcher.research_by_pillars(
+                SPEC,
+                Arc::new(Vec::new()),
+                vec![
+                    (TOKEN_A.to_string(), MODEL_A.to_string()),
+                    (TOKEN_B.to_string(), MODEL_B.to_string()),
+                    (TOKEN_C.to_string(), MODEL_C.to_string()),
+                ],
+                MODEL_A,
+            ),
+        )
+        .await
+        .expect("the structured pillar source did not finish")
+        .expect("the structured pillar source failed");
+        assert_eq!(outcome.retries, 0);
+        assert_eq!(outcome.provider_calls, 2);
+        let events = harness.sink.values();
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "pre_scheduler_recurrent_source_retired"));
+        assert!(events.iter().any(|event| {
+            event["event"] == "provider_stream_progress"
+                && event["task_id"].as_str().is_some_and(|task| {
+                    task.starts_with("pillar-pillar-01-attempt-1:pre-scheduler:")
+                })
+                && event["structured_output_bytes"].as_u64().unwrap_or(0) >= 411
+        }));
+        hold_b
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        hold_c
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the structured pillar source did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_v21_pillar_opener_and_planner_have_no_recurrence_retry_authority() {
+        const SPEC: &str = "Build a runnable command that prints READY when invoked.";
+        const MODEL_A: &str = "v21-authority-pillar-model-a";
+        const MODEL_B: &str = "v21-authority-pillar-model-b";
+        const MODEL_C: &str = "v21-authority-pillar-model-c";
+        const HOST_A: &str = "v21-authority-pillar-host-a";
+        const HOST_B: &str = "v21-authority-pillar-host-b";
+        const HOST_C: &str = "v21-authority-pillar-host-c";
+        const TOKEN_A: &str = "v21-authority-pillar-lane-a";
+        const TOKEN_B: &str = "v21-authority-pillar-lane-b";
+        const TOKEN_C: &str = "v21-authority-pillar-lane-c";
+
+        let provider = Arc::new(PillarReplayProvider::default());
+        provider.set_next_phase_mode("opening", PillarReplayStreamMode::RecurrentThenFinal);
+        provider.set_next_phase_mode("planner", PillarReplayStreamMode::RecurrentThenFinal);
+        let harness = pillar_replay_runtime_harness_with_provider(
+            &[
+                (TOKEN_A, MODEL_A, HOST_A),
+                (TOKEN_B, MODEL_B, HOST_B),
+                (TOKEN_C, MODEL_C, HOST_C),
+            ],
+            provider,
+        )
+        .await;
+        let hold_b = admit_direct(
+            &harness.control,
+            "hold-v21-authority-pillar-b",
+            &format!("device-{TOKEN_B}"),
+        )
+        .await
+        .unwrap();
+        let hold_c = admit_direct(
+            &harness.control,
+            "hold-v21-authority-pillar-c",
+            &format!("device-{TOKEN_C}"),
+        )
+        .await
+        .unwrap();
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(8),
+            harness.dispatcher.research_by_pillars(
+                SPEC,
+                Arc::new(Vec::new()),
+                vec![
+                    (TOKEN_A.to_string(), MODEL_A.to_string()),
+                    (TOKEN_B.to_string(), MODEL_B.to_string()),
+                    (TOKEN_C.to_string(), MODEL_C.to_string()),
+                ],
+                MODEL_A,
+            ),
+        )
+        .await
+        .expect("the recurrent pillar opener did not finish")
+        .expect("the recurrent pillar opener failed");
+        assert_eq!(outcome.retries, 0);
+        let (_plan_json, dag) = tokio::time::timeout(
+            Duration::from_secs(8),
+            harness
+                .dispatcher
+                .plan_from_pillars(SPEC, &outcome, MODEL_A),
+        )
+        .await
+        .expect("the recurrent pillar planner did not finish")
+        .expect("the recurrent pillar planner failed");
+        assert!(!dag.tasks.is_empty());
+
+        hold_b
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        hold_c
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        let events = harness.sink.values();
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "pre_scheduler_recurrent_source_retired"));
+        for label in ["pillar-opening-authority", "pillar-synthesis-plan"] {
+            assert!(events.iter().any(|event| {
+                event["event"] == "broker_provider_terminal_observed"
+                    && event["admission"]["work_id"]
+                        .as_str()
+                        .is_some_and(|work_id| work_id.starts_with(label))
+                    && event["admission"]["role"] == "planning_authority"
+                    && event["receipt"]["kind"] == "finished"
+            }));
+        }
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the recurrent opener and planner did not drain")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
@@ -66271,7 +66794,11 @@ mod pre_scheduler_semantic_runtime_tests {
             Weak::new(),
         );
         let admitted = runtime
-            .admit_source(planner_model, "planner-canonical")
+            .admit_source(
+                planner_model,
+                "planner-canonical",
+                PreSchedulerSourceAuthority::planning(),
+            )
             .await
             .unwrap();
         assert_eq!(admitted.receipt().model_id, planner_model);
