@@ -47179,6 +47179,57 @@ fn reseal_scheduler_checkpoint_stage(
     }
 }
 
+fn reseal_authoritative_scheduler_checkpoints<F>(
+    checkpoint_store: &SchedulerCheckpointStore,
+    capability_repair: Option<(&[TaskSpec], &[SchedulerCompletedTaskEvidence])>,
+    main_specs: &[TaskSpec],
+    main_evidence: F,
+    tree_hash: &str,
+    sink: &dyn EventSink,
+) -> Result<()>
+where
+    F: FnOnce() -> Result<Vec<SchedulerCompletedTaskEvidence>>,
+{
+    if let Some((repair_specs, repair_evidence)) = capability_repair {
+        if let Some(receipt) = reseal_scheduler_checkpoint_stage(
+            checkpoint_store,
+            repair_specs,
+            repair_evidence,
+            "capability-repair",
+            sink,
+        ) {
+            sink.write_value(serde_json::json!({
+                "event": "scheduler_capability_repair_checkpoints_resealed",
+                "tasks": receipt.tasks,
+                "first_sequence": receipt.first_sequence,
+                "next_sequence": receipt.next_sequence,
+                "tree_hash": tree_hash,
+                "artifact_bytes": "exact-final-authoritative-tree",
+                "restore_order": "after-main-build",
+            }));
+        }
+    }
+
+    let main_evidence = main_evidence()?;
+    if let Some(receipt) = reseal_scheduler_checkpoint_stage(
+        checkpoint_store,
+        main_specs,
+        &main_evidence,
+        "main-build",
+        sink,
+    ) {
+        sink.write_value(serde_json::json!({
+            "event": "scheduler_checkpoints_resealed",
+            "tasks": receipt.tasks,
+            "first_sequence": receipt.first_sequence,
+            "next_sequence": receipt.next_sequence,
+            "tree_hash": tree_hash,
+            "restore_without_repeat": true,
+        }));
+    }
+    Ok(())
+}
+
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
 /// Pure — unit-tested. Asks for the SMALLEST root-cause fix that makes collect-only + the `-m` entry pass.
 fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
@@ -56066,6 +56117,23 @@ impl SealedCompleteTree {
     }
 }
 
+fn emit_run_terminal_events(
+    sink: &dyn EventSink,
+    overview_event: Option<serde_json::Value>,
+    sealed: Option<&SealedCompleteTree>,
+    run_finished: serde_json::Value,
+) -> Result<()> {
+    if let Some(overview_event) = overview_event {
+        sink.write_value(overview_event);
+    }
+    if let Some(sealed) = sealed {
+        sealed.emit_final_events(sink, run_finished)
+    } else {
+        sink.write_value(run_finished);
+        Ok(())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_post_build_ast_review(
     root: &Path,
@@ -56431,9 +56499,9 @@ mod repair_tree_seal_tests {
         let app = dir.path().join("app.txt");
         std::fs::write(&app, "authoritative bytes\n").unwrap();
         let store = SchedulerCheckpointStore::open(dir.path()).unwrap();
-        let spec = TaskSpec {
-            id: "build-app".to_string(),
-            description: "Build the application".to_string(),
+        let spec = |id: &str| TaskSpec {
+            id: id.to_string(),
+            description: format!("Build {id}"),
             difficulty: goose_swarm::Difficulty::Easy,
             preferred_model: None,
             owned_files: vec!["app.txt".to_string()],
@@ -56441,8 +56509,15 @@ mod repair_tree_seal_tests {
             subsplit: Vec::new(),
             replan_authority: None,
         };
-        let evidence = SchedulerCompletedTaskEvidence {
-            task_id: spec.id.clone(),
+        let capability_spec = spec("repair::capability::01");
+        let main_spec = spec("build-app");
+        let capability_evidence = SchedulerCompletedTaskEvidence {
+            task_id: capability_spec.id.clone(),
+            output: "repaired".to_string(),
+            attempts: 1,
+        };
+        let main_evidence = SchedulerCompletedTaskEvidence {
+            task_id: main_spec.id.clone(),
             output: "built".to_string(),
             attempts: 1,
         };
@@ -56456,46 +56531,67 @@ mod repair_tree_seal_tests {
             .join(".swarm/scheduler-checkpoint-v1/tasks.wal.jsonl");
         std::fs::remove_file(&wal).unwrap();
         std::fs::write(&wal, "injected replacement\n").unwrap();
-        assert!(reseal_scheduler_checkpoint_stage(
+        reseal_authoritative_scheduler_checkpoints(
             &store,
-            std::slice::from_ref(&spec),
-            std::slice::from_ref(&evidence),
-            "main-build",
+            Some((
+                std::slice::from_ref(&capability_spec),
+                std::slice::from_ref(&capability_evidence),
+            )),
+            std::slice::from_ref(&main_spec),
+            || Ok(vec![main_evidence]),
+            "authoritative-tree-hash",
             &sink,
         )
-        .is_none());
+        .unwrap();
 
         let sealed = tree
             .seal("authoritative tree".to_string(), false, &sink)
             .unwrap();
-        sink.write_value(serde_json::json!({
-            "event": "run_overview",
-            "generated": false,
-        }));
-        sealed
-            .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
-            .unwrap();
+        let overview_event = run_overview_event(None, "other", false, None, 1);
+        emit_run_terminal_events(
+            &sink,
+            Some(overview_event),
+            Some(&sealed),
+            serde_json::json!({ "event": "run_finished" }),
+        )
+        .unwrap();
 
         let values = sink.values();
         let unavailable = values
             .iter()
-            .find(|event| event["event"] == "scheduler_checkpoint_reseal_unavailable")
-            .expect("checkpoint failure did not emit typed unavailability");
-        assert_eq!(unavailable["stage"], "main-build");
-        assert_eq!(unavailable["status"], "unavailable");
-        assert_eq!(unavailable["reason"], "checkpoint_durability_reseal_failed");
-        assert_eq!(unavailable["resume_claim_disabled"], true);
-        assert!(!unavailable
-            .to_string()
-            .contains(&dir.path().display().to_string()));
+            .filter(|event| event["event"] == "scheduler_checkpoint_reseal_unavailable")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unavailable
+                .iter()
+                .map(|event| event["stage"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["capability-repair", "main-build"],
+            "main reseal was not attempted after capability reseal failed"
+        );
+        for event in unavailable {
+            assert_eq!(event["status"], "unavailable");
+            assert_eq!(event["reason"], "checkpoint_durability_reseal_failed");
+            assert_eq!(event["resume_claim_disabled"], true);
+            assert!(!event
+                .to_string()
+                .contains(&dir.path().display().to_string()));
+        }
         assert!(values.iter().any(|event| {
             event["event"] == "complete_result"
                 && event["passed"] == true
                 && event["verified"] == true
         }));
-        assert!(!values
+        assert!(values
             .iter()
-            .any(|event| event["event"] == "scheduler_checkpoints_resealed"));
+            .any(|event| { event["event"] == "run_overview" && event["generated"] == false }));
+        assert!(!values.iter().any(|event| {
+            [
+                "scheduler_capability_repair_checkpoints_resealed",
+                "scheduler_checkpoints_resealed",
+            ]
+            .contains(&event["event"].as_str().unwrap_or_default())
+        }));
 
         let terminal = sink
             .names()
@@ -56514,6 +56610,7 @@ mod repair_tree_seal_tests {
         assert_eq!(
             terminal,
             [
+                "scheduler_checkpoint_reseal_unavailable",
                 "scheduler_checkpoint_reseal_unavailable",
                 "repair_tree_sealed",
                 "run_overview",
@@ -61585,44 +61682,16 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             let checkpoint_store = scheduler_checkpoint_store
                 .as_ref()
                 .expect("pillar flow armed a scheduler checkpoint store");
-            if let Some((repair_specs, repair_evidence)) =
-                capability_repair_checkpoint_reseal.as_ref()
-            {
-                if let Some(repair_receipt) = reseal_scheduler_checkpoint_stage(
-                    checkpoint_store,
-                    repair_specs,
-                    repair_evidence,
-                    "capability-repair",
-                    sink.as_ref(),
-                ) {
-                    sink.write_value(serde_json::json!({
-                        "event": "scheduler_capability_repair_checkpoints_resealed",
-                        "tasks": repair_receipt.tasks,
-                        "first_sequence": repair_receipt.first_sequence,
-                        "next_sequence": repair_receipt.next_sequence,
-                        "tree_hash": ruling.tree_hash,
-                        "artifact_bytes": "exact-final-authoritative-tree",
-                        "restore_order": "after-main-build",
-                    }));
-                }
-            }
-            let evidence = completed_checkpoint_evidence(&build_specs, &report)?;
-            if let Some(receipt) = reseal_scheduler_checkpoint_stage(
+            reseal_authoritative_scheduler_checkpoints(
                 checkpoint_store,
+                capability_repair_checkpoint_reseal
+                    .as_ref()
+                    .map(|(specs, evidence)| (specs.as_slice(), evidence.as_slice())),
                 &build_specs,
-                &evidence,
-                "main-build",
+                || completed_checkpoint_evidence(&build_specs, &report),
+                &ruling.tree_hash,
                 sink.as_ref(),
-            ) {
-                sink.write_value(serde_json::json!({
-                    "event": "scheduler_checkpoints_resealed",
-                    "tasks": receipt.tasks,
-                    "first_sequence": receipt.first_sequence,
-                    "next_sequence": receipt.next_sequence,
-                    "tree_hash": ruling.tree_hash,
-                    "restore_without_repeat": true,
-                }));
-            }
+            )?;
         } else if pillar_flow_on {
             sink.write_value(serde_json::json!({
                 "event": "scheduler_checkpoint_reseal_skipped",
@@ -61993,9 +62062,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     } else {
         None
     };
-    if let Some(overview_event) = overview_event {
-        sink.write_value(overview_event);
-    }
 
     let mut phases_value = serde_json::json!({
         "research_min": (research_m * 10.0).round() / 10.0,
@@ -62037,13 +62103,12 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         "report": report_value,
         "phases": phases_value,
     });
-    if let Some(sealed) = sealed_complete.as_ref() {
-        // One method re-hashes once and emits both terminal events back-to-back. There is no call-site
-        // seam where a future writer can land between the result claim and the run report.
-        sealed.emit_final_events(sink.as_ref(), run_finished)?;
-    } else {
-        sink.write_value(run_finished);
-    }
+    emit_run_terminal_events(
+        sink.as_ref(),
+        overview_event,
+        sealed_complete.as_ref(),
+        run_finished,
+    )?;
 
     if json {
         println!(
