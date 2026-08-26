@@ -1,5 +1,7 @@
+use super::{validate_task_unavailable_evidence, TaskUnavailableEvidence};
 use crate::context::SharedContext;
 use crate::dag::{Dag, TaskId, TaskSpec, TaskState};
+use crate::repair::{validate_provisional_task_receipt, ProvisionalTaskReceipt};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -10,9 +12,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const GENESIS_HASH: &str = "genesis";
-const CHECKPOINT_DIRECTORY: &str = "scheduler-checkpoint-v1";
+const CHECKPOINT_DIRECTORY: &str = "scheduler-checkpoint-v2";
 const WAL_FILE: &str = "tasks.wal.jsonl";
 const HEAD_FILE: &str = "tasks.head.json";
 const LOCK_FILE: &str = "control.lock";
@@ -68,13 +70,16 @@ struct DependencyCheckpoint {
     task_id: TaskId,
     task_spec_digest: String,
     completion_order: u64,
+    transition: CheckpointTransition,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum CheckpointTransition {
-    TaskDone,
-    TaskInvalidated,
+    Done,
+    Provisional,
+    Unavailable,
+    Invalidated,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -92,6 +97,8 @@ struct WalMaterial {
     attempts: u32,
     artifacts: Vec<OwnedArtifactCheckpoint>,
     dependency_checkpoints: Vec<DependencyCheckpoint>,
+    unavailable: Option<TaskUnavailableEvidence>,
+    provisional: Option<ProvisionalTaskReceipt>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -172,6 +179,8 @@ pub struct SchedulerDagResealReceipt {
 pub struct SchedulerRestoreSummary {
     pub restored: Vec<TaskId>,
     pub invalidated: Vec<TaskId>,
+    pub unavailable: Vec<TaskUnavailableEvidence>,
+    pub provisional: Vec<(TaskId, ProvisionalTaskReceipt)>,
 }
 
 impl SchedulerCheckpointStore {
@@ -385,12 +394,17 @@ impl SchedulerCheckpointStore {
             .deps
             .iter()
             .map(|task_id| {
-                state.active.get(task_id).cloned().ok_or_else(|| {
-                    SchedulerCheckpointError::new(format!(
-                        "task {:?} dependency {task_id:?} has no restorable checkpoint",
+                state
+                    .active
+                    .get(task_id)
+                    .filter(|checkpoint| checkpoint.transition == CheckpointTransition::Done)
+                    .cloned()
+                    .ok_or_else(|| {
+                        SchedulerCheckpointError::new(format!(
+                        "task {:?} dependency {task_id:?} has no complete restorable checkpoint",
                         spec.id
                     ))
-                })
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -399,7 +413,7 @@ impl SchedulerCheckpointStore {
             sequence: state.next_sequence,
             previous_hash: state.previous_hash.clone(),
             working_root: self.root.clone(),
-            transition: CheckpointTransition::TaskDone,
+            transition: CheckpointTransition::Done,
             task_id: spec.id.clone(),
             task_spec_digest: scheduler_task_spec_digest(spec),
             output: output.to_string(),
@@ -410,12 +424,142 @@ impl SchedulerCheckpointStore {
                 .map(|artifact| artifact.checkpoint.clone())
                 .collect(),
             dependency_checkpoints,
+            unavailable: None,
+            provisional: None,
         };
         self.append_material(&mut state, material.clone())?;
         state
             .active
             .insert(spec.id.clone(), dependency_checkpoint(&material));
 
+        Ok(SchedulerCheckpointReceipt {
+            sequence: material.sequence,
+            completion_order: material.completion_order,
+            artifact_count: material.artifacts.len(),
+        })
+    }
+
+    pub fn persist_unavailable(
+        &self,
+        spec: &TaskSpec,
+        evidence: &TaskUnavailableEvidence,
+    ) -> Result<SchedulerCheckpointReceipt, SchedulerCheckpointError> {
+        validate_task_spec_for_checkpoint(spec)?;
+        if !validate_task_unavailable_evidence(spec, evidence) {
+            return Err(SchedulerCheckpointError::new(
+                "cannot checkpoint invalid typed unavailable evidence",
+            ));
+        }
+        let captured = capture_existing_owned_artifacts(&self.root, &spec.owned_files)?;
+        let mut state = lock(&self.state);
+        verify_checkpoint_state(&self.wal_path, &state)?;
+        self.persist_artifact_objects(&captured)?;
+        let dependency_checkpoints = active_dependency_checkpoints(&state, spec, false)?;
+        let mut expected_ancestors =
+            dependency_unavailable_ancestors(&state, &dependency_checkpoints)?;
+        expected_ancestors.insert(spec.id.clone());
+        if evidence
+            .unavailable_ancestors
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            != expected_ancestors
+        {
+            return Err(SchedulerCheckpointError::new(
+                "unavailable checkpoint ancestry does not match its exact dependency receipts",
+            ));
+        }
+        let material = WalMaterial {
+            schema_version: SCHEMA_VERSION,
+            sequence: state.next_sequence,
+            previous_hash: state.previous_hash.clone(),
+            working_root: self.root.clone(),
+            transition: CheckpointTransition::Unavailable,
+            task_id: spec.id.clone(),
+            task_spec_digest: scheduler_task_spec_digest(spec),
+            output: String::new(),
+            completion_order: state.next_sequence,
+            attempts: evidence.attempt.saturating_add(1),
+            artifacts: captured
+                .iter()
+                .map(|artifact| artifact.checkpoint.clone())
+                .collect(),
+            dependency_checkpoints,
+            unavailable: Some(evidence.clone()),
+            provisional: None,
+        };
+        self.append_material(&mut state, material.clone())?;
+        state
+            .active
+            .insert(spec.id.clone(), dependency_checkpoint(&material));
+        Ok(SchedulerCheckpointReceipt {
+            sequence: material.sequence,
+            completion_order: material.completion_order,
+            artifact_count: material.artifacts.len(),
+        })
+    }
+
+    pub fn persist_provisional(
+        &self,
+        spec: &TaskSpec,
+        output: &str,
+        attempts: u32,
+        receipt: &ProvisionalTaskReceipt,
+    ) -> Result<SchedulerCheckpointReceipt, SchedulerCheckpointError> {
+        if attempts == 0 {
+            return Err(SchedulerCheckpointError::new(
+                "cannot checkpoint a provisional task with zero attempts",
+            ));
+        }
+        validate_task_spec_for_checkpoint(spec)?;
+        let captured = capture_owned_artifacts(&self.root, &spec.owned_files)?;
+        let mut state = lock(&self.state);
+        verify_checkpoint_state(&self.wal_path, &state)?;
+        self.persist_artifact_objects(&captured)?;
+        let dependency_checkpoints = active_dependency_checkpoints(&state, spec, false)?;
+        let expected_ancestors = dependency_unavailable_ancestors(&state, &dependency_checkpoints)?;
+        if expected_ancestors.is_empty()
+            || receipt.task_id() != spec.id
+            || receipt.task_contract() != scheduler_task_spec_digest(spec)
+            || receipt.acceptance_contract() != super::task_acceptance_digest(spec)
+            || receipt
+                .unavailable_ancestors()
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>()
+                != expected_ancestors
+            || receipt.output_sha256() != sha256_digest(output.as_bytes())
+            || receipt.attempt().saturating_add(1) != attempts
+            || !validate_provisional_task_receipt(receipt)
+            || !receipt_artifacts_match(receipt, &captured)
+        {
+            return Err(SchedulerCheckpointError::new(
+                "provisional checkpoint receipt does not bind exact ancestry, contract, output, and artifacts",
+            ));
+        }
+        let material = WalMaterial {
+            schema_version: SCHEMA_VERSION,
+            sequence: state.next_sequence,
+            previous_hash: state.previous_hash.clone(),
+            working_root: self.root.clone(),
+            transition: CheckpointTransition::Provisional,
+            task_id: spec.id.clone(),
+            task_spec_digest: scheduler_task_spec_digest(spec),
+            output: output.to_string(),
+            completion_order: state.next_sequence,
+            attempts,
+            artifacts: captured
+                .iter()
+                .map(|artifact| artifact.checkpoint.clone())
+                .collect(),
+            dependency_checkpoints,
+            unavailable: None,
+            provisional: Some(receipt.clone()),
+        };
+        self.append_material(&mut state, material.clone())?;
+        state
+            .active
+            .insert(spec.id.clone(), dependency_checkpoint(&material));
         Ok(SchedulerCheckpointReceipt {
             sequence: material.sequence,
             completion_order: material.completion_order,
@@ -475,7 +619,7 @@ impl SchedulerCheckpointStore {
                 sequence: state.next_sequence,
                 previous_hash: state.previous_hash.clone(),
                 working_root: self.root.clone(),
-                transition: CheckpointTransition::TaskDone,
+                transition: CheckpointTransition::Done,
                 task_id: spec.id.clone(),
                 task_spec_digest: scheduler_task_spec_digest(spec),
                 output: completion.output.clone(),
@@ -486,6 +630,8 @@ impl SchedulerCheckpointStore {
                     .map(|artifact| artifact.checkpoint.clone())
                     .collect(),
                 dependency_checkpoints,
+                unavailable: None,
+                provisional: None,
             };
             self.append_material(&mut state, material.clone())?;
             state
@@ -520,10 +666,12 @@ impl SchedulerCheckpointStore {
             )));
         }
         verify_live_file(&self.wal_path, &state.wal, state.expected_len)?;
-        Ok(spec
-            .deps
-            .iter()
-            .all(|dependency| state.active.contains_key(dependency)))
+        Ok(spec.deps.iter().all(|dependency| {
+            state
+                .active
+                .get(dependency)
+                .is_some_and(|checkpoint| checkpoint.transition == CheckpointTransition::Done)
+        }))
     }
 
     fn append_material(
@@ -608,7 +756,38 @@ impl SchedulerCheckpointStore {
             let Some(record) = latest.get(task_id) else {
                 continue;
             };
-            let directly_valid = record.transition == CheckpointTransition::TaskDone
+            let artifacts_match = match record.transition {
+                CheckpointTransition::Done | CheckpointTransition::Provisional => {
+                    recorded_artifact_paths_match(&node.spec, &record.artifacts)
+                }
+                CheckpointTransition::Unavailable => {
+                    recorded_artifact_paths_are_subset(&node.spec, &record.artifacts)
+                }
+                CheckpointTransition::Invalidated => false,
+            };
+            let typed_evidence_valid = match record.transition {
+                CheckpointTransition::Done => {
+                    record.unavailable.is_none() && record.provisional.is_none()
+                }
+                CheckpointTransition::Unavailable => {
+                    record.unavailable.as_ref().is_some_and(|evidence| {
+                        validate_task_unavailable_evidence(&node.spec, evidence)
+                    })
+                }
+                CheckpointTransition::Provisional => {
+                    record.provisional.as_ref().is_some_and(|receipt| {
+                        validate_provisional_task_receipt(receipt)
+                            && receipt.task_id() == node.spec.id
+                            && receipt.task_contract() == scheduler_task_spec_digest(&node.spec)
+                            && receipt.acceptance_contract()
+                                == super::task_acceptance_digest(&node.spec)
+                            && receipt.output_sha256() == sha256_digest(record.output.as_bytes())
+                            && receipt_artifacts_match_recorded(receipt, &record.artifacts)
+                    })
+                }
+                CheckpointTransition::Invalidated => false,
+            };
+            let directly_valid = record.transition != CheckpointTransition::Invalidated
                 && record.task_spec_digest == scheduler_task_spec_digest(&node.spec)
                 && record.dependency_checkpoints.len() == node.spec.deps.len()
                 && record
@@ -616,13 +795,14 @@ impl SchedulerCheckpointStore {
                     .iter()
                     .zip(&node.spec.deps)
                     .all(|(checkpoint, dependency)| checkpoint.task_id == *dependency)
-                && recorded_artifact_paths_match(&node.spec, &record.artifacts)
+                && artifacts_match
+                && typed_evidence_valid
                 && artifact_objects_available(&self.artifact_object_directory, &record.artifacts);
             if directly_valid {
                 valid.insert(task_id.clone(), record.clone());
             } else {
                 invalidated.insert(task_id.clone());
-                if record.transition == CheckpointTransition::TaskDone {
+                if record.transition != CheckpointTransition::Invalidated {
                     needs_tombstone.insert(task_id.clone());
                 }
             }
@@ -633,7 +813,8 @@ impl SchedulerCheckpointStore {
                 .iter()
                 .filter_map(|(task_id, record)| {
                     let node = &dag.tasks[task_id];
-                    node.spec
+                    let dependency_invalid = node
+                        .spec
                         .deps
                         .iter()
                         .zip(&record.dependency_checkpoints)
@@ -641,8 +822,41 @@ impl SchedulerCheckpointStore {
                             valid.get(dependency).is_none_or(|dependency_record| {
                                 checkpoint != &dependency_checkpoint(dependency_record)
                             })
-                        })
-                        .then_some(task_id.clone())
+                        });
+                    let expected_ancestors = node
+                        .spec
+                        .deps
+                        .iter()
+                        .filter_map(|dependency| valid.get(dependency))
+                        .flat_map(recorded_unavailable_ancestors)
+                        .collect::<BTreeSet<_>>();
+                    let ancestry_invalid = match record.transition {
+                        CheckpointTransition::Done => !expected_ancestors.is_empty(),
+                        CheckpointTransition::Provisional => {
+                            record.provisional.as_ref().is_none_or(|receipt| {
+                                receipt
+                                    .unavailable_ancestors()
+                                    .iter()
+                                    .cloned()
+                                    .collect::<BTreeSet<_>>()
+                                    != expected_ancestors
+                            })
+                        }
+                        CheckpointTransition::Unavailable => {
+                            let mut expected = expected_ancestors;
+                            expected.insert(task_id.clone());
+                            record.unavailable.as_ref().is_none_or(|evidence| {
+                                evidence
+                                    .unavailable_ancestors
+                                    .iter()
+                                    .cloned()
+                                    .collect::<BTreeSet<_>>()
+                                    != expected
+                            })
+                        }
+                        CheckpointTransition::Invalidated => true,
+                    };
+                    (dependency_invalid || ancestry_invalid).then_some(task_id.clone())
                 })
                 .collect::<Vec<_>>();
             if invalid_downstream.is_empty() {
@@ -666,7 +880,7 @@ impl SchedulerCheckpointStore {
                 sequence: state.next_sequence,
                 previous_hash: state.previous_hash.clone(),
                 working_root: self.root.clone(),
-                transition: CheckpointTransition::TaskInvalidated,
+                transition: CheckpointTransition::Invalidated,
                 task_id: task_id.clone(),
                 task_spec_digest: scheduler_task_spec_digest(spec),
                 output: String::new(),
@@ -674,6 +888,8 @@ impl SchedulerCheckpointStore {
                 attempts: 0,
                 artifacts: Vec::new(),
                 dependency_checkpoints: Vec::new(),
+                unavailable: None,
+                provisional: None,
             };
             self.append_material(&mut state, material)?;
             state.active.remove(task_id);
@@ -705,15 +921,34 @@ impl SchedulerCheckpointStore {
             .map(|record| (record.task_id.clone(), dependency_checkpoint(record)))
             .collect();
         let mut restored = Vec::with_capacity(restored_records.len());
+        let mut restored_unavailable = Vec::new();
+        let mut restored_provisional = Vec::new();
         for record in restored_records {
             let node = dag
                 .tasks
                 .get_mut(&record.task_id)
                 .expect("checkpoint candidates came from this DAG");
-            node.state = TaskState::Done;
+            node.state = match record.transition {
+                CheckpointTransition::Done => TaskState::Done,
+                CheckpointTransition::Provisional => TaskState::Salvaged,
+                CheckpointTransition::Unavailable => TaskState::Unavailable,
+                CheckpointTransition::Invalidated => {
+                    return Err(SchedulerCheckpointError::new(
+                        "invalidated task reached checkpoint restoration",
+                    ));
+                }
+            };
             node.attempts = record.attempts;
-            node.result = Some(record.output.clone());
-            context.merge(&record.task_id, record.output);
+            if record.transition != CheckpointTransition::Unavailable {
+                node.result = Some(record.output.clone());
+                context.merge(&record.task_id, record.output.clone());
+            }
+            if let Some(evidence) = record.unavailable {
+                restored_unavailable.push(evidence);
+            }
+            if let Some(receipt) = record.provisional {
+                restored_provisional.push((record.task_id.clone(), receipt));
+            }
             restored.push(record.task_id);
         }
 
@@ -747,6 +982,8 @@ impl SchedulerCheckpointStore {
         Ok(SchedulerRestoreSummary {
             restored,
             invalidated: invalidated.into_iter().collect(),
+            unavailable: restored_unavailable,
+            provisional: restored_provisional,
         })
     }
 }
@@ -769,6 +1006,34 @@ fn capture_owned_artifacts(
             )));
         }
         artifacts.push(capture_artifact(root, relative)?);
+    }
+    artifacts.sort_by(|left, right| left.checkpoint.path.cmp(&right.checkpoint.path));
+    Ok(artifacts)
+}
+
+fn capture_existing_owned_artifacts(
+    root: &Path,
+    owned_files: &[String],
+) -> Result<Vec<CapturedArtifact>, SchedulerCheckpointError> {
+    let mut seen = HashSet::new();
+    let mut artifacts = Vec::new();
+    for relative in owned_files {
+        if !seen.insert(relative.clone()) {
+            return Err(SchedulerCheckpointError::new(format!(
+                "task owns duplicate checkpoint path {relative:?}"
+            )));
+        }
+        let path = validate_project_artifact_path(root, relative)?;
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => artifacts.push(capture_artifact(root, relative)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(SchedulerCheckpointError::io(
+                    "cannot inspect unavailable task artifact",
+                    error,
+                ));
+            }
+        }
     }
     artifacts.sort_by(|left, right| left.checkpoint.path.cmp(&right.checkpoint.path));
     Ok(artifacts)
@@ -852,7 +1117,125 @@ fn dependency_checkpoint(record: &WalMaterial) -> DependencyCheckpoint {
         task_id: record.task_id.clone(),
         task_spec_digest: record.task_spec_digest.clone(),
         completion_order: record.completion_order,
+        transition: record.transition,
     }
+}
+
+fn verify_checkpoint_state(
+    wal_path: &Path,
+    state: &StoreState,
+) -> Result<(), SchedulerCheckpointError> {
+    if let Some(error) = &state.poisoned {
+        return Err(SchedulerCheckpointError::new(format!(
+            "scheduler checkpoint is latched after a prior durability failure: {error}"
+        )));
+    }
+    verify_live_file(wal_path, &state.wal, state.expected_len)
+}
+
+fn active_dependency_checkpoints(
+    state: &StoreState,
+    spec: &TaskSpec,
+    require_done: bool,
+) -> Result<Vec<DependencyCheckpoint>, SchedulerCheckpointError> {
+    spec.deps
+        .iter()
+        .map(|task_id| {
+            state
+                .active
+                .get(task_id)
+                .filter(|checkpoint| {
+                    !require_done || checkpoint.transition == CheckpointTransition::Done
+                })
+                .cloned()
+                .ok_or_else(|| {
+                    SchedulerCheckpointError::new(format!(
+                        "task {:?} dependency {task_id:?} has no compatible restorable checkpoint",
+                        spec.id
+                    ))
+                })
+        })
+        .collect()
+}
+
+fn dependency_unavailable_ancestors(
+    state: &StoreState,
+    checkpoints: &[DependencyCheckpoint],
+) -> Result<BTreeSet<TaskId>, SchedulerCheckpointError> {
+    let mut ancestors = BTreeSet::new();
+    for checkpoint in checkpoints {
+        let record = state
+            .records
+            .iter()
+            .find(|record| {
+                record.task_id == checkpoint.task_id
+                    && record.completion_order == checkpoint.completion_order
+                    && dependency_checkpoint(record) == *checkpoint
+            })
+            .ok_or_else(|| {
+                SchedulerCheckpointError::new(
+                    "active dependency checkpoint has no exact hash-linked WAL record",
+                )
+            })?;
+        match record.transition {
+            CheckpointTransition::Done => {}
+            CheckpointTransition::Unavailable => {
+                ancestors.extend(
+                    record
+                        .unavailable
+                        .as_ref()
+                        .ok_or_else(|| {
+                            SchedulerCheckpointError::new(
+                                "unavailable dependency checkpoint lost typed evidence",
+                            )
+                        })?
+                        .unavailable_ancestors
+                        .iter()
+                        .cloned(),
+                );
+            }
+            CheckpointTransition::Provisional => {
+                ancestors.extend(
+                    record
+                        .provisional
+                        .as_ref()
+                        .ok_or_else(|| {
+                            SchedulerCheckpointError::new(
+                                "provisional dependency checkpoint lost typed receipt",
+                            )
+                        })?
+                        .unavailable_ancestors()
+                        .iter()
+                        .cloned(),
+                );
+            }
+            CheckpointTransition::Invalidated => {
+                return Err(SchedulerCheckpointError::new(
+                    "invalidated dependency checkpoint remained active",
+                ));
+            }
+        }
+    }
+    Ok(ancestors)
+}
+
+fn receipt_artifacts_match(
+    receipt: &ProvisionalTaskReceipt,
+    captured: &[CapturedArtifact],
+) -> bool {
+    if receipt.artifacts().len() != captured.len() {
+        return false;
+    }
+    captured.iter().all(|captured| {
+        receipt
+            .artifacts()
+            .get(&captured.checkpoint.path)
+            .is_some_and(|artifact| {
+                artifact.sha256() == captured.checkpoint.sha256
+                    && artifact.bytes() == captured.checkpoint.bytes
+                    && artifact.mode() == captured.checkpoint.mode
+            })
+    })
 }
 
 fn validate_task_spec_for_checkpoint(spec: &TaskSpec) -> Result<(), SchedulerCheckpointError> {
@@ -879,8 +1262,7 @@ fn capture_artifact(
     root: &Path,
     relative: &str,
 ) -> Result<CapturedArtifact, SchedulerCheckpointError> {
-    validate_owned_file_path(relative)?;
-    let path = root.join(relative);
+    let path = validate_project_artifact_path(root, relative)?;
     let mut file = open_artifact_no_follow(&path).map_err(|error| {
         SchedulerCheckpointError::io(
             &format!("cannot open completed task artifact {relative:?}"),
@@ -1195,6 +1577,53 @@ fn recorded_artifact_paths_match(spec: &TaskSpec, recorded: &[OwnedArtifactCheck
     true
 }
 
+fn recorded_artifact_paths_are_subset(
+    spec: &TaskSpec,
+    recorded: &[OwnedArtifactCheckpoint],
+) -> bool {
+    let expected_paths = spec.owned_files.iter().cloned().collect::<BTreeSet<_>>();
+    let recorded_paths = recorded
+        .iter()
+        .map(|artifact| artifact.path.clone())
+        .collect::<BTreeSet<_>>();
+    expected_paths.len() == spec.owned_files.len()
+        && recorded_paths.len() == recorded.len()
+        && recorded_paths.is_subset(&expected_paths)
+}
+
+fn receipt_artifacts_match_recorded(
+    receipt: &ProvisionalTaskReceipt,
+    recorded: &[OwnedArtifactCheckpoint],
+) -> bool {
+    receipt.artifacts().len() == recorded.len()
+        && recorded.iter().all(|recorded| {
+            receipt
+                .artifacts()
+                .get(&recorded.path)
+                .is_some_and(|artifact| {
+                    artifact.sha256() == recorded.sha256
+                        && artifact.bytes() == recorded.bytes
+                        && artifact.mode() == recorded.mode
+                })
+        })
+}
+
+fn recorded_unavailable_ancestors(record: &WalMaterial) -> Vec<TaskId> {
+    match record.transition {
+        CheckpointTransition::Unavailable => record
+            .unavailable
+            .as_ref()
+            .map(|evidence| evidence.unavailable_ancestors.clone())
+            .unwrap_or_default(),
+        CheckpointTransition::Provisional => record
+            .provisional
+            .as_ref()
+            .map(|receipt| receipt.unavailable_ancestors().to_vec())
+            .unwrap_or_default(),
+        CheckpointTransition::Done | CheckpointTransition::Invalidated => Vec::new(),
+    }
+}
+
 fn validate_owned_file_path(relative: &str) -> Result<(), SchedulerCheckpointError> {
     let relative_path = Path::new(relative);
     if relative_path.as_os_str().is_empty()
@@ -1212,6 +1641,69 @@ fn validate_owned_file_path(relative: &str) -> Result<(), SchedulerCheckpointErr
         )));
     }
     Ok(())
+}
+
+/// Resolve an owned project path without following any symlink component. A missing final file is
+/// returned as a safe path so callers can distinguish an unavailable artifact from corruption; a
+/// symlink or non-directory ancestor is always an integrity error.
+pub fn validate_project_artifact_path(
+    root: &Path,
+    relative: &str,
+) -> Result<PathBuf, SchedulerCheckpointError> {
+    validate_owned_file_path(relative)?;
+    let root = std::fs::canonicalize(root).map_err(|error| {
+        SchedulerCheckpointError::io("cannot canonicalize project artifact root", error)
+    })?;
+    let relative_path = Path::new(relative);
+    let mut current = root.clone();
+    let component_count = relative_path.components().count();
+    for (index, component) in relative_path.components().enumerate() {
+        current.push(component.as_os_str());
+        let final_component = index + 1 == component_count;
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(SchedulerCheckpointError::new(format!(
+                    "task artifact path contains a symlink component: {relative:?}"
+                )));
+            }
+            Ok(metadata) if !final_component && !metadata.is_dir() => {
+                return Err(SchedulerCheckpointError::new(format!(
+                    "task artifact path contains a non-directory ancestor: {relative:?}"
+                )));
+            }
+            Ok(metadata) if final_component && !metadata.is_file() => {
+                return Err(SchedulerCheckpointError::new(format!(
+                    "task artifact path is not a regular file: {relative:?}"
+                )));
+            }
+            Ok(_) => {
+                let canonical = std::fs::canonicalize(&current).map_err(|error| {
+                    SchedulerCheckpointError::io(
+                        "cannot canonicalize task artifact component",
+                        error,
+                    )
+                })?;
+                if !canonical.starts_with(&root) {
+                    return Err(SchedulerCheckpointError::new(format!(
+                        "task artifact path escapes the project root: {relative:?}"
+                    )));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && final_component => {
+                return Ok(current);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(root.join(relative_path));
+            }
+            Err(error) => {
+                return Err(SchedulerCheckpointError::io(
+                    "cannot inspect task artifact path component",
+                    error,
+                ));
+            }
+        }
+    }
+    Ok(current)
 }
 
 #[cfg(unix)]
@@ -1377,20 +1869,57 @@ fn validate_wal_material(material: &WalMaterial) -> Result<(), SchedulerCheckpoi
         ));
     }
     match material.transition {
-        CheckpointTransition::TaskDone => {
-            if material.attempts == 0 {
+        CheckpointTransition::Done => {
+            if material.attempts == 0
+                || material.unavailable.is_some()
+                || material.provisional.is_some()
+            {
                 return Err(SchedulerCheckpointError::new(
-                    "scheduler checkpoint Done record has zero attempts",
+                    "scheduler checkpoint Done record has invalid typed evidence",
                 ));
             }
             validate_recorded_artifacts(&material.artifacts)?;
             validate_dependency_checkpoints(material)
         }
-        CheckpointTransition::TaskInvalidated => {
+        CheckpointTransition::Provisional => {
+            if material.attempts == 0
+                || material.unavailable.is_some()
+                || material.provisional.as_ref().is_none_or(|receipt| {
+                    !validate_provisional_task_receipt(receipt)
+                        || receipt.task_id() != material.task_id
+                        || receipt.task_contract() != material.task_spec_digest
+                })
+            {
+                return Err(SchedulerCheckpointError::new(
+                    "scheduler checkpoint provisional record has invalid typed evidence",
+                ));
+            }
+            validate_recorded_artifacts(&material.artifacts)?;
+            validate_dependency_checkpoints(material)
+        }
+        CheckpointTransition::Unavailable => {
+            if material.attempts == 0
+                || !material.output.is_empty()
+                || material.provisional.is_some()
+                || material.unavailable.as_ref().is_none_or(|evidence| {
+                    evidence.task_id != material.task_id
+                        || evidence.task_spec_digest != material.task_spec_digest
+                })
+            {
+                return Err(SchedulerCheckpointError::new(
+                    "scheduler checkpoint unavailable record has invalid typed evidence",
+                ));
+            }
+            validate_recorded_artifacts(&material.artifacts)?;
+            validate_dependency_checkpoints(material)
+        }
+        CheckpointTransition::Invalidated => {
             if material.attempts != 0
                 || !material.output.is_empty()
                 || !material.artifacts.is_empty()
                 || !material.dependency_checkpoints.is_empty()
+                || material.unavailable.is_some()
+                || material.provisional.is_some()
             {
                 return Err(SchedulerCheckpointError::new(
                     "scheduler checkpoint invalidation record contains completion evidence",
@@ -1408,6 +1937,7 @@ fn validate_dependency_checkpoints(material: &WalMaterial) -> Result<(), Schedul
             || !task_ids.insert(checkpoint.task_id.clone())
             || !canonical_digest(&checkpoint.task_spec_digest)
             || checkpoint.completion_order >= material.completion_order
+            || checkpoint.transition == CheckpointTransition::Invalidated
         {
             return Err(SchedulerCheckpointError::new(
                 "scheduler checkpoint WAL contains invalid dependency evidence",
@@ -1681,6 +2211,7 @@ mod tests {
     use super::*;
     use crate::dag::{Difficulty, TaskSpec};
     use crate::dispatch::{DispatchError, DispatchRequest, TaskDispatcher, TaskRunOutput};
+    use crate::repair::TaskCompletionDisposition;
     use crate::scheduler::{DeviceCfg, Scheduler};
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -1710,6 +2241,22 @@ mod tests {
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(path, contents).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_artifact_validation_rejects_a_symlinked_ancestor() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("artifact.txt"), "outside").unwrap();
+        symlink(outside.path(), root.path().join("redirect")).unwrap();
+        let error = validate_project_artifact_path(root.path(), "redirect/artifact.txt")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("symlink component"));
+        assert!(validate_project_artifact_path(root.path(), "missing/artifact.txt").is_ok());
     }
 
     #[test]
@@ -2103,6 +2650,115 @@ mod tests {
         assert_eq!(contexts.len(), 1);
         assert_eq!(contexts[0].0, "b");
         assert!(contexts[0].1.contains("restored dependency output"));
+    }
+
+    #[tokio::test]
+    async fn unavailable_and_deep_provisional_chain_restore_without_replay() {
+        struct DegradedDispatcher {
+            root: PathBuf,
+            calls: Arc<AtomicUsize>,
+        }
+
+        #[async_trait::async_trait]
+        impl TaskDispatcher for DegradedDispatcher {
+            async fn run(&self, request: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+                self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+                if request.task_id == "missing" {
+                    return Err(DispatchError::ContentRetry(
+                        "ordinary provider output omitted the obligation".to_string(),
+                    ));
+                }
+                for relative in &request.owned_files {
+                    write_artifact(&self.root, relative, &format!("{} bytes", request.task_id));
+                }
+                Ok(format!("{} output", request.task_id).into())
+            }
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let specs = vec![
+            spec("missing", &[], &["missing.txt"]),
+            spec("dependent", &["missing"], &[]),
+            spec("deep", &["dependent"], &["deep.txt"]),
+            spec("independent", &[], &["independent.txt"]),
+        ];
+        let calls = Arc::new(AtomicUsize::new(0));
+        let scheduler = Scheduler::new(
+            vec![DeviceCfg {
+                id: "device".to_string(),
+                model_id: "model".to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            }],
+            1,
+        )
+        .with_checkpoint_root(root.path())
+        .unwrap()
+        .with_unavailable_continuation();
+        let first = scheduler
+            .run(
+                Dag::from_specs(specs.clone()).unwrap(),
+                Arc::new(DegradedDispatcher {
+                    root: root.path().to_path_buf(),
+                    calls: calls.clone(),
+                }),
+                "degraded checkpoint".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 4);
+        assert_eq!(first.unavailable.len(), 1);
+        assert_eq!(first.provisional, vec!["deep", "dependent"]);
+        drop(scheduler);
+
+        calls.store(0, AtomicOrdering::SeqCst);
+        let replay = Scheduler::new(
+            vec![DeviceCfg {
+                id: "device".to_string(),
+                model_id: "model".to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            }],
+            1,
+        )
+        .with_checkpoint_root(root.path())
+        .unwrap()
+        .with_unavailable_continuation()
+        .run(
+            Dag::from_specs(specs).unwrap(),
+            Arc::new(DegradedDispatcher {
+                root: root.path().to_path_buf(),
+                calls: calls.clone(),
+            }),
+            "degraded checkpoint".to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(replay.unavailable.len(), 1);
+        assert_eq!(replay.provisional, vec!["deep", "dependent"]);
+        for task_id in ["deep", "dependent"] {
+            let receipt = replay
+                .tasks
+                .iter()
+                .find(|task| task.task_id == task_id)
+                .and_then(|task| task.completion.as_ref())
+                .and_then(TaskCompletionDisposition::provisional_receipt)
+                .unwrap();
+            assert_eq!(receipt.unavailable_ancestors(), &["missing".to_string()]);
+            if task_id == "dependent" {
+                assert!(receipt.artifacts().is_empty());
+                assert_ne!(
+                    receipt.output_sha256(),
+                    "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    "a fileless provisional obligation must bind explicit acceptance output"
+                );
+            }
+        }
     }
 
     #[tokio::test]

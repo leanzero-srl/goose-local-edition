@@ -93,11 +93,12 @@ pub use repair::{
 };
 pub use replan::{ReplanContext, Replanner};
 pub use scheduler::{
-    qa_enabled, salvage_require_critical, salvage_spin_enabled, sink_review_enabled,
-    tail_review_enabled, testgen_enabled, AttemptRecord, DeviceCfg, DeviceSummary, RunReport,
-    Scheduler, SchedulerCheckpointError, SchedulerCheckpointReceipt, SchedulerCheckpointStore,
+    qa_enabled, salvage_require_critical, salvage_spin_enabled, scheduler_task_spec_digest,
+    sink_review_enabled, tail_review_enabled, task_acceptance_digest, testgen_enabled,
+    validate_project_artifact_path, AttemptRecord, DeviceCfg, DeviceSummary, RunReport, Scheduler,
+    SchedulerCheckpointError, SchedulerCheckpointReceipt, SchedulerCheckpointStore,
     SchedulerCompletedTaskEvidence, SchedulerDagResealReceipt, SchedulerRestoreSummary,
-    TaskOutcome, TaskUnavailableEvidence, TaskUnavailableKind,
+    TaskArtifactHashEvidence, TaskOutcome, TaskUnavailableEvidence, TaskUnavailableKind,
 };
 pub use semantic_control::{
     semantic_observation_task_version, AdmittedSemanticObservationHandle,
