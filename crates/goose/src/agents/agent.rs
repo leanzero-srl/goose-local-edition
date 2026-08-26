@@ -1350,8 +1350,17 @@ impl Agent {
 
     /// Save current extension state to session by session_id
     pub async fn persist_extension_state(&self, session_id: &str) -> Result<()> {
-        let extensions_state =
-            EnabledExtensionsState::new(self.extension_configs_for_persistence().await);
+        self.persist_extension_configs(session_id, self.extension_configs_for_persistence().await)
+            .await
+    }
+
+    /// Save the provided extension configuration to session metadata.
+    pub async fn persist_extension_configs(
+        &self,
+        session_id: &str,
+        extensions: Vec<ExtensionConfig>,
+    ) -> Result<()> {
+        let extensions_state = EnabledExtensionsState::new(extensions);
 
         let session_manager = self.config.session_manager.clone();
         let session = session_manager.get_session(session_id, false).await?;
@@ -1488,6 +1497,11 @@ impl Agent {
     ///
     /// Unlike `add_extension`, this avoids per-extension persistence and acquires
     /// the container lock once upfront to prevent serialisation of the parallel futures.
+    ///
+    /// State is persisted once every extension has settled, even when all of them
+    /// fail: the session's enabled list records what actually loaded, so failed
+    /// extensions are dropped instead of staying marked as enabled and being
+    /// retried on every subsequent resume.
     pub async fn add_extensions_bulk(
         self: &Arc<Self>,
         extensions: Vec<ExtensionConfig>,
@@ -1511,30 +1525,41 @@ impl Agent {
             .into_iter()
             .map(|config| {
                 let ext_manager = Arc::clone(&self.extension_manager);
+                let agent = Arc::clone(self);
                 let working_dir = working_dir.clone();
                 let container = container.clone();
                 let sid = session_id.to_string();
 
                 async move {
                     let name = config.name().to_string();
-                    match ext_manager
-                        .add_extension(config, working_dir, container.as_ref(), Some(&sid))
-                        .await
-                    {
-                        Ok(_) => ExtensionLoadResult {
-                            name,
-                            success: true,
-                            error: None,
-                        },
-                        Err(e) => {
-                            let error_msg = e.to_string();
-                            warn!("Failed to load extension {}: {}", name, error_msg);
+                    match &config {
+                        ExtensionConfig::Frontend { .. } => {
+                            agent.insert_frontend_extension(config.clone()).await;
                             ExtensionLoadResult {
                                 name,
-                                success: false,
-                                error: Some(error_msg),
+                                success: true,
+                                error: None,
                             }
                         }
+                        _ => match ext_manager
+                            .add_extension(config, working_dir, container.as_ref(), Some(&sid))
+                            .await
+                        {
+                            Ok(_) => ExtensionLoadResult {
+                                name,
+                                success: true,
+                                error: None,
+                            },
+                            Err(e) => {
+                                let error = e.to_string();
+                                warn!("Failed to load extension {}: {}", name, error);
+                                ExtensionLoadResult {
+                                    name,
+                                    success: false,
+                                    error: Some(error),
+                                }
+                            }
+                        },
                     }
                 }
             })
@@ -1542,9 +1567,7 @@ impl Agent {
 
         let results = futures::future::join_all(extension_futures).await;
 
-        if results.iter().any(|r| r.success) {
-            self.persist_extension_state(session_id).await?;
-        }
+        self.persist_extension_state(session_id).await?;
 
         Ok(results)
     }
