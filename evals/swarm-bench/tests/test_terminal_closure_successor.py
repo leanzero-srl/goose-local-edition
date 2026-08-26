@@ -36,6 +36,107 @@ class ApprovedAnchorTests(unittest.TestCase):
         )
 
 
+class ScoreAdoptionBindingTests(unittest.TestCase):
+    def contract(self, *, failure: str | None = None, port: int = 18970) -> dict[str, object]:
+        attempt = pathlib.Path("/private/tmp/source-closure/scoring/attempt-1")
+        state = attempt.parent.parent
+        evidence = {
+            "generation": "v21-r5",
+            "live_root": "/private/tmp/live-r5",
+            "run_dir": "/private/tmp/live-r5/swarm-3node-qwen38-brainwaves-r0",
+            "state_dir": "/private/tmp/new-successor",
+            "run_id": "swarm-20260826-123456789",
+        }
+        publication = {
+            "target_document_id": successor.TARGET_DOCUMENT_ID,
+            "protected_document_ids": list(successor.PROTECTED_DOCUMENT_ID_ORDER),
+            "provenance_marker": "Brainwaves v21",
+        }
+        expected_failure = (
+            "score contains degraded product-probe evidence in probe_unavailable"
+        )
+        config = {
+            "armed": True,
+            "closure_generation": "v21-r5",
+            "live_root": evidence["live_root"],
+            "run_dir": evidence["run_dir"],
+            "publication": publication,
+            "controller_sha256": "a" * 64,
+            "expected": {
+                "run_id": evidence["run_id"],
+                "fixture_seed": "0123456789abcdef",
+            },
+        }
+        values = {
+            state / "config.json": config,
+            state / "failure.json": {
+                "error_type": "ClosureError",
+                "message": "attempt-1 did not prove descendant cleanup; refusing retry",
+            },
+            attempt / "worker-result.json": {
+                "schema_version": 1,
+                "attempt": 1,
+                "completed_at": "2026-08-26T08:44:58+00:00",
+                "exit_code": 70,
+                "failure": failure if failure is not None else expected_failure,
+                "score_sha256": None,
+            },
+            attempt / "job.json": {
+                "schema_version": 1,
+                "attempt": 1,
+                "clone": str(attempt / "tree"),
+                "score_output": str(attempt / "raw-score.json"),
+                "score_log": str(attempt / "score.log"),
+                "result": str(attempt / "worker-result.json"),
+                "raw_tree": evidence["run_dir"],
+                "raw_tree_sha256": "b" * 64,
+                "seed": "0123456789abcdef",
+                "port": port,
+            },
+            state / "raw-tree-seal.json": {
+                "root": evidence["run_dir"],
+                "tree_sha256": "b" * 64,
+            },
+            attempt / "clone-seal.json": {"tree_sha256": "b" * 64},
+        }
+
+        def fake_read_json(path: pathlib.Path, **_: object) -> dict[str, object]:
+            return values[path.resolve()]
+
+        with (
+            mock.patch.object(successor, "require_regular", side_effect=lambda path, **_: path.resolve()),
+            mock.patch.object(successor, "stable_file_sha256", return_value=("a" * 64, 1)),
+            mock.patch.object(successor, "stable_tree_content_sha256", return_value="c" * 64),
+            mock.patch.object(successor, "read_json", side_effect=fake_read_json),
+        ):
+            return successor.score_adoption_contract(attempt, evidence, publication)
+
+    def test_exact_post_score_failure_can_be_bound_for_adoption(self) -> None:
+        contract = self.contract()
+        self.assertEqual(contract["source_clone_tree_sha256"], "c" * 64)
+        self.assertEqual(contract["source_raw_tree_sha256"], "b" * 64)
+
+    def test_tampered_job_fails_closed(self) -> None:
+        with self.assertRaisesRegex(successor.SuccessorBindingError, "job or initial seal"):
+            self.contract(port=18971)
+
+    def test_wrong_failure_fails_closed(self) -> None:
+        with self.assertRaisesRegex(successor.SuccessorBindingError, "failure boundary"):
+            self.contract(failure="some other failure")
+
+    def test_linked_source_tree_fails_before_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            real = root / "real"
+            real.mkdir()
+            linked = root / "linked"
+            linked.symlink_to(real, target_is_directory=True)
+            with self.assertRaisesRegex(
+                successor.SuccessorBindingError, "not a real directory"
+            ):
+                successor.stable_tree_content_sha256(linked)
+
+
 class SuccessorBindingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()

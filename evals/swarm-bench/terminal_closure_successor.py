@@ -56,10 +56,34 @@ APPROVED_TERMINAL_PREDECESSOR_CONFIG_SHA256_BY_GENERATION = {
     "v21-r5": "5941e31cf886ed3ddaab649fe18961c7e68fbb2af38a495a300fa58355735891",
 }
 APPROVED_CONTROLLER_SOURCE_SHA256 = (
-    "e0e97cf532d816bd11ea10ee62bce06635ce2d5ed949dcd0ada2aea5a0f5b41d"
+    "c7608f873a925f54693058af139bd8ae99395f9902c21cee4e868e6853662ec6"
 )
 APPROVED_USAGE_POLICY_SOURCE_SHA256 = (
     "8363461152fa30c6b48c97e142e06d8eca1fc61b1a9c639b5b7abd27a2cb9d2c"
+)
+APPROVED_PUBLISHER_SOURCE_SHA256 = (
+    "9f2eb2f92880b4280adec0960e14aa5b59002fd6d0756d04c34cbf4e6690d466"
+)
+APPROVED_PUBLISHER_COMMIT = "0c5df6d4beaa9903c549460fec0b653cc37fcc0a"
+SCORE_ADOPTION_SOURCE_FILES = (
+    "config.json",
+    "failure.json",
+    "raw-tree-seal.json",
+    "terminal-evidence.json",
+    "usage-contract.json",
+    "successor-binding.json",
+    "closure-instrument/terminal_closure.py",
+    "scoring/attempt-1/job.json",
+    "scoring/attempt-1/worker-result.json",
+    "scoring/attempt-1/raw-score.json",
+    "scoring/attempt-1/clone-seal.json",
+    "scoring/attempt-1/descendants.json",
+    "scoring/attempt-1/spawn-journal.txt",
+    "scoring/attempt-1/score.log",
+    "scoring/attempt-1/scorer-state.json",
+    "scoring/attempt-1/scorer.pid.json",
+    "scoring/attempt-1/worker.pid.json",
+    "scoring/attempt-1/runtime/playwright-node",
 )
 
 
@@ -229,6 +253,51 @@ def path_is_within(path: pathlib.Path, parent: pathlib.Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def stable_tree_content_sha256(root: pathlib.Path) -> str:
+    if root.is_symlink() or not root.is_dir():
+        raise SuccessorBindingError("score adoption clone is not a real directory")
+    root = root.resolve()
+    entries: list[dict[str, Any]] = []
+    for path in sorted(
+        root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()
+    ):
+        relative = path.relative_to(root).as_posix()
+        metadata = path.lstat()
+        mode = stat.S_IMODE(metadata.st_mode)
+        if stat.S_ISDIR(metadata.st_mode):
+            entries.append({"path": relative, "type": "directory", "mode": mode})
+        elif stat.S_ISREG(metadata.st_mode):
+            digest, size = stable_file_sha256(path)
+            entries.append(
+                {
+                    "path": relative,
+                    "type": "file",
+                    "mode": mode,
+                    "size": size,
+                    "sha256": digest,
+                }
+            )
+        elif stat.S_ISLNK(metadata.st_mode):
+            target = path.resolve()
+            if not path_is_within(target, root):
+                raise SuccessorBindingError(
+                    f"score adoption clone contains an escaping symlink: {relative}"
+                )
+            entries.append(
+                {
+                    "path": relative,
+                    "type": "symlink",
+                    "mode": mode,
+                    "target_sha256": sha256_bytes(os.readlink(path).encode()),
+                }
+            )
+        else:
+            raise SuccessorBindingError(
+                f"score adoption clone contains a special file: {relative}"
+            )
+    return sha256_bytes(canonical_json(entries))
 
 
 def create_once(path: pathlib.Path, payload: bytes, mode: int) -> bool:
@@ -881,6 +950,119 @@ def post_terminal_armed_config(
     return armed
 
 
+def score_adoption_contract(
+    attempt_path: pathlib.Path,
+    evidence: Mapping[str, Any],
+    publication: Mapping[str, Any],
+) -> dict[str, Any]:
+    attempt = attempt_path.resolve()
+    if attempt.name != "attempt-1" or attempt.parent.name != "scoring":
+        raise SuccessorBindingError("score adoption source is not exact attempt-1")
+    state = attempt.parent.parent
+    if state == pathlib.Path(str(evidence["state_dir"])).resolve():
+        raise SuccessorBindingError("score adoption source cannot be its successor")
+    files: dict[str, str] = {}
+    for relative in SCORE_ADOPTION_SOURCE_FILES:
+        path = require_regular(state / relative)
+        files[relative] = stable_file_sha256(path)[0]
+    source_config = read_json(state / "config.json")
+    source_failure = read_json(state / "failure.json")
+    source_worker = read_json(attempt / "worker-result.json")
+    source_job = read_json(attempt / "job.json")
+    raw_seal = read_json(state / "raw-tree-seal.json")
+    clone_seal = read_json(attempt / "clone-seal.json")
+    if (
+        source_config.get("armed") is not True
+        or source_config.get("closure_generation") != evidence["generation"]
+        or source_config.get("live_root") != evidence["live_root"]
+        or source_config.get("run_dir") != evidence["run_dir"]
+        or source_config.get("publication") != publication
+        or source_config.get("expected", {}).get("run_id") != evidence["run_id"]
+        or source_config.get("controller_sha256")
+        != files["closure-instrument/terminal_closure.py"]
+    ):
+        raise SuccessorBindingError("score adoption source closure identity differs")
+    if (
+        source_failure.get("error_type") != "ClosureError"
+        or source_failure.get("message")
+        != "attempt-1 did not prove descendant cleanup; refusing retry"
+        or source_worker.get("schema_version") != SCHEMA_VERSION
+        or source_worker.get("attempt") != 1
+        or source_worker.get("exit_code") != 70
+        or source_worker.get("failure")
+        != "score contains degraded product-probe evidence in probe_unavailable"
+        or source_worker.get("score_sha256") is not None
+        or set(source_worker)
+        != {
+            "schema_version",
+            "attempt",
+            "completed_at",
+            "exit_code",
+            "failure",
+            "score_sha256",
+        }
+        or not isinstance(source_worker.get("completed_at"), str)
+    ):
+        raise SuccessorBindingError("score adoption source failure boundary differs")
+    score_output = attempt / "raw-score.json"
+    if (
+        source_job.get("schema_version") != SCHEMA_VERSION
+        or source_job.get("attempt") != 1
+        or source_job.get("clone") != str(attempt / "tree")
+        or source_job.get("score_output") != str(score_output)
+        or source_job.get("score_log") != str(attempt / "score.log")
+        or source_job.get("result") != str(attempt / "worker-result.json")
+        or source_job.get("raw_tree") != evidence["run_dir"]
+        or source_job.get("raw_tree_sha256") != raw_seal.get("tree_sha256")
+        or source_job.get("seed")
+        != source_config.get("expected", {}).get("fixture_seed")
+        or source_job.get("port") != 18970
+        or clone_seal.get("tree_sha256") != raw_seal.get("tree_sha256")
+        or raw_seal.get("root") != evidence["run_dir"]
+        or not SHA256_RE.fullmatch(str(raw_seal.get("tree_sha256", "")))
+    ):
+        raise SuccessorBindingError("score adoption job or initial seal differs")
+    first_tree_sha256 = stable_tree_content_sha256(attempt / "tree")
+    second_tree_sha256 = stable_tree_content_sha256(attempt / "tree")
+    if first_tree_sha256 != second_tree_sha256:
+        raise SuccessorBindingError("score adoption source tree is not quiescent")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "source_state": str(state),
+        "source_attempt": str(attempt),
+        "source_files": files,
+        "source_clone_tree_sha256": first_tree_sha256,
+        "source_initial_clone_tree_sha256": clone_seal["tree_sha256"],
+        "source_raw_tree_sha256": raw_seal["tree_sha256"],
+        "expected_failure": (
+            "score contains degraded product-probe evidence in probe_unavailable"
+        ),
+    }
+
+
+def publisher_successor_identity(source: pathlib.Path) -> tuple[pathlib.Path, str]:
+    source = require_regular(source)
+    completed = subprocess.run(
+        ["git", "-C", str(source.parent), "rev-parse", "--show-toplevel", "HEAD"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    lines = completed.stdout.decode("utf-8", "strict").splitlines()
+    if completed.returncode != 0 or len(lines) != 2:
+        raise SuccessorBindingError("publisher successor Git identity is unavailable")
+    site_root = pathlib.Path(lines[0]).resolve()
+    commit = lines[1]
+    if (
+        not path_is_within(source, site_root)
+        or commit != APPROVED_PUBLISHER_COMMIT
+        or not COMMIT_RE.fullmatch(commit)
+        or sha256_file(source) != APPROVED_PUBLISHER_SOURCE_SHA256
+    ):
+        raise SuccessorBindingError("publisher successor source is not approved")
+    return site_root, commit
+
+
 def load_generated_module(path: pathlib.Path) -> Any:
     spec = importlib.util.spec_from_file_location("terminal_closure_successor_bound", path)
     if spec is None or spec.loader is None:
@@ -903,6 +1085,8 @@ def generate_successor(
     base_config_path: pathlib.Path,
     controller_source: pathlib.Path,
     terminal_predecessor_config_path: pathlib.Path | None = None,
+    score_adoption_attempt_path: pathlib.Path | None = None,
+    publisher_successor_source_path: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     base_config_path = require_regular(base_config_path)
     controller_source = require_regular(controller_source)
@@ -957,6 +1141,33 @@ def generate_successor(
         raise SuccessorBindingError("successor usage policy is not approved")
     successor_base_config = json.loads(json.dumps(base_config))
     successor_base_config["usage_policy"]["sha256"] = usage_policy_sha256
+    frozen_publisher_payload = publisher_payload
+    publisher_successor_source = None
+    if publisher_successor_source_path is not None:
+        publisher_successor_source = require_regular(
+            publisher_successor_source_path
+        )
+        publisher_site_root, publisher_commit = publisher_successor_identity(
+            publisher_successor_source
+        )
+        frozen_publisher_payload = read_stable_bytes(publisher_successor_source)
+        successor_base_config["publisher"].update(
+            {
+                "sha256": sha256_bytes(frozen_publisher_payload),
+                "git_commit": publisher_commit,
+                "site_root": str(publisher_site_root),
+            }
+        )
+    adoption_contract = None
+    if score_adoption_attempt_path is not None:
+        adoption_contract = score_adoption_contract(
+            score_adoption_attempt_path,
+            evidence,
+            successor_base_config["publication"],
+        )
+        successor_base_config["score_adoption"] = adoption_contract
+    else:
+        successor_base_config.pop("score_adoption", None)
 
     rendered = render_controller(
         controller_source_payload, evidence, successor_base_config
@@ -987,7 +1198,7 @@ def generate_successor(
         pathlib.Path("successor-binding.json"): (receipt_payload, 0o400),
         pathlib.Path("bootstrap/terminal_closure.py"): (rendered, 0o500),
         pathlib.Path("bootstrap/seed-fleet-brainwaves-sb70.mjs"): (
-            publisher_payload,
+            frozen_publisher_payload,
             0o500,
         ),
         pathlib.Path("bootstrap/usage_impairment.py"): (
@@ -1025,11 +1236,32 @@ def generate_successor(
                 raise SuccessorBindingError(
                     "successor launch evidence changed before append-only commit"
                 )
+            if score_adoption_attempt_path is not None:
+                refreshed_adoption = score_adoption_contract(
+                    score_adoption_attempt_path,
+                    evidence,
+                    successor_base_config["publication"],
+                )
+                if canonical_json(refreshed_adoption) != canonical_json(
+                    adoption_contract
+                ):
+                    raise SuccessorBindingError(
+                        "score adoption evidence changed before append-only commit"
+                    )
             immutable_sources = (
                 (publisher_source, publisher_payload, True),
                 (base_usage_policy_source, base_usage_policy_payload, True),
                 (usage_policy_source, usage_policy_payload, False),
             )
+            if publisher_successor_source is not None:
+                immutable_sources = (
+                    *immutable_sources,
+                    (
+                        publisher_successor_source,
+                        frozen_publisher_payload,
+                        False,
+                    ),
+                )
             if any(
                 read_stable_bytes(path, read_only=read_only) != payload
                 for path, payload, read_only in (
@@ -1089,6 +1321,15 @@ def generate_successor(
     if armed_payload is not None:
         receipt["config"] = str(config_path)
         receipt["config_sha256"] = sha256_file(config_path)
+    if adoption_contract is not None:
+        receipt["score_adoption_sha256"] = sha256_bytes(
+            canonical_json(adoption_contract)
+        )
+    if publisher_successor_source is not None:
+        receipt["source_publisher_sha256"] = sha256_bytes(
+            frozen_publisher_payload
+        )
+        receipt["source_publisher_commit"] = APPROVED_PUBLISHER_COMMIT
     return receipt
 
 
@@ -1104,6 +1345,8 @@ def parser() -> argparse.ArgumentParser:
         default=pathlib.Path(__file__).with_name("terminal_closure.py"),
     )
     root.add_argument("--terminal-predecessor-config", type=pathlib.Path)
+    root.add_argument("--score-adoption-attempt", type=pathlib.Path)
+    root.add_argument("--publisher-successor-source", type=pathlib.Path)
     root.add_argument("--bind", action="store_true")
     return root
 
@@ -1118,6 +1361,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         base_config_path=args.base_config,
         controller_source=args.controller_source,
         terminal_predecessor_config_path=args.terminal_predecessor_config,
+        score_adoption_attempt_path=args.score_adoption_attempt,
+        publisher_successor_source_path=args.publisher_successor_source,
     )
     if args.bind:
         if receipt.get("config"):

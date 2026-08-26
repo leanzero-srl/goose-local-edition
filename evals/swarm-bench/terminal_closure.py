@@ -142,6 +142,14 @@ PROBE_DEGRADATION_RE = re.compile(
     r"product_probe[^\n]*(?:missing|failed|error|unavailable))",
     re.I,
 )
+NOTIFICATION_MULTISET_CHECK = "r_notification_multiset"
+NOTIFICATION_MULTISET_UNAVAILABLE_DETAIL = (
+    "PROBE UNAVAILABLE: notifier notifications endpoint never read"
+)
+NOTIFICATION_MULTISET_UNAVAILABLE_CONSEQUENCE = "harness failure, not app evidence"
+NOTIFICATION_SCHEMA_REQUIRED_KEYS = ("data", "total")
+NOTIFICATION_SCHEMA_OBSERVED_KEYS = ("limit", "notifications", "offset")
+SUPPLEMENTAL_NOTIFICATION_SCHEMA_VERSION = 1
 PLAYWRIGHT_SMOKE_SOURCE = r"""
 const { createRequire } = require('node:module');
 const { join, sep } = require('node:path');
@@ -325,6 +333,69 @@ class TrackedPopen(real_popen):
 subprocess.Popen = TrackedPopen
 sys.argv = scorer_argv
 runpy.run_path(scorer_argv[0], run_name="__main__")
+"""
+NOTIFICATION_SCHEMA_PROBE_SOURCE = r"""
+import hashlib
+import http.client
+import importlib.util
+import json
+import pathlib
+import sqlite3
+import sys
+import tempfile
+import threading
+from http.server import HTTPServer
+
+source = pathlib.Path(sys.argv[1]).resolve()
+spec = importlib.util.spec_from_file_location("terminal_closure_notifier_probe", source)
+if spec is None or spec.loader is None:
+    raise SystemExit(65)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory(prefix="sb7-notifier-schema-") as temporary:
+    database = pathlib.Path(temporary) / "notifier.db"
+    connection = module.init_db(str(database))
+    module.NotifierHandler.db = connection
+    server = HTTPServer(("127.0.0.1", 0), module.NotifierHandler)
+    outcome = {}
+    def request_endpoint():
+        client = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        client.request("GET", "/notify/notifications?limit=200&offset=0")
+        response = client.getresponse()
+        outcome["status"] = response.status
+        outcome["content_type"] = response.getheader("Content-Type", "")
+        outcome["body"] = response.read(65537)
+        client.close()
+    thread = threading.Thread(target=request_endpoint, daemon=True)
+    thread.start()
+    try:
+        server.handle_request()
+        thread.join(timeout=5)
+        if thread.is_alive():
+            raise SystemExit(68)
+        body = outcome["body"]
+        if len(body) > 65536:
+            raise SystemExit(66)
+        parsed = json.loads(body.decode("utf-8"))
+        if not isinstance(parsed, dict):
+            raise SystemExit(67)
+        receipt = {
+            "reachable": True,
+            "http_status": outcome["status"],
+            "content_type": outcome["content_type"],
+            "json_object": True,
+            "observed_keys": sorted(parsed),
+            "missing_required_keys": [
+                key for key in ("data", "total") if key not in parsed
+            ],
+            "notifications_is_list": isinstance(parsed.get("notifications"), list),
+            "response_body_bytes": len(body),
+            "response_body_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        sys.stdout.write(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
+    finally:
+        server.server_close()
+        connection.close()
 """
 
 
@@ -1361,6 +1432,7 @@ def validate_sb7_score_payload(
     fixture_seed: str,
     *,
     allow_probe_degradation: bool = False,
+    supplemental_product_schema_failure: Mapping[str, Any] | None = None,
 ) -> None:
     if score.get("fixture_seed") != fixture_seed or not SEED_RE.fullmatch(fixture_seed):
         raise ClosureError("score used a different or malformed fixture_seed")
@@ -1387,11 +1459,22 @@ def validate_sb7_score_payload(
     checks = score.get("checks")
     if not isinstance(checks, list) or len(checks) != expected["check_count"]:
         raise ClosureError("score check count differs")
+    supplemental_notification_failure = False
+    if supplemental_product_schema_failure is not None:
+        validate_notification_schema_failure_receipt(
+            score, supplemental_product_schema_failure
+        )
+        supplemental_notification_failure = True
     for field in ("probe_unavailable", "harness_missing"):
         evidence = score.get(field)
         if not isinstance(evidence, list):
             raise ClosureError(f"score {field} evidence is missing or malformed")
-        if evidence and not allow_probe_degradation:
+        exact_supplemented_evidence = (
+            supplemental_notification_failure
+            and field == "probe_unavailable"
+            and evidence == [NOTIFICATION_MULTISET_CHECK]
+        )
+        if evidence and not allow_probe_degradation and not exact_supplemented_evidence:
             raise ClosureError(f"score contains degraded product-probe evidence in {field}")
     if not isinstance(score.get("sched_unreached"), list):
         raise ClosureError("score sched_unreached evidence is missing or malformed")
@@ -1406,13 +1489,22 @@ def validate_sb7_score_payload(
             raise ClosureError(f"score check {name} is malformed")
         if not isinstance(row.get("detail"), str):
             raise ClosureError(f"score check {name} lacks detail evidence")
-        if row.get("unavailable") is True and not allow_probe_degradation:
+        supplemented_row = (
+            supplemental_notification_failure
+            and name == NOTIFICATION_MULTISET_CHECK
+        )
+        if (
+            row.get("unavailable") is True
+            and not allow_probe_degradation
+            and not supplemented_row
+        ):
             raise ClosureError(f"score check {name} is probe-unavailable")
         evidence_text = "\n".join(
             str(row.get(field, "")) for field in ("detail", "consequence", "reason")
         )
         if (
             not allow_probe_degradation
+            and not supplemented_row
             and PROBE_DEGRADATION_RE.search(evidence_text)
         ):
             raise ClosureError(f"score check {name} contains degraded product-probe evidence")
@@ -1493,6 +1585,223 @@ def validate_sb7_score_payload(
     for field in ("calls", "prompt_tokens", "completion_tokens"):
         if sum(node[field] for node in telemetry["nodes"].values()) != telemetry[field]:
             raise ClosureError(f"score telemetry.{field} does not reconcile its node totals")
+
+
+def notification_multiset_unavailable_row(score: Mapping[str, Any]) -> Mapping[str, Any]:
+    checks = score.get("checks")
+    if not isinstance(checks, list):
+        raise ClosureError("notification supplement requires the frozen score registry")
+    matching = [
+        row
+        for row in checks
+        if isinstance(row, Mapping)
+        and row.get("check") == NOTIFICATION_MULTISET_CHECK
+    ]
+    if len(matching) != 1:
+        raise ClosureError("notification supplement requires exactly one frozen check row")
+    row = matching[0]
+    if (
+        row.get("tier") != "R"
+        or row.get("score") != 0.0
+        or row.get("detail") != NOTIFICATION_MULTISET_UNAVAILABLE_DETAIL
+        or row.get("consequence") != NOTIFICATION_MULTISET_UNAVAILABLE_CONSEQUENCE
+        or row.get("unavailable") is not True
+    ):
+        raise ClosureError("notification supplement check row differs from frozen output")
+    unavailable_rows = [
+        candidate
+        for candidate in checks
+        if isinstance(candidate, Mapping)
+        and candidate.get("unavailable") is True
+    ]
+    if unavailable_rows != [row]:
+        raise ClosureError("notification supplement cannot cover multiple unavailable rows")
+    return row
+
+
+def validate_notification_schema_failure_receipt(
+    score: Mapping[str, Any], receipt: Mapping[str, Any]
+) -> None:
+    notification_multiset_unavailable_row(score)
+    if score.get("probe_unavailable") != [NOTIFICATION_MULTISET_CHECK]:
+        raise ClosureError("notification supplement top-level unavailable evidence differs")
+    if score.get("harness_missing") != []:
+        raise ClosureError("notification supplement cannot cover missing harness evidence")
+    expected_keys = {
+        "schema_version",
+        "classification",
+        "method",
+        "endpoint",
+        "reachable",
+        "http_status",
+        "content_type",
+        "json_object",
+        "observed_keys",
+        "required_keys",
+        "missing_required_keys",
+        "notifications_is_list",
+        "response_body_bytes",
+        "response_body_sha256",
+        "notifier_source_sha256",
+        "probe_process_identity_sha256",
+        "probe_process_exit_proven",
+        "score_sha256",
+        "clone_tree_sha256",
+        "raw_tree_sha256",
+        "fixture_seed",
+    }
+    if not isinstance(receipt, Mapping) or set(receipt) != expected_keys:
+        raise ClosureError("notification schema supplement receipt is malformed")
+    if (
+        receipt.get("schema_version") != SUPPLEMENTAL_NOTIFICATION_SCHEMA_VERSION
+        or receipt.get("classification")
+        != "reachable-json-product-schema-mismatch"
+        or receipt.get("method") != "GET"
+        or receipt.get("endpoint") != "/notify/notifications?limit=200&offset=0"
+        or receipt.get("reachable") is not True
+        or receipt.get("http_status") != 200
+        or not isinstance(receipt.get("content_type"), str)
+        or not receipt["content_type"].lower().startswith("application/json")
+        or receipt.get("json_object") is not True
+        or receipt.get("observed_keys") != list(NOTIFICATION_SCHEMA_OBSERVED_KEYS)
+        or receipt.get("required_keys") != list(NOTIFICATION_SCHEMA_REQUIRED_KEYS)
+        or receipt.get("missing_required_keys")
+        != list(NOTIFICATION_SCHEMA_REQUIRED_KEYS)
+        or receipt.get("notifications_is_list") is not True
+        or not isinstance(receipt.get("response_body_bytes"), int)
+        or isinstance(receipt.get("response_body_bytes"), bool)
+        or not 2 <= receipt["response_body_bytes"] <= 65_536
+        or not SHA256_RE.fullmatch(str(receipt.get("response_body_sha256", "")))
+        or not SHA256_RE.fullmatch(str(receipt.get("notifier_source_sha256", "")))
+        or not SHA256_RE.fullmatch(
+            str(receipt.get("probe_process_identity_sha256", ""))
+        )
+        or receipt.get("probe_process_exit_proven") is not True
+        or receipt.get("score_sha256") != sha256_bytes(canonical_json(score))
+        or not SHA256_RE.fullmatch(str(receipt.get("clone_tree_sha256", "")))
+        or not SHA256_RE.fullmatch(str(receipt.get("raw_tree_sha256", "")))
+        or receipt.get("fixture_seed") != score.get("fixture_seed")
+        or not SEED_RE.fullmatch(str(receipt.get("fixture_seed", "")))
+    ):
+        raise ClosureError(
+            "notification schema supplement did not prove reachable exact product mismatch"
+        )
+
+
+def run_notification_schema_failure_probe(
+    clone: pathlib.Path,
+    score: Mapping[str, Any],
+    *,
+    raw_tree_sha256: str,
+    timeout_seconds: float = 15,
+) -> dict[str, Any]:
+    notification_multiset_unavailable_row(score)
+    source = clone / "app/notifierd/__main__.py"
+    if source.is_symlink() or not source.is_file():
+        raise ClosureError("notification supplement product source is missing or linked")
+    before = tree_manifest(clone)
+    source_sha256 = sha256_file(source)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-B",
+            "-u",
+            "-c",
+            NOTIFICATION_SCHEMA_PROBE_SOURCE,
+            str(source),
+        ],
+        cwd=clone,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=safe_environment({"PYTHONDONTWRITEBYTECODE": "1"}),
+        start_new_session=True,
+    )
+    process_receipt = stable_process_receipt(process.pid)
+    if process_receipt is None:
+        terminate_process_group(process.pid)
+        process.wait()
+        raise ClosureError(
+            "notification supplement probe did not remain live long enough to authenticate"
+        )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        terminate_process_group(process.pid)
+        process.communicate()
+        raise ClosureError("notification supplement endpoint probe timed out") from error
+    if process.returncode != 0:
+        detail = redact_text(stderr.decode("utf-8", "replace")[:400]).strip()
+        raise ClosureError(
+            "notification supplement endpoint probe failed"
+            + (f": {detail}" if detail else "")
+        )
+    if safe_process_receipt(process.pid) is not None or process_group_exists(process.pid):
+        raise ClosureError("notification supplement probe did not prove process exit")
+    if stderr.strip():
+        raise ClosureError("notification supplement probe emitted unexpected diagnostics")
+    try:
+        observed = json.loads(stdout)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ClosureError("notification supplement endpoint returned non-JSON evidence") from error
+    if not isinstance(observed, dict):
+        raise ClosureError("notification supplement endpoint receipt is not an object")
+    after = tree_manifest(clone)
+    if not manifests_equal(before, after):
+        raise ClosureError("notification supplement probe mutated the hermetic score tree")
+    receipt = {
+        "schema_version": SUPPLEMENTAL_NOTIFICATION_SCHEMA_VERSION,
+        "classification": "reachable-json-product-schema-mismatch",
+        "method": "GET",
+        "endpoint": "/notify/notifications?limit=200&offset=0",
+        **observed,
+        "required_keys": list(NOTIFICATION_SCHEMA_REQUIRED_KEYS),
+        "notifier_source_sha256": source_sha256,
+        "probe_process_identity_sha256": process_receipt["identity_sha256"],
+        "probe_process_exit_proven": True,
+        "score_sha256": sha256_bytes(canonical_json(score)),
+        "clone_tree_sha256": before["tree_sha256"],
+        "raw_tree_sha256": raw_tree_sha256,
+        "fixture_seed": score.get("fixture_seed"),
+    }
+    validate_notification_schema_failure_receipt(score, receipt)
+    return receipt
+
+
+def validate_score_adoption_receipt(
+    contract: Mapping[str, Any],
+    result: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+) -> None:
+    if (
+        not isinstance(contract, Mapping)
+        or not isinstance(receipt, Mapping)
+        or set(receipt)
+        != {
+            "schema_version",
+            "source_state_sha256",
+            "source_score_sha256",
+            "source_clone_tree_sha256",
+            "descendant_count",
+            "all_descendants_absent",
+            "port_isolated",
+            "supplemental_product_schema_failure_sha256",
+        }
+        or receipt.get("schema_version") != SCHEMA_VERSION
+        or receipt.get("source_state_sha256")
+        != sha256_bytes(canonical_json(contract))
+        or receipt.get("source_score_sha256") != result.get("score_sha256")
+        or receipt.get("source_clone_tree_sha256")
+        != contract.get("source_clone_tree_sha256")
+        or not isinstance(receipt.get("descendant_count"), int)
+        or isinstance(receipt.get("descendant_count"), bool)
+        or receipt.get("descendant_count") < 1
+        or receipt.get("all_descendants_absent") is not True
+        or receipt.get("port_isolated") is not True
+        or receipt.get("supplemental_product_schema_failure_sha256")
+        != result.get("supplemental_product_schema_failure_sha256")
+    ):
+        raise ClosureError("successful adopted score provenance differs")
 
 
 def validate_raw_sb7_terminal_payload(
@@ -1797,6 +2106,75 @@ def validate_config(config: dict[str, Any], *, allow_unarmed: bool = False) -> N
         raise ClosureError("max_publish_attempts must be positive")
     if float(config.get("score_timeout_seconds", 0)) <= 0:
         raise ClosureError("score_timeout_seconds must be positive")
+    score_adoption = config.get("score_adoption")
+    if score_adoption is not None:
+        expected_adoption_keys = {
+            "schema_version",
+            "source_state",
+            "source_attempt",
+            "source_files",
+            "source_clone_tree_sha256",
+            "source_initial_clone_tree_sha256",
+            "source_raw_tree_sha256",
+            "expected_failure",
+        }
+        source_files = (
+            score_adoption.get("source_files")
+            if isinstance(score_adoption, Mapping)
+            else None
+        )
+        source_state = pathlib.Path(
+            str(score_adoption.get("source_state", ""))
+        ).resolve() if isinstance(score_adoption, Mapping) else pathlib.Path("/")
+        source_attempt = pathlib.Path(
+            str(score_adoption.get("source_attempt", ""))
+        ).resolve() if isinstance(score_adoption, Mapping) else pathlib.Path("/")
+        if (
+            not isinstance(score_adoption, Mapping)
+            or set(score_adoption) != expected_adoption_keys
+            or score_adoption.get("schema_version") != SCHEMA_VERSION
+            or source_attempt != source_state / "scoring/attempt-1"
+            or source_state == state_dir
+            or path_is_within(source_state, live_root)
+            or not isinstance(source_files, Mapping)
+            or set(source_files)
+            != {
+                "config.json",
+                "failure.json",
+                "raw-tree-seal.json",
+                "terminal-evidence.json",
+                "usage-contract.json",
+                "successor-binding.json",
+                "closure-instrument/terminal_closure.py",
+                "scoring/attempt-1/job.json",
+                "scoring/attempt-1/worker-result.json",
+                "scoring/attempt-1/raw-score.json",
+                "scoring/attempt-1/clone-seal.json",
+                "scoring/attempt-1/descendants.json",
+                "scoring/attempt-1/spawn-journal.txt",
+                "scoring/attempt-1/score.log",
+                "scoring/attempt-1/scorer-state.json",
+                "scoring/attempt-1/scorer.pid.json",
+                "scoring/attempt-1/worker.pid.json",
+                "scoring/attempt-1/runtime/playwright-node",
+            }
+            or any(
+                not SHA256_RE.fullmatch(str(digest))
+                for digest in source_files.values()
+            )
+            or not SHA256_RE.fullmatch(
+                str(score_adoption.get("source_clone_tree_sha256", ""))
+            )
+            or not SHA256_RE.fullmatch(
+                str(score_adoption.get("source_initial_clone_tree_sha256", ""))
+            )
+            or not SHA256_RE.fullmatch(
+                str(score_adoption.get("source_raw_tree_sha256", ""))
+            )
+            or score_adoption.get("expected_failure")
+            != "score contains degraded product-probe evidence in probe_unavailable"
+        ):
+            raise ClosureError("score adoption contract is malformed")
     if config.get("closure_generation") == V19_GENERATION or "armed" in config:
         validate_v19_config(config, allow_unarmed=allow_unarmed)
 
@@ -2765,6 +3143,213 @@ class TerminalClosure:
         atomic_json(attempt_dir / "clone-seal.json", copied)
         return clone
 
+    def materialize_adopted_score_attempt(
+        self,
+        raw_seal: Mapping[str, Any],
+        usage_contract: Mapping[str, Any],
+    ) -> None:
+        contract = self.config.get("score_adoption")
+        if contract is None:
+            return
+        target = self.state_dir / "scoring/attempt-1"
+        if target.exists():
+            return
+        source_state = pathlib.Path(str(contract["source_state"])).resolve()
+        source_attempt = pathlib.Path(str(contract["source_attempt"])).resolve()
+        source_files = contract["source_files"]
+        for relative, digest in source_files.items():
+            source = source_state / relative
+            if source.is_symlink() or not source.is_file() or sha256_file(source) != digest:
+                raise ClosureError(f"adopted score source changed: {relative}")
+        source_failure = read_json(source_state / "failure.json")
+        source_worker = read_json(source_attempt / "worker-result.json")
+        if (
+            source_failure.get("error_type") != "ClosureError"
+            or source_failure.get("message")
+            != "attempt-1 did not prove descendant cleanup; refusing retry"
+            or source_worker
+            != {
+                "attempt": 1,
+                "completed_at": source_worker.get("completed_at"),
+                "exit_code": 70,
+                "failure": contract["expected_failure"],
+                "schema_version": SCHEMA_VERSION,
+                "score_sha256": None,
+            }
+            or not isinstance(source_worker.get("completed_at"), str)
+        ):
+            raise ClosureError("adopted score did not fail at the approved post-score boundary")
+        source_config = read_json(source_state / "config.json")
+        source_controller = source_state / "closure-instrument/terminal_closure.py"
+        if (
+            source_config.get("armed") is not True
+            or source_config.get("closure_generation")
+            != self.config.get("closure_generation")
+            or source_config.get("live_root") != self.config.get("live_root")
+            or source_config.get("run_dir") != self.config.get("run_dir")
+            or source_config.get("publication") != self.config.get("publication")
+            or source_config.get("expected") != self.config.get("expected")
+            or source_config.get("controller_sha256") != sha256_file(source_controller)
+        ):
+            raise ClosureError("adopted score source closure identity differs")
+        if (
+            read_json(source_state / "raw-tree-seal.json").get("tree_sha256")
+            != raw_seal.get("tree_sha256")
+            or contract["source_raw_tree_sha256"] != raw_seal.get("tree_sha256")
+            or canonical_json(read_json(source_state / "usage-contract.json"))
+            != canonical_json(usage_contract)
+        ):
+            raise ClosureError("adopted score raw tree or usage contract differs")
+        job = read_json(source_attempt / "job.json")
+        score_path = source_attempt / "raw-score.json"
+        score = read_json(score_path)
+        clone_seal = read_json(source_attempt / "clone-seal.json")
+        expected_job_paths = {
+            "clone": str(source_attempt / "tree"),
+            "score_output": str(score_path),
+            "score_log": str(source_attempt / "score.log"),
+            "result": str(source_attempt / "worker-result.json"),
+        }
+        if (
+            job.get("schema_version") != SCHEMA_VERSION
+            or job.get("attempt") != 1
+            or any(job.get(field) != value for field, value in expected_job_paths.items())
+            or job.get("raw_tree") != str(self.run_dir)
+            or job.get("raw_tree_sha256") != raw_seal.get("tree_sha256")
+            or job.get("seed") != self.config["expected"]["fixture_seed"]
+            or job.get("scorer_sha256")
+            != self.config["expected"]["instrument_files"][
+                "evals/swarm-bench/bench/score_sb7.py"
+            ]
+            or job.get("port") != self.config["expected"]["vendor_port"]
+            or job.get("render_node_sha256")
+            != self.config["publisher"]["node_sha256"]
+            or job.get("playwright_runtime") != self.config["runtime"]["playwright"]
+            or canonical_json(job.get("score_contract"))
+            != canonical_json(
+                {
+                    "raw_scorer_version": self.config["expected"][
+                        "raw_scorer_version"
+                    ],
+                    "check_count": self.config["expected"]["check_count"],
+                    "telemetry_nodes": self.config["expected"]["telemetry_nodes"],
+                    "models": self.config["expected"]["models"],
+                    "usage_contract": usage_contract,
+                }
+            )
+            or clone_seal.get("tree_sha256")
+            != contract["source_initial_clone_tree_sha256"]
+            or clone_seal.get("tree_sha256") != raw_seal.get("tree_sha256")
+        ):
+            raise ClosureError("adopted score job or initial clone seal differs")
+        source_clone = source_attempt / "tree"
+        source_tree = tree_manifest(source_clone)
+        if source_tree.get("tree_sha256") != contract["source_clone_tree_sha256"]:
+            raise ClosureError("adopted score clone changed before import")
+        source_receipts, _ = prove_adoption_process_absence(
+            source_attempt, int(self.config["expected"]["vendor_port"])
+        )
+        time.sleep(0.2)
+        if tree_manifest(source_clone).get("tree_sha256") != source_tree.get(
+            "tree_sha256"
+        ):
+            raise ClosureError("adopted score clone did not remain quiescent")
+
+        ensure_secure_dir(target.parent)
+        target.mkdir(mode=0o700)
+        clone = target / "tree"
+        shutil.copytree(source_clone, clone, symlinks=True)
+        if not manifests_equal(source_tree, tree_manifest(clone)):
+            raise ClosureError("adopted score copy differs from its authenticated source")
+        for name in (
+            "clone-seal.json",
+            "descendants.json",
+            "spawn-journal.txt",
+            "score.log",
+        ):
+            shutil.copy2(source_attempt / name, target / name)
+        shutil.copytree(source_attempt / "runtime", target / "runtime", symlinks=True)
+        shutil.copy2(score_path, target / "raw-score.json")
+        supplemental = run_notification_schema_failure_probe(
+            clone,
+            score,
+            raw_tree_sha256=str(raw_seal["tree_sha256"]),
+        )
+        validate_sb7_score_payload(
+            score,
+            job["score_contract"],
+            str(job["seed"]),
+            supplemental_product_schema_failure=supplemental,
+        )
+        supplemental_path = target / "supplemental-product-schema-failure.json"
+        atomic_json(supplemental_path, supplemental)
+        score_tree_seal = tree_manifest(clone)
+        score_tree_seal_path = target / "score-tree-seal.json"
+        atomic_json(score_tree_seal_path, score_tree_seal)
+        adoption_receipt = {
+            "schema_version": SCHEMA_VERSION,
+            "source_state_sha256": sha256_bytes(canonical_json(contract)),
+            "source_score_sha256": sha256_file(score_path),
+            "source_clone_tree_sha256": source_tree["tree_sha256"],
+            "descendant_count": len(source_receipts),
+            "all_descendants_absent": True,
+            "port_isolated": True,
+            "supplemental_product_schema_failure_sha256": sha256_file(
+                supplemental_path
+            ),
+        }
+        adoption_receipt_path = target / "score-adoption-receipt.json"
+        atomic_json(adoption_receipt_path, adoption_receipt)
+        render_wrapper = target / "runtime/playwright-node"
+        result = {
+            "schema_version": SCHEMA_VERSION,
+            "attempt": 1,
+            "completed_at": utc_now(),
+            "exit_code": 0,
+            "scorer_exit_code": 0,
+            "failure": None,
+            "scorer_sha256": job["scorer_sha256"],
+            "playwright_module_tree_sha256": self.config["runtime"]["playwright"][
+                "module_tree_sha256"
+            ],
+            "playwright_browser_tree_sha256": self.config["runtime"]["playwright"][
+                "browser_tree_sha256"
+            ],
+            "playwright_executable_sha256": self.config["runtime"]["playwright"][
+                "executable_sha256"
+            ],
+            "playwright_node_wrapper_sha256": sha256_file(render_wrapper),
+            "raw_tree_sha256": raw_seal["tree_sha256"],
+            "fixture_seed": job["seed"],
+            "port": job["port"],
+            "descendants_clean": True,
+            "descendant_cleanup_proven": True,
+            "descendants_observed": len(source_receipts),
+            "descendants_survived_scorer": 0,
+            "descendants_live_after_cleanup": 0,
+            "descendant_cleanup_signals": [],
+            "descendant_tracker_error": None,
+            "port_free_after_cleanup": True,
+            "descendant_inventory_sha256": sha256_file(
+                target / "descendants.json"
+            ),
+            "spawn_journal_sha256": sha256_file(target / "spawn-journal.txt"),
+            "score_sha256": sha256_file(target / "raw-score.json"),
+            "supplemental_product_schema_failure_sha256": sha256_file(
+                supplemental_path
+            ),
+            "score_tree_sha256": score_tree_seal["tree_sha256"],
+            "score_tree_seal_sha256": sha256_file(score_tree_seal_path),
+            "log_sha256": sha256_file(target / "score.log"),
+            "score_execution_adopted": True,
+            "score_adoption_receipt_sha256": sha256_file(adoption_receipt_path),
+        }
+        atomic_json(target / "worker-result.json", result)
+        if tree_manifest(source_clone).get("tree_sha256") != source_tree.get(
+            "tree_sha256"
+        ):
+            raise ClosureError("adopted score source changed during import")
+
     def successful_score_attempt(
         self, attempt: pathlib.Path
     ) -> tuple[pathlib.Path, dict[str, Any]] | None:
@@ -2773,6 +3358,10 @@ class TerminalClosure:
         seal_path = attempt / "score-tree-seal.json"
         inventory_path = attempt / "descendants.json"
         spawn_journal_path = attempt / "spawn-journal.txt"
+        supplemental_schema_path = (
+            attempt / "supplemental-product-schema-failure.json"
+        )
+        adoption_receipt_path = attempt / "score-adoption-receipt.json"
         clone = attempt / "tree"
         render_wrapper = attempt / "runtime" / "playwright-node"
         if any(
@@ -2784,6 +3373,8 @@ class TerminalClosure:
                 inventory_path,
                 spawn_journal_path,
                 render_wrapper,
+                supplemental_schema_path,
+                adoption_receipt_path,
             )
         ):
             raise ClosureError("successful scoring evidence contains a symbolic link")
@@ -2877,6 +3468,61 @@ class TerminalClosure:
             raise ClosureError("successful scoring attempt still has a live descendant")
         if not port_is_available(int(self.config["expected"]["vendor_port"])):
             raise ClosureError("successful scoring attempt did not leave its port isolated")
+        if result.get("score_execution_adopted") is True:
+            contract = self.config.get("score_adoption")
+            if (
+                not isinstance(contract, Mapping)
+                or not adoption_receipt_path.is_file()
+                or not SHA256_RE.fullmatch(
+                    str(result.get("score_adoption_receipt_sha256", ""))
+                )
+                or sha256_file(adoption_receipt_path)
+                != result.get("score_adoption_receipt_sha256")
+            ):
+                raise ClosureError("successful adopted score receipt differs")
+            adoption_receipt = read_json(adoption_receipt_path)
+            validate_score_adoption_receipt(contract, result, adoption_receipt)
+        elif adoption_receipt_path.exists() or result.get(
+            "score_adoption_receipt_sha256"
+        ) is not None:
+            raise ClosureError("successful score has unbound adoption evidence")
+        supplemental_schema_sha256 = result.get(
+            "supplemental_product_schema_failure_sha256"
+        )
+        if supplemental_schema_sha256 is None:
+            if supplemental_schema_path.exists():
+                raise ClosureError(
+                    "successful scoring attempt has unbound supplemental evidence"
+                )
+        else:
+            if (
+                not SHA256_RE.fullmatch(str(supplemental_schema_sha256))
+                or not supplemental_schema_path.is_file()
+                or sha256_file(supplemental_schema_path)
+                != supplemental_schema_sha256
+            ):
+                raise ClosureError(
+                    "successful scoring attempt supplemental evidence differs"
+                )
+            score = read_json(score_path)
+            supplemental_schema = read_json(supplemental_schema_path)
+            validate_notification_schema_failure_receipt(
+                score, supplemental_schema
+            )
+            notifier_source = clone / "app/notifierd/__main__.py"
+            if (
+                supplemental_schema.get("clone_tree_sha256")
+                != seal.get("tree_sha256")
+                or supplemental_schema.get("raw_tree_sha256")
+                != result.get("raw_tree_sha256")
+                or notifier_source.is_symlink()
+                or not notifier_source.is_file()
+                or supplemental_schema.get("notifier_source_sha256")
+                != sha256_file(notifier_source)
+            ):
+                raise ClosureError(
+                    "successful scoring attempt supplemental provenance differs"
+                )
         return score_path, result
 
     def successful_score(self) -> tuple[pathlib.Path, dict[str, Any]] | None:
@@ -3064,6 +3710,7 @@ class TerminalClosure:
         raw_seal: dict[str, Any],
     ) -> tuple[pathlib.Path, dict[str, Any]]:
         usage_contract = self.sealed_usage_contract(raw_seal)
+        self.materialize_adopted_score_attempt(raw_seal, usage_contract)
         successful = self.successful_score()
         if successful is None:
             max_attempts = int(self.config.get("max_score_attempts", 2))
@@ -3095,7 +3742,23 @@ class TerminalClosure:
                 raise ClosureError("authoritative scorer exhausted its bounded attempts")
         score_path, worker_result = successful
         score = read_json(score_path)
-        self.validate_score(score, terminal, usage_contract)
+        supplemental_schema = None
+        supplemental_schema_sha256 = worker_result.get(
+            "supplemental_product_schema_failure_sha256"
+        )
+        if supplemental_schema_sha256 is not None:
+            supplemental_schema_path = (
+                score_path.parent / "supplemental-product-schema-failure.json"
+            )
+            supplemental_schema = read_json(supplemental_schema_path)
+            if sha256_file(supplemental_schema_path) != supplemental_schema_sha256:
+                raise ClosureError("authoritative supplemental evidence hash differs")
+        self.validate_score(
+            score,
+            terminal,
+            usage_contract,
+            supplemental_product_schema_failure=supplemental_schema,
+        )
         parent_owned = {"entrant", "rep", "agent", "actual_pool", "actual_nodes", "vendor_port", "closure"}
         overlap = sorted(parent_owned & set(score))
         if overlap:
@@ -3124,6 +3787,16 @@ class TerminalClosure:
             "timed_out": auto["agent"]["timed_out"],
             "secs": auto["agent"]["secs"],
         }
+        goose_exit = terminal.get("goose_exit")
+        terminal_failure_preserved = bool(
+            isinstance(goose_exit, Mapping)
+            and goose_exit.get("terminal_failure_preserved") is True
+            and goose_exit.get("successful") is False
+            and goose_exit.get("exit_code") == safe_agent["exit"]
+            and safe_agent["exit"] != 0
+        )
+        terminal_evidence_path = self.state_dir / "terminal-evidence.json"
+        terminal_evidence_sha256 = sha256_file(terminal_evidence_path)
         score.update(
             {
                 "entrant": auto["entrant"],
@@ -3149,6 +3822,11 @@ class TerminalClosure:
                         "playwright_node_wrapper_sha256"
                     ],
                     "auto_verdict_sha256": terminal["auto_verdict_sha256"],
+                    "terminal_evidence_sha256": terminal_evidence_sha256,
+                    "agent_terminal_failure_preserved": terminal_failure_preserved,
+                    "supplemental_product_schema_failure_sha256": (
+                        supplemental_schema_sha256
+                    ),
                     **fleet_closure,
                 },
             }
@@ -3191,9 +3869,16 @@ class TerminalClosure:
             "candidate_commit": launch["candidate"]["commit"],
             "usage_contract_sha256": usage_contract_sha256,
             "usage_contract": usage_contract,
+            "supplemental_product_schema_failure_sha256": (
+                supplemental_schema_sha256
+            ),
+            "supplemental_product_schema_failure": supplemental_schema,
             "engine_events": terminal["engine_events"],
             "run_started_at": terminal["run_started_at"],
             "run_finished_at": terminal["run_finished_at"],
+            "terminal_evidence_sha256": terminal_evidence_sha256,
+            "agent_terminal_failure_preserved": terminal_failure_preserved,
+            "agent_exit_code": safe_agent["exit"],
             **fleet_provenance,
             "authoritative_verdict_sha256": sha256_file(authoritative_path),
         }
@@ -3274,11 +3959,20 @@ class TerminalClosure:
         score: dict[str, Any],
         terminal: dict[str, Any],
         usage_contract: Mapping[str, Any],
+        *,
+        supplemental_product_schema_failure: Mapping[str, Any] | None = None,
     ) -> None:
         expected_seed = self.expected_fixture_seed(terminal.get("fixture_seed"))
         expected = dict(self.config["expected"])
         expected["usage_contract"] = usage_contract
-        validate_sb7_score_payload(score, expected, expected_seed)
+        validate_sb7_score_payload(
+            score,
+            expected,
+            expected_seed,
+            supplemental_product_schema_failure=(
+                supplemental_product_schema_failure
+            ),
+        )
         raw_score = read_json(self.run_dir / "verdict.json")
         if raw_score.get("fixture_seed") != expected_seed:
             raise ClosureError("raw auto-verdict fixture_seed changed before publication")
@@ -3818,6 +4512,47 @@ def read_spawn_journal_receipts(path: pathlib.Path) -> list[dict[str, Any]]:
         }
         for pid in sorted(identities_by_pid)
     ]
+
+
+def prove_adoption_process_absence(
+    attempt: pathlib.Path, port: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    receipts = validate_attempt_process_inventory(attempt / "descendants.json")
+    journal = read_spawn_journal_receipts(attempt / "spawn-journal.txt")
+    inventoried = {receipt["pid"]: receipt for receipt in receipts}
+    if any(
+        receipt["pid"] not in inventoried
+        or not set(receipt["identity_sha256s"]).issubset(
+            set(inventoried[receipt["pid"]]["identity_sha256s"])
+        )
+        or not set(receipt["birth_sha256s"]).issubset(
+            set(inventoried[receipt["pid"]]["birth_sha256s"])
+        )
+        for receipt in journal
+    ):
+        raise ClosureError("adopted score lost journaled descendant identities")
+    direct_receipts = [
+        read_json(attempt / "scorer.pid.json"),
+        read_json(attempt / "worker.pid.json"),
+    ]
+    statuses = [
+        process_receipt_status(receipt)
+        for receipt in [*receipts, *direct_receipts]
+    ]
+    scorer_state = read_json(attempt / "scorer-state.json")
+    scorer_process_group = scorer_state.get("process_group_id")
+    if (
+        "match" in statuses
+        or "unavailable" in statuses
+        or "invalid" in statuses
+        or not isinstance(scorer_process_group, int)
+        or isinstance(scorer_process_group, bool)
+        or scorer_process_group <= 1
+        or process_group_exists(scorer_process_group)
+        or not port_is_available(port)
+    ):
+        raise ClosureError("adopted score source still has active or unproven descendants")
+    return receipts, journal
 
 
 class AttemptProcessTracker:
@@ -4386,18 +5121,61 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
             failure = "authoritative scorer descendant cleanup could not be proven"
         score_output = pathlib.Path(str(job["score_output"]))
         score_tree_seal_path = result_path.parent / "score-tree-seal.json"
+        supplemental_schema_path = (
+            result_path.parent / "supplemental-product-schema-failure.json"
+        )
         score_tree_sha256 = None
+        supplemental_schema_sha256 = None
         if accepted_exit == 0 and score_output.is_file():
             score_payload = read_json(score_output)
             if not isinstance(score_payload, dict):
-                raise ClosureError("authoritative scorer output is not an object")
-            validate_sb7_score_payload(score_payload, job["score_contract"], seed)
-            forbidden = {"entrant", "rep", "agent", "actual_pool", "actual_nodes", "vendor_port", "closure"}
-            if forbidden & set(score_payload):
-                raise ClosureError("authoritative scorer supplied parent-owned publication fields")
-            score_tree_seal = tree_manifest(clone)
-            atomic_json(score_tree_seal_path, score_tree_seal)
-            score_tree_sha256 = score_tree_seal["tree_sha256"]
+                accepted_exit = 70
+                failure = "authoritative scorer output is not an object"
+            else:
+                supplemental_schema = None
+                try:
+                    validate_sb7_score_payload(
+                        score_payload, job["score_contract"], seed
+                    )
+                except ClosureError as strict_error:
+                    try:
+                        supplemental_schema = run_notification_schema_failure_probe(
+                            clone,
+                            score_payload,
+                            raw_tree_sha256=str(job["raw_tree_sha256"]),
+                        )
+                        validate_sb7_score_payload(
+                            score_payload,
+                            job["score_contract"],
+                            seed,
+                            supplemental_product_schema_failure=supplemental_schema,
+                        )
+                    except ClosureError:
+                        accepted_exit = 70
+                        failure = str(strict_error)
+                forbidden = {
+                    "entrant",
+                    "rep",
+                    "agent",
+                    "actual_pool",
+                    "actual_nodes",
+                    "vendor_port",
+                    "closure",
+                }
+                if accepted_exit == 0 and forbidden & set(score_payload):
+                    accepted_exit = 70
+                    failure = (
+                        "authoritative scorer supplied parent-owned publication fields"
+                    )
+                if accepted_exit == 0:
+                    if supplemental_schema is not None:
+                        atomic_json(supplemental_schema_path, supplemental_schema)
+                        supplemental_schema_sha256 = sha256_file(
+                            supplemental_schema_path
+                        )
+                    score_tree_seal = tree_manifest(clone)
+                    atomic_json(score_tree_seal_path, score_tree_seal)
+                    score_tree_sha256 = score_tree_seal["tree_sha256"]
         result = {
             "schema_version": SCHEMA_VERSION,
             "attempt": job["attempt"],
@@ -4438,6 +5216,9 @@ def score_worker_impl(job: Mapping[str, Any]) -> int:
             "score_sha256": sha256_file(score_output)
             if accepted_exit == 0 and score_output.is_file()
             else None,
+            "supplemental_product_schema_failure_sha256": (
+                supplemental_schema_sha256
+            ),
             "score_tree_sha256": score_tree_sha256,
             "score_tree_seal_sha256": sha256_file(score_tree_seal_path)
             if score_tree_seal_path.is_file()
