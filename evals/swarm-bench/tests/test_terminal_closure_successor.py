@@ -25,7 +25,7 @@ class ApprovedAnchorTests(unittest.TestCase):
         self.assertEqual(
             successor.APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION,
             {
-                "v21-r5": "0bfa5e8d13708919d69c1cdd26f52baa77b2f47da0ef7a41818477bec3fe3e04"
+                "v22": "5941e31cf886ed3ddaab649fe18961c7e68fbb2af38a495a300fa58355735891"
             },
         )
 
@@ -34,13 +34,13 @@ class SuccessorBindingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temporary.name)
-        self.live_root = self.root / "local-sb7-engine-v21-r5"
+        self.live_root = self.root / "local-sb7-engine-v22"
         self.run_dir = self.live_root / "swarm-3node-qwen38-brainwaves-r0"
-        self.state_dir = self.root / "local-sb7-engine-v21-r5-terminal-closure"
+        self.state_dir = self.root / "local-sb7-engine-v22-terminal-closure"
         self.live_root.mkdir()
         self.run_dir.mkdir()
 
-        self.launcher = self.live_root / "launch_local_v21_r5.py"
+        self.launcher = self.live_root / "launch_local_v22.py"
         self.launcher.write_text("raise SystemExit('fixture only')\n", encoding="utf-8")
         self.launcher.chmod(0o400)
         self.binary = self.live_root / "bin" / "goose-successor"
@@ -51,12 +51,15 @@ class SuccessorBindingTests(unittest.TestCase):
 
         self.candidate_commit = "1" * 40
         self.candidate_tree = "2" * 40
-        self.candidate_branch = "codex/swarm-v21-pillar-flow"
+        self.candidate_branch = "codex/swarm-next-semantic-flow"
         self.candidate_remote_ref = f"origin/{self.candidate_branch}"
         self.wrapper_sha256 = "a" * 64
         instrument_files = {
             "evals/swarm-bench/bench/run_build_local_v20.py": "3" * 64,
-            "evals/swarm-bench/bench/score_sb7.py": "4" * 64,
+            "evals/swarm-bench/spec-build-sb7.md": successor.SPEC_SHA256,
+            "evals/swarm-bench/bench/score_sb7.py": successor.SCORER_SHA256,
+            "evals/swarm-bench/bench/sb7-thresholds.json": successor.THRESHOLDS_SHA256,
+            "evals/swarm-bench/bench/product_probe_v3.mjs": "4" * 64,
         }
         manifest = {
             "schema_version": 2,
@@ -81,7 +84,7 @@ class SuccessorBindingTests(unittest.TestCase):
                         "evals/swarm-bench",
                         "scripts/monitor_swarm_run.py",
                     ],
-                    "file_count": 1,
+                    "file_count": 4,
                     "inventory_sha256": "b" * 64,
                 },
                 "inherited_overlay": {
@@ -94,7 +97,7 @@ class SuccessorBindingTests(unittest.TestCase):
                         * 64
                     },
                 },
-                "total_file_count": 2,
+                "total_file_count": 5,
                 "tracked_only_archive": True,
                 "python_cache_debris_forbidden": True,
                 "symlinks_forbidden": True,
@@ -112,16 +115,9 @@ class SuccessorBindingTests(unittest.TestCase):
                 ),
                 "monitor_policy": "observation-only",
             },
-            "sb7_policy": {
-                "spec_and_scorer_unchanged_from_v6": True,
-                "website_surface": "stable-sb7",
-                "publish_from_run_build_auto_score": False,
-                "entrant": "swarm-3node-qwen38-brainwaves",
-                "publication_document_id": successor.TARGET_DOCUMENT_ID,
-                "protected_document_ids": list(
-                    successor.PROTECTED_DOCUMENT_ID_ORDER
-                ),
-            },
+            "sb7_policy": successor.expected_sb7_policy(
+                "swarm-3node-qwen38-brainwaves"
+            ),
             "publisher_closure": {
                 "binding": "deferred-until-authenticated-run-started-and-fixture-seed",
                 "protected_publication_untouched_during_freeze": True,
@@ -172,7 +168,44 @@ class SuccessorBindingTests(unittest.TestCase):
         )
 
         self.publisher = self.root / "publisher.mjs"
-        self.publisher.write_text("export const guarded = true;\n", encoding="utf-8")
+        self.publisher.write_text(
+            "\n".join(
+                (
+                    f"export const TARGET_DOCUMENT_ID = '{successor.PREDECESSOR_TARGET_DOCUMENT_ID}';",
+                    "export const PROTECTED_DOCUMENT_IDS = Object.freeze([",
+                    "  'brun-fleet-qwen38-sb70',",
+                    "  'brun-fleet-qwen-sb70',",
+                    "]);",
+                    f"export const PUBLIC_PROVENANCE_MARKER = '{successor.PUBLISHER_SOURCE_PROVENANCE_MARKER}';",
+                    "`Full sb-7 tier means (the public schema exposes A–D separately): ${tierLine}. Raw scorer and calibration provenance remain in the sealed local closure receipt; the public board intentionally stays on its single sb-7.0 era.`,",
+                    "'protected-document positive control did not resolve both frozen IDs'",
+                    "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact v21 provenance');",
+                    "  if (",
+                    "    runHtml.includes('Brainwaves v20') ||",
+                    "    runHtml.includes('Brainwaves v19') ||",
+                    "    runHtml.includes('Brainwaves v18') ||",
+                    "    runHtml.includes('Brainwaves v17')",
+                    "  ) {",
+                    "    failures.push('run page contains stale pre-v21 provenance');",
+                    "  }",
+                    "  if (state?.initialized) {",
+                    "    invariant(state.target_document_id === TARGET_DOCUMENT_ID, 'publisher state target changed');",
+                    "  } else {",
+                    "    invariant(!existingTarget, 'new target document already exists without this closure state; refusing to replace it');",
+                    "    state = persistOperationState(state, {",
+                    "      schema_version: 1,",
+                    "      initialized: true,",
+                    "    });",
+                    "  }",
+                    "  const receipt = {",
+                    "    create_only: true,",
+                    "    screenshots: [],",
+                    "  };",
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         self.publisher.chmod(0o400)
         self.usage_policy = self.root / "usage_impairment.py"
         self.usage_policy.write_bytes((ROOT / "usage_impairment.py").read_bytes())
@@ -188,7 +221,7 @@ class SuccessorBindingTests(unittest.TestCase):
         predecessor_anchor = mock.patch.object(
             successor,
             "APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION",
-            {"v21-r5": successor.sha256_file(self.base_config_path)},
+            {"v22": successor.sha256_file(self.base_config_path)},
         )
         controller_anchor = mock.patch.object(
             successor,
@@ -245,11 +278,11 @@ class SuccessorBindingTests(unittest.TestCase):
                 "telemetry_nodes": ["gabee", "mihai", "workhorse"],
             },
             "publication": {
-                "target_document_id": successor.TARGET_DOCUMENT_ID,
+                "target_document_id": successor.PREDECESSOR_TARGET_DOCUMENT_ID,
                 "protected_document_ids": list(
-                    successor.PROTECTED_DOCUMENT_ID_ORDER
+                    successor.PREDECESSOR_PROTECTED_DOCUMENT_ID_ORDER
                 ),
-                "provenance_marker": "Brainwaves v21",
+                "provenance_marker": successor.PREDECESSOR_PUBLICATION_PROVENANCE_MARKER,
             },
             "publisher": {
                 "path": str(self.publisher),
@@ -307,7 +340,7 @@ class SuccessorBindingTests(unittest.TestCase):
     ) -> None:
         base_before = self.base_config_path.read_bytes()
         receipt = successor.generate_successor(
-            generation="v21-r5",
+            generation="v22",
             live_root=self.live_root,
             state_dir=self.state_dir,
             base_config_path=self.base_config_path,
@@ -330,6 +363,16 @@ class SuccessorBindingTests(unittest.TestCase):
         )
         self.assertEqual(generated.V19_BOUND_RUN_ID, "swarm-20260826-123456789")
         self.assertEqual(generated.V19_INSTRUMENT_MANIFEST_SCHEMA_VERSION, 2)
+        self.assertEqual(generated.V19_TARGET_DOCUMENT_ID, successor.TARGET_DOCUMENT_ID)
+        self.assertEqual(
+            generated.V19_PROTECTED_DOCUMENT_ID_ORDER,
+            successor.PROTECTED_DOCUMENT_ID_ORDER,
+        )
+        self.assertEqual(generated.V19_SCORER_SHA256, successor.SCORER_SHA256)
+        self.assertEqual(
+            generated.V19_PREDECESSOR_SCORER_SHA256,
+            successor.PREDECESSOR_SCORER_SHA256,
+        )
         self.assertEqual(
             generated.V19_BOUND_PROCESSES,
             {
@@ -340,6 +383,32 @@ class SuccessorBindingTests(unittest.TestCase):
         )
         exact = generated.load_config(pathlib.Path(receipt["template"]))
         generated.validate_config(exact, allow_unarmed=True)
+        publisher_path = pathlib.Path(exact["publisher"]["path"])
+        publisher_text = publisher_path.read_text(encoding="utf-8")
+        self.assertIn(successor.TARGET_DOCUMENT_ID, publisher_text)
+        self.assertIn(successor.PUBLICATION_PROVENANCE_MARKER, publisher_text)
+        self.assertIn("target_absent_before", publisher_text)
+        self.assertEqual(
+            exact["publisher"]["source_sha256"],
+            successor.sha256_file(self.publisher),
+        )
+        self.assertEqual(exact["publisher"]["sha256"], receipt["publisher_sha256"])
+        self.assertEqual(
+            successor.sha256_file(publisher_path), receipt["publisher_sha256"]
+        )
+        node = successor.shutil.which("node")
+        if node is not None:
+            checked = successor.subprocess.run(
+                [node, "--check", str(publisher_path)],
+                check=False,
+                stdout=successor.subprocess.PIPE,
+                stderr=successor.subprocess.PIPE,
+            )
+            self.assertEqual(checked.returncode, 0, checked.stderr.decode())
+        self.assertEqual(
+            exact["expected"]["scorer_change_authorization"],
+            successor.SCORER_CHANGE_AUTHORIZATION,
+        )
         self.assertFalse((self.state_dir / "closure-instrument").exists())
         self.assertEqual(
             pathlib.Path(exact["publisher"]["path"]).parent.resolve(),
@@ -348,7 +417,7 @@ class SuccessorBindingTests(unittest.TestCase):
         frozen = json.loads(json.dumps(exact))
         instrument = self.state_dir / "closure-instrument"
         frozen["publisher"]["path"] = str(
-            instrument / "seed-fleet-brainwaves-sb70.mjs"
+            instrument / successor.PUBLISHER_FILENAME
         )
         frozen["usage_policy"]["path"] = str(instrument / "usage_impairment.py")
         generated.materialize_closure_instrument_snapshot(
@@ -359,7 +428,7 @@ class SuccessorBindingTests(unittest.TestCase):
                     "sha256": receipt["controller_sha256"],
                     "mode": 0o500,
                 },
-                "seed-fleet-brainwaves-sb70.mjs": {
+                successor.PUBLISHER_FILENAME: {
                     "path": exact["publisher"]["path"],
                     "sha256": exact["publisher"]["sha256"],
                     "mode": 0o500,
@@ -376,7 +445,7 @@ class SuccessorBindingTests(unittest.TestCase):
             {path.name for path in instrument.iterdir()},
             {
                 "terminal_closure.py",
-                "seed-fleet-brainwaves-sb70.mjs",
+                successor.PUBLISHER_FILENAME,
                 "usage_impairment.py",
                 "config.json",
                 "manifest.json",
@@ -393,7 +462,7 @@ class SuccessorBindingTests(unittest.TestCase):
                 "protected_document_ids": list(
                     successor.PROTECTED_DOCUMENT_ID_ORDER
                 ),
-                "provenance_marker": "Brainwaves v21",
+                "provenance_marker": successor.PUBLICATION_PROVENANCE_MARKER,
             },
         )
         with self.assertRaises(generated.ClosureError):
@@ -429,6 +498,14 @@ class SuccessorBindingTests(unittest.TestCase):
         )
         self.assertEqual(
             binding["predecessor_config_sha256"], successor.sha256_bytes(base_before)
+        )
+        self.assertEqual(binding["publisher_sha256"], receipt["publisher_sha256"])
+        self.assertEqual(
+            binding["publisher_source_sha256"], receipt["publisher_source_sha256"]
+        )
+        self.assertEqual(
+            binding["publication_contract_sha256"],
+            receipt["publication_contract_sha256"],
         )
         self.assertEqual(
             receipt["predecessor_config_sha256"], successor.sha256_bytes(base_before)
@@ -472,6 +549,16 @@ class SuccessorBindingTests(unittest.TestCase):
                 "protected_document_ids",
                 list(reversed(successor.PROTECTED_DOCUMENT_ID_ORDER)),
             ),
+            "stale unchanged claim": lambda value: value["sb7_policy"].__setitem__(
+                "spec_and_scorer_unchanged_from_v6", True
+            ),
+            "unauthorized scorer": lambda value: value["sb7_policy"][
+                "contract_hashes"
+            ].__setitem__("scorer_sha256", successor.PREDECESSOR_SCORER_SHA256),
+            "scorer inventory": lambda value: value["files"].__setitem__(
+                "evals/swarm-bench/bench/score_sb7.py",
+                successor.PREDECESSOR_SCORER_SHA256,
+            ),
             "privacy": lambda value: value["privacy"].__setitem__(
                 "raw_argv_persisted", True
             ),
@@ -484,10 +571,46 @@ class SuccessorBindingTests(unittest.TestCase):
                 self._rewrite_manifest(changed)
                 with self.assertRaises(successor.SuccessorBindingError):
                     successor.successor_evidence(
-                        "v21-r5", self.live_root, self.state_dir
+                        "v22", self.live_root, self.state_dir
                     )
                 self.assertFalse(self.state_dir.exists())
         self._rewrite_manifest(original)
+
+    def test_publisher_rendering_is_exact_and_rejects_anchor_drift(self) -> None:
+        source = self.publisher.read_bytes()
+        rendered = successor.render_publisher(source)
+        text = rendered.decode("utf-8")
+        self.assertIn(
+            f"export const TARGET_DOCUMENT_ID = '{successor.TARGET_DOCUMENT_ID}';",
+            text,
+        )
+        self.assertIn(
+            f"export const PUBLIC_PROVENANCE_MARKER = '{successor.PUBLICATION_PROVENANCE_MARKER}';",
+            text,
+        )
+        for document_id in successor.PROTECTED_DOCUMENT_ID_ORDER:
+            self.assertIn(f"  '{document_id}',", text)
+        self.assertIn("target-absence positive control", text)
+        self.assertIn("target_absent_before", text)
+        self.assertIn("authorized notifier reachability classifier repair", text)
+        with self.assertRaisesRegex(
+            successor.SuccessorBindingError, "document contract anchor"
+        ):
+            successor.render_publisher(
+                source.replace(b"export const TARGET_DOCUMENT_ID", b"const TARGET_DOCUMENT_ID")
+            )
+
+    def test_successor_rejects_a_different_entrant_before_creating_state(self) -> None:
+        launch = json.loads(self.launch_path.read_text(encoding="utf-8"))
+        launch["entrant"] = "different-entrant"
+        self.launch_path.write_text(
+            json.dumps(launch, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(
+            successor.SuccessorBindingError, "entrant identity"
+        ):
+            successor.successor_evidence("v22", self.live_root, self.state_dir)
+        self.assertFalse(self.state_dir.exists())
 
     def test_oversized_release_binary_streams_with_a_cap_and_rejects_tamper(
         self,
@@ -520,7 +643,7 @@ class SuccessorBindingTests(unittest.TestCase):
         self._rewrite_manifest(manifest)
 
         evidence = successor.successor_evidence(
-            "v21-r5", self.live_root, self.state_dir
+            "v22", self.live_root, self.state_dir
         )
         self.assertEqual(evidence["binary_sha256"], digest)
         self.assertFalse(self.state_dir.exists())
@@ -533,12 +656,12 @@ class SuccessorBindingTests(unittest.TestCase):
             successor.SuccessorBindingError, "binary path/hash/mode"
         ):
             successor.successor_evidence(
-                "v21-r5", self.live_root, self.state_dir
+                "v22", self.live_root, self.state_dir
             )
 
     def test_generation_is_append_only_and_rejects_different_successor_bytes(self) -> None:
         kwargs = {
-            "generation": "v21-r5",
+            "generation": "v22",
             "live_root": self.live_root,
             "state_dir": self.state_dir,
             "base_config_path": self.base_config_path,
@@ -576,7 +699,7 @@ class SuccessorBindingTests(unittest.TestCase):
 
     def test_unapproved_predecessor_and_controller_are_rejected(self) -> None:
         kwargs = {
-            "generation": "v21-r5",
+            "generation": "v22",
             "live_root": self.live_root,
             "state_dir": self.state_dir,
             "base_config_path": self.base_config_path,
@@ -585,7 +708,7 @@ class SuccessorBindingTests(unittest.TestCase):
         with mock.patch.object(
             successor,
             "APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION",
-            {"v21-r5": "0" * 64},
+            {"v22": "0" * 64},
         ):
             with self.assertRaisesRegex(
                 successor.SuccessorBindingError, "predecessor closure config"
@@ -616,7 +739,7 @@ class SuccessorBindingTests(unittest.TestCase):
 
     def test_changed_evidence_is_rejected_before_destination_commit(self) -> None:
         first = successor.successor_evidence(
-            "v21-r5", self.live_root, self.state_dir
+            "v22", self.live_root, self.state_dir
         )
         changed = json.loads(json.dumps(first))
         changed["run_id"] = "swarm-20260826-987654321"
@@ -627,7 +750,7 @@ class SuccessorBindingTests(unittest.TestCase):
                 successor.SuccessorBindingError, "evidence changed before"
             ):
                 successor.generate_successor(
-                    generation="v21-r5",
+                    generation="v22",
                     live_root=self.live_root,
                     state_dir=self.state_dir,
                     base_config_path=self.base_config_path,

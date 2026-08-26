@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create an append-only terminal-closure source/config pair for one live V21 successor."""
+"""Create the append-only terminal-closure source/config pair for one live V22 run."""
 
 from __future__ import annotations
 
@@ -26,13 +26,23 @@ END_MARKER = "# END TERMINAL_CLOSURE_RUN_BINDING"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 RUN_ID_RE = re.compile(r"^swarm-\d{8}-\d{9}$")
-GENERATION_RE = re.compile(r"^v21-r(?:[5-9]|[1-9]\d+)$")
-TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
+GENERATION = "v22"
+TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-v22-sb70"
+PREDECESSOR_TARGET_DOCUMENT_ID = "brun-fleet-qwen38-brainwaves-sb70"
+PUBLICATION_PROVENANCE_MARKER = "Brainwaves v22"
+PREDECESSOR_PUBLICATION_PROVENANCE_MARKER = "Brainwaves v21"
+PUBLISHER_SOURCE_PROVENANCE_MARKER = "Brainwaves v21"
+PUBLISHER_FILENAME = "seed-fleet-brainwaves-v22-sb70.mjs"
 PROTECTED_DOCUMENT_ID_ORDER = (
+    PREDECESSOR_TARGET_DOCUMENT_ID,
     "brun-fleet-qwen38-sb70",
     "brun-fleet-qwen-sb70",
 )
 PROTECTED_DOCUMENT_IDS = frozenset(PROTECTED_DOCUMENT_ID_ORDER)
+PREDECESSOR_PROTECTED_DOCUMENT_ID_ORDER = (
+    "brun-fleet-qwen38-sb70",
+    "brun-fleet-qwen-sb70",
+)
 EXACT_MODEL_ALIASES = frozenset(
     {
         "gabee-qwen3.8-27b-brainwaves-mxfp8-mlx",
@@ -49,12 +59,30 @@ EXPECTED_QUANTIZATION_SHA256 = (
     "267f67a60ca5f10733c610ff4be23d9bf6107a66de92ba1f37757c1d8aaec767"
 )
 EXPECTED_PLANNER_MODEL = "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx"
+EXPECTED_ENTRANT = "swarm-3node-qwen38-brainwaves"
 APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION = {
-    "v21-r5": "0bfa5e8d13708919d69c1cdd26f52baa77b2f47da0ef7a41818477bec3fe3e04",
+    "v22": "5941e31cf886ed3ddaab649fe18961c7e68fbb2af38a495a300fa58355735891",
 }
 APPROVED_CONTROLLER_SOURCE_SHA256 = (
-    "5a895119f13b4c1ab5c65c0504241077dac41bf36fa121dc8249e0f02bd4e965"
+    "f404b88cb191386dc350c2579880509fa19fc55f1ec7275a6cf5fc95c2e54f3e"
 )
+SPEC_SHA256 = "56f66c21c3557e9cbf6bccc4d4d01059ad88e4ee610e71f4cf67a8a34c330129"
+PREDECESSOR_SCORER_SHA256 = (
+    "3fcfce9d6ea302861d0ed2d956d0ec401adb924021ef9fa0e3d74548f2ed5fea"
+)
+SCORER_SHA256 = "3fdaa698730f63c3082db133f1524ee3992c66bfab879821b7f1a301872cd46a"
+THRESHOLDS_SHA256 = (
+    "a945595fbfcd36f7837e4f3cf558e30a8964301f7108b96c7a3418968d35abc3"
+)
+SCORER_CHANGE_AUTHORIZATION = {
+    "reason": "notifier-reachability-classifier-repair",
+    "scope": "reachable-schema-failure-vs-transport-unavailable-classification",
+    "predecessor_scorer_sha256": PREDECESSOR_SCORER_SHA256,
+    "scorer_sha256": SCORER_SHA256,
+    "check_count": 91,
+    "check_registry_unchanged": True,
+    "check_weights_unchanged": True,
+}
 
 
 class SuccessorBindingError(RuntimeError):
@@ -75,6 +103,137 @@ def sha256_file(path: pathlib.Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def publication_contract() -> dict[str, Any]:
+    return {
+        "target_document_id": TARGET_DOCUMENT_ID,
+        "protected_document_ids": list(PROTECTED_DOCUMENT_ID_ORDER),
+        "provenance_marker": PUBLICATION_PROVENANCE_MARKER,
+    }
+
+
+def expected_sb7_policy(entrant: str) -> dict[str, Any]:
+    return {
+        "contract_hashes": {
+            "spec_sha256": SPEC_SHA256,
+            "scorer_sha256": SCORER_SHA256,
+            "thresholds_sha256": THRESHOLDS_SHA256,
+        },
+        "scorer_change_authorization": dict(SCORER_CHANGE_AUTHORIZATION),
+        "website_surface": "stable-sb7",
+        "publish_from_run_build_auto_score": False,
+        "entrant": entrant,
+        "publication_document_id": TARGET_DOCUMENT_ID,
+        "protected_document_ids": list(PROTECTED_DOCUMENT_ID_ORDER),
+    }
+
+
+def replace_exact_once(source: str, before: str, after: str, identity: str) -> str:
+    if source.count(before) != 1:
+        raise SuccessorBindingError(
+            f"guarded publisher {identity} anchor is not unique"
+        )
+    return source.replace(before, after, 1)
+
+
+def render_publisher(source: bytes) -> bytes:
+    try:
+        text = source.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise SuccessorBindingError("guarded publisher source is not UTF-8") from error
+    old_contract = "\n".join(
+        (
+            f"export const TARGET_DOCUMENT_ID = '{PREDECESSOR_TARGET_DOCUMENT_ID}';",
+            "export const PROTECTED_DOCUMENT_IDS = Object.freeze([",
+            "  'brun-fleet-qwen38-sb70',",
+            "  'brun-fleet-qwen-sb70',",
+            "]);",
+        )
+    )
+    new_contract = "\n".join(
+        (
+            f"export const TARGET_DOCUMENT_ID = '{TARGET_DOCUMENT_ID}';",
+            "export const PROTECTED_DOCUMENT_IDS = Object.freeze([",
+            *[f"  '{document_id}'," for document_id in PROTECTED_DOCUMENT_ID_ORDER],
+            "]);",
+        )
+    )
+    text = replace_exact_once(text, old_contract, new_contract, "document contract")
+    text = replace_exact_once(
+        text,
+        f"export const PUBLIC_PROVENANCE_MARKER = '{PUBLISHER_SOURCE_PROVENANCE_MARKER}';",
+        f"export const PUBLIC_PROVENANCE_MARKER = '{PUBLICATION_PROVENANCE_MARKER}';",
+        "provenance marker",
+    )
+    text = replace_exact_once(
+        text,
+        "`Full sb-7 tier means (the public schema exposes A–D separately): ${tierLine}. Raw scorer and calibration provenance remain in the sealed local closure receipt; the public board intentionally stays on its single sb-7.0 era.`,",
+        "`Full sb-7 tier means (the public schema exposes A–D separately): ${tierLine}. The scorer hash differs from Brainwaves v21 only for the authorized notifier reachability classifier repair; all 91 check definitions and weights are unchanged. Exact scorer and calibration provenance remain in the sealed local closure receipt; the public board intentionally stays on its single sb-7.0 era.`,",
+        "authorized scorer-change disclosure",
+    )
+    text = replace_exact_once(
+        text,
+        "'protected-document positive control did not resolve both frozen IDs'",
+        "'protected-document positive control did not resolve all frozen IDs'",
+        "protected positive-control message",
+    )
+    text = replace_exact_once(
+        text,
+        "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact v21 provenance');\n"
+        "  if (\n"
+        "    runHtml.includes('Brainwaves v20') ||\n"
+        "    runHtml.includes('Brainwaves v19') ||\n"
+        "    runHtml.includes('Brainwaves v18') ||\n"
+        "    runHtml.includes('Brainwaves v17')\n"
+        "  ) {\n"
+        "    failures.push('run page contains stale pre-v21 provenance');\n"
+        "  }",
+        "if (!runHtml.includes(PUBLIC_PROVENANCE_MARKER)) failures.push('run page lacks exact publication provenance');\n"
+        "  for (const staleMarker of ['Brainwaves v17', 'Brainwaves v18', 'Brainwaves v19', 'Brainwaves v20', 'Brainwaves v21']) {\n"
+        "    if (runHtml.includes(staleMarker)) failures.push(`run page contains stale provenance ${staleMarker}`);\n"
+        "  }",
+        "rendered provenance verification",
+    )
+    text = replace_exact_once(
+        text,
+        "  if (state?.initialized) {\n"
+        "    invariant(state.target_document_id === TARGET_DOCUMENT_ID, 'publisher state target changed');",
+        "  if (state?.initialized) {\n"
+        "    invariant(state.target_absent_before === true, 'publisher state lacks target-absence proof');\n"
+        "    invariant(state.target_document_id === TARGET_DOCUMENT_ID, 'publisher state target changed');",
+        "resume target-absence proof",
+    )
+    text = replace_exact_once(
+        text,
+        "  } else {\n"
+        "    invariant(!existingTarget, 'new target document already exists without this closure state; refusing to replace it');\n"
+        "    state = persistOperationState(state, {\n"
+        "      schema_version: 1,\n"
+        "      initialized: true,",
+        "  } else {\n"
+        "    invariant(!existingTarget, 'new target document already exists without this closure state; refusing to replace it');\n"
+        "    invariant(\n"
+        "      JSON.stringify(beforeRows.map((row) => row._id).sort()) === JSON.stringify([...PROTECTED_DOCUMENT_IDS].sort()),\n"
+        "      'target-absence positive control did not resolve the exact protected set',\n"
+        "    );\n"
+        "    state = persistOperationState(state, {\n"
+        "      schema_version: 1,\n"
+        "      initialized: true,\n"
+        "      target_absent_before: true,",
+        "initial target-absence proof",
+    )
+    text = replace_exact_once(
+        text,
+        "    create_only: true,\n"
+        "    screenshots:",
+        "    create_only: true,\n"
+        "    target_absent_before: state.target_absent_before === true,\n"
+        "    protected_positive_control_ids: state.protected_before.map((row) => row._id),\n"
+        "    screenshots:",
+        "target-absence receipt",
+    )
+    return text.encode("utf-8")
 
 
 def stable_file_sha256(
@@ -463,16 +622,20 @@ def validate_successor_instrument_manifest(
         )
 
     entrant = launch.get("entrant")
-    if manifest.get("sb7_policy") != {
-        "spec_and_scorer_unchanged_from_v6": True,
-        "website_surface": "stable-sb7",
-        "publish_from_run_build_auto_score": False,
-        "entrant": entrant,
-        "publication_document_id": TARGET_DOCUMENT_ID,
-        "protected_document_ids": list(PROTECTED_DOCUMENT_ID_ORDER),
-    }:
+    if entrant != EXPECTED_ENTRANT:
+        raise SuccessorBindingError("successor entrant identity changed")
+    if manifest.get("sb7_policy") != expected_sb7_policy(entrant):
         raise SuccessorBindingError(
             "successor publication/protected-document policy changed"
+        )
+    exact_contract_files = {
+        "evals/swarm-bench/spec-build-sb7.md": SPEC_SHA256,
+        "evals/swarm-bench/bench/score_sb7.py": SCORER_SHA256,
+        "evals/swarm-bench/bench/sb7-thresholds.json": THRESHOLDS_SHA256,
+    }
+    if any(files.get(relative) != digest for relative, digest in exact_contract_files.items()):
+        raise SuccessorBindingError(
+            "successor instrument manifest SB7 contract hashes differ"
         )
     if manifest.get("publisher_closure") != {
         "binding": "deferred-until-authenticated-run-started-and-fixture-seed",
@@ -521,8 +684,8 @@ def successor_evidence(
     live_root: pathlib.Path,
     state_dir: pathlib.Path,
 ) -> dict[str, Any]:
-    if not GENERATION_RE.fullmatch(generation):
-        raise SuccessorBindingError("successor generation must be v21-r5 or later")
+    if generation != GENERATION:
+        raise SuccessorBindingError("successor generation must be exact v22")
     if live_root.is_symlink() or not live_root.is_dir():
         raise SuccessorBindingError("successor live root is missing or linked")
     live_root = live_root.resolve()
@@ -613,7 +776,11 @@ def successor_evidence(
     }
 
 
-def binding_block(evidence: Mapping[str, Any], base_config: Mapping[str, Any]) -> str:
+def binding_block(
+    evidence: Mapping[str, Any],
+    base_config: Mapping[str, Any],
+    rendered_publisher_sha256: str,
+) -> str:
     publisher = base_config.get("publisher")
     usage_policy = base_config.get("usage_policy")
     publication = base_config.get("publication")
@@ -621,9 +788,11 @@ def binding_block(evidence: Mapping[str, Any], base_config: Mapping[str, Any]) -
         not isinstance(publisher, dict)
         or not isinstance(usage_policy, dict)
         or not isinstance(publication, dict)
-        or publication.get("target_document_id") != TARGET_DOCUMENT_ID
+        or publication.get("target_document_id") != PREDECESSOR_TARGET_DOCUMENT_ID
         or publication.get("protected_document_ids")
-        != list(PROTECTED_DOCUMENT_ID_ORDER)
+        != list(PREDECESSOR_PROTECTED_DOCUMENT_ID_ORDER)
+        or publication.get("provenance_marker")
+        != PREDECESSOR_PUBLICATION_PROVENANCE_MARKER
     ):
         raise SuccessorBindingError("base closure publication contract is not protected")
     required_hashes = (
@@ -633,6 +802,8 @@ def binding_block(evidence: Mapping[str, Any], base_config: Mapping[str, Any]) -
     )
     if any(not SHA256_RE.fullmatch(str(value)) for value in required_hashes):
         raise SuccessorBindingError("base closure frozen source hash is malformed")
+    if not SHA256_RE.fullmatch(rendered_publisher_sha256):
+        raise SuccessorBindingError("rendered publisher hash is malformed")
     recorded_binary = evidence.get("instrument_recorded_binary")
     if not isinstance(recorded_binary, dict):
         raise SuccessorBindingError("instrument manifest lacks its recorded binary")
@@ -660,6 +831,11 @@ def binding_block(evidence: Mapping[str, Any], base_config: Mapping[str, Any]) -
         f"V19_EXPECTED_QUANTIZATION_SHA256 = {EXPECTED_QUANTIZATION_SHA256!r}",
         f"V19_EXPECTED_PLANNER_MODEL = {EXPECTED_PLANNER_MODEL!r}",
         f"V19_ROLE_PREFIXES = {ROLE_PREFIXES!r}",
+        f"V19_SPEC_SHA256 = {SPEC_SHA256!r}",
+        f"V19_PREDECESSOR_SCORER_SHA256 = {PREDECESSOR_SCORER_SHA256!r}",
+        f"V19_SCORER_SHA256 = {SCORER_SHA256!r}",
+        f"V19_THRESHOLDS_SHA256 = {THRESHOLDS_SHA256!r}",
+        f"V19_SCORER_CHANGE_AUTHORIZATION = {SCORER_CHANGE_AUTHORIZATION!r}",
         f"V19_CANDIDATE_COMMIT = {evidence['candidate_commit']!r}",
         f"V19_CANDIDATE_TREE = {evidence['candidate_tree']!r}",
         f"V19_BINARY = pathlib.Path({str(evidence['binary_path'])!r})",
@@ -669,11 +845,12 @@ def binding_block(evidence: Mapping[str, Any], base_config: Mapping[str, Any]) -
         f"{evidence['instrument_manifest_schema_version']!r}",
         f"V19_INSTRUMENT_RECORDED_BINARY = {recorded_binary!r}",
         f"V19_PUBLISHER_COMMIT = {publisher.get('git_commit')!r}",
-        f"V19_PUBLISHER_SHA256 = {publisher.get('sha256')!r}",
+        f"V19_PUBLISHER_SOURCE_SHA256 = {publisher.get('sha256')!r}",
+        f"V19_PUBLISHER_SHA256 = {rendered_publisher_sha256!r}",
         f"V19_USAGE_POLICY_SHA256 = {usage_policy.get('sha256')!r}",
-        f"V19_PUBLISHER_MARKER = {publication.get('provenance_marker')!r}",
+        f"V19_PUBLISHER_MARKER = {PUBLICATION_PROVENANCE_MARKER!r}",
         f"V19_PUBLISHER_ROOT = pathlib.Path({publisher.get('site_root')!r})",
-        "V19_PUBLISHER_PATH = V19_STATE_DIR / 'bootstrap' / 'seed-fleet-brainwaves-sb70.mjs'",
+        f"V19_PUBLISHER_PATH = V19_STATE_DIR / 'bootstrap' / {PUBLISHER_FILENAME!r}",
         "V19_USAGE_POLICY_PATH = V19_STATE_DIR / 'bootstrap' / 'usage_impairment.py'",
         f"V19_BOUND_LAUNCH_SHA256 = {evidence['launch_sha256']!r}",
         f"V19_BOUND_RUN_ID = {evidence['run_id']!r}",
@@ -683,7 +860,10 @@ def binding_block(evidence: Mapping[str, Any], base_config: Mapping[str, Any]) -
 
 
 def render_controller(
-    source: bytes, evidence: Mapping[str, Any], base_config: Mapping[str, Any]
+    source: bytes,
+    evidence: Mapping[str, Any],
+    base_config: Mapping[str, Any],
+    rendered_publisher_sha256: str,
 ) -> bytes:
     text = source.decode("utf-8")
     start = text.find(START_MARKER)
@@ -693,7 +873,11 @@ def render_controller(
     if text.find(START_MARKER, start + 1) >= 0 or text.find(END_MARKER, end + 1) >= 0:
         raise SuccessorBindingError("terminal closer repeats its run-binding markers")
     end += len(END_MARKER)
-    return (text[:start] + binding_block(evidence, base_config) + text[end:]).encode()
+    return (
+        text[:start]
+        + binding_block(evidence, base_config, rendered_publisher_sha256)
+        + text[end:]
+    ).encode()
 
 
 def successor_template(
@@ -701,6 +885,8 @@ def successor_template(
     evidence: Mapping[str, Any],
     controller_sha256: str,
     publisher_path: pathlib.Path,
+    publisher_source_sha256: str,
+    publisher_sha256: str,
     usage_policy_path: pathlib.Path,
 ) -> dict[str, Any]:
     template = json.loads(json.dumps(base_config))
@@ -718,6 +904,7 @@ def successor_template(
         }
     )
     template.pop("binding_successor", None)
+    template["publication"] = publication_contract()
     template["expected"].update(
         {
             "candidate_commit": evidence["candidate_commit"],
@@ -736,9 +923,24 @@ def successor_template(
             "trace_header_sha256": None,
             "fleet_seal_sha256": None,
             "fleet_binding_sha256": None,
+            "spec_sha256": SPEC_SHA256,
+            "predecessor_scorer_sha256": PREDECESSOR_SCORER_SHA256,
+            "scorer_sha256": SCORER_SHA256,
+            "thresholds_sha256": THRESHOLDS_SHA256,
+            "scorer_change_authorization": dict(SCORER_CHANGE_AUTHORIZATION),
         }
     )
     template["publisher"]["path"] = str(publisher_path)
+    template["publisher"]["source_sha256"] = publisher_source_sha256
+    template["publisher"]["sha256"] = publisher_sha256
+    template["publisher"]["rendering"] = {
+        "schema_version": SCHEMA_VERSION,
+        "source_sha256": publisher_source_sha256,
+        "rendered_sha256": publisher_sha256,
+        "publication_contract_sha256": sha256_bytes(
+            canonical_json(publication_contract())
+        ),
+    }
     template["usage_policy"]["path"] = str(usage_policy_path)
     template["binding_successor"] = {
         "schema_version": SCHEMA_VERSION,
@@ -748,6 +950,11 @@ def successor_template(
         "processes": evidence["processes"],
         "target_document_id": evidence["target_document_id"],
         "protected_document_ids": evidence["protected_document_ids"],
+        "publication_contract_sha256": sha256_bytes(
+            canonical_json(publication_contract())
+        ),
+        "publisher_source_sha256": publisher_source_sha256,
+        "publisher_sha256": publisher_sha256,
     }
     return template
 
@@ -798,7 +1005,7 @@ def generate_successor(
     state_dir = pathlib.Path(str(evidence["state_dir"]))
     bootstrap = state_dir / "bootstrap"
     controller_path = bootstrap / "terminal_closure.py"
-    publisher_path = bootstrap / "seed-fleet-brainwaves-sb70.mjs"
+    publisher_path = bootstrap / PUBLISHER_FILENAME
     usage_policy_path = bootstrap / "usage_impairment.py"
     publisher_source = require_regular(
         pathlib.Path(base_config["publisher"]["path"]), read_only=True
@@ -813,13 +1020,28 @@ def generate_successor(
     if sha256_bytes(usage_policy_payload) != base_config["usage_policy"]["sha256"]:
         raise SuccessorBindingError("base usage policy hash changed")
 
-    rendered = render_controller(controller_source_payload, evidence, base_config)
+    rendered_publisher = render_publisher(publisher_payload)
+    publisher_source_sha256 = sha256_bytes(publisher_payload)
+    publisher_sha256 = sha256_bytes(rendered_publisher)
+    evidence["publisher_source_sha256"] = publisher_source_sha256
+    evidence["publisher_sha256"] = publisher_sha256
+    evidence["publication_contract_sha256"] = sha256_bytes(
+        canonical_json(publication_contract())
+    )
+    rendered = render_controller(
+        controller_source_payload,
+        evidence,
+        base_config,
+        publisher_sha256,
+    )
     controller_sha256 = sha256_bytes(rendered)
     template = successor_template(
         base_config,
         evidence,
         controller_sha256,
         publisher_path,
+        publisher_source_sha256,
+        publisher_sha256,
         usage_policy_path,
     )
     template_payload = json.dumps(template, indent=2, sort_keys=True).encode() + b"\n"
@@ -829,8 +1051,8 @@ def generate_successor(
     outputs = {
         pathlib.Path("successor-binding.json"): (receipt_payload, 0o400),
         pathlib.Path("bootstrap/terminal_closure.py"): (rendered, 0o500),
-        pathlib.Path("bootstrap/seed-fleet-brainwaves-sb70.mjs"): (
-            publisher_payload,
+        pathlib.Path(f"bootstrap/{PUBLISHER_FILENAME}"): (
+            rendered_publisher,
             0o500,
         ),
         pathlib.Path("bootstrap/usage_impairment.py"): (
@@ -857,7 +1079,14 @@ def generate_successor(
             comparable_evidence = {
                 key: value
                 for key, value in evidence.items()
-                if key not in {"predecessor_config_sha256", "source_controller_sha256"}
+                if key
+                not in {
+                    "predecessor_config_sha256",
+                    "source_controller_sha256",
+                    "publisher_source_sha256",
+                    "publisher_sha256",
+                    "publication_contract_sha256",
+                }
             }
             if canonical_json(refreshed_evidence) != canonical_json(comparable_evidence):
                 raise SuccessorBindingError(
@@ -915,6 +1144,9 @@ def generate_successor(
         "run_id": evidence["run_id"],
         "target_document_id": TARGET_DOCUMENT_ID,
         "protected_document_ids": list(PROTECTED_DOCUMENT_ID_ORDER),
+        "publication_contract_sha256": evidence["publication_contract_sha256"],
+        "publisher_source_sha256": publisher_source_sha256,
+        "publisher_sha256": publisher_sha256,
         "base_config_unchanged": True,
         "predecessor_config_sha256": protected_before,
         "source_controller_sha256": evidence["source_controller_sha256"],
@@ -952,7 +1184,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sys.executable,
                 "-B",
                 receipt["controller"],
-                "bind-v21",
+                "bind-successor",
                 "--template",
                 receipt["template"],
             ],
