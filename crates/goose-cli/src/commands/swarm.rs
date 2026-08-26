@@ -17007,12 +17007,32 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
     }
 
     #[test]
-    fn a_raced_twin_lands_only_when_it_strictly_beats_the_baseline() {
-        let t = |s: &str, v: Option<usize>| (s.to_string(), v);
+    fn a_raced_twin_lands_on_strict_improvement_or_resolved_assigned_causes() {
+        let baseline = vec![
+            "missing tests".to_string(),
+            "app never bound port 50123".to_string(),
+        ];
+        let t = |s: &str, findings: Option<&[&str]>, established: bool| {
+            (
+                s.to_string(),
+                RepairGrade {
+                    findings: findings
+                        .map(|items| items.iter().map(|finding| (*finding).to_string()).collect()),
+                    established,
+                },
+            )
+        };
 
         // The win: one twin cleared the findings, the others did not. Lowest count takes the tree.
         assert_eq!(
-            pick_repair_winner(&[t("a", Some(2)), t("b", Some(0)), t("c", Some(1))], 2),
+            pick_repair_winner(
+                &[
+                    t("a", Some(&["missing tests", "other"]), true),
+                    t("b", Some(&[]), true),
+                    t("c", Some(&["other"]), true),
+                ],
+                &baseline,
+            ),
             Some((0, "b".to_string()))
         );
 
@@ -17020,38 +17040,86 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         // baseline. The engine's current behaviour promotes on the agent returning Ok and would land one
         // of these on the real app; here nothing is promoted and the tree survives the round unchanged.
         assert_eq!(
-            pick_repair_winner(&[t("a", Some(3)), t("b", Some(4))], 2),
+            pick_repair_winner(
+                &[
+                    t(
+                        "a",
+                        Some(&["missing tests", "app never bound port 50999", "new"]),
+                        true
+                    ),
+                    t(
+                        "b",
+                        Some(&[
+                            "missing tests",
+                            "app never bound port 50999",
+                            "new",
+                            "newer"
+                        ]),
+                        true
+                    ),
+                ],
+                &baseline,
+            ),
             None
         );
 
-        // A TIE IS NOT AN IMPROVEMENT. Equal counts can mean the fix traded one finding for another, and
-        // overwriting the tree on that is a coin flip dressed as progress.
+        // A count tie is not progress when an assigned cause remains.
         assert_eq!(
-            pick_repair_winner(&[t("a", Some(2)), t("b", Some(2))], 2),
+            pick_repair_winner(
+                &[
+                    t("a", Some(&["missing tests", "new"]), true),
+                    t("b", Some(&["app never bound port 50999", "new"]), true),
+                ],
+                &baseline,
+            ),
             None
+        );
+
+        // R5's exact failure class: the repair closed both blockers and unlocked nine deeper checks.
+        // Raw count 9 > 2 must not discard the runnable tree and its 21 passing tests.
+        let newly_reachable = (0..9)
+            .map(|index| format!("newly reachable contract finding {index}"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pick_repair_winner(
+                &[(
+                    "r5-candidate".to_string(),
+                    RepairGrade {
+                        findings: Some(newly_reachable),
+                        established: true,
+                    },
+                )],
+                &baseline,
+            ),
+            Some((9, "r5-candidate".to_string()))
         );
 
         // UNKNOWN IS NEVER A WINNER. `None` is a twin that errored, timed out, or whose gate could not run.
         // Scoring an unchecked tree as clean would promote it OVER a checked one — the vacuous-pass trap in
         // its most damaging form, because the destination is the real app.
-        assert_eq!(pick_repair_winner(&[t("a", None), t("b", None)], 5), None);
         assert_eq!(
-            pick_repair_winner(&[t("a", None), t("b", Some(1))], 5),
-            Some((1, "b".to_string()))
+            pick_repair_winner(&[t("a", None, false), t("b", Some(&[]), true),], &baseline,),
+            Some((0, "b".to_string()))
         );
 
         // DETERMINISM: equal winning counts resolve to the earliest twin, so two replicates of one run
         // cannot diverge on which fix landed.
         assert_eq!(
-            pick_repair_winner(&[t("a", Some(1)), t("b", Some(1))], 3),
+            pick_repair_winner(
+                &[
+                    t("a", Some(&["other"]), true),
+                    t("b", Some(&["other"]), true),
+                ],
+                &baseline,
+            ),
             Some((1, "a".to_string()))
         );
 
         // Vacuous truth: no twins at all must promote nothing, not succeed by default.
-        assert_eq!(pick_repair_winner(&[], 4), None);
+        assert_eq!(pick_repair_winner(&[], &baseline), None);
 
         // A baseline of zero cannot be beaten — the round should never have opened, and nothing may land.
-        assert_eq!(pick_repair_winner(&[t("a", Some(0))], 0), None);
+        assert_eq!(pick_repair_winner(&[t("a", Some(&[]), true)], &[]), None);
     }
 
     #[test]
@@ -17074,6 +17142,17 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert_eq!(complete_stall_rounds_from(Some("0".to_string())), 0); // explicit OFF
         assert_eq!(complete_stall_rounds_from(Some(" 3 ".to_string())), 3); // trimmed
         assert_eq!(complete_stall_rounds_from(Some("nope".to_string())), 2); // unparseable -> default 2
+    }
+
+    #[test]
+    fn a_promoted_repair_that_unlocks_deeper_checks_gets_the_next_wave() {
+        assert!(should_stop_complete_for_stall(
+            2, 1, 9, 2, false, false, false
+        ));
+        assert!(
+            !should_stop_complete_for_stall(2, 1, 9, 2, false, false, true),
+            "r5's runnable 21-test candidate exposed nine deeper checks after resolving two blockers"
+        );
     }
 
     /// REGRESSION: the repair phase must be able to AFFORD the rounds it advertises.
@@ -17950,22 +18029,88 @@ subprocess.Popen(
     }
 
     #[test]
-    fn a_fix_shard_promotes_only_a_verified_strictly_better_tree() {
-        // S1 increment 2: the per-shard promote rule is pick_repair_winner's, per shard.
-        assert!(shard_beats_baseline(Some(3), 5));
+    fn a_fix_shard_promotes_only_verified_progress_on_its_assigned_causes() {
+        let target = vec!["app never bound port 50123".to_string()];
+        let grade = |findings: Option<&[&str]>, established| RepairGrade {
+            findings: findings
+                .map(|items| items.iter().map(|finding| (*finding).to_string()).collect()),
+            established,
+        };
+        assert!(repair_grade_promotes(
+            &grade(Some(&["one", "two", "three"]), true),
+            5,
+            &target,
+        ));
         assert!(
-            !shard_beats_baseline(Some(5), 5),
-            "equal is not an improvement — a traded finding must not overwrite the tree"
+            !repair_grade_promotes(
+                &grade(Some(&["app never bound port 50999", "new"]), true),
+                1,
+                &target,
+            ),
+            "dynamic ports normalize to one unresolved cause"
         );
         assert!(
-            !shard_beats_baseline(Some(7), 5),
-            "a regression never lands"
+            repair_grade_promotes(&grade(Some(&["new one", "new two"]), true), 1, &target,),
+            "a resolved assigned blocker may expose deeper findings"
         );
         assert!(
-            !shard_beats_baseline(None, 5),
+            !repair_grade_promotes(&grade(None, false), 5, &target),
             "an unverifiable shadow is UNKNOWN, never clean — the vacuous-pass trap"
         );
-        assert!(!shard_beats_baseline(Some(0), 0));
+        assert!(!repair_grade_promotes(&grade(Some(&[]), true), 0, &[],));
+        assert_eq!(
+            normalize_repair_finding("Expected 3 rows on port 50123"),
+            "expected 3 rows on port #"
+        );
+        assert_ne!(
+            normalize_repair_finding("Expected 3 rows"),
+            normalize_repair_finding("Expected 4 rows"),
+            "semantic counts are evidence and must not be normalized away"
+        );
+    }
+
+    #[test]
+    fn recorded_v21_r5_candidate_and_final_findings_reenter_repair() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../evals/swarm-bench/fixtures/qwen38-v21-r5-final-repair-feedback.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            fixture["source"]["run_log_sha256"],
+            "13e0977a6b91f60c1b20d22fef1ff8e5604a505ce6f830d57b62c3c1311fd7c9"
+        );
+        let baseline = vec![
+            "the app ships NO executable tests (`pytest -q` collected 0)".to_string(),
+            "the app never bound port 50123".to_string(),
+        ];
+        let candidate_findings = (0..fixture["discarded_candidate"]["candidate_findings"]
+            .as_u64()
+            .unwrap())
+            .map(|index| format!("newly reachable contract finding {index}"))
+            .collect::<Vec<_>>();
+        assert!(repair_grade_promotes(
+            &RepairGrade {
+                findings: Some(candidate_findings),
+                established: true,
+            },
+            baseline.len(),
+            &baseline,
+        ));
+
+        let authoritative = fixture["authoritative_findings"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|finding| finding.as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        let mut seen = std::collections::BTreeSet::new();
+        assert!(register_authoritative_feedback(&mut seen, &authoritative));
+        assert!(
+            !register_authoritative_feedback(&mut seen, &authoritative),
+            "an unchanged authoritative failure set must terminalize incomplete instead of looping"
+        );
+        let improved = authoritative.into_iter().skip(1).collect::<Vec<_>>();
+        assert!(register_authoritative_feedback(&mut seen, &improved));
     }
 
     #[test]
@@ -26329,12 +26474,14 @@ impl GooseAgentDispatcher {
     /// The shadow grade judged the WHOLE shadow tree while `promote_speculative` copies ONLY the
     /// owned files (plus creations for multi-file owners). Two failure shapes fall out of that
     /// mismatch, both confirmed by review: a worker whose improvement lives in a NON-owned file
-    /// grades strictly better, "promotes", and lands nothing — the promotion counter arms
+    /// grades as progress, "promotes", and lands nothing — the promotion counter arms
     /// join-skips on a fiction; and a torn two-file edit grades on its coherent whole and lands
     /// only its broken half. The composition below mirrors the promote copy rules exactly:
     /// real tree + owned files from the shadow + (owned.len() > 1) created source files.
     ///
-    /// Returns (verified, changed, established). `established` is the ruler's own strict bit
+    /// Returns (grade, changed). The grade retains the ruler's finding identities so a repair
+    /// that removes its assigned blocker can expose deeper checks without being discarded merely
+    /// because the newly reachable surface contains more findings.
     /// (gate ran AND the composite spec-contract raised no inconclusive) — the race arm's claim
     /// rule kills siblings on it, so it must never be weakened to `verified.is_some()`.
     /// `changed == false` means the shadow left every owned byte
@@ -26352,20 +26499,20 @@ impl GooseAgentDispatcher {
         all_files: &[String],
         composite: bool,
         missing_gate: bool,
-    ) -> (Option<usize>, bool, bool) {
+    ) -> (RepairGrade, bool) {
         let Some((shadow_root, owned)) = ({
             let g = self.spec_shadows.lock().unwrap();
             g.get(task_id)
                 .map(|(shadow, owned)| (shadow.path().to_path_buf(), owned.clone()))
         }) else {
-            return (None, false, false);
+            return (RepairGrade::default(), false);
         };
         let preview = match tempfile::TempDir::new() {
             Ok(t) => t,
-            Err(_) => return (None, true, false),
+            Err(_) => return (RepairGrade::default(), true),
         };
         if copy_tree_excluding(real_root, preview.path()).is_err() {
-            return (None, true, false);
+            return (RepairGrade::default(), true);
         }
         let mut changed = owned.iter().any(|f| {
             std::fs::read(shadow_root.join(f)).ok() != std::fs::read(real_root.join(f)).ok()
@@ -26375,9 +26522,9 @@ impl GooseAgentDispatcher {
             changed |= copy_created_source_files(&shadow_root, preview.path()) > 0;
         }
         if !changed {
-            return (None, false, false);
+            return (RepairGrade::default(), false);
         }
-        let (verified, established) = one_ruler_grade(
+        let grade = one_ruler_grade(
             preview.path(),
             prompt,
             lang,
@@ -26386,7 +26533,7 @@ impl GooseAgentDispatcher {
             missing_gate,
         )
         .await;
-        (verified, true, established)
+        (grade, true)
     }
 
     /// The shadow's own root, so a twin can be VERIFIED before anyone decides whether it won. Peeks
@@ -49405,6 +49552,7 @@ fn web_vocab_note(owned_files: &[String], enabled: bool) -> String {
 #[derive(Clone)]
 struct FixRound {
     baseline: usize,
+    baseline_findings: Vec<String>,
     lang: TargetLang,
     all_files: Vec<String>,
     round: usize,
@@ -49638,7 +49786,7 @@ impl Drop for FixShadowGuard<'_> {
 
 impl GooseAgentDispatcher {
     /// F781/#16 c3: open a fix round — every `fix::` task dispatched while this is set runs the
-    /// fix path (forced speculative, capped, graded, promote-iff-strictly-better).
+    /// fix path (forced speculative, capped, graded, promote only on verified causal progress).
     #[allow(dead_code)]
     fn begin_fix_round(&self, fr: FixRound) {
         self.fix_promotions
@@ -49660,8 +49808,8 @@ impl GooseAgentDispatcher {
     /// the hand-rolled fan this replaces: (1) the agent works a SHADOW (forced speculative), the
     /// real tree is untouchable; (2) GRADE THE TREE, NOT THE AGENT'S EXIT — a timed-out or errored
     /// agent's partial shadow still competes (three historical rounds went red-to-green AT the
-    /// cap); (3) promote ONLY strictly-better than the round baseline (shard_beats_baseline — the
-    /// vacuous-pass trap is `None` and never promotes); (4) never a scheduler retry — an Err would
+    /// cap); (3) promote ONLY verified causal progress (an unavailable or unestablished ruler is
+    /// UNKNOWN and never promotes); (4) never a scheduler retry — an Err would
     /// re-shadow from a CURRENT tree against a STALE baseline, so the graded verdict returns Ok
     /// and the next round's gate regenerates fix tasks for still-red files.
     async fn run_fix_task(
@@ -49670,7 +49818,7 @@ impl GooseAgentDispatcher {
         fr: FixRound,
     ) -> Result<TaskRunOutput, DispatchError> {
         let is_join = req.task_id.ends_with("::#join");
-        let baseline = if is_join {
+        let (baseline, targeted_findings) = if is_join {
             // The join owns the whole tree, so its baseline is the REAL tree as the root fixes
             // left it — re-gated NOW, after their promotions. If the gate cannot run there is no
             // baseline to beat and the agent is not spent (the wave's own skip rule).
@@ -49678,7 +49826,7 @@ impl GooseAgentDispatcher {
             // F862 ONE RULER: the join's baseline and every shadow grade below now measure the
             // round's full category set — smoke-only (then smoke+sc) baselines biased every
             // strictly-better comparison by the categories they omitted.
-            let (graded, _) = one_ruler_grade(
+            let grade = one_ruler_grade(
                 &real_root,
                 &fr.prompt,
                 fr.lang,
@@ -49687,7 +49835,7 @@ impl GooseAgentDispatcher {
                 fr.missing_gate,
             )
             .await;
-            let Some(base) = graded else {
+            let Some(base) = grade.count() else {
                 self.events.write_value(serde_json::json!({
                     "event": "complete_fix_completed", "path": "sched",
                     "round": fr.round, "task_id": req.task_id,
@@ -49736,9 +49884,9 @@ impl GooseAgentDispatcher {
                     .to_string()
                     .into());
             }
-            base
+            (base, grade.findings.unwrap_or_default())
         } else {
-            fr.baseline
+            (fr.baseline, fr.baseline_findings.clone())
         };
         let mut req = req;
         req.speculative = true;
@@ -49815,7 +49963,7 @@ impl GooseAgentDispatcher {
         }
         // F862 ONE RULER + F883 GRADE-WHAT-LANDS: the composed preview answers the round's
         // exact question about the tree a promote would actually produce.
-        let (verified, shadow_changed, _est) = self
+        let (grade, shadow_changed) = self
             .grade_promotion_preview(
                 &req.task_id,
                 &root,
@@ -49826,7 +49974,9 @@ impl GooseAgentDispatcher {
                 fr.missing_gate,
             )
             .await;
-        let promoted = shadow_changed && shard_beats_baseline(verified, baseline);
+        let promoted =
+            shadow_changed && repair_grade_promotes(&grade, baseline, &targeted_findings);
+        let verified = grade.count();
         if promoted {
             self.fix_promotions
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -50316,8 +50466,8 @@ impl GooseAgentDispatcher {
                      wrong against the spec, not the side that is easier to edit. Then re-run the exact \
                      command from the finding and confirm THAT passes. A turn that ends with ZERO file \
                      modifications FAILS, is retried, and wastes a fleet slot — an imperfect edit that \
-                     the gate rejects costs nothing (your work runs in a shadow; only a strictly better \
-                     tree is kept), so there is NO reason to withhold an edit.\n\n"
+                     the gate rejects costs nothing (your work runs in a shadow; only verified \
+                     causal progress is kept), so there is NO reason to withhold an edit.\n\n"
                         .to_string()
                 } else if is_asset_owner {
                     "WRITE FIRST. Your owned file(s) are STATIC ASSETS (frontend/docs) — no \
@@ -51465,7 +51615,7 @@ impl TaskDispatcher for GooseAgentDispatcher {
         // F781/#16 c3 (GOOSE_SWARM_FIX_SCHED): FIX MODE. Gated on an ACTIVE round, never on the
         // prefix alone — a coincidentally-named plan task can never trip it (the fill_fan gate's
         // rule). The fix path wraps the ordinary task body in the fix cap, then ALWAYS grades the
-        // shadow and promotes only strictly-better (the fan's measured salvage rule) — see
+        // shadow and promotes only verified causal progress (the fan's measured salvage rule) — see
         // run_fix_task.
         if fix_mode_applies(&req.task_id, self.fix_round.lock().unwrap().is_some()) {
             let fr = self
@@ -56225,8 +56375,8 @@ fn complete_rounds() -> u32 {
 /// round (the pytest finding embeds the failure list), so even a truly flat app compared unequal.
 /// The count-based one-round rule is grounded in the same observation as ever: every fix that
 /// ever landed dropped findings on its FIRST round; flat-then-drop has never been observed.
-/// Stated trade: an equal-count round with DIFFERENT findings (fixed A, surfaced B) now stops
-/// where the old comparison would have continued.
+/// A verified promotion that resolves its assigned causes is exempt for one next wave: equal or
+/// higher counts may be newly reachable checks rather than a flat repair.
 fn complete_stall_rounds_from(v: Option<String>) -> u32 {
     v.and_then(|s| s.trim().parse::<u32>().ok())
         .unwrap_or(2)
@@ -56235,6 +56385,23 @@ fn complete_stall_rounds_from(v: Option<String>) -> u32 {
 
 fn complete_stall_rounds() -> u32 {
     complete_stall_rounds_from(std::env::var("GOOSE_SWARM_COMPLETE_STALL_ROUNDS").ok())
+}
+
+fn should_stop_complete_for_stall(
+    stall_cap: u32,
+    round: u32,
+    current_findings: usize,
+    previous_findings: usize,
+    force_race_next: bool,
+    force_shard_next: bool,
+    last_round_promoted: bool,
+) -> bool {
+    stall_cap > 0
+        && round > 0
+        && current_findings >= previous_findings
+        && !force_race_next
+        && !force_shard_next
+        && !last_round_promoted
 }
 
 /// GOOSE_SWARM_COMPLETE_PARALLEL (default OFF): fan the push-to-completion FIX step across the fleet's
@@ -56298,7 +56465,7 @@ fn sink_shard() -> bool {
     // isn't done by one node alone"). This is that mechanism, already built and gated: a round
     // whose findings span >=2 files fans one specific fix task per file across the fleet instead
     // of one node taking the whole set. Quality-safe by construction — each shard promotes only
-    // if its re-verified shadow strictly beats the round baseline (shard_beats_baseline), so the
+    // if its re-verified shadow makes authoritative causal progress, so the
     // worst case is "nothing promoted, tree unchanged". Single-file rounds still race twins.
     std::env::var("GOOSE_SWARM_SINK_SHARD")
         .map(|v| matches!(v.to_lowercase().as_str(), "1" | "on" | "true" | "yes"))
@@ -56446,15 +56613,88 @@ fn prefer_shard_over_race(
     shard_on && distinct_file_groups >= 1 && attributed_findings >= 1
 }
 
-/// Pure: may this fix shard's shadow promote its owned file to the real tree? Same rule as
-/// `pick_repair_winner`, per shard: `None` (no shadow, or the gate could not run there) is
-/// UNKNOWN and never promotes — scoring it as clean would land an unchecked tree on the real
-/// app, the vacuous-pass trap. Equal-to-baseline promotes nothing either: an unimproved tree
-/// gains nothing and still risks cross-shard interaction. Shards own disjoint single files,
-/// so each promote decision is independent and their compositions are re-judged at the loop
-/// head by the same gate.
-fn shard_beats_baseline(verified: Option<usize>, baseline: usize) -> bool {
-    verified.is_some_and(|v| v < baseline)
+/// Pure: may a repair shadow promote to the real tree? An unestablished or unavailable ruler is
+/// UNKNOWN and never promotes. Within the same verification frontier, fewer findings wins. A
+/// repair may also advance the frontier by resolving every cause it was assigned, even when that
+/// makes deeper checks reachable and raises the raw count; the next round owns those new causes.
+fn normalize_repair_finding(finding: &str) -> String {
+    let collapsed = finding
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    let chars = collapsed.chars().collect::<Vec<_>>();
+    let mut normalized = String::with_capacity(collapsed.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if !chars[index].is_ascii_digit() {
+            normalized.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < chars.len() && chars[index].is_ascii_digit() {
+            index += 1;
+        }
+        if index - start >= 4 {
+            normalized.push('#');
+        } else {
+            normalized.extend(chars[start..index].iter());
+        }
+    }
+    normalized
+}
+
+fn register_authoritative_feedback(
+    seen: &mut std::collections::BTreeSet<Vec<String>>,
+    findings: &[String],
+) -> bool {
+    let mut signature = findings
+        .iter()
+        .map(|finding| normalize_repair_finding(finding))
+        .collect::<Vec<_>>();
+    signature.sort();
+    signature.dedup();
+    seen.insert(signature)
+}
+
+#[derive(Clone, Debug, Default)]
+struct RepairGrade {
+    findings: Option<Vec<String>>,
+    established: bool,
+}
+
+impl RepairGrade {
+    fn count(&self) -> Option<usize> {
+        self.findings.as_ref().map(Vec::len)
+    }
+}
+
+fn repair_grade_promotes(
+    grade: &RepairGrade,
+    baseline_count: usize,
+    targeted_findings: &[String],
+) -> bool {
+    let Some(candidate_findings) = grade.findings.as_ref() else {
+        return false;
+    };
+    if !grade.established {
+        return false;
+    }
+    if candidate_findings.len() < baseline_count {
+        return true;
+    }
+    if targeted_findings.is_empty() {
+        return false;
+    }
+    let remaining = candidate_findings
+        .iter()
+        .map(|finding| normalize_repair_finding(finding))
+        .collect::<std::collections::BTreeSet<_>>();
+    targeted_findings
+        .iter()
+        .map(|finding| normalize_repair_finding(finding))
+        .all(|finding| !remaining.contains(&finding))
 }
 
 /// F781/#16: the fix-round-as-scheduler-run lever. Env wins, config falls back, default OFF —
@@ -56489,20 +56729,19 @@ fn spec_repair() -> bool {
 /// Which raced twin (if any) is allowed to touch the real tree. PURE, because this one rule is the whole
 /// safety argument for racing N writers, and it must be testable without a fleet.
 ///
-/// `outcomes` is (task_id, re-verified finding count) — `None` means the twin errored, timed out, or its
-/// gate could not run, all of which are UNKNOWN and never winners. A twin lands only when its count is
-/// STRICTLY below `baseline`; equal is not an improvement, and promoting on equal would let a fix that
-/// merely traded one finding for another overwrite the tree on a coin flip. Lowest count wins, ties resolve
-/// to the earliest twin so replicates of the same run make the same choice.
+/// `outcomes` retains the authoritative finding identities, not only a count. UNKNOWN candidates
+/// never win. Among candidates that either reduce the count or resolve every assigned baseline
+/// cause, the lowest remaining count wins; ties resolve to the earliest twin deterministically.
 fn pick_repair_winner(
-    outcomes: &[(String, Option<usize>)],
-    baseline: usize,
+    outcomes: &[(String, RepairGrade)],
+    baseline_findings: &[String],
 ) -> Option<(usize, String)> {
+    let baseline = baseline_findings.len();
     outcomes
         .iter()
         .enumerate()
-        .filter_map(|(i, (t, v))| v.map(|n| (n, i, t.clone())))
-        .filter(|(n, _, _)| *n < baseline)
+        .filter(|(_, (_, grade))| repair_grade_promotes(grade, baseline, baseline_findings))
+        .filter_map(|(i, (task_id, grade))| grade.count().map(|count| (count, i, task_id.clone())))
         .min_by_key(|(n, i, _)| (*n, *i))
         .map(|(n, _, t)| (n, t))
 }
@@ -57685,6 +57924,42 @@ impl OpenRepairTree {
         force_unverified: bool,
         sink: &dyn EventSink,
     ) -> Result<SealedCompleteTree> {
+        let ruling = self.require_current_ruling()?;
+        if !ruling.passed || !ruling.verified || force_unverified {
+            bail!(
+                "refusing to seal a final tree without a green authoritative ruling (passed={}, verified={}, forced_unverified={force_unverified})",
+                ruling.passed,
+                ruling.verified,
+            );
+        }
+        self.seal_with_status(shipped, false, "repair_tree_sealed", sink)
+    }
+
+    fn seal_incomplete(
+        self,
+        shipped: String,
+        force_unverified: bool,
+        sink: &dyn EventSink,
+    ) -> Result<SealedCompleteTree> {
+        let ruling = self.require_current_ruling()?;
+        if ruling.passed && ruling.verified && !force_unverified {
+            bail!("a green authoritative tree must use the final-tree seal");
+        }
+        self.seal_with_status(
+            shipped,
+            force_unverified,
+            "repair_tree_incomplete_sealed",
+            sink,
+        )
+    }
+
+    fn seal_with_status(
+        self,
+        shipped: String,
+        force_unverified: bool,
+        event: &str,
+        sink: &dyn EventSink,
+    ) -> Result<SealedCompleteTree> {
         let ruling = self.require_current_ruling()?.clone();
         let current = repair_tree_snapshot(&self.root)?;
         if current.sha256 != ruling.tree_hash {
@@ -57705,7 +57980,7 @@ impl OpenRepairTree {
             shipped,
         };
         sink.write_value(serde_json::json!({
-            "event": "repair_tree_sealed",
+            "event": event,
             "epoch": sealed.epoch,
             "tree_hash": sealed.tree_hash,
             "passed": sealed.passed,
@@ -58366,6 +58641,39 @@ mod repair_tree_seal_tests {
     }
 
     #[test]
+    fn red_authoritative_ruling_cannot_use_the_final_tree_seal() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("app.txt"), "still incomplete\n").unwrap();
+        let sink = CaptureSink::default();
+
+        let mut final_tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
+        final_tree
+            .record_ruling(&synthetic_ruler(&["still red"]), "authoritative", &sink)
+            .unwrap();
+        assert!(final_tree
+            .seal("final tree".to_string(), false, &sink)
+            .is_err());
+
+        let mut incomplete = OpenRepairTree::open(dir.path(), &sink).unwrap();
+        incomplete
+            .record_ruling(&synthetic_ruler(&["still red"]), "authoritative", &sink)
+            .unwrap();
+        let sealed = incomplete
+            .seal_incomplete("incomplete evidence tree".to_string(), false, &sink)
+            .unwrap();
+        assert!(!sealed.passed);
+        assert!(
+            sealed.verified,
+            "verified means the authoritative ruler ran; it does not mean the red tree passed"
+        );
+        assert_eq!(sealed.shipped, "incomplete evidence tree");
+        assert!(sink
+            .names()
+            .iter()
+            .any(|event| event == "repair_tree_incomplete_sealed"));
+    }
+
+    #[test]
     fn unregistered_mutation_blocks_ship_selection() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("app.txt"), "ruled\n").unwrap();
@@ -58470,16 +58778,13 @@ async fn one_ruler_grade(
     all_files: &[String],
     composite: bool,
     missing_gate: bool,
-) -> (Option<usize>, bool) {
+) -> RepairGrade {
     let result =
         run_complete_ruler(root, prompt, lang, all_files, composite, missing_gate, &[]).await;
-    if result.verdict.ran {
-        (
-            Some(result.verdict.findings.len()),
-            result.verdict.established(),
-        )
-    } else {
-        (None, false)
+    let established = result.verdict.established();
+    RepairGrade {
+        findings: result.verdict.ran.then_some(result.verdict.findings),
+        established,
     }
 }
 
@@ -61904,7 +62209,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         // one fix-cap BEFORE it — the last round the headroom governor admits then finishes,
         // and the floor/restore/overview tail runs INSIDE the wall. Reuses fix_cap_eff; no
         // new constants. Unset (every non-harness run) = byte-identical.
-        let cap_deadline = match std::env::var("GOOSE_SWARM_RUN_DEADLINE_UNIX_MS")
+        let harness_deadline = std::env::var("GOOSE_SWARM_RUN_DEADLINE_UNIX_MS")
             .ok()
             .and_then(|v| v.parse::<i64>().ok())
             .and_then(|ms| {
@@ -61922,7 +62227,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     std::time::Instant::now()
                         + std::time::Duration::from_millis(left_ms.max(0) as u64),
                 )
-            }) {
+            });
+        let mut cap_deadline = match harness_deadline {
             Some(h) => {
                 let clamped = cap_deadline.map_or(h, |c| c.min(h));
                 if cap_deadline.is_none_or(|c| h < c) {
@@ -61977,286 +62283,290 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "measured_rates": telemetry_rates,
             }));
         }
-        let mut last_findings: Vec<String> = Vec::new();
-        // F835 SHIP-BEST-VERIFIED, never ship-last-edited. The serial fix path writes straight
-        // into the real tree (its own event admits findings ROSE in 3 of 13 archived rounds),
-        // and when the round budget exhausts, the run ships whatever the LAST edit left —
-        // measured 2026-08-15: an app that SERVED mid-run (the render probe read its page)
-        // scored "server_runs: never bound" minutes later; late repairs had regressed it below
-        // every verified state and the engine had no memory of the best tree it ever checked.
-        // The verify rounds already measure every state, so the rail is bookkeeping: snapshot
-        // the tree whenever a RAN verify posts the fewest findings yet, and at a non-green exit
-        // restore that snapshot if the final state verified worse (or never ran).
-        // swarm_gate_cfg, NOT swarm_gate: the latter's second arg is assured-bundle membership,
-        // not a default — the first build of this rail resolved OFF with the var unset and
-        // zero snapshots fired on a live unit before anyone noticed (silently, because the
-        // failure path emitted nothing — also fixed below).
-        let ship_best = ship_best_enabled();
-        let mut best_verified: Option<(u32, usize)> = None; // (round, findings)
-                                                            // ESTABLISHED-AWARE SHIP CHAIN (contract-gap audit rank 1): a verify that RAN but
-                                                            // established nothing produces a count that is not comparable to an established one —
-                                                            // a blind low count must not capture the best slot, and an established snapshot must
-                                                            // never lose to an unestablished final state.
-        let mut best_established = false;
-        // Definite-init by the loop: every exit happens after this round's canonical ruler.
-        let mut last_verify_ran;
-        let mut last_verify_count;
-        let mut last_verify_established;
-        // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS; 0 = opt out of the
-        // one-flat-round stop).
-        let stall_cap = complete_stall_rounds();
-        // F907: which mechanism the previous fix round used and whether it PROMOTED — a
-        // promoted round whose finding count held flat is new information for the OTHER
-        // mechanism, and the stall exit used to fire before that arm ever saw the improved
-        // tree (r10 and r11 both promoted a verified fix, then stall-exited at a flat count).
-        let mut last_round_promoted = false;
-        let mut last_round_was_shard = false;
-        // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
-        // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
-        // FAILED PLANNED TASKS (GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN, default OFF).
-        //
-        // The complete loop's ONLY input is the smoke gate — it never looks at whether the build's own tasks
-        // succeeded, even though `report.failed` is right here in scope. MEASURED (loop-05): engine-tests and
-        // react-tests each burned all 3 attempts and FAILED, and the run still emitted
-        // complete_result{passed:true, verified:true} after ZERO fix rounds, because the (test-blind) TS gate
-        // said findings:0 at round 0. The "refuse to ship a red app" phase was not lazy — nothing told it
-        // anything was wrong.
-        //
-        // A failed task is a deterministic engine event. Surfacing it as a finding does two things at once:
-        // the loop no longer breaks green at round 0 (so it CHURNS and actually attempts a fix — the whole
-        // point of this phase), and if the task is still failing at the end the green claim cannot stand.
-        //
-        // Legacy BONUS tasks are excluded. Pillar flow instead exempts only typed Unavailable/provisional
-        // work: a bonus/fileless identity must never hide authority or integrity failure evidence.
-        // DELIVERY hard-completion gate (GOOSE_SWARM_DELIVERY, default OFF): the deterministic conjuncts turned
-        // on as ONE bundle. When on it forces the failed-owning-task block and the #120 spec-contract check so
-        // a failed DETERMINISTIC check can never coexist with a green claim. OFF = byte-identical (delivery_on
-        // stays false, so each `|| delivery_on` short-circuits to the conjunct's own default-off flag).
-        let delivery_on = swarm_gate_cfg("GOOSE_SWARM_DELIVERY", load_config().delivery);
-        // C1 (owns-nothing exclusion): the injected `integrate-verify` sink OWNS NO files, so its failure is a
-        // MODEL self-report, not a deterministic engine event. Excluding it here keeps the model judge
-        // INFORMATIONAL — only a FILE-OWNING task can block green — the exact engine-truth-not-model-claim
-        // doctrine. Without it, turning the block on would let a judge's dissent veto a genuinely-good app.
-        let owns_nothing: Vec<String> = report
-            .tasks
-            .iter()
-            .filter(|o| o.owns_nothing)
-            .map(|o| o.task_id.clone())
-            .collect();
-        let unavailable_ids = typed_unavailable_ids(&report.unavailable);
-        let failed_planned = completion_blocking_failed(
-            &report.failed,
-            &report.bonus,
-            &owns_nothing,
-            &report.unavailable,
-            &report.provisional,
-            pillar_flow_on,
-        )
-        .into_iter()
-        .filter(|task_id| !unavailable_ids.contains(task_id.as_str()))
-        .collect::<Vec<_>>();
-        let failed_task_findings: Vec<String> = if !failed_planned.is_empty()
-            && (pillar_flow_on
-                || delivery_on
-                || swarm_gate_cfg(
-                    "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
-                    load_config().failed_tasks_block_green,
-                )) {
-            failed_planned
+        let mut authoritative_feedback_seen = std::collections::BTreeSet::new();
+        let sealed = 'authoritative_repair: loop {
+            let mut last_findings: Vec<String> = Vec::new();
+            // F835 SHIP-BEST-VERIFIED, never ship-last-edited. The serial fix path writes straight
+            // into the real tree (its own event admits findings ROSE in 3 of 13 archived rounds),
+            // and when the round budget exhausts, the run ships whatever the LAST edit left —
+            // measured 2026-08-15: an app that SERVED mid-run (the render probe read its page)
+            // scored "server_runs: never bound" minutes later; late repairs had regressed it below
+            // every verified state and the engine had no memory of the best tree it ever checked.
+            // The verify rounds already measure every state, so the rail is bookkeeping: snapshot
+            // the tree whenever a RAN verify posts the fewest findings yet, and at a non-green exit
+            // restore that snapshot if the final state verified worse (or never ran).
+            // swarm_gate_cfg, NOT swarm_gate: the latter's second arg is assured-bundle membership,
+            // not a default — the first build of this rail resolved OFF with the var unset and
+            // zero snapshots fired on a live unit before anyone noticed (silently, because the
+            // failure path emitted nothing — also fixed below).
+            let ship_best = ship_best_enabled();
+            let mut best_verified: Option<(u32, usize)> = None; // (round, findings)
+                                                                // ESTABLISHED-AWARE SHIP CHAIN (contract-gap audit rank 1): a verify that RAN but
+                                                                // established nothing produces a count that is not comparable to an established one —
+                                                                // a blind low count must not capture the best slot, and an established snapshot must
+                                                                // never lose to an unestablished final state.
+            let mut best_established = false;
+            // Definite-init by the loop: every exit happens after this round's canonical ruler.
+            let mut last_verify_ran;
+            let mut last_verify_count;
+            let mut last_verify_established;
+            // Stall early-exit budget (GOOSE_SWARM_COMPLETE_STALL_ROUNDS; 0 = opt out of the
+            // one-flat-round stop).
+            let stall_cap = complete_stall_rounds();
+            // F907: which mechanism the previous fix round used and whether it PROMOTED — a
+            // promoted round whose finding count held flat is new information for the OTHER
+            // mechanism, and the stall exit used to fire before that arm ever saw the improved
+            // tree (r10 and r11 both promoted a verified fix, then stall-exited at a flat count).
+            let mut last_round_promoted = false;
+            let mut last_round_was_shard = false;
+            // `rounds` fix attempts, each preceded by a verify, PLUS a final verify after the last fix so the
+            // last fix is actually checked (0..=rounds => rounds+1 verifies, rounds fixes).
+            // FAILED PLANNED TASKS (GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN, default OFF).
+            //
+            // The complete loop's ONLY input is the smoke gate — it never looks at whether the build's own tasks
+            // succeeded, even though `report.failed` is right here in scope. MEASURED (loop-05): engine-tests and
+            // react-tests each burned all 3 attempts and FAILED, and the run still emitted
+            // complete_result{passed:true, verified:true} after ZERO fix rounds, because the (test-blind) TS gate
+            // said findings:0 at round 0. The "refuse to ship a red app" phase was not lazy — nothing told it
+            // anything was wrong.
+            //
+            // A failed task is a deterministic engine event. Surfacing it as a finding does two things at once:
+            // the loop no longer breaks green at round 0 (so it CHURNS and actually attempts a fix — the whole
+            // point of this phase), and if the task is still failing at the end the green claim cannot stand.
+            //
+            // Legacy BONUS tasks are excluded. Pillar flow instead exempts only typed Unavailable/provisional
+            // work: a bonus/fileless identity must never hide authority or integrity failure evidence.
+            // DELIVERY hard-completion gate (GOOSE_SWARM_DELIVERY, default OFF): the deterministic conjuncts turned
+            // on as ONE bundle. When on it forces the failed-owning-task block and the #120 spec-contract check so
+            // a failed DETERMINISTIC check can never coexist with a green claim. OFF = byte-identical (delivery_on
+            // stays false, so each `|| delivery_on` short-circuits to the conjunct's own default-off flag).
+            let delivery_on = swarm_gate_cfg("GOOSE_SWARM_DELIVERY", load_config().delivery);
+            // C1 (owns-nothing exclusion): the injected `integrate-verify` sink OWNS NO files, so its failure is a
+            // MODEL self-report, not a deterministic engine event. Excluding it here keeps the model judge
+            // INFORMATIONAL — only a FILE-OWNING task can block green — the exact engine-truth-not-model-claim
+            // doctrine. Without it, turning the block on would let a judge's dissent veto a genuinely-good app.
+            let owns_nothing: Vec<String> = report
+                .tasks
                 .iter()
-                .map(|t| {
-                    // A FAILED task says nothing on its own about WHOSE fault it is, and the
-                    // blanket "its deliverable is missing or broken" is measurably wrong for the
-                    // commonest case — see `failed_task_finding`. Both halves of the correction are
-                    // deterministic (a stat and the task's own deps), so no model judges this.
-                    let (owned, under_test) = task_files.get(t).cloned().unwrap_or_default();
-                    let written: Vec<String> = owned
-                        .iter()
-                        .filter(|f| cwd.join(f).metadata().map(|m| m.len() > 0).unwrap_or(false))
-                        .cloned()
-                        .collect();
-                    failed_task_finding(t, &written, &under_test)
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        if !failed_task_findings.is_empty() {
-            sink.write_value(serde_json::json!({
+                .filter(|o| o.owns_nothing)
+                .map(|o| o.task_id.clone())
+                .collect();
+            let unavailable_ids = typed_unavailable_ids(&report.unavailable);
+            let failed_planned = completion_blocking_failed(
+                &report.failed,
+                &report.bonus,
+                &owns_nothing,
+                &report.unavailable,
+                &report.provisional,
+                pillar_flow_on,
+            )
+            .into_iter()
+            .filter(|task_id| !unavailable_ids.contains(task_id.as_str()))
+            .collect::<Vec<_>>();
+            let failed_task_findings: Vec<String> = if !failed_planned.is_empty()
+                && (pillar_flow_on
+                    || delivery_on
+                    || swarm_gate_cfg(
+                        "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
+                        load_config().failed_tasks_block_green,
+                    )) {
+                failed_planned
+                    .iter()
+                    .map(|t| {
+                        // A FAILED task says nothing on its own about WHOSE fault it is, and the
+                        // blanket "its deliverable is missing or broken" is measurably wrong for the
+                        // commonest case — see `failed_task_finding`. Both halves of the correction are
+                        // deterministic (a stat and the task's own deps), so no model judges this.
+                        let (owned, under_test) = task_files.get(t).cloned().unwrap_or_default();
+                        let written: Vec<String> = owned
+                            .iter()
+                            .filter(|f| {
+                                cwd.join(f).metadata().map(|m| m.len() > 0).unwrap_or(false)
+                            })
+                            .cloned()
+                            .collect();
+                        failed_task_finding(t, &written, &under_test)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            if !failed_task_findings.is_empty() {
+                sink.write_value(serde_json::json!({
                 "event": "complete_failed_tasks",
                 "failed": failed_planned,
                 "detail": "failed planned tasks are blocking the green claim and driving the fix loop",
             }));
-        }
-        if !report.unavailable.is_empty() {
-            sink.write_value(serde_json::json!({
+            }
+            if !report.unavailable.is_empty() {
+                sink.write_value(serde_json::json!({
                 "event": "complete_unavailable_tasks",
                 "tasks": &report.unavailable,
                 "detail": "typed unavailable obligations remain in the planned-file scope and are owned by capability repair plus the live whole-product ruler",
             }));
-        }
-        // Missing deliverables are re-statted by the canonical ruler on every tree. A frozen pre-loop
-        // list once kept repaired files red forever; this boolean is policy only, never a cached verdict.
-        let missing_deliverable_gate = pillar_flow_on
-            || delivery_on
-            || swarm_gate_cfg(
-                "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
-                load_config().failed_tasks_block_green,
-            );
-        // PROGRESS-BASED ROUNDS (speed hunt, 2026-08-16). The static `for round in 0..=rounds` had
-        // two dead ends: a FLAT round could not stop early (the stall-exit was arithmetically
-        // unreachable at the defaults AND compared finding STRINGS, which mutate every round — the
-        // pytest finding embeds the failure list, so '7 failed' vs '19 failed, 45 passed' reads as
-        // change on an app that stayed red), and a CONVERTING run was cut at the count while budget
-        // remained. The round COUNT of gate findings is the ruler that decides green, so it decides
-        // continuation too: strictly decreasing + budget headroom => keep going (hard ceiling 6, the
-        // config clamp); not decreasing => one flat round is proof enough, stop before buying the
-        // next wave. MEASURED stakes: a flat wave costs 1,599-2,400s; a cut converting run costs the
-        // rounds it was denied.
-        let mut round: u32 = 0;
-        // ONE STRATEGY SWITCH (r5 postmortem): the detectors now produce precise, actionable
-        // findings, and the loss moved to FIX CONVERSION — r5's single sched round promoted
-        // nothing against 7 named findings and converged at 0.017. A zero-promotion round may
-        // switch strategy EXACTLY ONCE (shards -> race, or race -> shards): a different
-        // mechanism is new information, a repeat is not. The pending switch bypasses the
-        // stall exit for its one round; a second zero-promotion round converges for good.
-        let mut force_race_next = false;
-        let mut force_shard_next = false;
-        let mut strategy_switched = false;
-        let mut reusable_green_ruler: Option<(String, CompleteRulerResult)> = None;
-        loop {
-            let ruler = run_complete_ruler(
-                &cwd,
-                &final_binding_spec,
-                complete_lang,
-                &smoke_all_files,
-                delivery_on || spec_contract_enabled(),
-                missing_deliverable_gate,
-                &failed_task_findings,
-            )
-            .await;
-            emit_complete_ruler_observations(sink.as_ref(), round, complete_lang, &ruler);
-            // GOLDEN CHECK (ADVISORY ONLY): when goals are on, run each distilled pillar's runnable check
-            // against the advertised interface and SURFACE any failure as an event — but do NOT gate or fix
-            // on it. A distilled check whose arg-shape mismatches how the app was actually built would else
-            // FALSE-FAIL a correct app, and the fix loop would then REGRESS it (observed 2026-07-03: the
-            // pillar check used `spendlog add ... --db X` while the app built `--db` as a global option
-            // BEFORE the subcommand, so a CORRECT app went red and the fix loop broke 2 pytest tests +
-            // refused exit 0). The reliable smoke oracle (pytest + entry `--help`) stays the gate. Restoring
-            // a RELIABLE golden gate (re-distilling the check from the built app's `--help`) is future work.
-            if !pillar_flow_on && goals_enabled() {
-                let advisory = run_pillar_checks(&cwd).await;
-                if !advisory.is_empty() {
+            }
+            // Missing deliverables are re-statted by the canonical ruler on every tree. A frozen pre-loop
+            // list once kept repaired files red forever; this boolean is policy only, never a cached verdict.
+            let missing_deliverable_gate = pillar_flow_on
+                || delivery_on
+                || swarm_gate_cfg(
+                    "GOOSE_SWARM_FAILED_TASKS_BLOCK_GREEN",
+                    load_config().failed_tasks_block_green,
+                );
+            // PROGRESS-BASED ROUNDS (speed hunt, 2026-08-16). The static `for round in 0..=rounds` had
+            // two dead ends: a FLAT round could not stop early (the stall-exit was arithmetically
+            // unreachable at the defaults AND compared finding STRINGS, which mutate every round — the
+            // pytest finding embeds the failure list, so '7 failed' vs '19 failed, 45 passed' reads as
+            // change on an app that stayed red), and a CONVERTING run was cut at the count while budget
+            // remained. The round COUNT of gate findings is the ruler that decides green, so it decides
+            // continuation too: strictly decreasing + budget headroom => keep going (hard ceiling 6, the
+            // config clamp); not decreasing => one flat round is proof enough, stop before buying the
+            // next wave. MEASURED stakes: a flat wave costs 1,599-2,400s; a cut converting run costs the
+            // rounds it was denied.
+            let mut round: u32 = 0;
+            // ONE STRATEGY SWITCH (r5 postmortem): the detectors now produce precise, actionable
+            // findings, and the loss moved to FIX CONVERSION — r5's single sched round promoted
+            // nothing against 7 named findings and converged at 0.017. A zero-promotion round may
+            // switch strategy EXACTLY ONCE (shards -> race, or race -> shards): a different
+            // mechanism is new information, a repeat is not. The pending switch bypasses the
+            // stall exit for its one round; a second zero-promotion round converges for good.
+            let mut force_race_next = false;
+            let mut force_shard_next = false;
+            let mut strategy_switched = false;
+            let mut reusable_green_ruler: Option<(String, CompleteRulerResult)> = None;
+            loop {
+                let ruler = run_complete_ruler(
+                    &cwd,
+                    &final_binding_spec,
+                    complete_lang,
+                    &smoke_all_files,
+                    delivery_on || spec_contract_enabled(),
+                    missing_deliverable_gate,
+                    &failed_task_findings,
+                )
+                .await;
+                emit_complete_ruler_observations(sink.as_ref(), round, complete_lang, &ruler);
+                // GOLDEN CHECK (ADVISORY ONLY): when goals are on, run each distilled pillar's runnable check
+                // against the advertised interface and SURFACE any failure as an event — but do NOT gate or fix
+                // on it. A distilled check whose arg-shape mismatches how the app was actually built would else
+                // FALSE-FAIL a correct app, and the fix loop would then REGRESS it (observed 2026-07-03: the
+                // pillar check used `spendlog add ... --db X` while the app built `--db` as a global option
+                // BEFORE the subcommand, so a CORRECT app went red and the fix loop broke 2 pytest tests +
+                // refused exit 0). The reliable smoke oracle (pytest + entry `--help`) stays the gate. Restoring
+                // a RELIABLE golden gate (re-distilling the check from the built app's `--help`) is future work.
+                if !pillar_flow_on && goals_enabled() {
+                    let advisory = run_pillar_checks(&cwd).await;
+                    if !advisory.is_empty() {
+                        sink.write_value(serde_json::json!({
+                            "event": "pillar_check_advisory",
+                            "round": round,
+                            "findings": advisory.len(),
+                            "detail": advisory,
+                        }));
+                    }
+                }
+                emit_complete_verify(sink.as_ref(), round, &ruler, false, "repair-loop", None);
+                last_verify_ran = ruler.verdict.ran;
+                last_verify_count = ruler.verdict.findings.len();
+                last_verify_established = ruler.verdict.established();
+                let verdict = &ruler.verdict;
+                // F835: record what THIS verify measured, and snapshot the tree when a RAN verify
+                // posts the fewest findings yet. A ran:false verify never snapshots — promoting an
+                // UNCHECKED tree is the vacuous-pass trap the speculative-twin path already refuses.
+                // Established preference: a blind (ran-but-unestablished) lower count never
+                // displaces an established snapshot; an established verify may displace an
+                // unestablished snapshot at equal count (same number, strictly better evidence).
+                if ship_best
+                    && verdict.ran
+                    && best_verified.is_none_or(|(_, c)| {
+                        let cand_est = verdict.established();
+                        if best_established && !cand_est {
+                            false
+                        } else if cand_est && !best_established {
+                            verdict.findings.len() <= c
+                        } else {
+                            verdict.findings.len() < c
+                        }
+                    })
+                {
+                    let best_dir = cwd.join(".swarm/best-tree");
+                    let _ = std::fs::create_dir_all(&best_dir);
+                    // F886: the snapshot is the APP TREE, never the run's evidence. run.jsonl,
+                    // bench-shots, heartbeat and the scorer's db live in the same directory, and
+                    // snapshotting them means the end-of-run restore REWINDS HISTORY: run 10's
+                    // restore replaced run.jsonl with its round-0 copy (mtimes preserved), erasing
+                    // every fix-round event, and --delete removed the repair-progression screenshots
+                    // taken after the snapshot.
+                    let ok = tokio::process::Command::new("rsync")
+                        .args([
+                            "-a",
+                            "--delete",
+                            "--exclude",
+                            ".swarm",
+                            "--exclude",
+                            "run.jsonl",
+                            "--exclude",
+                            "bench-shots",
+                            "--exclude",
+                            "heartbeat",
+                            "--exclude",
+                            "graded.db",
+                        ])
+                        .arg(format!("{}/", cwd.display()))
+                        .arg(format!("{}/", best_dir.display()))
+                        .status()
+                        .await
+                        .map(|s| s.success())
+                        .unwrap_or(false);
+                    if ok {
+                        best_verified = Some((round, verdict.findings.len()));
+                        best_established = verdict.established();
+                    }
                     sink.write_value(serde_json::json!({
-                        "event": "pillar_check_advisory",
+                        "event": "best_tree_snapshot",
                         "round": round,
-                        "findings": advisory.len(),
-                        "detail": advisory,
+                        "findings": verdict.findings.len(),
+                        "established": verdict.established(),
+                        "ok": ok,
                     }));
                 }
-            }
-            emit_complete_verify(sink.as_ref(), round, &ruler, false, "repair-loop", None);
-            last_verify_ran = ruler.verdict.ran;
-            last_verify_count = ruler.verdict.findings.len();
-            last_verify_established = ruler.verdict.established();
-            let verdict = &ruler.verdict;
-            // F835: record what THIS verify measured, and snapshot the tree when a RAN verify
-            // posts the fewest findings yet. A ran:false verify never snapshots — promoting an
-            // UNCHECKED tree is the vacuous-pass trap the speculative-twin path already refuses.
-            // Established preference: a blind (ran-but-unestablished) lower count never
-            // displaces an established snapshot; an established verify may displace an
-            // unestablished snapshot at equal count (same number, strictly better evidence).
-            if ship_best
-                && verdict.ran
-                && best_verified.is_none_or(|(_, c)| {
-                    let cand_est = verdict.established();
-                    if best_established && !cand_est {
-                        false
-                    } else if cand_est && !best_established {
-                        verdict.findings.len() <= c
-                    } else {
-                        verdict.findings.len() < c
-                    }
-                })
-            {
-                let best_dir = cwd.join(".swarm/best-tree");
-                let _ = std::fs::create_dir_all(&best_dir);
-                // F886: the snapshot is the APP TREE, never the run's evidence. run.jsonl,
-                // bench-shots, heartbeat and the scorer's db live in the same directory, and
-                // snapshotting them means the end-of-run restore REWINDS HISTORY: run 10's
-                // restore replaced run.jsonl with its round-0 copy (mtimes preserved), erasing
-                // every fix-round event, and --delete removed the repair-progression screenshots
-                // taken after the snapshot.
-                let ok = tokio::process::Command::new("rsync")
-                    .args([
-                        "-a",
-                        "--delete",
-                        "--exclude",
-                        ".swarm",
-                        "--exclude",
-                        "run.jsonl",
-                        "--exclude",
-                        "bench-shots",
-                        "--exclude",
-                        "heartbeat",
-                        "--exclude",
-                        "graded.db",
-                    ])
-                    .arg(format!("{}/", cwd.display()))
-                    .arg(format!("{}/", best_dir.display()))
-                    .status()
-                    .await
-                    .map(|s| s.success())
-                    .unwrap_or(false);
-                if ok {
-                    best_verified = Some((round, verdict.findings.len()));
-                    best_established = verdict.established();
-                }
-                sink.write_value(serde_json::json!({
-                    "event": "best_tree_snapshot",
-                    "round": round,
-                    "findings": verdict.findings.len(),
-                    "established": verdict.established(),
-                    "ok": ok,
-                }));
-            }
-            // Clean verify (no smoke finding AND no failing pillar check) => done. An empty findings set on a
-            // smoke-skipped tree is still green — there is genuinely nothing to fix.
-            if verdict.findings.is_empty() {
-                // "VERIFIED" MUST MEAN WE ACTUALLY CHECKED — not merely that nothing we looked at was red.
-                //
-                // This was `final_verified = verdict.ran`, and `ran` is set to true for ANY tree with one .py
-                // file. Combined with smoke_output returning None (adding NO finding) on a spawn error or a
-                // TIMEOUT, "inconclusive" and "verified" were literally the same value: a run where python3 is
-                // missing, or pytest times out, or `--help` HANGS — which is exactly what an entry point that
-                // ignores --help and binds a port does — reported **verified:true having executed NOTHING**.
-                // That is the measured 4/4 false greens, and loop-ab-baseline3 (3/16, server never starts) is
-                // fully explained by it.
-                //
-                // `passed` is deliberately UNTOUCHED. An inconclusive check is not evidence of a defect, and
-                // flipping passed red on a correct app is forbidden. The honest state is passed:true +
-                // verified:false, which the engine and UI already support — a skipped oracle produces exactly
-                // it. This adds NO finding, so it cannot enter the corrective-fix loop and cannot vandalise
-                // correct code: it only narrows a CLAIM to what the evidence supports.
-                if verdict.ran && !verdict.inconclusive.is_empty() {
-                    eprintln!(
+                // Clean verify (no smoke finding AND no failing pillar check) => done. An empty findings set on a
+                // smoke-skipped tree is still green — there is genuinely nothing to fix.
+                if verdict.findings.is_empty() {
+                    // "VERIFIED" MUST MEAN WE ACTUALLY CHECKED — not merely that nothing we looked at was red.
+                    //
+                    // This was `final_verified = verdict.ran`, and `ran` is set to true for ANY tree with one .py
+                    // file. Combined with smoke_output returning None (adding NO finding) on a spawn error or a
+                    // TIMEOUT, "inconclusive" and "verified" were literally the same value: a run where python3 is
+                    // missing, or pytest times out, or `--help` HANGS — which is exactly what an entry point that
+                    // ignores --help and binds a port does — reported **verified:true having executed NOTHING**.
+                    // That is the measured 4/4 false greens, and loop-ab-baseline3 (3/16, server never starts) is
+                    // fully explained by it.
+                    //
+                    // `passed` is deliberately UNTOUCHED. An inconclusive check is not evidence of a defect, and
+                    // flipping passed red on a correct app is forbidden. The honest state is passed:true +
+                    // verified:false, which the engine and UI already support — a skipped oracle produces exactly
+                    // it. This adds NO finding, so it cannot enter the corrective-fix loop and cannot vandalise
+                    // correct code: it only narrows a CLAIM to what the evidence supports.
+                    if verdict.ran && !verdict.inconclusive.is_empty() {
+                        eprintln!(
                         "  {} NOT verified — {} check(s) never produced a verdict: {}. Nothing was red, but \
                          nothing was established either.",
                         style("!").yellow().bold(),
                         verdict.inconclusive.len(),
                         verdict.inconclusive.join("; ")
                     );
-                }
-                if verdict.ran {
-                    eprintln!(
+                    }
+                    if verdict.ran {
+                        eprintln!(
                         "{}",
                         style(format!(
                             "complete: GREEN at round {round} — the built app runs and its checks pass"
                         ))
                         .green()
                     );
-                } else {
-                    eprintln!(
+                    } else {
+                        eprintln!(
                         "{}",
                         style(format!(
                             "complete: UNVERIFIED — no smoke oracle ran for the produced tree ({} lang); \
@@ -62265,210 +62575,213 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         ))
                         .yellow()
                     );
-                }
-                reusable_green_ruler = Some((repair_tree_snapshot(&cwd)?.sha256, ruler));
-                break;
-            }
-            // STALL EXIT, count-based (speed hunt 2026-08-16). The old predicate compared finding
-            // STRINGS (never equal in practice — the pytest finding's embedded failure list mutates
-            // while the app stays red) and needed `stall_cap=2` consecutive hits that the round
-            // arithmetic made unreachable: a PROVEN zero across 54 logs. The count is the ruler
-            // that gates green, so it judges progress: a round that did not REDUCE the count made
-            // no progress, and one such round is proof — the next wave would re-attempt the same
-            // findings from the same tree at 1,599-2,400s a draw. `stall_cap=0` keeps the opt-out.
-            // PROMOTED-BUT-FLAT SWITCH (F907): a verified fix landed last round yet the count
-            // held — before the stall exit ends the phase, the OTHER mechanism gets its one
-            // round on the improved tree. Same one-shot bound as the zero-promotion switch.
-            if stall_cap > 0
-                && round > 0
-                && verdict.findings.len() >= last_findings.len()
-                && !force_race_next
-                && !force_shard_next
-                && last_round_promoted
-                && !strategy_switched
-            {
-                let to_race = !pillar_flow_on
-                    && last_round_was_shard
-                    && spec_repair()
-                    && fleet_models.len() > 1;
-                let to_shard = !last_round_was_shard && fix_sched();
-                if to_race || to_shard {
-                    strategy_switched = true;
-                    if to_race {
-                        force_race_next = true;
-                    } else {
-                        force_shard_next = true;
                     }
-                    sink.write_value(serde_json::json!({
+                    reusable_green_ruler = Some((repair_tree_snapshot(&cwd)?.sha256, ruler));
+                    break;
+                }
+                // STALL EXIT, count-based (speed hunt 2026-08-16). The old predicate compared finding
+                // STRINGS (never equal in practice — the pytest finding's embedded failure list mutates
+                // while the app stays red) and needed `stall_cap=2` consecutive hits that the round
+                // arithmetic made unreachable: a PROVEN zero across 54 logs. The count is the ruler
+                // that gates green, so it judges progress: a round that did not REDUCE the count made
+                // no progress, and one such round is proof — the next wave would re-attempt the same
+                // findings from the same tree at 1,599-2,400s a draw. `stall_cap=0` keeps the opt-out.
+                // PROMOTED-BUT-FLAT SWITCH (F907): a verified fix landed last round yet the count
+                // held — before the stall exit ends the phase, the OTHER mechanism gets its one
+                // round on the improved tree. Same one-shot bound as the zero-promotion switch.
+                if stall_cap > 0
+                    && round > 0
+                    && verdict.findings.len() >= last_findings.len()
+                    && !force_race_next
+                    && !force_shard_next
+                    && last_round_promoted
+                    && !strategy_switched
+                {
+                    let to_race = !pillar_flow_on
+                        && last_round_was_shard
+                        && spec_repair()
+                        && fleet_models.len() > 1;
+                    let to_shard = !last_round_was_shard && fix_sched();
+                    if to_race || to_shard {
+                        strategy_switched = true;
+                        if to_race {
+                            force_race_next = true;
+                        } else {
+                            force_shard_next = true;
+                        }
+                        sink.write_value(serde_json::json!({
                         "event": "fix_strategy_switch",
                         "round": round,
                         "from": if to_race { "shards" } else { "race" },
                         "to": if to_race { "race" } else { "shards" },
                         "detail": "the round PROMOTED a verified fix but the finding count held                                    flat — the other mechanism gets one round on the improved                                    tree before the stall exit ends the phase",
                     }));
+                    }
                 }
-            }
-            if stall_cap > 0
-                && round > 0
-                && verdict.findings.len() >= last_findings.len()
-                && !force_race_next
-                && !force_shard_next
-            {
-                sink.write_value(serde_json::json!({
-                    "event": "complete_stall_exit",
-                    "round": round,
-                    "findings": verdict.findings.len(),
-                    "previous": last_findings.len(),
-                }));
-                eprintln!(
-                    "{}",
-                    style(format!(
+                if should_stop_complete_for_stall(
+                    stall_cap,
+                    round,
+                    verdict.findings.len(),
+                    last_findings.len(),
+                    force_race_next,
+                    force_shard_next,
+                    last_round_promoted,
+                ) {
+                    sink.write_value(serde_json::json!({
+                        "event": "complete_stall_exit",
+                        "round": round,
+                        "findings": verdict.findings.len(),
+                        "previous": last_findings.len(),
+                    }));
+                    eprintln!(
+                        "{}",
+                        style(format!(
                         "complete: fix round made no progress ({} -> {} finding(s)) — stopping \
                          instead of buying another wave",
                         last_findings.len(),
                         verdict.findings.len()
                     ))
-                    .yellow()
-                );
-                break;
-            }
-            let prev_count = if round > 0 {
-                Some(last_findings.len())
-            } else {
-                None
-            };
-            last_findings = verdict.findings.clone();
-            eprintln!(
-                "{} round {round}: {} finding(s)",
-                style("complete: RED").red().bold(),
-                verdict.findings.len()
-            );
-            for f in &verdict.findings {
-                eprintln!("  - {}", f.lines().next().unwrap_or(""));
-            }
-            // Round budget: the static count is a FLOOR, not a wall. A run that just STRICTLY
-            // reduced its findings and still holds a full fix-cap of wall budget has earned the
-            // next round (extension requires BOTH; ceiling 6 = the config clamp). A run at the
-            // count without that proof stops exactly as before. A pending strategy switch
-            // bypasses this cap the same way it bypasses the stall exit (adversarial review:
-            // the zero-promotion round is USUALLY the last budgeted one, so gating the switch
-            // on the cap emitted fix_strategy_switch, burned the one-shot flag, and never ran
-            // the switched round). The switch is already bounded by strategy_switched, and the
-            // wall/headroom checks below still apply to it.
-            if round >= rounds && !force_race_next && !force_shard_next {
-                // Extension requires ESTABLISHED progress — a blind verify's lower count is
-                // not evidence that another round is earning its wall time (rank-1 chain fix).
-                let decreasing =
-                    prev_count.is_some_and(|p| verdict.findings.len() < p) && verdict.established();
-                let headroom = cap_deadline.is_none_or(|dl| {
-                    std::time::Instant::now() + std::time::Duration::from_secs(fix_cap_eff) < dl
-                });
-                if !(decreasing && headroom && round < 6) {
+                        .yellow()
+                    );
                     break;
                 }
+                let prev_count = if round > 0 {
+                    Some(last_findings.len())
+                } else {
+                    None
+                };
+                last_findings = verdict.findings.clone();
                 eprintln!(
+                    "{} round {round}: {} finding(s)",
+                    style("complete: RED").red().bold(),
+                    verdict.findings.len()
+                );
+                for f in &verdict.findings {
+                    eprintln!("  - {}", f.lines().next().unwrap_or(""));
+                }
+                // Round budget: the static count is a FLOOR, not a wall. A run that just STRICTLY
+                // reduced its findings and still holds a full fix-cap of wall budget has earned the
+                // next round (extension requires BOTH; ceiling 6 = the config clamp). A run at the
+                // count without that proof stops exactly as before. A pending strategy switch
+                // bypasses this cap the same way it bypasses the stall exit (adversarial review:
+                // the zero-promotion round is USUALLY the last budgeted one, so gating the switch
+                // on the cap emitted fix_strategy_switch, burned the one-shot flag, and never ran
+                // the switched round). The switch is already bounded by strategy_switched, and the
+                // wall/headroom checks below still apply to it.
+                if round >= rounds && !force_race_next && !force_shard_next {
+                    // Extension requires ESTABLISHED progress — a blind verify's lower count is
+                    // not evidence that another round is earning its wall time (rank-1 chain fix).
+                    let decreasing = prev_count.is_some_and(|p| verdict.findings.len() < p)
+                        && verdict.established();
+                    let headroom = cap_deadline.is_none_or(|dl| {
+                        std::time::Instant::now() + std::time::Duration::from_secs(fix_cap_eff) < dl
+                    });
+                    if !(decreasing && headroom && round < 6) {
+                        break;
+                    }
+                    eprintln!(
                     "complete: findings still falling ({} -> {}) with budget in hand — extending \
                      past the {rounds}-round floor",
                     prev_count.unwrap_or(0),
                     verdict.findings.len()
                 );
-            }
-            if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
-                eprintln!("complete: wall-clock cap reached — stopping the fix loop");
-                break;
-            }
-            // HEADROOM (wall-time hunt, verified): never dispatch a round the remaining
-            // completion window provably cannot finish — the SAME predicate the extension
-            // path above already applies to bonus rounds, now applied to every round.
-            // Measured: both sb-6 wall-cut runs spent their final 8-10 minutes on a round
-            // that was reaped mid-flight and landed nothing, then paid a redundant
-            // re-verify on the unchanged tree.
-            if cap_deadline.is_some_and(|dl| {
-                std::time::Instant::now() + std::time::Duration::from_secs(fix_cap_eff) >= dl
-            }) {
-                sink.write_value(serde_json::json!({
-                    "event": "complete_fix_headroom_stop",
-                    "round": round,
-                    "detail": "remaining completion window is smaller than one fix attempt — \
-                               stopping at the last verified state instead of dispatching a \
-                               doomed round",
-                }));
-                break;
-            }
-            // ZERO-PROMOTION CONVERGENCE (wall-time hunt, verified): set by the graded round
-            // paths when nothing promoted — the real tree is then byte-identical to the tree
-            // this round's opening verify measured, so the next round-head gate would re-measure
-            // the same state at 2-6 minutes for a guaranteed stall exit. Break instead; the
-            // round-opening verdict stays the accurate final word on this tree.
-            let mut fix_converged = false;
-            // FIX. Default: ONE serial fix on a single node (v1). GOOSE_SWARM_COMPLETE_PARALLEL: fan one fix
-            // per failing FILE across the fleet's models — each agent writes only its own file (shadow
-            // isolation), so two agents can never touch the same file; same-file findings collapse into one
-            // group and serialize. Re-verify happens at the loop head next round.
-            let Some((dev_id, model_id)) = smoke_fix_target.clone() else {
-                break;
-            };
-            // `len() > 1`, not `!is_empty()`. Racing ONE model is the serial path plus shadow-tree
-            // machinery: same single attempt, same single verify, extra copying. The entire argument for
-            // racing is that the OTHER nodes are idle during a median-one-finding repair round, so with
-            // one model there is nothing to recover and the overhead is pure cost. This matters now that
-            // the lever is default-ON — a 1-node fleet must keep running exactly what it ran before.
-            let shard_this_round = if pillar_flow_on {
-                true
-            } else if force_race_next {
-                force_race_next = false;
-                false
-            } else if force_shard_next {
-                force_shard_next = false;
-                true
-            } else {
-                let (groups, _) = group_findings_by_file(&verdict.findings, &smoke_all_files);
-                let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
-                prefer_shard_over_race(sink_shard(), groups.len(), attributed)
-            };
-            if !pillar_flow_on && spec_repair() && fleet_models.len() > 1 && !shard_this_round {
-                // RACE. One independent attempt per fleet model at the SAME findings, each rooted in its
-                // own shadow, then a deterministic re-verify of every shadow decides which (if any) lands.
-                let baseline = verdict.findings.len();
-                let attempts: Vec<(usize, String)> =
-                    fleet_models.iter().cloned().enumerate().collect();
-                eprintln!(
+                }
+                if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
+                    eprintln!("complete: wall-clock cap reached — stopping the fix loop");
+                    break;
+                }
+                // HEADROOM (wall-time hunt, verified): never dispatch a round the remaining
+                // completion window provably cannot finish — the SAME predicate the extension
+                // path above already applies to bonus rounds, now applied to every round.
+                // Measured: both sb-6 wall-cut runs spent their final 8-10 minutes on a round
+                // that was reaped mid-flight and landed nothing, then paid a redundant
+                // re-verify on the unchanged tree.
+                if cap_deadline.is_some_and(|dl| {
+                    std::time::Instant::now() + std::time::Duration::from_secs(fix_cap_eff) >= dl
+                }) {
+                    sink.write_value(serde_json::json!({
+                        "event": "complete_fix_headroom_stop",
+                        "round": round,
+                        "detail": "remaining completion window is smaller than one fix attempt — \
+                                   stopping at the last verified state instead of dispatching a \
+                                   doomed round",
+                    }));
+                    break;
+                }
+                // ZERO-PROMOTION CONVERGENCE (wall-time hunt, verified): set by the graded round
+                // paths when nothing promoted — the real tree is then byte-identical to the tree
+                // this round's opening verify measured, so the next round-head gate would re-measure
+                // the same state at 2-6 minutes for a guaranteed stall exit. Break instead; the
+                // round-opening verdict stays the accurate final word on this tree.
+                let mut fix_converged = false;
+                // FIX. Default: ONE serial fix on a single node (v1). GOOSE_SWARM_COMPLETE_PARALLEL: fan one fix
+                // per failing FILE across the fleet's models — each agent writes only its own file (shadow
+                // isolation), so two agents can never touch the same file; same-file findings collapse into one
+                // group and serialize. Re-verify happens at the loop head next round.
+                let Some((dev_id, model_id)) = smoke_fix_target.clone() else {
+                    break;
+                };
+                // `len() > 1`, not `!is_empty()`. Racing ONE model is the serial path plus shadow-tree
+                // machinery: same single attempt, same single verify, extra copying. The entire argument for
+                // racing is that the OTHER nodes are idle during a median-one-finding repair round, so with
+                // one model there is nothing to recover and the overhead is pure cost. This matters now that
+                // the lever is default-ON — a 1-node fleet must keep running exactly what it ran before.
+                let shard_this_round = if pillar_flow_on {
+                    true
+                } else if force_race_next {
+                    force_race_next = false;
+                    false
+                } else if force_shard_next {
+                    force_shard_next = false;
+                    true
+                } else {
+                    let (groups, _) = group_findings_by_file(&verdict.findings, &smoke_all_files);
+                    let attributed: usize = groups.iter().map(|g| g.findings.len()).sum();
+                    prefer_shard_over_race(sink_shard(), groups.len(), attributed)
+                };
+                if !pillar_flow_on && spec_repair() && fleet_models.len() > 1 && !shard_this_round {
+                    // RACE. One independent attempt per fleet model at the SAME findings, each rooted in its
+                    // own shadow, then a deterministic re-verify of every shadow decides which (if any) lands.
+                    let baseline = verdict.findings.len();
+                    let attempts: Vec<(usize, String)> =
+                        fleet_models.iter().cloned().enumerate().collect();
+                    eprintln!(
                     "complete: fix round {round} — racing {} independent attempt(s) at {baseline} finding(s); \
                      a twin lands only if its re-verify beats {baseline}",
                     attempts.len()
                 );
-                let me = smoke_fix_dispatcher.clone();
-                let all_files = smoke_all_files.clone();
-                let dev = dev_id.clone();
-                let decisions = user_decisions.clone();
-                let facts = doc_facts.clone();
-                let desc = smoke_fix_description(&verdict.findings, complete_lang);
-                let wave_prompt = final_binding_spec.clone();
-                let wave_cwd = cwd.clone();
-                // F862: the ruler flags the round graded with — the twins grade with the same.
-                let wave_composite = delivery_on || spec_contract_enabled();
-                let wave_missing_gate = missing_deliverable_gate;
-                let sink_r = sink.clone();
-                // F846 EARLY-CLOSE (NEXT-BIG rank 2). MEASURED on the first green product-regime
-                // run: both waves' winners re-verified 5-7.5 minutes before the wave closed, while
-                // capped losers burned 2,400 twin-seconds converting nothing. FIRST-PAST-THE-POST:
-                // a twin whose shadow re-verifies STRICTLY better than baseline claims the round
-                // and notifies the rest, which cancel their own runs and clean up after themselves
-                // (their sampler, their event, their shadow discard below). The trade is explicit
-                // and intended: the FIRST better twin wins, not the BEST of all — wall-time is the
-                // axis this wave exists to buy. With no claimant, pick_repair_winner decides
-                // exactly as before.
-                // REVIEWED (adversarial, 2026-08-16) and reworked on its findings: the claim's
-                // ONLY job is to fire the cancellation — winner selection stays the proven
-                // minimum-pick over ALL graded shadows (cancelled ones included), so a dead
-                // claimant can never discard the round and a slower-but-greener sibling still
-                // wins. The token is level-triggered (a twin not yet parked in its select still
-                // sees the cancellation), and a claim requires an ESTABLISHED gate — a re-verify
-                // blinded by an inconclusive leg (port collision) cannot kill its siblings.
-                let win_claim: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-                let wave_cancel = tokio_util::sync::CancellationToken::new();
-                let win_claim_outer = win_claim.clone();
-                let outcomes =
+                    let me = smoke_fix_dispatcher.clone();
+                    let all_files = smoke_all_files.clone();
+                    let dev = dev_id.clone();
+                    let decisions = user_decisions.clone();
+                    let facts = doc_facts.clone();
+                    let desc = smoke_fix_description(&verdict.findings, complete_lang);
+                    let wave_prompt = final_binding_spec.clone();
+                    let wave_cwd = cwd.clone();
+                    // F862: the ruler flags the round graded with — the twins grade with the same.
+                    let wave_composite = delivery_on || spec_contract_enabled();
+                    let wave_missing_gate = missing_deliverable_gate;
+                    let sink_r = sink.clone();
+                    // F846 EARLY-CLOSE (NEXT-BIG rank 2). MEASURED on the first green product-regime
+                    // run: both waves' winners re-verified 5-7.5 minutes before the wave closed, while
+                    // capped losers burned 2,400 twin-seconds converting nothing. FIRST-PAST-THE-POST:
+                    // a twin whose shadow re-verifies STRICTLY better than baseline claims the round
+                    // and notifies the rest, which cancel their own runs and clean up after themselves
+                    // (their sampler, their event, their shadow discard below). The trade is explicit
+                    // and intended: the FIRST better twin wins, not the BEST of all — wall-time is the
+                    // axis this wave exists to buy. With no claimant, pick_repair_winner decides
+                    // exactly as before.
+                    // REVIEWED (adversarial, 2026-08-16) and reworked on its findings: the claim's
+                    // ONLY job is to fire the cancellation — winner selection stays the proven
+                    // minimum-pick over ALL graded shadows (cancelled ones included), so a dead
+                    // claimant can never discard the round and a slower-but-greener sibling still
+                    // wins. The token is level-triggered (a twin not yet parked in its select still
+                    // sees the cancellation), and a claim requires an ESTABLISHED gate — a re-verify
+                    // blinded by an inconclusive leg (port collision) cannot kill its siblings.
+                    let win_claim: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+                    let wave_cancel = tokio_util::sync::CancellationToken::new();
+                    let win_claim_outer = win_claim.clone();
+                    let outcomes =
                     fanout_over_fleet(fleet_models.clone(), attempts, move |(i, _), model| {
                         let me = me.clone();
                         let all_files = all_files.clone();
@@ -62573,7 +62886,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // PLANNED file, but an edit to an unplanned pre-existing file still
                             // does not land (promote copies owned + creations only), so the raw
                             // shadow can grade a tree the real one never becomes.
-                            let (verified, twin_changed, twin_est) = me
+                            let (grade, twin_changed) = me
                                 .grade_promotion_preview(
                                     &task_id,
                                     &wave_cwd,
@@ -62584,8 +62897,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     wave_missing_gate,
                                 )
                                 .await;
-                            let gate_established = twin_est;
-                            let verified = if twin_changed { verified } else { None };
+                            let gate_established = grade.established;
+                            let verified = twin_changed.then(|| grade.count()).flatten();
                             sink_r.write_value(serde_json::json!({
                                 "event": "complete_fix_completed",
                                 // task_id: the desktop's fleet panel closes the twin's lane on THIS
@@ -62619,46 +62932,51 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     }
                                 }
                             }
-                            (task_id, verified)
+                            let grade = if twin_changed {
+                                grade
+                            } else {
+                                RepairGrade::default()
+                            };
+                            (task_id, grade)
                         }
                     })
                     .await;
-                // The claim only CANCELLED; the winner is the original minimum-findings pick
-                // over every graded shadow — cancelled twins included, so the documented
-                // red-to-green class (a stopped agent's partial tree verifying best) survives,
-                // and a claimant that died after claiming can never discard the round.
-                let claimed = win_claim_outer.lock().unwrap().clone();
-                let winner = pick_repair_winner(&outcomes, baseline);
-                for (task_id, _) in &outcomes {
-                    if winner.as_ref().is_some_and(|(_, w)| w == task_id) {
-                        smoke_fix_dispatcher.promote_speculative(task_id).await;
-                    } else {
-                        smoke_fix_dispatcher.discard_speculative(task_id).await;
+                    // The claim only CANCELLED; the winner is the original minimum-findings pick
+                    // over every graded shadow — cancelled twins included, so the documented
+                    // red-to-green class (a stopped agent's partial tree verifying best) survives,
+                    // and a claimant that died after claiming can never discard the round.
+                    let claimed = win_claim_outer.lock().unwrap().clone();
+                    let winner = pick_repair_winner(&outcomes, &verdict.findings);
+                    for (task_id, _) in &outcomes {
+                        if winner.as_ref().is_some_and(|(_, w)| w == task_id) {
+                            smoke_fix_dispatcher.promote_speculative(task_id).await;
+                        } else {
+                            smoke_fix_dispatcher.discard_speculative(task_id).await;
+                        }
                     }
-                }
-                sink.write_value(serde_json::json!({
+                    sink.write_value(serde_json::json!({
                     "event": "spec_repair_wave",
                     "round": round,
                     "early_close": claimed.is_some(),
                     "twins": outcomes.len(),
-                    "verified": outcomes.iter().filter(|(_, v)| v.is_some()).count(),
+                    "verified": outcomes.iter().filter(|(_, grade)| grade.count().is_some()).count(),
                     "baseline_findings": baseline,
                     "winner_findings": winner.as_ref().map(|(n, _)| *n),
                     "promoted": winner.is_some(),
                     "detail": if winner.is_some() {
-                        "a twin re-verified strictly better than the round's baseline and was promoted"
+                        "a twin re-verified authoritative causal progress and was promoted"
                     } else {
                         "NO twin beat the baseline — nothing was promoted, so the tree is unchanged \
                          rather than damaged by an unverified edit"
                     },
                 }));
-                last_round_was_shard = false;
-                last_round_promoted = winner.is_some();
-                if winner.is_none() {
-                    if !strategy_switched && fix_sched() {
-                        strategy_switched = true;
-                        force_shard_next = true;
-                        sink.write_value(serde_json::json!({
+                    last_round_was_shard = false;
+                    last_round_promoted = winner.is_some();
+                    if winner.is_none() {
+                        if !strategy_switched && fix_sched() {
+                            strategy_switched = true;
+                            force_shard_next = true;
+                            sink.write_value(serde_json::json!({
                             "event": "fix_strategy_switch",
                             "round": round,
                             "from": "race", "to": "shards",
@@ -62666,120 +62984,126 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                        before convergence; a different mechanism is new \
                                        information, a repeat is not",
                         }));
-                    } else {
-                        fix_converged = true;
+                        } else {
+                            fix_converged = true;
+                        }
                     }
-                }
-            } else if !pillar_flow_on && fix_sched() && shard_this_round && !fleet_models.is_empty()
-            {
-                // F781/#16 c6 (GOOSE_SWARM_FIX_SCHED, default OFF): THE FIX ROUND AS A REAL
-                // SCHEDULER RUN. The gate's findings become fix::r{N}::{file} DAG tasks a FRESH
-                // Scheduler dispatches over the same fleet — so a fix round gets claims, capacity
-                // discipline, judge supervision (probing SHADOWS, c5) and tail-review for free,
-                // instead of the hand-rolled fan below. The FRESH dispatcher is load-bearing:
-                // reusing run 1's would re-arm its OnceLock silent no-op, stale owner_snapshots
-                // restore, and sink_review_findings carryover. max_attempts=1 is one-shot parity
-                // with the fan — a retry would re-shadow from a CURRENT tree against a STALE
-                // baseline. The round loop's next real-tree gate stays the sole authority on
-                // green; this path never touches green_blocking.
-                let baseline = verdict.findings.len();
-                let specs = fix_round_specs(
-                    &verdict.findings,
-                    &smoke_all_files,
-                    round as usize,
-                    complete_lang,
-                );
-                match goose_swarm::Dag::from_specs(specs) {
-                    Err(e) => {
-                        // NEVER `?` out of run_swarm from the advisory fix path — an unbuildable
-                        // fix DAG skips the round exactly like the stuck-bail Err.
-                        sink.write_value(serde_json::json!({
-                            "event": "complete_fix_sched_result", "round": round,
-                            "error": format!("fix DAG build failed: {e}"),
-                        }));
-                    }
-                    Ok(fix_dag) => {
-                        match build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone()).await
-                        {
-                            Err(e) => {
-                                sink.write_value(serde_json::json!({
-                                    "event": "complete_fix_sched_result", "round": round,
-                                    "error": format!("fresh dispatcher build failed: {e}"),
-                                }));
-                            }
-                            Ok(fresh) => {
-                                *fresh.spec_frozen.lock().unwrap() = final_binding_spec.clone();
-                                if !fix_contracts_bundle.is_empty() {
-                                    fresh.set_contracts(fix_contracts_bundle.clone());
+                } else if !pillar_flow_on
+                    && fix_sched()
+                    && shard_this_round
+                    && !fleet_models.is_empty()
+                {
+                    // F781/#16 c6 (GOOSE_SWARM_FIX_SCHED, default OFF): THE FIX ROUND AS A REAL
+                    // SCHEDULER RUN. The gate's findings become fix::r{N}::{file} DAG tasks a FRESH
+                    // Scheduler dispatches over the same fleet — so a fix round gets claims, capacity
+                    // discipline, judge supervision (probing SHADOWS, c5) and tail-review for free,
+                    // instead of the hand-rolled fan below. The FRESH dispatcher is load-bearing:
+                    // reusing run 1's would re-arm its OnceLock silent no-op, stale owner_snapshots
+                    // restore, and sink_review_findings carryover. max_attempts=1 is one-shot parity
+                    // with the fan — a retry would re-shadow from a CURRENT tree against a STALE
+                    // baseline. The round loop's next real-tree gate stays the sole authority on
+                    // green; this path never touches green_blocking.
+                    let baseline = verdict.findings.len();
+                    let specs = fix_round_specs(
+                        &verdict.findings,
+                        &smoke_all_files,
+                        round as usize,
+                        complete_lang,
+                    );
+                    match goose_swarm::Dag::from_specs(specs) {
+                        Err(e) => {
+                            // NEVER `?` out of run_swarm from the advisory fix path — an unbuildable
+                            // fix DAG skips the round exactly like the stuck-bail Err.
+                            sink.write_value(serde_json::json!({
+                                "event": "complete_fix_sched_result", "round": round,
+                                "error": format!("fix DAG build failed: {e}"),
+                            }));
+                        }
+                        Ok(fix_dag) => {
+                            match build_swarm_dispatcher(dispatcher_recipe.clone(), sink.clone())
+                                .await
+                            {
+                                Err(e) => {
+                                    sink.write_value(serde_json::json!({
+                                        "event": "complete_fix_sched_result", "round": round,
+                                        "error": format!("fresh dispatcher build failed: {e}"),
+                                    }));
                                 }
-                                if !fix_pillars_block.is_empty() {
-                                    fresh.set_pillars(fix_pillars_block.clone());
-                                }
-                                fresh.begin_fix_round(FixRound {
-                                    baseline,
-                                    lang: complete_lang,
-                                    all_files: smoke_all_files.clone(),
-                                    round: round as usize,
-                                    prompt: final_binding_spec.clone(),
-                                    race_next: fleet_models.len() > 1 && spec_repair(),
-                                    composite: delivery_on || spec_contract_enabled(),
-                                    missing_gate: missing_deliverable_gate,
-                                });
-                                let mut fix_run = Scheduler::new(fix_devices.clone(), 1)
-                                    .for_fix_round()
-                                    .with_sink(sink.clone())
-                                    .with_doc_facts(doc_facts.clone())
-                                    .with_pause_file(working_dir.join(".swarm").join("pause"));
-                                // The fix scheduler is explicitly legacy even when main execution used
-                                // physical admission, so preserve the operator's requested legacy judge and
-                                // pre-review settings here. An env-disabled path must not reappear. No
-                                // replanner or speculation: a fix round neither replans nor races twins.
-                                if legacy_auxiliary_control_enabled(
-                                    legacy_judge_requested,
-                                    broker_enforcement_requested,
-                                    LegacyAuxiliaryPhase::LegacyFixRound,
-                                ) {
-                                    fix_run = fix_run.with_judge(
-                                        fresh.clone() as Arc<dyn Judge>,
-                                        JudgeConfig::default(),
-                                    );
-                                }
-                                if legacy_auxiliary_control_enabled(
-                                    legacy_prereview_requested,
-                                    broker_enforcement_requested,
-                                    LegacyAuxiliaryPhase::LegacyFixRound,
-                                ) {
-                                    fix_run = fix_run
-                                        .with_pre_reviewer(fresh.clone() as Arc<dyn PreReviewer>);
-                                }
-                                // F890 (run 11, measured live: the fix loop ran 117 minutes
-                                // against an 80-minute cap and was still spawning children when
-                                // the operator asked why the run was three hours in). The
-                                // completion cap is enforced ONLY at round heads, and a fix-round
-                                // DAG has no wall bound of its own — the judge's splits keep
-                                // adding tasks INSIDE the round, so the round head that would
-                                // enforce the cap never arrives. The scheduler run now lives
-                                // inside the cap's remaining window. The deadline is enforced INSIDE
-                                // Scheduler so expiry aborts and joins every worker and auxiliary before
-                                // this caller proceeds to the authoritative re-verify and seal.
-                                let report = match cap_deadline {
-                                    Some(dl) => {
-                                        match fix_run
-                                            .run_with_decisions_until(
-                                                fix_dag,
-                                                fresh.clone() as Arc<dyn TaskDispatcher>,
-                                                final_binding_spec.clone(),
-                                                user_decisions.clone(),
-                                                dl,
-                                            )
-                                            .await
-                                        {
-                                            Err(error)
-                                                if error
-                                                    .to_string()
-                                                    .contains("scheduler deadline elapsed") =>
+                                Ok(fresh) => {
+                                    *fresh.spec_frozen.lock().unwrap() = final_binding_spec.clone();
+                                    if !fix_contracts_bundle.is_empty() {
+                                        fresh.set_contracts(fix_contracts_bundle.clone());
+                                    }
+                                    if !fix_pillars_block.is_empty() {
+                                        fresh.set_pillars(fix_pillars_block.clone());
+                                    }
+                                    fresh.begin_fix_round(FixRound {
+                                        baseline,
+                                        baseline_findings: verdict.findings.clone(),
+                                        lang: complete_lang,
+                                        all_files: smoke_all_files.clone(),
+                                        round: round as usize,
+                                        prompt: final_binding_spec.clone(),
+                                        race_next: fleet_models.len() > 1 && spec_repair(),
+                                        composite: delivery_on || spec_contract_enabled(),
+                                        missing_gate: missing_deliverable_gate,
+                                    });
+                                    let mut fix_run = Scheduler::new(fix_devices.clone(), 1)
+                                        .for_fix_round()
+                                        .with_sink(sink.clone())
+                                        .with_doc_facts(doc_facts.clone())
+                                        .with_pause_file(working_dir.join(".swarm").join("pause"));
+                                    // The fix scheduler is explicitly legacy even when main execution used
+                                    // physical admission, so preserve the operator's requested legacy judge and
+                                    // pre-review settings here. An env-disabled path must not reappear. No
+                                    // replanner or speculation: a fix round neither replans nor races twins.
+                                    if legacy_auxiliary_control_enabled(
+                                        legacy_judge_requested,
+                                        broker_enforcement_requested,
+                                        LegacyAuxiliaryPhase::LegacyFixRound,
+                                    ) {
+                                        fix_run = fix_run.with_judge(
+                                            fresh.clone() as Arc<dyn Judge>,
+                                            JudgeConfig::default(),
+                                        );
+                                    }
+                                    if legacy_auxiliary_control_enabled(
+                                        legacy_prereview_requested,
+                                        broker_enforcement_requested,
+                                        LegacyAuxiliaryPhase::LegacyFixRound,
+                                    ) {
+                                        fix_run = fix_run.with_pre_reviewer(
+                                            fresh.clone() as Arc<dyn PreReviewer>
+                                        );
+                                    }
+                                    // F890 (run 11, measured live: the fix loop ran 117 minutes
+                                    // against an 80-minute cap and was still spawning children when
+                                    // the operator asked why the run was three hours in). The
+                                    // completion cap is enforced ONLY at round heads, and a fix-round
+                                    // DAG has no wall bound of its own — the judge's splits keep
+                                    // adding tasks INSIDE the round, so the round head that would
+                                    // enforce the cap never arrives. The scheduler run now lives
+                                    // inside the cap's remaining window. The deadline is enforced INSIDE
+                                    // Scheduler so expiry aborts and joins every worker and auxiliary before
+                                    // this caller proceeds to the authoritative re-verify and seal.
+                                    let report = match cap_deadline {
+                                        Some(dl) => {
+                                            match fix_run
+                                                .run_with_decisions_until(
+                                                    fix_dag,
+                                                    fresh.clone() as Arc<dyn TaskDispatcher>,
+                                                    final_binding_spec.clone(),
+                                                    user_decisions.clone(),
+                                                    dl,
+                                                )
+                                                .await
                                             {
-                                                sink.write_value(serde_json::json!({
+                                                Err(error)
+                                                    if error
+                                                        .to_string()
+                                                        .contains("scheduler deadline elapsed") =>
+                                                {
+                                                    sink.write_value(serde_json::json!({
                                                     "event": "fix_sched_wall_cut",
                                                     "round": round,
                                                     "detail": "the completion cap expired inside \
@@ -62787,70 +63111,72 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                                                promoted work kept, proceeding to \
                                                                re-verify",
                                                 }));
-                                                Err(anyhow::anyhow!(
-                                                    "fix round cut by the completion wall cap"
-                                                ))
+                                                    Err(anyhow::anyhow!(
+                                                        "fix round cut by the completion wall cap"
+                                                    ))
+                                                }
+                                                result => result,
                                             }
-                                            result => result,
                                         }
-                                    }
-                                    None => {
-                                        fix_run
-                                            .run_with_decisions(
-                                                fix_dag,
-                                                fresh.clone() as Arc<dyn TaskDispatcher>,
-                                                final_binding_spec.clone(),
-                                                user_decisions.clone(),
-                                            )
-                                            .await
-                                    }
-                                };
-                                fresh.end_fix_round();
-                                // The fix run's review findings have no consumer yet — drained to
-                                // an informational event so they are visible, never green-blocking.
-                                let dropped = fresh.drain_sink_review();
-                                match report {
-                                    Ok(r) => {
-                                        sink.write_value(serde_json::json!({
+                                        None => {
+                                            fix_run
+                                                .run_with_decisions(
+                                                    fix_dag,
+                                                    fresh.clone() as Arc<dyn TaskDispatcher>,
+                                                    final_binding_spec.clone(),
+                                                    user_decisions.clone(),
+                                                )
+                                                .await
+                                        }
+                                    };
+                                    fresh.end_fix_round();
+                                    // The fix run's review findings have no consumer yet — drained to
+                                    // an informational event so they are visible, never green-blocking.
+                                    let dropped = fresh.drain_sink_review();
+                                    match report {
+                                        Ok(r) => {
+                                            sink.write_value(serde_json::json!({
                                             "event": "complete_fix_sched_result", "round": round,
                                             "done": r.done.len(), "failed": r.failed.len(),
                                             "review_findings_dropped": dropped.len(),
                                         }));
-                                    }
-                                    Err(e) => {
-                                        sink.write_value(serde_json::json!({
+                                        }
+                                        Err(e) => {
+                                            sink.write_value(serde_json::json!({
                                             "event": "complete_fix_sched_result", "round": round,
                                             "error": e.to_string(),
                                             "review_findings_dropped": dropped.len(),
                                         }));
+                                        }
                                     }
-                                }
-                                // A desktop Pause (shared pause file) can hold the fix run past
-                                // the completion cap, which is only enforced at round heads —
-                                // emit the overrun so the next round-head cap check is legible.
-                                if let Some(dl) = cap_deadline {
-                                    if std::time::Instant::now() >= dl {
-                                        sink.write_value(serde_json::json!({
-                                            "event": "complete_cap_overrun_after_fix_sched",
-                                            "round": round,
-                                        }));
+                                    // A desktop Pause (shared pause file) can hold the fix run past
+                                    // the completion cap, which is only enforced at round heads —
+                                    // emit the overrun so the next round-head cap check is legible.
+                                    if let Some(dl) = cap_deadline {
+                                        if std::time::Instant::now() >= dl {
+                                            sink.write_value(serde_json::json!({
+                                                "event": "complete_cap_overrun_after_fix_sched",
+                                                "round": round,
+                                            }));
+                                        }
                                     }
-                                }
-                                last_round_was_shard = true;
-                                last_round_promoted = fresh
-                                    .fix_promotions
-                                    .load(std::sync::atomic::Ordering::Relaxed)
-                                    > 0;
-                                if fresh
-                                    .fix_promotions
-                                    .load(std::sync::atomic::Ordering::Relaxed)
-                                    == 0
-                                {
-                                    if !strategy_switched && spec_repair() && fleet_models.len() > 1
+                                    last_round_was_shard = true;
+                                    last_round_promoted = fresh
+                                        .fix_promotions
+                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                        > 0;
+                                    if fresh
+                                        .fix_promotions
+                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                        == 0
                                     {
-                                        strategy_switched = true;
-                                        force_race_next = true;
-                                        sink.write_value(serde_json::json!({
+                                        if !strategy_switched
+                                            && spec_repair()
+                                            && fleet_models.len() > 1
+                                        {
+                                            strategy_switched = true;
+                                            force_race_next = true;
+                                            sink.write_value(serde_json::json!({
                                             "event": "fix_strategy_switch",
                                             "round": round,
                                             "from": "shards", "to": "race",
@@ -62859,222 +63185,292 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                                        before convergence; a different mechanism \
                                                        is new information, a repeat is not",
                                         }));
-                                    } else {
-                                        fix_converged = true;
+                                        } else {
+                                            fix_converged = true;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
-            } else if (complete_parallel() || shard_this_round) && !fleet_models.is_empty() {
-                let (groups, unassigned) =
-                    group_findings_by_file(&verdict.findings, &smoke_all_files);
-                eprintln!(
+                } else if (complete_parallel() || shard_this_round) && !fleet_models.is_empty() {
+                    let (groups, unassigned) =
+                        group_findings_by_file(&verdict.findings, &smoke_all_files);
+                    eprintln!(
                     "complete: fix round {round} — {} file-group(s) fanned across {} model(s), {} unassigned",
                     groups.len(),
                     fleet_models.len(),
                     unassigned.len()
                 );
-                if !groups.is_empty() {
-                    let baseline = verdict.findings.len();
-                    let taken: std::collections::HashSet<String> =
-                        groups.iter().map(|g| g.file.clone()).collect();
-                    let me = smoke_fix_dispatcher.clone();
-                    let all_files = smoke_all_files.clone();
-                    let fan_cwd = cwd.clone();
-                    let fan_prompt = final_binding_spec.clone();
-                    let fan_all_files = smoke_all_files.clone();
-                    let fan_composite = delivery_on || spec_contract_enabled();
-                    let fan_missing_gate = missing_deliverable_gate;
-                    let dev = dev_id.clone();
-                    // Cloned OUTSIDE the Fn closure: fanout calls it once per group, so it may only borrow.
-                    let decisions = user_decisions.clone();
-                    let facts = doc_facts.clone();
-                    let sink_r = sink.clone();
-                    let summaries =
-                        fanout_over_fleet(fleet_slots.clone(), groups, move |g, model| {
-                            let me = me.clone();
-                            let all_files = all_files.clone();
-                            let fan_cwd = fan_cwd.clone();
-                            let fan_prompt = fan_prompt.clone();
-                            let fan_all_files = fan_all_files.clone();
-                            let dev = dev.clone();
-                            let decisions = decisions.clone();
-                            let facts = facts.clone();
-                            let sink_r = sink_r.clone();
-                            let taken = taken.clone();
-                            async move {
-                                let task_id = format!("complete-fix::{}", g.file);
-                                sink_r.write_value(serde_json::json!({
-                                    "event": "complete_fix_dispatched",
-                                    "round": round, "shard": g.file, "model": model,
-                                    "task_id": task_id, "baseline_findings": baseline,
-                                }));
-                                let started = std::time::Instant::now();
-                                let req = DispatchRequest {
-                                    task_id: task_id.clone(),
-                                    description: smoke_fix_description(&g.findings, complete_lang),
-                                    device_id: dev,
-                                    model_id: model.clone(),
-                                    context_slice: String::new(),
-                                    dependency_files: Vec::new(),
-                                    attempt: round,
-                                    owned_files: shard_owned_files(&g.file, &all_files, &taken),
-                                    all_files,
-                                    prior_hint: None,
-                                    subsplit: Vec::new(),
-                                    // Shadow-isolate: this shard runs rooted at its OWN cp -r shadow tree, so N
-                                    // concurrent fix agents can never write the real tree at once. On success
-                                    // ONLY this shard's owned file is promoted back — and the file-groups are a
-                                    // NORMALIZED disjoint partition, so no two promotes touch the same real dst.
-                                    speculative: true,
-                                    // A FIX worker must honour the user's choices too — a fix that re-introduces
-                                    // `Decimal` after the user chose integer cents is still wrong.
-                                    user_decisions: decisions.clone(),
-                                    doc_facts: facts.clone(),
-                                    // Per-file fix shard: no DAG neighborhood → contract bundle unscoped.
-                                    neighborhood: Vec::new(),
-                                    replan_authority: None,
-                                    activity_publisher: None,
-                                };
-                                // ONE rule, one implementation. This was a bare `from_secs(1200)`
-                                // while its sibling — the serial fix on the other branch of this same
-                                // `if` — used `fix_cap_secs()`, which is env-overridable and clamped
-                                // to 120..=3600. Same default, same purpose, and only one of them
-                                // could be tuned: setting GOOSE_SWARM_FIX_CAP_SECS moved the serial
-                                // path and silently left the fanned path at 20 minutes.
-                                let progress =
-                                    Arc::new(std::sync::Mutex::new(FixAttemptProgress::default()));
-                                let sampler = spawn_fix_progress_sampler(
-                                    me.clone(),
-                                    task_id.clone(),
-                                    progress.clone(),
-                                );
-                                let ran = tokio::time::timeout(
-                                    std::time::Duration::from_secs(fix_cap_eff),
-                                    me.run(req),
-                                )
-                                .await;
-                                sampler.abort();
-                                {
-                                    let st = progress.lock().unwrap().clone();
+                    if !groups.is_empty() {
+                        let baseline = verdict.findings.len();
+                        let taken: std::collections::HashSet<String> =
+                            groups.iter().map(|g| g.file.clone()).collect();
+                        let me = smoke_fix_dispatcher.clone();
+                        let all_files = smoke_all_files.clone();
+                        let fan_cwd = cwd.clone();
+                        let fan_prompt = final_binding_spec.clone();
+                        let fan_all_files = smoke_all_files.clone();
+                        let fan_composite = delivery_on || spec_contract_enabled();
+                        let fan_missing_gate = missing_deliverable_gate;
+                        let dev = dev_id.clone();
+                        // Cloned OUTSIDE the Fn closure: fanout calls it once per group, so it may only borrow.
+                        let decisions = user_decisions.clone();
+                        let facts = doc_facts.clone();
+                        let sink_r = sink.clone();
+                        let summaries =
+                            fanout_over_fleet(fleet_slots.clone(), groups, move |g, model| {
+                                let me = me.clone();
+                                let all_files = all_files.clone();
+                                let fan_cwd = fan_cwd.clone();
+                                let fan_prompt = fan_prompt.clone();
+                                let fan_all_files = fan_all_files.clone();
+                                let dev = dev.clone();
+                                let decisions = decisions.clone();
+                                let facts = facts.clone();
+                                let sink_r = sink_r.clone();
+                                let taken = taken.clone();
+                                async move {
+                                    let task_id = format!("complete-fix::{}", g.file);
                                     sink_r.write_value(serde_json::json!({
-                                        "event": "fix_attempt_progress",
-                                        "round": round, "shard": g.file,
-                                        "samples": st.samples,
-                                        "changed_samples": st.changed,
-                                        "first_change_secs": st.first_change_secs,
-                                        "longest_still_secs": st.longest_still_secs,
+                                        "event": "complete_fix_dispatched",
+                                        "round": round, "shard": g.file, "model": model,
+                                        "task_id": task_id, "baseline_findings": baseline,
                                     }));
-                                }
-                                // GRADE THE TREE, NOT THE AGENT'S EXIT — the twin race's rule, for the
-                                // same measured reasons: a shard killed at the cap may still hold the
-                                // fix in its shadow, and an agent's "done" may not survive the gate.
-                                // Promoting on `Ok(Ok(_))` alone (what this branch did before) lands
-                                // whatever the agent claims, unverified, on the real tree. The shard
-                                // owns ONE file and the worker is pinned to it (single_owned_file), so
-                                // the shadow's gate verdict is what a promote would produce for real.
-                                // F883 + F862: the shard's grade was run_smoke_gate — a SUBSET
-                                // of the ruler that produced `baseline` (the round's composite
-                                // complete_verify count) — so a shard that edited NOTHING graded
-                                // its byte-identical shadow below baseline on the categories the
-                                // subset could not see, and promoted a no-op every wave. One
-                                // ruler, on the composed preview a promote would actually land.
-                                let (verified, shard_changed, _est) = me
-                                    .grade_promotion_preview(
-                                        &task_id,
-                                        &fan_cwd,
-                                        &fan_prompt,
-                                        complete_lang,
-                                        &fan_all_files,
-                                        fan_composite,
-                                        fan_missing_gate,
+                                    let started = std::time::Instant::now();
+                                    let req = DispatchRequest {
+                                        task_id: task_id.clone(),
+                                        description: smoke_fix_description(
+                                            &g.findings,
+                                            complete_lang,
+                                        ),
+                                        device_id: dev,
+                                        model_id: model.clone(),
+                                        context_slice: String::new(),
+                                        dependency_files: Vec::new(),
+                                        attempt: round,
+                                        owned_files: shard_owned_files(&g.file, &all_files, &taken),
+                                        all_files,
+                                        prior_hint: None,
+                                        subsplit: Vec::new(),
+                                        // Shadow-isolate: this shard runs rooted at its OWN cp -r shadow tree, so N
+                                        // concurrent fix agents can never write the real tree at once. On success
+                                        // ONLY this shard's owned file is promoted back — and the file-groups are a
+                                        // NORMALIZED disjoint partition, so no two promotes touch the same real dst.
+                                        speculative: true,
+                                        // A FIX worker must honour the user's choices too — a fix that re-introduces
+                                        // `Decimal` after the user chose integer cents is still wrong.
+                                        user_decisions: decisions.clone(),
+                                        doc_facts: facts.clone(),
+                                        // Per-file fix shard: no DAG neighborhood → contract bundle unscoped.
+                                        neighborhood: Vec::new(),
+                                        replan_authority: None,
+                                        activity_publisher: None,
+                                    };
+                                    // ONE rule, one implementation. This was a bare `from_secs(1200)`
+                                    // while its sibling — the serial fix on the other branch of this same
+                                    // `if` — used `fix_cap_secs()`, which is env-overridable and clamped
+                                    // to 120..=3600. Same default, same purpose, and only one of them
+                                    // could be tuned: setting GOOSE_SWARM_FIX_CAP_SECS moved the serial
+                                    // path and silently left the fanned path at 20 minutes.
+                                    let progress = Arc::new(std::sync::Mutex::new(
+                                        FixAttemptProgress::default(),
+                                    ));
+                                    let sampler = spawn_fix_progress_sampler(
+                                        me.clone(),
+                                        task_id.clone(),
+                                        progress.clone(),
+                                    );
+                                    let ran = tokio::time::timeout(
+                                        std::time::Duration::from_secs(fix_cap_eff),
+                                        me.run(req),
                                     )
                                     .await;
-                                let promoted =
-                                    shard_changed && shard_beats_baseline(verified, baseline);
-                                if promoted {
-                                    me.promote_speculative(&task_id).await;
-                                } else {
-                                    me.discard_speculative(&task_id).await;
+                                    sampler.abort();
+                                    {
+                                        let st = progress.lock().unwrap().clone();
+                                        sink_r.write_value(serde_json::json!({
+                                            "event": "fix_attempt_progress",
+                                            "round": round, "shard": g.file,
+                                            "samples": st.samples,
+                                            "changed_samples": st.changed,
+                                            "first_change_secs": st.first_change_secs,
+                                            "longest_still_secs": st.longest_still_secs,
+                                        }));
+                                    }
+                                    // GRADE THE TREE, NOT THE AGENT'S EXIT — the twin race's rule, for the
+                                    // same measured reasons: a shard killed at the cap may still hold the
+                                    // fix in its shadow, and an agent's "done" may not survive the gate.
+                                    // Promoting on `Ok(Ok(_))` alone (what this branch did before) lands
+                                    // whatever the agent claims, unverified, on the real tree. The shard
+                                    // owns ONE file and the worker is pinned to it (single_owned_file), so
+                                    // the shadow's gate verdict is what a promote would produce for real.
+                                    // F883 + F862: the shard's grade was run_smoke_gate — a SUBSET
+                                    // of the ruler that produced `baseline` (the round's composite
+                                    // complete_verify count) — so a shard that edited NOTHING graded
+                                    // its byte-identical shadow below baseline on the categories the
+                                    // subset could not see, and promoted a no-op every wave. One
+                                    // ruler, on the composed preview a promote would actually land.
+                                    let (grade, shard_changed) = me
+                                        .grade_promotion_preview(
+                                            &task_id,
+                                            &fan_cwd,
+                                            &fan_prompt,
+                                            complete_lang,
+                                            &fan_all_files,
+                                            fan_composite,
+                                            fan_missing_gate,
+                                        )
+                                        .await;
+                                    let promoted = shard_changed
+                                        && repair_grade_promotes(&grade, baseline, &g.findings);
+                                    let verified = grade.count();
+                                    if promoted {
+                                        me.promote_speculative(&task_id).await;
+                                    } else {
+                                        me.discard_speculative(&task_id).await;
+                                    }
+                                    sink_r.write_value(serde_json::json!({
+                                        "event": "complete_fix_completed",
+                                        "round": round, "shard": g.file, "model": model,
+                                        "task_id": task_id,
+                                        "secs": started.elapsed().as_secs(),
+                                        "agent_ok": matches!(ran, Ok(Ok(_))),
+                                        "verified_findings": verified,
+                                        "baseline_findings": baseline,
+                                        "promoted": promoted,
+                                    }));
+                                    promoted
                                 }
-                                sink_r.write_value(serde_json::json!({
-                                    "event": "complete_fix_completed",
-                                    "round": round, "shard": g.file, "model": model,
-                                    "task_id": task_id,
-                                    "secs": started.elapsed().as_secs(),
-                                    "agent_ok": matches!(ran, Ok(Ok(_))),
-                                    "verified_findings": verified,
-                                    "baseline_findings": baseline,
-                                    "promoted": promoted,
-                                }));
-                                promoted
-                            }
-                        })
-                        .await;
-                    sink.write_value(serde_json::json!({
-                        "event": "complete_fix_wave",
-                        "round": round,
-                        "shards": summaries.len(),
-                        "promoted": summaries.iter().filter(|p| **p).count(),
-                        "unassigned": unassigned.len(),
-                    }));
-                }
-                // A finding that names no file still gets one shot after the partitioned wave —
-                // S1 increment 3: as a JOIN TWIN under the same shadow-and-gate discipline, not
-                // the `speculative: false` direct write this was. That flag made this the LAST
-                // dispatch in the whole repair tail whose agent touched the real tree ungraded.
-                // The gate must run on the REAL tree first: the round's opening count is stale
-                // the moment a shard promotes, so the join's honest baseline is the post-wave
-                // tree. If that gate cannot run, no promote decision can be honest — skip the
-                // join entirely; the loop head re-gates next round and the findings drive it
-                // there. (A sentinel baseline here would promote on UNKNOWN, the vacuous-pass
-                // trap with the sign flipped.)
-                // F862: the join twin's baseline and grade were BOTH run_smoke_gate — internally
-                // consistent, but a SUBSET of the ruler that opened the round, so a cross-file
-                // finding visible only to the composite categories could neither hold the twin
-                // accountable nor be repaired by it. One ruler here too.
-                let post_wave_gate = if unassigned.is_empty() {
-                    None
-                } else {
-                    Some(
-                        one_ruler_grade(
-                            &cwd,
-                            &final_binding_spec,
-                            complete_lang,
-                            &smoke_all_files,
-                            delivery_on || spec_contract_enabled(),
-                            missing_deliverable_gate,
+                            })
+                            .await;
+                        sink.write_value(serde_json::json!({
+                            "event": "complete_fix_wave",
+                            "round": round,
+                            "shards": summaries.len(),
+                            "promoted": summaries.iter().filter(|p| **p).count(),
+                            "unassigned": unassigned.len(),
+                        }));
+                    }
+                    // A finding that names no file still gets one shot after the partitioned wave —
+                    // S1 increment 3: as a JOIN TWIN under the same shadow-and-gate discipline, not
+                    // the `speculative: false` direct write this was. That flag made this the LAST
+                    // dispatch in the whole repair tail whose agent touched the real tree ungraded.
+                    // The gate must run on the REAL tree first: the round's opening count is stale
+                    // the moment a shard promotes, so the join's honest baseline is the post-wave
+                    // tree. If that gate cannot run, no promote decision can be honest — skip the
+                    // join entirely; the loop head re-gates next round and the findings drive it
+                    // there. (A sentinel baseline here would promote on UNKNOWN, the vacuous-pass
+                    // trap with the sign flipped.)
+                    // F862: the join twin's baseline and grade were BOTH run_smoke_gate — internally
+                    // consistent, but a SUBSET of the ruler that opened the round, so a cross-file
+                    // finding visible only to the composite categories could neither hold the twin
+                    // accountable nor be repaired by it. One ruler here too.
+                    let post_wave_gate = if unassigned.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            one_ruler_grade(
+                                &cwd,
+                                &final_binding_spec,
+                                complete_lang,
+                                &smoke_all_files,
+                                delivery_on || spec_contract_enabled(),
+                                missing_deliverable_gate,
+                            )
+                            .await,
                         )
-                        .await,
-                    )
-                };
-                if let Some(post_wave) = post_wave_gate.and_then(|(n, _)| n) {
-                    let task_id = "complete-fix::cross-file".to_string();
-                    sink.write_value(serde_json::json!({
-                        "event": "complete_fix_dispatched",
-                        "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
-                        "task_id": task_id, "baseline_findings": post_wave,
-                    }));
-                    let started = std::time::Instant::now();
-                    let req = DispatchRequest {
-                        task_id: task_id.clone(),
-                        description: smoke_fix_description(&unassigned, complete_lang),
+                    };
+                    if let Some(post_wave_grade) =
+                        post_wave_gate.filter(|grade| grade.count().is_some())
+                    {
+                        let post_wave = post_wave_grade.count().expect("filtered ruler grade");
+                        let task_id = "complete-fix::cross-file".to_string();
+                        sink.write_value(serde_json::json!({
+                            "event": "complete_fix_dispatched",
+                            "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
+                            "task_id": task_id, "baseline_findings": post_wave,
+                        }));
+                        let started = std::time::Instant::now();
+                        let req = DispatchRequest {
+                            task_id: task_id.clone(),
+                            description: smoke_fix_description(&unassigned, complete_lang),
+                            device_id: dev_id,
+                            model_id: model_id.clone(),
+                            context_slice: String::new(),
+                            dependency_files: Vec::new(),
+                            attempt: round,
+                            // Whole-tree twin semantics: which file a cross-file fix needs is exactly
+                            // what is unknown, so it owns everything and its shadow (cp -r of the
+                            // POST-promote tree — this dispatch is after the wave's barrier) promotes
+                            // in full or not at all.
+                            owned_files: smoke_all_files.clone(),
+                            all_files: smoke_all_files.clone(),
+                            prior_hint: None,
+                            subsplit: Vec::new(),
+                            speculative: true,
+                            // A FIX worker must honour the user's choices too — a fix that re-introduces
+                            // `Decimal` after the user chose integer cents is still wrong.
+                            user_decisions: user_decisions.clone(),
+                            doc_facts: doc_facts.clone(),
+                            // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
+                            neighborhood: Vec::new(),
+                            replan_authority: None,
+                            activity_publisher: None,
+                        };
+                        let ran = tokio::time::timeout(
+                            std::time::Duration::from_secs(fix_cap_eff),
+                            smoke_fix_dispatcher.run(req),
+                        )
+                        .await;
+                        // GRADE THE TREE, NOT THE AGENT'S EXIT — third application of the one rule,
+                        // now on the composed preview with the round's full ruler (F883/F862).
+                        let (grade, join_changed) = smoke_fix_dispatcher
+                            .grade_promotion_preview(
+                                &task_id,
+                                &cwd,
+                                &final_binding_spec,
+                                complete_lang,
+                                &smoke_all_files,
+                                delivery_on || spec_contract_enabled(),
+                                missing_deliverable_gate,
+                            )
+                            .await;
+                        let promoted =
+                            join_changed && repair_grade_promotes(&grade, post_wave, &unassigned);
+                        let verified = grade.count();
+                        if promoted {
+                            smoke_fix_dispatcher.promote_speculative(&task_id).await;
+                        } else {
+                            smoke_fix_dispatcher.discard_speculative(&task_id).await;
+                        }
+                        sink.write_value(serde_json::json!({
+                            "event": "complete_fix_completed",
+                            "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
+                            "task_id": task_id,
+                            "secs": started.elapsed().as_secs(),
+                            "agent_ok": matches!(ran, Ok(Ok(_))),
+                            "verified_findings": verified,
+                            "baseline_findings": post_wave,
+                            "promoted": promoted,
+                        }));
+                    }
+                } else {
+                    eprintln!("complete: fix round {round} against the distilled failure ...");
+                    let fix_model_id = model_id.clone();
+                    let fix_req = DispatchRequest {
+                        task_id: "complete-fix".to_string(),
+                        description: smoke_fix_description(&verdict.findings, complete_lang),
                         device_id: dev_id,
-                        model_id: model_id.clone(),
+                        model_id,
                         context_slice: String::new(),
                         dependency_files: Vec::new(),
                         attempt: round,
-                        // Whole-tree twin semantics: which file a cross-file fix needs is exactly
-                        // what is unknown, so it owns everything and its shadow (cp -r of the
-                        // POST-promote tree — this dispatch is after the wave's barrier) promotes
-                        // in full or not at all.
-                        owned_files: smoke_all_files.clone(),
+                        owned_files: vec![],
                         all_files: smoke_all_files.clone(),
                         prior_hint: None,
                         subsplit: Vec::new(),
-                        speculative: true,
+                        speculative: false,
                         // A FIX worker must honour the user's choices too — a fix that re-introduces
                         // `Decimal` after the user chose integer cents is still wrong.
                         user_decisions: user_decisions.clone(),
@@ -63084,112 +63480,52 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         replan_authority: None,
                         activity_publisher: None,
                     };
-                    let ran = tokio::time::timeout(
+                    // THE TAIL'S DISPATCH EVENTS BELONG ON *THIS* PATH, the default one.
+                    //
+                    // F76/F77 added complete_fix_dispatched/complete_fix_completed so the repair tail
+                    // would stop being a measurement black hole (F74: 13-26% of every run with no
+                    // occupancy number, because the tail emits no task_dispatched). But they were placed
+                    // inside the `spec_repair()` branch — a lever that is DEFAULT-OFF — so on an ordinary
+                    // run the tail still emitted nothing and the black hole was exactly as dark as
+                    // before. MEASURED: complete_fix_dispatched = 0 on the first full run after shipping
+                    // it (F105).
+                    //
+                    // That is a mechanism whose precondition never holds, inside the fix for mechanisms
+                    // whose preconditions never hold. The events now ride the SERIAL path, which is the
+                    // one that actually runs.
+                    sink.write_value(serde_json::json!({
+                        "event": "complete_fix_dispatched",
+                        "round": round,
+                        "twin": 0,
+                        "model": fix_model_id,
+                        "task_id": "complete-fix",
+                        "baseline_findings": verdict.findings.len(),
+                        "path": "serial",
+                    }));
+                    let fix_started = std::time::Instant::now();
+                    let fix_out = tokio::time::timeout(
                         std::time::Duration::from_secs(fix_cap_eff),
-                        smoke_fix_dispatcher.run(req),
+                        smoke_fix_dispatcher.run(fix_req),
                     )
                     .await;
-                    // GRADE THE TREE, NOT THE AGENT'S EXIT — third application of the one rule,
-                    // now on the composed preview with the round's full ruler (F883/F862).
-                    let (verified, join_changed, _est) = smoke_fix_dispatcher
-                        .grade_promotion_preview(
-                            &task_id,
-                            &cwd,
-                            &final_binding_spec,
-                            complete_lang,
-                            &smoke_all_files,
-                            delivery_on || spec_contract_enabled(),
-                            missing_deliverable_gate,
-                        )
-                        .await;
-                    let promoted = join_changed && shard_beats_baseline(verified, post_wave);
-                    if promoted {
-                        smoke_fix_dispatcher.promote_speculative(&task_id).await;
-                    } else {
-                        smoke_fix_dispatcher.discard_speculative(&task_id).await;
-                    }
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_completed",
-                        "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
-                        "task_id": task_id,
-                        "secs": started.elapsed().as_secs(),
-                        "agent_ok": matches!(ran, Ok(Ok(_))),
-                        "verified_findings": verified,
-                        "baseline_findings": post_wave,
-                        "promoted": promoted,
+                        "round": round,
+                        "twin": 0,
+                        "secs": fix_started.elapsed().as_secs(),
+                        // The serial path writes straight into the real tree and nothing re-verifies the
+                        // edit before it lands (F75: `passed` false in 13 of 13 archived rounds, findings
+                        // ROSE in 3). So there is no verified_findings to report here — the next round's
+                        // complete_verify is the only check, and saying `null` states that plainly rather
+                        // than implying a grade that was never computed.
+                        "verified_findings": serde_json::Value::Null,
+                        "agent_ok": matches!(fix_out, Ok(Ok(_))),
+                        "baseline_findings": verdict.findings.len(),
+                        "path": "serial",
                     }));
                 }
-            } else {
-                eprintln!("complete: fix round {round} against the distilled failure ...");
-                let fix_model_id = model_id.clone();
-                let fix_req = DispatchRequest {
-                    task_id: "complete-fix".to_string(),
-                    description: smoke_fix_description(&verdict.findings, complete_lang),
-                    device_id: dev_id,
-                    model_id,
-                    context_slice: String::new(),
-                    dependency_files: Vec::new(),
-                    attempt: round,
-                    owned_files: vec![],
-                    all_files: smoke_all_files.clone(),
-                    prior_hint: None,
-                    subsplit: Vec::new(),
-                    speculative: false,
-                    // A FIX worker must honour the user's choices too — a fix that re-introduces
-                    // `Decimal` after the user chose integer cents is still wrong.
-                    user_decisions: user_decisions.clone(),
-                    doc_facts: doc_facts.clone(),
-                    // Fix/sink dispatch: no DAG neighborhood → the contract bundle stays unscoped (full).
-                    neighborhood: Vec::new(),
-                    replan_authority: None,
-                    activity_publisher: None,
-                };
-                // THE TAIL'S DISPATCH EVENTS BELONG ON *THIS* PATH, the default one.
-                //
-                // F76/F77 added complete_fix_dispatched/complete_fix_completed so the repair tail
-                // would stop being a measurement black hole (F74: 13-26% of every run with no
-                // occupancy number, because the tail emits no task_dispatched). But they were placed
-                // inside the `spec_repair()` branch — a lever that is DEFAULT-OFF — so on an ordinary
-                // run the tail still emitted nothing and the black hole was exactly as dark as
-                // before. MEASURED: complete_fix_dispatched = 0 on the first full run after shipping
-                // it (F105).
-                //
-                // That is a mechanism whose precondition never holds, inside the fix for mechanisms
-                // whose preconditions never hold. The events now ride the SERIAL path, which is the
-                // one that actually runs.
-                sink.write_value(serde_json::json!({
-                    "event": "complete_fix_dispatched",
-                    "round": round,
-                    "twin": 0,
-                    "model": fix_model_id,
-                    "task_id": "complete-fix",
-                    "baseline_findings": verdict.findings.len(),
-                    "path": "serial",
-                }));
-                let fix_started = std::time::Instant::now();
-                let fix_out = tokio::time::timeout(
-                    std::time::Duration::from_secs(fix_cap_eff),
-                    smoke_fix_dispatcher.run(fix_req),
-                )
-                .await;
-                sink.write_value(serde_json::json!({
-                    "event": "complete_fix_completed",
-                    "round": round,
-                    "twin": 0,
-                    "secs": fix_started.elapsed().as_secs(),
-                    // The serial path writes straight into the real tree and nothing re-verifies the
-                    // edit before it lands (F75: `passed` false in 13 of 13 archived rounds, findings
-                    // ROSE in 3). So there is no verified_findings to report here — the next round's
-                    // complete_verify is the only check, and saying `null` states that plainly rather
-                    // than implying a grade that was never computed.
-                    "verified_findings": serde_json::Value::Null,
-                    "agent_ok": matches!(fix_out, Ok(Ok(_))),
-                    "baseline_findings": verdict.findings.len(),
-                    "path": "serial",
-                }));
-            }
-            if fix_converged {
-                sink.write_value(serde_json::json!({
+                if fix_converged {
+                    sink.write_value(serde_json::json!({
                     "event": "complete_fix_converged",
                     "round": round,
                     "findings": verdict.findings.len(),
@@ -63197,132 +63533,132 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                its opening verify, so the phase ends here instead of re-measuring \
                                an identical tree into a stall exit",
                 }));
-                break;
+                    break;
+                }
+                round += 1;
             }
-            round += 1;
-        }
-        // The ordinary fix loop is now provisional. From this point to `seal`, every corrective
-        // writer must hold an OpenRepairTree candidate token and every changed epoch must pass the
-        // canonical full ruler before ship-best may be selected or a result may be emitted.
-        let mut repair_tree = OpenRepairTree::open(&cwd, sink.as_ref())?;
-        let mut shipped_desc = "final tree".to_string();
-        // The final repair-loop measurement is a full canonical-ruler decision over this still-current
-        // tree. Bind it to the open epoch before ship-best can inspect it. The restore remains provisional:
-        // it invalidates this ruling, then the boot/wire floor runs on the restored bytes and the final
-        // authoritative ruler decides the exact tree that seals.
-        let selection_ruling = repair_tree.record_ruling_values(
-            last_verify_count == 0,
-            last_verify_established,
-            last_verify_count,
-            "repair-loop-final",
-            sink.as_ref(),
-        )?;
-        repair_tree.require_current_ruling()?;
-        if ship_best && (!selection_ruling.passed || !selection_ruling.verified) {
-            if let Some((best_round, best_count)) = best_verified {
-                if !last_verify_ran
-                    || last_verify_count > best_count
-                    || (!last_verify_established && best_established)
-                {
-                    let best_dir = cwd.join(".swarm/best-tree");
-                    if best_dir.is_dir() {
-                        let candidate = repair_tree.begin_candidate("ship-best-restore")?;
-                        let restored = tokio::process::Command::new("rsync")
-                            .args([
-                                "-a",
-                                "--delete",
-                                "--exclude",
-                                ".swarm",
-                                "--exclude",
-                                "run.jsonl",
-                                "--exclude",
-                                "bench-shots",
-                                "--exclude",
-                                "heartbeat",
-                                "--exclude",
-                                "graded.db",
-                            ])
-                            .arg(format!("{}/", best_dir.display()))
-                            .arg(format!("{}/", cwd.display()))
-                            .status()
-                            .await
-                            .map(|status| status.success())
-                            .unwrap_or(false);
-                        let changed = repair_tree.finish_candidate(candidate, sink.as_ref())?;
-                        sink.write_value(serde_json::json!({
-                            "event": "best_tree_restored",
-                            "from_round": best_round,
-                            "best_findings": best_count,
-                            "best_established": best_established,
-                            "final_findings": last_verify_count,
-                            "final_ran": last_verify_ran,
-                            "final_established": last_verify_established,
-                            "restored": restored,
-                            "changed": changed,
-                        }));
-                        if restored {
-                            shipped_desc = format!(
+            // The ordinary fix loop is now provisional. From this point to `seal`, every corrective
+            // writer must hold an OpenRepairTree candidate token and every changed epoch must pass the
+            // canonical full ruler before ship-best may be selected or a result may be emitted.
+            let mut repair_tree = OpenRepairTree::open(&cwd, sink.as_ref())?;
+            let mut shipped_desc = "final tree".to_string();
+            // The final repair-loop measurement is a full canonical-ruler decision over this still-current
+            // tree. Bind it to the open epoch before ship-best can inspect it. The restore remains provisional:
+            // it invalidates this ruling, then the boot/wire floor runs on the restored bytes and the final
+            // authoritative ruler decides the exact tree that seals.
+            let selection_ruling = repair_tree.record_ruling_values(
+                last_verify_count == 0,
+                last_verify_established,
+                last_verify_count,
+                "repair-loop-final",
+                sink.as_ref(),
+            )?;
+            repair_tree.require_current_ruling()?;
+            if ship_best && (!selection_ruling.passed || !selection_ruling.verified) {
+                if let Some((best_round, best_count)) = best_verified {
+                    if !last_verify_ran
+                        || last_verify_count > best_count
+                        || (!last_verify_established && best_established)
+                    {
+                        let best_dir = cwd.join(".swarm/best-tree");
+                        if best_dir.is_dir() {
+                            let candidate = repair_tree.begin_candidate("ship-best-restore")?;
+                            let restored = tokio::process::Command::new("rsync")
+                                .args([
+                                    "-a",
+                                    "--delete",
+                                    "--exclude",
+                                    ".swarm",
+                                    "--exclude",
+                                    "run.jsonl",
+                                    "--exclude",
+                                    "bench-shots",
+                                    "--exclude",
+                                    "heartbeat",
+                                    "--exclude",
+                                    "graded.db",
+                                ])
+                                .arg(format!("{}/", best_dir.display()))
+                                .arg(format!("{}/", cwd.display()))
+                                .status()
+                                .await
+                                .map(|status| status.success())
+                                .unwrap_or(false);
+                            let changed = repair_tree.finish_candidate(candidate, sink.as_ref())?;
+                            sink.write_value(serde_json::json!({
+                                "event": "best_tree_restored",
+                                "from_round": best_round,
+                                "best_findings": best_count,
+                                "best_established": best_established,
+                                "final_findings": last_verify_count,
+                                "final_ran": last_verify_ran,
+                                "final_established": last_verify_established,
+                                "restored": restored,
+                                "changed": changed,
+                            }));
+                            if restored {
+                                shipped_desc = format!(
                                 "restored round {best_round} snapshot ({best_count} established \
                                  finding(s))"
                             );
-                        }
-                        eprintln!(
-                            "{}",
-                            style(format!(
+                            }
+                            eprintln!(
+                                "{}",
+                                style(format!(
                                 "complete: SHIP-BEST-VERIFIED — restored round {best_round}'s tree \
                                  ({best_count} finding(s)) over the final repair-loop state \
                                  ({last_verify_count} finding(s), ran={last_verify_ran}); the \
                                  functional floor and final ruler now run on the restored bytes"
                             ))
-                            .yellow()
-                        );
+                                .yellow()
+                            );
+                        }
                     }
                 }
             }
-        }
-        // FUNCTIONAL FLOOR (Mihai 2026-08-19: "the goose swarm should not allow a non
-        // functional result — if the application is dead there is no point to it"). Three of
-        // five sb-6 fleet runs shipped apps that never serve a request; the repair loop saw
-        // the symptoms too late and converged red. Before anything ships: boot the advertised
-        // entry. If it does not BIND, run dedicated boot-repair attempts — the worker gets the
-        // ACTUAL boot traceback (the smallest, most actionable finding a run can produce) —
-        // and stop on PROGRESS grounds only: an attempt that leaves the traceback byte-
-        // identical taught the loop nothing, two such stops end it. Attempt budget reuses the
-        // existing per-fix cap; no new time constants. This block runs AFTER the F835 restore
-        // (adversarial review, boot-floor 1a: probing before the restore let the restore
-        // clobber a successful boot repair with a pre-repair snapshot — the floor must probe
-        // the tree that SHIPS). Past the completion deadline the budget drops to one attempt:
-        // the floor is the point, but not three fix-caps past the wall.
-        if matches!(complete_lang, TargetLang::Python) {
-            let boot_budget: u32 = if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl)
-            {
-                1
-            } else {
-                3
-            };
-            let mut prev_err: Option<String> = None;
-            let mut attempts = 0u32;
-            loop {
-                let Some(probe) = boot_probe(&cwd, &final_binding_spec).await else {
-                    break; // spec advertises no bootable entry — the floor does not apply
-                };
-                let Some(err_tail) = probe else {
-                    if attempts > 0 {
+            // FUNCTIONAL FLOOR (Mihai 2026-08-19: "the goose swarm should not allow a non
+            // functional result — if the application is dead there is no point to it"). Three of
+            // five sb-6 fleet runs shipped apps that never serve a request; the repair loop saw
+            // the symptoms too late and converged red. Before anything ships: boot the advertised
+            // entry. If it does not BIND, run dedicated boot-repair attempts — the worker gets the
+            // ACTUAL boot traceback (the smallest, most actionable finding a run can produce) —
+            // and stop on PROGRESS grounds only: an attempt that leaves the traceback byte-
+            // identical taught the loop nothing, two such stops end it. Attempt budget reuses the
+            // existing per-fix cap; no new time constants. This block runs AFTER the F835 restore
+            // (adversarial review, boot-floor 1a: probing before the restore let the restore
+            // clobber a successful boot repair with a pre-repair snapshot — the floor must probe
+            // the tree that SHIPS). Past the completion deadline the budget drops to one attempt:
+            // the floor is the point, but not three fix-caps past the wall.
+            if matches!(complete_lang, TargetLang::Python) {
+                let boot_budget: u32 =
+                    if cap_deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
+                        1
+                    } else {
+                        3
+                    };
+                let mut prev_err: Option<String> = None;
+                let mut attempts = 0u32;
+                loop {
+                    let Some(probe) = boot_probe(&cwd, &final_binding_spec).await else {
+                        break; // spec advertises no bootable entry — the floor does not apply
+                    };
+                    let Some(err_tail) = probe else {
+                        if attempts > 0 {
+                            sink.write_value(serde_json::json!({
+                                "event": "boot_repaired",
+                                "attempts": attempts,
+                                "detail": "the app now binds and answers — a dead app never ships \
+                                           without a fight",
+                            }));
+                            eprintln!(
+                                "{}",
+                                style("complete: BOOT REPAIRED — the app binds again").green()
+                            );
+                        }
+                        break;
+                    };
+                    if attempts >= boot_budget || prev_err.as_deref() == Some(err_tail.as_str()) {
                         sink.write_value(serde_json::json!({
-                            "event": "boot_repaired",
-                            "attempts": attempts,
-                            "detail": "the app now binds and answers — a dead app never ships \
-                                       without a fight",
-                        }));
-                        eprintln!(
-                            "{}",
-                            style("complete: BOOT REPAIRED — the app binds again").green()
-                        );
-                    }
-                    break;
-                };
-                if attempts >= boot_budget || prev_err.as_deref() == Some(err_tail.as_str()) {
-                    sink.write_value(serde_json::json!({
                         "event": "boot_repair_exhausted",
                         "attempts": attempts,
                         "detail": "boot repair stopped — no progress between attempts (identical \
@@ -63330,19 +63666,19 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                    decides what ships",
                         "boot_error": elide_middle(&err_tail, 150, 650),
                     }));
-                    break;
-                }
-                attempts += 1;
-                sink.write_value(serde_json::json!({
-                    "event": "boot_repair_attempt",
-                    "attempt": attempts,
-                    "boot_error": elide_middle(&err_tail, 150, 650),
-                }));
-                prev_err = Some(err_tail.clone());
-                if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
-                    let candidate =
-                        repair_tree.begin_candidate(format!("boot-repair-{attempts}"))?;
-                    let boot_req = DispatchRequest {
+                        break;
+                    }
+                    attempts += 1;
+                    sink.write_value(serde_json::json!({
+                        "event": "boot_repair_attempt",
+                        "attempt": attempts,
+                        "boot_error": elide_middle(&err_tail, 150, 650),
+                    }));
+                    prev_err = Some(err_tail.clone());
+                    if let Some((dev_id, model_id)) = smoke_fix_target.clone() {
+                        let candidate =
+                            repair_tree.begin_candidate(format!("boot-repair-{attempts}"))?;
+                        let boot_req = DispatchRequest {
                         task_id: format!("boot-repair-{attempts}"),
                         description: format!(
                             "THE APP DOES NOT START. The documented invocation was spawned and \
@@ -63375,118 +63711,118 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         replan_authority: None,
                         activity_publisher: None,
                     };
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(fix_cap_eff),
-                        smoke_fix_dispatcher.run(boot_req),
-                    )
-                    .await;
-                    repair_tree.finish_candidate(candidate, sink.as_ref())?;
-                } else {
-                    break;
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(fix_cap_eff),
+                            smoke_fix_dispatcher.run(boot_req),
+                        )
+                        .await;
+                        repair_tree.finish_candidate(candidate, sink.as_ref())?;
+                    } else {
+                        break;
+                    }
                 }
             }
-        }
-        let review_on =
-            !pillar_flow_on && swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review);
-        let demote_survivors = if review_on {
-            run_post_build_ast_review(
-                &cwd,
-                &final_binding_spec,
-                &smoke_all_files,
-                &review_before,
-                &review_before_modules,
-                &smoke_fix_dispatcher,
-                smoke_fix_target.clone(),
-                &user_decisions,
-                &doc_facts,
-                sink.as_ref(),
-                fix_cap_eff,
-                Some(&mut repair_tree),
-            )
-            .await?
-        } else {
-            Vec::new()
-        };
-        let force_unverified = !demote_survivors.is_empty()
-            && swarm_gate_cfg(
-                "GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED",
-                load_config().unwired_demotes_verified,
-            );
-
-        // Bind the final bytes to a canonical ruler decision after every possible writer. When the
-        // loop already proved this exact tree green and no later writer changed a byte, reuse that
-        // result instead of running the same expensive suite a second time.
-        let authoritative_round = round.saturating_add(1);
-        let authoritative_tree_hash = repair_tree_snapshot(&cwd)?.sha256;
-        let authoritative = match reusable_green_ruler
-            .take()
-            .filter(|(ruled_hash, _)| ruled_hash == &authoritative_tree_hash)
-        {
-            Some((ruled_hash, ruler)) => {
-                sink.write_value(serde_json::json!({
-                    "event": "complete_ruler_reused",
-                    "reason": "no tree bytes changed after the green repair-loop ruling",
-                    "tree_hash": ruled_hash,
-                    "saved_model_calls": 0,
-                    "saved_test_rounds": 1,
-                }));
-                ruler
-            }
-            None => {
-                let ruler = run_complete_ruler(
+            let review_on =
+                !pillar_flow_on && swarm_gate_cfg("GOOSE_SWARM_REVIEW", load_config().review);
+            let demote_survivors = if review_on {
+                run_post_build_ast_review(
                     &cwd,
                     &final_binding_spec,
-                    complete_lang,
                     &smoke_all_files,
-                    delivery_on || spec_contract_enabled(),
-                    missing_deliverable_gate,
-                    &failed_task_findings,
-                )
-                .await;
-                emit_complete_ruler_observations(
+                    &review_before,
+                    &review_before_modules,
+                    &smoke_fix_dispatcher,
+                    smoke_fix_target.clone(),
+                    &user_decisions,
+                    &doc_facts,
                     sink.as_ref(),
-                    authoritative_round,
-                    complete_lang,
-                    &ruler,
+                    fix_cap_eff,
+                    Some(&mut repair_tree),
+                )
+                .await?
+            } else {
+                Vec::new()
+            };
+            let force_unverified = !demote_survivors.is_empty()
+                && swarm_gate_cfg(
+                    "GOOSE_SWARM_UNWIRED_DEMOTES_VERIFIED",
+                    load_config().unwired_demotes_verified,
                 );
-                ruler
-            }
-        };
-        let ruling =
-            repair_tree.record_ruling(&authoritative, "post-repair-floor", sink.as_ref())?;
-        emit_complete_verify(
-            sink.as_ref(),
-            authoritative_round,
-            &authoritative,
-            true,
-            "post-repair-floor",
-            Some(&ruling.tree_hash),
-        );
 
-        if force_unverified && ruling.verified {
-            sink.write_value(serde_json::json!({
-                "event": "complete_verification_demoted",
-                "reason": "unwired-module-unfixed",
-                "evidence": demote_survivors,
-                "tree_hash": ruling.tree_hash,
-            }));
-        }
-        if pillar_flow_on && ruling.passed && ruling.verified && report.failed.is_empty() {
-            let checkpoint_store = scheduler_checkpoint_store
-                .as_ref()
-                .expect("pillar flow armed a scheduler checkpoint store");
-            reseal_authoritative_scheduler_checkpoints(
-                checkpoint_store,
-                capability_repair_checkpoint_reseal
-                    .as_ref()
-                    .map(|(specs, evidence)| (specs.as_slice(), evidence.as_slice())),
-                &build_specs,
-                || completed_checkpoint_evidence(&build_specs, &report),
-                &ruling.tree_hash,
+            // Bind the final bytes to a canonical ruler decision after every possible writer. When the
+            // loop already proved this exact tree green and no later writer changed a byte, reuse that
+            // result instead of running the same expensive suite a second time.
+            let authoritative_round = round.saturating_add(1);
+            let authoritative_tree_hash = repair_tree_snapshot(&cwd)?.sha256;
+            let authoritative = match reusable_green_ruler
+                .take()
+                .filter(|(ruled_hash, _)| ruled_hash == &authoritative_tree_hash)
+            {
+                Some((ruled_hash, ruler)) => {
+                    sink.write_value(serde_json::json!({
+                        "event": "complete_ruler_reused",
+                        "reason": "no tree bytes changed after the green repair-loop ruling",
+                        "tree_hash": ruled_hash,
+                        "saved_model_calls": 0,
+                        "saved_test_rounds": 1,
+                    }));
+                    ruler
+                }
+                None => {
+                    let ruler = run_complete_ruler(
+                        &cwd,
+                        &final_binding_spec,
+                        complete_lang,
+                        &smoke_all_files,
+                        delivery_on || spec_contract_enabled(),
+                        missing_deliverable_gate,
+                        &failed_task_findings,
+                    )
+                    .await;
+                    emit_complete_ruler_observations(
+                        sink.as_ref(),
+                        authoritative_round,
+                        complete_lang,
+                        &ruler,
+                    );
+                    ruler
+                }
+            };
+            let ruling =
+                repair_tree.record_ruling(&authoritative, "post-repair-floor", sink.as_ref())?;
+            emit_complete_verify(
                 sink.as_ref(),
-            )?;
-        } else if pillar_flow_on {
-            sink.write_value(serde_json::json!({
+                authoritative_round,
+                &authoritative,
+                true,
+                "post-repair-floor",
+                Some(&ruling.tree_hash),
+            );
+
+            if force_unverified && ruling.verified {
+                sink.write_value(serde_json::json!({
+                    "event": "complete_verification_demoted",
+                    "reason": "unwired-module-unfixed",
+                    "evidence": demote_survivors,
+                    "tree_hash": ruling.tree_hash,
+                }));
+            }
+            if pillar_flow_on && ruling.passed && ruling.verified && report.failed.is_empty() {
+                let checkpoint_store = scheduler_checkpoint_store
+                    .as_ref()
+                    .expect("pillar flow armed a scheduler checkpoint store");
+                reseal_authoritative_scheduler_checkpoints(
+                    checkpoint_store,
+                    capability_repair_checkpoint_reseal
+                        .as_ref()
+                        .map(|(specs, evidence)| (specs.as_slice(), evidence.as_slice())),
+                    &build_specs,
+                    || completed_checkpoint_evidence(&build_specs, &report),
+                    &ruling.tree_hash,
+                    sink.as_ref(),
+                )?;
+            } else if pillar_flow_on {
+                sink.write_value(serde_json::json!({
                 "event": "scheduler_checkpoint_reseal_skipped",
                 "reason": if !ruling.passed || !ruling.verified {
                     "the post-repair tree lacks a verified green ruler receipt"
@@ -63497,8 +63833,52 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "ruler_passed": ruling.passed,
                 "ruler_verified": ruling.verified,
             }));
-        }
-        let sealed = repair_tree.seal(shipped_desc, force_unverified, sink.as_ref())?;
+            }
+            if !ruling.passed || !ruling.verified || force_unverified {
+                if register_authoritative_feedback(
+                    &mut authoritative_feedback_seen,
+                    &authoritative.verdict.findings,
+                ) {
+                    sink.write_value(serde_json::json!({
+                    "event": "authoritative_repair_continued",
+                    "from_round": authoritative_round,
+                    "findings": ruling.remaining_findings,
+                    "tree_hash": ruling.tree_hash,
+                    "detail": "the final ruler found unresolved defects after a late writer; its exact findings return to the ordinary repair loop before any tree can seal",
+                }));
+                    if cap_deadline.is_some() {
+                        let refreshed =
+                            std::time::Instant::now() + std::time::Duration::from_secs(cap_secs);
+                        cap_deadline = Some(
+                            harness_deadline.map_or(refreshed, |deadline| refreshed.min(deadline)),
+                        );
+                        sink.write_value(serde_json::json!({
+                            "event": "authoritative_repair_budget_refreshed",
+                            "cap_secs": cap_secs,
+                            "harness_clamped": harness_deadline
+                                .is_some_and(|deadline| deadline < refreshed),
+                        }));
+                    }
+                    continue 'authoritative_repair;
+                }
+                sink.write_value(serde_json::json!({
+                "event": "authoritative_repair_unavailable",
+                "findings": ruling.remaining_findings,
+                "tree_hash": ruling.tree_hash,
+                "reason": "the same normalized authoritative finding set survived a full feedback cycle",
+            }));
+            }
+            let sealed = if ruling.passed && ruling.verified && !force_unverified {
+                repair_tree.seal(shipped_desc, false, sink.as_ref())?
+            } else {
+                repair_tree.seal_incomplete(
+                    "incomplete evidence tree".to_string(),
+                    force_unverified,
+                    sink.as_ref(),
+                )?
+            };
+            break sealed;
+        };
         complete_failed = !sealed.passed;
         ov_verified = sealed.verified;
         let final_passed = sealed.passed;
