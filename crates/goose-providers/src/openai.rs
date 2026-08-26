@@ -960,6 +960,9 @@ pub fn from_declarative_config(
         std::time::Duration::from_secs(timeout_secs),
         tls_config,
     )?;
+    if config.name == "lmstudio" {
+        api_client = api_client.with_lifecycle_supervised_stream_transport()?;
+    }
 
     if let Some(query) = url.query() {
         let query_params = url::form_urlencoded::parse(query.as_bytes())
@@ -1368,6 +1371,30 @@ mod tests {
             provider.api_client.host(),
             "https://user:pass@gateway.example"
         );
+    }
+
+    #[test]
+    fn only_lmstudio_enables_lifecycle_supervised_stream_transport() {
+        let ordinary = from_declarative_config(
+            custom_config("http://127.0.0.1:1234/v1"),
+            None,
+            crate::declarative::EnvKeyResolver,
+        )
+        .unwrap()
+        .build();
+        let mut local_config = custom_config("http://127.0.0.1:1234/v1");
+        local_config.name = "lmstudio".to_string();
+        let lmstudio =
+            from_declarative_config(local_config, None, crate::declarative::EnvKeyResolver)
+                .unwrap()
+                .build();
+
+        assert!(!ordinary
+            .api_client
+            .has_lifecycle_supervised_stream_transport());
+        assert!(lmstudio
+            .api_client
+            .has_lifecycle_supervised_stream_transport());
     }
 
     #[tokio::test]
