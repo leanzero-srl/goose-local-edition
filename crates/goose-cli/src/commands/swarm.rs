@@ -48,15 +48,16 @@ use goose_swarm::{
     EvidenceSourceAuthority, EvidenceSourceSection, HostCapacityEvidence, IntegrationContract,
     Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
     PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
-    PillarAttemptCheckpoint, PillarCheckpointStore, PillarImplementationTaskCoverage,
-    PillarReportDraft, PillarResumeDecision, PreReviewOutput, PreReviewRequest, PreReviewer,
-    ProviderLifecycle, ProviderLifecycleDispatcher, ProviderLifecycleStartError,
-    ProviderNudgeDelivery, ProviderNudgeSafetySnapshot, ProviderRequestKey, ProviderRequestReceipt,
-    ProviderTerminalKind, ProviderTerminalReceipt, ReplanAuthorityFact, ReplanAuthorityReceipt,
-    ReplanContext, Replanner, ResearchClaimDraft, ResearchPillar, ResearchPillarOpening, RunReport,
-    Scheduler, SchedulerCheckpointStore, SchedulerCompletedTaskEvidence, SemanticActivityPublisher,
-    SourceRevisionKind, SwarmEvent, TaskDispatcher, TaskRunOutput, TaskSpec, TaskVersion,
-    ToolCallRecord, Verdict, VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
+    PillarAttemptCheckpoint, PillarAttemptStatus, PillarCheckpointStore,
+    PillarImplementationTaskCoverage, PillarReportDraft, PillarResumeDecision, PreReviewOutput,
+    PreReviewRequest, PreReviewer, ProviderLifecycle, ProviderLifecycleDispatcher,
+    ProviderLifecycleStartError, ProviderNudgeDelivery, ProviderNudgeSafetySnapshot,
+    ProviderRequestKey, ProviderRequestReceipt, ProviderTerminalKind, ProviderTerminalReceipt,
+    ReplanAuthorityFact, ReplanAuthorityReceipt, ReplanContext, Replanner, ResearchClaimDraft,
+    ResearchPillar, ResearchPillarOpening, RunReport, Scheduler, SchedulerCheckpointStore,
+    SchedulerCompletedTaskEvidence, SemanticActivityPublisher, SourceRevisionKind, SwarmEvent,
+    TaskDispatcher, TaskRunOutput, TaskSpec, TaskVersion, ToolCallRecord, Verdict,
+    VerifiedPhysicalIdentity, WorkOpportunity, WorkRole,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -5894,12 +5895,13 @@ mod tests {
             Confidence::Low,
             vec!["REQ-a remains entirely unresolved".to_string()],
         );
-        let selected = best_pillar_attempt_report(vec![
+        let selected = merge_pillar_attempt_reports(vec![
             PillarAttemptCheckpoint {
                 pillar_id: "pillar-a".to_string(),
                 attempt_ordinal: 1,
                 model_id: "primary-model".to_string(),
                 physical_host: "primary-host".to_string(),
+                status: PillarAttemptStatus::ModelReport,
                 report: primary,
             },
             PillarAttemptCheckpoint {
@@ -5907,6 +5909,7 @@ mod tests {
                 attempt_ordinal: 2,
                 model_id: "retry-model".to_string(),
                 physical_host: "retry-host".to_string(),
+                status: PillarAttemptStatus::ModelReport,
                 report: worse_retry,
             },
         ])
@@ -5916,6 +5919,141 @@ mod tests {
             selected.claims[0].statement,
             "primary retained useful authored evidence"
         );
+    }
+
+    #[test]
+    fn focused_retry_preserves_complementary_model_facts_and_ignores_unavailable_attempts() {
+        let claim = |requirement_id: &str, statement: &str| goose_swarm::CompiledResearchClaim {
+            requirement_id: requirement_id.to_string(),
+            statement: statement.to_string(),
+            reported_class: EvidenceClass::Supported,
+            effective_class: EvidenceClass::Supported,
+            provenance: goose_swarm::ProvenanceMatch::NotClaimed,
+        };
+        let report = |claims: Vec<goose_swarm::CompiledResearchClaim>, missing: Vec<&str>| {
+            CompiledPillarReport {
+                pillar_id: "pillar-a".to_string(),
+                reported_confidence: Confidence::Low,
+                effective_confidence: Confidence::Low,
+                claims,
+                missing_requirement_ids: missing.into_iter().map(str::to_string).collect(),
+                unresolved_uncertainties: Vec::new(),
+                acceptance_tests: vec!["exercise both owned requirements".to_string()],
+                interfaces: vec!["RequirementPort".to_string()],
+                exclusions: vec!["sibling ownership".to_string()],
+            }
+        };
+        let primary = PillarAttemptCheckpoint {
+            pillar_id: "pillar-a".to_string(),
+            attempt_ordinal: 1,
+            model_id: "primary-model".to_string(),
+            physical_host: "primary-host".to_string(),
+            status: PillarAttemptStatus::ModelReport,
+            report: report(
+                vec![claim("REQ-a", "primary established requirement A")],
+                vec!["REQ-b"],
+            ),
+        };
+        let retry = PillarAttemptCheckpoint {
+            pillar_id: "pillar-a".to_string(),
+            attempt_ordinal: 2,
+            model_id: "retry-model".to_string(),
+            physical_host: "retry-host".to_string(),
+            status: PillarAttemptStatus::ModelReport,
+            report: report(
+                vec![
+                    claim("REQ-a", "retry established a complementary interface fact"),
+                    claim("REQ-b", "retry established requirement B"),
+                ],
+                vec![],
+            ),
+        };
+        let unavailable = PillarAttemptCheckpoint {
+            pillar_id: "pillar-a".to_string(),
+            attempt_ordinal: 2,
+            model_id: "unavailable-model".to_string(),
+            physical_host: "unavailable-host".to_string(),
+            status: PillarAttemptStatus::Unavailable,
+            report: report(
+                vec![claim("REQ-a", "engine-generated unavailable placeholder")],
+                vec!["REQ-b"],
+            ),
+        };
+
+        let merged = merge_pillar_attempt_reports(vec![unavailable, retry, primary]).unwrap();
+        assert_eq!(
+            merged
+                .claims
+                .iter()
+                .map(|claim| (claim.requirement_id.as_str(), claim.statement.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("REQ-a", "primary established requirement A"),
+                ("REQ-a", "retry established a complementary interface fact"),
+                ("REQ-b", "retry established requirement B")
+            ]
+        );
+        assert!(merged.missing_requirement_ids.is_empty());
+        assert!(!merged
+            .claims
+            .iter()
+            .any(|claim| claim.statement.contains("placeholder")));
+    }
+
+    #[test]
+    fn focused_retry_resolution_clears_stale_primary_uncertainty() {
+        let report = |ordinal: u8,
+                      confidence: Confidence,
+                      class: EvidenceClass,
+                      statement: &str,
+                      uncertainties: Vec<&str>| PillarAttemptCheckpoint {
+            pillar_id: "pillar-a".to_string(),
+            attempt_ordinal: ordinal,
+            model_id: format!("model-{ordinal}"),
+            physical_host: format!("host-{ordinal}"),
+            status: PillarAttemptStatus::ModelReport,
+            report: CompiledPillarReport {
+                pillar_id: "pillar-a".to_string(),
+                reported_confidence: confidence,
+                effective_confidence: confidence,
+                claims: vec![goose_swarm::CompiledResearchClaim {
+                    requirement_id: "REQ-a".to_string(),
+                    statement: statement.to_string(),
+                    reported_class: class,
+                    effective_class: class,
+                    provenance: goose_swarm::ProvenanceMatch::NotClaimed,
+                }],
+                missing_requirement_ids: Vec::new(),
+                unresolved_uncertainties: uncertainties.into_iter().map(str::to_string).collect(),
+                acceptance_tests: vec!["exercise requirement A".to_string()],
+                interfaces: vec!["RequirementA".to_string()],
+                exclusions: vec!["sibling ownership".to_string()],
+            },
+        };
+        let primary = report(
+            1,
+            Confidence::Low,
+            EvidenceClass::Unresolved,
+            "REQ-a owner boundary was initially unknown",
+            vec!["REQ-a owner boundary remains unknown"],
+        );
+        let retry = report(
+            2,
+            Confidence::High,
+            EvidenceClass::Supported,
+            "REQ-a is resolved through the exact RequirementA boundary",
+            Vec::new(),
+        );
+
+        let merged = merge_pillar_attempt_reports(vec![primary, retry]).unwrap();
+        assert_eq!(merged.effective_confidence, Confidence::High);
+        assert!(merged.unresolved_uncertainties.is_empty());
+        assert_eq!(merged.claims.len(), 1);
+        assert_eq!(
+            merged.claims[0].statement,
+            "REQ-a is resolved through the exact RequirementA boundary"
+        );
+        assert_eq!(merged.claims[0].effective_class, EvidenceClass::Supported);
     }
 
     #[test]
@@ -11433,7 +11571,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         // THE MEASURED SEQUENCE. Round 0 = 84 (the first measure), then the redrafts.
         assert_eq!(
             decide(&[84, 70, 70, 52], 1),
-            Some(1),
+            Some(2),
             "the guard must stop at the FIRST round that fails to beat 84 — rounds 2 and 3 cost ~40 min of \
              fleet and produced nothing better"
         );
@@ -13663,6 +13801,29 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
         }
         assert!(!description.contains("vague"));
 
+        let mut mismatched_plan = serde_json::json!({
+            "subtasks": [{
+                "id": "build-core",
+                "description": "preserve this semantic description on rejection",
+                "model": "qwen",
+                "depends_on": [],
+                "files": ["src/core.rs"]
+            }]
+        });
+        let mismatch = compile_pillar_task_specs(
+            &mut mismatched_plan,
+            vec![pillar_task_spec("different-task")],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(mismatch.contains("planner_correction[task_spec_alignment]"));
+        assert!(mismatch.contains("missing task_specs [build-core]"));
+        assert!(mismatch.contains("unknown task_specs [different-task]"));
+        assert_eq!(
+            mismatched_plan["subtasks"][0]["description"],
+            "preserve this semantic description on rejection"
+        );
+
         let mut connected_plan = serde_json::json!({"subtasks": [
             {"id":"producer", "description":"producer", "model":"qwen", "depends_on":[], "files":["src/producer.rs"]},
             {"id":"consumer", "description":"consumer", "model":"qwen", "depends_on":["producer"], "files":["src/consumer.rs"]}
@@ -13676,6 +13837,65 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 .to_string()
                 .contains("dependency edge")
         );
+    }
+
+    #[test]
+    fn pillar_plan_missing_advertised_entry_is_a_focused_correction_not_a_mutation() {
+        let opening = pillar_plan_test_opening(false);
+        let raw = serde_json::json!({
+            "task_coverage": [{
+                "task_id": "build-core", "owns_requirement_ids": ["REQ-core"],
+                "applies_requirement_ids": [], "verifies_requirement_ids": [], "evidence_ids": []
+            }],
+            "task_specs": [{
+                "task_id": "build-core", "objective": "Implement core",
+                "module_boundary": "Own only src/core.py",
+                "concrete_steps": ["Implement core"], "interfaces": [],
+                "edge_cases": ["Reject empty input"],
+                "acceptance_evidence": ["python core test passes"],
+                "exclusions": ["Do not invent boot files"]
+            }],
+            "uncertainty_routes": [],
+            "canonical_plan": {"subtasks": [{
+                "id": "build-core",
+                "description": "model-authored core responsibility",
+                "model": "qwen", "depends_on": [], "files": ["src/core.py"]
+            }]}
+        });
+        let frozen_raw = raw.to_string();
+        let error = compile_pillar_plan(
+            &frozen_raw,
+            &opening,
+            &[],
+            &["qwen".to_string()],
+            "Build one Python application; `python -m app` must boot it.",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("planner_correction[missing_advertised_entries]"));
+        assert!(error.contains("app/__main__.py"));
+        assert_eq!(raw.to_string(), frozen_raw);
+        assert!(!frozen_raw.contains("app/__main__.py"));
+        assert!(frozen_raw.contains("model-authored core responsibility"));
+    }
+
+    #[test]
+    fn pillar_planner_only_fail_closes_lifecycle_integrity_errors() {
+        assert!(pillar_planner_integrity_failure(&anyhow!(
+            "pre-scheduler source terminal reconciliation failed: conflicting terminal receipt"
+        )));
+        assert!(pillar_planner_integrity_failure(&anyhow!(
+            "pre-scheduler physical lifecycle completion failed: invalid transition"
+        )));
+        assert!(pillar_planner_integrity_failure(&anyhow!(
+            "provider failed; pre-scheduler physical lifecycle completion also failed: invalid transition"
+        )));
+        assert!(!pillar_planner_integrity_failure(&anyhow!(
+            "provider connection reset before a typed response"
+        )));
+        assert!(!pillar_planner_integrity_failure(&anyhow!(
+            "pillar plan was not valid typed JSON"
+        )));
     }
 
     #[test]
@@ -13713,7 +13933,8 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                     "model": "qwen",
                     "depends_on": [],
                     "files": ["src/core.rs"]
-                }]
+                }],
+                "integration": "Run cargo test core_contract"
             }
         });
         let error = compile_pillar_plan(&raw.to_string(), &opening, &[], &["qwen".to_string()], "")
@@ -19685,6 +19906,7 @@ struct PillarResearchOutcome {
 struct PillarOwnerAttempt {
     model_id: String,
     physical_host_id: String,
+    status: PillarAttemptStatus,
     report: CompiledPillarReport,
 }
 
@@ -19713,13 +19935,257 @@ fn pillar_report_evidence_rank(report: &CompiledPillarReport) -> (u8, usize, usi
     )
 }
 
-fn best_pillar_attempt_report(
+fn merge_pillar_attempt_reports(
     attempts: Vec<PillarAttemptCheckpoint>,
 ) -> Option<CompiledPillarReport> {
-    attempts
+    let has_model_report = attempts
+        .iter()
+        .any(|attempt| attempt.status == PillarAttemptStatus::ModelReport);
+    let mut attempts = attempts
         .into_iter()
-        .max_by_key(|attempt| pillar_report_evidence_rank(&attempt.report))
-        .map(|attempt| attempt.report)
+        .filter(|attempt| !has_model_report || attempt.status == PillarAttemptStatus::ModelReport)
+        .collect::<Vec<_>>();
+    attempts.sort_by(|left, right| {
+        pillar_report_evidence_rank(&right.report)
+            .cmp(&pillar_report_evidence_rank(&left.report))
+            .then_with(|| left.attempt_ordinal.cmp(&right.attempt_ordinal))
+    });
+    let every_model_report_declared_low = attempts
+        .iter()
+        .all(|attempt| attempt.report.reported_confidence == Confidence::Low);
+    let pillar_id = attempts.first()?.report.pillar_id.clone();
+    let mut known_requirements = BTreeSet::new();
+    let mut claims_by_requirement = BTreeMap::<String, Vec<_>>::new();
+    let mut seen_claims = HashSet::new();
+    let mut acceptance_tests = Vec::new();
+    let mut interfaces = Vec::new();
+    let mut exclusions = Vec::new();
+    for attempt in &attempts {
+        known_requirements.extend(
+            attempt
+                .report
+                .claims
+                .iter()
+                .map(|claim| claim.requirement_id.clone()),
+        );
+        known_requirements.extend(attempt.report.missing_requirement_ids.iter().cloned());
+        for claim in &attempt.report.claims {
+            if seen_claims.insert((claim.requirement_id.clone(), claim.statement.clone())) {
+                claims_by_requirement
+                    .entry(claim.requirement_id.clone())
+                    .or_default()
+                    .push(claim.clone());
+            }
+        }
+        acceptance_tests.extend(attempt.report.acceptance_tests.iter().cloned());
+        interfaces.extend(attempt.report.interfaces.iter().cloned());
+        exclusions.extend(attempt.report.exclusions.iter().cloned());
+    }
+
+    for claims in claims_by_requirement.values_mut() {
+        if claims
+            .iter()
+            .any(|claim| claim.effective_class != EvidenceClass::Unresolved)
+        {
+            claims.retain(|claim| claim.effective_class != EvidenceClass::Unresolved);
+        }
+    }
+    let mut claims = claims_by_requirement
+        .into_values()
+        .flatten()
+        .collect::<Vec<_>>();
+    claims.sort_by(|left, right| {
+        left.requirement_id
+            .cmp(&right.requirement_id)
+            .then_with(|| left.effective_class.cmp(&right.effective_class))
+            .then_with(|| left.statement.cmp(&right.statement))
+    });
+    let covered = claims
+        .iter()
+        .map(|claim| claim.requirement_id.clone())
+        .collect::<BTreeSet<_>>();
+    let missing_requirement_ids = known_requirements
+        .into_iter()
+        .filter(|requirement_id| !covered.contains(requirement_id))
+        .collect::<Vec<_>>();
+    let unresolved_requirement_ids = claims
+        .iter()
+        .filter(|claim| claim.effective_class == EvidenceClass::Unresolved)
+        .map(|claim| claim.requirement_id.clone())
+        .chain(missing_requirement_ids.iter().cloned())
+        .collect::<HashSet<_>>();
+    let mut unresolved_uncertainties = attempts
+        .iter()
+        .filter(|attempt| {
+            attempt.report.claims.iter().any(|claim| {
+                unresolved_requirement_ids.contains(claim.requirement_id.as_str())
+                    && claim.effective_class == EvidenceClass::Unresolved
+            }) || attempt
+                .report
+                .missing_requirement_ids
+                .iter()
+                .any(|requirement_id| unresolved_requirement_ids.contains(requirement_id.as_str()))
+        })
+        .flat_map(|attempt| attempt.report.unresolved_uncertainties.iter().cloned())
+        .collect::<Vec<_>>();
+    for values in [
+        &mut unresolved_uncertainties,
+        &mut acceptance_tests,
+        &mut interfaces,
+        &mut exclusions,
+    ] {
+        values.sort();
+        values.dedup();
+    }
+    let forced_low = every_model_report_declared_low
+        || !missing_requirement_ids.is_empty()
+        || !unresolved_uncertainties.is_empty()
+        || claims.iter().any(|claim| {
+            claim.effective_class == EvidenceClass::Unresolved || !claim.provenance.is_valid()
+        });
+    let confidence = if forced_low {
+        Confidence::Low
+    } else {
+        Confidence::High
+    };
+    Some(CompiledPillarReport {
+        pillar_id,
+        reported_confidence: confidence,
+        effective_confidence: confidence,
+        claims,
+        missing_requirement_ids,
+        unresolved_uncertainties,
+        acceptance_tests,
+        interfaces,
+        exclusions,
+    })
+}
+
+fn render_verified_pillar_facts(reports: &[CompiledPillarReport], max_chars: usize) -> String {
+    let mut facts = reports
+        .iter()
+        .flat_map(|report| {
+            report
+                .claims
+                .iter()
+                .filter(|claim| claim.effective_class == EvidenceClass::Proven)
+                .map(move |claim| {
+                    (
+                        report.pillar_id.as_str(),
+                        claim.requirement_id.as_str(),
+                        claim
+                            .statement
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    facts.sort();
+    let prefixes = facts
+        .iter()
+        .map(|(pillar_id, requirement_id, statement)| {
+            format!(
+                "- {pillar_id}/{requirement_id} {}: ",
+                evidence_source_digest(statement)
+            )
+        })
+        .collect::<Vec<_>>();
+    let minimum_chars = prefixes
+        .iter()
+        .map(String::len)
+        .sum::<usize>()
+        .saturating_add(prefixes.len().saturating_sub(1));
+    if minimum_chars > max_chars {
+        return format!(
+            "VERIFIED_FACT_CAPACITY_ERROR facts={} minimum_chars={minimum_chars} available_chars={max_chars}",
+            facts.len()
+        )
+        .chars()
+        .take(max_chars)
+        .collect();
+    }
+    let mut remaining = max_chars - minimum_chars;
+    let mut remaining_facts = facts.len();
+    facts
+        .into_iter()
+        .zip(prefixes)
+        .map(|((_, _, statement), prefix)| {
+            let allowance = if remaining_facts == 0 {
+                0
+            } else {
+                remaining / remaining_facts
+            };
+            let excerpt = statement
+                .chars()
+                .take(allowance.min(2_048))
+                .collect::<String>();
+            remaining = remaining.saturating_sub(excerpt.chars().count());
+            remaining_facts = remaining_facts.saturating_sub(1);
+            format!("{prefix}{excerpt}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn pillar_planner_integrity_failure(error: &anyhow::Error) -> bool {
+    if matches!(
+        error.downcast_ref::<ProviderLifecycleStartError>(),
+        Some(ProviderLifecycleStartError::TerminalReconciliation(_))
+    ) {
+        return true;
+    }
+    let message = error.to_string();
+    [
+        "pre-scheduler source terminal reconciliation failed",
+        "pre-scheduler physical lifecycle completion failed",
+        "pre-scheduler physical lifecycle completion also failed",
+        "pre-scheduler source quarantine failed",
+        "pre-scheduler source supervisor ended without a terminal result",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker))
+}
+
+fn pillar_plan_semantic_score(raw: &str) -> usize {
+    fn nonempty_string_leaves(value: &serde_json::Value) -> usize {
+        match value {
+            serde_json::Value::String(text) => usize::from(!text.trim().is_empty()),
+            serde_json::Value::Array(values) => values
+                .iter()
+                .map(nonempty_string_leaves)
+                .fold(0usize, usize::saturating_add),
+            serde_json::Value::Object(values) => values
+                .values()
+                .map(nonempty_string_leaves)
+                .fold(0usize, usize::saturating_add),
+            _ => 0,
+        }
+    }
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(strip_code_fences(raw).trim()) else {
+        return 0;
+    };
+    let canonical_tasks = value
+        .pointer("/canonical_plan/subtasks")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let task_specs = value
+        .get("task_specs")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let task_coverage = value
+        .get("task_coverage")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    nonempty_string_leaves(&value)
+        .saturating_add(canonical_tasks.saturating_mul(100))
+        .saturating_add(task_specs.saturating_mul(50))
+        .saturating_add(task_coverage.saturating_mul(25))
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -25956,6 +26422,40 @@ impl GooseAgentDispatcher {
         }
     }
 
+    async fn run_pillar_planner_attempt_on_lane(
+        &self,
+        lane: &ResearchPhysicalLane,
+        system_prompt: String,
+        user_text: String,
+    ) -> Result<RunAgentOut> {
+        let run = self.run_agent_in(
+            self.working_dir.clone(),
+            &lane.model_id,
+            system_prompt,
+            user_text,
+            Some(Response {
+                json_schema: Some(pillar_plan_capture_schema()),
+            }),
+            Some(1),
+            &[],
+            AgentToolSurface::ResponseOnly,
+            self.planner_timeout_secs,
+            Some("pillar-synthesis-plan-authority"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        if lane.verified_physical {
+            PRE_SCHEDULER_REQUIRED_HOST
+                .scope(lane.physical_host_id.clone(), run)
+                .await
+        } else {
+            run.await
+        }
+    }
+
     fn validate_pillar_lane_output(
         lane: &ResearchPhysicalLane,
         output: &RunAgentOut,
@@ -30193,6 +30693,7 @@ impl GooseAgentDispatcher {
         Ok(PillarOwnerAttempt {
             model_id: lane.model_id,
             physical_host_id: lane.physical_host_id,
+            status: PillarAttemptStatus::ModelReport,
             report,
         })
     }
@@ -30367,6 +30868,7 @@ impl GooseAgentDispatcher {
                     PillarOwnerAttempt {
                         model_id: lane.model_id,
                         physical_host_id: lane.physical_host_id,
+                        status: PillarAttemptStatus::Unavailable,
                         report: unresolved_pillar_report(
                             &opening,
                             &pillar,
@@ -30380,6 +30882,7 @@ impl GooseAgentDispatcher {
                 attempt_ordinal: 1,
                 model_id: attempt.model_id,
                 physical_host: attempt.physical_host_id,
+                status: attempt.status,
                 report: attempt.report,
             })?;
         }
@@ -30414,6 +30917,7 @@ impl GooseAgentDispatcher {
                     attempt_ordinal: 2,
                     model_id: "engine-typed-unavailable".to_string(),
                     physical_host: "no-distinct-retry-host".to_string(),
+                    status: PillarAttemptStatus::Unavailable,
                     report: primary.report,
                 })?;
                 continue;
@@ -30461,11 +30965,12 @@ impl GooseAgentDispatcher {
                         "model": lane.model_id,
                         "physical_host_id": lane.physical_host_id,
                         "reason": error.to_string(),
-                        "fallback": "preserve-better-primary-evidence",
+                        "evidence_disposition": "unavailable-attempt-excluded-when-a-model-report-exists",
                     }));
                     PillarOwnerAttempt {
                         model_id: lane.model_id,
                         physical_host_id: lane.physical_host_id,
+                        status: PillarAttemptStatus::Unavailable,
                         report: primary_report,
                     }
                 }
@@ -30475,6 +30980,7 @@ impl GooseAgentDispatcher {
                 attempt_ordinal: 2,
                 model_id: attempt.model_id,
                 physical_host: attempt.physical_host_id,
+                status: attempt.status,
                 report: attempt.report,
             })?;
         }
@@ -30483,38 +30989,17 @@ impl GooseAgentDispatcher {
             .pillars
             .iter()
             .map(|pillar| {
-                best_pillar_attempt_report(checkpoint.completed_attempts(&pillar.id)?)
+                merge_pillar_attempt_reports(checkpoint.completed_attempts(&pillar.id)?)
                     .ok_or_else(|| anyhow!("pillar {:?} has no completed attempt", pillar.id))
             })
             .collect::<Result<Vec<_>>>()?;
-        let synthesis = render_synthesis_input(&reports, 32_000);
-        let verified_facts = reports
-            .iter()
-            .flat_map(|report| {
-                report
-                    .claims
-                    .iter()
-                    .filter(|claim| claim.effective_class == EvidenceClass::Proven)
-                    .map(move |claim| {
-                        format!(
-                            "- {}/{}: {}",
-                            report.pillar_id, claim.requirement_id, claim.statement
-                        )
-                    })
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            .chars()
-            .take(12_000)
-            .collect::<String>();
+        let synthesis = render_synthesis_input(&reports, 64_000);
+        let verified_facts = render_verified_pillar_facts(&reports, 32_000);
         let worker_context = format!(
             "SHARED PILLAR INTEGRATION CONTRACT\n{}\n\n{}",
             serde_json::to_string_pretty(&opening.integration_contract)?,
             synthesis
-        )
-        .chars()
-        .take(40_000)
-        .collect::<String>();
+        );
         self.events.write_value(serde_json::json!({
             "event": "pillar_research_completed",
             "pillars": reports.len(),
@@ -30524,7 +31009,7 @@ impl GooseAgentDispatcher {
             "focused_retries": retries,
             "synthesis_chars": synthesis.chars().count(),
             "verified_fact_chars": verified_facts.chars().count(),
-            "completion": "one-report-per-pillar-with-explicit-unresolved-fallbacks",
+            "completion": "one-compiled-report-per-pillar-with-explicit-unavailable-attempt-status",
         }));
         Ok(PillarResearchOutcome {
             opening: Arc::unwrap_or_clone(opening),
@@ -30559,8 +31044,8 @@ impl GooseAgentDispatcher {
             .collect::<Vec<_>>();
         let mut seen = HashSet::new();
         allowed_runtime_models.retain(|model| seen.insert(model.clone()));
-        let system = "You are the sole and final synthesis planner. Convert the frozen authored requirements and disjoint pillar reports into one immediately executable build DAG. There is no later model plan-verification or detail-writing round, so task_specs is the exact implementation contract for every canonical task: name its exclusive module boundary, concrete implementation steps, producer/consumer interfaces, edge cases, executable acceptance evidence, and explicit exclusions. Assign each file to exactly one task. Independent modules must have no artificial dependency so other nodes can write them in parallel without overlap. Honor integration_contract.integration_required: add one hook-up task only when true; when false, keep independent deliverables independent. Low-confidence facts never block the build: attach exactly one alternative, isolation, or degraded_fallback route to the task implementing each unresolved requirement, with critical paths choosing an implementable safe alternative or isolation. Schedule noncritical low-confidence work after resolved foundations wherever dependency truth permits; never invent a dependency that is not consumed. Evidence IDs must be empty because receipt authority is conveyed through the compiled pillar reports, not invented plan citations. Use only allowed model IDs. Return the complete typed plan once; no peer review follows.";
-        let user = serde_json::to_string_pretty(&serde_json::json!({
+        let system = "You are the sole logical synthesis planner. Convert the frozen authored requirements and disjoint pillar reports into one immediately executable build DAG. There is no peer plan review or deterministic substitute. A distinct authenticated lane may continue this same logical authority after an unavailable provider attempt or focused compiler rejection; when correction history is present, preserve every valid semantic decision and repair only the supplied diagnostics. task_specs is the exact implementation contract for every canonical task: name its exclusive module boundary, concrete implementation steps, producer/consumer interfaces, edge cases, executable acceptance evidence, and explicit exclusions. Assign each file to exactly one task. Independent modules must have no artificial dependency so other nodes can write them in parallel without overlap. Honor integration_contract.integration_required: add one hook-up task only when true; when false, keep independent deliverables independent. Low-confidence facts never block the build: attach exactly one alternative, isolation, or degraded_fallback route to the task implementing each unresolved requirement, with critical paths choosing an implementable safe alternative or isolation. Schedule noncritical low-confidence work after resolved foundations wherever dependency truth permits; never invent a dependency that is not consumed. Evidence IDs must be empty because receipt authority is conveyed through the compiled pillar reports, not invented plan citations. Use only allowed model IDs. Return a complete replacement typed plan.";
+        let base_payload = serde_json::json!({
             "authored_prompt": user_prompt,
             "frozen_requirements": outcome.opening.requirements,
             "disjoint_pillars": outcome.opening.pillars,
@@ -30572,70 +31057,294 @@ impl GooseAgentDispatcher {
                 &outcome.reports,
             ),
             "allowed_runtime_models": allowed_runtime_models,
-        }))?;
+            "required_typed_plan_schema": pillar_plan_schema(),
+        });
+
+        let mut ordered_lanes = std::iter::once(planner_lane.clone())
+            .chain(
+                lanes
+                    .into_iter()
+                    .filter(|lane| lane.token != planner_lane.token),
+            )
+            .collect::<Vec<_>>();
+        if planner_lane.verified_physical {
+            ordered_lanes.retain(|lane| lane.verified_physical);
+        }
+        let mut seen_authority_lanes = HashSet::new();
+        ordered_lanes.retain(|lane| {
+            let authority_lane = if lane.verified_physical {
+                format!("physical:{}", lane.physical_host_id)
+            } else {
+                format!("logical:{}", lane.token)
+            };
+            seen_authority_lanes.insert(authority_lane)
+        });
         self.events.write_value(serde_json::json!({
             "event": "pillar_synthesis_plan_started",
-            "model": planner_lane.model_id,
-            "physical_host_id": planner_lane.physical_host_id,
-            "planner_invocation": 1,
+            "logical_planner_authorities": 1,
+            "candidate_lanes": ordered_lanes.len(),
             "peer_plan_verification_calls": 0,
-            "input_chars": user.chars().count(),
+            "fallback_authority": false,
         }));
-        let model_plan = self
-            .run_pillar_agent_on_lane(
-                &planner_lane,
-                system.to_string(),
-                user,
-                Some(Response {
-                    json_schema: Some(pillar_plan_schema()),
-                }),
-                &[],
-                self.planner_timeout_secs,
-                Some("pillar-synthesis-plan"),
-            )
-            .await
-            .and_then(|output| {
-                Self::validate_pillar_lane_output(&planner_lane, &output)?;
+
+        let mut recent_attempt_history = Vec::new();
+        let mut diagnostics = Vec::new();
+        let mut preserved_semantic_attempt = None;
+        let mut preserved_semantic_quality = (0u8, 0usize);
+        let mut diagnostic_recurrence = HashMap::<String, usize>::new();
+        let mut continuation_strategy =
+            "Produce the complete typed plan from the frozen semantic ledger.".to_string();
+        let mut cycle = 0usize;
+        let mut lane_invocations = 0usize;
+        let mut unavailable_cycles = 0u32;
+        loop {
+            cycle = cycle.saturating_add(1);
+            let mut unavailable_attempts = 0usize;
+            let mut cycle_compiler_diagnostics = Vec::new();
+            for (index, lane) in ordered_lanes.iter().enumerate() {
+                lane_invocations = lane_invocations.saturating_add(1);
+                let attempt = lane_invocations;
+                let mut payload = base_payload.clone();
+                if !recent_attempt_history.is_empty() {
+                    payload["planner_correction"] = serde_json::json!({
+                        "preserved_semantic_attempt": preserved_semantic_attempt,
+                        "recent_attempt_history": recent_attempt_history,
+                        "focused_compiler_diagnostics": diagnostics,
+                        "continuation_cycle": cycle,
+                        "continuation_strategy": continuation_strategy,
+                        "instruction": "Continue the same sole logical planner authority. Preserve valid semantic decisions; return a complete replacement that fixes every exact diagnostic. Do not review, vote on, or generically replace the prior plan.",
+                    });
+                }
+                let user = serde_json::to_string_pretty(&payload)?;
+                self.events.write_value(serde_json::json!({
+                    "event": "pillar_synthesis_plan_attempt_started",
+                    "attempt": attempt,
+                    "continuation_cycle": cycle,
+                    "candidate_lanes": ordered_lanes.len(),
+                    "model": lane.model_id,
+                    "physical_host_id": lane.physical_host_id,
+                    "verified_physical": lane.verified_physical,
+                    "logical_planner_authorities": 1,
+                    "input_chars": user.chars().count(),
+                }));
+
+                let output = match self
+                    .run_pillar_planner_attempt_on_lane(lane, system.to_string(), user)
+                    .await
+                {
+                    Ok(output) => output,
+                    Err(error) => {
+                        if pillar_planner_integrity_failure(&error) {
+                            self.events.write_value(serde_json::json!({
+                                "event": "pillar_synthesis_plan_integrity_failure",
+                                "attempt": attempt,
+                                "continuation_cycle": cycle,
+                                "model": lane.model_id,
+                                "physical_host_id": lane.physical_host_id,
+                                "logical_planner_authorities": 1,
+                                "diagnostic": error.to_string(),
+                                "fallback_authority": false,
+                            }));
+                            return Err(error);
+                        }
+                        let unproven_partial_output_quarantined = matches!(
+                            error.downcast_ref::<ProviderLifecycleStartError>(),
+                            Some(ProviderLifecycleStartError::UnprovenProviderRequest(_))
+                        );
+                        unavailable_attempts = unavailable_attempts.saturating_add(1);
+                        let diagnostic = format!("provider attempt unavailable: {error}");
+                        let semantic_attempt_preserved = preserved_semantic_attempt.is_some();
+                        diagnostics.push(diagnostic.clone());
+                        recent_attempt_history.push(serde_json::json!({
+                            "attempt": attempt,
+                            "model": lane.model_id,
+                            "physical_host_id": lane.physical_host_id,
+                            "status": "unavailable",
+                            "accepted_terminal_output": null,
+                            "diagnostic": diagnostic,
+                        }));
+                        self.events.write_value(serde_json::json!({
+                            "event": "pillar_synthesis_plan_attempt_rejected",
+                            "attempt": attempt,
+                            "continuation_cycle": cycle,
+                            "model": lane.model_id,
+                            "physical_host_id": lane.physical_host_id,
+                            "stage": "provider",
+                            "diagnostic": diagnostics.last(),
+                            "semantic_attempt_preserved": semantic_attempt_preserved,
+                            "unproven_partial_output_quarantined": unproven_partial_output_quarantined,
+                            "next_distinct_lane": ordered_lanes.get(index.saturating_add(1)).map(|next| next.physical_host_id.as_str()),
+                        }));
+                        continue;
+                    }
+                };
+                Self::validate_pillar_lane_output(lane, &output)?;
                 let raw = output
                     .final_output
                     .filter(|value| !value.trim().is_empty())
-                    .or_else(|| (!output.text.trim().is_empty()).then_some(output.text))
-                    .ok_or_else(|| anyhow!("pillar synthesis planner returned no typed plan"))?;
-                compile_pillar_plan(
+                    .or_else(|| (!output.text.trim().is_empty()).then_some(output.text));
+                let Some(raw) = raw else {
+                    let diagnostic = "planner returned no typed plan".to_string();
+                    let semantic_attempt_preserved = preserved_semantic_attempt.is_some();
+                    diagnostics.push(diagnostic.clone());
+                    cycle_compiler_diagnostics.push(diagnostic.clone());
+                    recent_attempt_history.push(serde_json::json!({
+                        "attempt": attempt,
+                        "model": lane.model_id,
+                        "physical_host_id": lane.physical_host_id,
+                        "status": "empty_terminal_output",
+                        "accepted_terminal_output": null,
+                        "diagnostic": diagnostic,
+                    }));
+                    self.events.write_value(serde_json::json!({
+                        "event": "pillar_synthesis_plan_attempt_rejected",
+                        "attempt": attempt,
+                        "continuation_cycle": cycle,
+                        "model": lane.model_id,
+                        "physical_host_id": lane.physical_host_id,
+                        "stage": "typed-output",
+                        "diagnostic": diagnostics.last(),
+                        "semantic_attempt_preserved": semantic_attempt_preserved,
+                        "next_distinct_lane": ordered_lanes.get(index.saturating_add(1)).map(|next| next.physical_host_id.as_str()),
+                    }));
+                    continue;
+                };
+                match compile_pillar_plan(
                     &raw,
                     &outcome.opening,
                     &outcome.reports,
                     &allowed_runtime_models,
                     user_prompt,
-                )
-            });
-        let (plan_json, dag, routes) = match model_plan {
-            Ok(compiled) => compiled,
-            Err(error) => {
-                self.events.write_value(serde_json::json!({
-                    "event": "pillar_synthesis_plan_degraded",
-                    "reason": error.to_string(),
-                    "fallback": "deterministic-disjoint-pillar-build-plan",
-                    "additional_planner_call": false,
-                }));
-                fallback_pillar_plan(
-                    user_prompt,
-                    &outcome.opening,
-                    &outcome.reports,
-                    planner_model,
-                    &allowed_runtime_models,
-                )?
+                ) {
+                    Ok((plan_json, dag, routes)) => {
+                        self.events.write_value(serde_json::json!({
+                            "event": "pillar_synthesis_plan_completed",
+                            "logical_planner_authorities": 1,
+                            "planner_lane_invocations": lane_invocations,
+                            "continuation_cycles": cycle,
+                            "peer_plan_verification_calls": 0,
+                            "fallback_authority": false,
+                            "tasks": dag.tasks.len(),
+                            "uncertainty_routes": routes.len(),
+                            "next_phase": "immediate-build-dispatch",
+                        }));
+                        return Ok((plan_json, dag));
+                    }
+                    Err(error) => {
+                        let diagnostic = error.to_string();
+                        let stage = if diagnostic.contains("pillar plan was malformed JSON") {
+                            "json"
+                        } else {
+                            "compiler"
+                        };
+                        diagnostics.push(diagnostic.clone());
+                        cycle_compiler_diagnostics.push(diagnostic.clone());
+                        let semantic_tier = if stage == "json" {
+                            0
+                        } else if diagnostic.contains("planner_correction[typed_plan_schema]") {
+                            1
+                        } else {
+                            2
+                        };
+                        let semantic_score = pillar_plan_semantic_score(&raw);
+                        let candidate_semantic_quality = (semantic_tier, semantic_score);
+                        if semantic_score > 0
+                            && candidate_semantic_quality >= preserved_semantic_quality
+                        {
+                            preserved_semantic_quality = candidate_semantic_quality;
+                            preserved_semantic_attempt = Some(serde_json::json!({
+                                "attempt": attempt,
+                                "model": lane.model_id,
+                                "physical_host_id": lane.physical_host_id,
+                                "semantic_plan": raw.clone(),
+                                "diagnostic": diagnostic,
+                                "semantic_tier": semantic_tier,
+                                "semantic_score": semantic_score,
+                            }));
+                        }
+                        let malformed_terminal_output = (stage == "json").then(|| raw.clone());
+                        recent_attempt_history.push(serde_json::json!({
+                            "attempt": attempt,
+                            "model": lane.model_id,
+                            "physical_host_id": lane.physical_host_id,
+                            "status": "compiler_rejected",
+                            "diagnostic": diagnostic,
+                            "malformed_terminal_output": malformed_terminal_output,
+                        }));
+                        self.events.write_value(serde_json::json!({
+                            "event": "pillar_synthesis_plan_attempt_rejected",
+                            "attempt": attempt,
+                            "continuation_cycle": cycle,
+                            "model": lane.model_id,
+                            "physical_host_id": lane.physical_host_id,
+                            "stage": stage,
+                            "diagnostic": diagnostics.last(),
+                            "semantic_attempt_preserved": preserved_semantic_attempt.is_some(),
+                            "candidate_semantic_score": semantic_score,
+                            "preserved_semantic_score": preserved_semantic_quality.1,
+                            "malformed_terminal_output_preserved": stage == "json",
+                            "next_distinct_lane": ordered_lanes.get(index.saturating_add(1)).map(|next| next.physical_host_id.as_str()),
+                        }));
+                    }
+                }
             }
-        };
-        self.events.write_value(serde_json::json!({
-            "event": "pillar_synthesis_plan_completed",
-            "planner_invocations": 1,
-            "peer_plan_verification_calls": 0,
-            "tasks": dag.tasks.len(),
-            "uncertainty_routes": routes.len(),
-            "next_phase": "immediate-build-dispatch",
-        }));
-        Ok((plan_json, dag))
+
+            if recent_attempt_history.len() > ordered_lanes.len().saturating_mul(2).max(4) {
+                let keep = ordered_lanes.len().saturating_mul(2).max(4);
+                recent_attempt_history.drain(..recent_attempt_history.len() - keep);
+            }
+            if diagnostics.len() > 12 {
+                diagnostics.drain(..diagnostics.len() - 12);
+            }
+            if unavailable_attempts == ordered_lanes.len() {
+                unavailable_cycles = unavailable_cycles.saturating_add(1);
+                let backoff_secs = 1u64
+                    .checked_shl(unavailable_cycles.saturating_sub(1).min(5))
+                    .unwrap_or(30)
+                    .min(30);
+                continuation_strategy = format!(
+                    "All authenticated routes were unavailable. On route recovery, resume the preserved semantic attempt and exact diagnostics; recovery cycle {unavailable_cycles}."
+                );
+                self.events.write_value(serde_json::json!({
+                    "event": "pillar_synthesis_plan_route_recovery_waiting",
+                    "logical_planner_authorities": 1,
+                    "continuation_cycle": cycle,
+                    "planner_lane_invocations": lane_invocations,
+                    "backoff_secs": backoff_secs,
+                    "semantic_attempt_preserved": preserved_semantic_attempt.is_some(),
+                    "fallback_authority": false,
+                    "next_phase": "planner-route-recovery",
+                }));
+                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+            } else {
+                unavailable_cycles = 0;
+                cycle_compiler_diagnostics.sort();
+                cycle_compiler_diagnostics.dedup();
+                let signature = content_sha256(&cycle_compiler_diagnostics.join("\n"));
+                let recurrence = diagnostic_recurrence.entry(signature.clone()).or_default();
+                *recurrence = recurrence.saturating_add(1);
+                continuation_strategy = match *recurrence {
+                    1 => "Apply the focused compiler diagnostics to the preserved semantic plan without changing its valid task responsibilities.".to_string(),
+                    2 => "The same diagnostic recurred: rebuild the typed task_coverage and task_specs envelope from the preserved semantic responsibilities, then reattach the unchanged canonical task meanings.".to_string(),
+                    _ => format!(
+                        "Diagnostic signature {signature} recurred {recurrence} times: trace every frozen requirement, advertised entry, task id, dependency, and uncertainty route exactly once before emitting a fresh typed envelope around the preserved semantic decisions."
+                    ),
+                };
+                self.events.write_value(serde_json::json!({
+                    "event": "pillar_synthesis_plan_semantic_continuation",
+                    "logical_planner_authorities": 1,
+                    "continuation_cycle": cycle,
+                    "planner_lane_invocations": lane_invocations,
+                    "diagnostic_signature": signature,
+                    "unchanged_diagnostic_recurrence": recurrence,
+                    "strategy": continuation_strategy,
+                    "semantic_attempt_preserved": preserved_semantic_attempt.is_some(),
+                    "fallback_authority": false,
+                    "next_phase": "focused-semantic-planner-repair",
+                }));
+            }
+            ordered_lanes.rotate_left(1);
+        }
     }
 
     async fn research_to_saturation(
@@ -36456,6 +37165,7 @@ fn spec_python_invocations(spec: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
 fn nested_python_package_boot_files(spec: &str) -> Vec<String> {
     let invocations = spec_python_invocations(spec);
     let package_invocations = invocations
@@ -50813,6 +51523,18 @@ fn pillar_plan_schema() -> serde_json::Value {
     })
 }
 
+fn pillar_plan_capture_schema() -> serde_json::Value {
+    let mut schema = pillar_plan_schema();
+    schema["required"] = serde_json::json!([]);
+    schema["additionalProperties"] = serde_json::Value::Bool(true);
+    if let Some(properties) = schema["properties"].as_object_mut() {
+        for property_schema in properties.values_mut() {
+            *property_schema = serde_json::json!({});
+        }
+    }
+    schema
+}
+
 fn planning_audit_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -51360,11 +52082,25 @@ fn compile_pillar_task_specs(
             bail!("pillar task specification repeats task `{task_id}`");
         }
     }
-    if by_id.len() != tasks.len() {
+    let canonical_task_ids = tasks
+        .iter()
+        .filter_map(|task| task.get("id").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    let task_spec_ids = by_id.keys().cloned().collect::<BTreeSet<_>>();
+    let missing_specs = canonical_task_ids
+        .difference(&task_spec_ids)
+        .cloned()
+        .collect::<Vec<_>>();
+    let unknown_specs = task_spec_ids
+        .difference(&canonical_task_ids)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing_specs.is_empty() || !unknown_specs.is_empty() {
         bail!(
-            "pillar plan has {} tasks but {} exact task specifications",
-            tasks.len(),
-            by_id.len()
+            "planner_correction[task_spec_alignment]: canonical task ids and task_specs must match exactly; missing task_specs [{}]; unknown task_specs [{}]",
+            missing_specs.join(", "),
+            unknown_specs.join(", ")
         );
     }
 
@@ -51390,7 +52126,9 @@ fn compile_pillar_task_specs(
             .ok_or_else(|| anyhow!("pillar canonical task has no id"))?
             .to_string();
         let task_spec = by_id.remove(&task_id).ok_or_else(|| {
-            anyhow!("pillar canonical task `{task_id}` has no exact task specification")
+            anyhow!(
+                "planner_correction[task_spec_alignment]: canonical task `{task_id}` has no exact task specification"
+            )
         })?;
         let objective = task_spec.objective.trim();
         let module_boundary = task_spec.module_boundary.trim();
@@ -51683,17 +52421,19 @@ fn compile_pillar_plan(
     binding_spec: &str,
 ) -> Result<(String, Dag, Vec<PillarUncertaintyRoute>)> {
     let raw = strip_code_fences(raw);
-    let mut draft: PillarPlanDraft = serde_json::from_str(raw.trim())
-        .map_err(|error| anyhow!("pillar plan was not valid typed JSON: {error}"))?;
-    require_advertised_entry_files(&mut draft.canonical_plan, binding_spec);
+    let value: serde_json::Value = serde_json::from_str(raw.trim())
+        .map_err(|error| anyhow!("pillar plan was malformed JSON: {error}"))?;
+    let mut draft: PillarPlanDraft = serde_json::from_value(value)
+        .map_err(|error| anyhow!("planner_correction[typed_plan_schema]: {error}"))?;
     let missing_entries = missing_advertised_entry_files(&draft.canonical_plan, binding_spec);
     if !missing_entries.is_empty() {
         bail!(
-            "pillar plan could not assign spec-advertised package entry artifact(s): {}",
+            "planner_correction[missing_advertised_entries]: assign every spec-advertised package entry artifact to exactly one canonical task and align that task's typed task_spec with its boot/composition responsibility; missing [{}]",
             missing_entries.join(", ")
         );
     }
-    compile_pillar_task_specs(&mut draft.canonical_plan, draft.task_specs)?;
+    compile_pillar_task_specs(&mut draft.canonical_plan, draft.task_specs)
+        .map_err(|error| anyhow!("planner_correction[task_spec_compilation]: {error}"))?;
     validate_pillar_integration_owner(opening, &draft.canonical_plan, &draft.task_coverage)?;
     if !opening.integration_contract.integration_required {
         validate_no_cross_pillar_integration(opening, &draft.canonical_plan, &draft.task_coverage)?;
@@ -51817,6 +52557,7 @@ fn compile_pillar_plan(
     Ok((compiled.plan_json, dag, draft.uncertainty_routes))
 }
 
+#[cfg(test)]
 fn fallback_pillar_plan(
     user_prompt: &str,
     opening: &ResearchPillarOpening,
@@ -63118,6 +63859,7 @@ mod pre_scheduler_semantic_runtime_tests {
         text_scripts: Mutex<HashMap<String, VecDeque<String>>>,
         calls: Mutex<Vec<String>>,
         request_digests: Mutex<Vec<(String, String)>>,
+        user_inputs: Mutex<Vec<(String, String)>>,
         unproven_stream_drop_models: Mutex<HashSet<String>>,
         late_unproven_chunks_polled: Arc<AtomicUsize>,
         recurrent_models: Mutex<HashSet<String>>,
@@ -63138,6 +63880,7 @@ mod pre_scheduler_semantic_runtime_tests {
                 text_scripts: Mutex::new(HashMap::new()),
                 calls: Mutex::new(Vec::new()),
                 request_digests: Mutex::new(Vec::new()),
+                user_inputs: Mutex::new(Vec::new()),
                 unproven_stream_drop_models: Mutex::new(HashSet::new()),
                 late_unproven_chunks_polled: Arc::new(AtomicUsize::new(0)),
                 recurrent_models: Mutex::new(HashSet::new()),
@@ -63163,6 +63906,16 @@ mod pre_scheduler_semantic_runtime_tests {
                 .iter()
                 .filter(|(called_model, _)| called_model == model)
                 .map(|(_, digest)| digest.clone())
+                .collect()
+        }
+
+        fn user_inputs(&self, model: &str) -> Vec<String> {
+            self.user_inputs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(called_model, _)| called_model == model)
+                .map(|(_, user)| user.clone())
                 .collect()
         }
 
@@ -63254,7 +64007,7 @@ mod pre_scheduler_semantic_runtime_tests {
             SingleAttemptStream::new(
                 Box::pin(async_stream::stream! {
                     record_current_provider_stream_chunk(
-                        411,
+                        410,
                         ProviderStreamChunkKind::StructuredOutput,
                     );
                     yield Ok((
@@ -63330,6 +64083,16 @@ mod pre_scheduler_semantic_runtime_tests {
         ) -> Result<SingleAttemptStream, ProviderError> {
             let model = model_config.model_name.clone();
             self.calls.lock().unwrap().push(model.clone());
+            let user = messages
+                .iter()
+                .rev()
+                .flat_map(|message| message.content.iter().rev())
+                .find_map(|content| match content {
+                    MessageContent::Text(text) => Some(text.text.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            self.user_inputs.lock().unwrap().push((model.clone(), user));
             let normalized_messages = messages
                 .iter()
                 .map(|message| {
@@ -63340,7 +64103,7 @@ mod pre_scheduler_semantic_runtime_tests {
                 })
                 .collect::<Vec<_>>();
             let request_digest = content_sha256(
-                &serde_json::to_string(&(system, normalized_messages, tools))
+                &serde_json::to_string(&(system, &normalized_messages, tools))
                     .expect("runtime provider request must serialize"),
             );
             self.request_digests
@@ -63370,15 +64133,17 @@ mod pre_scheduler_semantic_runtime_tests {
                     .expect("research correction blocked call semaphore closed")
                     .forget();
             }
-            if tools.is_empty() {
-                let text = self
-                    .text_scripts
-                    .lock()
-                    .unwrap()
-                    .get_mut(&model)
-                    .and_then(VecDeque::pop_front)
-                    .unwrap_or_else(|| panic!("unexpected text-only provider call for `{model}`"));
+            let queued_text = self
+                .text_scripts
+                .lock()
+                .unwrap()
+                .get_mut(&model)
+                .and_then(VecDeque::pop_front);
+            if let Some(text) = queued_text {
                 return Ok(Self::finished_text(&model, &text));
+            }
+            if tools.is_empty() {
+                panic!("unexpected text-only provider call for `{model}`");
             }
             let output = self
                 .scripts
@@ -63386,7 +64151,12 @@ mod pre_scheduler_semantic_runtime_tests {
                 .unwrap()
                 .get_mut(&model)
                 .and_then(VecDeque::pop_front)
-                .unwrap_or_else(|| panic!("unexpected additional provider call for `{model}`"));
+                .unwrap_or_else(|| {
+                    panic!(
+                        "unexpected additional provider call for `{model}`; transcript={}",
+                        serde_json::to_string(&normalized_messages).unwrap()
+                    )
+                });
             Ok(Self::finished_final_output(&model, output))
         }
     }
@@ -63427,7 +64197,7 @@ mod pre_scheduler_semantic_runtime_tests {
             } else if system.contains("one non-overlapping research and implementation-spec pillar")
             {
                 ("owner", Self::report_output(user))
-            } else if system.contains("sole and final synthesis planner") {
+            } else if system.contains("sole logical synthesis planner") {
                 ("planner", Self::plan_output(user))
             } else {
                 panic!(
@@ -63571,6 +64341,10 @@ mod pre_scheduler_semantic_runtime_tests {
                 1,
                 "one uncertain owner item must not poison its entire pillar"
             );
+            let authored_prompt = request["authored_prompt"]
+                .as_str()
+                .expect("pillar replay synthesis lost the authored prompt");
+            let advertised_entries = nested_python_package_boot_files(authored_prompt);
 
             let mut subtasks = Vec::new();
             let mut task_coverage = Vec::new();
@@ -63606,13 +64380,15 @@ mod pre_scheduler_semantic_runtime_tests {
                     "exclusions": ["Do not edit the shared entry point or sibling capability modules"]
                 }));
             }
+            let mut integration_files = vec!["src/main.rs".to_string()];
+            integration_files.extend(advertised_entries.iter().cloned());
             subtasks.push(serde_json::json!({
                 "id": "integrate-app",
                 "description": "Hook the three completed capabilities into one runnable entry point",
                 "difficulty": "hard",
                 "model": models[0],
                 "depends_on": build_ids,
-                "files": ["src/main.rs"]
+                "files": integration_files
             }));
             task_coverage.push(serde_json::json!({
                 "task_id": "integrate-app",
@@ -63624,8 +64400,8 @@ mod pre_scheduler_semantic_runtime_tests {
             task_specs.push(serde_json::json!({
                 "task_id": "integrate-app",
                 "objective": "Wire all completed capabilities into one runnable application",
-                "module_boundary": "Own only src/main.rs and consume, never reimplement, capability modules",
-                "concrete_steps": ["Import each capability module", "Expose one runnable entry point"],
+                "module_boundary": format!("Own the shared entry/composition artifacts, including {}", advertised_entries.join(", ")),
+                "concrete_steps": ["Import each capability module", format!("Implement every advertised boot entry: {}", advertised_entries.join(", "))],
                 "interfaces": ["Consume every capability export after its producer task completes"],
                 "edge_cases": ["Fail clearly when a required capability cannot initialize"],
                 "acceptance_evidence": ["Start the integrated application and exercise all three capability paths"],
@@ -64448,8 +65224,15 @@ mod pre_scheduler_semantic_runtime_tests {
             "one opener plus four owner calls"
         );
         assert_eq!(outcome.retries, 1);
-        assert!(outcome.synthesis.chars().count() <= 32_000);
-        assert!(outcome.worker_context.chars().count() <= 40_000);
+        assert!(outcome.synthesis.chars().count() <= 64_000);
+        assert!(outcome.worker_context.contains(&outcome.synthesis));
+        for requirement in &outcome.opening.requirements {
+            assert!(
+                outcome.synthesis.contains(&requirement.id),
+                "synthesis starved {}",
+                requirement.id
+            );
+        }
 
         let research_events = harness.sink.values();
         let owner_starts = research_events
@@ -64622,6 +65405,487 @@ mod pre_scheduler_semantic_runtime_tests {
             .expect("frozen V20 replay did not drain provider lifecycle")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    fn synthesis_authority_runtime_fixture(
+        planner_model: &str,
+        healthy_model: &str,
+        lanes: Vec<ResearchPhysicalLane>,
+    ) -> (String, PillarResearchOutcome, serde_json::Value) {
+        let binding_spec = "Implement the isolated core behavior in src/core.rs.".to_string();
+        let opening = ResearchPillarOpening {
+            requirements: vec![AuthoredRequirement {
+                id: "REQ-core".to_string(),
+                text: binding_spec.clone(),
+                critical: true,
+            }],
+            pillars: vec![ResearchPillar {
+                id: "core".to_string(),
+                title: "Core behavior".to_string(),
+                objective: "Implement only the core behavior".to_string(),
+                requirement_ids: vec!["REQ-core".to_string()],
+                dependencies: Vec::new(),
+                research_questions: vec!["Which module owns core behavior?".to_string()],
+                acceptance_criteria: vec!["The core contract test passes".to_string()],
+                exclusions: vec!["Do not add sibling behavior".to_string()],
+            }],
+            integration_contract: IntegrationContract {
+                owner: planner_model.to_string(),
+                integration_required: false,
+                objective: "No cross-pillar integration is required".to_string(),
+                interface_invariants: vec!["Keep the core interface stable".to_string()],
+                acceptance_criteria: vec!["Run the isolated core test".to_string()],
+            },
+        };
+        let reports = vec![CompiledPillarReport {
+            pillar_id: "core".to_string(),
+            reported_confidence: Confidence::High,
+            effective_confidence: Confidence::High,
+            claims: vec![goose_swarm::CompiledResearchClaim {
+                requirement_id: "REQ-core".to_string(),
+                statement: "src/core.rs owns the complete isolated core behavior".to_string(),
+                reported_class: EvidenceClass::Supported,
+                effective_class: EvidenceClass::Supported,
+                provenance: goose_swarm::ProvenanceMatch::NotClaimed,
+            }],
+            missing_requirement_ids: Vec::new(),
+            unresolved_uncertainties: Vec::new(),
+            acceptance_tests: vec!["cargo test core_contract".to_string()],
+            interfaces: vec!["run_core(input) -> output".to_string()],
+            exclusions: vec!["Application composition".to_string()],
+        }];
+        let synthesis = render_synthesis_input(&reports, 64_000);
+        let worker_context = synthesis.clone();
+        let outcome = PillarResearchOutcome {
+            opening,
+            reports,
+            lanes,
+            synthesis,
+            verified_facts: String::new(),
+            worker_context,
+            provider_calls: 0,
+            retries: 0,
+        };
+        let plan = serde_json::json!({
+            "task_coverage": [{
+                "task_id": "build-core",
+                "owns_requirement_ids": ["REQ-core"],
+                "applies_requirement_ids": [],
+                "verifies_requirement_ids": [],
+                "evidence_ids": []
+            }],
+            "task_specs": [{
+                "task_id": "build-core",
+                "objective": "Implement the complete isolated core behavior",
+                "module_boundary": "Own only src/core.rs",
+                "concrete_steps": ["Implement run_core in src/core.rs"],
+                "interfaces": [],
+                "edge_cases": ["Reject empty input deterministically"],
+                "acceptance_evidence": ["cargo test core_contract passes"],
+                "exclusions": ["Do not edit application composition"]
+            }],
+            "uncertainty_routes": [],
+            "canonical_plan": {
+                "subtasks": [{
+                    "id": "build-core",
+                    "description": "Semantic model plan for the isolated core",
+                    "difficulty": "hard",
+                    "model": healthy_model,
+                    "depends_on": [],
+                    "files": ["src/core.rs"]
+                }],
+                "integration": "Run cargo test core_contract"
+            }
+        });
+        (binding_spec, outcome, plan)
+    }
+
+    #[tokio::test]
+    async fn r5_410_byte_unproven_planner_reroutes_without_fallback_or_early_build_dispatch() {
+        const MODEL_A: &str = "r5-synthesis-model-a";
+        const MODEL_B: &str = "r5-synthesis-model-b";
+        const HOST_A: &str = "r5-synthesis-host-a";
+        const HOST_B: &str = "r5-synthesis-host-b";
+        let lanes = [
+            ("r5-synthesis-lane-a", MODEL_A, HOST_A),
+            ("r5-synthesis-lane-b", MODEL_B, HOST_B),
+        ];
+        let fixture_lanes = lanes
+            .iter()
+            .map(|(token, model, host)| ResearchPhysicalLane {
+                token: (*token).to_string(),
+                model_id: (*model).to_string(),
+                physical_host_id: (*host).to_string(),
+                verified_physical: true,
+            })
+            .collect::<Vec<_>>();
+        let (binding_spec, outcome, valid_plan) =
+            synthesis_authority_runtime_fixture(MODEL_A, MODEL_B, fixture_lanes);
+        compile_pillar_plan(
+            &valid_plan.to_string(),
+            &outcome.opening,
+            &outcome.reports,
+            &[MODEL_A.to_string(), MODEL_B.to_string()],
+            &binding_spec,
+        )
+        .expect("the healthy-lane fixture must be an accepted typed plan");
+        let harness = research_correction_runtime_harness(
+            &lanes,
+            HashMap::from([
+                (MODEL_A.to_string(), Vec::new()),
+                (MODEL_B.to_string(), vec![valid_plan]),
+            ]),
+        )
+        .await;
+        harness.provider.drop_next_stream_unproven(MODEL_A);
+        harness.provider.block_next_call(MODEL_B);
+        let build_dispatcher = Arc::new(RuntimeBuildDispatchProbe {
+            starts: AtomicUsize::new(0),
+        });
+
+        let run = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            let build_dispatcher = build_dispatcher.clone();
+            let binding_spec = binding_spec.clone();
+            async move {
+                let (_, dag) = dispatcher
+                    .plan_from_pillars(&binding_spec, &outcome, MODEL_A)
+                    .await?;
+                assert_eq!(
+                    build_dispatcher.starts.load(AtomicOrdering::SeqCst),
+                    0,
+                    "a typed plan had not yet entered Scheduler dispatch"
+                );
+                Scheduler::new(
+                    vec![DeviceCfg {
+                        id: "r5-synthesis-build-node".to_string(),
+                        model_id: MODEL_B.to_string(),
+                        weight: 1,
+                        enabled: true,
+                        speed_weight: 1,
+                        supervision: false,
+                    }],
+                    1,
+                )
+                .run(
+                    dag,
+                    build_dispatcher as Arc<dyn TaskDispatcher>,
+                    binding_spec,
+                )
+                .await
+            }
+        });
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            harness.provider.wait_for_blocked_call(),
+        )
+        .await
+        .expect("the healthy planner lane was not admitted after the unproven drop");
+        assert_eq!(
+            build_dispatcher.starts.load(AtomicOrdering::SeqCst),
+            0,
+            "build dispatch began before a typed plan was accepted"
+        );
+        assert!(!harness.sink.has("pillar_synthesis_plan_completed"));
+        harness.provider.release_blocked_call();
+        let report = tokio::time::timeout(Duration::from_secs(8), run)
+            .await
+            .expect("the rerouted planner did not finish")
+            .unwrap()
+            .expect("the rerouted typed plan did not reach build dispatch");
+        assert_eq!(build_dispatcher.starts.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(report.done, vec!["build-core"]);
+        assert_eq!(harness.provider.call_count(MODEL_A), 1);
+        assert_eq!(harness.provider.call_count(MODEL_B), 1);
+        assert_eq!(
+            harness
+                .provider
+                .late_unproven_chunks_polled
+                .load(AtomicOrdering::SeqCst),
+            0,
+            "the 410-byte unproven stream was polled after its network drop"
+        );
+        let correction_input = harness.provider.user_inputs(MODEL_B);
+        assert_eq!(correction_input.len(), 1);
+        assert!(correction_input[0].contains("planner_correction"));
+        assert!(correction_input[0].contains("provider attempt unavailable"));
+
+        let events = harness.sink.values();
+        let rejected = events
+            .iter()
+            .find(|event| event["event"] == "pillar_synthesis_plan_attempt_rejected")
+            .expect("the unproven planner attempt was not retained as a rejection");
+        assert_eq!(rejected["physical_host_id"], HOST_A);
+        assert_eq!(rejected["stage"], "provider");
+        assert_eq!(rejected["semantic_attempt_preserved"], false);
+        assert_eq!(rejected["unproven_partial_output_quarantined"], true);
+        assert_eq!(rejected["next_distinct_lane"], HOST_B);
+        let completed = events
+            .iter()
+            .find(|event| event["event"] == "pillar_synthesis_plan_completed")
+            .expect("the accepted typed plan did not terminalize the sole authority");
+        assert_eq!(completed["logical_planner_authorities"], 1);
+        assert_eq!(completed["planner_lane_invocations"], 2);
+        assert_eq!(completed["fallback_authority"], false);
+        let serialized_events = serde_json::to_string(&events).unwrap();
+        assert!(!serialized_events.contains("deterministic-disjoint-pillar-build-plan"));
+        assert!(!serialized_events.contains("pillar_synthesis_plan_degraded"));
+        assert!(!serialized_events.contains("pillar-build-01"));
+        assert!(events.iter().any(|event| {
+            event["event"] == "provider_stream_progress" && event["structured_output_bytes"] == 410
+        }));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the planner failover lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 1));
+    }
+
+    #[tokio::test]
+    async fn repeated_planner_diagnostic_changes_semantic_repair_strategy_without_fallback() {
+        const MODEL_A: &str = "semantic-continuation-model-a";
+        const MODEL_B: &str = "semantic-continuation-model-b";
+        const HOST_A: &str = "semantic-continuation-host-a";
+        const HOST_B: &str = "semantic-continuation-host-b";
+        let lanes = [
+            ("semantic-continuation-lane-a", MODEL_A, HOST_A),
+            ("semantic-continuation-lane-b", MODEL_B, HOST_B),
+        ];
+        let fixture_lanes = lanes
+            .iter()
+            .map(|(token, model, host)| ResearchPhysicalLane {
+                token: (*token).to_string(),
+                model_id: (*model).to_string(),
+                physical_host_id: (*host).to_string(),
+                verified_physical: true,
+            })
+            .collect::<Vec<_>>();
+        let (binding_spec, outcome, valid_plan) =
+            synthesis_authority_runtime_fixture(MODEL_A, MODEL_B, fixture_lanes);
+        let rejected_semantic_plan = serde_json::json!({
+            "semantic_note": "preserve this model-authored module responsibility",
+            "canonical_plan": {
+                "subtasks": [{
+                    "id": "build-core",
+                    "description": "Keep this model-authored responsibility unchanged"
+                }]
+            }
+        });
+        let harness = research_correction_runtime_harness(
+            &lanes,
+            HashMap::from([
+                (
+                    MODEL_A.to_string(),
+                    vec![
+                        rejected_semantic_plan.clone(),
+                        rejected_semantic_plan.clone(),
+                        valid_plan,
+                    ],
+                ),
+                (
+                    MODEL_B.to_string(),
+                    vec![rejected_semantic_plan.clone(), rejected_semantic_plan],
+                ),
+            ]),
+        )
+        .await;
+
+        let (_, dag) = tokio::time::timeout(
+            Duration::from_secs(8),
+            harness
+                .dispatcher
+                .plan_from_pillars(&binding_spec, &outcome, MODEL_A),
+        )
+        .await
+        .expect("the focused semantic continuation did not converge")
+        .expect("ordinary compiler diagnostics stopped the run");
+        assert_eq!(
+            dag.tasks.keys().cloned().collect::<Vec<_>>(),
+            ["build-core"]
+        );
+        assert_eq!(harness.provider.call_count(MODEL_A), 3);
+        assert_eq!(harness.provider.call_count(MODEL_B), 2);
+        let model_b_inputs = harness.provider.user_inputs(MODEL_B);
+        assert!(model_b_inputs[0].contains("preserved_semantic_attempt"));
+        assert!(model_b_inputs[0].contains("preserve this model-authored module responsibility"));
+
+        let events = harness.sink.values();
+        let continuations = events
+            .iter()
+            .filter(|event| event["event"] == "pillar_synthesis_plan_semantic_continuation")
+            .collect::<Vec<_>>();
+        assert_eq!(continuations.len(), 2);
+        assert_eq!(continuations[0]["unchanged_diagnostic_recurrence"], 1);
+        assert_eq!(continuations[1]["unchanged_diagnostic_recurrence"], 2);
+        assert!(continuations[1]["strategy"]
+            .as_str()
+            .unwrap()
+            .contains("rebuild the typed task_coverage and task_specs envelope"));
+        let serialized_events = serde_json::to_string(&events).unwrap();
+        assert!(!serialized_events.contains("pillar_synthesis_plan_authority_exhausted"));
+        assert!(!serialized_events.contains("pillar_synthesis_plan_degraded"));
+        assert!(!serialized_events.contains("deterministic-disjoint-pillar-build-plan"));
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn empty_or_malformed_json_does_not_replace_the_last_substantive_semantic_plan() {
+        const MODEL_A: &str = "semantic-preservation-model-a";
+        const MODEL_B: &str = "semantic-preservation-model-b";
+        const MODEL_C: &str = "semantic-preservation-model-c";
+        const HOST_A: &str = "semantic-preservation-host-a";
+        const HOST_B: &str = "semantic-preservation-host-b";
+        const HOST_C: &str = "semantic-preservation-host-c";
+        let lanes = [
+            ("semantic-preservation-lane-a", MODEL_A, HOST_A),
+            ("semantic-preservation-lane-b", MODEL_B, HOST_B),
+            ("semantic-preservation-lane-c", MODEL_C, HOST_C),
+        ];
+        let fixture_lanes = lanes
+            .iter()
+            .map(|(token, model, host)| ResearchPhysicalLane {
+                token: (*token).to_string(),
+                model_id: (*model).to_string(),
+                physical_host_id: (*host).to_string(),
+                verified_physical: true,
+            })
+            .collect::<Vec<_>>();
+        let (binding_spec, outcome, valid_plan) =
+            synthesis_authority_runtime_fixture(MODEL_A, MODEL_B, fixture_lanes);
+        let mut compiler_rejected = valid_plan.clone();
+        compiler_rejected["task_specs"][0]["task_id"] = serde_json::json!("mismatched-task-id");
+        compiler_rejected["canonical_plan"]["subtasks"][0]["description"] =
+            serde_json::json!("preserve this exact model-authored semantic responsibility");
+        let harness = research_correction_runtime_harness(
+            &lanes,
+            HashMap::from([
+                (MODEL_A.to_string(), vec![compiler_rejected]),
+                (MODEL_B.to_string(), vec![serde_json::json!({}), valid_plan]),
+                (MODEL_C.to_string(), Vec::new()),
+            ]),
+        )
+        .await;
+        harness
+            .provider
+            .queue_finished_text(MODEL_C, "{malformed planner output");
+
+        let (_, dag) = tokio::time::timeout(
+            Duration::from_secs(8),
+            harness
+                .dispatcher
+                .plan_from_pillars(&binding_spec, &outcome, MODEL_A),
+        )
+        .await
+        .expect("semantic continuation did not recover after malformed JSON")
+        .expect("malformed JSON stopped the sole logical planner authority");
+        assert_eq!(
+            dag.tasks.keys().cloned().collect::<Vec<_>>(),
+            ["build-core"]
+        );
+        assert_eq!(harness.provider.call_count(MODEL_A), 1);
+        assert_eq!(harness.provider.call_count(MODEL_B), 2);
+        assert_eq!(harness.provider.call_count(MODEL_C), 1);
+        let model_b_inputs = harness.provider.user_inputs(MODEL_B);
+        assert_eq!(model_b_inputs.len(), 2);
+        for input in &model_b_inputs {
+            assert!(input.contains("preserve this exact model-authored semantic responsibility"));
+        }
+        assert!(model_b_inputs[1].contains("malformed planner output"));
+        let model_c_inputs = harness.provider.user_inputs(MODEL_C);
+        assert_eq!(model_c_inputs.len(), 1);
+        assert!(model_c_inputs[0]
+            .contains("preserve this exact model-authored semantic responsibility"));
+        let schema_empty_rejection = harness
+            .sink
+            .values()
+            .into_iter()
+            .find(|event| {
+                event["event"] == "pillar_synthesis_plan_attempt_rejected"
+                    && event["stage"] == "compiler"
+                    && event["candidate_semantic_score"] == 0
+            })
+            .expect("schema-empty JSON was not retained as a focused rejection");
+        assert!(schema_empty_rejection["preserved_semantic_score"]
+            .as_u64()
+            .is_some_and(|score| score > 0));
+        assert_eq!(schema_empty_rejection["semantic_attempt_preserved"], true);
+        let json_rejection = harness
+            .sink
+            .values()
+            .into_iter()
+            .find(|event| {
+                event["event"] == "pillar_synthesis_plan_attempt_rejected"
+                    && event["stage"] == "json"
+            })
+            .expect("malformed JSON was not retained as a focused rejection");
+        assert_eq!(json_rejection["semantic_attempt_preserved"], true);
+        assert_eq!(json_rejection["malformed_terminal_output_preserved"], true);
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn all_unavailable_planner_lanes_park_for_route_recovery_instead_of_stopping() {
+        const MODEL_A: &str = "route-recovery-model-a";
+        const MODEL_B: &str = "route-recovery-model-b";
+        const HOST_A: &str = "route-recovery-host-a";
+        const HOST_B: &str = "route-recovery-host-b";
+        let lanes = [
+            ("route-recovery-lane-a", MODEL_A, HOST_A),
+            ("route-recovery-lane-b", MODEL_B, HOST_B),
+        ];
+        let fixture_lanes = lanes
+            .iter()
+            .map(|(token, model, host)| ResearchPhysicalLane {
+                token: (*token).to_string(),
+                model_id: (*model).to_string(),
+                physical_host_id: (*host).to_string(),
+                verified_physical: true,
+            })
+            .collect::<Vec<_>>();
+        let (binding_spec, outcome, _) =
+            synthesis_authority_runtime_fixture(MODEL_A, MODEL_B, fixture_lanes);
+        let harness = research_correction_runtime_harness(
+            &lanes,
+            HashMap::from([
+                (MODEL_A.to_string(), Vec::new()),
+                (MODEL_B.to_string(), Vec::new()),
+            ]),
+        )
+        .await;
+        harness.provider.drop_next_stream_unproven(MODEL_A);
+        harness.provider.drop_next_stream_unproven(MODEL_B);
+        let planner = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            async move {
+                dispatcher
+                    .plan_from_pillars(&binding_spec, &outcome, MODEL_A)
+                    .await
+            }
+        });
+        let waiting = harness
+            .sink
+            .wait_for("pillar_synthesis_plan_route_recovery_waiting")
+            .await;
+        assert_eq!(waiting["logical_planner_authorities"], 1);
+        assert_eq!(waiting["fallback_authority"], false);
+        assert_eq!(waiting["next_phase"], "planner-route-recovery");
+        assert!(
+            !planner.is_finished(),
+            "route recovery was reduced to a stop"
+        );
+        assert!(!harness.sink.has("pillar_synthesis_plan_completed"));
+        assert!(!harness
+            .sink
+            .values()
+            .iter()
+            .any(|event| event["event"] == "pillar_synthesis_plan_authority_exhausted"));
+        planner.abort();
+        let _ = planner.await;
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the parked unavailable planner lanes did not drain into quarantine")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 2));
     }
 
     fn requirement_binding_runtime_fixture(
