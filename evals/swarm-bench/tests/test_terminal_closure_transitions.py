@@ -15,6 +15,75 @@ closure = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(closure)
 
 RUN_ID = "swarm-20260826-123456789"
+FIXTURE_SEED = "0123456789abcdef"
+
+
+def score_payload() -> dict[str, object]:
+    tiers = {tier: {"mean": 0.75} for tier in sorted(closure.SB7_TIERS)}
+    tier_names = sorted(closure.SB7_TIERS)
+    checks = [
+        {
+            "check": f"fixture_check_{index:02d}",
+            "tier": tier_names[index % len(tier_names)],
+            "score": 0.75,
+            "detail": f"fixture evidence {index}",
+        }
+        for index in range(91)
+    ]
+    nodes = {
+        name: {
+            "calls": 3,
+            "prompt_tokens": 1200 + index,
+            "completion_tokens": 300 + index,
+            "prefill_tok_s": 90.5 + index,
+            "decode_tok_s": 20.5 + index,
+        }
+        for index, name in enumerate(("gabee", "mihai", "workhorse"))
+    }
+    return {
+        "score": 0.75,
+        "inner": 0.75,
+        "scorer_version": "sb-7.0-rc",
+        "fixture_seed": FIXTURE_SEED,
+        "calibration": "UNCALIBRATED — fixture; rc-grade only",
+        "tiers": tiers,
+        "checks": checks,
+        "excellent": False,
+        "excellence_gate": False,
+        "excellence": {
+            "fraction": 0.75,
+            "e_mean": 0.75,
+            "conditions": [
+                {"name": "fixture_condition", "ok": False, "value": 0.75}
+            ],
+        },
+        "critical": {
+            "floor": 0.6,
+            "multiplier": 1.0,
+            "pre_severity_score": 0.75,
+            "rows": [],
+        },
+        "solid": True,
+        "probe_unavailable": [],
+        "harness_missing": [],
+        "sched_unreached": [],
+        "telemetry": {
+            "calls": 9,
+            "prompt_tokens": 3603,
+            "completion_tokens": 903,
+            "prefill_tok_s": 91.5,
+            "decode_tok_s": 21.5,
+            "nodes": nodes,
+        },
+    }
+
+
+def score_contract() -> dict[str, object]:
+    return {
+        "raw_scorer_version": "sb-7.0-rc",
+        "check_count": 91,
+        "telemetry_nodes": ["gabee", "mihai", "workhorse"],
+    }
 
 
 def engine_row(event: str) -> dict[str, object]:
@@ -167,6 +236,32 @@ class TerminalTransitionTests(unittest.TestCase):
             closure.terminal_completion_assessment(rows, "swarm-20260826-000000000")
             ["terminal_complete"]
         )
+
+
+class RawAndHermeticScorePolicyTests(unittest.TestCase):
+    def test_degraded_raw_can_continue_into_clean_hermetic_scoring(self) -> None:
+        raw = score_payload()
+        raw["probe_unavailable"] = ["t_labels_culling"]
+        raw["checks"][0].update(
+            {
+                "unavailable": True,
+                "detail": "PROBE UNAVAILABLE: raw Playwright module unresolved",
+            }
+        )
+        closure.validate_raw_sb7_terminal_payload(raw, score_contract(), FIXTURE_SEED)
+
+        hermetic = score_payload()
+        closure.validate_sb7_score_payload(hermetic, score_contract(), FIXTURE_SEED)
+
+    def test_degraded_hermetic_score_cannot_reach_publication(self) -> None:
+        hermetic = score_payload()
+        hermetic["probe_unavailable"] = ["t_labels_culling"]
+        with self.assertRaisesRegex(
+            closure.ClosureError, "degraded product-probe evidence"
+        ):
+            closure.validate_sb7_score_payload(
+                hermetic, score_contract(), FIXTURE_SEED
+            )
 
 
 class MonitorIncidentPolicyTests(unittest.TestCase):

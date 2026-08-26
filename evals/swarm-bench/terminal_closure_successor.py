@@ -52,8 +52,11 @@ EXPECTED_PLANNER_MODEL = "workhorse-qwen3.8-27b-brainwaves-mxfp8-mlx"
 APPROVED_PREDECESSOR_CONFIG_SHA256_BY_GENERATION = {
     "v21-r5": "0bfa5e8d13708919d69c1cdd26f52baa77b2f47da0ef7a41818477bec3fe3e04",
 }
+APPROVED_TERMINAL_PREDECESSOR_CONFIG_SHA256_BY_GENERATION = {
+    "v21-r5": "5941e31cf886ed3ddaab649fe18961c7e68fbb2af38a495a300fa58355735891",
+}
 APPROVED_CONTROLLER_SOURCE_SHA256 = (
-    "5a895119f13b4c1ab5c65c0504241077dac41bf36fa121dc8249e0f02bd4e965"
+    "0495c1e120bd37cf30bebc7a9eef7b2f094871bd4ec237ac6e975c1a1cae9344"
 )
 
 
@@ -752,6 +755,129 @@ def successor_template(
     return template
 
 
+def process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def post_terminal_armed_config(
+    *,
+    generation: str,
+    evidence: Mapping[str, Any],
+    template: Mapping[str, Any],
+    template_payload: bytes,
+    predecessor_config_path: pathlib.Path,
+) -> dict[str, Any]:
+    predecessor_config_path = require_regular(
+        predecessor_config_path, read_only=True
+    )
+    predecessor_payload = read_stable_bytes(
+        predecessor_config_path, read_only=True
+    )
+    approved = APPROVED_TERMINAL_PREDECESSOR_CONFIG_SHA256_BY_GENERATION.get(
+        generation
+    )
+    if approved is None or sha256_bytes(predecessor_payload) != approved:
+        raise SuccessorBindingError(
+            "terminal predecessor closure config is not approved"
+        )
+    predecessor = decode_json(predecessor_payload, predecessor_config_path)
+    predecessor_state = pathlib.Path(str(predecessor.get("state_dir", ""))).resolve()
+    if predecessor_config_path != predecessor_state / "config.json":
+        raise SuccessorBindingError("terminal predecessor config escaped its state")
+    if (
+        predecessor.get("armed") is not True
+        or predecessor.get("closure_generation") != generation
+        or predecessor.get("live_root") != evidence["live_root"]
+        or predecessor.get("run_dir") != evidence["run_dir"]
+        or predecessor.get("publication") != template.get("publication")
+        or predecessor.get("binding_successor")
+        != template.get("binding_successor")
+    ):
+        raise SuccessorBindingError("terminal predecessor run/publication identity differs")
+    expected = predecessor.get("expected")
+    binding = predecessor.get("binding")
+    if (
+        not isinstance(expected, dict)
+        or expected.get("run_id") != evidence["run_id"]
+        or not isinstance(binding, dict)
+        or binding.get("generation") != generation
+        or binding.get("launch_sha256") != evidence["launch_sha256"]
+    ):
+        raise SuccessorBindingError("terminal predecessor binding identity differs")
+    state = read_json(predecessor_state / "state.json")
+    failure = read_json(predecessor_state / "failure.json")
+    supervisor = read_json(predecessor_state / "supervisor.pid.json")
+    if (
+        state.get("phase") != "failed"
+        or failure.get("error_type") != "ClosureError"
+        or failure.get("message")
+        != "score contains degraded product-probe evidence in probe_unavailable"
+    ):
+        raise SuccessorBindingError(
+            "terminal predecessor did not fail at the approved raw-probe boundary"
+        )
+    supervisor_pid = supervisor.get("pid")
+    if (
+        not isinstance(supervisor_pid, int)
+        or isinstance(supervisor_pid, bool)
+        or process_exists(supervisor_pid)
+    ):
+        raise SuccessorBindingError("terminal predecessor supervisor is still live")
+    for receipt in evidence["processes"].values():
+        if process_exists(int(receipt["pid"])):
+            raise SuccessorBindingError(
+                "terminal predecessor launch process is still live"
+            )
+
+    run_dir = pathlib.Path(str(evidence["run_dir"]))
+    auto_path = require_regular(run_dir / "verdict.json")
+    aggregate_path = require_regular(
+        pathlib.Path(str(evidence["live_root"]))
+        / "swarm-3node-qwen38-brainwaves.json"
+    )
+    auto = read_json(auto_path)
+    aggregate = json.loads(read_stable_bytes(aggregate_path))
+    if (
+        not isinstance(aggregate, list)
+        or len(aggregate) != 1
+        or canonical_json(aggregate[0]) != canonical_json(auto)
+        or auto.get("fixture_seed") != expected.get("fixture_seed")
+        or auto.get("entrant") != "swarm-3node-qwen38-brainwaves"
+        or auto.get("rep") != 0
+        or auto.get("vendor_port") != 18970
+        or not isinstance(auto.get("probe_unavailable"), list)
+        or not auto["probe_unavailable"]
+    ):
+        raise SuccessorBindingError(
+            "terminal predecessor raw verdict does not prove the recoverable boundary"
+        )
+
+    armed = json.loads(json.dumps(template))
+    dynamic_fields = (
+        "run_id",
+        "fixture_seed",
+        "models",
+        "instrument_files",
+        "launch_sha256",
+        "run_started_sha256",
+        "trace_header_sha256",
+        "fleet_seal_sha256",
+        "fleet_binding_sha256",
+    )
+    armed["armed"] = True
+    armed["expected"].update({field: expected[field] for field in dynamic_fields})
+    armed_binding = json.loads(json.dumps(binding))
+    armed_binding["template_sha256"] = sha256_bytes(template_payload)
+    armed["binding"] = armed_binding
+    return armed
+
+
 def load_generated_module(path: pathlib.Path) -> Any:
     spec = importlib.util.spec_from_file_location("terminal_closure_successor_bound", path)
     if spec is None or spec.loader is None:
@@ -773,6 +899,7 @@ def generate_successor(
     state_dir: pathlib.Path,
     base_config_path: pathlib.Path,
     controller_source: pathlib.Path,
+    terminal_predecessor_config_path: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     base_config_path = require_regular(base_config_path)
     controller_source = require_regular(controller_source)
@@ -823,6 +950,16 @@ def generate_successor(
         usage_policy_path,
     )
     template_payload = json.dumps(template, indent=2, sort_keys=True).encode() + b"\n"
+    armed_payload = None
+    if terminal_predecessor_config_path is not None:
+        armed = post_terminal_armed_config(
+            generation=generation,
+            evidence=evidence,
+            template=template,
+            template_payload=template_payload,
+            predecessor_config_path=terminal_predecessor_config_path,
+        )
+        armed_payload = json.dumps(armed, indent=2, sort_keys=True).encode() + b"\n"
     receipt_payload = canonical_json(evidence) + b"\n"
 
     template_path = state_dir / "template.json"
@@ -839,6 +976,8 @@ def generate_successor(
         ),
         pathlib.Path("template.json"): (template_payload, 0o400),
     }
+    if armed_payload is not None:
+        outputs[pathlib.Path("config.json")] = (armed_payload, 0o400)
 
     if not state_dir.exists():
         state_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -853,6 +992,9 @@ def generate_successor(
             staged_template = temporary / "template.json"
             module = load_generated_module(staged_controller)
             module.validate_config(module.load_config(staged_template), allow_unarmed=True)
+            staged_config = temporary / "config.json"
+            if armed_payload is not None:
+                module.validate_config(module.load_config(staged_config))
             refreshed_evidence = successor_evidence(generation, live_root, state_dir)
             comparable_evidence = {
                 key: value
@@ -903,7 +1045,10 @@ def generate_successor(
             )
     module = load_generated_module(controller_path)
     module.validate_config(module.load_config(template_path), allow_unarmed=True)
-    return {
+    config_path = state_dir / "config.json"
+    if armed_payload is not None:
+        module.validate_config(module.load_config(config_path))
+    receipt = {
         "schema_version": SCHEMA_VERSION,
         "generation": generation,
         "controller": str(controller_path),
@@ -919,6 +1064,10 @@ def generate_successor(
         "predecessor_config_sha256": protected_before,
         "source_controller_sha256": evidence["source_controller_sha256"],
     }
+    if armed_payload is not None:
+        receipt["config"] = str(config_path)
+        receipt["config_sha256"] = sha256_file(config_path)
+    return receipt
 
 
 def parser() -> argparse.ArgumentParser:
@@ -932,6 +1081,7 @@ def parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         default=pathlib.Path(__file__).with_name("terminal_closure.py"),
     )
+    root.add_argument("--terminal-predecessor-config", type=pathlib.Path)
     root.add_argument("--bind", action="store_true")
     return root
 
@@ -945,20 +1095,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         state_dir=args.state_dir,
         base_config_path=args.base_config,
         controller_source=args.controller_source,
+        terminal_predecessor_config_path=args.terminal_predecessor_config,
     )
     if args.bind:
-        completed = subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                receipt["controller"],
-                "bind-v21",
-                "--template",
-                receipt["template"],
-            ],
-            check=False,
-        )
-        if completed.returncode != 0:
+        if receipt.get("config"):
+            completed = None
+        else:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    receipt["controller"],
+                    "bind-v21",
+                    "--template",
+                    receipt["template"],
+                ],
+                check=False,
+            )
+        if completed is not None and completed.returncode != 0:
             raise SuccessorBindingError("generated successor binder failed closed")
     print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0

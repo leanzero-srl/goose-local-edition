@@ -28,6 +28,12 @@ class ApprovedAnchorTests(unittest.TestCase):
                 "v21-r5": "0bfa5e8d13708919d69c1cdd26f52baa77b2f47da0ef7a41818477bec3fe3e04"
             },
         )
+        self.assertEqual(
+            successor.APPROVED_TERMINAL_PREDECESSOR_CONFIG_SHA256_BY_GENERATION,
+            {
+                "v21-r5": "5941e31cf886ed3ddaab649fe18961c7e68fbb2af38a495a300fa58355735891"
+            },
+        )
 
 
 class SuccessorBindingTests(unittest.TestCase):

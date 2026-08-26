@@ -1356,7 +1356,11 @@ def finite_number(value: Any, minimum: float | None = None, maximum: float | Non
 
 
 def validate_sb7_score_payload(
-    score: Mapping[str, Any], expected: Mapping[str, Any], fixture_seed: str
+    score: Mapping[str, Any],
+    expected: Mapping[str, Any],
+    fixture_seed: str,
+    *,
+    allow_probe_degradation: bool = False,
 ) -> None:
     if score.get("fixture_seed") != fixture_seed or not SEED_RE.fullmatch(fixture_seed):
         raise ClosureError("score used a different or malformed fixture_seed")
@@ -1387,7 +1391,7 @@ def validate_sb7_score_payload(
         evidence = score.get(field)
         if not isinstance(evidence, list):
             raise ClosureError(f"score {field} evidence is missing or malformed")
-        if evidence:
+        if evidence and not allow_probe_degradation:
             raise ClosureError(f"score contains degraded product-probe evidence in {field}")
     if not isinstance(score.get("sched_unreached"), list):
         raise ClosureError("score sched_unreached evidence is missing or malformed")
@@ -1402,12 +1406,15 @@ def validate_sb7_score_payload(
             raise ClosureError(f"score check {name} is malformed")
         if not isinstance(row.get("detail"), str):
             raise ClosureError(f"score check {name} lacks detail evidence")
-        if row.get("unavailable") is True:
+        if row.get("unavailable") is True and not allow_probe_degradation:
             raise ClosureError(f"score check {name} is probe-unavailable")
         evidence_text = "\n".join(
             str(row.get(field, "")) for field in ("detail", "consequence", "reason")
         )
-        if PROBE_DEGRADATION_RE.search(evidence_text):
+        if (
+            not allow_probe_degradation
+            and PROBE_DEGRADATION_RE.search(evidence_text)
+        ):
             raise ClosureError(f"score check {name} contains degraded product-probe evidence")
         names.add(name)
     excellence = score.get("excellence")
@@ -1486,6 +1493,19 @@ def validate_sb7_score_payload(
     for field in ("calls", "prompt_tokens", "completion_tokens"):
         if sum(node[field] for node in telemetry["nodes"].values()) != telemetry[field]:
             raise ClosureError(f"score telemetry.{field} does not reconcile its node totals")
+
+
+def validate_raw_sb7_terminal_payload(
+    score: Mapping[str, Any], expected: Mapping[str, Any], fixture_seed: str
+) -> None:
+    """Authenticate raw terminal scoring without treating it as publishable evidence."""
+
+    validate_sb7_score_payload(
+        score,
+        expected,
+        fixture_seed,
+        allow_probe_degradation=True,
+    )
 
 
 def load_config(path: pathlib.Path) -> dict[str, Any]:
@@ -2516,7 +2536,7 @@ class TerminalClosure:
         trace_header = self.bound_trace_header()
         if trace_header is not None and trace_header.get("fixture_seed") != seed:
             raise ClosureError("raw auto-verdict fixture_seed differs from first trace evidence")
-        validate_sb7_score_payload(auto_verdict, self.config["expected"], seed)
+        validate_raw_sb7_terminal_payload(auto_verdict, self.config["expected"], seed)
         if (
             auto_verdict.get("entrant") != self.config["expected"]["entrant"]
             or auto_verdict.get("rep") != 0
