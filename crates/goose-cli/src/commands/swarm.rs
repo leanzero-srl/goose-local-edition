@@ -26007,6 +26007,11 @@ pub struct GooseAgentDispatcher {
     /// planning model call is admitted here so recurrence supervision can consume only verified
     /// spare capacity on a distinct host.
     pre_scheduler_semantic: Mutex<Option<Arc<PreSchedulerSemanticRuntime>>>,
+    /// The run's physical broker remains available after the execute scheduler drains. Legacy
+    /// COMPLETE repairs still dispatch outside that broker, so their nested omni-judge must not
+    /// start another provider request behind the broker's back. Until the probe itself has a
+    /// cancellation-safe admitted-dispatch path, physical runs skip that auxiliary call.
+    physical_auxiliary_control: Mutex<Option<PhysicalAdmissionControl>>,
     /// Notes older than this belong to a PREVIOUS run in the same directory (nothing ever cleared the inbox).
     /// Epoch-ms of this run's start.
     notes_since_ms: i64,
@@ -26162,11 +26167,16 @@ impl GooseAgentDispatcher {
             repeat_break,
             activity_sink_health,
             pre_scheduler_semantic: Mutex::new(None),
+            physical_auxiliary_control: Mutex::new(None),
         })
     }
 
     fn set_pre_scheduler_semantic(&self, runtime: Option<Arc<PreSchedulerSemanticRuntime>>) {
         *self.pre_scheduler_semantic.lock().unwrap() = runtime;
+    }
+
+    fn set_physical_auxiliary_control(&self, control: Option<PhysicalAdmissionControl>) {
+        *self.physical_auxiliary_control.lock().unwrap() = control;
     }
 
     /// Build the isolated SHADOW workspace for a speculative twin: a cp -r of the real tree (heavy dirs
@@ -26569,9 +26579,32 @@ impl GooseAgentDispatcher {
         model_id: &str,
         system_prompt: String,
         user_text: String,
-    ) -> Result<RunAgentOut> {
+    ) -> Result<Option<RunAgentOut>> {
+        let physical_control = self.physical_auxiliary_control.lock().unwrap().clone();
+        if let Some(control) = physical_control {
+            let occupancy = control.physical_occupancy().await;
+            let idle_hosts = occupancy
+                .iter()
+                .filter(|host| host.provider_turn_permits_held < host.capacity)
+                .count();
+            self.events.write_value(serde_json::json!({
+                "event": "legacy_omni_judge_skipped",
+                "reason": if idle_hosts == 0 {
+                    "physical broker has no verified idle host"
+                } else {
+                    "legacy nested probe has no cancellation-safe brokered dispatch path"
+                },
+                "physical_hosts": occupancy.len(),
+                "idle_physical_hosts": idle_hosts,
+                "provider_start_admitted": false,
+                "physical_broker_enforced": true,
+                "payload_logged": false,
+            }));
+            return Ok(None);
+        }
         self.run_read_only_agent(model_id, system_prompt, user_text, None, 1, 0, None)
             .await
+            .map(Some)
     }
 
     async fn generate_run_overview(
@@ -27682,7 +27715,7 @@ impl GooseAgentDispatcher {
                     Box::pin(self.run_omni_judge_probe(&pm, sys, user)),
                 )
                 .await;
-                if let Ok(Ok(o)) = probe {
+                if let Ok(Ok(Some(o))) = probe {
                     // CORROBORATION, not a single verdict. MEASURED across four fires — 1,200 / 1,201 /
                     // 3,759 / 4,003 reasoning chars — the judge returns LOOPING on its FIRST look almost
                     // whatever the floor is, and every one of those kills was wrong: the tasks completed
@@ -59420,6 +59453,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 .expect("physical provider journal was preflighted")
                 .clone(),
         )?;
+        dispatcher.set_physical_auxiliary_control(Some(control.clone()));
         dispatcher.set_pre_scheduler_semantic(Some(Arc::new(PreSchedulerSemanticRuntime::new(
             control.clone(),
             snapshot,
@@ -62708,6 +62742,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 }));
                             }
                             Ok(fresh) => {
+                                fresh.set_physical_auxiliary_control(pre_scheduler_control.clone());
                                 *fresh.spec_frozen.lock().unwrap() = final_binding_spec.clone();
                                 if !fix_contracts_bundle.is_empty() {
                                     fresh.set_contracts(fix_contracts_bundle.clone());
@@ -68681,6 +68716,97 @@ mod pre_scheduler_semantic_runtime_tests {
             .await
     }
 
+    #[tokio::test]
+    async fn physical_complete_omni_probe_never_bypasses_busy_or_idle_broker_lanes() {
+        let working_dir = tempfile::tempdir().unwrap();
+        let target = working_dir.path().join("app.py");
+        std::fs::write(&target, "original application\n").unwrap();
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let provider = Arc::new(OverviewAdversarialProvider::write_then_text(
+            target,
+            "OK|HIGH|reasoning advanced",
+        ));
+        let dispatcher = overview_test_dispatcher(
+            working_dir.path().to_path_buf(),
+            sink.clone(),
+            provider.clone(),
+        )
+        .await;
+        let snapshot = PhysicalFleetSnapshot::new(
+            "complete-omni-broker-snapshot",
+            vec![
+                lane(SOURCE_DEVICE, SOURCE_MODEL, SOURCE_HOST),
+                lane(JUDGE_DEVICE, JUDGE_MODEL, JUDGE_HOST),
+            ],
+        )
+        .unwrap();
+        let control =
+            PhysicalAdmissionControl::new("complete-omni-broker-control", snapshot, sink.clone())
+                .unwrap();
+        dispatcher.set_physical_auxiliary_control(Some(control.clone()));
+
+        let planner_repair = admit_direct(&control, "complete-planner-repair", SOURCE_DEVICE)
+            .await
+            .unwrap();
+        let sibling_repair = admit_direct(&control, "complete-sibling-repair", JUDGE_DEVICE)
+            .await
+            .unwrap();
+        assert!(control
+            .physical_occupancy()
+            .await
+            .iter()
+            .all(|host| host.provider_turn_permits_held == host.capacity));
+
+        let busy = dispatcher
+            .run_omni_judge_probe(
+                SOURCE_MODEL,
+                "Inspect the supplied reasoning.".to_string(),
+                "The COMPLETE repair is still advancing.".to_string(),
+            )
+            .await
+            .unwrap();
+        assert!(busy.is_none());
+        assert_eq!(provider.calls.load(AtomicOrdering::SeqCst), 0);
+        let busy_skip = sink
+            .values()
+            .into_iter()
+            .rev()
+            .find(|event| event["event"] == "legacy_omni_judge_skipped")
+            .unwrap();
+        assert_eq!(busy_skip["idle_physical_hosts"], 0);
+        assert_eq!(busy_skip["provider_start_admitted"], false);
+
+        planner_repair
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        sibling_repair
+            .complete_local(LocalCompletionKind::Error)
+            .await
+            .unwrap();
+        control.wait_until_drained().await.unwrap();
+
+        let idle = dispatcher
+            .run_omni_judge_probe(
+                SOURCE_MODEL,
+                "Inspect the supplied reasoning.".to_string(),
+                "No COMPLETE repair lane is active.".to_string(),
+            )
+            .await
+            .unwrap();
+        assert!(idle.is_none());
+        assert_eq!(provider.calls.load(AtomicOrdering::SeqCst), 0);
+        let idle_skip = sink
+            .values()
+            .into_iter()
+            .rev()
+            .find(|event| event["event"] == "legacy_omni_judge_skipped")
+            .unwrap();
+        assert_eq!(idle_skip["idle_physical_hosts"], 2);
+        assert_eq!(idle_skip["provider_start_admitted"], false);
+        assert!(!sink.has("broker_provider_request_permitted"));
+    }
+
     fn released_completion_for(events: &[serde_json::Value], model: &str) -> Vec<String> {
         events
             .iter()
@@ -68865,7 +68991,8 @@ mod pre_scheduler_semantic_runtime_tests {
                 "The call is still advancing.".to_string(),
             )
             .await
-            .unwrap();
+            .unwrap()
+            .expect("brokerless overview probe should preserve legacy behavior");
         assert!(omni.text.contains("maximum number of actions"));
 
         let overview_provider = Arc::new(OverviewAdversarialProvider::write_then_typed(
