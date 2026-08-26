@@ -6,6 +6,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = pathlib.Path(__file__).parents[1] / "terminal_closure.py"
@@ -91,6 +92,46 @@ def score_contract() -> dict[str, object]:
         "raw_scorer_version": "sb-7.0-rc",
         "check_count": 91,
         "telemetry_nodes": ["gabee", "mihai", "workhorse"],
+    }
+
+
+def notification_unavailable_score() -> dict[str, object]:
+    score = score_payload()
+    score["probe_unavailable"] = [closure.NOTIFICATION_MULTISET_CHECK]
+    score["checks"][0] = {
+        "check": closure.NOTIFICATION_MULTISET_CHECK,
+        "tier": "R",
+        "score": 0.0,
+        "detail": closure.NOTIFICATION_MULTISET_UNAVAILABLE_DETAIL,
+        "consequence": closure.NOTIFICATION_MULTISET_UNAVAILABLE_CONSEQUENCE,
+        "unavailable": True,
+    }
+    return score
+
+
+def notification_schema_receipt(score: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": closure.SUPPLEMENTAL_NOTIFICATION_SCHEMA_VERSION,
+        "classification": "reachable-json-product-schema-mismatch",
+        "method": "GET",
+        "endpoint": "/notify/notifications?limit=200&offset=0",
+        "reachable": True,
+        "http_status": 200,
+        "content_type": "application/json",
+        "json_object": True,
+        "observed_keys": list(closure.NOTIFICATION_SCHEMA_OBSERVED_KEYS),
+        "required_keys": list(closure.NOTIFICATION_SCHEMA_REQUIRED_KEYS),
+        "missing_required_keys": list(closure.NOTIFICATION_SCHEMA_REQUIRED_KEYS),
+        "notifications_is_list": True,
+        "response_body_bytes": 42,
+        "response_body_sha256": "a" * 64,
+        "notifier_source_sha256": "b" * 64,
+        "probe_process_identity_sha256": "c" * 64,
+        "probe_process_exit_proven": True,
+        "score_sha256": closure.sha256_bytes(closure.canonical_json(score)),
+        "clone_tree_sha256": "d" * 64,
+        "raw_tree_sha256": "e" * 64,
+        "fixture_seed": FIXTURE_SEED,
     }
 
 
@@ -286,6 +327,161 @@ class RawAndHermeticScorePolicyTests(unittest.TestCase):
         ):
             closure.validate_sb7_score_payload(
                 hermetic, score_contract(), FIXTURE_SEED
+            )
+
+    def test_exact_notification_product_schema_failure_keeps_frozen_unavailable_row(self) -> None:
+        score = notification_unavailable_score()
+        receipt = notification_schema_receipt(score)
+        closure.validate_sb7_score_payload(
+            score,
+            score_contract(),
+            FIXTURE_SEED,
+            supplemental_product_schema_failure=receipt,
+        )
+        self.assertTrue(score["checks"][0]["unavailable"])
+        self.assertEqual(score["checks"][0]["score"], 0.0)
+
+    def test_notification_supplement_rejects_unreachable_or_non_json(self) -> None:
+        for field, value in (("reachable", False), ("json_object", False)):
+            score = notification_unavailable_score()
+            receipt = notification_schema_receipt(score)
+            receipt[field] = value
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    closure.ClosureError, "reachable exact product mismatch"
+                ):
+                    closure.validate_sb7_score_payload(
+                        score,
+                        score_contract(),
+                        FIXTURE_SEED,
+                        supplemental_product_schema_failure=receipt,
+                    )
+
+
+class AdoptedScoreProcessProofTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.attempt = pathlib.Path(self.temporary.name)
+        receipt = {
+            "pid": 43210,
+            "identity_sha256s": ["a" * 64],
+            "birth_sha256s": ["b" * 64],
+        }
+        (self.attempt / "descendants.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "root_pid": 43210,
+                    "updated_at": "2026-08-26T00:00:00+00:00",
+                    "processes": [receipt],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (self.attempt / "spawn-journal.txt").write_text(
+            json.dumps(receipt) + "\n", encoding="utf-8"
+        )
+        for name, pid in (("scorer.pid.json", 43210), ("worker.pid.json", 43211)):
+            (self.attempt / name).write_text(
+                json.dumps({"pid": pid, "identity_sha256": "c" * 64}) + "\n",
+                encoding="utf-8",
+            )
+        (self.attempt / "scorer-state.json").write_text(
+            json.dumps({"process_group_id": 43210}) + "\n", encoding="utf-8"
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_all_authenticated_descendants_absent_is_accepted(self) -> None:
+        with (
+            mock.patch.object(closure, "process_receipt_status", return_value="absent"),
+            mock.patch.object(closure, "process_group_exists", return_value=False),
+            mock.patch.object(closure, "port_is_available", return_value=True),
+        ):
+            receipts, journal = closure.prove_adoption_process_absence(
+                self.attempt, 18970
+            )
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(len(journal), 1)
+
+    def test_active_descendant_fails_closed_without_signalling(self) -> None:
+        with (
+            mock.patch.object(closure, "process_receipt_status", return_value="match"),
+            mock.patch.object(closure, "process_group_exists", return_value=True),
+            mock.patch.object(closure, "port_is_available", return_value=False),
+            self.assertRaisesRegex(closure.ClosureError, "active or unproven"),
+        ):
+            closure.prove_adoption_process_absence(self.attempt, 18970)
+
+    def test_occupied_port_fails_closed_with_absent_descendants(self) -> None:
+        with (
+            mock.patch.object(closure, "process_receipt_status", return_value="absent"),
+            mock.patch.object(closure, "process_group_exists", return_value=False),
+            mock.patch.object(closure, "port_is_available", return_value=False),
+            self.assertRaisesRegex(closure.ClosureError, "active or unproven"),
+        ):
+            closure.prove_adoption_process_absence(self.attempt, 18970)
+
+    def test_tampered_adoption_receipt_fails_closed(self) -> None:
+        contract = {"source_clone_tree_sha256": "a" * 64}
+        result = {
+            "score_sha256": "b" * 64,
+            "supplemental_product_schema_failure_sha256": "c" * 64,
+        }
+        receipt = {
+            "schema_version": 1,
+            "source_state_sha256": closure.sha256_bytes(
+                closure.canonical_json(contract)
+            ),
+            "source_score_sha256": "b" * 64,
+            "source_clone_tree_sha256": "a" * 64,
+            "descendant_count": 30,
+            "all_descendants_absent": True,
+            "port_isolated": True,
+            "supplemental_product_schema_failure_sha256": "c" * 64,
+        }
+        closure.validate_score_adoption_receipt(contract, result, receipt)
+        receipt["source_score_sha256"] = "d" * 64
+        with self.assertRaisesRegex(closure.ClosureError, "provenance differs"):
+            closure.validate_score_adoption_receipt(contract, result, receipt)
+
+    def test_notification_supplement_rejects_other_check(self) -> None:
+        score = notification_unavailable_score()
+        score["checks"][0]["check"] = "r_other"
+        score["probe_unavailable"] = ["r_other"]
+        receipt = notification_schema_receipt(score)
+        with self.assertRaisesRegex(closure.ClosureError, "exactly one frozen check"):
+            closure.validate_sb7_score_payload(
+                score,
+                score_contract(),
+                FIXTURE_SEED,
+                supplemental_product_schema_failure=receipt,
+            )
+
+    def test_notification_supplement_rejects_nonzero_row(self) -> None:
+        score = notification_unavailable_score()
+        score["checks"][0]["score"] = 0.1
+        receipt = notification_schema_receipt(score)
+        with self.assertRaisesRegex(closure.ClosureError, "row differs"):
+            closure.validate_sb7_score_payload(
+                score,
+                score_contract(),
+                FIXTURE_SEED,
+                supplemental_product_schema_failure=receipt,
+            )
+
+    def test_notification_supplement_rejects_multiple_unavailable_rows(self) -> None:
+        score = notification_unavailable_score()
+        score["checks"][1]["unavailable"] = True
+        receipt = notification_schema_receipt(score)
+        with self.assertRaisesRegex(closure.ClosureError, "multiple unavailable"):
+            closure.validate_sb7_score_payload(
+                score,
+                score_contract(),
+                FIXTURE_SEED,
+                supplemental_product_schema_failure=receipt,
             )
 
 
