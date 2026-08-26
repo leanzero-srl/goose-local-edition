@@ -24537,6 +24537,7 @@ struct PreSchedulerSourceContext {
     lifecycle: ProviderLifecycle,
     label: String,
     authority: PreSchedulerSourceAuthority,
+    live_retirement_authority: Option<ResearchPartitionLiveRetirementAuthority>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24624,6 +24625,39 @@ impl PreSchedulerSourceAuthority {
     }
 }
 
+#[derive(Clone)]
+struct ResearchPartitionLiveRetirementAuthority {
+    partition_host_state: Arc<tokio::sync::Mutex<ResearchPartitionHostState>>,
+    eligible_physical_hosts: Arc<HashSet<String>>,
+    active_physical_host_id: String,
+}
+
+impl ResearchPartitionLiveRetirementAuthority {
+    async fn current_source_authority(&self) -> PreSchedulerSourceAuthority {
+        let state = self.partition_host_state.lock().await;
+        let remaining_eligible_physical_hosts = self
+            .eligible_physical_hosts
+            .iter()
+            .filter(|physical_host_id| {
+                physical_host_id.as_str() != self.active_physical_host_id
+                    && state.host_is_available(physical_host_id)
+            })
+            .count();
+        PreSchedulerSourceAuthority::research_with_remaining_physical_hosts(
+            remaining_eligible_physical_hosts,
+        )
+    }
+}
+
+impl PreSchedulerSourceContext {
+    async fn current_retirement_authority(&self) -> PreSchedulerSourceAuthority {
+        match &self.live_retirement_authority {
+            Some(authority) => authority.current_source_authority().await,
+            None => self.authority,
+        }
+    }
+}
+
 struct PillarFocusedRetryRoute {
     eligible_tokens: Vec<String>,
     primary_retirement_continuation: PreSchedulerRetirementContinuation,
@@ -24676,6 +24710,10 @@ tokio::task_local! {
 
 tokio::task_local! {
     static PRE_SCHEDULER_SOURCE_AUTHORITY: PreSchedulerSourceAuthority;
+}
+
+tokio::task_local! {
+    static PRE_SCHEDULER_LIVE_RETIREMENT_AUTHORITY: ResearchPartitionLiveRetirementAuthority;
 }
 
 #[cfg(test)]
@@ -25890,6 +25928,7 @@ impl GooseAgentDispatcher {
         model_id: &str,
         physical_host_id: &str,
         source_authority: PreSchedulerSourceAuthority,
+        live_retirement_authority: Option<ResearchPartitionLiveRetirementAuthority>,
         system_prompt: String,
         user_text: String,
         response: Option<Response>,
@@ -25907,9 +25946,15 @@ impl GooseAgentDispatcher {
                 activity_key,
             ),
         );
-        PRE_SCHEDULER_REQUIRED_HOST
-            .scope(physical_host_id.to_string(), run)
-            .await
+        let run = PRE_SCHEDULER_REQUIRED_HOST.scope(physical_host_id.to_string(), run);
+        match live_retirement_authority {
+            Some(authority) => {
+                PRE_SCHEDULER_LIVE_RETIREMENT_AUTHORITY
+                    .scope(authority, run)
+                    .await
+            }
+            None => run.await,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -26011,6 +26056,7 @@ impl GooseAgentDispatcher {
                     &lane.model_id,
                     &lane.physical_host_id,
                     PreSchedulerSourceAuthority::planning(),
+                    None,
                     system_prompt.to_string(),
                     user_text.to_string(),
                     Some(Response {
@@ -26228,6 +26274,9 @@ impl GooseAgentDispatcher {
                 lifecycle: lifecycle.clone(),
                 label,
                 authority: source_authority,
+                live_retirement_authority: PRE_SCHEDULER_LIVE_RETIREMENT_AUTHORITY
+                    .try_with(Clone::clone)
+                    .ok(),
             };
             let cancellation = PreSchedulerCallCancellation::new();
             let cleanup_cancellation = cancellation.clone();
@@ -27220,8 +27269,9 @@ impl GooseAgentDispatcher {
                                                 );
                                             match retirement {
                                                 Ok(retired_request) => {
-                                                    let continuation = source
-                                                        .authority
+                                                    let retirement_authority =
+                                                        source.current_retirement_authority().await;
+                                                    let continuation = retirement_authority
                                                         .recurrence_retirement_continuation(
                                                             source.lifecycle.admission().role,
                                                         )
@@ -27804,12 +27854,11 @@ impl GooseAgentDispatcher {
                 let source = response_schema_retirement_source.as_ref().expect(
                     "a validation repeat is armed only for a retirement-authorized research source",
                 );
-                let continuation = source
-                    .authority
+                let retirement_source_authority = source.current_retirement_authority().await;
+                let continuation = retirement_source_authority
                     .recurrence_retirement_continuation(source.lifecycle.admission().role)
                     .expect("a retirement-authorized schema source lost its continuation");
-                let retry_authority = source
-                    .authority
+                let retry_authority = retirement_source_authority
                     .retirement_authority(source.lifecycle.admission().role)
                     .expect("a retirement-authorized schema source lost its branch authority");
                 self.events.write_value(serde_json::json!({
@@ -28472,15 +28521,10 @@ impl GooseAgentDispatcher {
         sources: Arc<Vec<ResearchAuthoritySource>>,
         lane: ResearchPhysicalLane,
         source_authority: PreSchedulerSourceAuthority,
+        live_retirement_authority: Option<ResearchPartitionLiveRetirementAuthority>,
         partition_host_state: Arc<tokio::sync::Mutex<ResearchPartitionHostState>>,
         admission_stop: &tokio_util::sync::CancellationToken,
     ) -> Result<CompiledResearchClosurePartition> {
-        let retirement_continuation = source_authority
-            .recurrence_retirement_continuation(WorkRole::ResearchEvidence)
-            .expect("research jury source lost its retirement continuation");
-        let retirement_authority = source_authority
-            .retirement_authority(WorkRole::ResearchEvidence)
-            .expect("research jury source lost its retirement authority");
         let started = std::time::Instant::now();
         let immutable_prefix = format!(
             "COMPLETE IMMUTABLE CANONICAL REQUIREMENT LEDGER (byte-identical leading prefix for every target packet):\n{}\n\nEXACT AVAILABLE SOURCE CATALOG:\n{}",
@@ -28528,6 +28572,16 @@ impl GooseAgentDispatcher {
                 .or_default()
                 .observe_request(correction, &request_input_digest);
             if let Some(repeat) = request_repeat {
+                let retirement_source_authority = match &live_retirement_authority {
+                    Some(authority) => authority.current_source_authority().await,
+                    None => source_authority,
+                };
+                let retirement_continuation = retirement_source_authority
+                    .recurrence_retirement_continuation(WorkRole::ResearchEvidence)
+                    .expect("research jury source lost its retirement continuation");
+                let retirement_authority = retirement_source_authority
+                    .retirement_authority(WorkRole::ResearchEvidence)
+                    .expect("research jury source lost its retirement authority");
                 self.events.write_value(serde_json::json!({
                     "event": "research_target_jury_correction_repeat_detected",
                     "stage": stage,
@@ -28576,6 +28630,7 @@ impl GooseAgentDispatcher {
                     &lane.model_id,
                     &lane.physical_host_id,
                     source_authority,
+                    live_retirement_authority.clone(),
                     system.to_string(),
                     user,
                     Some(Response {
@@ -28639,6 +28694,16 @@ impl GooseAgentDispatcher {
                         .or_default()
                         .observe_failure(&raw, &target_ids, "assessments", &message, correction);
                     if let Some(repeat) = failure_repeat {
+                        let retirement_source_authority = match &live_retirement_authority {
+                            Some(authority) => authority.current_source_authority().await,
+                            None => source_authority,
+                        };
+                        let retirement_continuation = retirement_source_authority
+                            .recurrence_retirement_continuation(WorkRole::ResearchEvidence)
+                            .expect("research jury source lost its retirement continuation");
+                        let retirement_authority = retirement_source_authority
+                            .retirement_authority(WorkRole::ResearchEvidence)
+                            .expect("research jury source lost its retirement authority");
                         self.events.write_value(serde_json::json!({
                             "event": "research_target_jury_correction_repeat_detected",
                             "stage": stage,
@@ -28754,6 +28819,7 @@ impl GooseAgentDispatcher {
                     runtime.sources.clone(),
                     lane.clone(),
                     source_authority,
+                    None,
                     partition_host_state.clone(),
                     admission_stop,
                 )
@@ -28813,6 +28879,13 @@ impl GooseAgentDispatcher {
         admission_stop: &tokio_util::sync::CancellationToken,
     ) -> Result<Option<CompiledResearchClosurePartition>> {
         let mut attempt = 0usize;
+        let eligible_physical_hosts = Arc::new(
+            runtime
+                .lanes
+                .iter()
+                .map(|lane| lane.physical_host_id.clone())
+                .collect::<HashSet<_>>(),
+        );
         loop {
             if admission_stop.is_cancelled() {
                 return Ok(None);
@@ -28929,6 +29002,11 @@ impl GooseAgentDispatcher {
                 PreSchedulerSourceAuthority::research_with_remaining_physical_hosts(
                     remaining_eligible_physical_hosts.len(),
                 );
+            let live_retirement_authority = ResearchPartitionLiveRetirementAuthority {
+                partition_host_state: partition_host_state.clone(),
+                eligible_physical_hosts: eligible_physical_hosts.clone(),
+                active_physical_host_id: lane.physical_host_id.clone(),
+            };
             let result = self
                 .run_research_closure_semantic_pass_on_lane(
                     &runtime.stage,
@@ -28939,6 +29017,7 @@ impl GooseAgentDispatcher {
                     runtime.sources.clone(),
                     lane.clone(),
                     source_authority,
+                    Some(live_retirement_authority),
                     partition_host_state.clone(),
                     admission_stop,
                 )
@@ -29327,6 +29406,7 @@ impl GooseAgentDispatcher {
                                         &lane.model_id,
                                         &lane.physical_host_id,
                                         source_authority,
+                                        None,
                                         system.to_string(),
                                         user,
                                         Some(Response {
@@ -65344,6 +65424,116 @@ mod pre_scheduler_semantic_runtime_tests {
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
             .expect("the final-host recurrent jury lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_concurrent_two_host_recurrence_uses_live_partial_preservation_authority() {
+        const PARTITION: &str = "target-section-runtime-concurrent-recurrence";
+        const REQUIREMENT: &str = "REQ-runtime-concurrent-recurrence";
+        const MODEL_A: &str = "runtime-concurrent-recurrence-model-a";
+        const MODEL_B: &str = "runtime-concurrent-recurrence-model-b";
+        const HOST_A: &str = "runtime-concurrent-recurrence-host-a";
+        const HOST_B: &str = "runtime-concurrent-recurrence-host-b";
+
+        let mut scripts = HashMap::new();
+        scripts.insert(
+            MODEL_B.to_string(),
+            vec![valid_jury_runtime_output(PARTITION, REQUIREMENT)],
+        );
+        let mut harness = research_correction_runtime_harness_with_timeout(
+            &[
+                ("concurrent-recurrence-lane-a", MODEL_A, HOST_A),
+                ("concurrent-recurrence-lane-b", MODEL_B, HOST_B),
+            ],
+            scripts,
+            4,
+        )
+        .await;
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements =
+            Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        harness.provider.recur_next_call(MODEL_A);
+        harness.provider.block_next_call(MODEL_B);
+
+        let pair = tokio::spawn({
+            let dispatcher = harness.dispatcher.clone();
+            let runtime = harness.runtime.clone();
+            async move {
+                dispatcher
+                    .run_research_closure_partition_pair(
+                        runtime.as_ref(),
+                        ResearchClosurePartition {
+                            partition_id: PARTITION.to_string(),
+                            candidates: vec![correction_runtime_candidate(REQUIREMENT)],
+                        },
+                        &tokio_util::sync::CancellationToken::new(),
+                    )
+                    .await
+            }
+        });
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            harness.provider.wait_for_blocked_call(),
+        )
+        .await
+        .expect("the sibling juror did not become active on the second host");
+        let started = harness
+            .sink
+            .values()
+            .into_iter()
+            .filter(|event| event["event"] == "research_target_jury_unit_attempt_started")
+            .collect::<Vec<_>>();
+        assert_eq!(started.len(), 2);
+        assert_eq!(started[0]["physical_host_id"], HOST_A);
+        assert_eq!(started[1]["physical_host_id"], HOST_B);
+
+        let retirement = harness
+            .sink
+            .wait_for("pre_scheduler_recurrent_source_retired")
+            .await;
+        assert_eq!(retirement["physical_host_id"], HOST_A);
+        assert_eq!(retirement["confirmations"], 2);
+        assert_eq!(
+            retirement["continuation"],
+            "retire-exhausted-source-and-preserve-typed-partial-research-report"
+        );
+        let exhausted = harness
+            .sink
+            .wait_for("research_target_semantic_unit_exhausted")
+            .await;
+        assert_eq!(exhausted["failed_physical_host_id"], HOST_A);
+        assert_eq!(exhausted["continuation"], retirement["continuation"]);
+        assert!(exhausted["remaining_eligible_physical_hosts"]
+            .as_array()
+            .is_some_and(Vec::is_empty));
+        assert!(!harness.sink.values().iter().any(|event| {
+            event["event"] == "research_target_semantic_unit_rescheduled"
+                && event["failed_physical_host_id"] == HOST_A
+        }));
+
+        harness.provider.release_blocked_call();
+        let outcome = tokio::time::timeout(Duration::from_secs(5), pair)
+            .await
+            .expect("the concurrent jury pair did not finish")
+            .unwrap()
+            .expect("the concurrent jury pair failed")
+            .expect("the concurrent jury pair was externally retired");
+        let ResearchPartitionPairOutcome::Degraded {
+            partial_ledgers,
+            reason: _,
+        } = outcome
+        else {
+            panic!("the recurrent juror did not preserve its successful sibling partial")
+        };
+        assert_eq!(partial_ledgers.len(), 1);
+        assert_eq!(partial_ledgers[0].physical_host_id, HOST_B);
+        assert_eq!(harness.provider.call_count(MODEL_A), 1);
+        assert_eq!(harness.provider.call_count(MODEL_B), 1);
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the concurrent recurrence lifecycle did not drain")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
