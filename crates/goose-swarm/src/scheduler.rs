@@ -44,10 +44,12 @@ use crate::semantic_control::{
     BrokeredSemanticObservationPlane, SemanticObservationAdmissionPolicy,
     SemanticObservationAdmissionSubmission,
 };
-use crate::semantic_observation::AcceptanceCriterionSnapshot;
+use crate::semantic_observation::{
+    AcceptanceCriterionSnapshot, SemanticObservationRejection, SemanticProtocolFailureKind,
+};
 use crate::semantic_runtime::{
-    EngineSemanticTaskAuthority, SemanticActivityPublisher, SemanticObservationCaptureRequest,
-    SemanticObservationSnapshotProducer, SemanticTraceRevision,
+    EngineSemanticTaskAuthority, SemanticActivityPublisher, SemanticObservationCapture,
+    SemanticObservationCaptureRequest, SemanticObservationSnapshotProducer, SemanticTraceRevision,
 };
 use anyhow::{bail, Result};
 use futures::FutureExt;
@@ -58,7 +60,7 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDequ
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{mpsc, Mutex, Notify};
+use tokio::sync::{mpsc, watch, Mutex, Notify};
 
 /// GOOSE_SWARM_SPLIT_INHERIT_SPEC (default ON): give a split CHILD the parent's full implementation spec,
 /// scoped to the child's own files — instead of the ~40-char label it gets today.
@@ -278,6 +280,209 @@ fn transient_retry_hint(msg: &str) -> Option<String> {
         ));
     }
     None
+}
+
+fn is_transport_stream_failure(message: &str) -> bool {
+    message.contains("stream decode error")
+        || message.contains("mid-stream body drop")
+        || message.contains("error decoding response body")
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TransportRetryDisposition {
+    budget_exempt: bool,
+    routes_exhausted: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompletedSemanticRetryKind {
+    Content,
+    Transient,
+}
+
+impl CompletedSemanticRetryKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Content => "content_retry",
+            Self::Transient => "transient",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SemanticRetryHostEvidence {
+    failure_shape_digest: String,
+    artifact_shape_digest: String,
+    observations: u32,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct SemanticRetryCorroboration {
+    active_shape_digest: String,
+    hosts: BTreeMap<String, SemanticRetryHostEvidence>,
+    observations: u32,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct SemanticRetryDisposition {
+    observed: bool,
+    review_requested: bool,
+    detail: Option<String>,
+}
+
+struct CompletedSemanticRetryObservation<'a> {
+    task_id: &'a str,
+    physical_host_id: &'a str,
+    kind: CompletedSemanticRetryKind,
+    message: &'a str,
+    artifact_snapshot: &'a SalvageArtifactSnapshot,
+}
+
+fn normalize_semantic_failure_shape(message: &str) -> String {
+    let mut normalized = String::with_capacity(message.len().min(4096));
+    let mut last_was_space = false;
+    let mut last_was_digit = false;
+    for character in message.chars().take(4096) {
+        if character.is_ascii_digit() {
+            if !last_was_digit {
+                normalized.push('#');
+            }
+            last_was_digit = true;
+            last_was_space = false;
+        } else if character.is_whitespace() {
+            if !last_was_space && !normalized.is_empty() {
+                normalized.push(' ');
+            }
+            last_was_space = true;
+            last_was_digit = false;
+        } else {
+            normalized.extend(character.to_lowercase());
+            last_was_space = false;
+            last_was_digit = false;
+        }
+    }
+    normalized.trim().to_string()
+}
+
+fn semantic_retry_artifact_shape_digest(snapshot: &SalvageArtifactSnapshot) -> String {
+    let shape = snapshot
+        .values()
+        .map(|evidence| {
+            evidence
+                .as_ref()
+                .map(|(digest, bytes, mode)| (scheduler_sha256_digest(digest), *bytes, *mode))
+        })
+        .collect::<Vec<_>>();
+    let encoded = serde_json::to_vec(&("semantic-retry-artifact-shape-v1", shape))
+        .expect("semantic retry artifact shapes are JSON serializable");
+    scheduler_sha256_digest(&encoded)
+}
+
+fn semantic_retry_shape_digests(
+    kind: CompletedSemanticRetryKind,
+    message: &str,
+    snapshot: &SalvageArtifactSnapshot,
+) -> (String, String, String) {
+    let normalized = normalize_semantic_failure_shape(message);
+    let failure_shape_digest = scheduler_sha256_digest(
+        &serde_json::to_vec(&("semantic-retry-failure-v1", kind.label(), normalized))
+            .expect("semantic retry failures are JSON serializable"),
+    );
+    let artifact_shape_digest = semantic_retry_artifact_shape_digest(snapshot);
+    let active_shape_digest = scheduler_sha256_digest(
+        &serde_json::to_vec(&(
+            "semantic-retry-shape-v1",
+            kind.label(),
+            &failure_shape_digest,
+            &artifact_shape_digest,
+        ))
+        .expect("semantic retry shapes are JSON serializable"),
+    );
+    (
+        active_shape_digest,
+        failure_shape_digest,
+        artifact_shape_digest,
+    )
+}
+
+fn record_completed_semantic_retry(
+    history: &mut HashMap<TaskId, SemanticRetryCorroboration>,
+    eligible_physical_hosts: &HashSet<String>,
+    observation: CompletedSemanticRetryObservation<'_>,
+) -> SemanticRetryDisposition {
+    if eligible_physical_hosts.is_empty()
+        || !eligible_physical_hosts.contains(observation.physical_host_id)
+    {
+        return SemanticRetryDisposition::default();
+    }
+    let (active_shape_digest, failure_shape_digest, artifact_shape_digest) =
+        semantic_retry_shape_digests(
+            observation.kind,
+            observation.message,
+            observation.artifact_snapshot,
+        );
+    let entry = history.entry(observation.task_id.to_string()).or_default();
+    if entry.active_shape_digest != active_shape_digest {
+        *entry = SemanticRetryCorroboration {
+            active_shape_digest: active_shape_digest.clone(),
+            hosts: BTreeMap::new(),
+            observations: 0,
+        };
+    }
+    entry.observations = entry.observations.saturating_add(1);
+    let host = entry
+        .hosts
+        .entry(observation.physical_host_id.to_string())
+        .or_insert_with(|| SemanticRetryHostEvidence {
+            failure_shape_digest: failure_shape_digest.clone(),
+            artifact_shape_digest: artifact_shape_digest.clone(),
+            observations: 0,
+        });
+    host.observations = host.observations.saturating_add(1);
+
+    let every_host_corroborated = eligible_physical_hosts
+        .iter()
+        .all(|eligible| entry.hosts.contains_key(eligible));
+    let review_requested = every_host_corroborated && entry.observations >= 2;
+    SemanticRetryDisposition {
+        observed: true,
+        review_requested,
+        detail: review_requested.then(|| {
+            format!(
+                "semantic review requested after unchanged completed {} failure was observed across all {} eligible physical hosts (failure_shape={}, artifact_shape={})",
+                observation.kind.label(),
+                eligible_physical_hosts.len(),
+                failure_shape_digest,
+                artifact_shape_digest,
+            )
+        }),
+    }
+}
+
+fn transport_retry_disposition(
+    physical_admission: bool,
+    message: &str,
+    physical_host_id: Option<&str>,
+    eligible_physical_hosts: &HashSet<String>,
+    failed_physical_hosts: &mut HashSet<String>,
+) -> TransportRetryDisposition {
+    if !physical_admission || !is_transport_stream_failure(message) {
+        return TransportRetryDisposition::default();
+    }
+    let Some(physical_host_id) =
+        physical_host_id.filter(|host| eligible_physical_hosts.contains(*host))
+    else {
+        return TransportRetryDisposition::default();
+    };
+
+    let distinct_failure = failed_physical_hosts.insert(physical_host_id.to_string());
+    let routes_exhausted = eligible_physical_hosts
+        .iter()
+        .all(|host| failed_physical_hosts.contains(host));
+    TransportRetryDisposition {
+        budget_exempt: distinct_failure && !routes_exhausted,
+        routes_exhausted,
+    }
 }
 
 /// Is an UNACTED judge verdict still worth carrying to the task's next attempt?
@@ -507,6 +712,52 @@ fn dispatch_prefers_fastest_node(is_hard: bool, attempts: u32) -> bool {
     is_hard || attempts >= 2
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DependencyBlockedTask {
+    task_id: TaskId,
+    unavailable_dependencies: Vec<TaskId>,
+    failed_dependencies: Vec<TaskId>,
+    attempt: u32,
+}
+
+fn dependency_blocked_tasks(dag: &Dag) -> Vec<DependencyBlockedTask> {
+    let mut blocked = dag
+        .tasks
+        .iter()
+        .filter_map(|(task_id, node)| {
+            if node.state != TaskState::Pending {
+                return None;
+            }
+            let mut unavailable_dependencies = node
+                .spec
+                .deps
+                .iter()
+                .filter(|dependency_id| dag.tasks[*dependency_id].state == TaskState::Unavailable)
+                .cloned()
+                .collect::<Vec<_>>();
+            unavailable_dependencies.sort();
+            let mut failed_dependencies = node
+                .spec
+                .deps
+                .iter()
+                .filter(|dependency_id| dag.tasks[*dependency_id].state == TaskState::Failed)
+                .cloned()
+                .collect::<Vec<_>>();
+            failed_dependencies.sort();
+            (!unavailable_dependencies.is_empty() || !failed_dependencies.is_empty()).then(|| {
+                DependencyBlockedTask {
+                    task_id: task_id.clone(),
+                    unavailable_dependencies,
+                    failed_dependencies,
+                    attempt: node.attempts,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    blocked.sort_by(|left, right| left.task_id.cmp(&right.task_id));
+    blocked
+}
+
 type SalvageArtifactSnapshot = BTreeMap<String, Option<(Vec<u8>, u64, u32)>>;
 
 #[cfg(unix)]
@@ -726,8 +977,10 @@ pub struct TaskOutcome {
 #[serde(rename_all = "snake_case")]
 pub enum TaskUnavailableKind {
     AttemptsExhausted,
+    DependencyBlocked,
     DispatchUnavailable,
     DeterministicSupervisorExhausted,
+    SemanticRetryCorroborated,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
@@ -999,6 +1252,8 @@ enum SchedulerDispatcher {
         control: PhysicalAdmissionControl,
         dispatcher: Arc<dyn ProviderLifecycleDispatcher>,
         execution: PhysicalExecutionAuthority,
+        eligible_physical_hosts: HashSet<String>,
+        physical_host_by_logical_device: HashMap<String, String>,
     },
 }
 
@@ -1008,6 +1263,11 @@ struct SemanticObservationConfig {
     reviewer: Arc<dyn AdmittedSemanticObservationReviewer>,
 }
 
+struct RetryableSemanticObservationCapture {
+    capture: SemanticObservationCapture,
+    provider_request: Option<ProviderRequestKey>,
+}
+
 #[derive(Clone)]
 struct SchedulerSemanticObservationRuntime {
     control: PhysicalAdmissionControl,
@@ -1015,6 +1275,7 @@ struct SchedulerSemanticObservationRuntime {
     producer: Arc<dyn SemanticObservationSnapshotProducer>,
     reviewer: Arc<dyn AdmittedSemanticObservationReviewer>,
     sink: Arc<dyn EventSink>,
+    retryable_captures: Arc<Mutex<HashMap<TaskId, RetryableSemanticObservationCapture>>>,
 }
 
 struct ScheduledSemanticObservationCaptureRequest {
@@ -1023,10 +1284,18 @@ struct ScheduledSemanticObservationCaptureRequest {
     provider_start: ProviderStartKey,
 }
 
+struct SemanticCaptureAuthorityError {
+    task_id: TaskId,
+    attempt: u32,
+    reason: String,
+}
+
 enum SemanticObservationAttemptDisposition {
     NoCapture,
     Deferred,
+    Retryable,
     Consumed,
+    CancelledAtCompletion,
     Retired {
         provider_request: Option<ProviderRequestKey>,
     },
@@ -1057,6 +1326,7 @@ impl SchedulerSemanticObservationRuntime {
         scheduled: ScheduledSemanticObservationCaptureRequest,
         last_consumed: Option<SemanticTraceRevision>,
         last_summoned: Option<SemanticTraceRevision>,
+        mut completion_cancelled: watch::Receiver<bool>,
     ) -> SemanticObservationAttemptResult {
         let ScheduledSemanticObservationCaptureRequest {
             request,
@@ -1065,6 +1335,13 @@ impl SchedulerSemanticObservationRuntime {
         } = scheduled;
         let task_id = request.task_id.clone();
         let attempt = request.attempt;
+        if *completion_cancelled.borrow_and_update() {
+            return SemanticObservationAttemptResult {
+                task_id,
+                revision: None,
+                disposition: SemanticObservationAttemptDisposition::CancelledAtCompletion,
+            };
+        }
         let registry = self.control.provider_start_registry();
         let provider_request = registry.current_request_key(&provider_start).ok().flatten();
         let provider_session = match registry.query(&provider_start) {
@@ -1109,7 +1386,7 @@ impl SchedulerSemanticObservationRuntime {
                 return SemanticObservationAttemptResult {
                     task_id,
                     revision: None,
-                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                    disposition: SemanticObservationAttemptDisposition::IntegrityFailure(error),
                 };
             }
         };
@@ -1122,40 +1399,57 @@ impl SchedulerSemanticObservationRuntime {
             return SemanticObservationAttemptResult {
                 task_id,
                 revision: None,
-                disposition: SemanticObservationAttemptDisposition::NoCapture,
+                disposition: SemanticObservationAttemptDisposition::IntegrityFailure(reason),
             };
         }
         let admitted_source = &request.activity_publisher.source;
-        if request.task_id != admitted_source.task_id || request.attempt != admitted_source.attempt
+        if request.task_id != admitted_source.task_id
+            || request.attempt != admitted_source.attempt
+            || request.running_logical_device_id != request.activity_publisher.logical_device_id
+            || request.running_model_id != request.activity_publisher.model_id
         {
-            self.capture_failed(
-                &task_id,
-                attempt,
-                "semantic capture request task/attempt diverges from its admitted source authority"
-                    .to_string(),
-            );
+            let reason =
+                "semantic capture request diverges from its admitted source authority".to_string();
+            self.capture_failed(&task_id, attempt, reason.clone());
             return SemanticObservationAttemptResult {
                 task_id,
                 revision: None,
-                disposition: SemanticObservationAttemptDisposition::NoCapture,
+                disposition: SemanticObservationAttemptDisposition::IntegrityFailure(reason),
             };
         }
-        let capture = match self.producer.capture(request.clone()).await {
-            Ok(Some(capture)) => capture,
-            Ok(None) => {
-                return SemanticObservationAttemptResult {
-                    task_id,
-                    revision: None,
-                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+        let retryable_capture = self.retryable_captures.lock().await.remove(&task_id);
+        let capture = if let Some(retryable) =
+            retryable_capture.filter(|retryable| retryable.provider_request == provider_request)
+        {
+            retryable.capture
+        } else {
+            let capture = tokio::select! {
+                capture = self.producer.capture(request.clone()) => capture,
+                _ = wait_for_scheduler_completion(&mut completion_cancelled) => {
+                    return SemanticObservationAttemptResult {
+                        task_id,
+                        revision: None,
+                        disposition: SemanticObservationAttemptDisposition::CancelledAtCompletion,
+                    };
                 }
-            }
-            Err(reason) => {
-                self.capture_failed(&task_id, attempt, reason);
-                return SemanticObservationAttemptResult {
-                    task_id,
-                    revision: None,
-                    disposition: SemanticObservationAttemptDisposition::NoCapture,
-                };
+            };
+            match capture {
+                Ok(Some(capture)) => capture,
+                Ok(None) => {
+                    return SemanticObservationAttemptResult {
+                        task_id,
+                        revision: None,
+                        disposition: SemanticObservationAttemptDisposition::NoCapture,
+                    };
+                }
+                Err(reason) => {
+                    self.capture_failed(&task_id, attempt, reason);
+                    return SemanticObservationAttemptResult {
+                        task_id,
+                        revision: None,
+                        disposition: SemanticObservationAttemptDisposition::NoCapture,
+                    };
+                }
             }
         };
         if let Err(error) = provider_session.ensure_live() {
@@ -1167,7 +1461,7 @@ impl SchedulerSemanticObservationRuntime {
             return SemanticObservationAttemptResult {
                 task_id,
                 revision: None,
-                disposition: SemanticObservationAttemptDisposition::NoCapture,
+                disposition: SemanticObservationAttemptDisposition::Retired { provider_request },
             };
         }
         let revision = capture.revision();
@@ -1193,8 +1487,10 @@ impl SchedulerSemanticObservationRuntime {
             );
             return SemanticObservationAttemptResult {
                 task_id,
-                revision: None,
-                disposition: SemanticObservationAttemptDisposition::NoCapture,
+                revision: Some(revision),
+                disposition: SemanticObservationAttemptDisposition::IntegrityFailure(
+                    "semantic capture snapshot diverges from admitted authority".to_string(),
+                ),
             };
         }
         if let Err(reason) =
@@ -1209,7 +1505,7 @@ impl SchedulerSemanticObservationRuntime {
             return SemanticObservationAttemptResult {
                 task_id,
                 revision: Some(revision),
-                disposition: SemanticObservationAttemptDisposition::NoCapture,
+                disposition: SemanticObservationAttemptDisposition::IntegrityFailure(reason),
             };
         }
         if let Some(last) = &last_consumed {
@@ -1236,7 +1532,9 @@ impl SchedulerSemanticObservationRuntime {
                 return SemanticObservationAttemptResult {
                     task_id,
                     revision: Some(revision),
-                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                    disposition: SemanticObservationAttemptDisposition::IntegrityFailure(
+                        "semantic trace revision changed immutable snapshot identity".to_string(),
+                    ),
                 };
             }
         }
@@ -1248,12 +1546,13 @@ impl SchedulerSemanticObservationRuntime {
             });
         }
 
+        let running_physical_host_id = request.activity_publisher().physical_host_id();
         let mut eligible_logical_device_ids: Vec<String> = self
             .control
             .verified_lanes()
             .await
             .into_iter()
-            .filter(|lane| lane.logical_device_id != request.running_logical_device_id)
+            .filter(|lane| lane.host_id != running_physical_host_id)
             .map(|lane| lane.logical_device_id)
             .collect();
         eligible_logical_device_ids.sort();
@@ -1273,10 +1572,24 @@ impl SchedulerSemanticObservationRuntime {
                 snapshot_hash: revision.snapshot_hash.clone(),
                 reason: "no_verified_alternate_provider_route".to_string(),
             });
+            self.retryable_captures.lock().await.insert(
+                task_id.clone(),
+                RetryableSemanticObservationCapture {
+                    capture,
+                    provider_request,
+                },
+            );
             return SemanticObservationAttemptResult {
                 task_id,
                 revision: Some(revision),
                 disposition: SemanticObservationAttemptDisposition::Deferred,
+            };
+        }
+        if *completion_cancelled.borrow_and_update() {
+            return SemanticObservationAttemptResult {
+                task_id,
+                revision: Some(revision),
+                disposition: SemanticObservationAttemptDisposition::CancelledAtCompletion,
             };
         }
 
@@ -1294,21 +1607,99 @@ impl SchedulerSemanticObservationRuntime {
             )
             .await;
         match submission {
-            Ok(None) => SemanticObservationAttemptResult {
-                task_id,
-                revision: Some(revision),
-                disposition: SemanticObservationAttemptDisposition::Deferred,
-            },
-            Ok(Some(SemanticObservationAdmissionSubmission::Rejected(_))) => {
+            Ok(None) => {
+                self.retryable_captures.lock().await.insert(
+                    task_id.clone(),
+                    RetryableSemanticObservationCapture {
+                        capture,
+                        provider_request,
+                    },
+                );
                 SemanticObservationAttemptResult {
                     task_id,
                     revision: Some(revision),
-                    disposition: SemanticObservationAttemptDisposition::Consumed,
+                    disposition: SemanticObservationAttemptDisposition::Deferred,
+                }
+            }
+            Ok(Some(SemanticObservationAdmissionSubmission::Rejected(rejected))) => {
+                match rejected.rejection {
+                    SemanticObservationRejection::DuplicateInFlight
+                    | SemanticObservationRejection::DuplicateCompleted
+                    | SemanticObservationRejection::OlderThanCurrent { .. } => {
+                        SemanticObservationAttemptResult {
+                            task_id,
+                            revision: Some(revision),
+                            disposition: SemanticObservationAttemptDisposition::Consumed,
+                        }
+                    }
+                    SemanticObservationRejection::ReviewerBusy { .. } => {
+                        self.retryable_captures.lock().await.insert(
+                            task_id.clone(),
+                            RetryableSemanticObservationCapture {
+                                capture,
+                                provider_request,
+                            },
+                        );
+                        SemanticObservationAttemptResult {
+                            task_id,
+                            revision: Some(revision),
+                            disposition: SemanticObservationAttemptDisposition::Retryable,
+                        }
+                    }
+                    SemanticObservationRejection::ConflictingRevision { current_snapshot } => {
+                        let reason = format!(
+                            "semantic observation control rejected immutable source identity against `{current_snapshot}`"
+                        );
+                        self.capture_failed(&request.task_id, request.attempt, reason.clone());
+                        SemanticObservationAttemptResult {
+                            task_id,
+                            revision: Some(revision),
+                            disposition: SemanticObservationAttemptDisposition::IntegrityFailure(
+                                reason,
+                            ),
+                        }
+                    }
                 }
             }
             Ok(Some(SemanticObservationAdmissionSubmission::Started(handle))) => {
-                match handle.wait().await {
+                let completion_status = completion_cancelled.clone();
+                match handle.wait_with_cancellation(completion_cancelled).await {
                     Ok(receipt) => {
+                        if *completion_status.borrow()
+                            || receipt.reviewer_provider_terminal()
+                                == Some(crate::broker::ProviderTerminalKind::Cancelled)
+                        {
+                            return SemanticObservationAttemptResult {
+                                task_id,
+                                revision: Some(revision),
+                                disposition:
+                                    SemanticObservationAttemptDisposition::CancelledAtCompletion,
+                            };
+                        }
+                        if let Some(failure) = receipt.observation().decision.failure() {
+                            if receipt.observation().stale
+                                || failure.kind == SemanticProtocolFailureKind::StaleSnapshot
+                            {
+                                return SemanticObservationAttemptResult {
+                                    task_id,
+                                    revision: Some(revision),
+                                    disposition: SemanticObservationAttemptDisposition::Consumed,
+                                };
+                            }
+                            self.retryable_captures.lock().await.insert(
+                                task_id.clone(),
+                                RetryableSemanticObservationCapture {
+                                    capture,
+                                    provider_request,
+                                },
+                            );
+                            return SemanticObservationAttemptResult {
+                                task_id,
+                                revision: Some(revision),
+                                disposition: SemanticObservationAttemptDisposition::Retryable,
+                            };
+                        }
+                        let retry_capture = capture.retry_copy();
                         if let Err(error) = self
                             .plane
                             .redeem_scheduler_nudge(
@@ -1320,15 +1711,58 @@ impl SchedulerSemanticObservationRuntime {
                             )
                             .await
                         {
-                            self.capture_failed(
-                                &request.task_id,
-                                request.attempt,
-                                format!("semantic nudge authority was rejected: {error}"),
-                            );
+                            let reason = format!("semantic nudge authority was rejected: {error}");
+                            self.capture_failed(&request.task_id, request.attempt, reason.clone());
+                            return match self.plane.rearm_scheduler_review_after_failed_redemption(
+                                &retry_capture,
+                                &request,
+                                &reason,
+                            ) {
+                                Ok(true) => {
+                                    self.retryable_captures.lock().await.insert(
+                                        task_id.clone(),
+                                        RetryableSemanticObservationCapture {
+                                            capture: retry_capture,
+                                            provider_request,
+                                        },
+                                    );
+                                    SemanticObservationAttemptResult {
+                                        task_id,
+                                        revision: Some(revision),
+                                        disposition:
+                                            SemanticObservationAttemptDisposition::Retryable,
+                                    }
+                                }
+                                Ok(false) => SemanticObservationAttemptResult {
+                                    task_id,
+                                    revision: Some(revision),
+                                    disposition: SemanticObservationAttemptDisposition::Retired {
+                                        provider_request,
+                                    },
+                                },
+                                Err(rearm_error) => SemanticObservationAttemptResult {
+                                    task_id,
+                                    revision: Some(revision),
+                                    disposition:
+                                        SemanticObservationAttemptDisposition::IntegrityFailure(
+                                            format!(
+                                                "{reason}; semantic retry rearm failed: {rearm_error}"
+                                            ),
+                                        ),
+                                },
+                            };
                         }
                     }
                     Err(error) => {
-                        self.capture_failed(&request.task_id, request.attempt, error.to_string());
+                        let reason = error.to_string();
+                        self.capture_failed(&request.task_id, request.attempt, reason.clone());
+                        return SemanticObservationAttemptResult {
+                            task_id,
+                            revision: Some(revision),
+                            disposition: SemanticObservationAttemptDisposition::IntegrityFailure(
+                                reason,
+                            ),
+                        };
                     }
                 }
                 SemanticObservationAttemptResult {
@@ -1338,11 +1772,12 @@ impl SchedulerSemanticObservationRuntime {
                 }
             }
             Err(error) => {
-                self.capture_failed(&request.task_id, request.attempt, error.to_string());
+                let reason = error.to_string();
+                self.capture_failed(&request.task_id, request.attempt, reason.clone());
                 SemanticObservationAttemptResult {
                     task_id,
                     revision: Some(revision),
-                    disposition: SemanticObservationAttemptDisposition::Consumed,
+                    disposition: SemanticObservationAttemptDisposition::IntegrityFailure(reason),
                 }
             }
         }
@@ -1355,6 +1790,17 @@ impl SchedulerSemanticObservationRuntime {
                 attempt,
                 reason,
             });
+    }
+}
+
+async fn wait_for_scheduler_completion(completion_cancelled: &mut watch::Receiver<bool>) {
+    loop {
+        if *completion_cancelled.borrow_and_update() {
+            return;
+        }
+        if completion_cancelled.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
     }
 }
 
@@ -1463,12 +1909,15 @@ struct State {
     /// that budget on a model's reasoning-loop abort would leave a genuinely stuck task with no
     /// deterministic supervisor at the point it needs one most.
     omni_aborts: HashMap<TaskId, u32>,
-    /// Attempts lost to a TRANSPORT fault (mid-stream body drop) rather than to the task.
-    /// MEASURED (qwen3.8 r1): one LAN-flaky node dropped streams repeatedly and three modules —
-    /// api, frontend-viz, frontend-page-cli — burned all four attempts on it and were LOST, two of
-    /// them never recovered. A socket that dies mid-generation says nothing about the work, exactly
-    /// like a judge kill, so it must not consume the task's failure budget.
-    transport_drops: HashMap<TaskId, u32>,
+    /// Exact physical hosts whose unproven decode/body-drop outcome has already consumed one route
+    /// for this task. The physical dispatcher quarantines such a host before returning the transient;
+    /// only a distinct remaining host licenses a budget-exempt failover. Legacy dispatches and repeat
+    /// failures on one host count normally, so a terminal transport fault cannot retry forever.
+    transport_failed_hosts: HashMap<TaskId, HashSet<String>>,
+    transport_retry_exemptions: HashMap<TaskId, u32>,
+    semantic_retry_corroboration: HashMap<TaskId, SemanticRetryCorroboration>,
+    eligible_physical_hosts: HashSet<String>,
+    physical_host_by_logical_device: HashMap<String, String>,
     /// Split generation per task: 0 for original tasks, parent+1 for children injected by a split. Feeds
     /// JudgeRequest.split_count so the judge caps splitting at once (a split-child is never re-split).
     split_generation: HashMap<TaskId, u32>,
@@ -1545,6 +1994,22 @@ impl PhysicalDispatchAuthority for SchedulerPhysicalAuthority {
             .map(|device| device.cfg.id.clone())
             .collect();
         eligible.sort();
+        if let Some(corroboration) = state.semantic_retry_corroboration.get(&req.task_id) {
+            let attempted_hosts = corroboration.hosts.keys().collect::<HashSet<_>>();
+            let distinct = eligible
+                .iter()
+                .filter(|device| {
+                    state
+                        .physical_host_by_logical_device
+                        .get(device.as_str())
+                        .is_some_and(|host| !attempted_hosts.contains(host))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if !distinct.is_empty() {
+                eligible = distinct;
+            }
+        }
         let excluded = node.avoid_device.as_ref().filter(|avoid| {
             eligible.len() > 1
                 && eligible
@@ -1850,9 +2315,10 @@ impl State {
         &self,
         already_capturing: &HashSet<TaskId>,
         available_provider_slots: usize,
-    ) -> Vec<ScheduledSemanticObservationCaptureRequest> {
+    ) -> Result<Vec<ScheduledSemanticObservationCaptureRequest>, SemanticCaptureAuthorityError>
+    {
         if available_provider_slots == 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let mut task_ids: Vec<TaskId> = self
             .dag
@@ -1874,17 +2340,34 @@ impl State {
         task_ids
             .into_iter()
             .take(available_provider_slots)
-            .filter_map(|task_id| self.semantic_observation_capture_request(&task_id))
+            .map(|task_id| self.semantic_observation_capture_request(&task_id))
             .collect()
     }
 
     fn semantic_observation_capture_request(
         &self,
         task_id: &str,
-    ) -> Option<ScheduledSemanticObservationCaptureRequest> {
-        let node = self.dag.tasks.get(task_id)?;
-        let device_index = *self.claimed_device.get(task_id)?;
-        let running_device = self.devices.get(device_index)?;
+    ) -> Result<ScheduledSemanticObservationCaptureRequest, SemanticCaptureAuthorityError> {
+        let attempt = self
+            .dag
+            .tasks
+            .get(task_id)
+            .map(|node| node.attempts)
+            .unwrap_or_default();
+        let authority_error = |reason: String| SemanticCaptureAuthorityError {
+            task_id: task_id.to_string(),
+            attempt,
+            reason,
+        };
+        let node = self.dag.tasks.get(task_id).ok_or_else(|| {
+            authority_error("claimed semantic task is absent from the scheduler DAG".to_string())
+        })?;
+        let device_index = *self.claimed_device.get(task_id).ok_or_else(|| {
+            authority_error("claimed semantic task has no physical device binding".to_string())
+        })?;
+        let running_device = self.devices.get(device_index).ok_or_else(|| {
+            authority_error("semantic task physical device index is invalid".to_string())
+        })?;
         let contract_version = task_contract_version(&node.spec);
 
         let dependency_contract_versions = node
@@ -1945,15 +2428,35 @@ impl State {
             allowed_finding_routes,
             running_device.cfg.id.clone(),
             running_device.cfg.model_id.clone(),
-            self.physical_activity_publishers.get(task_id)?.clone(),
+            self.physical_activity_publishers
+                .get(task_id)
+                .cloned()
+                .ok_or_else(|| {
+                    authority_error(
+                        "semantic task has no engine-minted activity publisher".to_string(),
+                    )
+                })?,
         )
-        .ok()?;
-        let task_authority =
-            EngineSemanticTaskAuthority::mint_from_scheduler_state(&request).ok()?;
-        Some(ScheduledSemanticObservationCaptureRequest {
+        .map_err(|error| {
+            authority_error(format!(
+                "semantic capture request construction failed: {error}"
+            ))
+        })?;
+        let task_authority = EngineSemanticTaskAuthority::mint_from_scheduler_state(&request)
+            .map_err(|error| {
+                authority_error(format!("semantic task authority mint failed: {error}"))
+            })?;
+        let provider_start = self
+            .physical_provider_starts
+            .get(task_id)
+            .cloned()
+            .ok_or_else(|| {
+                authority_error("semantic task has no provider-start registry binding".to_string())
+            })?;
+        Ok(ScheduledSemanticObservationCaptureRequest {
             request,
             task_authority,
-            provider_start: self.physical_provider_starts.get(task_id)?.clone(),
+            provider_start,
         })
     }
 
@@ -2180,14 +2683,7 @@ impl State {
                 n.spec.replan_authority.clone(),
             )
         };
-        let artifact_root = self
-            .checkpoint
-            .as_ref()
-            .map(|checkpoint| checkpoint.root().to_path_buf())
-            .unwrap_or_else(|| Path::new(".").to_path_buf());
-        self.salvage_artifact_baselines
-            .entry(tid.clone())
-            .or_insert_with(|| salvage_artifact_snapshot_at(&artifact_root, &files));
+        self.record_pre_attempt_artifact_baseline(&tid);
         for f in &files {
             self.held_files.insert(f.clone());
         }
@@ -2288,6 +2784,143 @@ impl State {
         n
     }
 
+    fn completed_semantic_retry_disposition(
+        &mut self,
+        tid: &str,
+        kind: CompletedSemanticRetryKind,
+        message: &str,
+    ) -> SemanticRetryDisposition {
+        if !self.continue_on_unavailable
+            || self.max_attempts != u32::MAX
+            || !self.physical_admission
+            || is_transport_stream_failure(message)
+        {
+            return SemanticRetryDisposition::default();
+        }
+        let Some(physical_host_id) = self
+            .physical_activity_publishers
+            .get(tid)
+            .map(|publisher| publisher.physical_host_id.clone())
+        else {
+            return SemanticRetryDisposition::default();
+        };
+        let mut eligible_hosts = self.eligible_physical_hosts.clone();
+        if let Some(transport_failed) = self.transport_failed_hosts.get(tid) {
+            eligible_hosts.retain(|host| !transport_failed.contains(host));
+        }
+        let Some(checkpoint) = self.checkpoint.as_ref() else {
+            return SemanticRetryDisposition::default();
+        };
+        let owned_files = self.dag.tasks[tid].spec.owned_files.clone();
+        let snapshot = salvage_artifact_snapshot_at(checkpoint.root(), &owned_files);
+        record_completed_semantic_retry(
+            &mut self.semantic_retry_corroboration,
+            &eligible_hosts,
+            CompletedSemanticRetryObservation {
+                task_id: tid,
+                physical_host_id: &physical_host_id,
+                kind,
+                message,
+                artifact_snapshot: &snapshot,
+            },
+        )
+    }
+
+    fn record_pre_attempt_artifact_baseline(&mut self, tid: &str) {
+        if self.salvage_artifact_baselines.contains_key(tid) {
+            return;
+        }
+        let owned_files = self.dag.tasks[tid].spec.owned_files.clone();
+        let artifact_root = self
+            .checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.root().to_path_buf())
+            .unwrap_or_else(|| Path::new(".").to_path_buf());
+        let baseline = salvage_artifact_snapshot_at(&artifact_root, &owned_files);
+        self.salvage_artifact_baselines
+            .insert(tid.to_string(), baseline);
+    }
+
+    fn resolve_dependency_blocked_tasks(&mut self) -> usize {
+        if !self.continue_on_unavailable {
+            return 0;
+        }
+        let mut continued = 0;
+        for blocked in dependency_blocked_tasks(&self.dag) {
+            let DependencyBlockedTask {
+                task_id,
+                unavailable_dependencies,
+                failed_dependencies,
+                attempt,
+            } = blocked;
+            if self.dag.tasks[&task_id].state != TaskState::Pending {
+                continue;
+            }
+            if !failed_dependencies.is_empty() {
+                let detail = format!(
+                    "task could not start because dependencies hard-failed without completion authority: {}",
+                    failed_dependencies.join(",")
+                );
+                self.attempt_log
+                    .entry(task_id.clone())
+                    .or_default()
+                    .push(AttemptRecord {
+                        device: None,
+                        model: None,
+                        outcome: "dependency_failed".to_string(),
+                        error: Some(detail.clone()),
+                        elapsed_ms: 0,
+                    });
+                self.dag.tasks.get_mut(&task_id).unwrap().state = TaskState::Failed;
+                self.fail_descendants(&task_id);
+                self.sink.emit(&SwarmEvent::TaskCompleted {
+                    task_id,
+                    salvaged: false,
+                    completion: None,
+                    status: "failed".to_string(),
+                    device: None,
+                    model: None,
+                    attempts: 0,
+                    elapsed_ms: 0,
+                    session_id: None,
+                    error: Some(detail),
+                    tool_calls: Vec::new(),
+                });
+                continued += 1;
+                continue;
+            }
+            let mut ancestry = BTreeSet::new();
+            for dependency_id in &unavailable_dependencies {
+                ancestry.insert(dependency_id.clone());
+                if let Some(dependency_ancestry) = self.task_unavailable_ancestry.get(dependency_id)
+                {
+                    ancestry.extend(dependency_ancestry.iter().cloned());
+                }
+            }
+            self.task_unavailable_ancestry
+                .entry(task_id.clone())
+                .or_default()
+                .extend(ancestry);
+            let detail = format!(
+                "task could not start because dependencies remained typed unavailable: {}",
+                unavailable_dependencies.join(",")
+            );
+            // No provider attempt exists for this dependency-blocked task, so this snapshot is its
+            // truthful pre-attempt state. Every path that did dispatch captured the same evidence at
+            // claim time; mark_unavailable_and_continue must never synthesize it after an attempt.
+            self.record_pre_attempt_artifact_baseline(&task_id);
+            if self.mark_unavailable_and_continue(
+                &task_id,
+                attempt,
+                TaskUnavailableKind::DependencyBlocked,
+                detail,
+            ) {
+                continued += 1;
+            }
+        }
+        continued
+    }
+
     /// Relax every dependent of a just-finished task: drop its indegree and promote it to Ready at zero.
     /// MUST run for BOTH a normal success AND a finalize-spin salvage (both leave the task Done) — otherwise
     /// a salvaged task leaves its dependents Pending forever, so the CLI/integrate-verify sink never
@@ -2341,9 +2974,9 @@ impl State {
         let working_root = self
             .checkpoint
             .as_ref()
-            .map(|checkpoint| checkpoint.root().to_path_buf())
-            .or_else(|| std::fs::canonicalize(".").ok())
-            .unwrap_or_else(|| Path::new(".").to_path_buf());
+            .expect("unavailable continuation is preflight-bound to a checkpoint root")
+            .root()
+            .to_path_buf();
         for path in &required_files {
             let validated = match checkpoint::validate_project_artifact_path(&working_root, path) {
                 Ok(path) => path,
@@ -2399,12 +3032,34 @@ impl State {
             .cloned()
             .unwrap_or_default();
         unavailable_ancestors.insert(tid.to_string());
+        let Some(baseline) = self.salvage_artifact_baselines.get(tid).cloned() else {
+            let integrity =
+                "typed unavailable evidence is missing its pre-attempt artifact baseline"
+                    .to_string();
+            if let Some(record) = self
+                .attempt_log
+                .get_mut(tid)
+                .and_then(|records| records.last_mut())
+            {
+                record.outcome = "integrity_failed".to_string();
+                record.error = Some(integrity);
+            } else {
+                self.attempt_log
+                    .entry(tid.to_string())
+                    .or_default()
+                    .push(AttemptRecord {
+                        device: None,
+                        model: None,
+                        outcome: "integrity_failed".to_string(),
+                        error: Some(integrity),
+                        elapsed_ms: 0,
+                    });
+            }
+            self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
+            self.fail_descendants_without_release(tid);
+            return false;
+        };
         let spec = &self.dag.tasks[tid].spec;
-        let baseline = self
-            .salvage_artifact_baselines
-            .get(tid)
-            .cloned()
-            .unwrap_or_else(|| salvage_artifact_snapshot_at(&working_root, &spec.owned_files));
         let mut evidence = TaskUnavailableEvidence {
             task_id: tid.to_string(),
             kind,
@@ -2564,8 +3219,8 @@ impl State {
                     let working_root = self
                         .checkpoint
                         .as_ref()
-                        .map(|checkpoint| checkpoint.root())
-                        .unwrap_or_else(|| Path::new("."));
+                        .expect("unavailable continuation is preflight-bound to a checkpoint root")
+                        .root();
                     let task_contract = scheduler_task_spec_digest(&node.spec);
                     let acceptance_contract = task_acceptance_digest(&node.spec);
                     mint_unavailable_descendant_receipt(
@@ -2631,13 +3286,14 @@ impl State {
                                 )
                                 .map(Some)
                         } else {
-                            match checkpoint.can_persist_done(spec) {
-                                Ok(true) => checkpoint
-                                    .persist_done(spec, &output, attempt.saturating_add(1))
-                                    .map(Some),
-                                Ok(false) => Ok(None),
-                                Err(error) => Err(error),
-                            }
+                            // A configured checkpoint makes durability part of the completion
+                            // contract. persist_done performs the same dependency-authority check
+                            // atomically with the WAL write; bypassing it after can_persist_done=false
+                            // previously let an in-memory Done release dependents with no resumable
+                            // receipt at all.
+                            checkpoint
+                                .persist_done(spec, &output, attempt.saturating_add(1))
+                                .map(Some)
                         }
                     } else {
                         Ok(None)
@@ -2786,28 +3442,64 @@ impl State {
                 if msg.contains("the judge read this call's own reasoning") {
                     *self.omni_aborts.entry(tid.to_string()).or_insert(0) += 1;
                 }
-                let exhausted = {
+                let semantic_retry = self.completed_semantic_retry_disposition(
+                    tid,
+                    if is_content {
+                        CompletedSemanticRetryKind::Content
+                    } else {
+                        CompletedSemanticRetryKind::Transient
+                    },
+                    &msg,
+                );
+                let budget_or_transport_exhausted = {
                     // Judge kills advance n.attempts (for the epoch guard) but are SUPERVISORY, not task
                     // failures — and the judge can be wrong (a borderline over-read). Don't let a judge
                     // intervention burn the transient-retry budget: exclude it from the exhaustion count.
                     let judge_kills = self.interventions.get(tid).copied().unwrap_or(0)
                         + self.omni_aborts.get(tid).copied().unwrap_or(0);
-                    // A mid-stream body drop is the NETWORK failing, not the task. Counting it
-                    // toward exhaustion let a flaky node delete finished-quality modules from the
-                    // build (r1: three tasks, two never recovered). Excluded like a judge kill;
-                    // bounded because a permanently dead link still exhausts the wall, not the
-                    // budget, and the run's own gates still report the missing deliverable.
-                    if msg.contains("stream decode error") || msg.contains("mid-stream body drop") {
-                        *self.transport_drops.entry(tid.to_string()).or_insert(0) += 1;
+                    // A decode/body drop is budget-exempt only on the lifecycle-backed physical path,
+                    // where the broker has quarantined the exact admitted host before this completion
+                    // reaches State. The admission publisher identifies that host, and the frozen fleet
+                    // proves whether a distinct route remains. Legacy errors, duplicate failures on one
+                    // host, and the final physical route all count; exhausting the route set terminalizes
+                    // immediately instead of manufacturing an unlimited retry allowance from error text.
+                    let physical_host = self
+                        .physical_activity_publishers
+                        .get(tid)
+                        .map(|publisher| publisher.physical_host_id.as_str());
+                    let transport = transport_retry_disposition(
+                        self.physical_admission,
+                        &msg,
+                        physical_host,
+                        &self.eligible_physical_hosts,
+                        self.transport_failed_hosts
+                            .entry(tid.to_string())
+                            .or_default(),
+                    );
+                    if transport.budget_exempt {
+                        *self
+                            .transport_retry_exemptions
+                            .entry(tid.to_string())
+                            .or_insert(0) += 1;
                     }
-                    let transport = self.transport_drops.get(tid).copied().unwrap_or(0);
+                    let transport_exemptions = self
+                        .transport_retry_exemptions
+                        .get(tid)
+                        .copied()
+                        .unwrap_or(0);
                     let n = self.dag.tasks.get_mut(tid).unwrap();
                     n.attempts += 1;
-                    n.attempts
-                        .saturating_sub(judge_kills)
-                        .saturating_sub(transport)
-                        >= self.max_attempts
+                    transport.routes_exhausted
+                        || n.attempts
+                            .saturating_sub(judge_kills)
+                            .saturating_sub(transport_exemptions)
+                            >= self.max_attempts
                 };
+                // Equality is evidence worth showing the semantic observer, not proof that every
+                // model route is incapable of correcting the work. Only typed transport exhaustion
+                // or the scheduler's explicit attempt authority may terminalize here; the semantic
+                // judge remains responsible for deciding whether unchanged output is actually a loop.
+                let exhausted = budget_or_transport_exhausted;
                 if exhausted {
                     let provisional = self.dag.tasks.get(tid).and_then(|node| {
                         let baseline = self.salvage_artifact_baselines.get(tid)?;
@@ -2893,9 +3585,24 @@ impl State {
                     // Guided retry: thread the content error into the next attempt's prior_hint (surfaced to
                     // the worker as a SUPERVISOR NOTE). Infra transients carry no hint — a stale content note
                     // on a "model unloaded" retry would mislead the worker.
-                    if is_content {
+                    if semantic_retry.review_requested {
+                        let observation = semantic_retry.detail.unwrap_or_else(|| {
+                            "semantic review requested for unchanged completed failure".to_string()
+                        });
+                        let hint = format!(
+                            "{observation}. The semantic observer must decide whether this is a real loop; equality alone does not terminate the task. Correct the reported failure rather than repeating the same result:\n{msg}"
+                        );
+                        self.prior_hints.insert(tid.to_string(), hint.clone());
+                        self.judge_notes.push((tid.to_string(), hint));
+                    } else if is_content {
                         self.prior_hints.insert(tid.to_string(), msg.clone());
                         self.judge_notes.push((tid.to_string(), msg.clone()));
+                    } else if semantic_retry.observed {
+                        let hint = format!(
+                            "The previous completed attempt returned this same semantic failure. Correct it rather than repeating the same result:\n{msg}"
+                        );
+                        self.prior_hints.insert(tid.to_string(), hint.clone());
+                        self.judge_notes.push((tid.to_string(), hint));
                     } else if let Some(hint) = transient_retry_hint(&msg) {
                         // The one infra transient that HAS something to say: see `transient_retry_hint`.
                         self.prior_hints.insert(tid.to_string(), hint);
@@ -4608,6 +5315,24 @@ impl Scheduler {
                 );
             }
         }
+        let enabled_build_devices = self
+            .devices
+            .iter()
+            .filter(|device| device.enabled && !device.supervision)
+            .map(|device| device.id.as_str())
+            .collect::<HashSet<_>>();
+        let eligible_physical_hosts = physical_snapshot
+            .lanes
+            .iter()
+            .filter(|lane| enabled_build_devices.contains(lane.logical_device_id.as_str()))
+            .map(|lane| lane.host_id.clone())
+            .collect::<HashSet<_>>();
+        let physical_host_by_logical_device = physical_snapshot
+            .lanes
+            .iter()
+            .filter(|lane| enabled_build_devices.contains(lane.logical_device_id.as_str()))
+            .map(|lane| (lane.logical_device_id.clone(), lane.host_id.clone()))
+            .collect::<HashMap<_, _>>();
         if !control.uses_sink(&self.sink) {
             bail!("physical admission and scheduler must share one authoritative event sink");
         }
@@ -4623,6 +5348,8 @@ impl Scheduler {
                     control: control.clone(),
                     dispatcher,
                     execution,
+                    eligible_physical_hosts,
+                    physical_host_by_logical_device,
                 },
                 goal,
                 user_decisions,
@@ -4699,7 +5426,10 @@ impl Scheduler {
         let mut seen = HashSet::new();
         for d in self.devices.iter().filter(|d| d.enabled) {
             if !seen.insert(d.model_id.clone()) {
-                bail!("duplicate model_id `{}` across enabled devices — LM Link cannot distinguish them", d.model_id);
+                bail!(
+                    "duplicate model_id `{}` across enabled devices — LM Link cannot distinguish them",
+                    d.model_id
+                );
             }
             if d.weight == 0 {
                 bail!(
@@ -4713,15 +5443,33 @@ impl Scheduler {
             SchedulerDispatcher::Legacy(_) => None,
             SchedulerDispatcher::Physical { execution, .. } => Some(execution.clone()),
         };
+        let eligible_physical_hosts = match &dispatcher {
+            SchedulerDispatcher::Legacy(_) => HashSet::new(),
+            SchedulerDispatcher::Physical {
+                eligible_physical_hosts,
+                ..
+            } => eligible_physical_hosts.clone(),
+        };
+        let physical_host_by_logical_device = match &dispatcher {
+            SchedulerDispatcher::Legacy(_) => HashMap::new(),
+            SchedulerDispatcher::Physical {
+                physical_host_by_logical_device,
+                ..
+            } => physical_host_by_logical_device.clone(),
+        };
         let physical_admission = physical_execution.is_some();
         let mut dag = dag;
         if self.continue_on_unavailable {
             let artifact_root = self
                 .checkpoint
                 .as_ref()
-                .map(|checkpoint| checkpoint.root().to_path_buf())
-                .or_else(|| std::fs::canonicalize(".").ok())
-                .unwrap_or_else(|| Path::new(".").to_path_buf());
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unavailable continuation requires an authoritative checkpoint root"
+                    )
+                })?
+                .root()
+                .to_path_buf();
             for node in dag.tasks.values() {
                 for file in &node.spec.owned_files {
                     validate_project_artifact_path(&artifact_root, file).map_err(|error| {
@@ -4820,7 +5568,11 @@ impl Scheduler {
             judge_notes: Vec::new(),
             interventions: HashMap::new(),
             omni_aborts: HashMap::new(),
-            transport_drops: HashMap::new(),
+            transport_failed_hosts: HashMap::new(),
+            transport_retry_exemptions: HashMap::new(),
+            semantic_retry_corroboration: HashMap::new(),
+            eligible_physical_hosts,
+            physical_host_by_logical_device,
             split_generation: HashMap::new(),
             judge_running: false,
             judge_node: None,
@@ -4854,6 +5606,8 @@ impl Scheduler {
                 control,
                 dispatcher,
                 execution: _,
+                eligible_physical_hosts: _,
+                physical_host_by_logical_device: _,
             } => {
                 if let Some(config) = &self.semantic_observation {
                     semantic_runtime = Some(SchedulerSemanticObservationRuntime {
@@ -4865,6 +5619,7 @@ impl Scheduler {
                         producer: config.producer.clone(),
                         reviewer: config.reviewer.clone(),
                         sink: self.sink.clone(),
+                        retryable_captures: Arc::new(Mutex::new(HashMap::new())),
                     });
                 }
                 let brokered = Arc::new(BrokeredTaskDispatcher::new(
@@ -4881,6 +5636,8 @@ impl Scheduler {
         let (semantic_completion_tx, mut semantic_completion_rx) =
             mpsc::unbounded_channel::<SemanticObservationAttemptResult>();
         let mut semantic_captures_in_flight = HashSet::new();
+        let mut semantic_completion_cancellations: HashMap<TaskId, watch::Sender<bool>> =
+            HashMap::new();
         let mut semantic_last_consumed: HashMap<TaskId, SemanticTraceRevision> = HashMap::new();
         let mut semantic_last_summoned: HashMap<TaskId, SemanticTraceRevision> = HashMap::new();
         let mut semantic_retired_provider_requests: HashMap<TaskId, Option<ProviderRequestKey>> =
@@ -4902,6 +5659,7 @@ impl Scheduler {
             }
             while let Ok(result) = semantic_completion_rx.try_recv() {
                 semantic_captures_in_flight.remove(&result.task_id);
+                semantic_completion_cancellations.remove(&result.task_id);
                 match &result.disposition {
                     SemanticObservationAttemptDisposition::Retired { provider_request } => {
                         semantic_retired_provider_requests
@@ -4979,17 +5737,24 @@ impl Scheduler {
             }
 
             let stuck_remaining = {
-                let s = state.lock().await;
-                if s.all_terminal() && semantic_captures_in_flight.is_empty() {
-                    drop(s);
-                    let deadline_elapsed =
-                        drain_scheduler_tasks_until(&mut scheduler_tasks, deadline).await;
-                    apply_idle_slot_releases(&state, &mut idle_release_rx).await;
-                    if deadline_elapsed {
-                        bail!("scheduler deadline elapsed after all scheduler tasks were drained");
+                let mut s = state.lock().await;
+                if s.all_terminal() {
+                    for cancellation in semantic_completion_cancellations.values() {
+                        cancellation.send_replace(true);
                     }
-                    let s = state.lock().await;
-                    return Ok(s.build_report());
+                    if semantic_captures_in_flight.is_empty() {
+                        drop(s);
+                        let deadline_elapsed =
+                            drain_scheduler_tasks_until(&mut scheduler_tasks, deadline).await;
+                        apply_idle_slot_releases(&state, &mut idle_release_rx).await;
+                        if deadline_elapsed {
+                            bail!(
+                                "scheduler deadline elapsed after all scheduler tasks were drained"
+                            );
+                        }
+                        let s = state.lock().await;
+                        return Ok(s.build_report());
+                    }
                 }
                 if !paused
                     && !dispatched_now
@@ -5008,8 +5773,14 @@ impl Scheduler {
                     if became_assignable {
                         continue;
                     }
+                    if s.resolve_dependency_blocked_tasks() > 0 {
+                        continue;
+                    }
                     // Nothing assignable and nothing running, but not all terminal: the remaining
-                    // tasks are permanently blocked (deps failed, or a file deadlock).
+                    // state is not a recoverable dependency block. A Ready task with no route, a
+                    // Claimed task with no active/pending dispatch, stale file holds, or a Pending
+                    // task whose dependencies do not explain the block is scheduler corruption and
+                    // remains a hard integrity failure.
                     // The `!paused` guard is LOAD-BEARING: while held we intentionally claim nothing and can
                     // drain to zero in-flight — without this guard that state trips the stuck-bail and turns
                     // Pause into an accidental terminate. Held + drained must idle until the sentinel clears.
@@ -5030,20 +5801,32 @@ impl Scheduler {
                 while scheduler_tasks.join_next().await.is_some() {}
                 apply_idle_slot_releases(&state, &mut idle_release_rx).await;
                 bail!(
-                    "scheduler stuck: {remaining} task(s) cannot proceed (blocked by failed deps or file holds)"
+                    "scheduler integrity failure: {remaining} task(s) cannot proceed despite typed dependency continuation"
                 );
             }
             if let Some(runtime) = semantic_runtime.as_ref().filter(|_| !paused) {
                 let available_provider_slots = runtime.available_provider_slots().await;
-                let mut requests = {
+                let requests = {
                     let s = state.lock().await;
                     if s.all_terminal() {
-                        Vec::new()
+                        Ok(Vec::new())
                     } else {
                         s.semantic_observation_capture_requests(
                             &semantic_captures_in_flight,
                             available_provider_slots,
                         )
+                    }
+                };
+                let mut requests = match requests {
+                    Ok(requests) => requests,
+                    Err(error) => {
+                        runtime.capture_failed(
+                            &error.task_id,
+                            error.attempt,
+                            format!("semantic capture authority wiring failed: {}", error.reason),
+                        );
+                        semantic_integrity_failure = Some(error.reason);
+                        continue;
                     }
                 };
                 let registry = runtime.control.provider_start_registry();
@@ -5074,6 +5857,8 @@ impl Scheduler {
                     if !semantic_captures_in_flight.insert(task_id.clone()) {
                         continue;
                     }
+                    let (completion_cancelled, completion_cancellation) = watch::channel(false);
+                    semantic_completion_cancellations.insert(task_id.clone(), completion_cancelled);
                     let observation_runtime = runtime.clone();
                     let panic_runtime = runtime.clone();
                     let last_consumed = semantic_last_consumed.get(&task_id).cloned();
@@ -5086,27 +5871,30 @@ impl Scheduler {
                             scheduled,
                             last_consumed,
                             last_summoned,
+                            completion_cancellation,
                         ))
                         .catch_unwind()
                         .await;
                         let result = match observed {
                             Ok(result) => result,
                             Err(_) => {
-                                panic_runtime.capture_failed(
-                                    &task_id,
-                                    attempt,
-                                    "snapshot producer task panicked".to_string(),
-                                );
+                                let reason = "snapshot producer task panicked".to_string();
+                                panic_runtime.capture_failed(&task_id, attempt, reason.clone());
                                 SemanticObservationAttemptResult {
                                     task_id,
                                     revision: None,
-                                    disposition: SemanticObservationAttemptDisposition::NoCapture,
+                                    disposition:
+                                        SemanticObservationAttemptDisposition::IntegrityFailure(
+                                            reason,
+                                        ),
                                 }
                             }
                         };
                         let wake_scheduler = matches!(
                             &result.disposition,
                             SemanticObservationAttemptDisposition::Consumed
+                                | SemanticObservationAttemptDisposition::Retryable
+                                | SemanticObservationAttemptDisposition::CancelledAtCompletion
                                 | SemanticObservationAttemptDisposition::Retired { .. }
                                 | SemanticObservationAttemptDisposition::IntegrityFailure(_)
                         );
@@ -5762,6 +6550,735 @@ mod salvage_tests {
                 "{quiet:?} must not carry a hint — nothing was produced to preserve"
             );
         }
+    }
+
+    #[test]
+    fn transport_retry_exemption_requires_exact_physical_distinct_route_evidence() {
+        let message = "stream decode error (mid-stream body drop)";
+        let routes = HashSet::from(["host-a".to_string(), "host-b".to_string()]);
+
+        let mut legacy = HashSet::new();
+        assert_eq!(
+            transport_retry_disposition(false, message, Some("host-a"), &routes, &mut legacy),
+            TransportRetryDisposition::default()
+        );
+        assert!(legacy.is_empty());
+
+        let mut physical = HashSet::new();
+        assert_eq!(
+            transport_retry_disposition(true, message, None, &routes, &mut physical),
+            TransportRetryDisposition::default()
+        );
+        assert_eq!(
+            transport_retry_disposition(
+                true,
+                "terminal provider error",
+                Some("host-a"),
+                &routes,
+                &mut physical,
+            ),
+            TransportRetryDisposition::default()
+        );
+        assert_eq!(
+            transport_retry_disposition(true, message, Some("host-a"), &routes, &mut physical,),
+            TransportRetryDisposition {
+                budget_exempt: true,
+                routes_exhausted: false,
+            }
+        );
+        assert_eq!(
+            transport_retry_disposition(true, message, Some("host-a"), &routes, &mut physical,),
+            TransportRetryDisposition::default(),
+            "a repeated fault on one host must count instead of minting another exemption"
+        );
+        assert_eq!(
+            transport_retry_disposition(true, message, Some("host-b"), &routes, &mut physical,),
+            TransportRetryDisposition {
+                budget_exempt: false,
+                routes_exhausted: true,
+            },
+            "the final distinct physical route must typed-exhaust rather than requeue"
+        );
+    }
+
+    #[test]
+    fn unchanged_completed_semantic_retry_requests_review_after_every_host_observes_it() {
+        let eligible = HashSet::from([
+            "host-a".to_string(),
+            "host-b".to_string(),
+            "host-c".to_string(),
+        ]);
+        let snapshot = BTreeMap::from([(
+            "src/main.rs".to_string(),
+            Some((vec![7; 32], 128, 0o100644)),
+        )]);
+        let mut history = HashMap::new();
+        let message = "schema rejected field at line 17 for private-value-12345";
+
+        for host in ["host-a", "host-b"] {
+            let disposition = record_completed_semantic_retry(
+                &mut history,
+                &eligible,
+                CompletedSemanticRetryObservation {
+                    task_id: "task",
+                    physical_host_id: host,
+                    kind: CompletedSemanticRetryKind::Content,
+                    message,
+                    artifact_snapshot: &snapshot,
+                },
+            );
+            assert!(disposition.observed);
+            assert!(!disposition.review_requested);
+        }
+        let review = record_completed_semantic_retry(
+            &mut history,
+            &eligible,
+            CompletedSemanticRetryObservation {
+                task_id: "task",
+                physical_host_id: "host-c",
+                kind: CompletedSemanticRetryKind::Content,
+                message,
+                artifact_snapshot: &snapshot,
+            },
+        );
+        assert!(review.review_requested);
+        let detail = review.detail.unwrap();
+        assert!(detail.contains("semantic review requested"));
+        assert!(detail.contains("failure_shape=sha256:"));
+        assert!(detail.contains("artifact_shape=sha256:"));
+        assert!(!detail.contains("private-value"));
+    }
+
+    #[test]
+    fn materially_changed_semantic_retry_shape_resets_host_corroboration() {
+        let eligible = HashSet::from(["host-a".to_string(), "host-b".to_string()]);
+        let first_snapshot =
+            BTreeMap::from([("src/main.rs".to_string(), Some((vec![1; 32], 32, 0o100644)))]);
+        let changed_snapshot =
+            BTreeMap::from([("src/main.rs".to_string(), Some((vec![2; 32], 64, 0o100644)))]);
+        let mut history = HashMap::new();
+
+        assert!(
+            record_completed_semantic_retry(
+                &mut history,
+                &eligible,
+                CompletedSemanticRetryObservation {
+                    task_id: "task",
+                    physical_host_id: "host-a",
+                    kind: CompletedSemanticRetryKind::Content,
+                    message: "missing required field 17",
+                    artifact_snapshot: &first_snapshot,
+                },
+            )
+            .observed
+        );
+        let changed = record_completed_semantic_retry(
+            &mut history,
+            &eligible,
+            CompletedSemanticRetryObservation {
+                task_id: "task",
+                physical_host_id: "host-b",
+                kind: CompletedSemanticRetryKind::Content,
+                message: "missing required field 17",
+                artifact_snapshot: &changed_snapshot,
+            },
+        );
+        assert!(!changed.review_requested);
+        assert_eq!(
+            history["task"].hosts.keys().collect::<Vec<_>>(),
+            [&"host-b"]
+        );
+
+        let changed_again = record_completed_semantic_retry(
+            &mut history,
+            &eligible,
+            CompletedSemanticRetryObservation {
+                task_id: "task",
+                physical_host_id: "host-a",
+                kind: CompletedSemanticRetryKind::Content,
+                message: "required field has the wrong type",
+                artifact_snapshot: &changed_snapshot,
+            },
+        );
+        assert!(
+            !changed_again.review_requested,
+            "a materially changed failure message must begin a new corroboration cycle"
+        );
+        assert_eq!(
+            history["task"].hosts.keys().collect::<Vec<_>>(),
+            [&"host-a"]
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable_continuation_requires_checkpoint_root_before_dispatch() {
+        struct MustNotDispatch(std::sync::atomic::AtomicUsize);
+
+        #[async_trait::async_trait]
+        impl TaskDispatcher for MustNotDispatch {
+            async fn run(&self, _request: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok("unexpected".to_string().into())
+            }
+        }
+
+        let dispatcher = Arc::new(MustNotDispatch(std::sync::atomic::AtomicUsize::new(0)));
+        let dag = Dag::from_specs(vec![TaskSpec {
+            id: "checkpoint-authority".to_string(),
+            description: "must not dispatch without artifact authority".to_string(),
+            difficulty: Difficulty::Easy,
+            preferred_model: None,
+            owned_files: Vec::new(),
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        }])
+        .unwrap();
+
+        let error = Scheduler::new(
+            vec![DeviceCfg {
+                id: "local".to_string(),
+                model_id: "model".to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            }],
+            1,
+        )
+        .with_unavailable_continuation()
+        .run(dag, dispatcher.clone(), String::new())
+        .await
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("requires an authoritative checkpoint root"));
+        assert_eq!(dispatcher.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn dependency_blocked_tasks_are_distinguished_from_scheduler_corruption() {
+        let mut dag = Dag::from_specs(vec![
+            TaskSpec {
+                id: "failed-root".to_string(),
+                description: "already failed".to_string(),
+                difficulty: Difficulty::Easy,
+                preferred_model: None,
+                owned_files: Vec::new(),
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+                replan_authority: None,
+            },
+            TaskSpec {
+                id: "blocked-child".to_string(),
+                description: "must move to capability repair".to_string(),
+                difficulty: Difficulty::Easy,
+                preferred_model: None,
+                owned_files: Vec::new(),
+                deps: vec!["failed-root".to_string()],
+                subsplit: Vec::new(),
+                replan_authority: None,
+            },
+        ])
+        .unwrap();
+        dag.tasks.get_mut("failed-root").unwrap().state = TaskState::Failed;
+        assert_eq!(
+            dependency_blocked_tasks(&dag),
+            vec![DependencyBlockedTask {
+                task_id: "blocked-child".to_string(),
+                unavailable_dependencies: Vec::new(),
+                failed_dependencies: vec!["failed-root".to_string()],
+                attempt: 0,
+            }]
+        );
+
+        dag.tasks.get_mut("failed-root").unwrap().state = TaskState::Ready;
+        assert!(
+            dependency_blocked_tasks(&dag).is_empty(),
+            "a nonterminal dependency does not license unavailable continuation; the scheduler must retain its hard corruption path"
+        );
+
+        dag.tasks.get_mut("failed-root").unwrap().state = TaskState::Failed;
+        let checkpoint_root = tempfile::Builder::new()
+            .prefix("dependency-resolution-checkpoint-")
+            .tempdir_in(".")
+            .unwrap();
+        let mut state = State {
+            dag,
+            ready: BinaryHeap::new(),
+            devices: vec![DeviceRt {
+                cfg: DeviceCfg {
+                    id: "local".to_string(),
+                    model_id: "model".to_string(),
+                    weight: 1,
+                    enabled: true,
+                    speed_weight: 1,
+                    supervision: false,
+                },
+                in_flight: 0,
+            }],
+            held_files: HashSet::new(),
+            held_by: HashMap::new(),
+            claimed_device: HashMap::new(),
+            physical_activity_publishers: HashMap::new(),
+            physical_provider_starts: HashMap::new(),
+            dispatched_per_device: HashMap::new(),
+            ctx: SharedContext::new(),
+            checkpoint: Some(Arc::new(
+                SchedulerCheckpointStore::open(checkpoint_root.path()).unwrap(),
+            )),
+            restored_attempts: HashMap::new(),
+            max_attempts: u32::MAX,
+            degrade_on_stall: false,
+            continue_on_unavailable: true,
+            sink: Arc::new(NullSink),
+            attempt_started_at: HashMap::new(),
+            attempt_log: HashMap::new(),
+            task_session: HashMap::new(),
+            task_tool_calls: HashMap::new(),
+            task_final_device: HashMap::new(),
+            goal: String::new(),
+            user_decisions: String::new(),
+            doc_facts: String::new(),
+            replans_done: 0,
+            replan_declined_at_incomplete: None,
+            bonus_ids: HashSet::new(),
+            device_speed: HashMap::new(),
+            abort_handles: HashMap::new(),
+            kill_tree_hash: HashMap::new(),
+            prior_hints: HashMap::new(),
+            judge_notes: Vec::new(),
+            interventions: HashMap::new(),
+            omni_aborts: HashMap::new(),
+            transport_failed_hosts: HashMap::new(),
+            transport_retry_exemptions: HashMap::new(),
+            semantic_retry_corroboration: HashMap::new(),
+            eligible_physical_hosts: HashSet::new(),
+            physical_host_by_logical_device: HashMap::new(),
+            split_generation: HashMap::new(),
+            judge_running: false,
+            judge_node: None,
+            task_completion: HashMap::new(),
+            task_unavailable: HashMap::new(),
+            task_unavailable_ancestry: HashMap::new(),
+            salvage_artifact_baselines: HashMap::new(),
+            idle_jobs: 0,
+            sink_review_dim: 0,
+            last_judged: HashMap::new(),
+            spec_device: HashMap::new(),
+            spec_started_at: HashMap::new(),
+            spec_abort: HashMap::new(),
+            speculating: HashSet::new(),
+            spec_count: 0,
+            testgen_count: 0,
+            fix_round: false,
+            tail_review_count: 0,
+            tail_review_dim: 0,
+            physical_admission: false,
+            physical_execution: None,
+        };
+        assert_eq!(state.resolve_dependency_blocked_tasks(), 1);
+        assert_eq!(state.dag.tasks["blocked-child"].state, TaskState::Failed);
+        assert!(state.task_unavailable.is_empty());
+        assert_eq!(
+            state.attempt_log["blocked-child"][0].outcome,
+            "dependency_failed"
+        );
+        assert!(state.all_terminal());
+
+        state.dag.tasks.get_mut("failed-root").unwrap().state = TaskState::Ready;
+        assert!(
+            !state.mark_unavailable_and_continue(
+                "failed-root",
+                0,
+                TaskUnavailableKind::DispatchUnavailable,
+                "root route is typed unavailable".to_string(),
+            ),
+            "post-attempt bytes must never be relabelled as a missing pre-attempt baseline"
+        );
+        assert_eq!(state.dag.tasks["failed-root"].state, TaskState::Failed);
+        assert!(!state.task_unavailable.contains_key("failed-root"));
+
+        state.dag.tasks.get_mut("failed-root").unwrap().state = TaskState::Ready;
+        state.attempt_log.remove("failed-root");
+        state.record_pre_attempt_artifact_baseline("failed-root");
+        assert!(state.mark_unavailable_and_continue(
+            "failed-root",
+            0,
+            TaskUnavailableKind::DispatchUnavailable,
+            "root route is typed unavailable".to_string(),
+        ));
+
+        // Even if in-memory ancestry tracking is lost, the durable dependency receipt remains the
+        // authority. A successful model response must fail closed instead of becoming Done without
+        // a WAL receipt and releasing further dependents.
+        state.task_unavailable_ancestry.remove("blocked-child");
+        state.dag.tasks.get_mut("blocked-child").unwrap().state = TaskState::Claimed;
+        state.complete(
+            "blocked-child",
+            0,
+            Ok("model claimed completion".to_string().into()),
+        );
+        assert_eq!(state.dag.tasks["blocked-child"].state, TaskState::Failed);
+        assert!(!state.task_completion.contains_key("blocked-child"));
+        assert_eq!(
+            state.attempt_log["blocked-child"].last().unwrap().outcome,
+            "checkpoint_failed"
+        );
+
+        {
+            let blocked_child = state.dag.tasks.get_mut("blocked-child").unwrap();
+            blocked_child.state = TaskState::Pending;
+            blocked_child.indegree_remaining = 1;
+        }
+        state.attempt_log.remove("blocked-child");
+        state.ready.clear();
+
+        assert_eq!(state.resolve_dependency_blocked_tasks(), 1);
+        assert_eq!(
+            state.dag.tasks["blocked-child"].state,
+            TaskState::Unavailable
+        );
+        assert_eq!(
+            state.task_unavailable["blocked-child"].kind,
+            TaskUnavailableKind::DependencyBlocked
+        );
+        assert!(state.task_unavailable["blocked-child"]
+            .unavailable_ancestors
+            .contains(&"failed-root".to_string()));
+        assert!(state.all_terminal());
+    }
+
+    #[tokio::test]
+    async fn repeated_legacy_transport_failures_consume_the_attempt_budget() {
+        struct AlwaysDrops {
+            calls: std::sync::atomic::AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl TaskDispatcher for AlwaysDrops {
+            async fn run(&self, _request: DispatchRequest) -> Result<TaskRunOutput, DispatchError> {
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err(DispatchError::Transient(
+                    "stream decode error (mid-stream body drop)".to_string(),
+                ))
+            }
+        }
+
+        let calls = Arc::new(AlwaysDrops {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let dag = Dag::from_specs(vec![TaskSpec {
+            id: "decode-drop".to_string(),
+            description: "exercise bounded transport retries".to_string(),
+            difficulty: Difficulty::Easy,
+            preferred_model: None,
+            owned_files: Vec::new(),
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        }])
+        .unwrap();
+        let report = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            Scheduler::new(
+                vec![DeviceCfg {
+                    id: "legacy".to_string(),
+                    model_id: "legacy-model".to_string(),
+                    weight: 1,
+                    enabled: true,
+                    speed_weight: 1,
+                    supervision: false,
+                }],
+                2,
+            )
+            .run(dag, calls.clone(), String::new()),
+        )
+        .await
+        .expect("repeated transport failures retried forever")
+        .unwrap();
+
+        assert_eq!(calls.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(report.failed, ["decode-drop"]);
+        assert_eq!(report.tasks[0].attempt_history.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn physical_transport_failures_try_distinct_hosts_then_typed_exhaust() {
+        struct UnprovenBodyDrops {
+            hosts: std::sync::Mutex<Vec<String>>,
+        }
+
+        #[async_trait::async_trait]
+        impl ProviderLifecycleDispatcher for UnprovenBodyDrops {
+            async fn run_admitted(
+                &self,
+                _request: DispatchRequest,
+                admission: AdmissionReceipt,
+                lifecycle: crate::control_plane::ProviderLifecycle,
+            ) -> Result<TaskRunOutput, DispatchError> {
+                self.hosts.lock().unwrap().push(admission.physical_host_id);
+                let request = lifecycle
+                    .start_provider_request()
+                    .await
+                    .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+                drop(request);
+                Err(DispatchError::Transient(
+                    "error decoding response body after streamed chunks".to_string(),
+                ))
+            }
+        }
+
+        let transport = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let lane = |logical_device_id: &str, model_id: &str, host_id: &str| {
+            crate::broker::VerifiedPhysicalLane {
+                logical_device_id: logical_device_id.to_string(),
+                model_id: model_id.to_string(),
+                host_id: host_id.to_string(),
+                model_instance_id: format!("instance-{host_id}"),
+                provider_transport_id: transport.to_string(),
+                advertised_instance_capacity: 1,
+                routing_weight: 1,
+                capacity_evidence: crate::broker::HostCapacityEvidence::MeasuredProfile {
+                    profile_hash: format!("fixture:{host_id}"),
+                    profile_key: "test-runtime:model:context:role".to_string(),
+                    max_concurrent: 1,
+                },
+                route_evidence_id: format!("fixture-route:{host_id}"),
+            }
+        };
+        let lanes = vec![
+            lane("lane-a", "model-a", "host-a"),
+            lane("lane-b", "model-b", "host-b"),
+        ];
+        let sink: Arc<dyn EventSink> = Arc::new(NullSink);
+        let control = PhysicalAdmissionControl::new(
+            "scheduler-transport-route-exhaustion",
+            crate::broker::PhysicalFleetSnapshot::new("transport-routes", lanes).unwrap(),
+            sink.clone(),
+        )
+        .unwrap();
+        let dispatcher = Arc::new(UnprovenBodyDrops {
+            hosts: std::sync::Mutex::new(Vec::new()),
+        });
+        let checkpoint_root = tempfile::Builder::new()
+            .prefix("transport-route-checkpoint-")
+            .tempdir_in(".")
+            .unwrap();
+        let dag = Dag::from_specs(vec![TaskSpec {
+            id: "decode-drop".to_string(),
+            description: "exercise physical transport route exhaustion".to_string(),
+            difficulty: Difficulty::Easy,
+            preferred_model: None,
+            owned_files: Vec::new(),
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        }])
+        .unwrap();
+        let report = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            Scheduler::new(
+                vec![
+                    DeviceCfg {
+                        id: "lane-a".to_string(),
+                        model_id: "model-a".to_string(),
+                        weight: 1,
+                        enabled: true,
+                        speed_weight: 1,
+                        supervision: false,
+                    },
+                    DeviceCfg {
+                        id: "lane-b".to_string(),
+                        model_id: "model-b".to_string(),
+                        weight: 1,
+                        enabled: true,
+                        speed_weight: 1,
+                        supervision: false,
+                    },
+                ],
+                99,
+            )
+            .with_sink(sink)
+            .with_unavailable_continuation()
+            .with_checkpoint_root(checkpoint_root.path())
+            .unwrap()
+            .run_with_physical_admission(
+                dag,
+                dispatcher.clone(),
+                control.clone(),
+                PhysicalExecutionAuthority::new(
+                    crate::broker::AuthorityScope::new(
+                        "scheduler-transport-route-exhaustion",
+                        "execute",
+                    ),
+                    0,
+                    crate::broker::WorkRole::Build,
+                ),
+                String::new(),
+                String::new(),
+            ),
+        )
+        .await
+        .expect("physical transport faults did not terminalize after all routes")
+        .unwrap();
+
+        let hosts = dispatcher.hosts.lock().unwrap().clone();
+        assert_eq!(hosts.len(), 2);
+        assert_eq!(hosts.into_iter().collect::<HashSet<_>>().len(), 2);
+        assert_eq!(report.unavailable.len(), 1);
+        assert_eq!(
+            report.unavailable[0].kind,
+            TaskUnavailableKind::AttemptsExhausted
+        );
+        assert_eq!(report.tasks[0].attempt_history.len(), 2);
+        control.wait_until_drained().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_semantic_equality_requests_review_without_ending_the_task() {
+        #[derive(Default)]
+        struct RepeatedCompletedFailure {
+            attempts: std::sync::Mutex<Vec<(String, Option<String>)>>,
+        }
+
+        #[async_trait::async_trait]
+        impl ProviderLifecycleDispatcher for RepeatedCompletedFailure {
+            async fn run_admitted(
+                &self,
+                req: DispatchRequest,
+                admission: AdmissionReceipt,
+                lifecycle: crate::control_plane::ProviderLifecycle,
+            ) -> Result<TaskRunOutput, DispatchError> {
+                self.attempts
+                    .lock()
+                    .unwrap()
+                    .push((admission.physical_host_id, req.prior_hint));
+                lifecycle
+                    .start_provider_request()
+                    .await
+                    .map_err(|error| DispatchError::Terminal(error.to_string()))?
+                    .provider_terminal(crate::broker::ProviderTerminalKind::Finished)
+                    .await
+                    .map_err(|error| DispatchError::Terminal(error.to_string()))?;
+                Err(DispatchError::ContentRetry(
+                    "final output failed schema validation: missing `modules`".to_string(),
+                ))
+            }
+        }
+
+        let lane = |logical_device_id: &str, model_id: &str, host_id: &str| {
+            crate::broker::VerifiedPhysicalLane {
+                logical_device_id: logical_device_id.to_string(),
+                model_id: model_id.to_string(),
+                host_id: host_id.to_string(),
+                model_instance_id: format!("instance-{logical_device_id}"),
+                provider_transport_id:
+                    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                        .to_string(),
+                advertised_instance_capacity: 1,
+                routing_weight: 1,
+                capacity_evidence: crate::broker::HostCapacityEvidence::MeasuredProfile {
+                    profile_hash: format!("fixture:{host_id}"),
+                    profile_key: "test-runtime:model:context:role".to_string(),
+                    max_concurrent: 1,
+                },
+                route_evidence_id: format!("fixture-route:{logical_device_id}"),
+            }
+        };
+        let lanes = vec![lane("lane-a", "model-a", "host-a")];
+        let sink: Arc<dyn EventSink> = Arc::new(NullSink);
+        let control = PhysicalAdmissionControl::new(
+            "scheduler-semantic-retry-corroboration",
+            crate::broker::PhysicalFleetSnapshot::new("semantic-retry-routes", lanes).unwrap(),
+            sink.clone(),
+        )
+        .unwrap();
+        let dispatcher = Arc::new(RepeatedCompletedFailure::default());
+        let checkpoint_root = tempfile::Builder::new()
+            .prefix("semantic-retry-checkpoint-")
+            .tempdir_in(".")
+            .unwrap();
+        let scheduler = Scheduler::new(
+            vec![DeviceCfg {
+                id: "lane-a".to_string(),
+                model_id: "model-a".to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            }],
+            3,
+        )
+        .with_sink(sink)
+        .with_unavailable_continuation()
+        .with_checkpoint_root(checkpoint_root.path())
+        .unwrap();
+        let dag = Dag::from_specs(vec![TaskSpec {
+            id: "schema-loop".to_string(),
+            description: "produce one schema-valid final output".to_string(),
+            difficulty: Difficulty::Easy,
+            preferred_model: None,
+            owned_files: Vec::new(),
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        }])
+        .unwrap();
+
+        let report = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            scheduler.run_with_physical_admission(
+                dag,
+                dispatcher.clone(),
+                control.clone(),
+                PhysicalExecutionAuthority::new(
+                    crate::broker::AuthorityScope::new(
+                        "scheduler-semantic-retry-corroboration",
+                        "execute",
+                    ),
+                    0,
+                    crate::broker::WorkRole::Build,
+                ),
+                String::new(),
+                String::new(),
+            ),
+        )
+        .await
+        .expect("completed semantic failures did not reach the explicit test attempt authority")
+        .unwrap();
+
+        {
+            let attempts = dispatcher.attempts.lock().unwrap();
+            assert_eq!(
+                attempts.len(),
+                3,
+                "equality must not terminalize before the explicit test attempt authority"
+            );
+            assert_eq!(
+                attempts
+                    .iter()
+                    .map(|(host, _)| host)
+                    .collect::<HashSet<_>>()
+                    .len(),
+                1,
+                "the fixture has one eligible physical host"
+            );
+            assert!(attempts[0].1.is_none());
+            for (_, hint) in attempts.iter().skip(1) {
+                assert!(hint
+                    .as_deref()
+                    .is_some_and(|hint| hint.contains("missing `modules`")));
+            }
+        }
+        assert_eq!(report.unavailable.len(), 1);
+        assert_eq!(
+            report.unavailable[0].kind,
+            TaskUnavailableKind::AttemptsExhausted
+        );
+        assert_eq!(report.tasks[0].attempt_history.len(), 3);
+        control.wait_until_drained().await.unwrap();
     }
 
     /// The stall class retries WARM: the hint must carry the specific pathology that killed the

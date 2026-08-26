@@ -20,9 +20,16 @@ use crate::{
     SEMANTIC_OBSERVATION_PROTOCOL, SEMANTIC_OBSERVATION_SNAPSHOT_SCHEMA,
 };
 use async_trait::async_trait;
+#[cfg(unix)]
+use fs2::FileExt;
 use goose_provider_types::base::{expose_current_provider_http_request, ProviderHttpProtocol};
 use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::fs::OpenOptions;
+#[cfg(unix)]
+use std::process::{Command, Stdio};
 use std::sync::Arc;
+use tokio::sync::Notify;
 
 const TRANSPORT_ID: &str =
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -43,6 +50,11 @@ enum ReplyKind {
 }
 
 struct TypedReviewer(ReplyKind);
+
+struct BlockingTypedReviewer {
+    started: Notify,
+    release: Notify,
+}
 
 struct TestJournal;
 
@@ -68,6 +80,26 @@ impl AdmittedSemanticObservationReviewer for TypedReviewer {
         )
         .map_err(AdmittedSemanticReviewError::unresolved)?;
         Ok(raw_reply(self.0, &request.observation.snapshot))
+    }
+}
+
+#[async_trait]
+impl AdmittedSemanticObservationReviewer for BlockingTypedReviewer {
+    async fn review(
+        &self,
+        request: AdmittedSemanticObservationRequest,
+    ) -> Result<String, AdmittedSemanticReviewError> {
+        expose_current_provider_http_request(
+            ProviderHttpProtocol::OpenAiChatCompletions,
+            TRANSPORT_ID,
+        )
+        .map_err(AdmittedSemanticReviewError::unresolved)?;
+        self.started.notify_waiters();
+        self.release.notified().await;
+        Ok(raw_reply(
+            ReplyKind::Continue,
+            &request.observation.snapshot,
+        ))
     }
 }
 
@@ -884,4 +916,115 @@ async fn duplicate_redemption_is_atomically_rejected() {
         fixture.plane.redeem_existing_judge_nudge(&eligibility),
         Err(SemanticNudgeAuthorityError::DeliveryUnavailableAfterSpend)
     ));
+}
+
+#[cfg(unix)]
+const TERMINAL_CONTENTION_CHILD_MODE: &str = "GOOSE_SEMANTIC_TERMINAL_CONTENTION_CHILD";
+#[cfg(unix)]
+const TERMINAL_CONTENTION_ROOT: &str = "GOOSE_SEMANTIC_TERMINAL_CONTENTION_ROOT";
+#[cfg(unix)]
+const TERMINAL_CONTENTION_READY: &str = "GOOSE_SEMANTIC_TERMINAL_CONTENTION_READY";
+#[cfg(unix)]
+const TERMINAL_CONTENTION_RELEASE: &str = "GOOSE_SEMANTIC_TERMINAL_CONTENTION_RELEASE";
+
+#[cfg(unix)]
+#[test]
+fn semantic_terminal_contention_lock_holder_child() {
+    if std::env::var_os(TERMINAL_CONTENTION_CHILD_MODE).is_none() {
+        return;
+    }
+    let root = std::path::PathBuf::from(std::env::var_os(TERMINAL_CONTENTION_ROOT).unwrap());
+    let ready = std::path::PathBuf::from(std::env::var_os(TERMINAL_CONTENTION_READY).unwrap());
+    let release = std::path::PathBuf::from(std::env::var_os(TERMINAL_CONTENTION_RELEASE).unwrap());
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root.join("control.lock"))
+        .unwrap();
+    lock.lock_exclusive().unwrap();
+    std::fs::write(&ready, b"locked").unwrap();
+    while !release.exists() {
+        std::thread::yield_now();
+    }
+    lock.unlock().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn provider_terminal_authority_contention_returns_typed_failure_without_spinning() {
+    let fixture = fixture().await;
+    let capture = observation_capture(&fixture.request, 7);
+    let reviewer = Arc::new(BlockingTypedReviewer {
+        started: Notify::new(),
+        release: Notify::new(),
+    });
+    let submission = fixture
+        .plane
+        .submit_if_idle(
+            capture.snapshot().clone(),
+            SemanticObservationAdmissionPolicy {
+                task_rank: 11,
+                eligible_logical_device_ids: vec!["observer".to_string()],
+                preferred_model_id: None,
+                excluded_logical_device_id: None,
+            },
+            reviewer.clone(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let handle = match submission {
+        SemanticObservationAdmissionSubmission::Started(handle) => handle,
+        SemanticObservationAdmissionSubmission::Rejected(rejected) => {
+            panic!("semantic review was rejected: {:?}", rejected.rejection)
+        }
+    };
+    reviewer.started.notified().await;
+
+    let ready = fixture._lease_root.path().join("terminal-contention-ready");
+    let release = fixture
+        ._lease_root
+        .path()
+        .join("terminal-contention-release");
+    let lease_authority = fixture._lease_root.path().join("provider-leases");
+    let child = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg(
+            "semantic_control::authority_replay_tests::semantic_terminal_contention_lock_holder_child",
+        )
+        .arg("--nocapture")
+        .env(TERMINAL_CONTENTION_CHILD_MODE, "1")
+        .env(TERMINAL_CONTENTION_ROOT, &lease_authority)
+        .env(TERMINAL_CONTENTION_READY, &ready)
+        .env(TERMINAL_CONTENTION_RELEASE, &release)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !ready.exists() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("lease authority lock holder did not start");
+
+    reviewer.release.notify_one();
+    let error = tokio::time::timeout(std::time::Duration::from_secs(2), handle.wait())
+        .await
+        .expect("authority contention entered an unbounded retry loop")
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        SemanticObservationAdmissionError::ProviderLifecycleUnresolved { .. }
+    ));
+    assert!(error.to_string().contains("contended"));
+
+    std::fs::write(&release, b"release").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "lock-holder child failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

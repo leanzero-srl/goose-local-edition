@@ -486,6 +486,10 @@ tokio::task_local! {
     static ACTIVE_LIFECYCLE_SUPERVISED_STREAM: ();
 }
 
+tokio::task_local! {
+    static ACTIVE_UNCAPPED_LOCAL_STREAM: ();
+}
+
 pub async fn scope_provider_http_exposure<F>(
     boundary: Arc<dyn ProviderHttpExposureBoundary>,
     future: F,
@@ -518,6 +522,17 @@ where
 
 pub fn lifecycle_supervised_stream_active() -> bool {
     ACTIVE_LIFECYCLE_SUPERVISED_STREAM.try_with(|_| ()).is_ok()
+}
+
+pub async fn scope_uncapped_local_stream<F>(future: F) -> F::Output
+where
+    F: Future,
+{
+    ACTIVE_UNCAPPED_LOCAL_STREAM.scope((), future).await
+}
+
+pub fn uncapped_local_stream_active() -> bool {
+    ACTIVE_UNCAPPED_LOCAL_STREAM.try_with(|_| ()).is_ok()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -860,6 +875,35 @@ pub trait Provider: Send + Sync {
 mod tests {
     use super::*;
     use test_case::test_case;
+
+    #[tokio::test]
+    async fn uncapped_local_and_lifecycle_scopes_are_independent_and_do_not_leak() {
+        assert!(!uncapped_local_stream_active());
+        assert!(!lifecycle_supervised_stream_active());
+
+        scope_uncapped_local_stream(async {
+            assert!(uncapped_local_stream_active());
+            assert!(!lifecycle_supervised_stream_active());
+            scope_lifecycle_supervised_stream(async {
+                assert!(uncapped_local_stream_active());
+                assert!(lifecycle_supervised_stream_active());
+            })
+            .await;
+            assert!(uncapped_local_stream_active());
+            assert!(!lifecycle_supervised_stream_active());
+        })
+        .await;
+
+        assert!(!uncapped_local_stream_active());
+        assert!(!lifecycle_supervised_stream_active());
+        scope_lifecycle_supervised_stream(async {
+            assert!(!uncapped_local_stream_active());
+            assert!(lifecycle_supervised_stream_active());
+        })
+        .await;
+        assert!(!uncapped_local_stream_active());
+        assert!(!lifecycle_supervised_stream_active());
+    }
 
     #[test]
     fn terminal_proof_preserves_the_first_provider_signal() {

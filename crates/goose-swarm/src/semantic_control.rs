@@ -35,7 +35,7 @@ use std::fmt;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, MutexGuard};
-use tokio::sync::{oneshot, Mutex as AsyncMutex, OwnedMutexGuard};
+use tokio::sync::{oneshot, watch, Mutex as AsyncMutex, OwnedMutexGuard};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SemanticObservationAdmissionPolicy {
@@ -628,6 +628,61 @@ impl SemanticNudgeAuthority {
         }
         prune_task_capture_authority(&mut ledger, &task_key, revision.source_revision);
         ledger.latest_activity_by_task.insert(task_key, revision);
+        Ok(())
+    }
+
+    fn rearm_unspent_current_capture(
+        &self,
+        request: &SemanticObservationCaptureRequest,
+        revision: &SemanticTraceRevision,
+    ) -> Result<(), SemanticNudgeAuthorityError> {
+        let task_key = semantic_task_key(request);
+        let mut ledger = lock_nudge_ledger(&self.inner);
+        prune_closed_provider_authority(&mut ledger);
+        if !latest_activity_matches(
+            ledger.latest_activity_by_task.get(&task_key),
+            revision.source_revision,
+            &revision.snapshot_hash,
+        ) {
+            return Err(SemanticNudgeAuthorityError::CaptureNotCurrent);
+        }
+        let Some(capture_id) = ledger.current_capture_by_task.get(&task_key).cloned() else {
+            return Ok(());
+        };
+        let capture = ledger
+            .captures
+            .get(&capture_id)
+            .ok_or(SemanticNudgeAuthorityError::CaptureNotCurrent)?;
+        if capture.trace_revision != revision.source_revision
+            || capture.snapshot_hash != revision.snapshot_hash
+        {
+            return Err(SemanticNudgeAuthorityError::CaptureNotCurrent);
+        }
+        if ledger.capabilities.values().any(|capability| {
+            capability.capture_id == capture_id
+                && capability.state == SemanticCapabilityState::SpentDelivered
+        }) {
+            return Err(SemanticNudgeAuthorityError::CancellationTerminalUnproven);
+        }
+        let provider_request_hash = capture.provider_request_hash.clone();
+        let provider_live = ledger
+            .source_provider_sessions
+            .get(&provider_request_hash)
+            .is_some_and(|witness| witness.try_pin().is_ok());
+        if !provider_live {
+            return Err(SemanticNudgeAuthorityError::SourceProviderNotLive);
+        }
+        ledger.current_capture_by_task.remove(&task_key);
+        ledger.captures.remove(&capture_id);
+        ledger
+            .capabilities
+            .retain(|_, capability| capability.capture_id != capture_id);
+        ledger.capture_by_snapshot.retain(|_, binding| {
+            binding.task_key != task_key || binding.trace_revision != revision.source_revision
+        });
+        ledger
+            .unused_capture_permits
+            .retain(|_, permit| permit.task_key != task_key);
         Ok(())
     }
 
@@ -1278,6 +1333,7 @@ fn sha256_label(bytes: &[u8]) -> String {
 pub struct AdmittedSemanticObservationHandle {
     snapshot_hash: String,
     admission: AdmissionReceipt,
+    cancellation: watch::Sender<bool>,
     completion: oneshot::Receiver<
         std::result::Result<AdmittedSemanticObservationReceipt, SemanticObservationAdmissionError>,
     >,
@@ -1296,12 +1352,54 @@ impl AdmittedSemanticObservationHandle {
         self,
     ) -> std::result::Result<AdmittedSemanticObservationReceipt, SemanticObservationAdmissionError>
     {
-        self.completion.await.map_err(|_| {
-            SemanticObservationAdmissionError::ObserverCompletionClosed {
-                snapshot_hash: self.snapshot_hash,
-            }
-        })?
+        self.wait_for_completion().await
     }
+
+    /// Wait for the observation unless its owning phase has completed. Completion cancellation is
+    /// reconciled through the exact admitted provider lifecycle before this returns.
+    pub async fn wait_with_cancellation(
+        mut self,
+        mut completion_cancelled: watch::Receiver<bool>,
+    ) -> std::result::Result<AdmittedSemanticObservationReceipt, SemanticObservationAdmissionError>
+    {
+        loop {
+            if *completion_cancelled.borrow_and_update() {
+                self.cancellation.send_replace(true);
+                return self.wait_for_completion().await;
+            }
+            tokio::select! {
+                completion = &mut self.completion => {
+                    return map_observer_completion(&self.snapshot_hash, completion);
+                }
+                changed = completion_cancelled.changed() => {
+                    if changed.is_err() {
+                        return self.wait_for_completion().await;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn wait_for_completion(
+        self,
+    ) -> std::result::Result<AdmittedSemanticObservationReceipt, SemanticObservationAdmissionError>
+    {
+        map_observer_completion(&self.snapshot_hash, self.completion.await)
+    }
+}
+
+fn map_observer_completion(
+    snapshot_hash: &str,
+    completion: std::result::Result<
+        std::result::Result<AdmittedSemanticObservationReceipt, SemanticObservationAdmissionError>,
+        oneshot::error::RecvError,
+    >,
+) -> std::result::Result<AdmittedSemanticObservationReceipt, SemanticObservationAdmissionError> {
+    completion.map_err(
+        |_| SemanticObservationAdmissionError::ObserverCompletionClosed {
+            snapshot_hash: snapshot_hash.to_string(),
+        },
+    )?
 }
 
 #[derive(Clone, Debug)]
@@ -1491,6 +1589,27 @@ impl BrokeredSemanticObservationPlane {
         Ok(true)
     }
 
+    pub(crate) fn rearm_scheduler_review_after_failed_redemption(
+        &self,
+        capture: &SemanticObservationCapture,
+        request: &SemanticObservationCaptureRequest,
+        reason: &str,
+    ) -> Result<bool, String> {
+        let revision = capture.revision();
+        match self
+            .nudge_authority
+            .rearm_unspent_current_capture(request, &revision)
+        {
+            Ok(()) => {}
+            Err(SemanticNudgeAuthorityError::SourceProviderNotLive)
+            | Err(SemanticNudgeAuthorityError::CaptureNotCurrent) => return Ok(false),
+            Err(error) => return Err(error.to_string()),
+        }
+        self.observations
+            .rearm_completed(capture.snapshot(), reason)?;
+        Ok(true)
+    }
+
     /// Consume a one-shot provider-bound permit and seal observation bytes for eligibility review.
     fn seal_semantic_nudge_capture(
         &self,
@@ -1649,11 +1768,13 @@ impl BrokeredSemanticObservationPlane {
         };
         let admission = admitted.receipt().clone();
         let proof = Arc::new(Mutex::new(ProviderLifecycleProof::Pending));
+        let (cancellation, cancellation_requested) = watch::channel(false);
         let lifecycle_reviewer = Arc::new(LifecycleBoundSemanticReviewer {
             inner: reviewer,
             admission: admission.clone(),
             lifecycle: admitted.lifecycle(),
             proof: proof.clone(),
+            cancellation_requested,
         });
 
         let observation = match self.observations.submit(snapshot, lifecycle_reviewer) {
@@ -1699,6 +1820,7 @@ impl BrokeredSemanticObservationPlane {
             AdmittedSemanticObservationHandle {
                 snapshot_hash,
                 admission: admission_for_handle,
+                cancellation,
                 completion,
             },
         )))
@@ -1780,6 +1902,7 @@ struct LifecycleBoundSemanticReviewer {
     admission: AdmissionReceipt,
     lifecycle: ProviderLifecycle,
     proof: Arc<Mutex<ProviderLifecycleProof>>,
+    cancellation_requested: watch::Receiver<bool>,
 }
 
 #[async_trait]
@@ -1788,11 +1911,24 @@ impl SemanticObservationReviewer for LifecycleBoundSemanticReviewer {
         &self,
         observation: SemanticObservationRequest,
     ) -> std::result::Result<String, String> {
+        let mut cancellation_requested = self.cancellation_requested.clone();
         let mut admitted_request = AdmittedSemanticObservationRequest {
             observation,
             admission: self.admission.clone(),
             provider_request_id: None,
         };
+        if *cancellation_requested.borrow_and_update() {
+            let detail =
+                "semantic observation cancelled after scheduler completion before provider start"
+                    .to_string();
+            match self.lifecycle.provider_not_started(detail.clone()).await {
+                Ok(()) => self.set_proof(ProviderLifecycleProof::ProviderNotStarted),
+                Err(close_error) => self.set_proof(ProviderLifecycleProof::Unresolved(format!(
+                    "{detail}; provider-not-started was rejected: {close_error}"
+                ))),
+            }
+            return Err(detail);
+        }
         if let Err(detail) = self.inner.verify_admission(&admitted_request) {
             let detail = format!("semantic provider preflight rejected admission: {detail}");
             match self.lifecycle.provider_not_started(detail.clone()).await {
@@ -1803,7 +1939,7 @@ impl SemanticObservationReviewer for LifecycleBoundSemanticReviewer {
             }
             return Err(detail);
         }
-        let started = match self.lifecycle.start_provider_request().await {
+        let mut started = match self.lifecycle.start_provider_request().await {
             Ok(started) => started,
             Err(error) => {
                 let detail = format!("provider start rejected before semantic review: {error}");
@@ -1815,11 +1951,37 @@ impl SemanticObservationReviewer for LifecycleBoundSemanticReviewer {
             Some(started.receipt().key.provider_request_id.clone());
 
         let reviewer = self.inner.clone();
-        let reviewed = match catch_future_unwind(
-            started.scope_http(async move { reviewer.review(admitted_request).await }),
-        )
-        .await
-        {
+        let provider_review =
+            started.scope_http(async move { reviewer.review(admitted_request).await });
+        let mut provider_review = Box::pin(catch_future_unwind(provider_review));
+        let reviewed = tokio::select! {
+            reviewed = &mut provider_review => Some(reviewed),
+            _ = wait_for_cancellation(&mut cancellation_requested) => None,
+        };
+        drop(provider_review);
+        let Some(reviewed) = reviewed else {
+            started.arm_cancelled_reconciliation_on_drop();
+            drop(started);
+            let detail =
+                "semantic observation cancelled after scheduler completion during provider review"
+                    .to_string();
+            match self.lifecycle.reconcile_cancelled_after_drop().await {
+                Ok(Some(completion)) => {
+                    self.set_proof(ProviderLifecycleProof::TerminalObserved {
+                        completion: Box::new(completion),
+                        reviewer_raw_reply_hash: None,
+                    });
+                }
+                Ok(None) => self.set_proof(ProviderLifecycleProof::Unresolved(format!(
+                    "{detail}; cancelled provider terminal produced no exact completion proof"
+                ))),
+                Err(error) => self.set_proof(ProviderLifecycleProof::Unresolved(format!(
+                    "{detail}; cancelled provider terminal was unresolved: {error}"
+                ))),
+            }
+            return Err(detail);
+        };
+        let reviewed = match reviewed {
             Ok(reviewed) => reviewed,
             Err(()) => {
                 let detail = "semantic provider task panicked without a reply".to_string();
@@ -1870,31 +2032,25 @@ impl SemanticObservationReviewer for LifecycleBoundSemanticReviewer {
     }
 }
 
+async fn wait_for_cancellation(cancellation_requested: &mut watch::Receiver<bool>) {
+    loop {
+        if *cancellation_requested.borrow_and_update() {
+            return;
+        }
+        if cancellation_requested.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
 async fn finish_started_provider_request(
-    mut request: StartedProviderRequest,
+    request: StartedProviderRequest,
     kind: ProviderTerminalKind,
 ) -> Result<CompletedProviderRequest, String> {
-    loop {
-        match request.provider_terminal_with_completion(kind).await {
-            Ok(completion) => return Ok(completion),
-            Err(ProviderLifecycleTransitionError::Retryable {
-                error,
-                request: retryable,
-            }) => {
-                request = *retryable;
-                if matches!(
-                    &error,
-                    crate::control_plane::ProviderLifecycleOperationError::Lease(
-                        crate::provider_lease::ProviderLeaseError::AuthorityContended
-                    )
-                ) {
-                    tokio::task::yield_now().await;
-                    continue;
-                }
-                return Err(error.to_string());
-            }
-            Err(ProviderLifecycleTransitionError::Fatal(error)) => return Err(error.to_string()),
-        }
+    match request.provider_terminal_with_completion(kind).await {
+        Ok(completion) => Ok(completion),
+        Err(ProviderLifecycleTransitionError::Retryable { error, .. }) => Err(error.to_string()),
+        Err(ProviderLifecycleTransitionError::Fatal(error)) => Err(error.to_string()),
     }
 }
 
@@ -1972,20 +2128,28 @@ async fn finalize_admitted_observation(
             (LocalCompletionKind::Error, None, None)
         }
         ProviderLifecycleProof::Unresolved(reason) => {
+            let admission_id = admitted.receipt().admission_id.clone();
+            let reason = quarantine_unresolved_observation(admitted, reason).await;
             return Err(
                 SemanticObservationAdmissionError::ProviderLifecycleUnresolved {
-                    admission_id: admitted.receipt().admission_id.clone(),
+                    admission_id,
                     reason,
                 },
-            )
+            );
         }
         ProviderLifecycleProof::Consumed => {
+            let admission_id = admitted.receipt().admission_id.clone();
+            let reason = quarantine_unresolved_observation(
+                admitted,
+                "semantic reviewer lifecycle proof was already consumed".to_string(),
+            )
+            .await;
             return Err(
                 SemanticObservationAdmissionError::ProviderLifecycleUnresolved {
-                    admission_id: admitted.receipt().admission_id.clone(),
-                    reason: "semantic reviewer lifecycle proof was already consumed".to_string(),
+                    admission_id,
+                    reason,
                 },
-            )
+            );
         }
     };
     let admission_id = admitted.receipt().admission_id.clone();
@@ -2009,6 +2173,14 @@ async fn finalize_admitted_observation(
                 reason: error.to_string(),
             },
         )
+}
+
+async fn quarantine_unresolved_observation(admitted: AdmittedWork, reason: String) -> String {
+    let quarantine_reason = format!("semantic observation provider lifecycle unresolved: {reason}");
+    match admitted.quarantine_unproven(quarantine_reason).await {
+        Ok(_) => reason,
+        Err(error) => format!("{reason}; exact admission quarantine failed: {error}"),
+    }
 }
 
 async fn close_after_observer_loss(

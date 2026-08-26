@@ -13,7 +13,6 @@ use std::fmt;
 pub struct AuthoredRequirement {
     pub id: String,
     pub text: String,
-    #[serde(default)]
     pub critical: bool,
 }
 
@@ -23,7 +22,6 @@ pub struct ResearchPillar {
     pub title: String,
     pub objective: String,
     pub requirement_ids: Vec<String>,
-    #[serde(default)]
     pub dependencies: Vec<String>,
     pub research_questions: Vec<String>,
     pub acceptance_criteria: Vec<String>,
@@ -33,76 +31,10 @@ pub struct ResearchPillar {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IntegrationContract {
     pub owner: String,
-    #[serde(default = "integration_required_default")]
     pub integration_required: bool,
     pub objective: String,
     pub interface_invariants: Vec<String>,
     pub acceptance_criteria: Vec<String>,
-}
-
-fn integration_required_default() -> bool {
-    true
-}
-
-pub fn authored_requirements_require_integration(requirements: &[AuthoredRequirement]) -> bool {
-    let authored = requirements
-        .iter()
-        .map(|requirement| requirement.text.to_ascii_lowercase())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let explicitly_integrated = authored.split(['\n', '.', ';']).any(|clause| {
-        let action = clause
-            .split(|character: char| !character.is_ascii_alphabetic())
-            .any(|word| {
-                word.starts_with("compos")
-                    || word.starts_with("integrat")
-                    || word.starts_with("hook")
-            });
-        let one_product = [
-            "into one app",
-            "into one application",
-            "into one product",
-            "into a single app",
-            "into a single application",
-            "into a single product",
-            "as one app",
-            "as one application",
-            "as one product",
-            "as a single app",
-            "as a single application",
-            "as a single product",
-        ]
-        .iter()
-        .any(|signal| clause.contains(signal));
-        let negated = [
-            "do not compose",
-            "must not compose",
-            "do not integrate",
-            "must not integrate",
-            "do not hook",
-            "must not hook",
-            "no integration required",
-            "without integration",
-            "without composing",
-            "without integrating",
-            "without hooking",
-        ]
-        .iter()
-        .any(|signal| clause.contains(signal));
-        action && one_product && !negated
-    });
-    let explicitly_independent = [
-        "independent deliverables",
-        "independent outputs",
-        "standalone deliverables",
-        "do not integrate",
-        "must not integrate",
-        "no integration required",
-        "without integration",
-    ]
-    .iter()
-    .any(|signal| authored.contains(signal));
-    explicitly_integrated || !explicitly_independent
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -134,15 +66,41 @@ pub enum Confidence {
     Low,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ResearchClaimDraft {
     pub requirement_id: String,
     pub statement: String,
     pub reported_class: EvidenceClass,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_section_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_quote: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for ResearchClaimDraft {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RequiredNullable<T>(Option<T>);
+
+        #[derive(Deserialize)]
+        struct Wire {
+            requirement_id: String,
+            statement: String,
+            reported_class: EvidenceClass,
+            source_section_id: RequiredNullable<String>,
+            source_quote: RequiredNullable<String>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            requirement_id: wire.requirement_id,
+            statement: wire.statement,
+            reported_class: wire.reported_class,
+            source_section_id: wire.source_section_id.0,
+            source_quote: wire.source_quote.0,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -165,10 +123,8 @@ pub struct PillarReportDraft {
     pub pillar_id: String,
     pub reported_confidence: Confidence,
     pub claims: Vec<ResearchClaimDraft>,
-    #[serde(default)]
     pub unresolved_uncertainties: Vec<String>,
     pub acceptance_tests: Vec<String>,
-    #[serde(default)]
     pub interfaces: Vec<String>,
     pub exclusions: Vec<String>,
 }
@@ -678,11 +634,35 @@ pub fn compile_pillar_report_with_sources(
     })
 }
 
-pub fn render_synthesis_input(reports: &[CompiledPillarReport], max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderedSynthesisInput {
+    pub text: String,
+    pub omitted_requirement_ids: Vec<String>,
+}
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SynthesisCapacityError {
+    pub row_count: usize,
+    pub minimum_chars: usize,
+    pub available_chars: usize,
+}
+
+impl fmt::Display for SynthesisCapacityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "synthesis requires at least {} characters for {} row headers and omission markers, but only {} are available",
+            self.minimum_chars, self.row_count, self.available_chars
+        )
+    }
+}
+
+impl std::error::Error for SynthesisCapacityError {}
+
+pub fn render_synthesis_input(
+    reports: &[CompiledPillarReport],
+    max_chars: usize,
+) -> Result<RenderedSynthesisInput, SynthesisCapacityError> {
     let mut reports = reports.iter().collect::<Vec<_>>();
     reports.sort_by_key(|report| report.pillar_id.as_str());
 
@@ -737,6 +717,7 @@ pub fn render_synthesis_input(reports: &[CompiledPillarReport], max_chars: usize
                 ),
                 body,
                 weight: 3,
+                requirement_id: Some(requirement_id),
             });
         }
 
@@ -760,6 +741,7 @@ pub fn render_synthesis_input(reports: &[CompiledPillarReport], max_chars: usize
                     values.join(" | ")
                 },
                 weight: 1,
+                requirement_id: None,
             });
         }
     }
@@ -772,13 +754,14 @@ struct SynthesisSemanticRow {
     key: String,
     body: String,
     weight: usize,
+    requirement_id: Option<String>,
 }
 
 fn render_fair_synthesis_rows(
     requirement_rows: Vec<SynthesisSemanticRow>,
     owner_rows: Vec<SynthesisSemanticRow>,
     max_chars: usize,
-) -> String {
+) -> Result<RenderedSynthesisInput, SynthesisCapacityError> {
     const HEADER: &str = "PILLAR RESEARCH SYNTHESIS\n[REQUIREMENT SEMANTIC ROWS]";
     const OWNER_HEADER: &str = "[OWNER CONTRACT DIGESTS]";
     let mut rows = requirement_rows
@@ -789,20 +772,23 @@ fn render_fair_synthesis_rows(
         .iter()
         .map(|row| format!("- {} {}: ", row.key, evidence_source_digest(&row.body)))
         .collect::<Vec<_>>();
+    let omission_markers = rows
+        .iter()
+        .map(|row| synthesis_omission_marker(&row.body))
+        .collect::<Vec<_>>();
     let separators = rows.len().saturating_add(2);
     let minimum_chars = HEADER
         .len()
         .saturating_add(OWNER_HEADER.len())
         .saturating_add(base_lines.iter().map(String::len).sum::<usize>())
+        .saturating_add(omission_markers.iter().map(String::len).sum::<usize>())
         .saturating_add(separators);
     if minimum_chars > max_chars {
-        return bounded_synthesis_line(
-            &format!(
-                "SYNTHESIS_CAPACITY_ERROR rows={} minimum_chars={minimum_chars} available_chars={max_chars}",
-                rows.len()
-            ),
-            max_chars,
-        );
+        return Err(SynthesisCapacityError {
+            row_count: rows.len(),
+            minimum_chars,
+            available_chars: max_chars,
+        });
     }
 
     let total_weight = rows.iter().map(|row| row.weight).sum::<usize>().max(1);
@@ -810,14 +796,21 @@ fn render_fair_synthesis_rows(
     let mut undistributed = remaining;
     let mut undistributed_weight = total_weight;
     let mut rendered_rows = Vec::with_capacity(rows.len());
-    for (row, prefix) in rows.drain(..).zip(base_lines) {
-        let allowance = if undistributed_weight == 0 {
+    let mut omitted_requirement_ids = Vec::new();
+    for ((row, prefix), marker) in rows.drain(..).zip(base_lines).zip(omission_markers) {
+        let extra = if undistributed_weight == 0 {
             0
         } else {
             undistributed.saturating_mul(row.weight) / undistributed_weight
         };
-        let excerpt = bounded_synthesis_line(&row.body, allowance.min(2_048));
-        undistributed = undistributed.saturating_sub(excerpt.len());
+        let allowance = marker.len().saturating_add(extra).min(2_048);
+        let excerpt = bounded_synthesis_line(&row.body, allowance);
+        if excerpt.len() < row.body.len() {
+            if let Some(requirement_id) = &row.requirement_id {
+                omitted_requirement_ids.push(requirement_id.clone());
+            }
+        }
+        undistributed = undistributed.saturating_sub(excerpt.len().saturating_sub(marker.len()));
         undistributed_weight = undistributed_weight.saturating_sub(row.weight);
         rendered_rows.push(format!("{prefix}{excerpt}"));
     }
@@ -829,7 +822,12 @@ fn render_fair_synthesis_rows(
     lines.extend(rendered_rows);
     let rendered = lines.join("\n");
     debug_assert!(rendered.len() <= max_chars);
-    rendered
+    omitted_requirement_ids.sort();
+    omitted_requirement_ids.dedup();
+    Ok(RenderedSynthesisInput {
+        text: rendered,
+        omitted_requirement_ids,
+    })
 }
 
 fn match_provenance(
@@ -1031,19 +1029,23 @@ fn evidence_label(class: EvidenceClass) -> &'static str {
     }
 }
 
+fn synthesis_omission_marker(line: &str) -> String {
+    format!("[excerpt omitted=true original_bytes={}]", line.len())
+}
+
 fn bounded_synthesis_line(line: &str, max_bytes: usize) -> String {
     if line.len() <= max_bytes {
         return line.to_string();
     }
-    const MARKER: &str = "…";
-    if max_bytes < MARKER.len() {
-        return String::new();
+    let marker = synthesis_omission_marker(line);
+    if max_bytes <= marker.len() {
+        return marker;
     }
-    let mut end = max_bytes - MARKER.len();
+    let mut end = max_bytes - marker.len() - 1;
     while !line.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}{}", &line[..end], MARKER)
+    format!("{} {marker}", &line[..end])
 }
 
 #[cfg(test)]
@@ -1107,6 +1109,41 @@ mod tests {
             interfaces: vec!["StatusView".to_string()],
             exclusions: vec!["Persistence implementation".to_string()],
         }
+    }
+
+    #[test]
+    fn research_claim_requires_explicit_nullable_provenance_fields() {
+        let missing_section = serde_json::json!({
+            "requirement_id": "req-ui",
+            "statement": "Supported UI evidence",
+            "reported_class": "supported",
+            "source_quote": null
+        });
+        let error = serde_json::from_value::<ResearchClaimDraft>(missing_section).unwrap_err();
+        assert!(error.to_string().contains("source_section_id"));
+
+        let missing_quote = serde_json::json!({
+            "requirement_id": "req-ui",
+            "statement": "Supported UI evidence",
+            "reported_class": "supported",
+            "source_section_id": null
+        });
+        let error = serde_json::from_value::<ResearchClaimDraft>(missing_quote).unwrap_err();
+        assert!(error.to_string().contains("source_quote"));
+
+        let explicit_null = serde_json::json!({
+            "requirement_id": "req-ui",
+            "statement": "Supported UI evidence",
+            "reported_class": "supported",
+            "source_section_id": null,
+            "source_quote": null
+        });
+        let claim = serde_json::from_value::<ResearchClaimDraft>(explicit_null).unwrap();
+        assert_eq!(claim.source_section_id, None);
+        assert_eq!(claim.source_quote, None);
+        let serialized = serde_json::to_value(&claim).unwrap();
+        assert!(serialized.get("source_section_id").unwrap().is_null());
+        assert!(serialized.get("source_quote").unwrap().is_null());
     }
 
     #[test]
@@ -1189,7 +1226,10 @@ mod tests {
             ProvenanceMatch::Unique { ref section_id, .. }
                 if section_id == "source-api-contract"
         ));
-        assert!(!render_synthesis_input(&[compiled], 1_000).contains(source_body));
+        assert!(!render_synthesis_input(&[compiled], 1_000)
+            .unwrap()
+            .text
+            .contains(source_body));
     }
 
     #[test]
@@ -1266,16 +1306,16 @@ mod tests {
             }]),
         )
         .unwrap();
-        let rendered = render_synthesis_input(&[compiled], 1_000);
-        assert!(rendered.len() <= 1_000);
-        assert!(rendered.contains("ui/interfaces"));
-        assert!(rendered.contains("StatusView"));
-        assert!(rendered.contains("ui/acceptance-tests"));
-        assert!(rendered.contains("Render the dashboard"));
-        assert!(rendered.contains("ui/exclusions"));
-        assert!(rendered.contains("Persistence implementation"));
-        assert!(rendered.contains("[SUPPORTED]"));
-        assert!(!rendered.contains(secret_receipt_body));
+        let rendered = render_synthesis_input(&[compiled], 1_000).unwrap();
+        assert!(rendered.text.len() <= 1_000);
+        assert!(rendered.text.contains("ui/interfaces"));
+        assert!(rendered.text.contains("StatusView"));
+        assert!(rendered.text.contains("ui/acceptance-tests"));
+        assert!(rendered.text.contains("Render the dashboard"));
+        assert!(rendered.text.contains("ui/exclusions"));
+        assert!(rendered.text.contains("Persistence implementation"));
+        assert!(rendered.text.contains("[SUPPORTED]"));
+        assert!(!rendered.text.contains(secret_receipt_body));
     }
 
     #[test]
@@ -1329,12 +1369,12 @@ mod tests {
             },
         ];
 
-        let undersized = render_synthesis_input(&compiled, 250);
-        assert!(undersized.len() <= 250);
-        assert!(undersized.starts_with("SYNTHESIS_CAPACITY_ERROR"));
-        assert!(!undersized.contains("bulk UI claim"));
+        let undersized = render_synthesis_input(&compiled, 250).unwrap_err();
+        assert_eq!(undersized.row_count, 10);
+        assert!(undersized.minimum_chars > undersized.available_chars);
+        assert_eq!(undersized.available_chars, 250);
 
-        let rendered = render_synthesis_input(&compiled, 2_000);
+        let rendered = render_synthesis_input(&compiled, 2_000).unwrap();
         for essential in [
             "api/interfaces",
             "run api smoke",
@@ -1342,12 +1382,28 @@ mod tests {
             "run ui smoke",
         ] {
             assert!(
-                rendered.contains(essential),
-                "missing {essential}: {rendered}"
+                rendered.text.contains(essential),
+                "missing {essential}: {}",
+                rendered.text
             );
         }
-        assert!(!rendered.contains(source_body));
-        assert!(rendered.contains("bulk UI claim"));
+        assert!(!rendered.text.contains(source_body));
+        assert!(rendered.text.contains("bulk UI claim"));
+        assert_eq!(
+            rendered.omitted_requirement_ids,
+            vec!["req-api".to_string()]
+        );
+        let canonical_api_body = canonical_whitespace(&format!(
+            "Atomic API contract {}",
+            "bulk-claim ".repeat(100)
+        ));
+        assert!(rendered
+            .text
+            .contains(&evidence_source_digest(&canonical_api_body)));
+        assert!(rendered.text.contains(&format!(
+            "[excerpt omitted=true original_bytes={}]",
+            canonical_api_body.len()
+        )));
     }
 
     #[test]
@@ -1362,10 +1418,10 @@ mod tests {
         draft.reported_confidence = Confidence::Low;
         draft.unresolved_uncertainties = vec!["Renderer availability is unknown".to_string()];
         let compiled = compile_pillar_report(&opening(), draft).unwrap();
-        let rendered = render_synthesis_input(&[compiled], 700);
-        assert!(rendered.contains("[UNRESOLVED]"));
-        assert!(rendered.contains("unresolved-rationales"));
-        assert!(!rendered.contains("[SUPPORTED]"));
+        let rendered = render_synthesis_input(&[compiled], 900).unwrap();
+        assert!(rendered.text.contains("[UNRESOLVED]"));
+        assert!(rendered.text.contains("unresolved-rationales"));
+        assert!(!rendered.text.contains("[SUPPORTED]"));
     }
 
     #[test]
@@ -1408,16 +1464,20 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let rendered = render_synthesis_input(&reports, 64_000);
-        assert!(rendered.len() <= 64_000);
-        assert!(!rendered.contains("CAPACITY_ERROR"));
-        assert!(!rendered.contains("[truncated]"));
+        let rendered = render_synthesis_input(&reports, 64_000).unwrap();
+        assert!(rendered.text.len() <= 64_000);
+        assert!(!rendered.text.contains("CAPACITY_ERROR"));
+        assert!(!rendered.text.contains("[truncated]"));
+        assert_eq!(rendered.omitted_requirement_ids.len(), 197);
         for requirement in 1..=197 {
             let requirement_id = format!("REQ-{requirement:03}");
             assert!(
-                rendered.contains(&format!("/{requirement_id} [SUPPORTED]")),
+                rendered
+                    .text
+                    .contains(&format!("/{requirement_id} [SUPPORTED]")),
                 "starved {requirement_id}"
             );
+            assert!(rendered.omitted_requirement_ids.contains(&requirement_id));
         }
 
         let mut shuffled = reports.clone();
@@ -1428,7 +1488,7 @@ mod tests {
             report.interfaces.reverse();
             report.exclusions.reverse();
         }
-        assert_eq!(rendered, render_synthesis_input(&shuffled, 64_000));
+        assert_eq!(rendered, render_synthesis_input(&shuffled, 64_000).unwrap());
     }
 
     #[test]
@@ -1547,61 +1607,5 @@ mod tests {
                 .code,
             "pillar_integration_task_not_strongest_terminal"
         );
-    }
-
-    #[test]
-    fn integration_is_disabled_only_by_explicit_independence() {
-        let ordinary_product = vec![AuthoredRequirement {
-            id: "req-cli".to_string(),
-            text: "Build a CLI with import and export commands".to_string(),
-            critical: false,
-        }];
-        assert!(authored_requirements_require_integration(&ordinary_product));
-
-        let independent = vec![AuthoredRequirement {
-            id: "req-assets".to_string(),
-            text: "Produce separate deliverables with no integration required".to_string(),
-            critical: false,
-        }];
-        assert!(!authored_requirements_require_integration(&independent));
-
-        for text in [
-            "Produce independent deliverables, then hook them into one application",
-            "Keep standalone deliverables while composing them into one product",
-            "Create independent outputs and integrate them into a single app",
-        ] {
-            assert!(
-                authored_requirements_require_integration(&[AuthoredRequirement {
-                    id: "req-contradictory".to_string(),
-                    text: text.to_string(),
-                    critical: false,
-                }]),
-                "explicit one-product integration must override independence wording: {text}"
-            );
-        }
-
-        assert!(!authored_requirements_require_integration(&[
-            AuthoredRequirement {
-                id: "req-negative".to_string(),
-                text: "Do not integrate these independent deliverables into one application"
-                    .to_string(),
-                critical: false,
-            },
-        ]));
-
-        for text in [
-            "Generate standalone outputs for every supported format",
-            "Write separate artifacts for the client and server packages",
-            "Create separate deliverables, then hook them into one application",
-        ] {
-            assert!(
-                authored_requirements_require_integration(&[AuthoredRequirement {
-                    id: "req-ambiguous".to_string(),
-                    text: text.to_string(),
-                    critical: false,
-                }]),
-                "ambiguous wording must not veto integration: {text}"
-            );
-        }
     }
 }

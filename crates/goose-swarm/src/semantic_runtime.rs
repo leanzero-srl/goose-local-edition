@@ -833,6 +833,13 @@ impl BoundSemanticObservationCapture {
 }
 
 impl SemanticObservationCapture {
+    pub(crate) fn retry_copy(&self) -> Self {
+        Self {
+            snapshot: self.snapshot.clone(),
+            summons: self.summons.clone(),
+        }
+    }
+
     pub fn new(
         snapshot: SealedSemanticObservationSnapshot,
         summons: SemanticObservationSummonsSignal,

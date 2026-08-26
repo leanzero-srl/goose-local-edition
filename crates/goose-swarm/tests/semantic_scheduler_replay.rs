@@ -65,6 +65,19 @@ impl RecordingSink {
             .collect()
     }
 
+    fn semantic_terminal_kinds(&self) -> Vec<String> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                event["event"] == "broker_provider_terminal_observed"
+                    && event["admission"]["role"] == "semantic_judge_observation"
+            })
+            .filter_map(|event| event["receipt"]["kind"].as_str().map(str::to_string))
+            .collect()
+    }
+
     fn capture_failure_reasons(&self, task_id: &str) -> Vec<String> {
         self.events
             .lock()
@@ -289,6 +302,62 @@ struct NudgeObserver {
     release: Notify,
     hold_review: bool,
     eligible_routes: Option<Vec<String>>,
+}
+
+struct MalformedThenContinueObserver {
+    calls: AtomicUsize,
+    called: Notify,
+}
+
+impl MalformedThenContinueObserver {
+    fn new() -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            called: Notify::new(),
+        }
+    }
+
+    async fn wait_for_calls(&self, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while self.calls.load(Ordering::SeqCst) < expected {
+                self.called.notified().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("semantic observer did not reach {expected} calls"));
+    }
+}
+
+#[async_trait]
+impl AdmittedSemanticObservationReviewer for MalformedThenContinueObserver {
+    async fn review(
+        &self,
+        request: AdmittedSemanticObservationRequest,
+    ) -> Result<String, AdmittedSemanticReviewError> {
+        expose_current_provider_http_request(
+            ProviderHttpProtocol::OpenAiChatCompletions,
+            VERIFIED_TRANSPORT,
+        )
+        .map_err(AdmittedSemanticReviewError::unresolved)?;
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        self.called.notify_waiters();
+        if call == 0 {
+            return Ok("{".to_string());
+        }
+        Ok(serde_json::json!({
+            "protocol": SEMANTIC_OBSERVATION_PROTOCOL,
+            "snapshot_hash": request.observation.snapshot.snapshot_hash(),
+            "observation": {
+                "action": "CONTINUE",
+                "summary": "the exact sealed trace remains productive",
+                "evidence": [{
+                    "source_id": "trace:1",
+                    "observation": "the current trace is advancing its owned contract"
+                }]
+            }
+        })
+        .to_string())
+    }
 }
 
 impl NudgeObserver {
@@ -749,6 +818,64 @@ async fn wait_for_semantic_release(sink: &RecordingSink) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn protocol_failure_retries_the_same_live_revision_without_a_timer_or_count_cap() {
+    let authority = tempfile::tempdir().unwrap();
+    let sink = Arc::new(RecordingSink::default());
+    let event_sink: Arc<dyn EventSink> = sink.clone();
+    let control = control(
+        "semantic-scheduler-protocol-retry",
+        vec![
+            lane("lane-a", "model-a", "host-a", 1),
+            lane("lane-b", "model-b", "host-b", 1),
+        ],
+        event_sink,
+        authority.path(),
+    );
+    let producer = Arc::new(FixedSnapshotProducer::new());
+    let observer = Arc::new(MalformedThenContinueObserver::new());
+    let dispatcher = Arc::new(GapDispatcher::new());
+    let run = tokio::spawn({
+        let sink = sink.clone();
+        let control = control.clone();
+        let producer = producer.clone();
+        let observer = observer.clone();
+        let dispatcher = dispatcher.clone();
+        async move {
+            Scheduler::new(
+                vec![device("lane-a", "model-a"), device("lane-b", "model-b")],
+                2,
+            )
+            .with_sink(sink)
+            .with_semantic_observation(producer, observer)
+            .run_with_physical_admission(
+                Dag::from_specs(vec![task("a-long")]).unwrap(),
+                dispatcher,
+                control,
+                execution(),
+                "Build the protocol-retry fixture".to_string(),
+                String::new(),
+            )
+            .await
+        }
+    });
+
+    observer.wait_for_calls(2).await;
+    assert_eq!(producer.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sink.count("semantic_observation_retryable"), 1);
+    assert_eq!(sink.semantic_admissions(), 2);
+    dispatcher.release_long.notify_one();
+
+    let report = tokio::time::timeout(Duration::from_secs(2), run)
+        .await
+        .expect("physical run did not finish after semantic retry")
+        .unwrap()
+        .unwrap();
+    assert_eq!(report.done, vec!["a-long".to_string()]);
+    assert!(report.failed.is_empty());
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn scheduler_delivers_one_nudge_before_cancel_and_rejects_replayed_trace_revision() {
     let authority = tempfile::tempdir().unwrap();
     let sink = Arc::new(RecordingSink::default());
@@ -832,6 +959,69 @@ async fn scheduler_delivers_one_nudge_before_cancel_and_rejects_replayed_trace_r
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn scheduler_completion_cancels_an_in_flight_optional_observation_with_exact_terminal() {
+    let authority = tempfile::tempdir().unwrap();
+    let sink = Arc::new(RecordingSink::default());
+    let event_sink: Arc<dyn EventSink> = sink.clone();
+    let control = control(
+        "semantic-scheduler-completion-cancellation",
+        vec![
+            lane("lane-a", "model-a", "host-a", 1),
+            lane("lane-b", "model-b", "host-b", 1),
+        ],
+        event_sink,
+        authority.path(),
+    );
+    let producer = Arc::new(FixedSnapshotProducer::new());
+    let observer = Arc::new(NudgeObserver::held());
+    let dispatcher = Arc::new(GapDispatcher::new());
+    let run = tokio::spawn({
+        let sink = sink.clone();
+        let control = control.clone();
+        let producer = producer.clone();
+        let observer = observer.clone();
+        let dispatcher = dispatcher.clone();
+        async move {
+            Scheduler::new(
+                vec![device("lane-a", "model-a"), device("lane-b", "model-b")],
+                2,
+            )
+            .with_sink(sink)
+            .with_semantic_observation(producer, observer)
+            .run_with_physical_admission(
+                Dag::from_specs(vec![task("a-long")]).unwrap(),
+                dispatcher,
+                control,
+                execution(),
+                "Build the completion-cancellation fixture".to_string(),
+                String::new(),
+            )
+            .await
+        }
+    });
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while observer.calls.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("semantic observer did not enter its uncapped provider review");
+    dispatcher.release_long.notify_one();
+
+    let report = tokio::time::timeout(Duration::from_secs(2), run)
+        .await
+        .expect("completion-triggered cancellation did not reconcile")
+        .unwrap()
+        .unwrap();
+    assert_eq!(report.done, vec!["a-long".to_string()]);
+    assert!(report.failed.is_empty());
+    assert_eq!(sink.semantic_terminal_kinds(), vec!["cancelled"]);
+    assert_eq!(sink.count("broker_admission_quarantined"), 0);
+    assert_eq!(control.occupancy().await, (0, 0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn scheduler_vetoes_nudge_when_structured_output_advances_after_capture() {
     let authority = tempfile::tempdir().unwrap();
     let sink = Arc::new(RecordingSink::default());
@@ -885,6 +1075,15 @@ async fn scheduler_vetoes_nudge_when_structured_output_advances_after_capture() 
     })
     .await
     .expect("structured-output safety rejection was not emitted");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while observer.calls.load(Ordering::SeqCst) < 2 {
+            observer.called.notified().await;
+        }
+    })
+    .await
+    .expect("failed nudge redemption permanently consumed the live source revision");
+    assert_eq!(producer.calls.load(Ordering::SeqCst), 1);
+    assert!(sink.count("semantic_observation_retryable") >= 1);
     dispatcher.release_long.notify_one();
 
     let report = tokio::time::timeout(Duration::from_secs(2), run)
@@ -900,7 +1099,7 @@ async fn scheduler_vetoes_nudge_when_structured_output_advances_after_capture() 
         sink.worker_terminal_kinds("a-long"),
         vec!["finished".to_string()]
     );
-    assert_eq!(observer.calls.load(Ordering::SeqCst), 1);
+    assert!(observer.calls.load(Ordering::SeqCst) >= 2);
     assert_eq!(control.occupancy().await, (0, 0));
 }
 
