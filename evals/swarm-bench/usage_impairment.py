@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import pathlib
+import re
 import statistics
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -24,6 +25,11 @@ PUBLIC_RECEIPT_FIELDS = (
     "usage_complete",
     "unmetered_unproven_requests",
     "unmetered_unproven_request_identity_sha256s",
+)
+DISPATCHER_UNPROVEN_REASON_RE = re.compile(
+    r"^(?:provider dispatcher returned success|provider dispatcher failed \([^\r\n]{1,4096}\)) "
+    r"without terminal proof: (?P<reason>outstanding provider request "
+    r"`engine-provider-request:[0-9a-f]{32}` has no proven cancelled terminal)$"
 )
 
 
@@ -179,6 +185,13 @@ def _quarantine_identity(event: Mapping[str, Any], run_id: str) -> dict[str, Any
         raise UsageEvidenceError("quarantine event lacks an unproven-terminal reason")
     prefix = "outstanding provider request `"
     suffix = "` has no proven cancelled terminal"
+    if not reason.startswith(prefix) or not reason.endswith(suffix):
+        wrapped = DISPATCHER_UNPROVEN_REASON_RE.fullmatch(reason)
+        if wrapped is None:
+            raise UsageEvidenceError(
+                "quarantine reason is not exact unproven-terminal evidence"
+            )
+        reason = wrapped.group("reason")
     if not reason.startswith(prefix) or not reason.endswith(suffix):
         raise UsageEvidenceError("quarantine reason is not exact unproven-terminal evidence")
     provider_request_id = reason[len(prefix) : -len(suffix)]
