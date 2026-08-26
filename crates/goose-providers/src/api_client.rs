@@ -100,6 +100,12 @@ fn apply_request_timeout(
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
 }
 
+fn apply_lifecycle_supervised_stream_timeout(
+    builder: reqwest::ClientBuilder,
+) -> reqwest::ClientBuilder {
+    builder.connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+}
+
 #[cfg(test)]
 mod timeout_semantics_tests {
     use super::*;
@@ -122,6 +128,7 @@ pub type RequestHeadersDecorator = Arc<dyn Fn(&mut HeaderMap) -> Result<()> + Se
 
 pub struct ApiClient {
     client: Client,
+    lifecycle_supervised_stream_client: Option<Client>,
     host: String,
     auth: AuthMethod,
     default_headers: HeaderMap,
@@ -363,6 +370,7 @@ impl ApiClient {
 
         Ok(Self {
             client,
+            lifecycle_supervised_stream_client: None,
             host,
             auth,
             default_headers: HeaderMap::new(),
@@ -395,7 +403,37 @@ impl ApiClient {
         }
 
         self.client = client_builder.build()?;
+        if self.lifecycle_supervised_stream_client.is_some() {
+            let mut supervised_builder =
+                apply_lifecycle_supervised_stream_timeout(Client::builder())
+                    .default_headers(self.default_headers.clone());
+            if let Some(ref config) = self.tls_config {
+                supervised_builder = Self::configure_tls(supervised_builder, config)?;
+            }
+            self.lifecycle_supervised_stream_client = Some(supervised_builder.build()?);
+        }
         Ok(())
+    }
+
+    /// Enables a connect-bounded client for lifecycle-supervised local streams.
+    ///
+    /// Goose owns the complete quiet budget and exact cancellation proof for these calls. A lower
+    /// transport read timeout would preempt that engine authority and leave an exposed provider
+    /// request without a proven terminal. The ordinary client remains unchanged and is still used
+    /// unless the request is inside a provider-lifecycle HTTP exposure scope.
+    pub fn with_lifecycle_supervised_stream_transport(mut self) -> Result<Self> {
+        let mut client_builder = apply_lifecycle_supervised_stream_timeout(Client::builder())
+            .default_headers(self.default_headers.clone());
+        if let Some(ref config) = self.tls_config {
+            client_builder = Self::configure_tls(client_builder, config)?;
+        }
+        self.lifecycle_supervised_stream_client = Some(client_builder.build()?);
+        Ok(self)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_lifecycle_supervised_stream_transport(&self) -> bool {
+        self.lifecycle_supervised_stream_client.is_some()
     }
 
     /// Configure TLS settings on a reqwest ClientBuilder
@@ -530,9 +568,12 @@ impl<'a> ApiRequestBuilder<'a> {
     }
 
     pub async fn response_post(self, payload: &Value) -> Result<Response> {
-        let request = self.send_request(|url, client| client.post(url)).await?;
+        let lifecycle_supervised = provider_http_exposure_active();
+        let request = self
+            .send_request(lifecycle_supervised, |url, client| client.post(url))
+            .await?;
         let request = request.json(payload);
-        if provider_http_exposure_active() {
+        if lifecycle_supervised {
             let protocol = ProviderHttpProtocol::from_openai_path(self.path).ok_or_else(|| {
                 anyhow::anyhow!(
                     "provider HTTP exposure refuses unrecognized POST path `{}`",
@@ -552,7 +593,9 @@ impl<'a> ApiRequestBuilder<'a> {
     }
 
     pub async fn multipart_post(self, form: reqwest::multipart::Form) -> Result<Response> {
-        let request = self.send_request(|url, client| client.post(url)).await?;
+        let request = self
+            .send_request(false, |url, client| client.post(url))
+            .await?;
         Ok(request.multipart(form).send().await?)
     }
 
@@ -562,17 +605,31 @@ impl<'a> ApiRequestBuilder<'a> {
     }
 
     pub async fn response_get(self) -> Result<Response> {
-        let request = self.send_request(|url, client| client.get(url)).await?;
+        let request = self
+            .send_request(false, |url, client| client.get(url))
+            .await?;
         Ok(request.send().await?)
     }
 
-    async fn send_request<F>(&self, request_builder: F) -> Result<reqwest::RequestBuilder>
+    async fn send_request<F>(
+        &self,
+        lifecycle_supervised: bool,
+        request_builder: F,
+    ) -> Result<reqwest::RequestBuilder>
     where
         F: FnOnce(url::Url, &Client) -> reqwest::RequestBuilder,
     {
         let url = self.client.build_url(self.path)?;
         let headers = self.headers.clone();
-        let mut request = request_builder(url, &self.client.client);
+        let request_client = if lifecycle_supervised {
+            self.client
+                .lifecycle_supervised_stream_client
+                .as_ref()
+                .unwrap_or(&self.client.client)
+        } else {
+            &self.client.client
+        };
+        let mut request = request_builder(url, request_client);
         request = request.headers(headers);
 
         if let Some(decorator) = &self.client.request_headers {
@@ -738,9 +795,65 @@ ShGoCNbfNS+COlPMRAujyDlATZcLs9p4tA==
 mod tests {
     use super::*;
     use crate::base::{scope_provider_http_exposure, ProviderHttpExposureBoundary};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::sync::Mutex;
+    use std::thread::JoinHandle;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // Preserve the production ordering (600s transport < a valid 900s+ engine budget) without a
+    // ten-minute test: the 150ms silence must outlive transport but remain engine-owned.
+    const SCALED_TRANSPORT_READ_TIMEOUT: Duration = Duration::from_millis(40);
+    const SCALED_ENGINE_QUIET_BUDGET: Duration = Duration::from_secs(2);
+    const SCALED_IN_BUDGET_GAP: Duration = Duration::from_millis(150);
+
+    #[derive(Clone, Copy)]
+    enum DelayedResponse {
+        Prefill,
+        MidStream,
+    }
+
+    fn delayed_response_server(mode: DelayedResponse) -> (String, JoinHandle<()>) {
+        const FIRST: &[u8] = b"first";
+        const SECOND: &[u8] = b"second";
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = socket.read(&mut request);
+            if matches!(mode, DelayedResponse::Prefill) {
+                std::thread::sleep(SCALED_IN_BUDGET_GAP);
+            }
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                FIRST.len() + SECOND.len()
+            );
+            if socket.write_all(headers.as_bytes()).is_err()
+                || socket.write_all(FIRST).is_err()
+                || socket.flush().is_err()
+            {
+                return;
+            }
+            if matches!(mode, DelayedResponse::MidStream) {
+                std::thread::sleep(SCALED_IN_BUDGET_GAP);
+            }
+            let _ = socket.write_all(SECOND);
+        });
+        (format!("http://{address}"), server)
+    }
+
+    fn short_timeout_client(host: String) -> ApiClient {
+        ApiClient::with_timeout_and_tls(
+            host,
+            AuthMethod::NoAuth,
+            SCALED_TRANSPORT_READ_TIMEOUT,
+            None,
+        )
+        .unwrap()
+    }
 
     struct RecordingExposure {
         records: Mutex<Vec<(ProviderHttpProtocol, String)>>,
@@ -765,6 +878,73 @@ mod tests {
         }
     }
 
+    fn accepting_exposure() -> Arc<RecordingExposure> {
+        Arc::new(RecordingExposure {
+            records: Mutex::new(Vec::new()),
+            reject: false,
+        })
+    }
+
+    #[tokio::test]
+    async fn lifecycle_scope_does_not_relax_an_unmarked_transport() {
+        let (host, server) = delayed_response_server(DelayedResponse::Prefill);
+        let client = short_timeout_client(host);
+        let result = scope_provider_http_exposure(
+            accepting_exposure(),
+            client.response_post("v1/chat/completions", &serde_json::json!({})),
+        )
+        .await;
+
+        assert!(result.is_err());
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn marked_local_transport_keeps_its_timeout_without_lifecycle_scope() {
+        let (host, server) = delayed_response_server(DelayedResponse::Prefill);
+        let client = short_timeout_client(host)
+            .with_lifecycle_supervised_stream_transport()
+            .unwrap();
+
+        assert!(client
+            .response_post("v1/chat/completions", &serde_json::json!({}))
+            .await
+            .is_err());
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn lifecycle_supervised_local_stream_survives_prefill_and_midstream_gaps() {
+        assert!(SCALED_TRANSPORT_READ_TIMEOUT < SCALED_IN_BUDGET_GAP);
+        assert!(SCALED_IN_BUDGET_GAP < SCALED_ENGINE_QUIET_BUDGET);
+
+        for mode in [DelayedResponse::Prefill, DelayedResponse::MidStream] {
+            let (host, server) = delayed_response_server(mode);
+            let client = short_timeout_client(host)
+                .with_lifecycle_supervised_stream_transport()
+                .unwrap()
+                .with_header("x-regression-rebuild", "true")
+                .unwrap();
+            let response = tokio::time::timeout(
+                SCALED_ENGINE_QUIET_BUDGET,
+                scope_provider_http_exposure(
+                    accepting_exposure(),
+                    client.response_post("v1/chat/completions", &serde_json::json!({})),
+                ),
+            )
+            .await
+            .expect("the engine quiet budget still owns this silent interval")
+            .unwrap();
+            let body = tokio::time::timeout(SCALED_ENGINE_QUIET_BUDGET, response.bytes())
+                .await
+                .expect("the engine quiet budget still owns this stream gap")
+                .unwrap();
+
+            assert_eq!(body.as_ref(), b"firstsecond");
+            server.join().unwrap();
+        }
+    }
+
     #[test]
     fn test_request_builder_decorator() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -781,7 +961,7 @@ mod tests {
 
             let request = client
                 .request("/test")
-                .send_request(|url, client| client.get(url))
+                .send_request(false, |url, client| client.get(url))
                 .await
                 .unwrap();
 
@@ -889,7 +1069,7 @@ mod tests {
 
         let request = client
             .request("v1/chat/completions")
-            .send_request(|url, client| client.post(url))
+            .send_request(false, |url, client| client.post(url))
             .await
             .unwrap()
             .build()
