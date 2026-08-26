@@ -700,6 +700,9 @@ pub enum BrokerError {
         work_id: String,
         reason: String,
     },
+    EligiblePhysicalHostsQuarantined {
+        work_id: String,
+    },
     StaleOpportunity {
         work_id: String,
         queued: Box<TaskVersion>,
@@ -818,6 +821,10 @@ impl std::fmt::Display for BrokerError {
             Self::InvalidOpportunity { work_id, reason } => {
                 write!(f, "invalid broker opportunity `{work_id}`: {reason}")
             }
+            Self::EligiblePhysicalHostsQuarantined { work_id } => write!(
+                f,
+                "broker opportunity `{work_id}` cannot run because every eligible physical host is quarantined by an unresolved provider request"
+            ),
             Self::StaleOpportunity {
                 work_id,
                 queued,
@@ -1192,11 +1199,8 @@ impl PhysicalBroker {
             opportunity_allows_lane(opportunity, lane)
                 && !self.quarantined_hosts.contains_key(&lane.host_id)
         }) {
-            return Err(BrokerError::InvalidOpportunity {
+            return Err(BrokerError::EligiblePhysicalHostsQuarantined {
                 work_id: opportunity.work_id.clone(),
-                reason:
-                    "every eligible physical host is quarantined by an unresolved provider request"
-                        .to_string(),
             });
         }
         Ok(())
