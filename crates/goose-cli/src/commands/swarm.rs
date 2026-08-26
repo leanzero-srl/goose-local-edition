@@ -25690,8 +25690,22 @@ impl GooseAgentDispatcher {
         system_prompt: String,
         user_text: String,
     ) -> Option<Overview> {
-        tokio::time::timeout(
+        self.generate_run_overview_with_timeout(
+            system_prompt,
+            user_text,
             std::time::Duration::from_secs(120),
+        )
+        .await
+    }
+
+    async fn generate_run_overview_with_timeout(
+        &self,
+        system_prompt: String,
+        user_text: String,
+        timeout: std::time::Duration,
+    ) -> Option<Overview> {
+        tokio::time::timeout(
+            timeout,
             self.run_response_only_agent(
                 &self.planner_model,
                 system_prompt,
@@ -25706,8 +25720,7 @@ impl GooseAgentDispatcher {
         .await
         .ok()
         .and_then(|result| result.ok())
-        .and_then(|output| output.final_output)
-        .and_then(|final_output| serde_json::from_str::<Overview>(&final_output).ok())
+        .and_then(|output| parse_run_overview_output(output.final_output.as_deref()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -34955,14 +34968,15 @@ fn run_overview_schema() -> serde_json::Value {
     })
 }
 
-#[derive(serde::Deserialize, Default)]
+#[derive(serde::Deserialize)]
 struct Overview {
-    #[serde(default)]
     features: Vec<String>,
-    #[serde(default)]
     engage: String,
-    #[serde(default)]
     next: Vec<String>,
+}
+
+fn parse_run_overview_output(final_output: Option<&str>) -> Option<Overview> {
+    final_output.and_then(|output| serde_json::from_str(output).ok())
 }
 
 /// Deterministic backstop for the summary agent: a value/next line that asserts the program WORKS / is tested
@@ -34999,6 +35013,40 @@ fn is_overclaim(line: &str) -> bool {
 }
 fn scrub_overclaim(lines: &mut Vec<String>) {
     lines.retain(|l| !is_overclaim(l));
+}
+
+fn run_overview_event(
+    run_command: Option<String>,
+    run_command_lang: &str,
+    run_command_verified: bool,
+    overview: Option<Overview>,
+    source_files: usize,
+) -> serde_json::Value {
+    match overview {
+        Some(mut overview) => {
+            scrub_overclaim(&mut overview.features);
+            scrub_overclaim(&mut overview.next);
+            if is_overclaim(&overview.engage) {
+                overview.engage =
+                    "You can ask goose in chat to run this program for you.".to_string();
+            }
+            if overview.features.is_empty() {
+                overview.features = vec![format!("Produced {source_files} source file(s)")];
+            }
+            serde_json::json!({
+                "event": "run_overview", "generated": true,
+                "run_command": run_command, "run_command_lang": run_command_lang,
+                "run_command_verified": run_command_verified,
+                "features": overview.features, "engage": overview.engage, "next": overview.next,
+            })
+        }
+        None => serde_json::json!({
+            "event": "run_overview", "generated": false,
+            "run_command": run_command, "run_command_lang": run_command_lang,
+            "run_command_verified": run_command_verified,
+            "features": [], "engage": serde_json::Value::Null, "next": [],
+        }),
+    }
 }
 
 /// The EXACT command a user runs the built app with — stamped in Rust from the on-disk entry (never authored
@@ -61894,7 +61942,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
     // STOPPED run dies mid-build and never reaches here, so the UI still never shows a triumphant overview.
     // Gate = DEFAULT ON, env can force off. (NOT swarm_gate(..,true) — that only activates under the assured
     // profile, which the desktop provider doesn't set, so the overview silently never ran there.)
-    if swarm_gate_cfg("GOOSE_SWARM_OVERVIEW", true) {
+    let overview_event = if swarm_gate_cfg("GOOSE_SWARM_OVERVIEW", true) {
         let ov_root = std::env::current_dir().unwrap_or_default();
         let rel_files = existing_files_manifest(&ov_root);
         let ov_lang = detect_language(&final_binding_spec, &rel_files);
@@ -61906,16 +61954,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
         };
         let run_cmd = overview_run_command(ov_lang, &ov_root, &rel_files);
         let run_cmd_verified = ov_verified && run_cmd.is_some();
-        let emit_bare = |sink: &dyn EventSink| {
-            sink.write_value(serde_json::json!({
-                "event": "run_overview", "generated": false,
-                "run_command": run_cmd, "run_command_lang": lang_tag,
-                "run_command_verified": run_cmd_verified,
-                "features": [], "engage": serde_json::Value::Null, "next": [],
-            }));
-        };
-        if complete_failed || rel_files.is_empty() {
-            emit_bare(sink.as_ref());
+        let parsed = if complete_failed || rel_files.is_empty() {
+            None
         } else {
             eprintln!("  generating build summary …");
             let spec_excerpt: String = final_binding_spec.chars().take(1800).collect();
@@ -61939,30 +61979,22 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 rel_files.join("\n"),
                 excerpts
             );
-            let parsed = smoke_fix_dispatcher
+            smoke_fix_dispatcher
                 .generate_run_overview(system, user)
-                .await;
-            match parsed {
-                Some(mut ov) => {
-                    scrub_overclaim(&mut ov.features);
-                    scrub_overclaim(&mut ov.next);
-                    if is_overclaim(&ov.engage) {
-                        ov.engage =
-                            "You can ask goose in chat to run this program for you.".to_string();
-                    }
-                    if ov.features.is_empty() {
-                        ov.features = vec![format!("Produced {} source file(s)", rel_files.len())];
-                    }
-                    sink.write_value(serde_json::json!({
-                        "event": "run_overview", "generated": true,
-                        "run_command": run_cmd, "run_command_lang": lang_tag,
-                        "run_command_verified": run_cmd_verified,
-                        "features": ov.features, "engage": ov.engage, "next": ov.next,
-                    }));
-                }
-                None => emit_bare(sink.as_ref()),
-            }
-        }
+                .await
+        };
+        Some(run_overview_event(
+            run_cmd,
+            lang_tag,
+            run_cmd_verified,
+            parsed,
+            rel_files.len(),
+        ))
+    } else {
+        None
+    };
+    if let Some(overview_event) = overview_event {
+        sink.write_value(overview_event);
     }
 
     let mut phases_value = serde_json::json!({
@@ -62423,16 +62455,33 @@ mod pre_scheduler_semantic_runtime_tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    enum OverviewProviderMode {
+        WriteThenTyped,
+        Pending,
+    }
+
     struct OverviewAdversarialProvider {
-        target: PathBuf,
+        mode: OverviewProviderMode,
+        target: Option<PathBuf>,
         calls: AtomicUsize,
         tool_surfaces: Mutex<Vec<Vec<String>>>,
     }
 
     impl OverviewAdversarialProvider {
-        fn new(target: PathBuf) -> Self {
+        fn write_then_typed(target: PathBuf) -> Self {
             Self {
-                target,
+                mode: OverviewProviderMode::WriteThenTyped,
+                target: Some(target),
+                calls: AtomicUsize::new(0),
+                tool_surfaces: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn pending() -> Self {
+            Self {
+                mode: OverviewProviderMode::Pending,
+                target: None,
                 calls: AtomicUsize::new(0),
                 tool_surfaces: Mutex::new(Vec::new()),
             }
@@ -62442,17 +62491,20 @@ mod pre_scheduler_semantic_runtime_tests {
             self.tool_surfaces.lock().unwrap().clone()
         }
 
-        fn next_message(&self, tools: &[Tool]) -> Message {
+        fn record_tool_surface(&self, tools: &[Tool]) {
             self.tool_surfaces
                 .lock()
                 .unwrap()
                 .push(tools.iter().map(|tool| tool.name.to_string()).collect());
+        }
+
+        fn next_message(&self) -> Message {
             match self.calls.fetch_add(1, AtomicOrdering::SeqCst) {
                 0 => {
                     let request = CallToolRequestParams::new("developer__text_editor")
                         .with_arguments(object!({
                             "command": "write",
-                            "path": self.target.display().to_string(),
+                            "path": self.target.as_ref().unwrap().display().to_string(),
                             "file_text": "overview mutated the application\n",
                         }));
                     Message::assistant()
@@ -62473,19 +62525,34 @@ mod pre_scheduler_semantic_runtime_tests {
         }
 
         fn finished_stream(&self, model: &str, tools: &[Tool]) -> MessageStream {
-            let message = self.next_message(tools);
-            let usage = ProviderUsage::new(model.to_string(), Usage::default());
-            Box::pin(stream::once(
-                async move { Ok((Some(message), Some(usage))) },
-            ))
+            self.record_tool_surface(tools);
+            match self.mode {
+                OverviewProviderMode::WriteThenTyped => {
+                    let message = self.next_message();
+                    let usage = ProviderUsage::new(model.to_string(), Usage::default());
+                    Box::pin(stream::once(
+                        async move { Ok((Some(message), Some(usage))) },
+                    ))
+                }
+                OverviewProviderMode::Pending => Box::pin(stream::pending()),
+            }
         }
 
         fn finished_attempt(&self, model: &str, tools: &[Tool]) -> SingleAttemptStream {
-            let message = self.next_message(tools);
-            let usage = ProviderUsage::new(model.to_string(), Usage::default());
-            SingleAttemptStream::finished(Box::pin(stream::once(async move {
-                Ok((Some(message), Some(usage)))
-            })))
+            self.record_tool_surface(tools);
+            match self.mode {
+                OverviewProviderMode::WriteThenTyped => {
+                    let message = self.next_message();
+                    let usage = ProviderUsage::new(model.to_string(), Usage::default());
+                    SingleAttemptStream::finished(Box::pin(stream::once(async move {
+                        Ok((Some(message), Some(usage)))
+                    })))
+                }
+                OverviewProviderMode::Pending => SingleAttemptStream::new(
+                    Box::pin(stream::pending()),
+                    SingleAttemptTerminalProof::default(),
+                ),
+            }
         }
     }
 
@@ -62529,6 +62596,38 @@ mod pre_scheduler_semantic_runtime_tests {
         ) -> Result<SingleAttemptStream, ProviderError> {
             Ok(self.finished_attempt(&model_config.model_name, tools))
         }
+    }
+
+    async fn overview_test_dispatcher(
+        working_dir: PathBuf,
+        sink: Arc<RuntimeRecordingSink>,
+        provider: Arc<dyn Provider>,
+    ) -> GooseAgentDispatcher {
+        let mut dispatcher = GooseAgentDispatcher::new(
+            working_dir,
+            sink,
+            0,
+            4,
+            Vec::new(),
+            HashMap::new(),
+            HashMap::new(),
+            SOURCE_MODEL.to_string(),
+            1,
+            5,
+            false,
+            SamplingParams::default(),
+            false,
+            false,
+            None,
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+        dispatcher.provider = provider;
+        dispatcher.activity_sink_health.activate().unwrap();
+        dispatcher
     }
 
     struct ResearchCorrectionRuntimeProvider {
@@ -65977,31 +66076,12 @@ mod pre_scheduler_semantic_runtime_tests {
         let target = working_dir.path().join("app.py");
         std::fs::write(&target, "original application\n").unwrap();
         let sink = Arc::new(RuntimeRecordingSink::default());
-        let provider = Arc::new(OverviewAdversarialProvider::new(target.clone()));
-        let mut dispatcher = GooseAgentDispatcher::new(
-            working_dir.path().to_path_buf(),
-            sink,
-            0,
-            4,
-            Vec::new(),
-            HashMap::new(),
-            HashMap::new(),
-            SOURCE_MODEL.to_string(),
-            1,
-            1,
-            false,
-            SamplingParams::default(),
-            false,
-            false,
-            None,
-            false,
-            false,
-            false,
-        )
-        .await
-        .unwrap();
-        dispatcher.provider = provider.clone();
-        dispatcher.activity_sink_health.activate().unwrap();
+        let provider = Arc::new(OverviewAdversarialProvider::write_then_typed(
+            target.clone(),
+        ));
+        let dispatcher =
+            overview_test_dispatcher(working_dir.path().to_path_buf(), sink, provider.clone())
+                .await;
 
         let overview = dispatcher
             .generate_run_overview(
@@ -66021,13 +66101,84 @@ mod pre_scheduler_semantic_runtime_tests {
         let surfaces = provider.tool_surfaces();
         assert_eq!(surfaces.len(), 2, "unexpected provider turns: {surfaces:?}");
         for surface in surfaces {
-            assert!(
-                surface.iter().any(|tool| tool == FINAL_OUTPUT_TOOL),
-                "typed final_output was unavailable: {surface:?}"
+            assert_eq!(
+                surface,
+                [FINAL_OUTPUT_TOOL.to_string()],
+                "overview must expose only typed final_output"
             );
-            assert!(
-                surface.iter().all(|tool| !tool.starts_with("developer__")),
-                "overview exposed a developer tool: {surface:?}"
+        }
+    }
+
+    #[tokio::test]
+    async fn overview_outer_timeout_uses_the_production_bare_event() {
+        let working_dir = tempfile::tempdir().unwrap();
+        let sink = Arc::new(RuntimeRecordingSink::default());
+        let provider = Arc::new(OverviewAdversarialProvider::pending());
+        let dispatcher =
+            overview_test_dispatcher(working_dir.path().to_path_buf(), sink, provider.clone())
+                .await;
+
+        let overview = dispatcher
+            .generate_run_overview_with_timeout(
+                "Return a grounded overview through final_output.".to_string(),
+                "The application source is supplied in this prompt.".to_string(),
+                Duration::from_secs(2),
+            )
+            .await;
+        let event = run_overview_event(
+            Some("python3 -m app --help".to_string()),
+            "python",
+            true,
+            overview,
+            1,
+        );
+
+        assert_eq!(
+            event,
+            serde_json::json!({
+                "event": "run_overview",
+                "generated": false,
+                "run_command": "python3 -m app --help",
+                "run_command_lang": "python",
+                "run_command_verified": true,
+                "features": [],
+                "engage": serde_json::Value::Null,
+                "next": [],
+            })
+        );
+        assert_eq!(
+            provider.tool_surfaces(),
+            vec![vec![FINAL_OUTPUT_TOOL.to_string()]]
+        );
+    }
+
+    #[test]
+    fn malformed_or_schema_invalid_overview_uses_the_production_bare_event() {
+        for raw in [
+            "not json",
+            "{}",
+            r#"{"features":"not-an-array","engage":7,"next":[]}"#,
+        ] {
+            let event = run_overview_event(
+                None,
+                "other",
+                false,
+                parse_run_overview_output(Some(raw)),
+                0,
+            );
+            assert_eq!(
+                event,
+                serde_json::json!({
+                    "event": "run_overview",
+                    "generated": false,
+                    "run_command": serde_json::Value::Null,
+                    "run_command_lang": "other",
+                    "run_command_verified": false,
+                    "features": [],
+                    "engage": serde_json::Value::Null,
+                    "next": [],
+                }),
+                "invalid overview escaped the bare fallback: {raw}"
             );
         }
     }
