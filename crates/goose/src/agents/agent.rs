@@ -391,6 +391,19 @@ impl Default for Agent {
     }
 }
 
+fn has_unique_persisted_extension(configs: &[ExtensionConfig], key: &str) -> Result<bool> {
+    match configs
+        .iter()
+        .filter(|config| config.key() == key)
+        .take(2)
+        .count()
+    {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(anyhow!("Duplicate session extension key '{key}'")),
+    }
+}
+
 impl Agent {
     pub fn new() -> Self {
         let config = Config::global();
@@ -1126,10 +1139,13 @@ impl Agent {
         self.rebuild_frontend_derived_state(&extensions).await;
     }
 
-    async fn remove_frontend_extension(&self, name: &str) {
+    async fn remove_frontend_extension_by_key(&self, key: &str) -> bool {
         let mut extensions = self.frontend_extensions.lock().await;
-        extensions.remove(&name_to_key(name));
-        self.rebuild_frontend_derived_state(&extensions).await;
+        let removed = extensions.remove(key).is_some();
+        if removed {
+            self.rebuild_frontend_derived_state(&extensions).await;
+        }
+        removed
     }
 
     async fn extension_configs_for_persistence(&self) -> Vec<ExtensionConfig> {
@@ -1593,8 +1609,27 @@ impl Agent {
     }
 
     pub async fn remove_extension(&self, name: &str, session_id: &str) -> Result<()> {
-        self.extension_manager.remove_extension(name).await?;
-        self.remove_frontend_extension(name).await;
+        self.remove_extension_by_key(&name_to_key(name), session_id)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn remove_extension_by_key(&self, key: &str, session_id: &str) -> Result<bool> {
+        let session = self
+            .config
+            .session_manager
+            .get_session(session_id, false)
+            .await?;
+        let persisted_extensions = EnabledExtensionsState::extensions_or_default(
+            Some(&session.extension_data),
+            Config::global(),
+        );
+        if !has_unique_persisted_extension(&persisted_extensions, key)? {
+            return Ok(false);
+        }
+
+        self.extension_manager.remove_extension_by_key(key).await?;
+        self.remove_frontend_extension_by_key(key).await;
 
         // Persist extension state after successful removal
         self.persist_extension_state(session_id)
@@ -1604,7 +1639,7 @@ impl Agent {
                 anyhow!("Failed to persist extension state: {}", e)
             })?;
 
-        Ok(())
+        Ok(true)
     }
 
     pub async fn list_extensions(&self) -> Vec<String> {
@@ -4155,6 +4190,33 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
+
+    fn persisted_builtin(name: &str) -> ExtensionConfig {
+        ExtensionConfig::Builtin {
+            name: name.to_string(),
+            description: String::new(),
+            display_name: None,
+            timeout: None,
+            bundled: None,
+            available_tools: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn persisted_extension_identity_must_be_unique_before_removal() {
+        let session_extension = persisted_builtin("session-only");
+        assert!(has_unique_persisted_extension(&[session_extension], "session-only").unwrap());
+        assert!(!has_unique_persisted_extension(&[], "missing").unwrap());
+
+        let duplicate_result = has_unique_persisted_extension(
+            &[persisted_builtin("a.b"), persisted_builtin("a/b")],
+            "a_b",
+        );
+        assert_eq!(
+            duplicate_result.unwrap_err().to_string(),
+            "Duplicate session extension key 'a_b'"
+        );
+    }
 
     #[test]
     fn provider_creation_context_preserves_acp_error_code() {
