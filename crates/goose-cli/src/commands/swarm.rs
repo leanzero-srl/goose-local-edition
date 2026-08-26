@@ -18948,15 +18948,15 @@ subprocess.Popen(
             normalize_repair_finding(no_bind_seq_12),
             "the hermetic scratch sequence and dynamic ports cannot mint a new causal defect"
         );
-        let mut seen = std::collections::BTreeSet::new();
-        assert!(register_authoritative_feedback(
-            &mut seen,
-            &[no_bind_seq_1.to_string()]
-        ));
-        assert!(
-            !register_authoritative_feedback(&mut seen, &[no_bind_seq_12.to_string()]),
-            "the same no-bind cause must terminalize incomplete instead of refreshing the budget"
+        let mut feedback = AuthoritativeRepairFeedback::default();
+        assert_eq!(
+            feedback.classify(&[no_bind_seq_1.to_string()]),
+            AuthoritativeRepairDisposition::Continue { cycle: 1 }
         );
+        assert!(matches!(
+            feedback.classify(&[no_bind_seq_12.to_string()]),
+            AuthoritativeRepairDisposition::Incomplete(_)
+        ));
     }
 
     #[test]
@@ -18968,6 +18968,30 @@ subprocess.Popen(
         assert_eq!(
             fixture["source"]["run_log_sha256"],
             "13e0977a6b91f60c1b20d22fef1ff8e5604a505ce6f830d57b62c3c1311fd7c9"
+        );
+        let chronology = fixture["repair_chronology"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| {
+                (
+                    event["seq"].as_u64().unwrap(),
+                    event["event"].as_str().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            chronology,
+            [
+                (255, "complete_verify"),
+                (616, "complete_verify"),
+                (723, "complete_fix_completed"),
+                (727, "complete_verify"),
+                (802, "repair_tree_ruled"),
+                (803, "complete_verify"),
+                (805, "repair_tree_sealed"),
+                (807, "complete_result"),
+            ]
         );
         let baseline_findings = vec![
             "the app ships NO executable tests (`pytest -q` collected 0)".to_string(),
@@ -19003,6 +19027,24 @@ subprocess.Popen(
             &baseline,
             &baseline_findings,
         ));
+        let candidate_tree = tempfile::TempDir::new().unwrap();
+        std::fs::write(candidate_tree.path().join("app.txt"), "candidate\n").unwrap();
+        let mut open = OpenRepairTree::open(candidate_tree.path(), &NullSink).unwrap();
+        open.record_ruling_values(
+            false,
+            true,
+            fixture["discarded_candidate"]["candidate_findings"]
+                .as_u64()
+                .unwrap() as usize,
+            "candidate-replay",
+            &NullSink,
+        )
+        .unwrap();
+        assert!(
+            open.seal("candidate tree".to_string(), false, &NullSink)
+                .is_err(),
+            "a frontier-expanding candidate remains provisional while its ruler is red"
+        );
 
         let authoritative = fixture["authoritative_findings"]["findings"]
             .as_array()
@@ -19010,14 +19052,77 @@ subprocess.Popen(
             .iter()
             .map(|finding| finding.as_str().unwrap().to_string())
             .collect::<Vec<_>>();
-        let mut seen = std::collections::BTreeSet::new();
-        assert!(register_authoritative_feedback(&mut seen, &authoritative));
-        assert!(
-            !register_authoritative_feedback(&mut seen, &authoritative),
-            "an unchanged authoritative failure set must terminalize incomplete instead of looping"
+        let mut feedback = AuthoritativeRepairFeedback::default();
+        assert_eq!(
+            feedback.classify(&authoritative),
+            AuthoritativeRepairDisposition::Continue { cycle: 1 }
         );
+        let now = std::time::Instant::now();
+        let mut deadline = Some(now);
+        assert_eq!(
+            refresh_authoritative_repair_budget(&mut deadline, None, now, 60),
+            Some(false)
+        );
+        assert_eq!(deadline, Some(now + Duration::from_secs(60)));
+        feedback.note_budget_refreshed();
+        feedback.note_ruler(&authoritative);
+        feedback.note_repair_dispatch();
+        feedback.note_ruler(&authoritative);
+        let AuthoritativeRepairDisposition::Incomplete(evidence) =
+            feedback.classify(&authoritative)
+        else {
+            panic!("unchanged authoritative findings reopened an unbounded repair cycle");
+        };
+        assert_eq!(
+            evidence,
+            AuthoritativeRepairCycleEvidence {
+                cycle: 1,
+                feedback_applied: true,
+                repair_dispatched: true,
+                post_dispatch_rulers: 1,
+                budget_refreshed: true,
+            }
+        );
+
         let improved = authoritative.into_iter().skip(1).collect::<Vec<_>>();
-        assert!(register_authoritative_feedback(&mut seen, &improved));
+        assert_eq!(
+            feedback.classify(&improved),
+            AuthoritativeRepairDisposition::Continue { cycle: 2 },
+            "a genuinely changed cause set gets one new bounded feedback cycle"
+        );
+
+        let no_bind = fixture["volatile_no_bind_findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event["finding"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        let normalized = no_bind
+            .iter()
+            .map(|finding| normalize_repair_finding(finding))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            normalized.len(),
+            1,
+            "V21's dynamic ports and scratch sequence must remain one service no-bind cause"
+        );
+        let mut volatile_feedback = AuthoritativeRepairFeedback::default();
+        assert_eq!(
+            volatile_feedback.classify(std::slice::from_ref(&no_bind[0])),
+            AuthoritativeRepairDisposition::Continue { cycle: 1 }
+        );
+        volatile_feedback.note_ruler(std::slice::from_ref(&no_bind[1]));
+        volatile_feedback.note_repair_dispatch();
+        volatile_feedback.note_ruler(std::slice::from_ref(&no_bind[2]));
+        assert!(matches!(
+            volatile_feedback.classify(std::slice::from_ref(&no_bind[2])),
+            AuthoritativeRepairDisposition::Incomplete(AuthoritativeRepairCycleEvidence {
+                feedback_applied: true,
+                repair_dispatched: true,
+                post_dispatch_rulers: 1,
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -59573,17 +59678,115 @@ fn normalize_repair_finding(finding: &str) -> String {
     normalized
 }
 
-fn register_authoritative_feedback(
-    seen: &mut std::collections::BTreeSet<Vec<String>>,
-    findings: &[String],
-) -> bool {
+fn normalized_repair_findings(findings: &[String]) -> Vec<String> {
     let mut signature = findings
         .iter()
         .map(|finding| normalize_repair_finding(finding))
         .collect::<Vec<_>>();
     signature.sort();
     signature.dedup();
-    seen.insert(signature)
+    signature
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AuthoritativeRepairDisposition {
+    Continue { cycle: u32 },
+    Incomplete(AuthoritativeRepairCycleEvidence),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct AuthoritativeRepairCycleEvidence {
+    cycle: u32,
+    feedback_applied: bool,
+    repair_dispatched: bool,
+    post_dispatch_rulers: u32,
+    budget_refreshed: bool,
+}
+
+#[derive(Debug)]
+struct PendingAuthoritativeRepairCycle {
+    signature: Vec<String>,
+    evidence: AuthoritativeRepairCycleEvidence,
+}
+
+#[derive(Debug, Default)]
+struct AuthoritativeRepairFeedback {
+    seen: std::collections::BTreeSet<Vec<String>>,
+    next_cycle: u32,
+    pending: Option<PendingAuthoritativeRepairCycle>,
+}
+
+impl AuthoritativeRepairFeedback {
+    fn classify(&mut self, findings: &[String]) -> AuthoritativeRepairDisposition {
+        let signature = normalized_repair_findings(findings);
+        if self.seen.insert(signature.clone()) {
+            self.next_cycle = self.next_cycle.saturating_add(1);
+            self.pending = Some(PendingAuthoritativeRepairCycle {
+                signature,
+                evidence: AuthoritativeRepairCycleEvidence {
+                    cycle: self.next_cycle,
+                    ..AuthoritativeRepairCycleEvidence::default()
+                },
+            });
+            AuthoritativeRepairDisposition::Continue {
+                cycle: self.next_cycle,
+            }
+        } else {
+            let evidence = self
+                .pending
+                .take()
+                .filter(|pending| pending.signature == signature)
+                .map(|pending| pending.evidence)
+                .unwrap_or(AuthoritativeRepairCycleEvidence {
+                    cycle: self.next_cycle,
+                    ..AuthoritativeRepairCycleEvidence::default()
+                });
+            AuthoritativeRepairDisposition::Incomplete(evidence)
+        }
+    }
+
+    fn note_budget_refreshed(&mut self) {
+        if let Some(pending) = self.pending.as_mut() {
+            pending.evidence.budget_refreshed = true;
+        }
+    }
+
+    fn note_ruler(&mut self, findings: &[String]) {
+        let signature = normalized_repair_findings(findings);
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+        if pending.signature != signature {
+            return;
+        }
+        if !pending.evidence.feedback_applied {
+            pending.evidence.feedback_applied = true;
+        } else if pending.evidence.repair_dispatched {
+            pending.evidence.post_dispatch_rulers =
+                pending.evidence.post_dispatch_rulers.saturating_add(1);
+        }
+    }
+
+    fn note_repair_dispatch(&mut self) {
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+        if pending.evidence.feedback_applied {
+            pending.evidence.repair_dispatched = true;
+        }
+    }
+}
+
+fn refresh_authoritative_repair_budget(
+    cap_deadline: &mut Option<std::time::Instant>,
+    harness_deadline: Option<std::time::Instant>,
+    now: std::time::Instant,
+    cap_secs: u64,
+) -> Option<bool> {
+    cap_deadline.as_ref()?;
+    let refreshed = now + std::time::Duration::from_secs(cap_secs);
+    *cap_deadline = Some(harness_deadline.map_or(refreshed, |deadline| refreshed.min(deadline)));
+    Some(harness_deadline.is_some_and(|deadline| deadline < refreshed))
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -60855,6 +61058,25 @@ struct RepairTreeRuling {
     remaining_findings: usize,
 }
 
+fn emit_authoritative_repair_unavailable(
+    sink: &dyn EventSink,
+    ruling: &RepairTreeRuling,
+    evidence: AuthoritativeRepairCycleEvidence,
+) {
+    sink.write_value(serde_json::json!({
+        "event": "authoritative_repair_unavailable",
+        "status": "degraded",
+        "cycle": evidence.cycle,
+        "findings": ruling.remaining_findings,
+        "tree_hash": ruling.tree_hash,
+        "feedback_applied": evidence.feedback_applied,
+        "repair_dispatched": evidence.repair_dispatched,
+        "post_dispatch_rulers": evidence.post_dispatch_rulers,
+        "budget_refreshed": evidence.budget_refreshed,
+        "reason": "the same normalized authoritative finding set survived a full feedback cycle",
+    }));
+}
+
 struct OpenRepairTree {
     root: PathBuf,
     epoch: u64,
@@ -61739,6 +61961,82 @@ mod repair_tree_seal_tests {
             .names()
             .iter()
             .any(|event| event == "repair_tree_incomplete_sealed"));
+    }
+
+    #[test]
+    fn recorded_authoritative_feedback_terminalizes_explicitly_incomplete() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../evals/swarm-bench/fixtures/qwen38-v21-r5-final-repair-feedback.json"
+        ))
+        .unwrap();
+        let findings = fixture["authoritative_findings"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|finding| finding.as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        let mut feedback = AuthoritativeRepairFeedback::default();
+        assert_eq!(
+            feedback.classify(&findings),
+            AuthoritativeRepairDisposition::Continue { cycle: 1 }
+        );
+        feedback.note_budget_refreshed();
+        feedback.note_ruler(&findings);
+        feedback.note_repair_dispatch();
+        feedback.note_ruler(&findings);
+        let AuthoritativeRepairDisposition::Incomplete(evidence) = feedback.classify(&findings)
+        else {
+            panic!("the repeated recorded authority reopened instead of degrading");
+        };
+
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("app.txt"), "still incomplete\n").unwrap();
+        let sink = CaptureSink::default();
+        let mut tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
+        let ruling = tree
+            .record_ruling_values(false, true, findings.len(), "post-repair-floor", &sink)
+            .unwrap();
+        emit_authoritative_repair_unavailable(&sink, &ruling, evidence);
+        let sealed = tree
+            .seal_incomplete("incomplete evidence tree".to_string(), false, &sink)
+            .unwrap();
+        emit_run_terminal_events(
+            &sink,
+            None,
+            Some(&sealed),
+            serde_json::json!({ "event": "run_finished" }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            sink.names(),
+            [
+                "repair_tree_opened",
+                "repair_tree_ruled",
+                "authoritative_repair_unavailable",
+                "repair_tree_incomplete_sealed",
+                "complete_result",
+                "run_finished",
+            ]
+        );
+        let values = sink.values();
+        assert!(values.iter().any(|event| {
+            event["event"] == "authoritative_repair_unavailable"
+                && event["status"] == "degraded"
+                && event["feedback_applied"] == true
+                && event["repair_dispatched"] == true
+                && event["post_dispatch_rulers"] == 1
+                && event["budget_refreshed"] == true
+        }));
+        assert!(values.iter().any(|event| {
+            event["event"] == "complete_result"
+                && event["passed"] == false
+                && event["verified"] == true
+                && event["remaining_findings"] == findings.len()
+        }));
+        assert!(!values
+            .iter()
+            .any(|event| event["event"] == "repair_tree_sealed"));
     }
 
     #[test]
@@ -65364,7 +65662,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                 "measured_rates": telemetry_rates,
             }));
         }
-        let mut authoritative_feedback_seen = std::collections::BTreeSet::new();
+        let mut authoritative_feedback = AuthoritativeRepairFeedback::default();
         let sealed = 'authoritative_repair: loop {
             let mut last_findings: Vec<String> = Vec::new();
             // F835 SHIP-BEST-VERIFIED, never ship-last-edited. The serial fix path writes straight
@@ -65526,6 +65824,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     &failed_task_findings,
                 )
                 .await;
+                authoritative_feedback.note_ruler(&ruler.verdict.findings);
                 let baseline_grade = RepairGrade::from_ruler(&ruler);
                 emit_complete_ruler_observations(sink.as_ref(), round, complete_lang, &ruler);
                 // GOLDEN CHECK (ADVISORY ONLY): when goals are on, run each distilled pillar's runnable check
@@ -65864,6 +66163,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     let win_claim: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
                     let wave_cancel = tokio_util::sync::CancellationToken::new();
                     let win_claim_outer = win_claim.clone();
+                    authoritative_feedback.note_repair_dispatch();
                     let outcomes =
                     fanout_over_fleet(fleet_models.clone(), attempts, move |(i, _), model| {
                         let me = me.clone();
@@ -66175,6 +66475,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                     // inside the cap's remaining window. The deadline is enforced INSIDE
                                     // Scheduler so expiry aborts and joins every worker and auxiliary before
                                     // this caller proceeds to the authoritative re-verify and seal.
+                                    authoritative_feedback.note_repair_dispatch();
                                     let report = match cap_deadline {
                                         Some(dl) => {
                                             match fix_run
@@ -66308,6 +66609,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         let decisions = user_decisions.clone();
                         let facts = doc_facts.clone();
                         let sink_r = sink.clone();
+                        authoritative_feedback.note_repair_dispatch();
                         let summaries =
                             fanout_over_fleet(fleet_slots.clone(), groups, move |g, model| {
                                 let me = me.clone();
@@ -66481,6 +66783,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     {
                         let post_wave = post_wave_grade.count().expect("filtered ruler grade");
                         let task_id = "complete-fix::cross-file".to_string();
+                        authoritative_feedback.note_repair_dispatch();
                         sink.write_value(serde_json::json!({
                             "event": "complete_fix_dispatched",
                             "round": round, "shard": "(cross-file)", "model": model_id.as_str(),
@@ -66588,6 +66891,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // That is a mechanism whose precondition never holds, inside the fix for mechanisms
                     // whose preconditions never hold. The events now ride the SERIAL path, which is the
                     // one that actually runs.
+                    authoritative_feedback.note_repair_dispatch();
                     sink.write_value(serde_json::json!({
                         "event": "complete_fix_dispatched",
                         "round": round,
@@ -66883,6 +67187,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     ruler
                 }
             };
+            authoritative_feedback.note_ruler(&authoritative.verdict.findings);
             let ruling =
                 repair_tree.record_ruling(&authoritative, "post-repair-floor", sink.as_ref())?;
             emit_complete_verify(
@@ -66930,38 +67235,36 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             }));
             }
             if !ruling.passed || !ruling.verified || force_unverified {
-                if register_authoritative_feedback(
-                    &mut authoritative_feedback_seen,
-                    &authoritative.verdict.findings,
-                ) {
-                    sink.write_value(serde_json::json!({
-                    "event": "authoritative_repair_continued",
-                    "from_round": authoritative_round,
-                    "findings": ruling.remaining_findings,
-                    "tree_hash": ruling.tree_hash,
-                    "detail": "the final ruler found unresolved defects after a late writer; its exact findings return to the ordinary repair loop before any tree can seal",
-                }));
-                    if cap_deadline.is_some() {
-                        let refreshed =
-                            std::time::Instant::now() + std::time::Duration::from_secs(cap_secs);
-                        cap_deadline = Some(
-                            harness_deadline.map_or(refreshed, |deadline| refreshed.min(deadline)),
-                        );
+                match authoritative_feedback.classify(&authoritative.verdict.findings) {
+                    AuthoritativeRepairDisposition::Continue { cycle } => {
                         sink.write_value(serde_json::json!({
-                            "event": "authoritative_repair_budget_refreshed",
-                            "cap_secs": cap_secs,
-                            "harness_clamped": harness_deadline
-                                .is_some_and(|deadline| deadline < refreshed),
+                            "event": "authoritative_repair_continued",
+                            "cycle": cycle,
+                            "from_round": authoritative_round,
+                            "findings": ruling.remaining_findings,
+                            "tree_hash": ruling.tree_hash,
+                            "detail": "the final ruler found unresolved defects after a late writer; its exact findings return to the ordinary repair loop before any tree can seal",
                         }));
+                        if let Some(harness_clamped) = refresh_authoritative_repair_budget(
+                            &mut cap_deadline,
+                            harness_deadline,
+                            std::time::Instant::now(),
+                            cap_secs,
+                        ) {
+                            authoritative_feedback.note_budget_refreshed();
+                            sink.write_value(serde_json::json!({
+                                "event": "authoritative_repair_budget_refreshed",
+                                "cycle": cycle,
+                                "cap_secs": cap_secs,
+                                "harness_clamped": harness_clamped,
+                            }));
+                        }
+                        continue 'authoritative_repair;
                     }
-                    continue 'authoritative_repair;
+                    AuthoritativeRepairDisposition::Incomplete(evidence) => {
+                        emit_authoritative_repair_unavailable(sink.as_ref(), &ruling, evidence);
+                    }
                 }
-                sink.write_value(serde_json::json!({
-                "event": "authoritative_repair_unavailable",
-                "findings": ruling.remaining_findings,
-                "tree_hash": ruling.tree_hash,
-                "reason": "the same normalized authoritative finding set survived a full feedback cycle",
-            }));
             }
             let sealed = if ruling.passed && ruling.verified && !force_unverified {
                 repair_tree.seal(shipped_desc, false, sink.as_ref())?

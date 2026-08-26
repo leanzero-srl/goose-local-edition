@@ -39,6 +39,71 @@
       "GET /notify/notifications?limit=&offset= returned 404"
     ]
   },
+  "repair_chronology": [
+    {
+      "seq": 255,
+      "event": "complete_verify",
+      "round": 0,
+      "findings": 8
+    },
+    {
+      "seq": 616,
+      "event": "complete_verify",
+      "round": 1,
+      "findings": 2
+    },
+    {
+      "seq": 723,
+      "event": "complete_fix_completed",
+      "round": 1,
+      "baseline_findings": 2,
+      "verified_findings": 9,
+      "promoted": false
+    },
+    {
+      "seq": 727,
+      "event": "complete_verify",
+      "round": 2,
+      "findings": 2
+    },
+    {
+      "seq": 802,
+      "event": "repair_tree_ruled",
+      "reason": "post-repair-floor",
+      "remaining_findings": 10
+    },
+    {
+      "seq": 803,
+      "event": "complete_verify",
+      "round": 3,
+      "reason": "post-repair-floor",
+      "findings": 10
+    },
+    {
+      "seq": 805,
+      "event": "repair_tree_sealed",
+      "remaining_findings": 10
+    },
+    {
+      "seq": 807,
+      "event": "complete_result",
+      "remaining_findings": 10
+    }
+  ],
+  "volatile_no_bind_findings": [
+    {
+      "seq": 255,
+      "finding": "the app never bound port 49245 when started EXACTLY as its spec documents (`python3 -m app --db-dir /tmp/goose-spec-contract-scratch-13414-1/dir1 --ledger-port 49245 --notifier-port 49246 --vendor http://127.0.0.1:18970 --tokens-file /tmp/goose-spec-contract-scratch-13414-1/probe-tokens.json`), so it does not run at all. Check that the entrypoint BLOCKS while serving — a server started on a daemon thread dies the moment main() returns. Do not change the advertised command or the port to make this pass."
+    },
+    {
+      "seq": 616,
+      "finding": "the app never bound port 50642 when started EXACTLY as its spec documents (`python3 -m app --db-dir /tmp/goose-spec-contract-scratch-13414-9/dir1 --ledger-port 50642 --notifier-port 50643 --vendor http://127.0.0.1:18970 --tokens-file /tmp/goose-spec-contract-scratch-13414-9/probe-tokens.json`), so it does not run at all. Check that the entrypoint BLOCKS while serving — a server started on a daemon thread dies the moment main() returns. Do not change the advertised command or the port to make this pass."
+    },
+    {
+      "seq": 727,
+      "finding": "the app never bound port 57664 when started EXACTLY as its spec documents (`python3 -m app --db-dir /tmp/goose-spec-contract-scratch-13414-12/dir1 --ledger-port 57664 --notifier-port 57665 --vendor http://127.0.0.1:18970 --tokens-file /tmp/goose-spec-contract-scratch-13414-12/probe-tokens.json`), so it does not run at all. Check that the entrypoint BLOCKS while serving — a server started on a daemon thread dies the moment main() returns. Do not change the advertised command or the port to make this pass."
+    }
+  ],
   "incorrect_terminal": {
     "seq": 807,
     "passed": false,
