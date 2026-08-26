@@ -19149,6 +19149,35 @@ struct RunAgentOut {
     physical_host_id: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentStallKind {
+    NoProductiveProgress,
+    NoActivity,
+}
+
+#[derive(Debug)]
+struct AgentStallError {
+    kind: AgentStallKind,
+    detail: String,
+}
+
+impl AgentStallError {
+    fn new(kind: AgentStallKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for AgentStallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for AgentStallError {}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ResearchSourceReceipt {
     source_id: String,
@@ -26990,10 +27019,14 @@ impl GooseAgentDispatcher {
                             "  {} omni-judge (look {omni_looks}): this call is LOOPING after {thinking_chars} reasoning chars — stopping it",
                             style("↯").yellow()
                         );
-                        return Err(anyhow!(
-                            "agent stalled — no productive progress: the judge read this call's own \
-                             reasoning ({thinking_chars} chars) and reported it is looping"
-                        ));
+                        return Err(AgentStallError::new(
+                            AgentStallKind::NoProductiveProgress,
+                            format!(
+                                "agent stalled — no productive progress: the judge read this call's own \
+                                 reasoning ({thinking_chars} chars) and reported it is looping"
+                            ),
+                        )
+                        .into());
                     }
                 }
             }
@@ -27002,31 +27035,43 @@ impl GooseAgentDispatcher {
             // event — which a spiral defeats by making an occasional real tool call). The measured scout made
             // 6 DISTINCT calls while emitting 30,403 chars, so only cumulative volume separates it.
             if spiral_budget > 0 && thinking_chars > spiral_budget {
-                return Err(anyhow!(
-                    "agent stalled — no productive progress: reasoning spiral, {thinking_chars} thinking \
-                     chars exceeded the {spiral_budget}-char budget for this call"
-                ));
+                return Err(AgentStallError::new(
+                    AgentStallKind::NoProductiveProgress,
+                    format!(
+                        "agent stalled — no productive progress: reasoning spiral, {thinking_chars} thinking \
+                         chars exceeded the {spiral_budget}-char budget for this call"
+                    ),
+                )
+                .into());
             }
             if repeat_break_on
                 && repeat_run >= REPEAT_BREAK_N
                 && repeat_run_started.elapsed()
                     >= std::time::Duration::from_secs(REPEAT_BREAK_MIN_SECS)
             {
-                return Err(anyhow!(
-                    "agent stalled — no productive progress: repeated the identical tool call {repeat_run}x \
-                     with an identical result over {}s ({})",
-                    repeat_run_started.elapsed().as_secs(),
-                    repeat_what
-                ));
+                return Err(AgentStallError::new(
+                    AgentStallKind::NoProductiveProgress,
+                    format!(
+                        "agent stalled — no productive progress: repeated the identical tool call {repeat_run}x \
+                         with an identical result over {}s ({})",
+                        repeat_run_started.elapsed().as_secs(),
+                        repeat_what
+                    ),
+                )
+                .into());
             }
             // Cut a THINKING-ONLY spiral: no productive event for the whole budget while the stream stays alive
             // on reasoning tokens. Checked at the top so a continuously-thinking task is caught promptly (each
             // streamed Thinking token drives an iteration here).
             if thinking_only_budget.is_some_and(|b| last_productive_at.elapsed() >= b) {
-                return Err(anyhow!(
-                    "agent stalled — no productive progress (tool/output/text) for {}s while streaming reasoning only",
-                    thinking_only_budget.map(|b| b.as_secs()).unwrap_or(0)
-                ));
+                return Err(AgentStallError::new(
+                    AgentStallKind::NoProductiveProgress,
+                    format!(
+                        "agent stalled — no productive progress (tool/output/text) for {}s while streaming reasoning only",
+                        thinking_only_budget.map(|b| b.as_secs()).unwrap_or(0)
+                    ),
+                )
+                .into());
             }
             // HARD wall-clock ceiling: finalize the moment the sink deadline passes, regardless of whether
             // the sink is still emitting. The wait/timeout path below only reaches the deadline check on an
@@ -27392,15 +27437,19 @@ impl GooseAgentDispatcher {
                     }));
                     break;
                 }
-                return Err(anyhow!(
-                    "agent stalled — no progress for {}s (no token/tool activity{})",
-                    quiet_budget.map(|budget| budget.as_secs()).unwrap_or(0),
-                    if first_event_seen {
-                        ""
-                    } else {
-                        "; budget included measured prefill grace for the first token"
-                    }
-                ));
+                return Err(AgentStallError::new(
+                    AgentStallKind::NoActivity,
+                    format!(
+                        "agent stalled — no progress for {}s (no token/tool activity{})",
+                        quiet_budget.map(|budget| budget.as_secs()).unwrap_or(0),
+                        if first_event_seen {
+                            ""
+                        } else {
+                            "; budget included measured prefill grace for the first token"
+                        }
+                    ),
+                )
+                .into());
             }
             let Some(ev) = next_event else {
                 break;
@@ -49950,8 +49999,9 @@ impl GooseAgentDispatcher {
                 })
             }
             Err(e) => {
+                let stall_kind = e.downcast_ref::<AgentStallError>().map(|stall| stall.kind);
                 let s = e.to_string();
-                let transient = s.contains("stalled")
+                let transient = stall_kind.is_some()
                     || s.contains("Model is unloaded")
                     || s.contains("Server error")
                     || s.contains("model_not_found")
@@ -49966,16 +50016,10 @@ impl GooseAgentDispatcher {
                     secs,
                     if transient { " — will retry" } else { "" }
                 );
-                // #sink-time (progress-watchdog): if the watchdog cut this worker for a thinking-only spiral but
-                // its owned files are ALREADY written non-empty, the deliverable is done — salvage it as done
-                // instead of re-dispatching (which re-runs the whole task up to max_attempts, and typically
-                // re-spirals the same way, wasting fleet time). Sound because the watchdog only fires after the
-                // FULL budget elapsed with NO productive event since the last one: a mid-write worker would have
-                // interspersed tool calls (each resets the clock), so a full-budget thinking-only stall AFTER a
-                // write means the file was finished and the model is just over-thinking. Scoped to the progress
-                // stall only (not idle/network stalls, which still re-route) and requires every owned file present.
-                if transient && s.contains("no productive progress") && !req.owned_files.is_empty()
-                {
+                // A typed watchdog stall after every owned artifact was written preserves the deliverable and
+                // releases its dependents provisionally. The scheduler revalidates changed, complete artifacts
+                // before accepting `salvaged`; network/provider transients remain ineligible.
+                if stall_kind.is_some() && !req.owned_files.is_empty() {
                     let cwd = root.clone();
                     let all_written =
                         req.owned_files
@@ -49996,14 +50040,15 @@ impl GooseAgentDispatcher {
                             });
                     if all_written {
                         eprintln!(
-                            "  {} {} on {} ({:.1}s) — progress-watchdog stall, but all owned files already written; accepting as done (not re-dispatching)",
+                            "  {} {} on {} ({:.1}s) — watchdog stall, but all owned files already written; accepting provisionally (not re-dispatching)",
                             style("✓").green().bold(),
                             style(&req.task_id).bold(),
                             req.device_id,
                             secs
                         );
                         return Ok(TaskRunOutput {
-                            output: "(progress-watchdog: thinking-only spiral stopped; owned files already written)".to_string(),
+                            output: "(watchdog stall stopped; owned files already written)"
+                                .to_string(),
                             session_id: None,
                             tool_calls: Vec::new(),
                             salvaged: true,
@@ -62638,6 +62683,8 @@ mod pre_scheduler_semantic_runtime_tests {
     enum RuntimeProviderMode {
         Silent,
         BuildWatchdogThenFinished,
+        QuietWatchdogAfterArtifactWrite,
+        QuietWatchdogWithoutArtifact,
         NetworkFailure,
         RecurrentSourceSilentJudge,
         CloseCapturedTurn,
@@ -62655,10 +62702,15 @@ mod pre_scheduler_semantic_runtime_tests {
         judge_started: Arc<Notify>,
         source_turn_two_started: Arc<Notify>,
         structured_growth_recorded: Arc<Notify>,
+        builder_artifact: Option<PathBuf>,
+        integration_artifact: Option<PathBuf>,
     }
 
     impl RuntimeScriptedProvider {
-        fn new(mode: RuntimeProviderMode) -> Self {
+        fn new(mode: RuntimeProviderMode, artifact_paths: Option<(PathBuf, PathBuf)>) -> Self {
+            let (builder_artifact, integration_artifact) = artifact_paths
+                .map(|(builder, integration)| (Some(builder), Some(integration)))
+                .unwrap_or((None, None));
             Self {
                 mode,
                 source_calls: AtomicUsize::new(0),
@@ -62667,6 +62719,8 @@ mod pre_scheduler_semantic_runtime_tests {
                 judge_started: Arc::new(Notify::new()),
                 source_turn_two_started: Arc::new(Notify::new()),
                 structured_growth_recorded: Arc::new(Notify::new()),
+                builder_artifact,
+                integration_artifact,
             }
         }
 
@@ -62712,6 +62766,19 @@ mod pre_scheduler_semantic_runtime_tests {
         fn finished_text(model: &str, text: &str) -> SingleAttemptStream {
             let message = Message::assistant().with_text(text.to_string());
             let usage = ProviderUsage::new(model.to_string(), Usage::default());
+            SingleAttemptStream::finished(Box::pin(stream::once(async move {
+                Ok((Some(message), Some(usage)))
+            })))
+        }
+
+        fn finished_file_write(path: &Path, content: &str, call_id: &str) -> SingleAttemptStream {
+            let tool_call =
+                CallToolRequestParams::new("developer__write").with_arguments(object!({
+                    "path": path.to_string_lossy(),
+                    "content": content,
+                }));
+            let message = Message::assistant().with_tool_request(call_id, Ok(tool_call));
+            let usage = ProviderUsage::new(SOURCE_MODEL.to_string(), Usage::default());
             SingleAttemptStream::finished(Box::pin(stream::once(async move {
                 Ok((Some(message), Some(usage)))
             })))
@@ -63647,6 +63714,39 @@ mod pre_scheduler_semantic_runtime_tests {
             _messages: &[Message],
             _tools: &[Tool],
         ) -> Result<SingleAttemptStream, ProviderError> {
+            if matches!(
+                self.mode,
+                RuntimeProviderMode::QuietWatchdogAfterArtifactWrite
+                    | RuntimeProviderMode::QuietWatchdogWithoutArtifact
+            ) {
+                let build_call = self.build_calls.fetch_add(1, AtomicOrdering::SeqCst);
+                return match (self.mode, build_call) {
+                    (RuntimeProviderMode::QuietWatchdogAfterArtifactWrite, 0) => {
+                        Ok(Self::finished_file_write(
+                            self.builder_artifact
+                                .as_deref()
+                                .expect("quiet-watchdog fixture has no builder artifact"),
+                            "builder artifact written before quiet watchdog\n",
+                            "runtime-quiet-builder-write",
+                        ))
+                    }
+                    (RuntimeProviderMode::QuietWatchdogAfterArtifactWrite, 1)
+                    | (RuntimeProviderMode::QuietWatchdogWithoutArtifact, 0) => Ok(Self::pending()),
+                    (RuntimeProviderMode::QuietWatchdogAfterArtifactWrite, 2) => {
+                        Ok(Self::finished_file_write(
+                            self.integration_artifact
+                                .as_deref()
+                                .expect("quiet-watchdog fixture has no integration artifact"),
+                            "integration ran after provisional builder settlement\n",
+                            "runtime-quiet-integration-write",
+                        ))
+                    }
+                    _ => Ok(Self::finished_text(
+                        &model_config.model_name,
+                        "integration completed without final_output",
+                    )),
+                };
+            }
             if matches!(self.mode, RuntimeProviderMode::BuildWatchdogThenFinished) {
                 let build_call = self.build_calls.fetch_add(1, AtomicOrdering::SeqCst);
                 return if build_call == 0 {
@@ -63694,6 +63794,10 @@ mod pre_scheduler_semantic_runtime_tests {
             match self.mode {
                 RuntimeProviderMode::BuildWatchdogThenFinished => {
                     unreachable!("build watchdog mode returns before source routing")
+                }
+                RuntimeProviderMode::QuietWatchdogAfterArtifactWrite
+                | RuntimeProviderMode::QuietWatchdogWithoutArtifact => {
+                    unreachable!("quiet watchdog modes return before source routing")
                 }
                 RuntimeProviderMode::Silent => Ok(Self::pending()),
                 RuntimeProviderMode::NetworkFailure => Err(ProviderError::NetworkError(
@@ -63744,6 +63848,9 @@ mod pre_scheduler_semantic_runtime_tests {
 
     struct RuntimeHarness {
         _working_dir: TempDir,
+        _artifact_dir: Option<TempDir>,
+        builder_artifact: Option<PathBuf>,
+        integration_artifact: Option<PathBuf>,
         dispatcher: Arc<GooseAgentDispatcher>,
         control: PhysicalAdmissionControl,
         sink: Arc<RuntimeRecordingSink>,
@@ -63842,9 +63949,50 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     async fn runtime_harness(mode: RuntimeProviderMode) -> RuntimeHarness {
+        runtime_harness_with_artifacts(mode, None).await
+    }
+
+    async fn quiet_watchdog_runtime_harness(mode: RuntimeProviderMode) -> RuntimeHarness {
+        assert!(matches!(
+            mode,
+            RuntimeProviderMode::QuietWatchdogAfterArtifactWrite
+                | RuntimeProviderMode::QuietWatchdogWithoutArtifact
+        ));
+        let artifact_dir = tempfile::Builder::new()
+            .prefix("quiet-watchdog-runtime-")
+            .tempdir_in(".")
+            .unwrap();
+        let root = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let relative_dir = artifact_dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .strip_prefix(root)
+            .unwrap()
+            .to_path_buf();
+        let builder_artifact = relative_dir.join("builder.txt");
+        let integration_artifact = relative_dir.join("integration.txt");
+        runtime_harness_with_artifacts(
+            mode,
+            Some((artifact_dir, builder_artifact, integration_artifact)),
+        )
+        .await
+    }
+
+    async fn runtime_harness_with_artifacts(
+        mode: RuntimeProviderMode,
+        artifact_fixture: Option<(TempDir, PathBuf, PathBuf)>,
+    ) -> RuntimeHarness {
         let working_dir = tempfile::tempdir().unwrap();
         let sink = Arc::new(RuntimeRecordingSink::default());
-        let provider = Arc::new(RuntimeScriptedProvider::new(mode));
+        let artifact_paths = artifact_fixture
+            .as_ref()
+            .map(|(_, builder, integration)| (builder.clone(), integration.clone()));
+        let builder_artifact = artifact_paths.as_ref().map(|(builder, _)| builder.clone());
+        let integration_artifact = artifact_paths
+            .as_ref()
+            .map(|(_, integration)| integration.clone());
+        let provider = Arc::new(RuntimeScriptedProvider::new(mode, artifact_paths));
         let mut dispatcher = GooseAgentDispatcher::new(
             working_dir.path().to_path_buf(),
             sink.clone(),
@@ -63905,6 +64053,9 @@ mod pre_scheduler_semantic_runtime_tests {
         ))));
         RuntimeHarness {
             _working_dir: working_dir,
+            _artifact_dir: artifact_fixture.map(|(dir, _, _)| dir),
+            builder_artifact,
+            integration_artifact,
             dispatcher,
             control,
             sink,
@@ -67167,7 +67318,10 @@ mod pre_scheduler_semantic_runtime_tests {
             Ok(_) => panic!("silent production source unexpectedly succeeded"),
             Err(error) => error,
         };
-        assert!(error.to_string().contains("agent stalled"));
+        let stall = error
+            .downcast_ref::<AgentStallError>()
+            .expect("quiet watchdog must retain its typed stall classification");
+        assert_eq!(stall.kind, AgentStallKind::NoActivity);
         let events = harness.sink.values();
         assert!(events.iter().any(|event| {
             event["event"] == "broker_provider_terminal_observed"
@@ -67288,6 +67442,188 @@ mod pre_scheduler_semantic_runtime_tests {
         .await
         .expect("brokered build watchdog lifecycle did not drain")
         .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    async fn run_quiet_watchdog_dependency_fixture(
+        mode: RuntimeProviderMode,
+    ) -> (RuntimeHarness, RunReport) {
+        let harness = quiet_watchdog_runtime_harness(mode).await;
+        let builder_artifact = harness
+            .builder_artifact
+            .as_ref()
+            .expect("quiet-watchdog harness has no builder artifact")
+            .to_string_lossy()
+            .into_owned();
+        let integration_artifact = harness
+            .integration_artifact
+            .as_ref()
+            .expect("quiet-watchdog harness has no integration artifact")
+            .to_string_lossy()
+            .into_owned();
+        let dag = Dag::from_specs(vec![
+            TaskSpec {
+                id: "pillar-build-quiet".to_string(),
+                description: "Write the builder artifact, then become quiet without final_output"
+                    .to_string(),
+                difficulty: goose_swarm::Difficulty::Easy,
+                preferred_model: None,
+                owned_files: vec![builder_artifact],
+                deps: Vec::new(),
+                subsplit: Vec::new(),
+                replan_authority: None,
+            },
+            TaskSpec {
+                id: "integrate-application".to_string(),
+                description: "Integrate the settled builder artifact without final_output"
+                    .to_string(),
+                difficulty: goose_swarm::Difficulty::Easy,
+                preferred_model: None,
+                owned_files: vec![integration_artifact],
+                deps: vec!["pillar-build-quiet".to_string()],
+                subsplit: Vec::new(),
+                replan_authority: None,
+            },
+        ])
+        .unwrap();
+        let devices = vec![
+            DeviceCfg {
+                id: SOURCE_DEVICE.to_string(),
+                model_id: SOURCE_MODEL.to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            },
+            DeviceCfg {
+                id: JUDGE_DEVICE.to_string(),
+                model_id: JUDGE_MODEL.to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            },
+        ];
+        let report = tokio::time::timeout(
+            Duration::from_secs(10),
+            Scheduler::new(devices, 1)
+                .with_sink(harness.sink.clone())
+                .run_with_physical_admission(
+                    dag,
+                    harness.dispatcher.clone() as Arc<dyn ProviderLifecycleDispatcher>,
+                    harness.control.clone(),
+                    PhysicalExecutionAuthority::new(
+                        AuthorityScope::new("quiet-watchdog-runtime-run", "execute"),
+                        0,
+                        WorkRole::Build,
+                    ),
+                    "exercise quiet-watchdog task settlement".to_string(),
+                    String::new(),
+                ),
+        )
+        .await
+        .expect("quiet-watchdog dependency fixture did not drain")
+        .expect("quiet-watchdog dependency fixture failed to report");
+        (harness, report)
+    }
+
+    #[tokio::test]
+    async fn final_attempt_quiet_watchdog_after_write_releases_integrator_and_complete_phase() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("0")),
+            ("GOOSE_SWARM_UNCAPPED", Some("0")),
+        ]);
+        let (harness, report) = run_quiet_watchdog_dependency_fixture(
+            RuntimeProviderMode::QuietWatchdogAfterArtifactWrite,
+        )
+        .await;
+
+        assert_eq!(
+            report.salvaged,
+            ["pillar-build-quiet"],
+            "unexpected quiet-watchdog report: {report:#?}"
+        );
+        assert_eq!(report.done, ["integrate-application"]);
+        assert_eq!(
+            report.failed,
+            ["pillar-build-quiet"],
+            "provisional salvage remains fail-closed, but must not cascade into the integrator"
+        );
+        assert_eq!(
+            harness.provider.build_calls.load(AtomicOrdering::SeqCst),
+            4,
+            "builder write, builder quiet watchdog, integrator write, integrator completion"
+        );
+        assert_eq!(
+            std::fs::read_to_string(harness.builder_artifact.as_ref().unwrap()).unwrap(),
+            "builder artifact written before quiet watchdog\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(harness.integration_artifact.as_ref().unwrap()).unwrap(),
+            "integration ran after provisional builder settlement\n"
+        );
+        assert!(report
+            .tasks
+            .iter()
+            .flat_map(|task| task.tool_calls.iter())
+            .all(|call| call.name != FINAL_OUTPUT_TOOL));
+
+        let events = harness.sink.values();
+        let dispatches = events
+            .iter()
+            .filter(|event| event["event"] == "task_dispatched")
+            .filter_map(|event| event["task_id"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(dispatches, ["pillar-build-quiet", "integrate-application"]);
+        assert!(events.iter().any(|event| {
+            event["event"] == "task_completed"
+                && event["task_id"] == "pillar-build-quiet"
+                && event["status"] == "salvaged"
+        }));
+        assert!(events.iter().any(|event| {
+            event["event"] == "task_completed"
+                && event["task_id"] == "integrate-application"
+                && event["status"] == "done"
+        }));
+        assert!(!events
+            .iter()
+            .any(|event| { event["event"] == "task_completed" && event["status"] == "failed" }));
+        assert_eq!(
+            released_completion_for(&events, SOURCE_MODEL),
+            ["error", "success"],
+            "the cancelled quiet provider turn is degraded locally while the completed integrator remains successful"
+        );
+        assert!(complete_phase_selected(true, false));
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn final_attempt_quiet_watchdog_without_artifact_stays_failed_and_blocks_integrator() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("0")),
+            ("GOOSE_SWARM_UNCAPPED", Some("0")),
+        ]);
+        let (harness, report) = run_quiet_watchdog_dependency_fixture(
+            RuntimeProviderMode::QuietWatchdogWithoutArtifact,
+        )
+        .await;
+
+        assert!(report.done.is_empty());
+        assert!(report.salvaged.is_empty());
+        assert_eq!(
+            report.failed,
+            ["integrate-application", "pillar-build-quiet"]
+        );
+        assert_eq!(harness.provider.build_calls.load(AtomicOrdering::SeqCst), 1);
+        assert!(!harness.builder_artifact.as_ref().unwrap().exists());
+        assert!(!harness.integration_artifact.as_ref().unwrap().exists());
+        assert!(!harness.sink.values().iter().any(|event| {
+            event["event"] == "task_dispatched" && event["task_id"] == "integrate-application"
+        }));
+        assert_eq!(
+            released_completion_for(&harness.sink.values(), SOURCE_MODEL),
+            ["error"]
+        );
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
