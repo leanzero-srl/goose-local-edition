@@ -47109,6 +47109,28 @@ fn completed_checkpoint_evidence(
         .collect()
 }
 
+fn reseal_scheduler_checkpoint_stage(
+    checkpoint_store: &SchedulerCheckpointStore,
+    specs: &[TaskSpec],
+    evidence: &[SchedulerCompletedTaskEvidence],
+    stage: &'static str,
+    sink: &dyn EventSink,
+) -> Option<goose_swarm::SchedulerDagResealReceipt> {
+    match checkpoint_store.reseal_completed_dag(specs, evidence) {
+        Ok(receipt) => Some(receipt),
+        Err(_) => {
+            sink.write_value(serde_json::json!({
+                "event": "scheduler_checkpoint_reseal_unavailable",
+                "stage": stage,
+                "status": "unavailable",
+                "reason": "checkpoint_durability_reseal_failed",
+                "resume_claim_disabled": true,
+            }));
+            None
+        }
+    }
+}
+
 /// Build the worker instruction for the GOOSE_SWARM_SMOKE corrective re-dispatch from the smoke findings.
 /// Pure — unit-tested. Asks for the SMALLEST root-cause fix that makes collect-only + the `-m` entry pass.
 fn smoke_fix_description(findings: &[String], lang: TargetLang) -> String {
@@ -56187,6 +56209,10 @@ mod repair_tree_seal_tests {
     }
 
     impl CaptureSink {
+        fn values(&self) -> Vec<serde_json::Value> {
+            self.0.lock().unwrap().clone()
+        }
+
         fn names(&self) -> Vec<String> {
             self.0
                 .lock()
@@ -56348,6 +56374,104 @@ mod repair_tree_seal_tests {
                 .count(),
             1,
             "post-seal drift must not emit a second run report: {events:?}"
+        );
+    }
+
+    #[test]
+    fn checkpoint_reseal_failure_preserves_the_authoritative_terminal_sequence() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app = dir.path().join("app.txt");
+        std::fs::write(&app, "authoritative bytes\n").unwrap();
+        let store = SchedulerCheckpointStore::open(dir.path()).unwrap();
+        let spec = TaskSpec {
+            id: "build-app".to_string(),
+            description: "Build the application".to_string(),
+            difficulty: goose_swarm::Difficulty::Easy,
+            preferred_model: None,
+            owned_files: vec!["app.txt".to_string()],
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        };
+        let evidence = SchedulerCompletedTaskEvidence {
+            task_id: spec.id.clone(),
+            output: "built".to_string(),
+            attempts: 1,
+        };
+        let sink = CaptureSink::default();
+        let mut tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
+        tree.record_ruling(&synthetic_ruler(&[]), "authoritative", &sink)
+            .unwrap();
+
+        let wal = dir
+            .path()
+            .join(".swarm/scheduler-checkpoint-v1/tasks.wal.jsonl");
+        std::fs::remove_file(&wal).unwrap();
+        std::fs::write(&wal, "injected replacement\n").unwrap();
+        assert!(reseal_scheduler_checkpoint_stage(
+            &store,
+            std::slice::from_ref(&spec),
+            std::slice::from_ref(&evidence),
+            "main-build",
+            &sink,
+        )
+        .is_none());
+
+        let sealed = tree
+            .seal("authoritative tree".to_string(), false, &sink)
+            .unwrap();
+        sink.write_value(serde_json::json!({
+            "event": "run_overview",
+            "generated": false,
+        }));
+        sealed
+            .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
+            .unwrap();
+
+        let values = sink.values();
+        let unavailable = values
+            .iter()
+            .find(|event| event["event"] == "scheduler_checkpoint_reseal_unavailable")
+            .expect("checkpoint failure did not emit typed unavailability");
+        assert_eq!(unavailable["stage"], "main-build");
+        assert_eq!(unavailable["status"], "unavailable");
+        assert_eq!(unavailable["reason"], "checkpoint_durability_reseal_failed");
+        assert_eq!(unavailable["resume_claim_disabled"], true);
+        assert!(!unavailable
+            .to_string()
+            .contains(&dir.path().display().to_string()));
+        assert!(values.iter().any(|event| {
+            event["event"] == "complete_result"
+                && event["passed"] == true
+                && event["verified"] == true
+        }));
+        assert!(!values
+            .iter()
+            .any(|event| event["event"] == "scheduler_checkpoints_resealed"));
+
+        let terminal = sink
+            .names()
+            .into_iter()
+            .filter(|event| {
+                [
+                    "scheduler_checkpoint_reseal_unavailable",
+                    "repair_tree_sealed",
+                    "run_overview",
+                    "complete_result",
+                    "run_finished",
+                ]
+                .contains(&event.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            terminal,
+            [
+                "scheduler_checkpoint_reseal_unavailable",
+                "repair_tree_sealed",
+                "run_overview",
+                "complete_result",
+                "run_finished",
+            ]
         );
     }
 
@@ -61416,28 +61540,41 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
             if let Some((repair_specs, repair_evidence)) =
                 capability_repair_checkpoint_reseal.as_ref()
             {
-                let repair_receipt =
-                    checkpoint_store.reseal_completed_dag(repair_specs, repair_evidence)?;
-                sink.write_value(serde_json::json!({
-                    "event": "scheduler_capability_repair_checkpoints_resealed",
-                    "tasks": repair_receipt.tasks,
-                    "first_sequence": repair_receipt.first_sequence,
-                    "next_sequence": repair_receipt.next_sequence,
-                    "tree_hash": ruling.tree_hash,
-                    "artifact_bytes": "exact-final-authoritative-tree",
-                    "restore_order": "after-main-build",
-                }));
+                if let Some(repair_receipt) = reseal_scheduler_checkpoint_stage(
+                    checkpoint_store,
+                    repair_specs,
+                    repair_evidence,
+                    "capability-repair",
+                    sink.as_ref(),
+                ) {
+                    sink.write_value(serde_json::json!({
+                        "event": "scheduler_capability_repair_checkpoints_resealed",
+                        "tasks": repair_receipt.tasks,
+                        "first_sequence": repair_receipt.first_sequence,
+                        "next_sequence": repair_receipt.next_sequence,
+                        "tree_hash": ruling.tree_hash,
+                        "artifact_bytes": "exact-final-authoritative-tree",
+                        "restore_order": "after-main-build",
+                    }));
+                }
             }
             let evidence = completed_checkpoint_evidence(&build_specs, &report)?;
-            let receipt = checkpoint_store.reseal_completed_dag(&build_specs, &evidence)?;
-            sink.write_value(serde_json::json!({
-                "event": "scheduler_checkpoints_resealed",
-                "tasks": receipt.tasks,
-                "first_sequence": receipt.first_sequence,
-                "next_sequence": receipt.next_sequence,
-                "tree_hash": ruling.tree_hash,
-                "restore_without_repeat": true,
-            }));
+            if let Some(receipt) = reseal_scheduler_checkpoint_stage(
+                checkpoint_store,
+                &build_specs,
+                &evidence,
+                "main-build",
+                sink.as_ref(),
+            ) {
+                sink.write_value(serde_json::json!({
+                    "event": "scheduler_checkpoints_resealed",
+                    "tasks": receipt.tasks,
+                    "first_sequence": receipt.first_sequence,
+                    "next_sequence": receipt.next_sequence,
+                    "tree_hash": ruling.tree_hash,
+                    "restore_without_repeat": true,
+                }));
+            }
         } else if pillar_flow_on {
             sink.write_value(serde_json::json!({
                 "event": "scheduler_checkpoint_reseal_skipped",
