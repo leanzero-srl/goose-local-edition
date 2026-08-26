@@ -43,6 +43,43 @@ pub(crate) fn provider_lifecycle_active() -> bool {
     ACTIVE_PROVIDER_LIFECYCLE.try_with(|_| ()).is_ok()
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AuthenticatedBackendRoute {
+    pub(crate) physical_host_id: String,
+    pub(crate) model_instance_id: String,
+    pub(crate) provider_request: ProviderRequestKey,
+}
+
+/// Resolve the broker-sealed backend route for the exact provider request that is live now.
+///
+/// LM Studio reports generation per loaded alias, not per HTTP request. The report identifies this
+/// request only when the physical broker has admitted one stream on the host and its current request
+/// still matches the sealed host/model instance. Anything less remains unauthenticated and cannot buy
+/// more watchdog time.
+pub(crate) fn authenticated_backend_route(model_id: &str) -> Option<AuthenticatedBackendRoute> {
+    ACTIVE_PROVIDER_LIFECYCLE
+        .try_with(|lifecycle| {
+            let admission = lifecycle.admission();
+            if admission.model_id != model_id || admission.capacity_evidence.max_concurrent() != 1 {
+                return None;
+            }
+            let request = lifecycle.current_live_provider_request_receipt().ok()?;
+            if request.admission_id != admission.admission_id
+                || request.physical_host_id != admission.physical_host_id
+                || request.model_instance_id != admission.model_instance_id
+            {
+                return None;
+            }
+            Some(AuthenticatedBackendRoute {
+                physical_host_id: request.physical_host_id,
+                model_instance_id: request.model_instance_id,
+                provider_request: request.key,
+            })
+        })
+        .ok()
+        .flatten()
+}
+
 pub(crate) trait ProviderNudgeDeliveryFactory: Send + Sync {
     fn open(&self) -> Arc<dyn ProviderNudgeDelivery>;
 }

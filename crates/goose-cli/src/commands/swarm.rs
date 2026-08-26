@@ -10,10 +10,10 @@ use super::swarm_control_registry::{
 };
 use super::swarm_provider_journal::DurableProviderLifecycleJournal;
 use super::swarm_provider_lifecycle::{
-    bind_current_provider_lifecycle, provider_lifecycle_active, scope_provider_lifecycle,
-    structured_output_progress_changed, PreSchedulerJudgeLaunchAdmission,
-    ProviderNudgeDeliveryFactory, ProviderStreamProgressMeter, ProviderStreamProgressSnapshot,
-    StructuredOutputNudgeSafetyGate,
+    authenticated_backend_route, bind_current_provider_lifecycle, provider_lifecycle_active,
+    scope_provider_lifecycle, structured_output_progress_changed, AuthenticatedBackendRoute,
+    PreSchedulerJudgeLaunchAdmission, ProviderNudgeDeliveryFactory, ProviderStreamProgressMeter,
+    ProviderStreamProgressSnapshot, StructuredOutputNudgeSafetyGate,
 };
 use super::swarm_semantic::{
     activity_digest_key, ActivitySinkHealth, GooseAdmittedSemanticObservationReviewer,
@@ -2988,6 +2988,82 @@ struct LmsProcess {
     loaded_context_length: Option<usize>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BackendProcessingState {
+    Processing,
+    Idle,
+    RouteLost,
+    Unavailable,
+}
+
+impl BackendProcessingState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Processing => "processing",
+            Self::Idle => "idle",
+            Self::RouteLost => "route_lost",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+fn backend_processing_state(
+    processes: &[LmsProcess],
+    route: &AuthenticatedBackendRoute,
+) -> BackendProcessingState {
+    let matching = processes
+        .iter()
+        .filter(|process| {
+            process.identifier == route.model_instance_id
+                && process.device.as_deref() == Some(route.physical_host_id.as_str())
+        })
+        .collect::<Vec<_>>();
+    let [process] = matching.as_slice() else {
+        return if matching.is_empty() {
+            BackendProcessingState::RouteLost
+        } else {
+            BackendProcessingState::Unavailable
+        };
+    };
+    if matches!(
+        process.status.trim().to_ascii_uppercase().as_str(),
+        "GENERATING" | "PROCESSING"
+    ) {
+        BackendProcessingState::Processing
+    } else {
+        BackendProcessingState::Idle
+    }
+}
+
+#[async_trait]
+trait BackendProcessingProbe: Send + Sync {
+    async fn state(&self, route: &AuthenticatedBackendRoute) -> BackendProcessingState;
+}
+
+struct LmsBackendProcessingProbe;
+
+#[async_trait]
+impl BackendProcessingProbe for LmsBackendProcessingProbe {
+    async fn state(&self, route: &AuthenticatedBackendRoute) -> BackendProcessingState {
+        let lms = resolve_lms();
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            tokio::task::spawn_blocking(move || ProcCommand::new(lms).arg("ps").output()),
+        )
+        .await;
+        let Ok(Ok(Ok(output))) = output else {
+            return BackendProcessingState::Unavailable;
+        };
+        if !output.status.success() {
+            return BackendProcessingState::Unavailable;
+        }
+        let Ok(processes) = parse_lms_ps(&String::from_utf8_lossy(&output.stdout)) else {
+            return BackendProcessingState::Unavailable;
+        };
+        backend_processing_state(&processes, route)
+    }
+}
+
 fn loaded_context_limits_from_processes(procs: &[LmsProcess]) -> HashMap<String, usize> {
     let mut observations: HashMap<String, Vec<Option<usize>>> = HashMap::new();
     for process in procs {
@@ -3726,6 +3802,19 @@ fn uncapped() -> bool {
 /// A week, in seconds: the stand-in for "no cap" at sites whose arithmetic needs a finite
 /// Duration (deadline sums, headroom division). Far beyond any run; never a real bound.
 const UNCAPPED_SECS: u64 = 604_800;
+
+/// V21-r4's two independently routed builds stayed GENERATING for 433s/481s after a 387/394-byte
+/// structured prefix, just past the 420s quiet window. Twice the configured quiet window covers that
+/// measured decode class while remaining a hard deadline that backend status cannot renew.
+fn structured_generation_budget(idle: std::time::Duration) -> std::time::Duration {
+    idle.saturating_mul(2)
+}
+
+/// Revalidate a backend-positive exception promptly enough that an alias becoming IDLE or disappearing
+/// cannot inherit the rest of the structured-generation budget.
+fn backend_processing_recheck_interval(idle: std::time::Duration) -> std::time::Duration {
+    idle.min(std::time::Duration::from_secs(30))
+}
 
 /// `SessionConfig::max_turns = None` means "use the global default", not unlimited. Authority compilers use
 /// this sentinel so a hidden global GOOSE_MAX_TURNS cannot truncate required plan input. It is operationally
@@ -18400,6 +18489,51 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
     }
 
     #[test]
+    fn backend_processing_requires_the_exact_alias_and_physical_host() {
+        let processes = parse_lms_ps(FIXTURE).unwrap();
+        let route = AuthenticatedBackendRoute {
+            physical_host_id: "WorksMacStudio.lan".to_string(),
+            model_instance_id: "qwen/qwen3.6-27b".to_string(),
+            provider_request: ProviderRequestKey {
+                ordinal: 1,
+                provider_request_id: "request-1".to_string(),
+            },
+        };
+        assert_eq!(
+            backend_processing_state(&processes, &route),
+            BackendProcessingState::Processing
+        );
+
+        let mut idle = route.clone();
+        idle.model_instance_id = "qwen/qwen3.6-35b-a3b".to_string();
+        idle.physical_host_id = "Mac.lan".to_string();
+        assert_eq!(
+            backend_processing_state(&processes, &idle),
+            BackendProcessingState::Idle
+        );
+
+        let mut wrong_host = route;
+        wrong_host.physical_host_id = "Mac.lan".to_string();
+        assert_eq!(
+            backend_processing_state(&processes, &wrong_host),
+            BackendProcessingState::RouteLost
+        );
+    }
+
+    #[test]
+    fn structured_generation_budget_is_finite_and_independent() {
+        let idle = std::time::Duration::from_secs(420);
+        assert_eq!(
+            structured_generation_budget(idle),
+            std::time::Duration::from_secs(840)
+        );
+        assert_eq!(
+            backend_processing_recheck_interval(idle),
+            std::time::Duration::from_secs(30)
+        );
+    }
+
+    #[test]
     fn parses_native_lmstudio_loaded_context_without_using_model_maximum() {
         let body = serde_json::json!({
             "data": [
@@ -24999,6 +25133,9 @@ impl PreSchedulerSemanticRuntime {
 
 pub struct GooseAgentDispatcher {
     provider: Arc<dyn Provider>,
+    /// Read only at an existing quiet-watchdog decision. A positive result is accepted only for the
+    /// broker-authenticated single-stream route of the exact live provider request.
+    backend_processing_probe: Arc<dyn BackendProcessingProbe>,
     /// model_id → provider name for CLOUD pool devices; consulted at the single update_provider
     /// seam so a bedrock node's calls run on the bedrock provider while everything else keeps the
     /// shared lmstudio provider. Empty on an all-local fleet (the default path, byte-identical).
@@ -25267,6 +25404,7 @@ impl GooseAgentDispatcher {
         let permission_manager = Arc::new(PermissionManager::new(session_root));
         Ok(Self {
             provider,
+            backend_processing_probe: Arc::new(LmsBackendProcessingProbe),
             cloud_models,
             local_context_limits,
             cloud_providers: tokio::sync::Mutex::new(std::collections::HashMap::new()),
@@ -26604,6 +26742,11 @@ impl GooseAgentDispatcher {
         let mut observed_provider_revision = 0u64;
         let mut observed_structured_output_bytes = 0u64;
         let mut observed_structured_output_active = false;
+        // A backend-positive exception is bounded independently from the ordinary quiet deadline. It is
+        // anchored to the most recent decoder-validated structured-output growth and backend status can
+        // never move it. New decoded bytes start a new silence window; repeated GENERATING reports do not.
+        let mut structured_generation_deadline: Option<tokio::time::Instant> = None;
+        let mut backend_processing_recheck_at: Option<tokio::time::Instant> = None;
         let mut last_provider_progress_event_at: Option<tokio::time::Instant> = None;
         let mut pre_scheduler_review: Option<PreSchedulerRecurrenceReview> = None;
         let mut pre_scheduler_recurrence_failover = PreSchedulerRecurrenceFailoverGate::default();
@@ -26922,8 +27065,15 @@ impl GooseAgentDispatcher {
                     idle + prefill_grace
                 }
             });
-            let mut quiet_deadline =
-                quiet_budget.map(|budget| tokio::time::Instant::now() + budget);
+            let mut quiet_deadline = backend_processing_recheck_at
+                .or_else(|| quiet_budget.map(|budget| tokio::time::Instant::now() + budget));
+            if backend_processing_recheck_at.is_some() {
+                if let (Some(quiet), Some(structured)) =
+                    (quiet_deadline.as_mut(), structured_generation_deadline)
+                {
+                    *quiet = (*quiet).min(structured);
+                }
+            }
             let mut next_agent_event = Box::pin(stream.next());
             let (next_event, timed_out) = loop {
                 if pre_scheduler_review.is_none()
@@ -27132,7 +27282,11 @@ impl GooseAgentDispatcher {
                 observed_structured_output_active = snapshot.structured_output_active;
 
                 if structured_growth {
-                    last_productive_at = tokio::time::Instant::now();
+                    let now = tokio::time::Instant::now();
+                    last_productive_at = now;
+                    structured_generation_deadline = idle
+                        .map(structured_generation_budget)
+                        .map(|budget| now + budget);
                     let post_first_event_budget = idle.map(|idle| {
                         if uncapped() {
                             idle + prefill_grace
@@ -27142,6 +27296,20 @@ impl GooseAgentDispatcher {
                     });
                     quiet_deadline =
                         post_first_event_budget.map(|budget| tokio::time::Instant::now() + budget);
+                    if let (Some(quiet), Some(structured)) =
+                        (quiet_deadline.as_mut(), structured_generation_deadline)
+                    {
+                        *quiet = (*quiet).min(structured);
+                    }
+                } else if structured_state_changed {
+                    if snapshot.structured_output_active {
+                        let now = tokio::time::Instant::now();
+                        structured_generation_deadline = idle
+                            .map(structured_generation_budget)
+                            .map(|budget| now + budget);
+                    } else {
+                        structured_generation_deadline = None;
+                    }
                 }
 
                 if activity_file.is_some()
@@ -27225,6 +27393,70 @@ impl GooseAgentDispatcher {
                     }));
                     break;
                 }
+                let now = tokio::time::Instant::now();
+                let progress = provider_stream_progress.snapshot();
+                let structured_budget_remaining =
+                    structured_generation_deadline.filter(|deadline| {
+                        progress.structured_output_active
+                            && progress.structured_output_chunks > 0
+                            && progress.structured_output_bytes > 0
+                            && *deadline > now
+                    });
+                if let Some(structured_deadline) = structured_budget_remaining {
+                    let route_before = authenticated_backend_route(model_id);
+                    let state = match route_before.as_ref() {
+                        Some(route) => self.backend_processing_probe.state(route).await,
+                        None => BackendProcessingState::Unavailable,
+                    };
+                    let route_still_authenticated = route_before.as_ref().is_some_and(|route| {
+                        authenticated_backend_route(model_id).as_ref() == Some(route)
+                    });
+                    let extend = state == BackendProcessingState::Processing
+                        && route_still_authenticated
+                        && progress.structured_output_active;
+                    self.events.write_value(serde_json::json!({
+                        "event": "structured_generation_quiet_decision",
+                        "task_id": activity_key,
+                        "model": model_id,
+                        "backend_state": state.as_str(),
+                        "route_authenticated": route_still_authenticated,
+                        "structured_output_chunks": progress.structured_output_chunks,
+                        "structured_output_bytes": progress.structured_output_bytes,
+                        "structured_output_active": progress.structured_output_active,
+                        "structured_budget_remaining_ms": structured_deadline
+                            .saturating_duration_since(tokio::time::Instant::now())
+                            .as_millis()
+                            .min(u64::MAX as u128) as u64,
+                        "quiet_extended": extend,
+                        "payload_logged": false,
+                    }));
+                    if extend {
+                        let recheck = tokio::time::Instant::now()
+                            + backend_processing_recheck_interval(
+                                idle.expect("a quiet timeout has a configured idle budget"),
+                            );
+                        backend_processing_recheck_at = Some(recheck.min(structured_deadline));
+                        continue;
+                    }
+                } else if progress.structured_output_active
+                    && progress.structured_output_chunks > 0
+                    && progress.structured_output_bytes > 0
+                    && structured_generation_deadline.is_some()
+                {
+                    self.events.write_value(serde_json::json!({
+                        "event": "structured_generation_quiet_decision",
+                        "task_id": activity_key,
+                        "model": model_id,
+                        "backend_state": "budget_exhausted",
+                        "route_authenticated": authenticated_backend_route(model_id).is_some(),
+                        "structured_output_chunks": progress.structured_output_chunks,
+                        "structured_output_bytes": progress.structured_output_bytes,
+                        "structured_output_active": true,
+                        "structured_budget_remaining_ms": 0,
+                        "quiet_extended": false,
+                        "payload_logged": false,
+                    }));
+                }
                 return Err(anyhow!(
                     "agent stalled — no progress for {}s (no token/tool activity{})",
                     quiet_budget.map(|budget| budget.as_secs()).unwrap_or(0),
@@ -27238,6 +27470,7 @@ impl GooseAgentDispatcher {
             let Some(ev) = next_event else {
                 break;
             };
+            backend_processing_recheck_at = None;
             first_event_seen = true;
             let mut final_output_validation_repeat = None;
             match ev {
@@ -62122,6 +62355,10 @@ mod pre_scheduler_semantic_runtime_tests {
     enum RuntimeProviderMode {
         Silent,
         BuildWatchdogThenFinished,
+        BufferedStructuredThenFinished,
+        BufferedStructuredIdleThenFinished,
+        BufferedStructuredRouteLostThenFinished,
+        BufferedStructuredForeverThenFinished,
         NetworkFailure,
         RecurrentSourceSilentJudge,
         CloseCapturedTurn,
@@ -62191,6 +62428,44 @@ mod pre_scheduler_semantic_runtime_tests {
                 }),
                 SingleAttemptTerminalProof::default(),
             )
+        }
+
+        fn buffered_structured_then_pending(bytes: usize) -> SingleAttemptStream {
+            SingleAttemptStream::new(
+                Box::pin(stream::once(async move {
+                    record_current_provider_stream_chunk(
+                        bytes,
+                        ProviderStreamChunkKind::StructuredOutput,
+                    );
+                    std::future::pending::<
+                        std::result::Result<
+                            (Option<Message>, Option<ProviderUsage>),
+                            ProviderError,
+                        >,
+                    >()
+                    .await
+                })),
+                SingleAttemptTerminalProof::default(),
+            )
+        }
+
+        fn buffered_structured_then_finished(model: String, bytes: usize) -> SingleAttemptStream {
+            let (terminal, reporter) = SingleAttemptTerminalProof::channel();
+            let output = async_stream::stream! {
+                record_current_provider_stream_chunk(
+                    bytes,
+                    ProviderStreamChunkKind::StructuredOutput,
+                );
+                tokio::time::sleep(Duration::from_millis(1_200)).await;
+                reporter.mark_finished();
+                yield Ok((
+                    Some(Message::assistant().with_text(
+                        "build completed after buffered structured generation".to_string(),
+                    )),
+                    Some(ProviderUsage::new(model, Usage::default())),
+                ));
+            };
+            SingleAttemptStream::new(Box::pin(output), terminal)
         }
 
         fn finished_text(model: &str, text: &str) -> SingleAttemptStream {
@@ -62938,15 +63213,35 @@ mod pre_scheduler_semantic_runtime_tests {
             _messages: &[Message],
             _tools: &[Tool],
         ) -> Result<SingleAttemptStream, ProviderError> {
-            if matches!(self.mode, RuntimeProviderMode::BuildWatchdogThenFinished) {
+            if matches!(
+                self.mode,
+                RuntimeProviderMode::BuildWatchdogThenFinished
+                    | RuntimeProviderMode::BufferedStructuredThenFinished
+                    | RuntimeProviderMode::BufferedStructuredIdleThenFinished
+                    | RuntimeProviderMode::BufferedStructuredRouteLostThenFinished
+                    | RuntimeProviderMode::BufferedStructuredForeverThenFinished
+            ) {
                 let build_call = self.build_calls.fetch_add(1, AtomicOrdering::SeqCst);
-                return if build_call == 0 {
-                    Ok(Self::thinking_until_dropped())
-                } else {
-                    Ok(Self::finished_text(
+                return match (self.mode, build_call) {
+                    (RuntimeProviderMode::BuildWatchdogThenFinished, 0) => {
+                        Ok(Self::thinking_until_dropped())
+                    }
+                    (RuntimeProviderMode::BufferedStructuredThenFinished, 0) => {
+                        Ok(Self::buffered_structured_then_finished(
+                            model_config.model_name.clone(),
+                            394,
+                        ))
+                    }
+                    (
+                        RuntimeProviderMode::BufferedStructuredIdleThenFinished
+                        | RuntimeProviderMode::BufferedStructuredRouteLostThenFinished
+                        | RuntimeProviderMode::BufferedStructuredForeverThenFinished,
+                        0,
+                    ) => Ok(Self::buffered_structured_then_pending(387)),
+                    _ => Ok(Self::finished_text(
                         &model_config.model_name,
                         "build completed after the watchdog retry",
-                    ))
+                    )),
                 };
             }
             if model_config.model_name == JUDGE_MODEL {
@@ -62985,6 +63280,12 @@ mod pre_scheduler_semantic_runtime_tests {
             match self.mode {
                 RuntimeProviderMode::BuildWatchdogThenFinished => {
                     unreachable!("build watchdog mode returns before source routing")
+                }
+                RuntimeProviderMode::BufferedStructuredThenFinished
+                | RuntimeProviderMode::BufferedStructuredIdleThenFinished
+                | RuntimeProviderMode::BufferedStructuredRouteLostThenFinished
+                | RuntimeProviderMode::BufferedStructuredForeverThenFinished => {
+                    unreachable!("buffered build modes return before source routing")
                 }
                 RuntimeProviderMode::Silent => Ok(Self::pending()),
                 RuntimeProviderMode::NetworkFailure => Err(ProviderError::NetworkError(
@@ -63029,6 +63330,27 @@ mod pre_scheduler_semantic_runtime_tests {
                 RuntimeProviderMode::StartPanic => {
                     panic!("runtime provider panicked before returning its source stream")
                 }
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BackendProcessingProbe for RuntimeScriptedProvider {
+        async fn state(&self, route: &AuthenticatedBackendRoute) -> BackendProcessingState {
+            assert_eq!(route.physical_host_id, SOURCE_HOST);
+            assert_eq!(
+                route.model_instance_id,
+                format!("runtime-instance:{SOURCE_HOST}")
+            );
+            match self.mode {
+                RuntimeProviderMode::BufferedStructuredThenFinished
+                | RuntimeProviderMode::BufferedStructuredForeverThenFinished => {
+                    BackendProcessingState::Processing
+                }
+                RuntimeProviderMode::BufferedStructuredRouteLostThenFinished => {
+                    BackendProcessingState::RouteLost
+                }
+                _ => BackendProcessingState::Idle,
             }
         }
     }
@@ -63099,6 +63421,7 @@ mod pre_scheduler_semantic_runtime_tests {
         .await
         .unwrap();
         dispatcher.provider = provider.clone();
+        dispatcher.backend_processing_probe = provider.clone();
         dispatcher.activity_sink_health.activate().unwrap();
         let dispatcher = Arc::new(dispatcher);
         let snapshot = PhysicalFleetSnapshot::new(
@@ -65718,6 +66041,58 @@ mod pre_scheduler_semantic_runtime_tests {
             .collect()
     }
 
+    async fn run_runtime_build(harness: &RuntimeHarness, task_id: &str) -> goose_swarm::RunReport {
+        let dag = Dag::from_specs(vec![TaskSpec {
+            id: task_id.to_string(),
+            description: "exercise buffered structured generation supervision".to_string(),
+            difficulty: goose_swarm::Difficulty::Easy,
+            preferred_model: None,
+            owned_files: Vec::new(),
+            deps: Vec::new(),
+            subsplit: Vec::new(),
+            replan_authority: None,
+        }])
+        .unwrap();
+        let devices = vec![
+            DeviceCfg {
+                id: SOURCE_DEVICE.to_string(),
+                model_id: SOURCE_MODEL.to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            },
+            DeviceCfg {
+                id: JUDGE_DEVICE.to_string(),
+                model_id: JUDGE_MODEL.to_string(),
+                weight: 1,
+                enabled: true,
+                speed_weight: 1,
+                supervision: false,
+            },
+        ];
+        tokio::time::timeout(
+            Duration::from_secs(8),
+            Scheduler::new(devices, 2)
+                .with_sink(harness.sink.clone())
+                .run_with_physical_admission(
+                    dag,
+                    harness.dispatcher.clone() as Arc<dyn ProviderLifecycleDispatcher>,
+                    harness.control.clone(),
+                    PhysicalExecutionAuthority::new(
+                        AuthorityScope::new("buffered-structured-runtime-run", "execute"),
+                        0,
+                        WorkRole::Build,
+                    ),
+                    "exercise buffered structured generation supervision".to_string(),
+                    String::new(),
+                ),
+        )
+        .await
+        .expect("buffered structured runtime did not terminate")
+        .expect("buffered structured runtime failed")
+    }
+
     #[tokio::test]
     async fn production_source_watchdog_cancels_reconciles_and_releases() {
         let harness = runtime_harness(RuntimeProviderMode::Silent).await;
@@ -65746,6 +66121,152 @@ mod pre_scheduler_semantic_runtime_tests {
         next.complete_local(LocalCompletionKind::Error)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_buffered_structured_generation_survives_quiet_while_backend_is_processing()
+    {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("0")),
+            ("GOOSE_SWARM_UNCAPPED", Some("0")),
+        ]);
+        let harness = runtime_harness(RuntimeProviderMode::BufferedStructuredThenFinished).await;
+        let report = run_runtime_build(&harness, "buffered-structured-build").await;
+
+        assert_eq!(report.done, ["buffered-structured-build"]);
+        assert!(report.failed.is_empty());
+        assert_eq!(harness.provider.build_calls.load(AtomicOrdering::SeqCst), 1);
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "provider_stream_progress"
+                && event["structured_output_bytes"] == 394
+                && event["structured_output_active"] == true
+        }));
+        assert!(events.iter().any(|event| {
+            event["event"] == "structured_generation_quiet_decision"
+                && event["backend_state"] == "processing"
+                && event["route_authenticated"] == true
+                && event["quiet_extended"] == true
+        }));
+        assert!(!events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["receipt"]["kind"] == "cancelled"
+        }));
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            harness.control.wait_until_drained(),
+        )
+        .await
+        .expect("successful buffered generation did not drain")
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_idle_backend_does_not_extend_buffered_structured_silence() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("0")),
+            ("GOOSE_SWARM_UNCAPPED", Some("0")),
+        ]);
+        let harness =
+            runtime_harness(RuntimeProviderMode::BufferedStructuredIdleThenFinished).await;
+        let report = run_runtime_build(&harness, "idle-buffered-structured-build").await;
+
+        assert_eq!(report.done, ["idle-buffered-structured-build"]);
+        assert_eq!(harness.provider.build_calls.load(AtomicOrdering::SeqCst), 2);
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "structured_generation_quiet_decision"
+                && event["backend_state"] == "idle"
+                && event["route_authenticated"] == true
+                && event["quiet_extended"] == false
+        }));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event["event"] == "broker_provider_terminal_observed"
+                        && event["receipt"]["kind"] == "cancelled"
+                })
+                .count(),
+            1
+        );
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            harness.control.wait_until_drained(),
+        )
+        .await
+        .expect("idle buffered retry did not drain")
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_route_loss_does_not_extend_buffered_structured_silence() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("0")),
+            ("GOOSE_SWARM_UNCAPPED", Some("0")),
+        ]);
+        let harness =
+            runtime_harness(RuntimeProviderMode::BufferedStructuredRouteLostThenFinished).await;
+        let report = run_runtime_build(&harness, "route-lost-buffered-structured-build").await;
+
+        assert_eq!(report.done, ["route-lost-buffered-structured-build"]);
+        assert_eq!(harness.provider.build_calls.load(AtomicOrdering::SeqCst), 2);
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "structured_generation_quiet_decision"
+                && event["backend_state"] == "route_lost"
+                && event["route_authenticated"] == true
+                && event["quiet_extended"] == false
+        }));
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            harness.control.wait_until_drained(),
+        )
+        .await
+        .expect("route-loss retry did not drain")
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_processing_state_cannot_extend_unbounded_structured_silence() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_SWARM_PROGRESS_WATCHDOG_SECS", Some("0")),
+            ("GOOSE_SWARM_UNCAPPED", Some("0")),
+        ]);
+        let harness =
+            runtime_harness(RuntimeProviderMode::BufferedStructuredForeverThenFinished).await;
+        let report = run_runtime_build(&harness, "bounded-buffered-structured-build").await;
+
+        assert_eq!(report.done, ["bounded-buffered-structured-build"]);
+        assert_eq!(harness.provider.build_calls.load(AtomicOrdering::SeqCst), 2);
+        let events = harness.sink.values();
+        assert!(events.iter().any(|event| {
+            event["event"] == "structured_generation_quiet_decision"
+                && event["backend_state"] == "processing"
+                && event["quiet_extended"] == true
+        }));
+        assert!(events.iter().any(|event| {
+            event["event"] == "structured_generation_quiet_decision"
+                && event["backend_state"] == "budget_exhausted"
+                && event["quiet_extended"] == false
+        }));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event["event"] == "broker_provider_terminal_observed"
+                        && event["receipt"]["kind"] == "cancelled"
+                })
+                .count(),
+            1
+        );
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            harness.control.wait_until_drained(),
+        )
+        .await
+        .expect("bounded buffered retry did not drain")
+        .unwrap();
     }
 
     #[tokio::test]
