@@ -27,6 +27,29 @@ RUN_ID = "swarm-20260826-123456789"
 FIXTURE_SEED = "0123456789abcdef"
 
 
+class PublisherProcessReceiptTests(unittest.TestCase):
+    def test_reused_publisher_pid_is_a_terminal_attempt_not_an_identity_failure(
+        self,
+    ) -> None:
+        expected = {"pid": 123, "identity_sha256": "a" * 64}
+        self.assertEqual(
+            closure.classify_process_receipt(expected, None),
+            "exited",
+        )
+        self.assertEqual(
+            closure.classify_process_receipt(
+                expected, {"pid": 123, "identity_sha256": "a" * 64}
+            ),
+            "active",
+        )
+        self.assertEqual(
+            closure.classify_process_receipt(
+                expected, {"pid": 123, "identity_sha256": "b" * 64}
+            ),
+            "reused",
+        )
+
+
 def score_payload() -> dict[str, object]:
     tiers = {tier: {"mean": 0.75} for tier in sorted(closure.SB7_TIERS)}
     tier_names = sorted(closure.SB7_TIERS)
