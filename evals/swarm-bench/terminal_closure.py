@@ -776,6 +776,16 @@ def stable_process_receipt(
     return None
 
 
+def classify_process_receipt(
+    expected: Mapping[str, Any], observed: Mapping[str, Any] | None
+) -> str:
+    if observed is None:
+        return "exited"
+    if observed.get("identity_sha256") == expected.get("identity_sha256"):
+        return "active"
+    return "reused"
+
+
 def validate_authenticated_process(role: str, receipt: dict[str, Any]) -> bool:
     pid = receipt.get("pid")
     expected = receipt.get("identity_sha256")
@@ -4051,8 +4061,13 @@ class TerminalClosure:
             current = None
             if process_receipt and process_receipt.get("attempt") == attempt:
                 current = safe_process_receipt(process_receipt["pid"])
-                if current and current["identity_sha256"] != process_receipt["identity_sha256"]:
-                    raise ClosureError("publisher pid identity changed")
+                if classify_process_receipt(process_receipt, current) == "reused":
+                    self.events.emit(
+                        "publisher_pid_reused",
+                        attempt=attempt,
+                        pid=process_receipt["pid"],
+                    )
+                    current = None
             if current is None:
                 self.validate_frozen_inputs()
                 descriptor = os.open(log_path, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
@@ -4091,8 +4106,13 @@ class TerminalClosure:
                 current = safe_process_receipt(process_receipt["pid"])
                 if current is None:
                     break
-                if current["identity_sha256"] != process_receipt["identity_sha256"]:
-                    raise ClosureError("publisher pid identity changed")
+                if classify_process_receipt(process_receipt, current) == "reused":
+                    self.events.emit(
+                        "publisher_pid_reused",
+                        attempt=attempt,
+                        pid=process_receipt["pid"],
+                    )
+                    break
                 if time.time() >= float(process_receipt["deadline_epoch"]):
                     terminate_process_group(process_receipt.get("process_group_id"))
                     self.events.emit("publisher_attempt_timed_out", attempt=attempt)
