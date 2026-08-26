@@ -40,13 +40,13 @@ use goose::session::SessionManager;
 use goose_swarm::scheduler::split_inherit_spec_enabled;
 use goose_swarm::{
     authored_requirements_require_integration, compile_pillar_report_with_sources,
-    deterministic_verdict, evidence_source_digest, is_split_candidate, pillar_frozen_spec_digest,
-    render_synthesis_input, validate_pillar_integration_task_ownership, validate_pillar_opening,
-    validate_pillar_opening_against, AdmissionReceipt, AdmittedWork, AuthoredRequirement,
-    AuthorityScope, ChildSpec, CompiledPillarReport, CompletedProviderRequest, Confidence, Dag,
-    DeviceCfg, DispatchError, DispatchRequest, EventSink, EvidenceClass, EvidenceSourceAuthority,
-    EvidenceSourceSection, HostCapacityEvidence, IntegrationContract, Judge, JudgeConfig,
-    JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
+    deterministic_verdict, evidence_source_digest, excluded_from_repair_tree, is_split_candidate,
+    pillar_frozen_spec_digest, render_synthesis_input, validate_pillar_integration_task_ownership,
+    validate_pillar_opening, validate_pillar_opening_against, AdmissionReceipt, AdmittedWork,
+    AuthoredRequirement, AuthorityScope, ChildSpec, CompiledPillarReport, CompletedProviderRequest,
+    Confidence, Dag, DeviceCfg, DispatchError, DispatchRequest, EventSink, EvidenceClass,
+    EvidenceSourceAuthority, EvidenceSourceSection, HostCapacityEvidence, IntegrationContract,
+    Judge, JudgeConfig, JudgeInput, JudgeOutcome, JudgeRequest, LocalCompletionKind, NullSink,
     PhysicalAdmissionControl, PhysicalExecutionAuthority, PhysicalFleetSnapshot,
     PillarAttemptCheckpoint, PillarCheckpointStore, PillarImplementationTaskCoverage,
     PillarReportDraft, PillarResumeDecision, PreReviewOutput, PreReviewRequest, PreReviewer,
@@ -56048,24 +56048,6 @@ struct RepairTreeSnapshot {
     entries: std::collections::BTreeMap<String, String>,
 }
 
-fn excluded_from_repair_tree(rel: &Path) -> bool {
-    // This is the existing F886 ship-best rsync contract, not a language or app-file allowlist.
-    // Anything rsync can ship must participate in the ruling, including dependencies, caches,
-    // generated assets, and unplanned files.
-    const ENGINE_EVIDENCE: &[&str] = &[
-        ".swarm",
-        ".swarm-monitor",
-        "run.jsonl",
-        "engine-console.log",
-        "bench-shots",
-        "heartbeat",
-        "graded.db",
-    ];
-    rel.components().any(|component| {
-        matches!(component, Component::Normal(name) if ENGINE_EVIDENCE.contains(&name.to_string_lossy().as_ref()))
-    })
-}
-
 #[cfg(unix)]
 fn repair_entry_mode(metadata: &std::fs::Metadata) -> u32 {
     use std::os::unix::fs::PermissionsExt;
@@ -56660,7 +56642,10 @@ mod repair_tree_seal_tests {
         std::fs::write(dir.path().join(".swarm-monitor/watch.jsonl"), "watch\n").unwrap();
         std::fs::write(dir.path().join("run.jsonl"), "evidence\n").unwrap();
         std::fs::write(dir.path().join("engine-console.log"), "console\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("bench-shots")).unwrap();
+        std::fs::write(dir.path().join("bench-shots/shot.png"), "screenshot\n").unwrap();
         std::fs::write(dir.path().join("heartbeat"), "alive\n").unwrap();
+        std::fs::write(dir.path().join("graded.db"), "grades\n").unwrap();
         let evidence_only = repair_tree_snapshot(dir.path()).unwrap();
         assert_eq!(before, evidence_only);
 
@@ -56682,6 +56667,46 @@ mod repair_tree_seal_tests {
             changed_repair_files(&before, &changed),
             vec!["src/main.rs".to_string()]
         );
+    }
+
+    #[test]
+    fn nested_engine_evidence_names_remain_bound_to_the_sealed_application_tree() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let nested_paths = [
+            "app/.swarm/data.json",
+            "app/.swarm-monitor/watch.jsonl",
+            "app/run.jsonl",
+            "app/engine-console.log",
+            "app/bench-shots/shot.png",
+            "src/heartbeat/state.json",
+            "app/graded.db",
+        ];
+        for path in nested_paths {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "v1\n").unwrap();
+        }
+
+        let sink = NullSink;
+        let mut tree = OpenRepairTree::open(dir.path(), &sink).unwrap();
+        tree.record_ruling(&synthetic_ruler(&[]), "authoritative", &sink)
+            .unwrap();
+        let sealed = tree
+            .seal("nested application components".to_string(), false, &sink)
+            .unwrap();
+        let before = repair_tree_snapshot(dir.path()).unwrap();
+
+        for path in nested_paths {
+            std::fs::write(dir.path().join(path), "v2\n").unwrap();
+        }
+        let after = repair_tree_snapshot(dir.path()).unwrap();
+        assert_ne!(before.sha256, after.sha256);
+        let mut expected_changed = nested_paths.map(str::to_string).to_vec();
+        expected_changed.sort();
+        assert_eq!(changed_repair_files(&before, &after), expected_changed);
+        assert!(sealed
+            .emit_final_events(&sink, serde_json::json!({ "event": "run_finished" }))
+            .is_err());
     }
 
     #[cfg(unix)]
