@@ -17607,10 +17607,15 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
 
     #[test]
     fn a_raced_twin_lands_on_strict_improvement_or_resolved_assigned_causes() {
-        let baseline = vec![
+        let baseline_findings = vec![
             "missing tests".to_string(),
             "app never bound port 50123".to_string(),
         ];
+        let baseline = RepairGrade {
+            findings: Some(baseline_findings),
+            established: true,
+            frontier: RepairFrontier::default(),
+        };
         let t = |s: &str, findings: Option<&[&str]>, established: bool| {
             (
                 s.to_string(),
@@ -17618,6 +17623,7 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                     findings: findings
                         .map(|items| items.iter().map(|finding| (*finding).to_string()).collect()),
                     established,
+                    frontier: RepairFrontier::default(),
                 },
             )
         };
@@ -17686,6 +17692,10 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
                     RepairGrade {
                         findings: Some(newly_reachable),
                         established: true,
+                        frontier: RepairFrontier {
+                            tests: ProofState::Passed,
+                            ..RepairFrontier::default()
+                        },
                     },
                 )],
                 &baseline,
@@ -17718,7 +17728,15 @@ commands, the two database files, the `web/` files and `DECISIONS.md` are the co
         assert_eq!(pick_repair_winner(&[], &baseline), None);
 
         // A baseline of zero cannot be beaten — the round should never have opened, and nothing may land.
-        assert_eq!(pick_repair_winner(&[t("a", Some(&[]), true)], &[]), None);
+        let clean_baseline = RepairGrade {
+            findings: Some(Vec::new()),
+            established: true,
+            frontier: RepairFrontier::default(),
+        };
+        assert_eq!(
+            pick_repair_winner(&[t("a", Some(&[]), true)], &clean_baseline),
+            None
+        );
     }
 
     #[test]
@@ -18630,33 +18648,94 @@ subprocess.Popen(
     #[test]
     fn a_fix_shard_promotes_only_verified_progress_on_its_assigned_causes() {
         let target = vec!["app never bound port 50123".to_string()];
-        let grade = |findings: Option<&[&str]>, established| RepairGrade {
+        let grade = |findings: Option<&[&str]>, established, frontier| RepairGrade {
             findings: findings
                 .map(|items| items.iter().map(|finding| (*finding).to_string()).collect()),
             established,
+            frontier,
         };
+        let baseline_many = grade(
+            Some(&["one", "two", "three", "four", "five"]),
+            true,
+            RepairFrontier::default(),
+        );
         assert!(repair_grade_promotes(
-            &grade(Some(&["one", "two", "three"]), true),
-            5,
+            &grade(
+                Some(&["one", "two", "three"]),
+                true,
+                RepairFrontier::default(),
+            ),
+            &baseline_many,
             &target,
         ));
+        let one_blocker = grade(
+            Some(&["app never bound port 50123"]),
+            true,
+            RepairFrontier::default(),
+        );
         assert!(
             !repair_grade_promotes(
-                &grade(Some(&["app never bound port 50999", "new"]), true),
-                1,
+                &grade(
+                    Some(&["app never bound port 50999", "new"]),
+                    true,
+                    RepairFrontier::default(),
+                ),
+                &one_blocker,
                 &target,
             ),
             "dynamic ports normalize to one unresolved cause"
         );
         assert!(
-            repair_grade_promotes(&grade(Some(&["new one", "new two"]), true), 1, &target,),
+            repair_grade_promotes(
+                &grade(
+                    Some(&["new one", "new two"]),
+                    true,
+                    RepairFrontier {
+                        tests: ProofState::Passed,
+                        ..RepairFrontier::default()
+                    },
+                ),
+                &one_blocker,
+                &target,
+            ),
             "a resolved assigned blocker may expose deeper findings"
         );
         assert!(
-            !repair_grade_promotes(&grade(None, false), 5, &target),
+            !repair_grade_promotes(
+                &grade(None, false, RepairFrontier::default()),
+                &baseline_many,
+                &target,
+            ),
             "an unverifiable shadow is UNKNOWN, never clean — the vacuous-pass trap"
         );
-        assert!(!repair_grade_promotes(&grade(Some(&[]), true), 0, &[],));
+        let clean = grade(Some(&[]), true, RepairFrontier::default());
+        assert!(!repair_grade_promotes(&clean, &clean, &[]));
+
+        let tested_baseline = grade(
+            Some(&["old blocker"]),
+            true,
+            RepairFrontier {
+                tests: ProofState::Passed,
+                entry: ProofState::Passed,
+                ..RepairFrontier::default()
+            },
+        );
+        assert!(
+            !repair_grade_promotes(
+                &grade(
+                    Some(&[]),
+                    true,
+                    RepairFrontier {
+                        tests: ProofState::Reached,
+                        entry: ProofState::Passed,
+                        ..RepairFrontier::default()
+                    },
+                ),
+                &tested_baseline,
+                &["old blocker".to_string()],
+            ),
+            "a candidate cannot hide a blocker by losing previously passing tests"
+        );
         assert_eq!(
             normalize_repair_finding("Expected 3 rows on port 50123"),
             "expected 3 rows on port #"
@@ -18665,6 +18744,28 @@ subprocess.Popen(
             normalize_repair_finding("Expected 3 rows"),
             normalize_repair_finding("Expected 4 rows"),
             "semantic counts are evidence and must not be normalized away"
+        );
+        let no_bind_seq_1 = "the app never bound every advertised service port (50123, 50124) \
+            when started EXACTLY as its spec documents (`python3 -m app --db \
+            /tmp/goose-spec-contract-13414-1.db --scratch \
+            /tmp/goose-spec-contract-scratch-13414-1 --ledger-port 50123 --notifier-port 50124`)";
+        let no_bind_seq_12 = "the app never bound every advertised service port (50991, 50992) \
+            when started EXACTLY as its spec documents (`python3 -m app --db \
+            /tmp/goose-spec-contract-13414-12.db --scratch \
+            /tmp/goose-spec-contract-scratch-13414-12 --ledger-port 50991 --notifier-port 50992`)";
+        assert_eq!(
+            normalize_repair_finding(no_bind_seq_1),
+            normalize_repair_finding(no_bind_seq_12),
+            "the hermetic scratch sequence and dynamic ports cannot mint a new causal defect"
+        );
+        let mut seen = std::collections::BTreeSet::new();
+        assert!(register_authoritative_feedback(
+            &mut seen,
+            &[no_bind_seq_1.to_string()]
+        ));
+        assert!(
+            !register_authoritative_feedback(&mut seen, &[no_bind_seq_12.to_string()]),
+            "the same no-bind cause must terminalize incomplete instead of refreshing the budget"
         );
     }
 
@@ -18678,10 +18779,20 @@ subprocess.Popen(
             fixture["source"]["run_log_sha256"],
             "13e0977a6b91f60c1b20d22fef1ff8e5604a505ce6f830d57b62c3c1311fd7c9"
         );
-        let baseline = vec![
+        let baseline_findings = vec![
             "the app ships NO executable tests (`pytest -q` collected 0)".to_string(),
             "the app never bound port 50123".to_string(),
         ];
+        let baseline = RepairGrade {
+            findings: Some(baseline_findings.clone()),
+            established: true,
+            frontier: RepairFrontier {
+                collect: ProofState::Passed,
+                tests: ProofState::Reached,
+                entry: ProofState::Reached,
+                ..RepairFrontier::default()
+            },
+        };
         let candidate_findings = (0..fixture["discarded_candidate"]["candidate_findings"]
             .as_u64()
             .unwrap())
@@ -18691,9 +18802,16 @@ subprocess.Popen(
             &RepairGrade {
                 findings: Some(candidate_findings),
                 established: true,
+                frontier: RepairFrontier {
+                    collect: ProofState::Passed,
+                    tests: ProofState::Passed,
+                    entry: ProofState::Passed,
+                    spec_contract: ProofState::Reached,
+                    ..RepairFrontier::default()
+                },
             },
-            baseline.len(),
             &baseline,
+            &baseline_findings,
         ));
 
         let authoritative = fixture["authoritative_findings"]["findings"]
@@ -50543,8 +50661,8 @@ fn web_vocab_note(owned_files: &[String], enabled: bool) -> String {
 /// fix req is normalized to.
 #[derive(Clone)]
 struct FixRound {
-    baseline: usize,
     baseline_findings: Vec<String>,
+    baseline_grade: RepairGrade,
     lang: TargetLang,
     all_files: Vec<String>,
     round: usize,
@@ -50810,7 +50928,7 @@ impl GooseAgentDispatcher {
         fr: FixRound,
     ) -> Result<TaskRunOutput, DispatchError> {
         let is_join = req.task_id.ends_with("::#join");
-        let (baseline, targeted_findings) = if is_join {
+        let (baseline_grade, targeted_findings) = if is_join {
             // The join owns the whole tree, so its baseline is the REAL tree as the root fixes
             // left it — re-gated NOW, after their promotions. If the gate cannot run there is no
             // baseline to beat and the agent is not spent (the wave's own skip rule).
@@ -50876,10 +50994,14 @@ impl GooseAgentDispatcher {
                     .to_string()
                     .into());
             }
-            (base, grade.findings.unwrap_or_default())
+            let targeted = grade.findings.clone().unwrap_or_default();
+            (grade, targeted)
         } else {
-            (fr.baseline, fr.baseline_findings.clone())
+            (fr.baseline_grade.clone(), fr.baseline_findings.clone())
         };
+        let baseline = baseline_grade
+            .count()
+            .expect("an active fix round has an established ruler baseline");
         let mut req = req;
         req.speculative = true;
         req.all_files = fr.all_files.clone();
@@ -50967,7 +51089,7 @@ impl GooseAgentDispatcher {
             )
             .await;
         let promoted =
-            shadow_changed && repair_grade_promotes(&grade, baseline, &targeted_findings);
+            shadow_changed && repair_grade_promotes(&grade, &baseline_grade, &targeted_findings);
         let verified = grade.count();
         if promoted {
             self.fix_promotions
@@ -57610,11 +57732,16 @@ fn prefer_shard_over_race(
 /// repair may also advance the frontier by resolving every cause it was assigned, even when that
 /// makes deeper checks reachable and raises the raw count; the next round owns those new causes.
 fn normalize_repair_finding(finding: &str) -> String {
-    let collapsed = finding
+    static SPEC_SCRATCH: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let scratch = SPEC_SCRATCH.get_or_init(|| {
+        regex::Regex::new(r"goose-spec-contract(?:-scratch)?-\d+-\d+")
+            .expect("static spec-contract scratch regex")
+    });
+    let collapsed = scratch
+        .replace_all(&finding.to_ascii_lowercase(), "goose-spec-contract-#-#")
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase();
+        .join(" ");
     let chars = collapsed.chars().collect::<Vec<_>>();
     let mut normalized = String::with_capacity(collapsed.len());
     let mut index = 0;
@@ -57650,10 +57777,63 @@ fn register_authoritative_feedback(
     seen.insert(signature)
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+enum ProofState {
+    #[default]
+    Unreached,
+    Reached,
+    Passed,
+}
+
+/// The deterministic checks a repair candidate must not make disappear.
+///
+/// Finding counts alone are not comparable when a repair makes more of the application runnable:
+/// the V21-r5 candidate replaced two shallow boot/test blockers with a runnable tree and 21 passing
+/// tests, then exposed nine deeper contract findings. Conversely, removing a finding by making its
+/// checker unreachable is not progress. This frontier records both reachability and affirmative
+/// proof, so promotion can distinguish those cases without rewarding raw count games.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RepairFrontier {
+    collect: ProofState,
+    tests: ProofState,
+    entry: ProofState,
+    deliverables: ProofState,
+    cross_module: ProofState,
+    http_timeout: ProofState,
+    dom: ProofState,
+    css: ProofState,
+    spec_contract: ProofState,
+    spec_verified: usize,
+    post_probed: usize,
+    render_reached: bool,
+}
+
+impl RepairFrontier {
+    fn preserves(&self, baseline: &Self) -> bool {
+        self.collect >= baseline.collect
+            && self.tests >= baseline.tests
+            && self.entry >= baseline.entry
+            && self.deliverables >= baseline.deliverables
+            && self.cross_module >= baseline.cross_module
+            && self.http_timeout >= baseline.http_timeout
+            && self.dom >= baseline.dom
+            && self.css >= baseline.css
+            && self.spec_contract >= baseline.spec_contract
+            && self.spec_verified >= baseline.spec_verified
+            && self.post_probed >= baseline.post_probed
+            && (!baseline.render_reached || self.render_reached)
+    }
+
+    fn strictly_extends(&self, baseline: &Self) -> bool {
+        self.preserves(baseline) && self != baseline
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct RepairGrade {
     findings: Option<Vec<String>>,
     established: bool,
+    frontier: RepairFrontier,
 }
 
 impl RepairGrade {
@@ -57664,16 +57844,19 @@ impl RepairGrade {
 
 fn repair_grade_promotes(
     grade: &RepairGrade,
-    baseline_count: usize,
+    baseline: &RepairGrade,
     targeted_findings: &[String],
 ) -> bool {
     let Some(candidate_findings) = grade.findings.as_ref() else {
         return false;
     };
-    if !grade.established {
+    let Some(baseline_findings) = baseline.findings.as_ref() else {
+        return false;
+    };
+    if !grade.established || !grade.frontier.preserves(&baseline.frontier) {
         return false;
     }
-    if candidate_findings.len() < baseline_count {
+    if candidate_findings.len() < baseline_findings.len() {
         return true;
     }
     if targeted_findings.is_empty() {
@@ -57683,10 +57866,11 @@ fn repair_grade_promotes(
         .iter()
         .map(|finding| normalize_repair_finding(finding))
         .collect::<std::collections::BTreeSet<_>>();
-    targeted_findings
+    let assigned_causes_resolved = targeted_findings
         .iter()
         .map(|finding| normalize_repair_finding(finding))
-        .all(|finding| !remaining.contains(&finding))
+        .all(|finding| !remaining.contains(&finding));
+    assigned_causes_resolved && grade.frontier.strictly_extends(&baseline.frontier)
 }
 
 /// F781/#16: the fix-round-as-scheduler-run lever. Env wins, config falls back, default OFF —
@@ -57726,9 +57910,9 @@ fn spec_repair() -> bool {
 /// cause, the lowest remaining count wins; ties resolve to the earliest twin deterministically.
 fn pick_repair_winner(
     outcomes: &[(String, RepairGrade)],
-    baseline_findings: &[String],
+    baseline: &RepairGrade,
 ) -> Option<(usize, String)> {
-    let baseline = baseline_findings.len();
+    let baseline_findings = baseline.findings.as_deref().unwrap_or_default();
     outcomes
         .iter()
         .enumerate()
@@ -58428,6 +58612,7 @@ fn swarm_repeat_penalty_resolved(cfg: Option<f32>) -> Option<f32> {
 struct CompleteRulerResult {
     verdict: SmokeResult,
     missing: Vec<String>,
+    missing_gate: bool,
     cross_module_enabled: bool,
     drift: DriftResult,
     no_timeout: DriftResult,
@@ -58435,6 +58620,86 @@ struct CompleteRulerResult {
     dom: DriftResult,
     css: DriftResult,
     spec_contract: Option<SpecContractResult>,
+}
+
+fn drift_proof_state(active: bool, result: &DriftResult) -> ProofState {
+    if !active || !result.ran {
+        ProofState::Unreached
+    } else if !result.partial && result.checked > 0 && result.findings.is_empty() {
+        ProofState::Passed
+    } else {
+        ProofState::Reached
+    }
+}
+
+impl RepairGrade {
+    fn from_ruler(result: &CompleteRulerResult) -> Self {
+        let collect = match result.verdict.collect.as_ref() {
+            Some(CollectVerdict::Ok) => ProofState::Passed,
+            Some(CollectVerdict::Errors(_)) => ProofState::Reached,
+            Some(CollectVerdict::PytestMissing) | None => ProofState::Unreached,
+        };
+        let tests = match result.verdict.tests.as_ref() {
+            Some(TestRunVerdict::Pass) => ProofState::Passed,
+            Some(TestRunVerdict::NoTests | TestRunVerdict::Failures(_)) => ProofState::Reached,
+            Some(TestRunVerdict::PytestMissing | TestRunVerdict::Inconclusive(_)) | None => {
+                ProofState::Unreached
+            }
+        };
+        let entry = match result.verdict.entry_ok {
+            Some(true) => ProofState::Passed,
+            Some(false) => ProofState::Reached,
+            None => ProofState::Unreached,
+        };
+        let deliverables = if !result.missing_gate {
+            ProofState::Unreached
+        } else if result.missing.is_empty() {
+            ProofState::Passed
+        } else {
+            ProofState::Reached
+        };
+        let (spec_contract, spec_verified, post_probed, render_reached) = result
+            .spec_contract
+            .as_ref()
+            .map(|contract| {
+                let state = if contract.findings.is_empty()
+                    && contract.inconclusive.is_empty()
+                    && contract.verified > 0
+                {
+                    ProofState::Passed
+                } else {
+                    ProofState::Reached
+                };
+                (
+                    state,
+                    contract.verified,
+                    contract.probed_post,
+                    contract.render_gate.starts_with("ran ("),
+                )
+            })
+            .unwrap_or((ProofState::Unreached, 0, 0, false));
+        Self {
+            findings: result
+                .verdict
+                .ran
+                .then_some(result.verdict.findings.clone()),
+            established: result.verdict.established(),
+            frontier: RepairFrontier {
+                collect,
+                tests,
+                entry,
+                deliverables,
+                cross_module: drift_proof_state(result.cross_module_enabled, &result.drift),
+                http_timeout: drift_proof_state(true, &result.no_timeout),
+                dom: drift_proof_state(true, &result.dom),
+                css: drift_proof_state(true, &result.css),
+                spec_contract,
+                spec_verified,
+                post_probed,
+                render_reached,
+            },
+        }
+    }
 }
 
 fn missing_source_deliverables_for(
@@ -58539,6 +58804,7 @@ async fn run_complete_ruler(
     CompleteRulerResult {
         verdict,
         missing,
+        missing_gate,
         cross_module_enabled,
         drift,
         no_timeout,
@@ -59281,6 +59547,7 @@ mod repair_tree_seal_tests {
                 inconclusive: Vec::new(),
             },
             missing: Vec::new(),
+            missing_gate: false,
             cross_module_enabled: false,
             drift: DriftResult::default(),
             no_timeout: DriftResult::default(),
@@ -59773,11 +60040,7 @@ async fn one_ruler_grade(
 ) -> RepairGrade {
     let result =
         run_complete_ruler(root, prompt, lang, all_files, composite, missing_gate, &[]).await;
-    let established = result.verdict.established();
-    RepairGrade {
-        findings: result.verdict.ran.then_some(result.verdict.findings),
-        established,
-    }
+    RepairGrade::from_ruler(&result)
 }
 
 /// F856: the per-fix ceiling, scaled by the SAME tree-bytes factor as the sink cap (≤2×), from
@@ -63438,6 +63701,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     &failed_task_findings,
                 )
                 .await;
+                let baseline_grade = RepairGrade::from_ruler(&ruler);
                 emit_complete_ruler_observations(sink.as_ref(), round, complete_lang, &ruler);
                 // GOLDEN CHECK (ADVISORY ONLY): when goals are on, run each distilled pillar's runnable check
                 // against the advertised interface and SURFACE any failure as an event — but do NOT gate or fix
@@ -63754,6 +64018,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // F862: the ruler flags the round graded with — the twins grade with the same.
                     let wave_composite = delivery_on || spec_contract_enabled();
                     let wave_missing_gate = missing_deliverable_gate;
+                    let wave_baseline_grade = baseline_grade.clone();
                     let sink_r = sink.clone();
                     // F846 EARLY-CLOSE (NEXT-BIG rank 2). MEASURED on the first green product-regime
                     // run: both waves' winners re-verified 5-7.5 minutes before the wave closed, while
@@ -63787,6 +64052,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         let wave_cancel = wave_cancel.clone();
                         let wave_prompt = wave_prompt.clone();
                         let wave_cwd = wave_cwd.clone();
+                        let wave_baseline_grade = wave_baseline_grade.clone();
                         async move {
                             let task_id = format!("complete-fix::twin{i}");
                             // THE TAIL'S FIRST DISPATCH EVENT. The repair tail emitted no task_dispatched at
@@ -63912,7 +64178,10 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                             // fully-established gate (ran, zero inconclusive legs) strictly under
                             // baseline. A blinded gate (port collision voiding the pytest leg)
                             // can still WIN via the minimum-pick, but it cannot cancel anyone.
-                            if !cancelled && gate_established {
+                            if !cancelled
+                                && gate_established
+                                && grade.frontier.preserves(&wave_baseline_grade.frontier)
+                            {
                                 if let Some(v) = verified.filter(|v| *v < baseline) {
                                     let mut claim = win_claim.lock().unwrap();
                                     if claim.is_none() {
@@ -63939,7 +64208,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // red-to-green class (a stopped agent's partial tree verifying best) survives,
                     // and a claimant that died after claiming can never discard the round.
                     let claimed = win_claim_outer.lock().unwrap().clone();
-                    let winner = pick_repair_winner(&outcomes, &verdict.findings);
+                    let winner = pick_repair_winner(&outcomes, &baseline_grade);
                     for (task_id, _) in &outcomes {
                         if winner.as_ref().is_some_and(|(_, w)| w == task_id) {
                             smoke_fix_dispatcher.promote_speculative(task_id).await;
@@ -63996,7 +64265,6 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                     // with the fan — a retry would re-shadow from a CURRENT tree against a STALE
                     // baseline. The round loop's next real-tree gate stays the sole authority on
                     // green; this path never touches green_blocking.
-                    let baseline = verdict.findings.len();
                     let specs = fix_round_specs(
                         &verdict.findings,
                         &smoke_all_files,
@@ -64034,8 +64302,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         fresh.set_pillars(fix_pillars_block.clone());
                                     }
                                     fresh.begin_fix_round(FixRound {
-                                        baseline,
                                         baseline_findings: verdict.findings.clone(),
+                                        baseline_grade: baseline_grade.clone(),
                                         lang: complete_lang,
                                         all_files: smoke_all_files.clone(),
                                         round: round as usize,
@@ -64209,6 +64477,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                         let fan_all_files = smoke_all_files.clone();
                         let fan_composite = delivery_on || spec_contract_enabled();
                         let fan_missing_gate = missing_deliverable_gate;
+                        let fan_baseline_grade = baseline_grade.clone();
                         let dev = dev_id.clone();
                         // Cloned OUTSIDE the Fn closure: fanout calls it once per group, so it may only borrow.
                         let decisions = user_decisions.clone();
@@ -64226,6 +64495,7 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 let facts = facts.clone();
                                 let sink_r = sink_r.clone();
                                 let taken = taken.clone();
+                                let baseline_grade = fan_baseline_grade.clone();
                                 async move {
                                     let task_id = format!("complete-fix::{}", g.file);
                                     sink_r.write_value(serde_json::json!({
@@ -64319,7 +64589,11 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                         )
                                         .await;
                                     let promoted = shard_changed
-                                        && repair_grade_promotes(&grade, baseline, &g.findings);
+                                        && repair_grade_promotes(
+                                            &grade,
+                                            &baseline_grade,
+                                            &g.findings,
+                                        );
                                     let verified = grade.count();
                                     if promoted {
                                         me.promote_speculative(&task_id).await;
@@ -64432,8 +64706,8 @@ pub async fn run_swarm(mut opts: RunOpts) -> Result<()> {
                                 missing_deliverable_gate,
                             )
                             .await;
-                        let promoted =
-                            join_changed && repair_grade_promotes(&grade, post_wave, &unassigned);
+                        let promoted = join_changed
+                            && repair_grade_promotes(&grade, &post_wave_grade, &unassigned);
                         let verified = grade.count();
                         if promoted {
                             smoke_fix_dispatcher.promote_speculative(&task_id).await;
