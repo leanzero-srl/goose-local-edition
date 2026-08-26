@@ -15,8 +15,8 @@ use goose_provider_types::permission::PermissionConfirmation;
 use goose_provider_types::retry::RetryConfig;
 use goose_swarm::{
     AdmittedWork, CompletedProviderRequest, ProviderLifecycle, ProviderNudgeDelivery,
-    ProviderNudgeSafetyGate, ProviderRequestKey, ProviderTerminalKind, StartedProviderRequest,
-    WorkRole,
+    ProviderNudgeSafetyGate, ProviderNudgeSafetySnapshot, ProviderRequestKey, ProviderTerminalKind,
+    StartedProviderRequest, WorkRole,
 };
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
@@ -309,6 +309,20 @@ pub(crate) struct ProviderStreamProgressSnapshot {
     pub(crate) structured_output_active: bool,
 }
 
+impl From<ProviderNudgeSafetySnapshot> for ProviderStreamProgressSnapshot {
+    fn from(snapshot: ProviderNudgeSafetySnapshot) -> Self {
+        Self {
+            revision: snapshot.provider_stream_revision,
+            chunks: snapshot.provider_stream_chunks,
+            bytes: snapshot.provider_stream_bytes,
+            structured_output_chunks: snapshot.provider_structured_output_chunks,
+            structured_output_bytes: snapshot.provider_structured_output_bytes,
+            last_progress_elapsed_ms: snapshot.provider_last_progress_elapsed_ms,
+            structured_output_active: snapshot.provider_structured_output_active,
+        }
+    }
+}
+
 pub(crate) struct ProviderStreamProgressMeter {
     started: Instant,
     snapshot: Mutex<ProviderStreamProgressSnapshot>,
@@ -383,7 +397,7 @@ impl ProviderStreamProgressMeter {
             .clone()
     }
 
-    fn reserve_progress_stable_nudge(
+    pub(crate) fn reserve_progress_stable_nudge(
         &self,
         capture: ProviderStreamProgressSnapshot,
         reserve: &mut dyn FnMut() -> std::result::Result<(), String>,
