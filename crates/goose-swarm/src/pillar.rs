@@ -691,151 +691,150 @@ pub fn render_synthesis_input(reports: &[CompiledPillarReport], max_chars: usize
     let mut reports = reports.iter().collect::<Vec<_>>();
     reports.sort_by_key(|report| report.pillar_id.as_str());
 
-    const HEADER: &str = "PILLAR RESEARCH SYNTHESIS";
-    const OWNER_SPEC_HEADER: &str = "[OWNER SPECS: INTERFACES AND ACCEPTANCE]";
-    let essential_line_count = reports.len().saturating_mul(2);
-    let essential_overhead = HEADER
-        .len()
-        .saturating_add(OWNER_SPEC_HEADER.len())
-        .saturating_add(essential_line_count.saturating_add(1));
-    let essential_line_budget = if essential_line_count == 0 {
-        0
-    } else {
-        max_chars
-            .saturating_sub(essential_overhead)
-            .checked_div(essential_line_count)
-            .unwrap_or(0)
-            .min(4_096)
-    };
-
-    let mut lines = vec![HEADER.to_string(), OWNER_SPEC_HEADER.to_string()];
-    for report in &reports {
-        lines.push(bounded_synthesis_list_line(
-            &format!("- {}/interfaces: ", report.pillar_id),
-            &report.interfaces,
-            essential_line_budget,
-        ));
-        lines.push(bounded_synthesis_list_line(
-            &format!("- {}/acceptance-tests: ", report.pillar_id),
-            &report.acceptance_tests,
-            essential_line_budget,
-        ));
-    }
-
-    let low_confidence = reports
-        .iter()
-        .copied()
-        .filter(|report| report.effective_confidence == Confidence::Low)
-        .collect::<Vec<_>>();
-    if !low_confidence.is_empty() {
-        lines.push("[LOW CONFIDENCE]".to_string());
-        for report in low_confidence {
-            let mut reasons = Vec::new();
-            if report.reported_confidence == Confidence::Low {
-                reasons.push("reported low".to_string());
-            }
-            if !report.missing_requirement_ids.is_empty() {
-                reasons.push(format!(
-                    "missing {}",
-                    report.missing_requirement_ids.join(",")
-                ));
-            }
-            if !report.unresolved_uncertainties.is_empty() {
-                reasons.push(format!(
-                    "{} unresolved item(s)",
-                    report.unresolved_uncertainties.len()
-                ));
-            }
-            if reasons.is_empty() {
-                reasons.push("evidence provenance not verified".to_string());
-            }
-            lines.push(bounded_synthesis_line(
-                &format!("- {}: {}", report.pillar_id, reasons.join("; ")),
-                2_048,
-            ));
-        }
-    }
-
-    lines.push("[OWNER CONSTRAINTS AND UNRESOLVED RATIONALES]".to_string());
-    for report in &reports {
-        for exclusion in &report.exclusions {
-            lines.push(bounded_synthesis_line(
-                &format!(
-                    "- {}/exclusion: {}",
-                    report.pillar_id,
-                    canonical_whitespace(exclusion)
-                ),
-                2_048,
-            ));
-        }
-        for uncertainty in &report.unresolved_uncertainties {
-            lines.push(bounded_synthesis_line(
-                &format!(
-                    "- {}/unresolved-rationale: {}",
-                    report.pillar_id,
-                    canonical_whitespace(uncertainty)
-                ),
-                2_048,
-            ));
-        }
-        if !report.missing_requirement_ids.is_empty() {
-            lines.push(bounded_synthesis_line(
-                &format!(
-                    "- {}/missing-requirements: {}",
-                    report.pillar_id,
-                    report.missing_requirement_ids.join(", ")
-                ),
-                2_048,
-            ));
-        }
-    }
-
-    let mut grouped = BTreeMap::<EvidenceClass, Vec<(&str, &CompiledResearchClaim)>>::new();
-    for report in &reports {
+    let mut requirement_rows = Vec::new();
+    let mut owner_rows = Vec::new();
+    for report in reports {
+        let mut claims_by_requirement = BTreeMap::<String, Vec<&CompiledResearchClaim>>::new();
         for claim in &report.claims {
-            grouped
-                .entry(claim.effective_class)
+            claims_by_requirement
+                .entry(claim.requirement_id.clone())
                 .or_default()
-                .push((&report.pillar_id, claim));
+                .push(claim);
         }
-    }
-    for claims in grouped.values_mut() {
-        claims.sort_by(|(left_pillar, left), (right_pillar, right)| {
-            (
-                left_pillar,
-                left.requirement_id.as_str(),
-                left.statement.as_str(),
-            )
-                .cmp(&(
-                    right_pillar,
-                    right.requirement_id.as_str(),
-                    right.statement.as_str(),
-                ))
-        });
-    }
-
-    for class in [
-        EvidenceClass::Unresolved,
-        EvidenceClass::Proven,
-        EvidenceClass::Supported,
-    ] {
-        let Some(class_claims) = grouped.get(&class) else {
-            continue;
-        };
-        lines.push(format!("[{}]", evidence_label(class)));
-        for (pillar_id, claim) in class_claims {
-            lines.push(bounded_synthesis_line(
-                &format!(
-                    "- {pillar_id}/{}: {}",
-                    claim.requirement_id,
-                    canonical_whitespace(&claim.statement)
+        for claims in claims_by_requirement.values_mut() {
+            claims.sort_by(|left, right| {
+                left.effective_class
+                    .cmp(&right.effective_class)
+                    .then_with(|| left.statement.cmp(&right.statement))
+            });
+        }
+        let requirement_ids = claims_by_requirement
+            .keys()
+            .cloned()
+            .chain(report.missing_requirement_ids.iter().cloned())
+            .collect::<BTreeSet<_>>();
+        for requirement_id in requirement_ids {
+            let (class, body) = match claims_by_requirement.get(&requirement_id) {
+                Some(claims) => {
+                    let class = claims
+                        .iter()
+                        .map(|claim| claim.effective_class)
+                        .max()
+                        .unwrap_or(EvidenceClass::Unresolved);
+                    let body = claims
+                        .iter()
+                        .map(|claim| canonical_whitespace(&claim.statement))
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    (class, body)
+                }
+                None => (
+                    EvidenceClass::Unresolved,
+                    "No model report claim is available in the pillar checkpoint.".to_string(),
                 ),
-                2_048,
-            ));
+            };
+            requirement_rows.push(SynthesisSemanticRow {
+                key: format!(
+                    "{}/{} [{}]",
+                    report.pillar_id,
+                    requirement_id,
+                    evidence_label(class)
+                ),
+                body,
+                weight: 3,
+            });
+        }
+
+        for (kind, values) in [
+            ("interfaces", &report.interfaces),
+            ("acceptance-tests", &report.acceptance_tests),
+            ("exclusions", &report.exclusions),
+            ("unresolved-rationales", &report.unresolved_uncertainties),
+        ] {
+            let mut values = values
+                .iter()
+                .map(|value| canonical_whitespace(value))
+                .collect::<Vec<_>>();
+            values.sort();
+            values.dedup();
+            owner_rows.push(SynthesisSemanticRow {
+                key: format!("{}/{kind}", report.pillar_id),
+                body: if values.is_empty() {
+                    "(none declared)".to_string()
+                } else {
+                    values.join(" | ")
+                },
+                weight: 1,
+            });
         }
     }
 
-    bound_lines(lines, max_chars)
+    render_fair_synthesis_rows(requirement_rows, owner_rows, max_chars)
+}
+
+#[derive(Debug)]
+struct SynthesisSemanticRow {
+    key: String,
+    body: String,
+    weight: usize,
+}
+
+fn render_fair_synthesis_rows(
+    requirement_rows: Vec<SynthesisSemanticRow>,
+    owner_rows: Vec<SynthesisSemanticRow>,
+    max_chars: usize,
+) -> String {
+    const HEADER: &str = "PILLAR RESEARCH SYNTHESIS\n[REQUIREMENT SEMANTIC ROWS]";
+    const OWNER_HEADER: &str = "[OWNER CONTRACT DIGESTS]";
+    let mut rows = requirement_rows
+        .iter()
+        .chain(owner_rows.iter())
+        .collect::<Vec<_>>();
+    let base_lines = rows
+        .iter()
+        .map(|row| format!("- {} {}: ", row.key, evidence_source_digest(&row.body)))
+        .collect::<Vec<_>>();
+    let separators = rows.len().saturating_add(2);
+    let minimum_chars = HEADER
+        .len()
+        .saturating_add(OWNER_HEADER.len())
+        .saturating_add(base_lines.iter().map(String::len).sum::<usize>())
+        .saturating_add(separators);
+    if minimum_chars > max_chars {
+        return bounded_synthesis_line(
+            &format!(
+                "SYNTHESIS_CAPACITY_ERROR rows={} minimum_chars={minimum_chars} available_chars={max_chars}",
+                rows.len()
+            ),
+            max_chars,
+        );
+    }
+
+    let total_weight = rows.iter().map(|row| row.weight).sum::<usize>().max(1);
+    let remaining = max_chars - minimum_chars;
+    let mut undistributed = remaining;
+    let mut undistributed_weight = total_weight;
+    let mut rendered_rows = Vec::with_capacity(rows.len());
+    for (row, prefix) in rows.drain(..).zip(base_lines) {
+        let allowance = if undistributed_weight == 0 {
+            0
+        } else {
+            undistributed.saturating_mul(row.weight) / undistributed_weight
+        };
+        let excerpt = bounded_synthesis_line(&row.body, allowance.min(2_048));
+        undistributed = undistributed.saturating_sub(excerpt.len());
+        undistributed_weight = undistributed_weight.saturating_sub(row.weight);
+        rendered_rows.push(format!("{prefix}{excerpt}"));
+    }
+
+    let requirement_count = requirement_rows.len();
+    let mut lines = vec![HEADER.to_string()];
+    lines.extend(rendered_rows.drain(..requirement_count));
+    lines.push(OWNER_HEADER.to_string());
+    lines.extend(rendered_rows);
+    let rendered = lines.join("\n");
+    debug_assert!(rendered.len() <= max_chars);
+    rendered
 }
 
 fn match_provenance(
@@ -1097,19 +1096,6 @@ fn evidence_label(class: EvidenceClass) -> &'static str {
     }
 }
 
-fn bounded_synthesis_list_line(prefix: &str, values: &[String], max_bytes: usize) -> String {
-    let body = if values.is_empty() {
-        "(none declared)".to_string()
-    } else {
-        values
-            .iter()
-            .map(|value| canonical_whitespace(value))
-            .collect::<Vec<_>>()
-            .join(" | ")
-    };
-    bounded_synthesis_line(&format!("{prefix}{body}"), max_bytes)
-}
-
 fn bounded_synthesis_line(line: &str, max_bytes: usize) -> String {
     if line.len() <= max_bytes {
         return line.to_string();
@@ -1123,29 +1109,6 @@ fn bounded_synthesis_line(line: &str, max_bytes: usize) -> String {
         end -= 1;
     }
     format!("{}{}", &line[..end], MARKER)
-}
-
-fn bound_lines(lines: Vec<String>, max_chars: usize) -> String {
-    let mut rendered = String::new();
-    for line in lines {
-        let separator = usize::from(!rendered.is_empty());
-        if rendered.len() + separator + line.len() > max_chars {
-            let marker = "[truncated]";
-            let separator = usize::from(!rendered.is_empty());
-            if rendered.len() + separator + marker.len() <= max_chars {
-                if !rendered.is_empty() {
-                    rendered.push('\n');
-                }
-                rendered.push_str(marker);
-            }
-            break;
-        }
-        if !rendered.is_empty() {
-            rendered.push('\n');
-        }
-        rendered.push_str(&line);
-    }
-    rendered
 }
 
 #[cfg(test)]
@@ -1396,15 +1359,18 @@ mod tests {
         .unwrap();
         let rendered = render_synthesis_input(&[compiled], 1_000);
         assert!(rendered.len() <= 1_000);
-        assert!(rendered.contains("ui/interfaces: StatusView"));
-        assert!(rendered.contains("ui/acceptance-tests: Render the dashboard"));
-        assert!(rendered.contains("ui/exclusion: Persistence implementation"));
+        assert!(rendered.contains("ui/interfaces"));
+        assert!(rendered.contains("StatusView"));
+        assert!(rendered.contains("ui/acceptance-tests"));
+        assert!(rendered.contains("Render the dashboard"));
+        assert!(rendered.contains("ui/exclusions"));
+        assert!(rendered.contains("Persistence implementation"));
         assert!(rendered.contains("[SUPPORTED]"));
         assert!(!rendered.contains(secret_receipt_body));
     }
 
     #[test]
-    fn tight_synthesis_bound_prioritizes_every_owner_interface_and_acceptance_test() {
+    fn synthesis_capacity_failure_never_persists_a_starved_prefix() {
         let source_body = "PRIVATE SOURCE BODY: the API status transition is atomic.";
         let api_report = compile_pillar_report_with_sources(
             &opening(),
@@ -1454,13 +1420,17 @@ mod tests {
             },
         ];
 
-        let rendered = render_synthesis_input(&compiled, 250);
-        assert!(rendered.len() <= 250);
+        let undersized = render_synthesis_input(&compiled, 250);
+        assert!(undersized.len() <= 250);
+        assert!(undersized.starts_with("SYNTHESIS_CAPACITY_ERROR"));
+        assert!(!undersized.contains("bulk UI claim"));
+
+        let rendered = render_synthesis_input(&compiled, 2_000);
         for essential in [
-            "api/interfaces: StatusApi",
-            "api/acceptance-tests: run api smoke",
-            "ui/interfaces: StatusView",
-            "ui/acceptance-tests: run ui smoke",
+            "api/interfaces",
+            "run api smoke",
+            "ui/interfaces",
+            "run ui smoke",
         ] {
             assert!(
                 rendered.contains(essential),
@@ -1468,7 +1438,7 @@ mod tests {
             );
         }
         assert!(!rendered.contains(source_body));
-        assert!(!rendered.contains("bulk UI claim"));
+        assert!(rendered.contains("bulk UI claim"));
     }
 
     #[test]
@@ -1484,9 +1454,72 @@ mod tests {
         draft.unresolved_uncertainties = vec!["Renderer availability is unknown".to_string()];
         let compiled = compile_pillar_report(&opening(), draft).unwrap();
         let rendered = render_synthesis_input(&[compiled], 700);
-        assert!(rendered.contains("[LOW CONFIDENCE]"));
         assert!(rendered.contains("[UNRESOLVED]"));
+        assert!(rendered.contains("unresolved-rationales"));
         assert!(!rendered.contains("[SUPPORTED]"));
+    }
+
+    #[test]
+    fn synthesis_fairly_covers_all_197_requirements_independent_of_input_order() {
+        let mut next_requirement = 1usize;
+        let reports = [59usize, 73, 65]
+            .into_iter()
+            .enumerate()
+            .map(|(pillar_index, requirement_count)| {
+                let claims = (0..requirement_count)
+                    .map(|_| {
+                        let requirement_id = format!("REQ-{next_requirement:03}");
+                        next_requirement += 1;
+                        CompiledResearchClaim {
+                            statement: format!(
+                                "Semantic implementation fact for {requirement_id}: {}",
+                                "bounded owner evidence ".repeat(24)
+                            ),
+                            requirement_id,
+                            reported_class: EvidenceClass::Supported,
+                            effective_class: EvidenceClass::Supported,
+                            provenance: ProvenanceMatch::NotClaimed,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                CompiledPillarReport {
+                    pillar_id: format!("pillar-{:02}", pillar_index + 1),
+                    reported_confidence: Confidence::High,
+                    effective_confidence: Confidence::High,
+                    claims,
+                    missing_requirement_ids: Vec::new(),
+                    unresolved_uncertainties: Vec::new(),
+                    acceptance_tests: vec![format!(
+                        "Execute pillar {} acceptance suite",
+                        pillar_index + 1
+                    )],
+                    interfaces: vec![format!("Pillar{}Port", pillar_index + 1)],
+                    exclusions: vec!["Sibling implementation ownership".to_string()],
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let rendered = render_synthesis_input(&reports, 64_000);
+        assert!(rendered.len() <= 64_000);
+        assert!(!rendered.contains("CAPACITY_ERROR"));
+        assert!(!rendered.contains("[truncated]"));
+        for requirement in 1..=197 {
+            let requirement_id = format!("REQ-{requirement:03}");
+            assert!(
+                rendered.contains(&format!("/{requirement_id} [SUPPORTED]")),
+                "starved {requirement_id}"
+            );
+        }
+
+        let mut shuffled = reports.clone();
+        shuffled.reverse();
+        for report in &mut shuffled {
+            report.claims.reverse();
+            report.acceptance_tests.reverse();
+            report.interfaces.reverse();
+            report.exclusions.reverse();
+        }
+        assert_eq!(rendered, render_synthesis_input(&shuffled, 64_000));
     }
 
     #[test]
