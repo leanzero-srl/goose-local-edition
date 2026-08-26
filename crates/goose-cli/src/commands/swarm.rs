@@ -11928,6 +11928,11 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 "retire-exhausted-source-and-preserve-prior-pillar-report",
                 "no-further-retry-preserve-prior-pillar-report",
             ),
+            (
+                PreSchedulerRetirementContinuation::PreservePartialResearchReport,
+                "retire-exhausted-source-and-preserve-typed-partial-research-report",
+                "no-further-retry-preserve-typed-partial-research-report",
+            ),
         ] {
             let authority = PreSchedulerSourceAuthority::research(continuation);
             assert_eq!(
@@ -11939,7 +11944,7 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
                 None
             );
             assert_eq!(
-                authority.response_schema_retirement_authority(WorkRole::ResearchEvidence),
+                authority.retirement_authority(WorkRole::ResearchEvidence),
                 Some(schema_authority)
             );
         }
@@ -11952,6 +11957,16 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
             PreSchedulerSourceAuthority::non_retryable(WorkRole::ResearchEvidence)
                 .recurrence_retirement_continuation(WorkRole::ResearchEvidence),
             None
+        );
+        assert_eq!(
+            PreSchedulerSourceAuthority::research_with_remaining_physical_hosts(1)
+                .retirement_continuation,
+            PreSchedulerRetirementContinuation::RetryDistinctPhysicalHost
+        );
+        assert_eq!(
+            PreSchedulerSourceAuthority::research_with_remaining_physical_hosts(0)
+                .retirement_continuation,
+            PreSchedulerRetirementContinuation::PreservePartialResearchReport
         );
     }
 
@@ -20061,9 +20076,9 @@ async fn run_research_host_failover<T, F, Fut, ObserveFailure>(
     mut observe_failure: ObserveFailure,
 ) -> Result<Option<T>>
 where
-    F: FnMut(ResearchPhysicalLane, usize) -> Fut,
+    F: FnMut(ResearchPhysicalLane, usize, Vec<String>) -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
-    ObserveFailure: FnMut(&ResearchPhysicalLane, usize, &anyhow::Error, &[String]),
+    ObserveFailure: FnMut(&ResearchPhysicalLane, usize, &anyhow::Error, &[String], &[String]),
 {
     let mut failed_tokens = Vec::<String>::new();
     let mut failed_physical_hosts = Vec::<String>::new();
@@ -20084,7 +20099,7 @@ where
         }
         let lease = match acquire_research_host_until_cancelled(
             scheduler,
-            remaining_tokens,
+            remaining_tokens.clone(),
             priority,
             unit_rank,
             format!("{label}:attempt-{}", failed_tokens.len().saturating_add(1)),
@@ -20105,7 +20120,16 @@ where
         }
         let lane = lease.lane.clone();
         let attempt = failed_tokens.len().saturating_add(1);
-        let result = call(lane.clone(), attempt).await;
+        let remaining_tokens_after_current = remaining_tokens
+            .into_iter()
+            .filter(|token| token != &lane.token)
+            .collect::<Vec<_>>();
+        let result = call(
+            lane.clone(),
+            attempt,
+            remaining_tokens_after_current.clone(),
+        )
+        .await;
         drop(lease);
         if admission_stop.is_cancelled() {
             return Ok(None);
@@ -20115,7 +20139,13 @@ where
             Err(error) => {
                 failed_tokens.push(lane.token.clone());
                 failed_physical_hosts.push(lane.physical_host_id.clone());
-                observe_failure(&lane, attempt, &error, &failed_tokens);
+                observe_failure(
+                    &lane,
+                    attempt,
+                    &error,
+                    &failed_tokens,
+                    &remaining_tokens_after_current,
+                );
             }
         }
     }
@@ -24515,6 +24545,7 @@ enum PreSchedulerRetirementContinuation {
     RetryDistinctPhysicalHost,
     RetrySamePhysicalHostOnce,
     PreservePriorPillarReport,
+    PreservePartialResearchReport,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24542,8 +24573,14 @@ impl PreSchedulerSourceAuthority {
         }
     }
 
-    const fn retryable_research_on_distinct_host() -> Self {
-        Self::research(PreSchedulerRetirementContinuation::RetryDistinctPhysicalHost)
+    const fn research_with_remaining_physical_hosts(
+        remaining_eligible_physical_hosts: usize,
+    ) -> Self {
+        if remaining_eligible_physical_hosts == 0 {
+            Self::research(PreSchedulerRetirementContinuation::PreservePartialResearchReport)
+        } else {
+            Self::research(PreSchedulerRetirementContinuation::RetryDistinctPhysicalHost)
+        }
     }
 
     fn recurrence_retirement_continuation(self, admitted_role: WorkRole) -> Option<&'static str> {
@@ -24561,10 +24598,13 @@ impl PreSchedulerSourceAuthority {
             PreSchedulerRetirementContinuation::PreservePriorPillarReport => {
                 Some("retire-exhausted-source-and-preserve-prior-pillar-report")
             }
+            PreSchedulerRetirementContinuation::PreservePartialResearchReport => {
+                Some("retire-exhausted-source-and-preserve-typed-partial-research-report")
+            }
         }
     }
 
-    fn response_schema_retirement_authority(self, admitted_role: WorkRole) -> Option<&'static str> {
+    fn retirement_authority(self, admitted_role: WorkRole) -> Option<&'static str> {
         self.recurrence_retirement_continuation(admitted_role)?;
         match self.retirement_continuation {
             PreSchedulerRetirementContinuation::None => None,
@@ -24576,6 +24616,9 @@ impl PreSchedulerSourceAuthority {
             }
             PreSchedulerRetirementContinuation::PreservePriorPillarReport => {
                 Some("no-further-retry-preserve-prior-pillar-report")
+            }
+            PreSchedulerRetirementContinuation::PreservePartialResearchReport => {
+                Some("no-further-retry-preserve-typed-partial-research-report")
             }
         }
     }
@@ -27767,7 +27810,7 @@ impl GooseAgentDispatcher {
                     .expect("a retirement-authorized schema source lost its continuation");
                 let retry_authority = source
                     .authority
-                    .response_schema_retirement_authority(source.lifecycle.admission().role)
+                    .retirement_authority(source.lifecycle.admission().role)
                     .expect("a retirement-authorized schema source lost its branch authority");
                 self.events.write_value(serde_json::json!({
                     "event": "research_response_schema_repeat_detected",
@@ -28428,9 +28471,16 @@ impl GooseAgentDispatcher {
         requirements: Arc<Vec<RequirementRecord>>,
         sources: Arc<Vec<ResearchAuthoritySource>>,
         lane: ResearchPhysicalLane,
+        source_authority: PreSchedulerSourceAuthority,
         partition_host_state: Arc<tokio::sync::Mutex<ResearchPartitionHostState>>,
         admission_stop: &tokio_util::sync::CancellationToken,
     ) -> Result<CompiledResearchClosurePartition> {
+        let retirement_continuation = source_authority
+            .recurrence_retirement_continuation(WorkRole::ResearchEvidence)
+            .expect("research jury source lost its retirement continuation");
+        let retirement_authority = source_authority
+            .retirement_authority(WorkRole::ResearchEvidence)
+            .expect("research jury source lost its retirement authority");
         let started = std::time::Instant::now();
         let immutable_prefix = format!(
             "COMPLETE IMMUTABLE CANONICAL REQUIREMENT LEDGER (byte-identical leading prefix for every target packet):\n{}\n\nEXACT AVAILABLE SOURCE CATALOG:\n{}",
@@ -28491,7 +28541,8 @@ impl GooseAgentDispatcher {
                     "correction": repeat.correction,
                     "state": repeat.state,
                     "provider_call_started": false,
-                    "retry_authority": "exclude-failed-physical-host-and-reschedule-distinct-host",
+                    "retry_authority": retirement_authority,
+                    "continuation": retirement_continuation,
                 }));
                 bail!(
                     "target authority packet `{}` repeated corrected request state on physical host `{}`",
@@ -28524,7 +28575,7 @@ impl GooseAgentDispatcher {
                 .run_response_only_agent_on_physical_host(
                     &lane.model_id,
                     &lane.physical_host_id,
-                    PreSchedulerSourceAuthority::retryable_research_on_distinct_host(),
+                    source_authority,
                     system.to_string(),
                     user,
                     Some(Response {
@@ -28601,7 +28652,8 @@ impl GooseAgentDispatcher {
                             "correction": repeat.correction,
                             "state": repeat.state,
                             "provider_call_started": true,
-                            "retry_authority": "exclude-failed-physical-host-and-reschedule-distinct-host",
+                            "retry_authority": retirement_authority,
+                            "continuation": retirement_continuation,
                         }));
                         bail!(
                             "target authority packet `{}` repeated compiler failure on physical host `{}` after correction: {message}",
@@ -28663,7 +28715,7 @@ impl GooseAgentDispatcher {
             }
             let lease = match acquire_research_host_until_cancelled(
                 &runtime.host_scheduler,
-                eligible_tokens,
+                eligible_tokens.clone(),
                 research_closure_partition_cost(&partition),
                 2,
                 format!("{}:{pass}", partition.partition_id),
@@ -28679,6 +28731,19 @@ impl GooseAgentDispatcher {
                 }
             };
             let lane = lease.lane.clone();
+            let remaining_eligible_physical_hosts = runtime
+                .lanes
+                .iter()
+                .filter(|candidate| {
+                    eligible_tokens.contains(&candidate.token)
+                        && candidate.physical_host_id != lane.physical_host_id
+                })
+                .map(|candidate| candidate.physical_host_id.as_str())
+                .collect::<HashSet<_>>();
+            let source_authority =
+                PreSchedulerSourceAuthority::research_with_remaining_physical_hosts(
+                    remaining_eligible_physical_hosts.len(),
+                );
             let result = self
                 .run_research_closure_semantic_pass_on_lane(
                     &runtime.stage,
@@ -28688,6 +28753,7 @@ impl GooseAgentDispatcher {
                     runtime.requirements.clone(),
                     runtime.sources.clone(),
                     lane.clone(),
+                    source_authority,
                     partition_host_state.clone(),
                     admission_stop,
                 )
@@ -28700,8 +28766,28 @@ impl GooseAgentDispatcher {
                 Ok(compiled) => return Ok(Some(compiled)),
                 Err(error) => {
                     failed_hosts.insert(lane.physical_host_id.clone());
+                    let remaining_eligible_physical_hosts = runtime
+                        .lanes
+                        .iter()
+                        .filter(|candidate| {
+                            !excluded_hosts.contains(&candidate.physical_host_id)
+                                && !failed_hosts.contains(&candidate.physical_host_id)
+                        })
+                        .map(|candidate| candidate.physical_host_id.as_str())
+                        .collect::<HashSet<_>>();
+                    let continuation =
+                        PreSchedulerSourceAuthority::research_with_remaining_physical_hosts(
+                            remaining_eligible_physical_hosts.len(),
+                        )
+                        .recurrence_retirement_continuation(WorkRole::ResearchEvidence)
+                        .expect("research authority retry branch lost its continuation");
+                    let event = if remaining_eligible_physical_hosts.is_empty() {
+                        "research_target_semantic_unit_exhausted"
+                    } else {
+                        "research_target_semantic_unit_rescheduled"
+                    };
                     self.events.write_value(serde_json::json!({
-                        "event": "research_target_semantic_unit_rescheduled",
+                        "event": event,
                         "stage": runtime.stage,
                         "cycle": runtime.cycle,
                         "pass": pass,
@@ -28709,6 +28795,8 @@ impl GooseAgentDispatcher {
                         "failed_physical_host_id": lane.physical_host_id,
                         "failed_hosts": failed_hosts,
                         "excluded_hosts": excluded_hosts,
+                        "remaining_eligible_physical_hosts": remaining_eligible_physical_hosts,
+                        "continuation": continuation,
                         "error": error.to_string(),
                     }));
                 }
@@ -28769,7 +28857,13 @@ impl GooseAgentDispatcher {
                 }
             };
             let lane = lease.lane.clone();
-            let (admitted, rejection_reason, claimed_hosts, failed_hosts) = {
+            let (
+                admitted,
+                rejection_reason,
+                claimed_hosts,
+                failed_hosts,
+                remaining_eligible_physical_hosts,
+            ) = {
                 let mut state = partition_host_state.lock().await;
                 let rejection_reason = if state.failed_hosts.contains(&lane.physical_host_id) {
                     Some("failed-while-scheduler-request-was-pending")
@@ -28779,11 +28873,18 @@ impl GooseAgentDispatcher {
                     None
                 };
                 let admitted = state.claim_host(&lane.physical_host_id);
+                let remaining_eligible_physical_hosts = runtime
+                    .lanes
+                    .iter()
+                    .filter(|candidate| state.host_is_available(&candidate.physical_host_id))
+                    .map(|candidate| candidate.physical_host_id.clone())
+                    .collect::<HashSet<_>>();
                 (
                     admitted,
                     rejection_reason,
                     state.claimed_hosts.clone(),
                     state.failed_hosts.clone(),
+                    remaining_eligible_physical_hosts,
                 )
             };
             if !admitted {
@@ -28821,8 +28922,13 @@ impl GooseAgentDispatcher {
                 "authored_cost": research_closure_partition_cost(&partition),
                 "prior_failed_physical_hosts": failed_hosts,
                 "paired_claimed_physical_hosts": claimed_hosts,
+                "remaining_eligible_physical_hosts": remaining_eligible_physical_hosts,
                 "admission_basis": "shared-maximum-cardinality-full-eligible-host-set",
             }));
+            let source_authority =
+                PreSchedulerSourceAuthority::research_with_remaining_physical_hosts(
+                    remaining_eligible_physical_hosts.len(),
+                );
             let result = self
                 .run_research_closure_semantic_pass_on_lane(
                     &runtime.stage,
@@ -28832,16 +28938,27 @@ impl GooseAgentDispatcher {
                     runtime.requirements.clone(),
                     runtime.sources.clone(),
                     lane.clone(),
+                    source_authority,
                     partition_host_state.clone(),
                     admission_stop,
                 )
                 .await;
-            let (claimed_hosts, failed_hosts) = {
+            let (claimed_hosts, failed_hosts, remaining_eligible_physical_hosts) = {
                 let mut state = partition_host_state.lock().await;
                 if result.is_err() {
                     state.fail_host(&lane.physical_host_id);
                 }
-                (state.claimed_hosts.clone(), state.failed_hosts.clone())
+                let remaining_eligible_physical_hosts = runtime
+                    .lanes
+                    .iter()
+                    .filter(|candidate| state.host_is_available(&candidate.physical_host_id))
+                    .map(|candidate| candidate.physical_host_id.clone())
+                    .collect::<HashSet<_>>();
+                (
+                    state.claimed_hosts.clone(),
+                    state.failed_hosts.clone(),
+                    remaining_eligible_physical_hosts,
+                )
             };
             drop(lease);
             self.events.write_value(serde_json::json!({
@@ -28856,12 +28973,31 @@ impl GooseAgentDispatcher {
                 "succeeded": result.is_ok(),
                 "paired_claimed_physical_hosts": claimed_hosts,
                 "partition_failed_physical_hosts": failed_hosts,
+                "remaining_eligible_physical_hosts": remaining_eligible_physical_hosts,
             }));
             match result {
                 Ok(compiled) => return Ok(Some(compiled)),
                 Err(error) => {
+                    let branch_authority =
+                        PreSchedulerSourceAuthority::research_with_remaining_physical_hosts(
+                            remaining_eligible_physical_hosts.len(),
+                        );
+                    let continuation = branch_authority
+                        .recurrence_retirement_continuation(WorkRole::ResearchEvidence)
+                        .expect("research jury retry branch lost its continuation");
+                    let (event, retry_basis) = if remaining_eligible_physical_hosts.is_empty() {
+                        (
+                            "research_target_semantic_unit_exhausted",
+                            "eligible-physical-host-roster-exhausted",
+                        )
+                    } else {
+                        (
+                            "research_target_semantic_unit_rescheduled",
+                            "shared-maximum-cardinality-host-scheduler",
+                        )
+                    };
                     self.events.write_value(serde_json::json!({
-                        "event": "research_target_semantic_unit_rescheduled",
+                        "event": event,
                         "stage": runtime.stage,
                         "cycle": runtime.cycle,
                         "pass": pass,
@@ -28869,7 +29005,9 @@ impl GooseAgentDispatcher {
                         "failed_physical_host_id": lane.physical_host_id,
                         "failed_hosts": failed_hosts,
                         "paired_claimed_hosts": claimed_hosts,
-                        "retry_basis": "shared-maximum-cardinality-host-scheduler",
+                        "remaining_eligible_physical_hosts": remaining_eligible_physical_hosts,
+                        "retry_basis": retry_basis,
+                        "continuation": continuation,
                         "error": error.to_string(),
                     }));
                     if admission_stop.is_cancelled() {
@@ -29077,6 +29215,14 @@ impl GooseAgentDispatcher {
         ));
         let calls = futures::stream::FuturesUnordered::new();
         for (_, (eligible_tokens, packets, group_cost)) in groups {
+            let eligible_physical_host_by_token = Arc::new(
+                runtime
+                    .lanes
+                    .iter()
+                    .filter(|lane| eligible_tokens.contains(&lane.token))
+                    .map(|lane| (lane.token.clone(), lane.physical_host_id.clone()))
+                    .collect::<HashMap<_, _>>(),
+            );
             let me = self.clone();
             let stage = runtime.stage.clone();
             let immutable_prefix = immutable_prefix.clone();
@@ -29103,6 +29249,8 @@ impl GooseAgentDispatcher {
                 let failure_stage = stage.clone();
                 let failure_label = group_label.clone();
                 let correction_admission_stop = admission_stop.clone();
+                let call_physical_host_by_token = eligible_physical_host_by_token.clone();
+                let failure_physical_host_by_token = eligible_physical_host_by_token.clone();
                 run_research_host_failover(
                     &host_scheduler,
                     eligible_tokens,
@@ -29110,7 +29258,7 @@ impl GooseAgentDispatcher {
                     3,
                     format!("research-target-citation:{group_label}"),
                     &admission_stop,
-                    move |lane, _attempt| {
+                    move |lane, _attempt, remaining_tokens| {
                         let me = me.clone();
                         let packets = packets.clone();
                         let packet_json = packet_json.clone();
@@ -29118,7 +29266,21 @@ impl GooseAgentDispatcher {
                         let immutable_prefix = immutable_prefix.clone();
                         let stage = call_stage.clone();
                         let correction_admission_stop = correction_admission_stop.clone();
+                        let remaining_eligible_physical_hosts = remaining_tokens
+                            .iter()
+                            .filter_map(|token| call_physical_host_by_token.get(token))
+                            .collect::<HashSet<_>>();
+                        let source_authority =
+                            PreSchedulerSourceAuthority::research_with_remaining_physical_hosts(
+                                remaining_eligible_physical_hosts.len(),
+                            );
                         async move {
+                            let retirement_continuation = source_authority
+                                .recurrence_retirement_continuation(WorkRole::ResearchEvidence)
+                                .expect("research citation source lost its retirement continuation");
+                            let retirement_authority = source_authority
+                                .retirement_authority(WorkRole::ResearchEvidence)
+                                .expect("research citation source lost its retirement authority");
                             let mut correction_feedback = String::new();
                             let mut correction_guard =
                                 ResearchCompilerCorrectionGuard::default();
@@ -29148,7 +29310,8 @@ impl GooseAgentDispatcher {
                                         "correction": repeat.correction,
                                         "state": repeat.state,
                                         "provider_call_started": false,
-                                        "retry_authority": "exclude-failed-physical-host-and-reschedule-independent-verifier",
+                                        "retry_authority": retirement_authority,
+                                        "continuation": retirement_continuation,
                                     }));
                                     bail!(
                                         "target citation audit repeated corrected request state on physical host `{}`",
@@ -29163,7 +29326,7 @@ impl GooseAgentDispatcher {
                                     .run_response_only_agent_on_physical_host(
                                         &lane.model_id,
                                         &lane.physical_host_id,
-                                        PreSchedulerSourceAuthority::retryable_research_on_distinct_host(),
+                                        source_authority,
                                         system.to_string(),
                                         user,
                                         Some(Response {
@@ -29220,7 +29383,8 @@ impl GooseAgentDispatcher {
                                                 "correction": repeat.correction,
                                                 "state": repeat.state,
                                                 "provider_call_started": true,
-                                                "retry_authority": "exclude-failed-physical-host-and-reschedule-independent-verifier",
+                                                "retry_authority": retirement_authority,
+                                                "continuation": retirement_continuation,
                                             }));
                                             bail!(
                                                 "target citation audit repeated compiler failure on physical host `{}` after correction: {message}",
@@ -29234,16 +29398,40 @@ impl GooseAgentDispatcher {
                             }
                         }
                     },
-                    move |lane, attempt, error, failed_tokens| {
+                    move |lane, attempt, error, failed_tokens, remaining_tokens| {
+                        let remaining_eligible_physical_hosts = remaining_tokens
+                            .iter()
+                            .filter_map(|token| failure_physical_host_by_token.get(token))
+                            .collect::<HashSet<_>>();
+                        let branch_authority =
+                            PreSchedulerSourceAuthority::research_with_remaining_physical_hosts(
+                                remaining_eligible_physical_hosts.len(),
+                            );
+                        let continuation = branch_authority
+                            .recurrence_retirement_continuation(WorkRole::ResearchEvidence)
+                            .expect("research citation retry branch lost its continuation");
+                        let (event, retry_basis) = if remaining_eligible_physical_hosts.is_empty() {
+                            (
+                                "research_target_citation_exhausted",
+                                "eligible-independent-verifier-roster-exhausted",
+                            )
+                        } else {
+                            (
+                                "research_target_citation_reassigned",
+                                "independent-eligible-verifier-remains",
+                            )
+                        };
                         retry_events.write_value(serde_json::json!({
-                            "event": "research_target_citation_reassigned",
+                            "event": event,
                             "stage": failure_stage,
                             "cycle": retry_cycle,
                             "requirement_group": failure_label,
                             "failed_physical_host_id": lane.physical_host_id,
                             "attempt": attempt,
                             "failed_lane_tokens": failed_tokens,
-                            "retry_basis": "independent-eligible-verifier-remains",
+                            "remaining_eligible_physical_hosts": remaining_eligible_physical_hosts,
+                            "retry_basis": retry_basis,
+                            "continuation": continuation,
                             "error": error.to_string(),
                         }));
                     },
@@ -30070,6 +30258,7 @@ impl GooseAgentDispatcher {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_pillar_owner_attempt(
         self: &Arc<Self>,
         opening: Arc<ResearchPillarOpening>,
@@ -39361,7 +39550,7 @@ mod fan_order_tests {
             &admission_stop,
             {
                 let provider_calls = provider_calls.clone();
-                move |lane, _attempt| {
+                move |lane, _attempt, _remaining_tokens| {
                     let provider_calls = provider_calls.clone();
                     async move {
                         if lane.physical_host_id == "replacement-c" {
@@ -39408,7 +39597,7 @@ mod fan_order_tests {
             },
             {
                 let failures = failures.clone();
-                move |lane, attempt, _, failed_tokens| {
+                move |lane, attempt, _, failed_tokens, _remaining_tokens| {
                     failures.lock().unwrap().push((
                         lane.physical_host_id.clone(),
                         attempt,
@@ -39463,7 +39652,7 @@ mod fan_order_tests {
             &admission_stop,
             {
                 let provider_calls = provider_calls.clone();
-                move |lane, _attempt| {
+                move |lane, _attempt, _remaining_tokens| {
                     let provider_calls = provider_calls.clone();
                     async move {
                         provider_calls
@@ -39497,7 +39686,7 @@ mod fan_order_tests {
                     }
                 }
             },
-            |_, _, _, _| {},
+            |_, _, _, _, _| {},
         )
         .await
         .unwrap()
@@ -39534,7 +39723,7 @@ mod fan_order_tests {
             &admission_stop,
             {
                 let attempts = attempts.clone();
-                move |lane, attempt| {
+                move |lane, attempt, _remaining_tokens| {
                     let attempts = attempts.clone();
                     async move {
                         attempts.lock().unwrap().push(lane.physical_host_id.clone());
@@ -39547,7 +39736,7 @@ mod fan_order_tests {
             },
             {
                 let failures = failures.clone();
-                move |lane, attempt, _, failed_tokens| {
+                move |lane, attempt, _, failed_tokens, _remaining_tokens| {
                     failures.lock().unwrap().push((
                         lane.physical_host_id.clone(),
                         attempt,
@@ -62758,9 +62947,9 @@ mod pre_scheduler_semantic_runtime_tests {
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum PillarReplayStreamMode {
-        RecurrentPending,
-        RecurrentThenFinal,
-        RecurrentStructuredThenFinal,
+        Pending,
+        ThenFinal,
+        StructuredThenFinal,
     }
 
     #[derive(Default)]
@@ -62851,7 +63040,7 @@ mod pre_scheduler_semantic_runtime_tests {
             let planner = request["required_integration_owner"]
                 .as_str()
                 .expect("pillar replay opening lost integration owner");
-            let pillar_count = requirement_ids.len().min(3).max(1);
+            let pillar_count = requirement_ids.len().clamp(1, 3);
             let mut cursor = 0usize;
             let pillars = (0..pillar_count)
                 .map(|index| {
@@ -63170,15 +63359,15 @@ mod pre_scheduler_semantic_runtime_tests {
             let mode = self.take_next_stream_mode(phase, &user);
             self.record_call(&model_config.model_name, phase, user);
             Ok(match mode {
-                Some(PillarReplayStreamMode::RecurrentPending) => {
+                Some(PillarReplayStreamMode::Pending) => {
                     ResearchCorrectionRuntimeProvider::recurrent_then_pending(
                         &model_config.model_name,
                     )
                 }
-                Some(PillarReplayStreamMode::RecurrentThenFinal) => {
+                Some(PillarReplayStreamMode::ThenFinal) => {
                     Self::recurrent_then_final_output(&model_config.model_name, output, false)
                 }
-                Some(PillarReplayStreamMode::RecurrentStructuredThenFinal) => {
+                Some(PillarReplayStreamMode::StructuredThenFinal) => {
                     Self::recurrent_then_final_output(&model_config.model_name, output, true)
                 }
                 None => ResearchCorrectionRuntimeProvider::finished_final_output(
@@ -63963,7 +64152,7 @@ mod pre_scheduler_semantic_runtime_tests {
         const TOKEN_C: &str = "v21-recurrence-pillar-lane-c";
 
         let provider = Arc::new(PillarReplayProvider::default());
-        provider.set_next_phase_mode("owner-attempt-1", PillarReplayStreamMode::RecurrentPending);
+        provider.set_next_phase_mode("owner-attempt-1", PillarReplayStreamMode::Pending);
         let harness = pillar_replay_runtime_harness_with_provider(
             &[
                 (TOKEN_A, MODEL_A, HOST_A),
@@ -64118,7 +64307,7 @@ mod pre_scheduler_semantic_runtime_tests {
         const TOKEN: &str = "v21-one-host-recurrence-pillar-lane";
 
         let provider = Arc::new(PillarReplayProvider::default());
-        provider.set_next_phase_mode("owner-attempt-1", PillarReplayStreamMode::RecurrentPending);
+        provider.set_next_phase_mode("owner-attempt-1", PillarReplayStreamMode::Pending);
         let harness =
             pillar_replay_runtime_harness_with_provider(&[(TOKEN, MODEL, HOST)], provider).await;
 
@@ -64213,7 +64402,7 @@ mod pre_scheduler_semantic_runtime_tests {
         const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
 
         let provider = Arc::new(PillarReplayProvider::default());
-        provider.set_next_phase_mode("owner-attempt-2", PillarReplayStreamMode::RecurrentPending);
+        provider.set_next_phase_mode("owner-attempt-2", PillarReplayStreamMode::Pending);
         let harness =
             pillar_replay_runtime_harness_with_provider(&[(TOKEN, MODEL, HOST)], provider).await;
 
@@ -64324,7 +64513,7 @@ mod pre_scheduler_semantic_runtime_tests {
         let provider = Arc::new(PillarReplayProvider::default());
         provider.set_next_phase_mode(
             "owner-attempt-1",
-            PillarReplayStreamMode::RecurrentStructuredThenFinal,
+            PillarReplayStreamMode::StructuredThenFinal,
         );
         let harness = pillar_replay_runtime_harness_with_provider(
             &[
@@ -64408,8 +64597,8 @@ mod pre_scheduler_semantic_runtime_tests {
         const TOKEN_C: &str = "v21-authority-pillar-lane-c";
 
         let provider = Arc::new(PillarReplayProvider::default());
-        provider.set_next_phase_mode("opening", PillarReplayStreamMode::RecurrentThenFinal);
-        provider.set_next_phase_mode("planner", PillarReplayStreamMode::RecurrentThenFinal);
+        provider.set_next_phase_mode("opening", PillarReplayStreamMode::ThenFinal);
+        provider.set_next_phase_mode("planner", PillarReplayStreamMode::ThenFinal);
         let harness = pillar_replay_runtime_harness_with_provider(
             &[
                 (TOKEN_A, MODEL_A, HOST_A),
@@ -65079,6 +65268,87 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
+    async fn production_recurrent_final_host_jury_retires_into_typed_partial_preservation() {
+        const PARTITION: &str = "target-section-runtime-final-host-recurrence";
+        const REQUIREMENT: &str = "REQ-runtime-final-host-recurrence";
+        const MODEL: &str = "runtime-final-host-recurrence-model";
+        const HOST: &str = "runtime-final-host-recurrence-host";
+        const TOKEN: &str = "runtime-final-host-recurrence-lane";
+
+        let mut harness = research_correction_runtime_harness_with_timeout(
+            &[(TOKEN, MODEL, HOST)],
+            HashMap::new(),
+            4,
+        )
+        .await;
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements =
+            Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        harness.provider.recur_next_call(MODEL);
+
+        let error = tokio::time::timeout(
+            Duration::from_secs(8),
+            harness.dispatcher.run_research_closure_partition_pair_unit(
+                harness.runtime.as_ref(),
+                PairedRetryingFanStage::First,
+                ResearchClosurePartition {
+                    partition_id: PARTITION.to_string(),
+                    candidates: vec![correction_runtime_candidate(REQUIREMENT)],
+                },
+                Arc::new(tokio::sync::Mutex::new(
+                    ResearchPartitionHostState::default(),
+                )),
+                &tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("the final-host recurrent jury did not terminate")
+        .expect_err("the final-host recurrent jury invented another eligible host");
+        assert!(is_research_authority_exhaustion(&error));
+        assert_eq!(harness.provider.call_count(MODEL), 1);
+
+        let events = harness.sink.values();
+        let retirement = events
+            .iter()
+            .find(|event| event["event"] == "pre_scheduler_recurrent_source_retired")
+            .expect("the final-host recurrent jury was not retired");
+        assert_eq!(retirement["physical_host_id"], HOST);
+        assert_eq!(retirement["confirmations"], 2);
+        assert_eq!(
+            retirement["continuation"],
+            "retire-exhausted-source-and-preserve-typed-partial-research-report"
+        );
+        let exhausted = events
+            .iter()
+            .find(|event| event["event"] == "research_target_semantic_unit_exhausted")
+            .expect("the final jury host did not report roster exhaustion");
+        assert_eq!(exhausted["failed_physical_host_id"], HOST);
+        assert_eq!(
+            exhausted["retry_basis"],
+            "eligible-physical-host-roster-exhausted"
+        );
+        assert_eq!(
+            exhausted["continuation"],
+            "retire-exhausted-source-and-preserve-typed-partial-research-report"
+        );
+        assert!(exhausted["remaining_eligible_physical_hosts"]
+            .as_array()
+            .is_some_and(Vec::is_empty));
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "research_target_semantic_unit_rescheduled"));
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["physical_host_id"] == HOST
+                && event["receipt"]["kind"] == "cancelled"
+        }));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the final-host recurrent jury lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
     async fn production_terminal_after_active_invalid_jury_does_not_admit_correction() {
         const PARTITION: &str = "target-section-runtime-active-terminal-jury";
         const REQUIREMENT: &str = "REQ-runtime-active-terminal-jury";
@@ -65414,6 +65684,123 @@ mod pre_scheduler_semantic_runtime_tests {
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
             .expect("schema-repeat lifecycle did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_final_host_citation_schema_repeat_preserves_partial_without_retry() {
+        const REQUIREMENT: &str = "REQ-runtime-final-citation-schema-repeat";
+        const MODEL_A: &str = "runtime-final-citation-author-model";
+        const MODEL_B: &str = "runtime-final-citation-endorser-model";
+        const MODEL_C: &str = "runtime-final-citation-verifier-model";
+        const HOST_A: &str = "runtime-final-citation-author-host";
+        const HOST_B: &str = "runtime-final-citation-endorser-host";
+        const HOST_C: &str = "runtime-final-citation-verifier-host";
+        const SECRET: &str = "private-final-citation-schema-value";
+
+        let invalid = serde_json::json!({
+            "complete": false,
+            "verdicts": SECRET,
+        });
+        let mut scripts = HashMap::new();
+        scripts.insert(MODEL_C.to_string(), vec![invalid.clone(), invalid]);
+        let mut harness = research_correction_runtime_harness(
+            &[
+                ("final-citation-lane-a", MODEL_A, HOST_A),
+                ("final-citation-lane-b", MODEL_B, HOST_B),
+                ("final-citation-lane-c", MODEL_C, HOST_C),
+            ],
+            scripts,
+        )
+        .await;
+        Arc::get_mut(&mut harness.runtime).unwrap().requirements =
+            Arc::new(vec![correction_runtime_requirement(REQUIREMENT)]);
+        let candidate = correction_runtime_candidate(REQUIREMENT);
+        let decision = ResearchClosureAssessment {
+            requirement_id: REQUIREMENT.to_string(),
+            complete: true,
+            authority_requirement_ids: vec![REQUIREMENT.to_string()],
+            evidence_ids: Vec::new(),
+            gaps: Vec::new(),
+            rationale: "The canonical requirement settles this target.".to_string(),
+        };
+        let decision_sources = HashMap::from([(
+            REQUIREMENT.to_string(),
+            ResearchAuthorityDecisionSources {
+                models: vec![MODEL_A.to_string(), MODEL_B.to_string()],
+                physical_host_ids: vec![HOST_A.to_string(), HOST_B.to_string()],
+            },
+        )]);
+
+        let error = match harness
+            .dispatcher
+            .run_research_target_citation_audit(
+                harness.runtime.as_ref(),
+                &[candidate],
+                &[decision],
+                &decision_sources,
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+        {
+            Ok(_) => panic!("the final citation verifier invented another eligible host"),
+            Err(error) => error,
+        };
+        assert!(is_research_authority_exhaustion(&error));
+        assert_eq!(harness.provider.call_count(MODEL_A), 0);
+        assert_eq!(harness.provider.call_count(MODEL_B), 0);
+        assert_eq!(harness.provider.call_count(MODEL_C), 2);
+
+        let events = harness.sink.values();
+        let repeat = events
+            .iter()
+            .find(|event| event["event"] == "research_response_schema_repeat_detected")
+            .expect("the final citation verifier did not detect its exact schema repeat");
+        assert_eq!(repeat["physical_host_id"], HOST_C);
+        assert_eq!(repeat["confirmations"], 2);
+        assert_eq!(
+            repeat["retry_authority"],
+            "no-further-retry-preserve-typed-partial-research-report"
+        );
+        assert_eq!(
+            repeat["continuation"],
+            "retire-exhausted-source-and-preserve-typed-partial-research-report"
+        );
+        assert!(!repeat.to_string().contains(SECRET));
+        let exhausted = events
+            .iter()
+            .find(|event| event["event"] == "research_target_citation_exhausted")
+            .expect("the final citation verifier did not report roster exhaustion");
+        assert_eq!(exhausted["failed_physical_host_id"], HOST_C);
+        assert_eq!(
+            exhausted["retry_basis"],
+            "eligible-independent-verifier-roster-exhausted"
+        );
+        assert_eq!(
+            exhausted["continuation"],
+            "retire-exhausted-source-and-preserve-typed-partial-research-report"
+        );
+        assert!(exhausted["remaining_eligible_physical_hosts"]
+            .as_array()
+            .is_some_and(Vec::is_empty));
+        assert!(!events
+            .iter()
+            .any(|event| event["event"] == "research_target_citation_reassigned"));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event["event"] == "broker_provider_terminal_observed"
+                        && event["admission"]["model_id"] == MODEL_C
+                        && event["receipt"]["kind"] == "finished"
+                })
+                .count(),
+            2
+        );
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the final citation schema-repeat lifecycle did not drain")
             .unwrap();
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
@@ -65872,7 +66259,31 @@ mod pre_scheduler_semantic_runtime_tests {
         assert_eq!(harness.provider.call_count(MODEL_A), 1);
         assert_eq!(harness.provider.call_count(MODEL_B), 2);
         assert_eq!(harness.provider.call_count(MODEL_C), 2);
-        assert!(harness.sink.has("research_target_partition_degraded"));
+        let events = harness.sink.values();
+        assert!(events
+            .iter()
+            .any(|event| event["event"] == "research_target_partition_degraded"));
+        let final_host_repeat = events
+            .iter()
+            .find(|event| {
+                event["event"] == "research_target_jury_correction_repeat_detected"
+                    && event["retry_authority"]
+                        == "no-further-retry-preserve-typed-partial-research-report"
+            })
+            .expect("the final jury host retained distinct-host retry authority");
+        assert_eq!(
+            final_host_repeat["continuation"],
+            "retire-exhausted-source-and-preserve-typed-partial-research-report"
+        );
+        let final_host = final_host_repeat["physical_host_id"]
+            .as_str()
+            .expect("the final jury repeat lost its physical host");
+        assert!(events.iter().any(|event| {
+            event["event"] == "research_target_semantic_unit_exhausted"
+                && event["failed_physical_host_id"] == final_host
+                && event["continuation"]
+                    == "retire-exhausted-source-and-preserve-typed-partial-research-report"
+        }));
         tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
             .await
             .expect("typed degraded partition lifecycle did not drain")
