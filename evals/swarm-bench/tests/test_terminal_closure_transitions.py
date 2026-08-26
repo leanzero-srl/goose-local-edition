@@ -272,5 +272,103 @@ class MonitorIncidentPolicyTests(unittest.TestCase):
             self.supervisor(rows).monitor_terminal_row({"terminal_complete": True})
 
 
+class PublicationReceiptTests(unittest.TestCase):
+    def test_publication_rejects_unrecorded_scorer_authorization(self) -> None:
+        supervisor = object.__new__(closure.TerminalClosure)
+        supervisor.config = {
+            "closure_generation": closure.V19_GENERATION,
+            "expected": {
+                "spec_sha256": closure.V19_SPEC_SHA256,
+                "predecessor_scorer_sha256": (
+                    closure.V19_PREDECESSOR_SCORER_SHA256
+                ),
+                "scorer_sha256": closure.V19_SCORER_SHA256,
+                "thresholds_sha256": closure.V19_THRESHOLDS_SHA256,
+                "scorer_change_authorization": (
+                    closure.V19_SCORER_CHANGE_AUTHORIZATION
+                ),
+            },
+        }
+        provenance = {
+            "spec_sha256": closure.V19_SPEC_SHA256,
+            "predecessor_scorer_sha256": closure.V19_PREDECESSOR_SCORER_SHA256,
+            "scorer_sha256": closure.V19_SCORER_SHA256,
+            "thresholds_sha256": closure.V19_THRESHOLDS_SHA256,
+            "scorer_change_authorization": {},
+        }
+        with self.assertRaisesRegex(
+            closure.ClosureError, "authoritative SB7 hash provenance"
+        ):
+            supervisor.validate_v19_publication_fleet({}, provenance)
+
+    def test_create_only_receipt_requires_positive_target_absence_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_dir = pathlib.Path(temporary)
+            authoritative_path = state_dir / "authoritative-verdict.json"
+            authoritative_path.write_text(
+                json.dumps({"fixture_seed": "0123456789abcdef"}) + "\n",
+                encoding="utf-8",
+            )
+            (state_dir / "scoring-provenance.json").write_text(
+                json.dumps({"fixture_seed": "0123456789abcdef"}) + "\n",
+                encoding="utf-8",
+            )
+            supervisor = object.__new__(closure.TerminalClosure)
+            supervisor.state_dir = state_dir
+            supervisor.config = {
+                "expected": {"fixture_seed": "0123456789abcdef"},
+                "publication": {
+                    "target_document_id": closure.V19_TARGET_DOCUMENT_ID,
+                    "protected_document_ids": list(
+                        closure.V19_PROTECTED_DOCUMENT_ID_ORDER
+                    ),
+                },
+            }
+            supervisor.validate_v19_publication_fleet = lambda *_args: None
+            receipt = {
+                "target_document_id": closure.V19_TARGET_DOCUMENT_ID,
+                "protected_document_ids": list(
+                    closure.V19_PROTECTED_DOCUMENT_ID_ORDER
+                ),
+                "protected_before_sha256": "1" * 64,
+                "protected_after_sha256": "1" * 64,
+                "protected_positive_control_ids": list(
+                    closure.V19_PROTECTED_DOCUMENT_ID_ORDER
+                ),
+                "authoritative_verdict_sha256": closure.sha256_file(
+                    authoritative_path
+                ),
+                "create_only": True,
+                "verification": {
+                    "zero_rc": True,
+                    "board_json_ld": "ItemList",
+                    "run_json_ld": "Dataset",
+                    "asset_checks": [{"ok": True}],
+                    "telemetry_sha256": "2" * 64,
+                    "sanity_exact": True,
+                    "screenshots_exact": True,
+                    "no_cache_requests": True,
+                },
+            }
+            with self.assertRaisesRegex(
+                closure.ClosureError, "positive target-absence proof"
+            ):
+                supervisor.validate_publication_receipt(receipt)
+            receipt["target_absent_before"] = True
+            receipt["protected_positive_control_ids"] = list(
+                closure.V19_PROTECTED_DOCUMENT_ID_ORDER[1:]
+            )
+            with self.assertRaisesRegex(
+                closure.ClosureError, "protected-document positive controls"
+            ):
+                supervisor.validate_publication_receipt(receipt)
+            receipt["protected_positive_control_ids"] = list(
+                closure.V19_PROTECTED_DOCUMENT_ID_ORDER
+            )
+            self.assertEqual(
+                supervisor.validate_publication_receipt(receipt), receipt
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
