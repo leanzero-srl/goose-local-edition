@@ -1452,7 +1452,7 @@ def generate_successor(
         if (
             path.is_symlink()
             or not path.is_file()
-            or read_stable_bytes(path, read_only=True) != payload
+            or read_stable_bytes(path, read_only=mode & 0o222 == 0) != payload
             or stat.S_IMODE(path.stat().st_mode) != mode
         ):
             raise SuccessorBindingError(
