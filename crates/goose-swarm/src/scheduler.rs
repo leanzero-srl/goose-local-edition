@@ -616,12 +616,17 @@ pub struct RunReport {
     /// remains unresolved. A salvaged id therefore appears in both `salvaged` and `failed` until a
     /// typed full-ruler consumer exists; existing CLI consumers fail closed by reading this field.
     pub failed: Vec<TaskId>,
+    /// Ordinary task attempts that exhausted without proving their owned artifacts. These remain
+    /// in `failed` until the final whole-product ruler proves a repaired tree, but unlike an
+    /// integrity failure they do not poison the rest of the build DAG. The typed evidence names
+    /// the exact obligation that the existing capability/final-repair path must recover.
+    pub unavailable: Vec<TaskUnavailableEvidence>,
     /// Ids of opportunistic/replanner-added (bonus) tasks — their failure must NOT fail the run.
     /// Unverified salvage is never bonus-exempt and is omitted from this projection.
     pub bonus: Vec<TaskId>,
-    /// Owned files carried by every DONE or SALVAGED task in the FINAL dag — including files added by
-    /// replan/split after the caller's pre-run snapshot. Salvaged files remain in verification scope;
-    /// `done`, `salvaged`, and the typed receipt remain separate truth in this report.
+    /// Owned files carried by every DONE, SALVAGED, or typed UNAVAILABLE task in the FINAL dag —
+    /// including files added by replan/split after the caller's pre-run snapshot. Missing unavailable
+    /// artifacts remain in final verification scope rather than disappearing with the failed task.
     pub planned_files: Vec<String>,
     pub results: HashMap<TaskId, String>,
     pub context_json: serde_json::Value,
@@ -638,9 +643,9 @@ fn fail_closed_report_classification(
     salvaged: &[TaskId],
     bonus_ids: &HashSet<TaskId>,
 ) -> (Vec<TaskId>, Vec<TaskId>) {
-    // No FullRepairRuler consumer exists yet. Preserve the provisional classification, but put
-    // every unresolved salvage in the field existing delivery/CLI consumers already treat as
-    // authoritative for a non-green run.
+    // The scheduler never adjudicates a later repair ruler. Preserve the provisional
+    // classification in the field every delivery/CLI consumer already treats as non-green; a
+    // typed outer consumer may clear it only after its own full-tree proof.
     failed.extend(salvaged.iter().cloned());
     failed.sort();
     failed.dedup();
@@ -656,11 +661,14 @@ fn fail_closed_report_classification(
 #[derive(Debug, Serialize, Clone)]
 pub struct TaskOutcome {
     pub task_id: TaskId,
-    /// `done` | `salvaged` | `failed` | `incomplete`.
+    /// `done` | `salvaged` | `unavailable` | `failed` | `incomplete`.
     pub status: String,
     /// Compatibility projection of `completion`.
     pub salvaged: bool,
     pub completion: Option<TaskCompletionDisposition>,
+    /// Engine-authored reason this task could not produce a completion receipt. Present only for
+    /// the opt-in continuation path; a failed integrity check never masquerades as Unavailable.
+    pub unavailable: Option<TaskUnavailableEvidence>,
     /// Device of the final attempt.
     pub device: Option<String>,
     pub model: Option<String>,
@@ -675,6 +683,25 @@ pub struct TaskOutcome {
     /// task's failure is a MODEL self-report, never a deterministic engine event — the hard completion gate
     /// must exclude it from the green-blocking set so a judge's dissent can never veto a good app (C1).
     pub owns_nothing: bool,
+}
+
+#[derive(Debug, Serialize, Clone, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskUnavailableKind {
+    AttemptsExhausted,
+    DispatchUnavailable,
+    DeterministicSupervisorExhausted,
+}
+
+#[derive(Debug, Serialize, Clone, Eq, PartialEq)]
+pub struct TaskUnavailableEvidence {
+    pub task_id: TaskId,
+    pub kind: TaskUnavailableKind,
+    pub attempt: u32,
+    pub detail: String,
+    pub required_files: Vec<String>,
+    pub missing_files: Vec<String>,
+    pub continued_dependents: Vec<TaskId>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1245,6 +1272,7 @@ struct State {
     restored_attempts: HashMap<TaskId, u32>,
     max_attempts: u32,
     degrade_on_stall: bool,
+    continue_on_unavailable: bool,
     sink: Arc<dyn EventSink>,
     attempt_started_at: HashMap<TaskId, Instant>,
     attempt_log: HashMap<TaskId, Vec<AttemptRecord>>,
@@ -1328,6 +1356,7 @@ struct State {
     /// interleave. If that invariant is ever relaxed this must become a per-task map.
     judge_node: Option<String>,
     task_completion: HashMap<String, TaskCompletionDisposition>,
+    task_unavailable: HashMap<TaskId, TaskUnavailableEvidence>,
     /// Artifact state at the task's first claim. Salvage must prove the current artifact set differs;
     /// a non-empty file that predates the worker is evidence of existence, not evidence of work.
     salvage_artifact_baselines: HashMap<TaskId, SalvageArtifactSnapshot>,
@@ -2150,6 +2179,131 @@ impl State {
         }
     }
 
+    fn mark_unavailable_and_continue(
+        &mut self,
+        tid: &str,
+        attempt: u32,
+        kind: TaskUnavailableKind,
+        detail: String,
+    ) -> bool {
+        let (mut required_files, mut continued_dependents) = {
+            let node = &self.dag.tasks[tid];
+            (
+                node.spec.owned_files.clone(),
+                self.dag.dependents.get(tid).cloned().unwrap_or_default(),
+            )
+        };
+        required_files.sort();
+        required_files.dedup();
+        continued_dependents.sort();
+        continued_dependents.dedup();
+        let mut missing_files = Vec::new();
+        for path in &required_files {
+            match std::fs::symlink_metadata(path) {
+                Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                    let integrity = format!(
+                        "owned artifact integrity violation: `{path}` exists but is not a regular file"
+                    );
+                    if let Some(record) = self
+                        .attempt_log
+                        .get_mut(tid)
+                        .and_then(|records| records.last_mut())
+                    {
+                        record.outcome = "integrity_failed".to_string();
+                        record.error = Some(integrity);
+                    }
+                    self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
+                    self.fail_descendants(tid);
+                    return false;
+                }
+                Ok(metadata)
+                    if metadata.len() == 0
+                        && !path.ends_with("__init__.py")
+                        && !path.ends_with("py.typed") =>
+                {
+                    missing_files.push(path.clone());
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    missing_files.push(path.clone());
+                }
+                Err(error) => {
+                    let integrity =
+                        format!("owned artifact integrity check failed for `{path}`: {error}");
+                    if let Some(record) = self
+                        .attempt_log
+                        .get_mut(tid)
+                        .and_then(|records| records.last_mut())
+                    {
+                        record.outcome = "integrity_failed".to_string();
+                        record.error = Some(integrity);
+                    }
+                    self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
+                    self.fail_descendants(tid);
+                    return false;
+                }
+            }
+        }
+
+        {
+            let node = self.dag.tasks.get_mut(tid).unwrap();
+            node.state = TaskState::Failed;
+            node.result = None;
+            node.avoid_device = None;
+        }
+
+        let evidence = TaskUnavailableEvidence {
+            task_id: tid.to_string(),
+            kind,
+            attempt,
+            detail,
+            required_files,
+            missing_files,
+            continued_dependents: continued_dependents.clone(),
+        };
+        self.task_unavailable
+            .insert(tid.to_string(), evidence.clone());
+        self.sink.emit(&SwarmEvent::TaskUnavailable {
+            evidence: evidence.clone(),
+        });
+
+        for dependent_id in continued_dependents {
+            let should_ready = {
+                let dependent = self.dag.tasks.get_mut(&dependent_id).unwrap();
+                if dependent.state.is_terminal() {
+                    continue;
+                }
+                if dependent.indegree_remaining > 0 {
+                    dependent.indegree_remaining -= 1;
+                }
+                dependent.indegree_remaining == 0 && dependent.state == TaskState::Pending
+            };
+            let hint = format!(
+                "dependency '{tid}' is UNAVAILABLE and produced no completion receipt. Continue only your own obligation against the compiled contract and the tree that exists. Do not pretend the missing dependency exists and do not edit its owned files; use an explicit isolation/fallback where your contract permits one. The final capability repair and whole-product ruler retain the missing obligation."
+            );
+            match self.prior_hints.entry(dependent_id.clone()) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if !entry.get().contains(&hint) {
+                        entry.get_mut().push_str("; ");
+                        entry.get_mut().push_str(&hint);
+                    }
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(hint);
+                }
+            }
+            if should_ready {
+                let dependent = self.dag.tasks.get_mut(&dependent_id).unwrap();
+                dependent.state = TaskState::Ready;
+                self.ready.push(Ranked {
+                    fan_out: dependent.fan_out,
+                    id: dependent_id,
+                });
+            }
+        }
+        true
+    }
+
     fn complete(&mut self, tid: &str, attempt: u32, res: Result<TaskRunOutput, DispatchError>) {
         // Ignore a completion from an attempt the judge already superseded (killed + re-dispatched):
         // its device and file holds were released when the judge intervened, so this stale future must
@@ -2365,7 +2519,7 @@ impl State {
                 let (msg, is_content) = match e {
                     DispatchError::Transient(m) => (m, false),
                     DispatchError::ContentRetry(m) => (m, true),
-                    DispatchError::Terminal(_) => unreachable!(),
+                    DispatchError::Unavailable(_) | DispatchError::Terminal(_) => unreachable!(),
                 };
                 self.attempt_log
                     .entry(tid.to_string())
@@ -2457,14 +2611,24 @@ impl State {
                             tool_calls: Vec::new(),
                         });
                     } else {
-                        self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
-                        self.fail_descendants(tid);
+                        let continued = if self.continue_on_unavailable {
+                            self.mark_unavailable_and_continue(
+                                tid,
+                                attempt,
+                                TaskUnavailableKind::AttemptsExhausted,
+                                msg.clone(),
+                            )
+                        } else {
+                            self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
+                            self.fail_descendants(tid);
+                            false
+                        };
                         let ended_because = self.last_attempt_error(tid);
                         self.sink.emit(&SwarmEvent::TaskCompleted {
                             task_id: tid.to_string(),
                             salvaged: false,
                             completion: None,
-                            status: "failed".to_string(),
+                            status: if continued { "unavailable" } else { "failed" }.to_string(),
                             device: dev_id,
                             model: model_id,
                             attempts,
@@ -2502,6 +2666,45 @@ impl State {
                         transient: true,
                     });
                 }
+            }
+            Err(DispatchError::Unavailable(msg)) => {
+                self.attempt_log
+                    .entry(tid.to_string())
+                    .or_default()
+                    .push(AttemptRecord {
+                        device: dev_id.clone(),
+                        model: model_id.clone(),
+                        outcome: "unavailable".to_string(),
+                        error: Some(msg.clone()),
+                        elapsed_ms,
+                    });
+                let continued = if self.continue_on_unavailable {
+                    self.mark_unavailable_and_continue(
+                        tid,
+                        attempt,
+                        TaskUnavailableKind::DispatchUnavailable,
+                        msg,
+                    )
+                } else {
+                    self.dag.tasks.get_mut(tid).unwrap().state = TaskState::Failed;
+                    self.fail_descendants(tid);
+                    false
+                };
+                let attempts = self.attempt_log[tid].len() as u32;
+                let ended_because = self.last_attempt_error(tid);
+                self.sink.emit(&SwarmEvent::TaskCompleted {
+                    task_id: tid.to_string(),
+                    salvaged: false,
+                    completion: None,
+                    status: if continued { "unavailable" } else { "failed" }.to_string(),
+                    device: dev_id,
+                    model: model_id,
+                    attempts,
+                    elapsed_ms,
+                    session_id: self.task_session_id(tid),
+                    error: ended_because,
+                    tool_calls: Vec::new(),
+                });
             }
             Err(DispatchError::Terminal(msg)) => {
                 self.attempt_log
@@ -3344,22 +3547,31 @@ impl State {
                     elapsed_ms,
                 });
             self.dag.tasks.get_mut(tid).unwrap().state = state;
-            if salvage {
+            let continued = if salvage {
                 let completion = TaskCompletionDisposition::Salvaged(
                     salvage_receipt.expect("salvage receipt checked above"),
                 );
                 self.task_completion.insert(tid.to_string(), completion);
                 self.relax_dependents(tid);
+                false
+            } else if self.continue_on_unavailable {
+                self.mark_unavailable_and_continue(
+                    tid,
+                    attempt,
+                    TaskUnavailableKind::DeterministicSupervisorExhausted,
+                    outcome.verdict.as_str().to_string(),
+                )
             } else {
                 self.fail_descendants(tid);
-            }
+                false
+            };
             let attempts = self.attempt_log[tid].len() as u32;
             let ended_because = self.last_attempt_error(tid);
             self.sink.emit(&SwarmEvent::TaskCompleted {
                 task_id: tid.to_string(),
                 salvaged: salvage,
                 completion: self.task_completion.get(tid).cloned(),
-                status: status.to_string(),
+                status: if continued { "unavailable" } else { status }.to_string(),
                 device,
                 model,
                 attempts,
@@ -3715,6 +3927,7 @@ impl State {
         let mut done = Vec::new();
         let mut salvaged = Vec::new();
         let mut failed = Vec::new();
+        let mut unavailable = Vec::new();
         let mut results = HashMap::new();
         let mut tasks = Vec::new();
         let mut per_device: HashMap<String, DeviceSummary> = HashMap::new();
@@ -3733,7 +3946,12 @@ impl State {
                 }
                 TaskState::Failed => {
                     failed.push(id.clone());
-                    "failed"
+                    if let Some(evidence) = self.task_unavailable.get(id) {
+                        unavailable.push(evidence.clone());
+                        "unavailable"
+                    } else {
+                        "failed"
+                    }
                 }
                 _ => "incomplete",
             };
@@ -3783,6 +4001,7 @@ impl State {
                     .as_ref()
                     .is_some_and(TaskCompletionDisposition::is_salvaged),
                 completion,
+                unavailable: self.task_unavailable.get(id).cloned(),
                 device,
                 model,
                 attempts: if history.is_empty() {
@@ -3803,12 +4022,13 @@ impl State {
         }
         done.sort();
         salvaged.sort();
+        unavailable.sort_by(|left, right| left.task_id.cmp(&right.task_id));
         let (failed, bonus) = fail_closed_report_classification(failed, &salvaged, &self.bonus_ids);
         tasks.sort_by(|a, b| a.task_id.cmp(&b.task_id));
         let mut planned_files: Vec<String> = {
             let mut set = std::collections::BTreeSet::new();
             for n in self.dag.tasks.values() {
-                if n.state.releases_dependents() {
+                if n.state.releases_dependents() || self.task_unavailable.contains_key(&n.spec.id) {
                     for f in &n.spec.owned_files {
                         set.insert(f.clone());
                     }
@@ -3821,6 +4041,7 @@ impl State {
             done,
             salvaged,
             failed,
+            unavailable,
             bonus,
             results,
             context_json: self.ctx.to_json(),
@@ -3893,6 +4114,10 @@ pub struct Scheduler {
     /// integrate-verify then gates the degraded file honestly (build + R1 missing-deliverable). false =>
     /// the exhausted arm is byte-identical (fail_descendants).
     degrade_on_stall: bool,
+    /// Pillar-flow continuation: ordinary exhausted work becomes typed Unavailable evidence and
+    /// releases its dependents with an explicit missing-input note. Integrity failures retain the
+    /// fail-closed descendant path. Off by default for every legacy scheduler caller.
+    continue_on_unavailable: bool,
     /// F883/E8: marks this scheduler as a repair-round run — testgen idle-fill is disabled there.
     fix_round: bool,
     /// Typed, immutable, observation-only semantic review. It is consulted only by the physical
@@ -3916,6 +4141,7 @@ impl Scheduler {
             pause_file: None,
             doc_facts: String::new(),
             degrade_on_stall: false,
+            continue_on_unavailable: false,
             fix_round: false,
             semantic_observation: None,
             checkpoint: None,
@@ -4009,6 +4235,11 @@ impl Scheduler {
     /// (fail_descendants). integrate-verify gates the degraded file honestly downstream.
     pub fn with_degrade_on_stall(mut self) -> Self {
         self.degrade_on_stall = true;
+        self
+    }
+
+    pub fn with_unavailable_continuation(mut self) -> Self {
+        self.continue_on_unavailable = true;
         self
     }
 
@@ -4269,6 +4500,7 @@ impl Scheduler {
             restored_attempts,
             max_attempts: self.max_attempts,
             degrade_on_stall: self.degrade_on_stall,
+            continue_on_unavailable: self.continue_on_unavailable,
             sink: self.sink.clone(),
             attempt_started_at: HashMap::new(),
             attempt_log: HashMap::new(),
@@ -4293,6 +4525,7 @@ impl Scheduler {
             judge_running: false,
             judge_node: None,
             task_completion: HashMap::new(),
+            task_unavailable: HashMap::new(),
             salvage_artifact_baselines: HashMap::new(),
             idle_jobs: 0,
             sink_review_dim: 0,

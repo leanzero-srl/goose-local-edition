@@ -3005,8 +3005,22 @@ pub trait ProviderLifecycleDispatcher: Send + Sync {
 }
 
 enum PreparedDispatch {
-    ProviderRequired(Result<PendingAdmission, String>),
+    ProviderRequired(Result<PendingAdmission, DispatchError>),
     DeterministicProviderFree,
+}
+
+const EXHAUSTED_PROVIDER_ROUTES: &str =
+    "every eligible physical host is quarantined by an unresolved provider request";
+
+fn broker_dispatch_error(error: BrokerError) -> DispatchError {
+    match &error {
+        BrokerError::InvalidOpportunity { reason, .. } if reason == EXHAUSTED_PROVIDER_ROUTES => {
+            DispatchError::Unavailable(format!(
+                "physical admission has no usable provider route: {error}"
+            ))
+        }
+        _ => DispatchError::Terminal(format!("physical admission rejected task: {error}")),
+    }
 }
 
 #[async_trait]
@@ -3058,10 +3072,10 @@ impl BrokeredTaskDispatcher {
                             .control
                             .queue_admission(opportunity)
                             .await
-                            .map_err(|error| error.to_string()),
-                        Err(error) => Err(error.to_string()),
+                            .map_err(broker_dispatch_error),
+                        Err(error) => Err(broker_dispatch_error(error)),
                     },
-                    Err(error) => Err(error.to_string()),
+                    Err(error) => Err(error),
                 })
             }
         };
@@ -3104,13 +3118,9 @@ impl TaskDispatcher for BrokeredTaskDispatcher {
                 self.control.emit_provider_free_dispatch(&req);
                 return self.inner.run_provider_free(req).await;
             }
-            PreparedDispatch::ProviderRequired(prepared) => prepared.map_err(|error| {
-                DispatchError::Terminal(format!("physical admission rejected task: {error}"))
-            })?,
+            PreparedDispatch::ProviderRequired(prepared) => prepared?,
         };
-        let admitted = pending.wait().await.map_err(|error| {
-            DispatchError::Terminal(format!("physical admission rejected task: {error}"))
-        })?;
+        let admitted = pending.wait().await.map_err(broker_dispatch_error)?;
         if let Err(error) = self
             .authority
             .route_admitted(&mut req, admitted.receipt())
@@ -3196,6 +3206,27 @@ mod provider_start_registry_tests {
     };
     use crate::event::{EventSink, NullSink, SwarmEvent};
     use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+    #[test]
+    fn only_exhausted_provider_routes_are_typed_unavailable() {
+        assert!(matches!(
+            broker_dispatch_error(BrokerError::InvalidOpportunity {
+                work_id: "task".to_string(),
+                reason: EXHAUSTED_PROVIDER_ROUTES.to_string(),
+            }),
+            DispatchError::Unavailable(_)
+        ));
+        assert!(matches!(
+            broker_dispatch_error(BrokerError::ProviderLifecycleJournal(
+                "hash mismatch".to_string()
+            )),
+            DispatchError::Terminal(_)
+        ));
+        assert!(matches!(
+            broker_dispatch_error(BrokerError::ConcurrentProviderRequest("task".to_string())),
+            DispatchError::Terminal(_)
+        ));
+    }
 
     fn request_authority(admission_id: &str) -> Arc<ProviderRequestAuthority> {
         ProviderRequestAuthority::new(ProviderRequestReceipt {
@@ -3729,7 +3760,7 @@ mod provider_start_registry_tests {
         let rejected = dispatcher.run(retry).await.unwrap_err();
         assert!(matches!(
             rejected,
-            DispatchError::Terminal(ref detail) if detail.contains("every eligible physical host is quarantined")
+            DispatchError::Unavailable(ref detail) if detail.contains("every eligible physical host is quarantined")
         ));
     }
 
