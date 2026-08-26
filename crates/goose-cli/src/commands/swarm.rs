@@ -11911,15 +11911,47 @@ Mask first, then tokenize, then route by a fixed-depth tree. Determinism is requ
     }
 
     #[test]
-    fn recurrence_failover_requires_matching_retryable_research_authority() {
-        let retryable = PreSchedulerSourceAuthority::retryable_research();
-        assert!(retryable.allows_recurrence_failover(WorkRole::ResearchEvidence));
-        assert!(!retryable.allows_recurrence_failover(WorkRole::PlanningAuthority));
-        assert!(!PreSchedulerSourceAuthority::planning()
-            .allows_recurrence_failover(WorkRole::PlanningAuthority));
-        assert!(
-            !PreSchedulerSourceAuthority::non_retryable(WorkRole::ResearchEvidence)
-                .allows_recurrence_failover(WorkRole::ResearchEvidence)
+    fn recurrence_retirement_requires_matching_research_continuation_authority() {
+        for (continuation, expected, schema_authority) in [
+            (
+                PreSchedulerRetirementContinuation::RetryDistinctPhysicalHost,
+                "retire-active-source-and-retry-on-distinct-eligible-host",
+                "exclude-failed-physical-host-and-reschedule-distinct-host",
+            ),
+            (
+                PreSchedulerRetirementContinuation::RetrySamePhysicalHostOnce,
+                "retire-active-source-and-run-one-bounded-same-host-retry",
+                "run-one-bounded-same-physical-host-retry",
+            ),
+            (
+                PreSchedulerRetirementContinuation::PreservePriorPillarReport,
+                "retire-exhausted-source-and-preserve-prior-pillar-report",
+                "no-further-retry-preserve-prior-pillar-report",
+            ),
+        ] {
+            let authority = PreSchedulerSourceAuthority::research(continuation);
+            assert_eq!(
+                authority.recurrence_retirement_continuation(WorkRole::ResearchEvidence),
+                Some(expected)
+            );
+            assert_eq!(
+                authority.recurrence_retirement_continuation(WorkRole::PlanningAuthority),
+                None
+            );
+            assert_eq!(
+                authority.response_schema_retirement_authority(WorkRole::ResearchEvidence),
+                Some(schema_authority)
+            );
+        }
+        assert_eq!(
+            PreSchedulerSourceAuthority::planning()
+                .recurrence_retirement_continuation(WorkRole::PlanningAuthority),
+            None
+        );
+        assert_eq!(
+            PreSchedulerSourceAuthority::non_retryable(WorkRole::ResearchEvidence)
+                .recurrence_retirement_continuation(WorkRole::ResearchEvidence),
+            None
         );
     }
 
@@ -24478,22 +24510,24 @@ struct PreSchedulerSourceContext {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PreSchedulerRetryAuthority {
+enum PreSchedulerRetirementContinuation {
     None,
-    DistinctPhysicalHost,
+    RetryDistinctPhysicalHost,
+    RetrySamePhysicalHostOnce,
+    PreservePriorPillarReport,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PreSchedulerSourceAuthority {
     role: WorkRole,
-    retry: PreSchedulerRetryAuthority,
+    retirement_continuation: PreSchedulerRetirementContinuation,
 }
 
 impl PreSchedulerSourceAuthority {
     const fn non_retryable(role: WorkRole) -> Self {
         Self {
             role,
-            retry: PreSchedulerRetryAuthority::None,
+            retirement_continuation: PreSchedulerRetirementContinuation::None,
         }
     }
 
@@ -24501,17 +24535,78 @@ impl PreSchedulerSourceAuthority {
         Self::non_retryable(WorkRole::PlanningAuthority)
     }
 
-    const fn retryable_research() -> Self {
+    const fn research(retirement_continuation: PreSchedulerRetirementContinuation) -> Self {
         Self {
             role: WorkRole::ResearchEvidence,
-            retry: PreSchedulerRetryAuthority::DistinctPhysicalHost,
+            retirement_continuation,
         }
     }
 
-    fn allows_recurrence_failover(self, admitted_role: WorkRole) -> bool {
-        self.role == WorkRole::ResearchEvidence
-            && admitted_role == self.role
-            && self.retry == PreSchedulerRetryAuthority::DistinctPhysicalHost
+    const fn retryable_research_on_distinct_host() -> Self {
+        Self::research(PreSchedulerRetirementContinuation::RetryDistinctPhysicalHost)
+    }
+
+    fn recurrence_retirement_continuation(self, admitted_role: WorkRole) -> Option<&'static str> {
+        if self.role != WorkRole::ResearchEvidence || admitted_role != self.role {
+            return None;
+        }
+        match self.retirement_continuation {
+            PreSchedulerRetirementContinuation::None => None,
+            PreSchedulerRetirementContinuation::RetryDistinctPhysicalHost => {
+                Some("retire-active-source-and-retry-on-distinct-eligible-host")
+            }
+            PreSchedulerRetirementContinuation::RetrySamePhysicalHostOnce => {
+                Some("retire-active-source-and-run-one-bounded-same-host-retry")
+            }
+            PreSchedulerRetirementContinuation::PreservePriorPillarReport => {
+                Some("retire-exhausted-source-and-preserve-prior-pillar-report")
+            }
+        }
+    }
+
+    fn response_schema_retirement_authority(self, admitted_role: WorkRole) -> Option<&'static str> {
+        self.recurrence_retirement_continuation(admitted_role)?;
+        match self.retirement_continuation {
+            PreSchedulerRetirementContinuation::None => None,
+            PreSchedulerRetirementContinuation::RetryDistinctPhysicalHost => {
+                Some("exclude-failed-physical-host-and-reschedule-distinct-host")
+            }
+            PreSchedulerRetirementContinuation::RetrySamePhysicalHostOnce => {
+                Some("run-one-bounded-same-physical-host-retry")
+            }
+            PreSchedulerRetirementContinuation::PreservePriorPillarReport => {
+                Some("no-further-retry-preserve-prior-pillar-report")
+            }
+        }
+    }
+}
+
+struct PillarFocusedRetryRoute {
+    eligible_tokens: Vec<String>,
+    primary_retirement_continuation: PreSchedulerRetirementContinuation,
+}
+
+fn pillar_focused_retry_route(
+    lanes: &[ResearchPhysicalLane],
+    primary_physical_host: &str,
+) -> PillarFocusedRetryRoute {
+    let distinct_host_tokens = lanes
+        .iter()
+        .filter(|lane| lane.physical_host_id != primary_physical_host)
+        .map(|lane| lane.token.clone())
+        .collect::<Vec<_>>();
+    if distinct_host_tokens.is_empty() {
+        PillarFocusedRetryRoute {
+            eligible_tokens: lanes.iter().map(|lane| lane.token.clone()).collect(),
+            primary_retirement_continuation:
+                PreSchedulerRetirementContinuation::RetrySamePhysicalHostOnce,
+        }
+    } else {
+        PillarFocusedRetryRoute {
+            eligible_tokens: distinct_host_tokens,
+            primary_retirement_continuation:
+                PreSchedulerRetirementContinuation::RetryDistinctPhysicalHost,
+        }
     }
 }
 
@@ -26215,11 +26310,11 @@ impl GooseAgentDispatcher {
         // Captured before the strings move into the message/session below — feeds the
         // prefill-aware first-token budget at the watchdog site.
         let prompt_chars = system_prompt.len() + user_text.len();
-        let response_schema_failover_source = (tool_surface == AgentToolSurface::ResponseOnly)
+        let response_schema_retirement_source = (tool_surface == AgentToolSurface::ResponseOnly)
             .then(|| ACTIVE_PRE_SCHEDULER_SOURCE.try_with(Clone::clone).ok())
             .flatten()
-            .filter(pre_scheduler_recurrence_failover_eligible);
-        let response_schema_fingerprint = response_schema_failover_source
+            .filter(pre_scheduler_recurrence_retirement_eligible);
+        let response_schema_fingerprint = response_schema_retirement_source
             .as_ref()
             .and(response.as_ref())
             .and_then(|response| response.json_schema.as_ref())
@@ -27025,7 +27120,7 @@ impl GooseAgentDispatcher {
                                     Ok(Some(review)) => pre_scheduler_review = Some(review),
                                     Ok(None) => {
                                         let progress = provider_stream_progress.snapshot();
-                                        if pre_scheduler_recurrence_failover_eligible(&source)
+                                        if pre_scheduler_recurrence_retirement_eligible(&source)
                                             && pre_scheduler_recurrence_failover.observe(
                                                 recurrence_provider_request.as_ref(),
                                                 &recurrence,
@@ -27082,6 +27177,14 @@ impl GooseAgentDispatcher {
                                                 );
                                             match retirement {
                                                 Ok(retired_request) => {
+                                                    let continuation = source
+                                                        .authority
+                                                        .recurrence_retirement_continuation(
+                                                            source.lifecycle.admission().role,
+                                                        )
+                                                        .expect(
+                                                            "eligible recurrent source lost its continuation authority",
+                                                        );
                                                     self.events.write_value(serde_json::json!({
                                                         "event": "pre_scheduler_recurrent_source_retired",
                                                         "task_id": activity_key,
@@ -27095,7 +27198,7 @@ impl GooseAgentDispatcher {
                                                         "structured_output_chunks": progress.structured_output_chunks,
                                                         "structured_output_bytes": progress.structured_output_bytes,
                                                         "structured_output_active": progress.structured_output_active,
-                                                        "continuation": "retire-active-source-and-retry-on-distinct-eligible-host",
+                                                        "continuation": continuation,
                                                         "payload_logged": false,
                                                     }));
                                                     return Err(anyhow!(
@@ -27426,7 +27529,7 @@ impl GooseAgentDispatcher {
                                         .as_ref()
                                         .map(|r| !r.is_error.unwrap_or(false))
                                         .unwrap_or(false);
-                                    if response_schema_failover_source.is_some()
+                                    if response_schema_retirement_source.is_some()
                                         && name == FINAL_OUTPUT_TOOL
                                         && !ok
                                     {
@@ -27655,9 +27758,17 @@ impl GooseAgentDispatcher {
                 }
             }
             if let Some(repeat) = final_output_validation_repeat {
-                let source = response_schema_failover_source
-                    .as_ref()
-                    .expect("a validation repeat is armed only for a retryable research source");
+                let source = response_schema_retirement_source.as_ref().expect(
+                    "a validation repeat is armed only for a retirement-authorized research source",
+                );
+                let continuation = source
+                    .authority
+                    .recurrence_retirement_continuation(source.lifecycle.admission().role)
+                    .expect("a retirement-authorized schema source lost its continuation");
+                let retry_authority = source
+                    .authority
+                    .response_schema_retirement_authority(source.lifecycle.admission().role)
+                    .expect("a retirement-authorized schema source lost its branch authority");
                 self.events.write_value(serde_json::json!({
                     "event": "research_response_schema_repeat_detected",
                     "task_id": activity_key,
@@ -27677,7 +27788,8 @@ impl GooseAgentDispatcher {
                     "private_exact_error_and_arguments_matched": true,
                     "provider_terminals_proven": true,
                     "payload_logged": false,
-                    "retry_authority": "exclude-failed-physical-host-and-reschedule-distinct-host",
+                    "retry_authority": retry_authority,
+                    "continuation": continuation,
                 }));
                 return Err(anyhow!(
                     "response-only final_output schema validation repeated on two completed provider turns on physical host `{}`",
@@ -28412,7 +28524,7 @@ impl GooseAgentDispatcher {
                 .run_response_only_agent_on_physical_host(
                     &lane.model_id,
                     &lane.physical_host_id,
-                    PreSchedulerSourceAuthority::retryable_research(),
+                    PreSchedulerSourceAuthority::retryable_research_on_distinct_host(),
                     system.to_string(),
                     user,
                     Some(Response {
@@ -29051,7 +29163,7 @@ impl GooseAgentDispatcher {
                                     .run_response_only_agent_on_physical_host(
                                         &lane.model_id,
                                         &lane.physical_host_id,
-                                        PreSchedulerSourceAuthority::retryable_research(),
+                                        PreSchedulerSourceAuthority::retryable_research_on_distinct_host(),
                                         system.to_string(),
                                         user,
                                         Some(Response {
@@ -29965,6 +30077,7 @@ impl GooseAgentDispatcher {
         lane: ResearchPhysicalLane,
         research_extensions: Arc<Vec<ExtensionConfig>>,
         attempt_ordinal: u8,
+        retirement_continuation: PreSchedulerRetirementContinuation,
         prior_report: Option<CompiledPillarReport>,
     ) -> Result<PillarOwnerAttempt> {
         let owned_requirements = opening
@@ -30000,7 +30113,7 @@ impl GooseAgentDispatcher {
         let output = self
             .run_pillar_agent_on_lane(
                 &lane,
-                PreSchedulerSourceAuthority::retryable_research(),
+                PreSchedulerSourceAuthority::research(retirement_continuation),
                 system.to_string(),
                 user,
                 Some(Response {
@@ -30175,6 +30288,7 @@ impl GooseAgentDispatcher {
             let dispatcher = self.clone();
             let scheduler = scheduler.clone();
             let tokens = all_tokens.clone();
+            let retry_lanes = lanes.clone();
             let opening = opening.clone();
             let extensions = research_extensions.clone();
             primary_calls.push(async move {
@@ -30187,6 +30301,7 @@ impl GooseAgentDispatcher {
                     )
                     .await?;
                 let lane = lease.lane.clone();
+                let retry_route = pillar_focused_retry_route(&retry_lanes, &lane.physical_host_id);
                 let result = dispatcher
                     .run_pillar_owner_attempt(
                         opening,
@@ -30194,6 +30309,7 @@ impl GooseAgentDispatcher {
                         lane.clone(),
                         extensions,
                         1,
+                        retry_route.primary_retirement_continuation,
                         None,
                     )
                     .await;
@@ -30246,19 +30362,8 @@ impl GooseAgentDispatcher {
                 .into_iter()
                 .next()
                 .ok_or_else(|| anyhow!("focused retry lost its primary checkpoint"))?;
-            let distinct = lanes
-                .iter()
-                .filter(|lane| lane.physical_host_id != primary.physical_host)
-                .map(|lane| lane.token.clone())
-                .collect::<Vec<_>>();
-            let eligible = if distinct.is_empty() {
-                lanes
-                    .iter()
-                    .map(|lane| lane.token.clone())
-                    .collect::<Vec<_>>()
-            } else {
-                distinct
-            };
+            let retry_route = pillar_focused_retry_route(&lanes, &primary.physical_host);
+            let eligible = retry_route.eligible_tokens;
             if eligible.is_empty() {
                 checkpoint.persist_attempt(PillarAttemptCheckpoint {
                     pillar_id: pillar.id.clone(),
@@ -30291,6 +30396,7 @@ impl GooseAgentDispatcher {
                         lane.clone(),
                         extensions,
                         2,
+                        PreSchedulerRetirementContinuation::PreservePriorPillarReport,
                         Some(primary.report),
                     )
                     .await;
@@ -42289,10 +42395,11 @@ impl PreSchedulerRecurrenceFailoverGate {
     }
 }
 
-fn pre_scheduler_recurrence_failover_eligible(source: &PreSchedulerSourceContext) -> bool {
+fn pre_scheduler_recurrence_retirement_eligible(source: &PreSchedulerSourceContext) -> bool {
     source
         .authority
-        .allows_recurrence_failover(source.lifecycle.admission().role)
+        .recurrence_retirement_continuation(source.lifecycle.admission().role)
+        .is_some()
 }
 
 fn bind_recurrence_to_provider_request(
@@ -62674,6 +62781,21 @@ mod pre_scheduler_semantic_runtime_tests {
                 .insert(phase.to_string(), mode);
         }
 
+        fn take_next_stream_mode(&self, phase: &str, user: &str) -> Option<PillarReplayStreamMode> {
+            let attempt_key = (phase == "owner").then(|| {
+                let request: serde_json::Value = serde_json::from_str(user)
+                    .expect("pillar replay owner request must remain typed JSON");
+                let attempt_ordinal = request["attempt_ordinal"]
+                    .as_u64()
+                    .expect("pillar replay owner request lost attempt ordinal");
+                format!("owner-attempt-{attempt_ordinal}")
+            });
+            let mut modes = self.next_phase_modes.lock().unwrap();
+            attempt_key
+                .and_then(|key| modes.remove(&key))
+                .or_else(|| modes.remove(phase))
+        }
+
         fn last_user_text(messages: &[Message]) -> String {
             messages
                 .iter()
@@ -63045,8 +63167,8 @@ mod pre_scheduler_semantic_runtime_tests {
             );
             let user = Self::last_user_text(messages);
             let (phase, output) = Self::scripted_output(system, &user);
+            let mode = self.take_next_stream_mode(phase, &user);
             self.record_call(&model_config.model_name, phase, user);
-            let mode = self.next_phase_modes.lock().unwrap().remove(phase);
             Ok(match mode {
                 Some(PillarReplayStreamMode::RecurrentPending) => {
                     ResearchCorrectionRuntimeProvider::recurrent_then_pending(
@@ -63841,7 +63963,7 @@ mod pre_scheduler_semantic_runtime_tests {
         const TOKEN_C: &str = "v21-recurrence-pillar-lane-c";
 
         let provider = Arc::new(PillarReplayProvider::default());
-        provider.set_next_phase_mode("owner", PillarReplayStreamMode::RecurrentPending);
+        provider.set_next_phase_mode("owner-attempt-1", PillarReplayStreamMode::RecurrentPending);
         let harness = pillar_replay_runtime_harness_with_provider(
             &[
                 (TOKEN_A, MODEL_A, HOST_A),
@@ -63891,6 +64013,10 @@ mod pre_scheduler_semantic_runtime_tests {
         assert_eq!(retirement["confirmations"], 2);
         assert_eq!(retirement["structured_output_chunks"], 0);
         assert_eq!(retirement["structured_output_bytes"], 0);
+        assert_eq!(
+            retirement["continuation"],
+            "retire-active-source-and-retry-on-distinct-eligible-host"
+        );
         assert!(retirement["task_id"]
             .as_str()
             .is_some_and(|task| task.starts_with("pillar-pillar-01-attempt-1:pre-scheduler:")));
@@ -63985,6 +64111,204 @@ mod pre_scheduler_semantic_runtime_tests {
     }
 
     #[tokio::test]
+    async fn production_v21_one_host_pillar_recurrence_runs_one_bounded_same_host_retry() {
+        const SPEC: &str = "Build a runnable command that prints READY when invoked.";
+        const MODEL: &str = "v21-one-host-recurrence-pillar-model";
+        const HOST: &str = "v21-one-host-recurrence-pillar-host";
+        const TOKEN: &str = "v21-one-host-recurrence-pillar-lane";
+
+        let provider = Arc::new(PillarReplayProvider::default());
+        provider.set_next_phase_mode("owner-attempt-1", PillarReplayStreamMode::RecurrentPending);
+        let harness =
+            pillar_replay_runtime_harness_with_provider(&[(TOKEN, MODEL, HOST)], provider).await;
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(8),
+            harness.dispatcher.research_by_pillars(
+                SPEC,
+                Arc::new(Vec::new()),
+                vec![(TOKEN.to_string(), MODEL.to_string())],
+                MODEL,
+            ),
+        )
+        .await
+        .expect("the one-host recurrent pillar did not finish its bounded retry")
+        .expect("the one-host recurrent pillar retry failed");
+        assert_eq!(outcome.retries, 1);
+        assert_eq!(outcome.provider_calls, 3);
+        assert_eq!(outcome.reports[0].effective_confidence, Confidence::High);
+
+        let events = harness.sink.values();
+        let retirements = events
+            .iter()
+            .filter(|event| event["event"] == "pre_scheduler_recurrent_source_retired")
+            .collect::<Vec<_>>();
+        assert_eq!(retirements.len(), 1);
+        assert_eq!(retirements[0]["physical_host_id"], HOST);
+        assert_eq!(retirements[0]["confirmations"], 2);
+        assert_eq!(
+            retirements[0]["continuation"],
+            "retire-active-source-and-run-one-bounded-same-host-retry"
+        );
+        assert!(retirements[0]["task_id"]
+            .as_str()
+            .is_some_and(|task| task.starts_with("pillar-pillar-01-attempt-1:pre-scheduler:")));
+
+        let owner_starts = events
+            .iter()
+            .filter(|event| event["event"] == "pillar_owner_attempt_started")
+            .collect::<Vec<_>>();
+        assert_eq!(owner_starts.len(), 2);
+        assert!(owner_starts
+            .iter()
+            .all(|event| event["physical_host_id"] == HOST));
+        assert_eq!(
+            owner_starts
+                .iter()
+                .filter(|event| event["attempt_ordinal"] == 1)
+                .count(),
+            1
+        );
+        assert_eq!(
+            owner_starts
+                .iter()
+                .filter(|event| event["attempt_ordinal"] == 2)
+                .count(),
+            1
+        );
+        assert!(!owner_starts
+            .iter()
+            .any(|event| event["attempt_ordinal"] == 3));
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["work_id"]
+                    .as_str()
+                    .is_some_and(|work_id| {
+                        work_id.starts_with("pillar-pillar-01-attempt-1:pre-scheduler:")
+                    })
+                && event["receipt"]["kind"] == "cancelled"
+        }));
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["work_id"]
+                    .as_str()
+                    .is_some_and(|work_id| {
+                        work_id.starts_with("pillar-pillar-01-attempt-2:pre-scheduler:")
+                    })
+                && event["receipt"]["kind"] == "finished"
+        }));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the one-host recurrent pillar did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_v21_recurrent_exhausted_pillar_attempt_preserves_primary_without_third_retry(
+    ) {
+        const MODEL: &str = "v21-exhausted-recurrence-pillar-model";
+        const HOST: &str = "v21-exhausted-recurrence-pillar-host";
+        const TOKEN: &str = "v21-exhausted-recurrence-pillar-lane";
+        const FROZEN_SPEC: &str = include_str!("../../../../evals/swarm-bench/spec-build-sb7.md");
+
+        let provider = Arc::new(PillarReplayProvider::default());
+        provider.set_next_phase_mode("owner-attempt-2", PillarReplayStreamMode::RecurrentPending);
+        let harness =
+            pillar_replay_runtime_harness_with_provider(&[(TOKEN, MODEL, HOST)], provider).await;
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(8),
+            harness.dispatcher.research_by_pillars(
+                FROZEN_SPEC,
+                Arc::new(Vec::new()),
+                vec![(TOKEN.to_string(), MODEL.to_string())],
+                MODEL,
+            ),
+        )
+        .await
+        .expect("the recurrent exhausted pillar attempt did not preserve its primary")
+        .expect("the recurrent exhausted pillar path failed");
+        assert_eq!(outcome.opening.pillars.len(), 1);
+        assert_eq!(outcome.retries, 1);
+        assert_eq!(outcome.provider_calls, 3);
+        assert_eq!(outcome.reports[0].effective_confidence, Confidence::Low);
+        assert!(outcome.reports[0].claims.iter().any(|claim| {
+            claim.statement
+                == "The exact optional rendering fallback cannot be proven from available engine evidence"
+        }));
+
+        let events = harness.sink.values();
+        let retirements = events
+            .iter()
+            .filter(|event| event["event"] == "pre_scheduler_recurrent_source_retired")
+            .collect::<Vec<_>>();
+        assert_eq!(retirements.len(), 1);
+        assert_eq!(retirements[0]["physical_host_id"], HOST);
+        assert_eq!(retirements[0]["confirmations"], 2);
+        assert_eq!(
+            retirements[0]["continuation"],
+            "retire-exhausted-source-and-preserve-prior-pillar-report"
+        );
+        assert!(retirements[0]["task_id"]
+            .as_str()
+            .is_some_and(|task| task.starts_with("pillar-pillar-01-attempt-2:pre-scheduler:")));
+
+        let owner_starts = events
+            .iter()
+            .filter(|event| event["event"] == "pillar_owner_attempt_started")
+            .collect::<Vec<_>>();
+        assert_eq!(owner_starts.len(), 2);
+        assert!(owner_starts
+            .iter()
+            .all(|event| event["physical_host_id"] == HOST));
+        assert!(!owner_starts
+            .iter()
+            .any(|event| event["attempt_ordinal"] == 3));
+        assert!(events.iter().any(|event| {
+            event["event"] == "pillar_owner_attempt_degraded"
+                && event["attempt_ordinal"] == 2
+                && event["fallback"] == "preserve-better-primary-evidence"
+        }));
+
+        let owner_attempts = harness
+            .provider
+            .calls()
+            .into_iter()
+            .filter(|call| call.phase == "owner")
+            .map(|call| {
+                serde_json::from_str::<serde_json::Value>(&call.user).unwrap()["attempt_ordinal"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(owner_attempts, [1, 2]);
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["work_id"]
+                    .as_str()
+                    .is_some_and(|work_id| {
+                        work_id.starts_with("pillar-pillar-01-attempt-1:pre-scheduler:")
+                    })
+                && event["receipt"]["kind"] == "finished"
+        }));
+        assert!(events.iter().any(|event| {
+            event["event"] == "broker_provider_terminal_observed"
+                && event["admission"]["work_id"]
+                    .as_str()
+                    .is_some_and(|work_id| {
+                        work_id.starts_with("pillar-pillar-01-attempt-2:pre-scheduler:")
+                    })
+                && event["receipt"]["kind"] == "cancelled"
+        }));
+        tokio::time::timeout(Duration::from_secs(5), harness.control.wait_until_drained())
+            .await
+            .expect("the exhausted recurrent pillar did not drain")
+            .unwrap();
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
     async fn production_v21_pillar_structured_output_blocks_recurrence_retirement() {
         const SPEC: &str = "Build a runnable command that prints READY when invoked.";
         const MODEL_A: &str = "v21-structured-pillar-model-a";
@@ -63999,7 +64323,7 @@ mod pre_scheduler_semantic_runtime_tests {
 
         let provider = Arc::new(PillarReplayProvider::default());
         provider.set_next_phase_mode(
-            "owner",
+            "owner-attempt-1",
             PillarReplayStreamMode::RecurrentStructuredThenFinal,
         );
         let harness = pillar_replay_runtime_harness_with_provider(
