@@ -56345,9 +56345,14 @@ fn env_f32_clamped(name: &str, lo: f32, hi: f32) -> Option<f32> {
         .map(|v| v.clamp(lo, hi))
 }
 
+const TELEMETRY_RANK_MIN_SAMPLES: usize = 3;
+const TELEMETRY_RANK_MIN_DECODE_SECS: f64 = 1.0;
+
 /// Median decode rate (tokens/sec) per node, from the run's OWN telemetry file. A record
-/// contributes only when it carries real backend usage and a positive decode window —
-/// approximations and failed calls never rank a node. Pure/testable.
+/// contributes only when it carries real backend usage and a timing window long enough to
+/// separate decode from TTFT. Ranking waits for three such observations: r5 exposed a backend
+/// timing attribution sample with 3,572 completion tokens in a 12 ms decode window; with only
+/// two observations, the upper median selected its impossible 297,666 tok/s value.
 fn telemetry_node_rates(path: &Path) -> std::collections::HashMap<String, f64> {
     let mut samples: std::collections::HashMap<String, Vec<f64>> = Default::default();
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -56369,7 +56374,7 @@ fn telemetry_node_rates(path: &Path) -> std::collections::HashMap<String, f64> {
             continue;
         };
         let decode_s = (total - ttft) / 1000.0;
-        if ct > 0.0 && decode_s > 0.0 {
+        if ct > 0.0 && decode_s >= TELEMETRY_RANK_MIN_DECODE_SECS {
             samples
                 .entry(node.to_string())
                 .or_default()
@@ -56378,10 +56383,13 @@ fn telemetry_node_rates(path: &Path) -> std::collections::HashMap<String, f64> {
     }
     samples
         .into_iter()
-        .map(|(k, mut v)| {
+        .filter_map(|(k, mut v)| {
+            if v.len() < TELEMETRY_RANK_MIN_SAMPLES {
+                return None;
+            }
             v.sort_by(|a, b| a.total_cmp(b));
             let m = v[v.len() / 2];
-            (k, m)
+            Some((k, m))
         })
         .collect()
 }
@@ -56480,6 +56488,11 @@ mod telemetry_rank_tests {
                 r#"{"node":"mihai","usage":false,"completion_tokens":900,"ttft_ms":0,"total_ms":1000}"#,
                 // zero decode window -> skipped
                 r#"{"node":"mihai","usage":true,"completion_tokens":50,"ttft_ms":1000,"total_ms":1000}"#,
+                // r5's exact bad shape: backend attributed almost the entire request to TTFT.
+                r#"{"node":"mihai","usage":true,"completion_tokens":3572,"ttft_ms":354643,"total_ms":354655}"#,
+                // Two trustworthy samples are not enough to rank a serialized repair owner.
+                r#"{"node":"workhorse","usage":true,"completion_tokens":100,"ttft_ms":1000,"total_ms":11000}"#,
+                r#"{"node":"workhorse","usage":true,"completion_tokens":120,"ttft_ms":1000,"total_ms":11000}"#,
                 "not json at all",
             ]
             .join("\n"),
@@ -56494,6 +56507,14 @@ mod telemetry_rank_tests {
         assert!(
             (rates["gabee"] - 20.0).abs() < 1e-9,
             "median, not mean: {rates:?}"
+        );
+        assert!(
+            !rates.contains_key("mihai"),
+            "a 12 ms timing-attribution artifact must never rank a node: {rates:?}"
+        );
+        assert!(
+            !rates.contains_key("workhorse"),
+            "repair ranking needs three settled timing samples: {rates:?}"
         );
         assert!(telemetry_node_rates(Path::new("/definitely/missing")).is_empty());
     }
