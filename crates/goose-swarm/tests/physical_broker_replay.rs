@@ -34,6 +34,23 @@ fn probe_lane(device: &str, model: &str, host: &str, instance: &str) -> Verified
     lane
 }
 
+fn measured_lane(
+    device: &str,
+    model: &str,
+    host: &str,
+    instance: &str,
+    max_concurrent: u32,
+) -> VerifiedPhysicalLane {
+    let mut lane = lane(device, model, host, instance);
+    lane.advertised_instance_capacity = max_concurrent;
+    lane.capacity_evidence = HostCapacityEvidence::MeasuredProfile {
+        profile_hash: format!("fixture:{host}:capacity:{max_concurrent}"),
+        profile_key: "test-runtime:model:context:role".to_string(),
+        max_concurrent,
+    };
+    lane
+}
+
 fn snapshot(id: &str, lanes: Vec<VerifiedPhysicalLane>) -> PhysicalFleetSnapshot {
     PhysicalFleetSnapshot::new(id, lanes).unwrap()
 }
@@ -678,7 +695,13 @@ fn provider_turns_reenter_the_common_ranked_queue_after_tool_gaps() {
         "turn-reacquisition",
         snapshot(
             "turn-reacquisition",
-            vec![lane("lane-a", "model-a", "host-a", "instance-a")],
+            vec![measured_lane(
+                "lane-a",
+                "model-a",
+                "host-a",
+                "instance-a",
+                2,
+            )],
         ),
     )
     .unwrap();
@@ -779,23 +802,31 @@ fn provider_reacquisition_uses_its_task_work_id_for_equal_rank_tiebreaking() {
     }
 }
 
-#[test]
-fn existing_core_session_continuation_beats_r5_queued_build_inversion() {
+fn assert_existing_core_session_continuation_beats_queued_build(
+    role: WorkRole,
+    existing_work_id: &str,
+) {
     let mut broker = PhysicalBroker::new(
         "r5-continuation-inversion",
         snapshot(
             "r5-continuation-inversion",
-            vec![lane("lane-a", "model-a", "host-a", "instance-a")],
+            vec![measured_lane(
+                "lane-a",
+                "model-a",
+                "host-a",
+                "instance-a",
+                2,
+            )],
         ),
     )
     .unwrap();
-    let existing_source = attempt("build-03", 0, 1);
+    let existing_source = attempt(existing_work_id, 0, 1);
     broker.set_source_revision(existing_source.clone()).unwrap();
     broker
         .enqueue(work(
-            "build-03",
-            WorkRole::Build,
-            WorkPriority::Implementation,
+            existing_work_id,
+            role,
+            role.priority(),
             existing_source,
         ))
         .unwrap();
@@ -825,8 +856,29 @@ fn existing_core_session_continuation_beats_r5_queued_build_inversion() {
     assert!(matches!(
         broker.grant_next(),
         Some(BrokerGrant::ProviderRequest { admission, receipt })
-            if admission.work_id == "build-03" && receipt == continuation
+            if admission.work_id == existing_work_id && receipt == continuation
     ));
+}
+
+#[test]
+fn existing_build_session_continuation_beats_r5_queued_build_inversion() {
+    assert_existing_core_session_continuation_beats_queued_build(WorkRole::Build, "build-03");
+}
+
+#[test]
+fn existing_research_session_continuation_beats_queued_build_inversion() {
+    assert_existing_core_session_continuation_beats_queued_build(
+        WorkRole::ResearchEvidence,
+        "research-03",
+    );
+}
+
+#[test]
+fn existing_planning_session_continuation_beats_queued_build_inversion() {
+    assert_existing_core_session_continuation_beats_queued_build(
+        WorkRole::PlanningAuthority,
+        "planning-03",
+    );
 }
 
 #[test]
@@ -907,6 +959,64 @@ fn probe_single_stream_keeps_one_parked_session_and_resumes_it_before_fresh_work
         snapshot(
             "probe-parked-session",
             vec![probe_lane("lane-a", "model-a", "host-a", "instance-a")],
+        ),
+    )
+    .unwrap();
+    let parked_source = attempt("parked", 0, 1);
+    broker.set_source_revision(parked_source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "parked",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            parked_source,
+        ))
+        .unwrap();
+    let parked = admit_next(&mut broker);
+    let first = provider_start(&parked, 0);
+    broker.request_provider_turn(first.clone()).unwrap();
+    broker
+        .observe_provider_terminal(provider_terminal(&first, ProviderTerminalKind::Finished))
+        .unwrap();
+
+    let fresh_source = attempt("fresh", 0, 1);
+    broker.set_source_revision(fresh_source.clone()).unwrap();
+    broker
+        .enqueue(work(
+            "fresh",
+            WorkRole::Build,
+            WorkPriority::Implementation,
+            fresh_source,
+        ))
+        .unwrap();
+    assert!(broker.grant_next().is_none());
+    assert_eq!(broker.active_len(), 1);
+
+    let continuation = provider_start(&parked, 1);
+    assert!(matches!(
+        broker.request_provider_turn(continuation.clone()).unwrap(),
+        ProviderRequestDisposition::Queued(_)
+    ));
+    assert!(matches!(
+        broker.grant_next(),
+        Some(BrokerGrant::ProviderRequest { receipt, .. }) if receipt == continuation
+    ));
+    assert_eq!(broker.active_len(), 1);
+}
+
+#[test]
+fn measured_capacity_one_keeps_one_parked_session_and_resumes_it_before_fresh_work() {
+    let mut broker = PhysicalBroker::new(
+        "measured-one-parked-session",
+        snapshot(
+            "measured-one-parked-session",
+            vec![measured_lane(
+                "lane-a",
+                "model-a",
+                "host-a",
+                "instance-a",
+                1,
+            )],
         ),
     )
     .unwrap();

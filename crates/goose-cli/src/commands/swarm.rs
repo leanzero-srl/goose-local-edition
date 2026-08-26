@@ -62737,6 +62737,7 @@ mod pre_scheduler_semantic_runtime_tests {
     struct RuntimeScriptedProvider {
         mode: RuntimeProviderMode,
         source_calls: AtomicUsize,
+        source_turn_user_texts: Mutex<Vec<Vec<String>>>,
         build_calls: AtomicUsize,
         judge_calls: AtomicUsize,
         judge_started: Arc<Notify>,
@@ -62754,6 +62755,7 @@ mod pre_scheduler_semantic_runtime_tests {
             Self {
                 mode,
                 source_calls: AtomicUsize::new(0),
+                source_turn_user_texts: Mutex::new(Vec::new()),
                 build_calls: AtomicUsize::new(0),
                 judge_calls: AtomicUsize::new(0),
                 judge_started: Arc::new(Notify::new()),
@@ -62762,6 +62764,23 @@ mod pre_scheduler_semantic_runtime_tests {
                 builder_artifact,
                 integration_artifact,
             }
+        }
+
+        fn source_turn_user_texts(&self) -> Vec<Vec<String>> {
+            self.source_turn_user_texts.lock().unwrap().clone()
+        }
+
+        fn record_source_turn_user_texts(&self, messages: &[Message]) {
+            let user_texts = messages
+                .iter()
+                .filter(|message| message.role == rmcp::model::Role::User)
+                .flat_map(|message| message.content.iter())
+                .filter_map(|content| match content {
+                    MessageContent::Text(text) => Some(text.text.clone()),
+                    _ => None,
+                })
+                .collect();
+            self.source_turn_user_texts.lock().unwrap().push(user_texts);
         }
 
         fn pending() -> SingleAttemptStream {
@@ -63751,7 +63770,7 @@ mod pre_scheduler_semantic_runtime_tests {
             &self,
             model_config: &ModelConfig,
             _system: &str,
-            _messages: &[Message],
+            messages: &[Message],
             _tools: &[Tool],
         ) -> Result<SingleAttemptStream, ProviderError> {
             if matches!(
@@ -63830,6 +63849,7 @@ mod pre_scheduler_semantic_runtime_tests {
                 };
             }
 
+            self.record_source_turn_user_texts(messages);
             let source_call = self.source_calls.fetch_add(1, AtomicOrdering::SeqCst);
             match self.mode {
                 RuntimeProviderMode::BuildWatchdogThenFinished => {
@@ -67868,6 +67888,50 @@ mod pre_scheduler_semantic_runtime_tests {
                 && record["provider_request_id"] == cancelled_request_id
                 && record["terminal_kind"] == "cancelled"
         }));
+        assert_eq!(harness.control.occupancy().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn production_agent_nudge_channel_delivers_queued_steer_on_next_session_turn() {
+        let harness = runtime_harness(RuntimeProviderMode::SuccessfulNudge).await;
+        let output = tokio::time::timeout(
+            Duration::from_secs(8),
+            run_source(
+                harness.dispatcher.clone(),
+                5,
+                AgentToolSurface::ResponseOnly,
+            ),
+        )
+        .await
+        .expect("production AgentProviderNudgeChannel did not resume the source session")
+        .expect("same-session production source failed after its queued steer");
+
+        let expected_guidance = "SUPERVISOR NOTE: an independently admitted judge found your latest reasoning semantically recurrent. use the established evidence and advance. Continue the SAME task and preserve valid work already completed.";
+        let turns = harness.provider.source_turn_user_texts();
+        assert_eq!(
+            turns.len(),
+            2,
+            "unexpected source provider turns: {turns:#?}"
+        );
+        assert!(
+            !turns[0].iter().any(|text| text == expected_guidance),
+            "guidance appeared in the captured turn before Agent::steer"
+        );
+        assert!(
+            turns[1].iter().any(|text| text == expected_guidance),
+            "the exact queued steer was not present in the next provider turn: {turns:#?}"
+        );
+        assert_eq!(
+            turns
+                .iter()
+                .flatten()
+                .filter(|text| text.as_str() == expected_guidance)
+                .count(),
+            1,
+            "one reserved nudge must be consumed exactly once"
+        );
+        assert!(output.text.contains("completed after semantic steer"));
+        assert!(!output.session_id.is_empty());
         assert_eq!(harness.control.occupancy().await, (0, 0));
     }
 
