@@ -60,11 +60,8 @@ impl Provider for FeatureProvider {
             .await
     }
 
-    async fn get_context_limit(
-        &self,
-        model_config: &ModelConfig,
-    ) -> Result<usize, goose_providers::errors::ProviderError> {
-        self.inner.get_context_limit(model_config).await
+    async fn get_context_limit(&self, model: &str, override_limit: Option<usize>) -> usize {
+        self.inner.get_context_limit(model, override_limit).await
     }
 
     fn manages_own_context(&self) -> bool {

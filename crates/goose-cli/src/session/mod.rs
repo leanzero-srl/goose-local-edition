@@ -13,7 +13,6 @@ use crate::session::task_execution_display::{
     format_task_execution_notification, TASK_EXECUTION_NOTIFICATION_TYPE,
 };
 use goose::conversation::{fix_conversation, merge_consecutive_messages_for_request, Conversation};
-use std::env;
 use std::io::Write;
 use std::str::FromStr;
 use tokio::signal::ctrl_c;
@@ -21,6 +20,7 @@ use tokio_util::task::AbortOnDropHandle;
 
 pub use builder::{build_session, ExtensionFailure, SessionBuilderConfig};
 use console::Color;
+
 use goose::agents::platform_extensions::developer::shell::{
     parse_shell_output_notification, ShellOutputNotificationParams, ShellOutputStream,
 };
@@ -65,7 +65,6 @@ use tokio;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-const GOOSE_PLANNER_CONTEXT_LIMIT: &str = "GOOSE_PLANNER_CONTEXT_LIMIT";
 const SHELL_STATUS_FALLBACK_WIDTH: usize = 120;
 const SHELL_STATUS_MAX_LINES: usize = 3;
 const SHELL_STATUS_RESERVED_WIDTH: usize = 2;
@@ -1079,26 +1078,11 @@ impl CliSession {
             return Ok(());
         }
 
-        if let Some(model_info) = target_entry
-            .metadata()
-            .known_models
-            .iter()
-            .find(|m| m.name == target_model_name)
-        {
-            if model_info.context_limit < current_model_config.context_limit.unwrap_or(0) {
-                eprintln!(
-                    "{}",
-                    console::style(format!(
-                        "Warning: '{}' has a smaller context window ({} tokens) than the current session ({} tokens). \
-                        You may need to use /compact.",
-                        target_model_name,
-                        model_info.context_limit,
-                        current_model_config.context_limit.unwrap_or(0)
-                    ))
-                    .yellow()
-                );
-            }
-        }
+        let current_context_limit = goose::context_limit::get_context_limit(
+            provider.as_ref(),
+            &current_model_config.model_name,
+        )
+        .await?;
 
         let extensions = self.agent.get_extension_configs().await;
         let new_provider = match goose::providers::create(target_provider_name, extensions).await {
@@ -1120,6 +1104,22 @@ impl CliSession {
                 target_provider_name
             ));
             return Ok(());
+        }
+
+        let new_context_limit = goose::context_limit::get_context_limit(
+            new_provider.as_ref(),
+            &new_model_config.model_name,
+        )
+        .await?;
+        if new_context_limit < current_context_limit {
+            eprintln!(
+                "{}",
+                console::style(format!(
+                    "Warning: '{}' has a smaller context window ({} tokens) than the current session ({} tokens). You may need to use /compact.",
+                    target_model_name, new_context_limit, current_context_limit
+                ))
+                .yellow()
+            );
         }
 
         self.agent
@@ -2092,10 +2092,9 @@ impl CliSession {
             .agent
             .model_config_for_session(&self.session_id)
             .await?;
-        let context_limit = provider
-            .get_context_limit(&model_config)
-            .await
-            .unwrap_or_else(|_| model_config.context_limit());
+        let context_limit =
+            goose::context_limit::get_context_limit(provider.as_ref(), &model_config.model_name)
+                .await?;
 
         let config = Config::global();
         let show_cost = config
@@ -2859,19 +2858,8 @@ async fn get_reasoner(
             .expect("No model configured. Run 'goose configure' first")
     };
 
-    let planner_context_limit = match env::var(GOOSE_PLANNER_CONTEXT_LIMIT)
-        .ok()
-        .map(|v| v.parse::<usize>())
-    {
-        Some(Ok(n)) if n >= 4096 => Some(n),
-        Some(Ok(_)) => anyhow::bail!("{} must be at least 4096", GOOSE_PLANNER_CONTEXT_LIMIT),
-        Some(Err(e)) => anyhow::bail!("{}: {}", GOOSE_PLANNER_CONTEXT_LIMIT, e),
-        None => None,
-    };
-
     let model_config =
-        goose::model_config::model_config_from_user_config(&provider, model.as_str())?
-            .with_context_limit(planner_context_limit);
+        goose::model_config::model_config_from_user_config(&provider, model.as_str())?;
     let extensions = goose::config::extensions::get_enabled_extensions_with_config(config);
     let reasoner = create(&provider, extensions).await?;
 

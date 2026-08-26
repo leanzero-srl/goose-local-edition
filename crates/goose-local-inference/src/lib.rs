@@ -261,6 +261,12 @@ fn resolve_model_local_path(model_id: &str) -> Option<PathBuf> {
         .map(|entry| entry.local_path.clone())
 }
 
+pub fn local_context_limit(model_id: &str) -> Option<usize> {
+    resolve_model_path(model_id)
+        .map(|resolved| resolved.context_limit)
+        .filter(|limit| *limit > 0)
+}
+
 /// Resolve model path, context limit, settings, and mmproj path for a model ID from the registry.
 fn resolve_model_path(model_id: &str) -> Option<ResolvedModelPaths> {
     use crate::local_model_registry::{default_settings_for_model, get_registry};
@@ -617,6 +623,14 @@ impl ProviderDescriptor for LocalInferenceProvider {
 impl Provider for LocalInferenceProvider {
     fn get_name(&self) -> &str {
         &self.name
+    }
+
+    async fn get_context_limit(&self, model: &str, override_limit: Option<usize>) -> usize {
+        goose_provider_types::context_limit::ContextLimitResolver::new(&self.name)
+            .resolve(model, override_limit, || async {
+                Ok(resolve_model_path(model).map(|resolved| resolved.context_limit))
+            })
+            .await
     }
 
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {

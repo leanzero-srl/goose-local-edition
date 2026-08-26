@@ -2,6 +2,7 @@ use super::*;
 use crate::config::declarative_providers;
 use crate::providers::inventory::ensure_refresh_identity_current;
 use crate::providers::provider_secrets;
+use goose_providers::base::ModelInfo;
 use std::str::FromStr;
 
 const ACP_READINESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -378,6 +379,34 @@ fn custom_provider_headers(headers: HashMap<String, String>) -> Option<HashMap<S
     (!headers.is_empty()).then_some(headers)
 }
 
+fn custom_provider_models(
+    names: Vec<String>,
+    existing: &[ModelInfo],
+    catalog_provider_id: Option<&str>,
+) -> Vec<ModelInfo> {
+    let catalog_models = catalog_provider_id
+        .and_then(crate::providers::catalog::get_provider_template)
+        .map(|template| template.models)
+        .unwrap_or_default();
+
+    names
+        .into_iter()
+        .map(|name| {
+            existing
+                .iter()
+                .find(|model| model.name == name)
+                .cloned()
+                .or_else(|| {
+                    catalog_models
+                        .iter()
+                        .find(|model| model.id == name)
+                        .map(|model| ModelInfo::new(&name).with_context_limit(model.context_limit))
+                })
+                .unwrap_or_else(|| ModelInfo::new(name))
+        })
+        .collect()
+}
+
 fn load_declarative_provider_for_client(
     provider_id: &str,
 ) -> Result<declarative_providers::LoadedProvider, agent_client_protocol::Error> {
@@ -611,7 +640,11 @@ impl GooseAcpAgent {
                 display_name: provider.display_name,
                 api_url: provider.api_url,
                 api_key: provider.api_key,
-                models: provider.models,
+                models: custom_provider_models(
+                    provider.models,
+                    &[],
+                    provider.catalog_provider_id.as_deref(),
+                ),
                 supports_streaming: provider.supports_streaming,
                 headers: custom_provider_headers(provider.headers),
                 requires_auth: provider.requires_auth,
@@ -680,7 +713,11 @@ impl GooseAcpAgent {
                 display_name: provider.display_name,
                 api_url: provider.api_url,
                 api_key: provider.api_key,
-                models: provider.models,
+                models: custom_provider_models(
+                    provider.models,
+                    &loaded.config.models,
+                    provider.catalog_provider_id.as_deref(),
+                ),
                 supports_streaming: provider.supports_streaming,
                 headers: Some(provider.headers),
                 requires_auth: provider.requires_auth,
@@ -1183,7 +1220,9 @@ impl GooseAcpAgent {
                             config_info.map(|info| CanonicalModelInfoDto {
                                 provider: req.provider.clone(),
                                 model: req.model.clone(),
-                                context_limit: info.context_limit,
+                                context_limit: info.context_limit.unwrap_or_else(|| {
+                                    ModelConfig::new(&req.model).context_limit()
+                                }),
                                 // ModelInfo carries no max-output limit.
                                 max_output_tokens: None,
                                 // Configs deserialize a missing `reasoning` as false; keep
