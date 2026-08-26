@@ -471,6 +471,9 @@ class Ctx:
         self.notifier_processed: List[Dict] = []
         self.notifier_processed_prekill: List[Dict] = []
         self.notifier_notifications: Dict = {}
+        self.notifier_notifications_status: Optional[int] = None
+        self.notifier_notifications_body_type = "unread"
+        self.notifier_notifications_response_keys: List[str] = []
         self.notifier_health_final: Dict = {}
         self.under_stream: Dict = {}
         self.api_lat: Dict = {}
@@ -500,6 +503,39 @@ class Ctx:
         # probes
         self.probes: Dict[str, Dict] = {}      # scenario -> emit
         self._txr_rows: List[Dict] = []
+
+
+def _record_notifier_notifications(c: Ctx, status: Optional[int], body) -> None:
+    if status is None:
+        return
+    if isinstance(body, dict):
+        body_type = "object"
+        response_keys = sorted(str(key) for key in body)[:32]
+        payload = body
+    elif isinstance(body, list):
+        body_type = "array"
+        response_keys = []
+        payload = {}
+    elif body is None:
+        body_type = "null"
+        response_keys = []
+        payload = {}
+    elif isinstance(body, bool):
+        body_type = "boolean"
+        response_keys = []
+        payload = {}
+    elif isinstance(body, (int, float)):
+        body_type = "number"
+        response_keys = []
+        payload = {}
+    else:
+        body_type = "string"
+        response_keys = []
+        payload = {}
+    c.notifier_notifications_status = status
+    c.notifier_notifications_body_type = body_type
+    c.notifier_notifications_response_keys = response_keys
+    c.notifier_notifications = payload
 
 
 def _pv(c: Ctx, scenario: str) -> Dict:
@@ -2643,9 +2679,20 @@ def _(c: Ctx):
 
 @check("r_notification_multiset", "R")
 def _(c: Ctx):
+    status = c.notifier_notifications_status
+    body_type = c.notifier_notifications_body_type
+    response_keys = c.notifier_notifications_response_keys
+    if status is None:
+        return unavail("notifier notifications request produced no HTTP response")
+    if status != 200:
+        return g(0.0, f"notifier notifications returned HTTP {status}",
+                 "the documented notifier notifications surface is unreachable")
     rows = (c.notifier_notifications or {}).get("data")
-    if rows is None:
-        return unavail("notifier notifications endpoint never read")
+    if body_type != "object" or not isinstance(rows, list):
+        return g(0.0,
+                 f"notifier notifications returned {body_type} with keys {response_keys}; "
+                 "expected an object containing a data array",
+                 "the documented notifier notifications response schema is wrong")
     got: Dict[str, int] = {}
     for r_ in rows:
         if isinstance(r_, dict):
@@ -4281,8 +4328,8 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
         _s, pr2, _r, _h = _get(f"{nbase}/notify/processed?after=0", timeout=8)
         c.notifier_processed = ((pr2 or {}).get("processed")
                                 if isinstance(pr2, dict) else []) or []
-        _s, nn, _r, _h = _get(f"{nbase}/notify/notifications?limit=200", timeout=8)
-        c.notifier_notifications = nn if isinstance(nn, dict) else {}
+        nn_status, nn, _r, _h = _get(f"{nbase}/notify/notifications?limit=200", timeout=8)
+        _record_notifier_notifications(c, nn_status, nn)
         _s, nh2, _r, _h = _get(f"{nbase}/health", timeout=5)
         c.notifier_health_final = nh2 if isinstance(nh2, dict) else {}
         seqs_after = [p.get("seq") for p in c.notifier_processed
@@ -4476,9 +4523,10 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
         _s, pr3, _r, _h = _get(f"{nbase}/notify/processed?after=0", timeout=8)
         if isinstance(pr3, dict) and pr3.get("processed"):
             c.notifier_processed = pr3["processed"]
-        _s, nn2, _r, _h = _get(f"{nbase}/notify/notifications?limit=200", timeout=8)
-        if isinstance(nn2, dict):
-            c.notifier_notifications = nn2
+        nn_status2, nn2, _r, _h = _get(
+            f"{nbase}/notify/notifications?limit=200", timeout=8
+        )
+        _record_notifier_notifications(c, nn_status2, nn2)
 
         # empty instance: vendor down => the pre-sync/D3 window is probeable at leisure
         edb = c.root / "sb7-empty-db"
